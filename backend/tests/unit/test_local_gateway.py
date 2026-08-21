@@ -690,3 +690,77 @@ async def test_a_queued_load_says_what_it_is_waiting_for() -> None:
     model, detail = queued[0]
     # It names the model ahead, so the screen reads "waiting for gpt-oss-120b", not "waiting".
     assert "gpt-oss-120b" in detail or "qwen3.8-27b-abliterated" in detail, detail
+
+
+async def test_a_guarded_load_does_not_report_itself_as_unannounced(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`unannounced_load` is the box's only signal that something loaded a model outside the
+    residency budget and the GPU guard — the documented host-freeze path. It reported the
+    client's OWN guarded loads.
+
+    `load()` claims the model before the weights are read, but the prune at the end of
+    `_drop_cache_for_unannounced` ran while it was still not resident and dropped the claim,
+    so the warm-up's own `/slots` poll saw it arrive un-owned. MEASURED 2026-08-21 on the box:
+    `load_cache_swept qwen3.8-27b-q4` at 21:41:14.804 then `unannounced_load qwen3.8-27b-q4`
+    at 21:41:17.873 — same client, three seconds apart, one load. A false alarm on this
+    surface is expensive: it sent a live investigation after a bypass that never happened."""
+    events: list[str] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: events.append(ev),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    # A load is in flight: claimed, not yet resident — the state the prune used to destroy.
+    gw._loading.add("gpt-oss-120b")  # type: ignore[attr-defined]
+    gw._drop_cache_for_unannounced(set())  # a poll while the weights are still being read
+    # ...and now it arrives, on the warm-up's own poll.
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})
+    assert "local_gateway.unannounced_load" not in events, "a guarded load reported itself"
+
+
+async def test_a_genuinely_unannounced_load_is_still_reported(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The veto must not blind the signal. A model this client never claimed is exactly what
+    the event exists for, and it still fires — annotated, so a cross-process sighting is
+    legible as one rather than read as an unguarded load."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+    gw._seen_resident = {"qwen3.5-4b"}  # not this client's first poll  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"qwen3.5-4b", "gpt-oss-120b"})
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert len(hits) == 1 and hits[0]["model"] == "gpt-oss-120b"
+    assert hits[0]["first_poll"] is False
+    assert hits[0]["client"], "no client identity — a cross-process sighting reads as a bypass"
+
+
+async def test_a_fresh_clients_first_poll_is_marked_as_such(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new client reports every already-resident model, because `_seen_resident` starts
+    empty. MEASURED: the worker logged gpt-oss-120b and qwen3.8-27b-q4 at the same millisecond
+    (21:41:23.348/.349) — both loaded by the api minutes earlier. Unavoidable and harmless,
+    but it must be DISTINGUISHABLE from a load that appeared while the client was watching."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # the very first poll
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert hits and hits[0]["first_poll"] is True

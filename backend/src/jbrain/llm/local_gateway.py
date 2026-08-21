@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -153,6 +154,14 @@ class LocalGatewayClient:
         # through the PWA (CLAUDE.md #10), and a Load button that does nothing for three
         # minutes is indistinguishable from one that is broken.
         self._loading_now: str | None = None
+        # Models THIS client has a load in flight for. Distinct from `_loaded_here`, which is
+        # pruned to what is actually resident: a load in flight is by definition not resident
+        # yet, so it needs a claim that survives the prune. Without this, every guarded load of
+        # a cold model reported itself as unannounced.
+        self._loading: set[str] = set()
+        # Which client this is, so a cross-process sighting is legible as one. Two long-lived
+        # clients run on this box (api, worker) and each sees the other's loads as unannounced.
+        self._client_id = f"{os.getpid()}:{id(self):x}"
         # The live per-model context-window and parallel-slot overrides (Settings → LLM), read
         # per load. They live here for the same chokepoint reason as the probe: KV is LINEAR in
         # the window, so a guard that reserves for the catalog default while llama-swap serves
@@ -231,20 +240,51 @@ class LocalGatewayClient:
         vitals narration on `unload`.
 
         Only on the TRANSITION into residency, so a steady poll costs nothing. Models we
-        loaded ourselves are skipped — `load()` already dropped theirs. Several clients exist
-        in a process (main, worker), each with its own view; the worst case is one extra
-        `posix_fadvise` sweep over already-evicted files, which is idempotent and harmless."""
+        loaded ourselves are skipped — `load()` already dropped theirs.
+
+        THE LABEL IS NOT PROOF OF A BYPASS, and two live false positives are why the event now
+        says so itself.
+
+        1. A load in flight used to report ITSELF. `load()` claims the model before the weights
+           are read, and the prune at the end of this method ran while it was still not
+           resident — dropping the claim moments before it arrived, so the warm-up's own
+           `/slots` poll saw it arrive un-owned. MEASURED 2026-08-21: `load_cache_swept
+           qwen3.8-27b-q4` at 21:41:14.804 then `unannounced_load qwen3.8-27b-q4` at
+           21:41:17.873 — same client, three seconds apart, one load. `_loading` now holds the
+           claim for the duration and the prune spares it.
+
+        2. Another PROCESS's load is unannounced here by construction. `_loaded_here` is per
+           client instance and this box runs two (api, worker), so each reports the other's
+           work — and a fresh client reports every already-resident model on its first poll,
+           because `_seen_resident` starts empty. MEASURED the same day: the worker logged
+           gpt-oss-120b and qwen3.8-27b-q4 at the same millisecond (21:41:23.348/.349), both
+           loaded by the api minutes earlier.
+
+        So the event carries the client's identity and whether this was its first poll. An
+        investigation that reads an un-annotated line as an unguarded load chases its own
+        tail — this one cost a wrong diagnosis before the annotation existed.
+
+        The page-cache drop stays unconditional: it is idempotent, and sweeping a cache we did
+        not strand costs one `posix_fadvise` over already-evicted files."""
         if not self._models_dir:
             return
         arrived = resident - self._seen_resident
+        first_poll = not self._seen_resident
         self._seen_resident = set(resident)
-        for served in sorted(arrived - self._loaded_here):
+        for served in sorted(arrived - self._loaded_here - self._loading):
             model = local_catalog.get_by_served(served)
             if model is not None:
-                log.info("local_gateway.unannounced_load", model=model.id)
+                log.info(
+                    "local_gateway.unannounced_load",
+                    model=model.id,
+                    client=self._client_id,
+                    first_poll=first_poll,
+                )
                 self._drop_weights_cache(model)
-        # Forget our own loads once they are gone, so a later request-driven reload of the
-        # same model is treated as unannounced (it is).
+        # Forget our own COMPLETED loads once they are gone, so a later request-driven reload
+        # of the same model is treated as unannounced (it is). `_loading` is deliberately NOT
+        # pruned here: a load in flight is not resident yet, and pruning its claim is exactly
+        # what made a guarded load report itself.
         self._loaded_here &= resident
 
     async def unload(self, served_model: str) -> None:
@@ -611,6 +651,7 @@ class LocalGatewayClient:
                 )
             async with self._global_load_lock:
                 self._loading_now = served_model
+                self._loading.add(served_model)
                 try:
                     async with box_events.span(box_events.MODEL_LOAD, served_model):
                         await self._load_and_warm(
@@ -618,6 +659,7 @@ class LocalGatewayClient:
                         )
                 finally:
                     self._loading_now = None
+                    self._loading.discard(served_model)
 
     async def _load_and_warm(
         self,

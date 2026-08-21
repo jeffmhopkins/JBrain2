@@ -50,6 +50,22 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   auth), so it clears on the next turn once the token lapses, is suspended, or is
   revoked. Diagnostics-only: the trace carries no owner text.
 
+> **Reading `local_gateway.unannounced_load`.** It means *the client that logged it* did not
+> load that model — NOT that the load skipped the residency budget. Two benign cases produce
+> it, and both were mistaken for a bypass on 2026-08-21:
+>
+> - `first_poll=true` — a fresh client reports every already-resident model, because it had no
+>   prior view. The worker logged two models at the same millisecond this way, both loaded by
+>   the api minutes earlier.
+> - a different `client` id — the api and the worker each hold their own client, so each
+>   reports the other's legitimate, guarded loads.
+>
+> A load this client has in flight no longer reports itself (it used to; `load_cache_swept`
+> and `unannounced_load` for the same model, same client, three seconds apart). Treat a line
+> as a real bypass only when `first_poll=false` **and** no other process was loading — confirm
+> against `box_events` (a guarded load leaves a `model_load` span; a true bypass leaves none)
+> and against llama-swap's own request log via `upstream-logs`.
+
 ## Streamed turns, buffered on the box
 
 `POST /api/debug/complete` takes `stream: true` (`scripts/debug-connect.sh complete --stream`),
