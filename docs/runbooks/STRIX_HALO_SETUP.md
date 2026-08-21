@@ -197,8 +197,9 @@ did nothing degrades to a slow prime, never a wrong answer.
 > **The state file is keyed per model, per prompt, per launch line** —
 > `jerv-<model>-<fingerprint>.bin`, where the fingerprint digests the persona, the tool JSON,
 > llama.cpp's `build_info`, the chat template, the served `-c`/`-np`, and the llama-server flags
-> the model runs with (the catalog's `extra_server_args` plus the operator's saved extra args,
-> hashed raw and unresolved). The flags are in there because `-c`/`-np` count the KV cells but
+> the model runs with — the catalog's `extra_server_args`, the operator's saved extra args, and
+> the `--swa-full` that `kv_full_history` renders (a derived flag no arg tuple carries), hashed
+> raw and unresolved. The flags are in there because `-c`/`-np` count the KV cells but
 > say nothing about their LAYOUT: when `-ctk/-ctv q8_0` landed on the Qwen3.8 27B family
 > (2026-08-21) no other input moved, so every existing file kept a live-looking name and
 > llama-server rejected the restore with `400 mismatched key type (8 != 1, layer 0)` — a cold

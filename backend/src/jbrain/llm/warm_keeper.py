@@ -284,8 +284,14 @@ class WarmKeeper:
         success and is then silently discarded (measured: 69,373 ms vs 194 ms). A digest blind
         to it would call a wasted restore a hit."""
         model = local_catalog.get_by_served(served_model)
-        catalog_args = tuple(model.extra_server_args) if model else ()
-        if model is not None and model.kv_full_history:
+        if model is None:
+            # A served name outside the catalog — something the operator is running unlisted. We
+            # cannot see ANY of its launch line, which is the maximally partial answer, so the
+            # slot cache is off for it rather than keyed on a digest blind to how it is served.
+            log.info("warm_keeper.uncatalogued_model", model=served_model)
+            return None
+        catalog_args = tuple(model.extra_server_args)
+        if model.kv_full_history:
             catalog_args += ("--swa-full",)
         if self._extra_args_loader is None:
             return catalog_args
@@ -304,7 +310,7 @@ class WarmKeeper:
         else:
             self._last_extra_args = saved
         # Overrides key off the CATALOG id, not the served name — see llm_local_extra_args.
-        return catalog_args + tuple(str(a) for a in (saved.get(model.id, ()) if model else ()))
+        return catalog_args + tuple(str(a) for a in saved.get(model.id, ()))
 
     async def _slot_target(
         self, served_model: str, system: str, tools: list[LlmTool]

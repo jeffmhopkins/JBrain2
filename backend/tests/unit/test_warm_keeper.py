@@ -7,13 +7,15 @@ or the model is evicted.
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Callable, Collection, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.llm import warm_keeper
+from jbrain.llm import llama_swap_config, local_catalog, warm_keeper
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTool
@@ -743,3 +745,99 @@ async def test_a_missed_restore_says_why() -> None:
     missed = [e for e in logs if e.get("event") == "warm_keeper.slot_restore_missed"]
     assert missed, "a rejected restore left no trace"
     assert "mismatched key type" in missed[0]["error"]
+
+
+async def test_an_uncatalogued_served_model_gets_no_slot_cache_rather_than_a_blind_name() -> None:
+    """Nothing outside the catalog is routed today, but the fail-safe direction still matters:
+    for a served name we cannot look up we can see NONE of the launch line — the maximally
+    partial answer — so the name would be keyed on a digest blind to how the thing is served."""
+    keeper = _keeper(router=_FakeRouter("something-the-operator-runs"), gateway=_FakeGateway())
+    assert await keeper._server_args("something-the-operator-runs") is None
+
+
+# The digest reassembles a SUBSET of what `llama_swap_config.render` actually puts on the command
+# line, and that subset is hand-maintained. `--swa-full` is why this test exists: it is rendered
+# from the catalog's `kv_full_history` rather than from `extra_server_args`, so the first version
+# of the fingerprint could not see it — the same shape of bug as the `-ctk` one it was written to
+# fix. This walks the REAL renderer's output and forces every flag to be accounted for, so the
+# next derived flag added to `render` fails here instead of silently leaving stale files valid.
+
+# Covered by the digest, but through `/props` rather than through `_server_args`.
+_VIA_PROPS = {"-c", "-np"}
+
+# KNOWINGLY outside the digest. Each entry needs a reason it cannot invalidate a state file.
+_DIGEST_BLIND = {
+    # Constant for every model on every box — they cannot drift without a code change that
+    # also moves `build_info` or the catalog, and neither changes the KV cells' layout.
+    "--host",
+    "--port",
+    "-ngl",
+    "-fa",
+    "-ub",
+    "--jinja",
+    "--no-warmup",
+    "--metrics",
+    "--slots",  # expose endpoints; the slots one is what the keeper itself calls
+    "--no-mmap",  # how the weights are read off disk, not what the KV holds
+    "--slot-save-path",  # where the file goes, not what is in it
+    "--cache-reuse",  # prefix-reuse threshold; does not change a stored cell
+    "--ctx-checkpoints",
+    "--checkpoint-min-step",  # checkpoint COUNT, not cell layout
+    "--reasoning-format",  # output channel parsing, downstream of the KV entirely
+    "--mmproj",  # the vision projector: not in the text KV a jerv prime writes
+    # Operator-settable (llm_local_image_min_tokens) and so the one real gap here, but it is a
+    # vision-token floor: it moves image prompts, never the persona+tools prefix this file holds.
+    "--image-min-tokens",
+    # The weights. THE known hole: a vendor re-quant under the same catalog id keeps the served
+    # name, layer count and KV row size, so an old file restores cleanly and every turn then runs
+    # on KV computed from different weights — wrong, not merely slow. Tracked separately; adding
+    # the file's size/mtime to the digest is what closes it.
+    "-m",
+}
+
+
+def _rendered_flags(root: Path, model_id: str, **kw: object) -> set[str]:
+    """Every flag token `render` emits for one real catalog model."""
+    manifest = json.loads(local_catalog._manifest([model_id]))
+    entry = manifest[0]
+    (root / model_id).mkdir()
+    (root / model_id / "model-Q8_0.gguf").write_bytes(b"\0")
+    if entry.get("mmproj_include"):
+        (root / model_id / "mmproj-f16.gguf").write_bytes(b"\0")
+    entry["gguf_include"] = "*.gguf"
+    entry["mmproj_include"] = "mmproj*.gguf" if entry.get("mmproj_include") else None
+    text = llama_swap_config.render([entry], str(root), **kw)  # type: ignore[arg-type]
+    cmd = next(ln for ln in text.splitlines() if ln.startswith("      ")).split()
+    return {t for t in cmd if t.startswith("-")}
+
+
+@pytest.mark.parametrize("model_id", ["gpt-oss-120b", "qwen3.8-27b-q4", "qwen3-vl-30b"])
+async def test_every_rendered_flag_is_either_in_the_digest_or_knowingly_out_of_it(
+    tmp_path: Path, model_id: str
+) -> None:
+    """Three models chosen to span the derived flags: gpt-oss carries `--swa-full`, the 27B
+    carries `-ctk/-ctv` and `--spec-type`, the VL model carries `--mmproj` and an id that
+    differs from its served name."""
+    model = local_catalog.get(model_id)
+    assert model is not None
+    seen = _rendered_flags(tmp_path, model_id)
+    keeper = _keeper(router=_FakeRouter(model.served_model), gateway=_FakeGateway())
+    digested = set(await keeper._server_args(model.served_model) or ())
+
+    unaccounted = seen - digested - _VIA_PROPS - _DIGEST_BLIND
+    assert not unaccounted, (
+        f"{sorted(unaccounted)} reach llama-server for {model_id} but nothing in the state "
+        "file's name moves when they do. Add them to WarmKeeper._server_args, or to "
+        "_DIGEST_BLIND with a reason they cannot invalidate a saved KV slot."
+    )
+
+
+async def test_the_tripwire_would_actually_fire(tmp_path: Path) -> None:
+    """The test above passes trivially if the flag set it reads is empty or the blind list
+    swallows everything. Pin both: the renderer really does emit `--swa-full` for gpt-oss, and
+    it really is the digest — not the blind list — that accounts for it."""
+    seen = _rendered_flags(tmp_path, "gpt-oss-120b")
+    assert "--swa-full" in seen
+    assert "--swa-full" not in _VIA_PROPS | _DIGEST_BLIND
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=_FakeGateway())
+    assert "--swa-full" in (await keeper._server_args("gpt-oss-120b") or ())
