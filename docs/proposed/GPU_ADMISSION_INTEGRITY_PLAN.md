@@ -23,7 +23,7 @@ and on this hardware a wrong picture costs a power cycle rather than an error.
 |---|---|---|
 | a | the runaway ceiling anchored to a GTT baseline taken mid-load | fixed, `399b15e` on main (#1186) |
 | b | `unannounced_load` reported the client's own guarded loads | fixed **on branch**, `656c92a`, not yet merged |
-| c | `running()` says "resident" from process spawn, before a byte is read | W1 |
+| c | `running()` collapses five llama-swap states into one boolean — `starting` and `stopping` both read as resident | W1 |
 | d | `residency._plan` mixes live `used` with **catalog** footprints | W0 |
 | e | admission is advisory — the completion POSTs whatever it decides | W3 |
 
@@ -94,19 +94,44 @@ catalog size.
 (`local_gateway.py:1161-1183` — *v1 cited 1119-1141, which is the `/metrics` parser*) reads
 only `model`/`id`/`name` and never `state`.
 
-**Gate:** no fixture, test or recorded payload in this repo contains a `state` field. Before
-W1 starts, `curl /running` on the live box and paste the response here. If `state` is absent,
-W1's premise collapses and it becomes a no-op refactor with a wide blast radius.
+**Gate — SATISFIED 2026-08-21 from primary source**, after the two reviews disagreed on whether
+it could be checked at all (one called it unverifiable in-repo, the other reported it verified).
+Neither was decisive, so the source was fetched at the pinned commit
+(`LLAMA_SWAP_VERSION=60226b63776efac11e15828abe0bb302ec259699`, `deploy/Dockerfile.local-llm:58`):
+
+    // internal/server/api.go:313-321
+    type runningModel struct {
+        Model string `json:"model"`
+        State string `json:"state"`
+        ...
+    }
+    // internal/server/api.go:336-346 — populated for EVERY entry
+    for id, state := range states { list = append(list, runningModel{Model: id, State: string(state), ...
+
+So `state` is on the wire and `_parse_running` discards it. The premise holds.
+
+**And it is not a binary.** `internal/process/process.go:14-20` defines FIVE states:
+
+    stopped · starting · ready · stopping · shutdown
+
+`handleRunning` lists everything not stopped, so `/running` can carry `stopping` and `shutdown`
+too. Nobody in either review considered `stopping`, and it matters here: **a model mid-unload
+still reports as running**, which is the exact window in which today's unload-then-reload race
+happened. A design that only separates "starting" from "ready" gets that case wrong in the same
+way the current code does.
 
 There are **23 call sites across 10 files**. v1 listed five filenames, one of which
-(`api/debug.py`) has **zero**. Each site gets one of **three** answers, not two — review found
-that the binary does not contain the answer the two most dangerous sites need:
+(`api/debug.py`) has **zero**. Each site needs one of **four** answers:
 
 | answer | means | example sites |
 |---|---|---|
-| `running()` | anything spawned — accounting | `_drop_cache_for_unannounced` |
-| `ready()` | Ready only — reachability | `_require_resident`, `external_llm.py:218`, `preconditions.py:68` |
-| **remaining footprint** | a starting model's *unallocated* balance | `local_gateway.py:762`, `residency.py:351` |
+| `running()` | anything not stopped — accounting | `_drop_cache_for_unannounced` |
+| `ready()` | `ready` only — reachability | `_require_resident`, `external_llm.py:218`, `preconditions.py:68` |
+| **arriving** | `starting` — bill the *remaining* footprint | `local_gateway.py:762`, `residency.py:351` |
+| **leaving** | `stopping`/`shutdown` — still consuming, do not reach, do not evict again | the unload path, `image_gen/render.py:205` |
+
+The fourth row is new to v2 and comes from the source rather than from either review. It is why
+this wave is a state-machine mapping and not a boolean rename.
 
 The third category is the wave's real work. `local_gateway.py:762` is the branch that **skips
 `refuse_if_no_device_room` and `guarded_load` entirely** — a plan about admission integrity
@@ -130,9 +155,11 @@ Two hazards v1 missed:
   while production diverges. The fakes must diverge by default.
 
 *Files:* the ten above. *Risk:* **high** — widest blast radius in the plan, and a wrong
-assignment fails toward host freeze. *Test:* a fake reporting a `StateStarting` model, asserting
-accounting counts it, reachability refuses it, and the third category bills the balance — plus
-a fake-fidelity test that fails if `ready()` is a synonym for `running()`.
+assignment fails toward host freeze. *Test:* a fake driven through all five states, asserting
+accounting counts `starting`, reachability refuses it, the arriving case bills the balance, and
+`stopping` is neither reached nor evicted twice — plus a fake-fidelity test that fails if
+`ready()` is a synonym for `running()`, since 18+ fakes could otherwise make the suite green
+while production diverges.
 
 ### W2 — Stop triage overriding an explicit unload ◻️
 
