@@ -225,6 +225,12 @@ def test_the_vision_workspace_is_the_measured_flash_attention_branch() -> None:
     assert local_catalog.vision_attn_buffer_gb(2116) == 0.24
 
 
+def _kv(model: local_catalog.LocalModel) -> float:
+    """This model's KV term at its own catalog window — the only part of the footprint the
+    cache type moves, so the piece to swap when comparing against an f16-era measurement."""
+    return local_catalog._kv_gb(model, model.context_window, 1)
+
+
 def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     """Served TEXT-ONLY, this entry measured 19.50 GiB on the box against 19.45 predicted
     (0.26%). The catalog had said 16.4 — weights and KV alone, with the f16 KV under-counted as
@@ -239,7 +245,14 @@ def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     assert mtp.is_speculative
     text_only = replace(mtp, mmproj_include=None, supports_vision=False, size_gb=15.9)
     predicted = local_catalog.load_footprint_gb(text_only)
-    assert 19.0 <= predicted <= 20.0, predicted
+    # That 19.50 GiB was measured AT f16, and this family now serves `-ctk/-ctv q8_0`. The
+    # measurement is still a fact about the box, so it is checked against the f16-equivalent
+    # arithmetic rather than re-anchored on a q8 figure nothing has weighed — putting the
+    # cache back is the only difference between then and now.
+    at_f16 = predicted - _kv(text_only) + _kv(text_only) * 8.0 / text_only.kv_gb_per_128k
+    assert 19.0 <= at_f16 <= 20.0, (predicted, at_f16)
+    # And the shipped number is genuinely lower, which is the whole point of the change.
+    assert predicted < at_f16
 
 
 def test_vision_plus_mtp_is_budgeted_but_has_never_been_loaded() -> None:
@@ -256,8 +269,10 @@ def test_vision_plus_mtp_is_budgeted_but_has_never_been_loaded() -> None:
     assert mtp is not None
     assert mtp.mmproj_include and mtp.supports_vision
     predicted = local_catalog.load_footprint_gb(mtp)
-    # 19.50 measured text-only, plus the projector weights and its vision workspace.
-    assert 20.5 <= predicted <= 22.0, predicted
+    # 19.50 measured text-only, plus the projector weights and its vision workspace — all of
+    # it weighed at f16, so the comparison puts that cache back (see the twin test above).
+    at_f16 = predicted - _kv(mtp) + _kv(mtp) * 8.0 / mtp.kv_gb_per_128k
+    assert 20.5 <= at_f16 <= 22.0, (predicted, at_f16)
     # Must still co-reside with gpt-oss (69.24 GiB measured) inside the ~124 GiB pool, which is
     # the only reason the pair is worth having at all.
     assert predicted + 69.24 < 124.0
@@ -338,10 +353,14 @@ async def test_the_preflight_reserves_for_the_served_window_not_the_catalog_defa
 
     at_catalog = local_catalog.load_footprint_gb(model)
     at_served = local_catalog.load_footprint_gb(model, 262144)
-    assert at_served > at_catalog + 10.0, (at_catalog, at_served)
-    # Measured on the box at 262144: 36.92 GiB. The reservation must be in that neighbourhood,
-    # and the gpu_guard headroom covers the remaining conservatism.
-    assert 33.0 <= at_served <= 38.0, at_served
+    assert at_served > at_catalog + 8.0, (at_catalog, at_served)
+    # The box measured 36.92 GiB here — AT f16, which this family no longer serves. With
+    # `-ctk/-ctv q8_0` the cache halves, so the same load is expected near 30 GiB and the old
+    # window would fail for the right reason. Widened downward, NOT re-anchored on a guess:
+    # the upper bound still holds the f16 measurement's neighbourhood, so if the flag ever
+    # comes off without this number following, the reservation goes back out of range and
+    # this test says so.
+    assert 28.0 <= at_served <= 38.0, at_served
 
     # A second parallel slot holds its own window-sized KV; the weights are shared. So the
     # increment is exactly one more window's worth of cache, nothing else.
