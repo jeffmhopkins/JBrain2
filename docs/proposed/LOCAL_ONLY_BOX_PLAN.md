@@ -54,11 +54,29 @@ most scaffolding under it.
 The enabling wave, and the one the owner asked for: *"make sure there's only one way to load in
 and out, and that everything on the box uses these."*
 
-Today `gateway.load()` / `gateway.unload()` are called directly from **at least** these, all
-verified present: `residency.py` (×4), `api/llm_settings.py` (×6), `warm_keeper.py`,
-`smoketest.py`, `cli.py`, `agent/transcribetools.py`, `image_gen/render.py`,
-`local_gateway.py`'s own abort path. Residency owns the budget; six of those callers do not go
-through it.
+**The caller set, enumerated rather than estimated** — a first draft of this wave got it wrong
+in both directions, so it is written out in full:
+
+    residency.py:502,533,589,645     the owner of the budget
+    api/llm_settings.py:833,908,1286,1519,1533
+    api/jcode.py:164,168,474         code mode taking and releasing the box
+    warm_keeper.py:182
+    smoketest.py:237                 during a deploy
+    cli.py:73                        pre-update, no app process
+    image_gen/render.py:206          frees the pool for ComfyUI
+    local_gateway.py:808             the watchdog's own abort (see below)
+
+Seventeen sites; thirteen of them bypass the budget entirely.
+
+**Explicitly NOT in scope, and named so nobody "fixes" them:** `agent/transcribetools.py:146`,
+`ingest/video.py:441` and `ingest/transcribe_job.py:206` call `unload` on a **different
+gateway** — `main.py:789-798` builds them their own `LocalGatewayClient` on
+`settings.whisper_url`. That is a separate llama-swap with its own memory, and routing it
+through the LLM box's budget would be wrong. The first draft listed `transcribetools` as a
+caller to move; it is not one.
+
+`api/jcode.py` is the omission that mattered most: code mode is the subsystem whose box
+reservation W1 generalises, and it is itself three direct calls.
 
 So: **`residency` becomes the only caller of `gateway.load`/`gateway.unload`**, exposing
 `acquire(model, *, why)` and `release(model, *, why)`. Every other caller moves to those. The
@@ -93,15 +111,27 @@ else can be admitted. Unload it and the box is free again. It is the "I want thi
 myself" switch — for a render, for an update, for debugging, or simply to stop background work
 touching the GPU.
 
-Shape, and each of these is a decision W1 must make explicitly rather than inherit:
-- **Does it start a process at all?** Cheapest is a pseudo-model residency accounts for with no
-  llama-server behind it — no weights, no load time, instant on and off. That means residency
-  can hold a reservation for something the gateway has never heard of, which is new.
+**It is not a new mechanism, and the first draft of this wave was wrong to propose one.**
+`residency._held_names()` already exists:
+
+> *"The served-model names code mode has reserved the box for, or an empty set (not held). Read
+> per-load so toggling code mode applies immediately."*
+
+Code mode already reserves the box, and the reservation is already consulted on every load.
+**Park is that hold with an empty name set** — nothing may be admitted — set by the owner rather
+than by code mode. That inherits a working, already-exercised code path and avoids special-casing
+a fake catalog entry in `llama_swap_config.render` (which would try to emit a `cmd` for it),
+`footprint_gb`, `_require_provisioned`, the settings model list, `smoketest`, and
+`deploy/local-models-sync.sh`.
+
+Two decisions remain, and W1 must make them explicitly:
 - **What does a task routed to a parked box get?** With cloud gone there is no fallback, so this
-  is W2's question arriving early: fail, or defer. For a background sweep, defer. For an
-  interactive turn, a clear "the box is parked" is far better than a timeout.
-- **Does park survive a restart?** It should — a park the owner set should not evaporate because
-  the api restarted. That means persisting it beside the auto-restore switch.
+  is W3's question arriving early: fail, or defer. For a background sweep, defer. For an
+  interactive turn, a clear "the box is parked" beats a timeout.
+- **Does park survive a restart, and can the owner forget it?** It should survive — a park the
+  owner set should not evaporate because the api restarted — which means persisting it beside the
+  auto-restore switch. And because a forgotten park silently stops all background work, the PWA
+  must show it as a standing banner, not a checkbox buried in settings.
 
 *Files:* `local_catalog.py`, `residency.py`, `api/llm_settings.py`, the settings screen.
 *Risk:* low-medium — additive, and its failure mode (box parked when it should not be) is
@@ -110,10 +140,19 @@ refused with a distinguishable reason, and releasing park admits it.
 
 ### W2 — Remove the cloud providers ◻️
 
-Delete `AnthropicClient`, the xAI provider wiring, and their config. Blast radius is contained —
-`config.py`, `llm/__init__.py`, `llm/router.py`, `llm/providers.py`, `llm/anthropic.py`,
-`llm/openai_compat.py`, `llm/model_sampling.py` — but the *routing* change touches all 23 task
-defaults.
+Delete `AnthropicClient`, the xAI provider wiring, and their config.
+
+**The blast radius is NOT contained, and a first draft of this wave said it was.** Counted:
+
+    backend source      7 files
+    backend tests      50 files
+    docs               23 files
+    frontend           11 files
+    deploy              2 files
+
+**86 files.** The *provider* deletion is seven; the *cloud reference* surface is an order of
+magnitude larger, and the 50 test files are the bulk of the work — most fixture routing in this
+suite names a cloud provider, which is why W2 is a multi-day wave rather than a deletion.
 
 **The hard part is not deletion, it is what each of the 23 becomes.** They span tiers the local
 roster serves unevenly, and the plan will not guess: W2 starts with a table of all 23, the local
@@ -128,11 +167,13 @@ own models through the residency-aware proxy at `api/jcode_llm.py`. Removing the
 does not touch it. *(Worth stating plainly because the predecessor plan got the jcode wiring
 wrong in the opposite direction and built a wave on it.)*
 
-*Files:* the seven above, plus the settings screen's provider list. *Risk:* medium — the
-deletion is safe; the re-routing is a quality change across every feature the system has.
-*Test:* no cloud provider can be constructed or routed to; each of the 23 tasks resolves to an
-installed local model; a task whose model is unavailable fails the way W1 decided, not by
-hanging.
+*Files:* the 86 above. *Risk:* **high, and not where it looks** — the deletion is safe and the
+tests are mechanical; the re-routing is a quality change across every feature the system has, on
+a box that fits two models. *Test:* no cloud provider can be constructed or routed to; each of
+the 23 tasks resolves to an installed local model; a task whose model is unavailable defers or
+fails per W1's decision rather than hanging. **Quality is the untested part** — `tests/eval/`
+exists and is where a regression on the 23 would have to be measured, so W2 should say up front
+which of the 23 have eval coverage and which are being re-routed on judgement alone.
 
 ### W3 — Make the owner's intent authoritative ◻️
 
