@@ -106,7 +106,16 @@ MTP_OVERHEAD_GB = 1.0
 # `extra_server_args`, which the cost model does not parse. Under-counting an override is the
 # same class of gap as the checkpoint count, and is why that flag is bounded (0..32 GiB) in
 # the settings API rather than left open.
-CACHE_RAM_GB = 8.0
+# ZERO because the gateway now serves `-cram 0` (llama_swap_config): the in-RAM prompt cache
+# is switched off, so no resident model pays for it. It was 8.0 — llama.cpp's own default,
+# which we inherited without writing the flag, and which cost 8 GiB of the same unified pool
+# the weights come from, per resident model.
+#
+# MOVES WITH THE SERVING FLAG. This number and the `-cram` on the command line are one decision
+# in two places: budgeting 8 GiB while serving 0 over-reserves 16 GiB across a co-resident pair
+# and evicts models that fit; budgeting 0 while serving the default under-reserves on the path
+# this box has hard-locked on.
+CACHE_RAM_GB = 0.0
 
 _KV_REFERENCE_TOKENS = 131072
 

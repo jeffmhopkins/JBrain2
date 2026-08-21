@@ -34,7 +34,6 @@
 #   scripts/debug-connect.sh extra-args <id> --swa-full  # try launch flags live; no args clears
 #   scripts/debug-connect.sh ctx <id> 65536            # the served -c
 #   scripts/debug-connect.sh prime <id>                # real jerv prime, returns elapsed_ms
-#   scripts/debug-connect.sh slot <id> 0 save|restore|erase  # llama-server KV-slot state files
 #   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
@@ -348,14 +347,6 @@ print(json.dumps({"args": shlex.split(os.environ["ARGS"])}))')"
   prime) # <model_id> — run the real jerv prime and return elapsed_ms: the measurement instrument
     m="${1:?usage: debug-connect.sh prime <model_id>}"
     _call POST "/api/debug/llm/local-models/$m/prime" '{}' | _pp
-    ;;
-
-  slot) # <model_id> <slot> <save|restore|erase> [filename] — llama-server KV-slot state files
-    m="${1:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
-    s="${2:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
-    a="${3:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
-    q="action=$a"; [ -n "${4:-}" ] && q="$q&filename=$4"
-    _call POST "/api/debug/llm/local-models/$m/slots/$s?$q" '{}' | _pp
     ;;
 
   # NB: the `-np` parallel-slot count has NO command here on purpose. Its route

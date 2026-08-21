@@ -513,32 +513,34 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     vl = local_catalog.get("qwen3-vl-30b")
     assert gpt is not None and vl is not None
     # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference), DOUBLED to
-    # 9.0 because it serves with `--swa-full` — full history on its sliding-window layers, the
-    # precondition for KV-slot restore — plus the 0.55 runtime term every entry carries, plus
-    # the 8.0 in-RAM prompt cache llama.cpp keeps by default (CACHE_RAM_GB): host memory, paid
-    # by every resident model whether or not we write the flag, and invisible to the evictor
-    # until it was added here.
-    assert local_catalog.footprint_gb(gpt, 131072) == 76.55
-    # The LOAD reservation deliberately excludes the prompt cache: it is a cache limit that
-    # fills as prompts are served, not an allocation the load makes. Same split as the vision
-    # peak and the context checkpoints.
+    # 9.0 because it serves with `--swa-full` — full history on its sliding-window layers —
+    # plus the 0.55 runtime term every entry carries. NO prompt-cache term: the gateway serves
+    # `-cram 0`, so CACHE_RAM_GB is 0.0. It was 8.0 (llama.cpp's default, inherited without
+    # writing the flag) and that 8 GiB per resident model is what stood between this box and
+    # holding gpt-oss + a Qwen3.8 27B together — 109.3 GB against a 124.0 GB cap, versus 93.3.
+    assert local_catalog.CACHE_RAM_GB == 0.0, "serving flag and budget term must move together"
+    assert local_catalog.footprint_gb(gpt, 131072) == 68.55
+    # With the cache off, resident and load now agree for a text-only model: the split existed
+    # only because the cache filled lazily after the load. The vision peak and the context
+    # checkpoints still split the same way — see the vl assertions below.
     assert local_catalog.load_footprint_gb(gpt, 131072) == 68.55
     # KV still scales linearly with the window. vl also carries a projector, so its resident
     # figure includes the CLIP attention workspace (see vision_attn_buffer_gb): 32 + 6*(32768/
     # 131072) + 0.55 + 0.47 + 8.0 prompt cache = 42.52. The 0.47 is MEASURED with flash
     # attention on; the quadratic no-flash-attention branch would put it at 16.0 instead.
-    assert local_catalog.footprint_gb(vl, 32768) == 42.52
+    assert local_catalog.footprint_gb(vl, 32768) == 34.52
     # Half the window → half the KV term; the vision and runtime terms do not scale with it.
-    assert local_catalog.footprint_gb(vl, 16384) == 41.77
+    assert local_catalog.footprint_gb(vl, 16384) == 33.77
     # A measured on-disk size overrides the nominal weights estimate — and only that term;
-    # KV, runtime, vision and the prompt cache are unaffected (31.9 + 1.5 + 0.55 + 0.47 + 8.0).
-    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 42.42
+    # KV, runtime and vision are unaffected (31.9 + 1.5 + 0.55 + 0.47).
+    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 34.42
     # A second slot doubles ONLY the KV term (weights are shared), and it compounds with
-    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) + 0.55 runtime + 8.0 prompt
-    # cache = 85.55. The number the owner trades against — halving the window takes 9 off it.
-    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 85.55
-    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 76.55
-    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 76.55
+    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) + 0.55 runtime = 77.55. The
+    # number the owner trades against — halving the window takes 9 off it, and the 16 GB the
+    # prompt cache used to take across a co-resident pair is what pays for the second slot.
+    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.55
+    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.55
+    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.55
 
 
 def test_footprint_budgets_the_checkpoints_a_hybrid_actually_pins() -> None:

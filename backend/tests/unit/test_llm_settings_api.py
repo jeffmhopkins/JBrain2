@@ -1413,20 +1413,36 @@ def test_the_image_ceiling_is_bounded_to_what_the_vision_budget_assumes() -> Non
 
 
 def test_the_next_prefill_investigation_can_reach_its_levers() -> None:
-    """The three flags this session needed and could not set.
+    """The flags this session needed and could not set.
 
     `-lv 4` is the decisive one and has no substitute: whether checkpoints are created and
     MATCHED is only visible in llama-server's TRC lines. Without it a checkpoint sweep cannot
     tell "the count is wrong" from "nothing is ever restored" — identical timings either way,
     which is how a 2-vs-8 sweep measured nothing and was misread as the flag being inert."""
-    for flag, value in (("-lv", "4"), ("--checkpoint-min-step", "512"), ("--cache-ram", "16384")):
+    for flag, value in (("-lv", "4"), ("--checkpoint-min-step", "512")):
         assert flag in llm_settings.EXTRA_ARG_FLAGS
         assert llm_settings._validate_extra_args([flag, value]) == [flag, value]
-    # Bounded: verbosity has no level 9, and --cache-ram is host memory this box cannot spare
-    # without starving everything else.
-    for flag, bad in (("-lv", "9"), ("--cache-ram", "999999")):
+    # Bounded: verbosity has no level 9.
+    with pytest.raises(HTTPException) as exc:
+        llm_settings._validate_extra_args(["-lv", "9"])
+    assert exc.value.status_code == 422
+
+
+def test_the_prompt_cache_cannot_be_turned_back_on_from_the_console() -> None:
+    """`--cache-ram` was allowlisted, and must not be any more.
+
+    The gateway serves `-cram 0` and `local_catalog.CACHE_RAM_GB` is 0.0 to match. An operator
+    re-enabling the cache from the PWA would serve up to 32 GiB of host RAM that the residency
+    budget believes does not exist — under-reserving on the one path this box has hard-locked
+    on. The flag and the budget term are ONE decision; the allowlist must not be a second,
+    unbudgeted way to move half of it.
+
+    `--slot-save-path` goes with it: the KV-slot feature it configured is gone, so an entry
+    would name a directory nothing reads and no volume provides."""
+    for flag in ("--cache-ram", "--slot-save-path"):
+        assert flag not in llm_settings.EXTRA_ARG_FLAGS
         with pytest.raises(HTTPException) as exc:
-            llm_settings._validate_extra_args([flag, bad])
+            llm_settings._validate_extra_args([flag, "16384"])
         assert exc.value.status_code == 422
 
 

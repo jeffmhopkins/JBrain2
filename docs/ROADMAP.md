@@ -266,8 +266,10 @@ line (a photographed lab report becomes queryable rows citing its note).
 on-box first-token latency by keeping the static jerv/curator system-prompt prefix reusable across
 turns: W1 made the prompt prefix byte-stable (moved the volatile `now_block`/presence to the tail,
 `api/agent.py`), W2 turned on llama-server's `--cache-reuse 256` (`llm/llama_swap_config.py`). Both
-waves shipped, no migration. *Deferred (optional):* `--slot-save-path` disk persistence and a
-`-np`/`--parallel` second slot were scoped as evaluations and not taken.
+waves shipped, no migration. A `--slot-save-path` disk cache was later built and then **removed**
+(2026-08-21): inert by construction on a hybrid, and on gpt-oss it persisted whatever held the
+single slot rather than the prefix. The in-RAM prompt cache went with it (`-cram 0`) to buy
+co-residency. The `-np`/`--parallel` second slot is operator-settable per model.
 
 **Scheduled:** Entity-graph ingest V2 (build plan: `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) —
 cut the ingest review-inbox noise the owner hit without changing the pipeline structure: remove the

@@ -49,12 +49,6 @@ from jbrain.llm import local_catalog
 # by every build, and the non-swapping group runs models concurrently so they can't
 # share a port. 127.0.0.1: llama-swap and llama-server share the container.
 UPSTREAM_PORT_BASE = 9100
-# Where llama-server reads/writes KV-slot state files, inside the gateway container. A named
-# docker volume (`llm_kv`), NOT a subdirectory of the read-only weights mount: the path must be
-# writable, must survive the container being recreated by an update, and must already exist —
-# llama-server refuses to start when `--slot-save-path` names a missing directory, and that
-# flag sits in every model's command.
-KV_SLOT_DIR = "/kv/"
 
 
 def resolve_weight(root: str, model_id: str, pattern: str) -> str:
@@ -139,7 +133,7 @@ def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str])
     The invariant is #1152's, generalised: a command line carrying the same flag twice is
     unreadable as a record of what is actually served, on a box whose only window into the
     engine is that string. #1152 established that for `--image-min-tokens` alone, by making it
-    a field. But `-ub` and `--slot-save-path` are BOTH hardcoded in the shared command and on
+    a field. But `-ub` and `-cram` are BOTH hardcoded in the shared command and on
     `EXTRA_ARG_FLAGS`, so overriding either already emitted it twice and left the result
     resting on llama.cpp taking the last one — true today, undocumented, and exactly what
     #1152 refused to rely on. Doing it here instead of per-flag means the next flag added to
@@ -281,6 +275,32 @@ def render(
             "-fa",
             "1",
             "--no-mmap",
+            # Prompt cache OFF. llama.cpp defaults `--cache-ram` to 8192 MiB, so every resident
+            # model silently reserves 8 GiB of HOST memory for conversation state that survives
+            # slot eviction — and on Strix Halo host and device draw on one physical pool, so
+            # that is 8 GiB out of the same budget the weights come from.
+            #
+            # The goal it loses to is CO-RESIDENCY: gpt-oss-120b + a Qwen3.8 27B held together
+            # with no swapping. MEASURED 2026-08-21, at the served windows, against a 124.0 GB
+            # GTT cap with the guard holding 6 GB back:
+            #
+            #   with the default   109.3 GB resident   ->   8.7 GB headroom
+            #   with `-cram 0`      93.3 GB resident   ->  24.7 GB headroom
+            #
+            # 8.7 GB is one wrong estimate away from the freeze this box has taken three times.
+            # 16 GB is the whole difference between "marginal" and "comfortable", and it buys
+            # the pair without shortening either model's context.
+            #
+            # The cost is real and accepted: an evicted conversation now re-prefills instead of
+            # being restored from host RAM. Co-residency is what pays for it — a model that is
+            # never swapped out is a model whose slots are not being fought over in the first
+            # place.
+            #
+            # `local_catalog.CACHE_RAM_GB` MOVES WITH THIS. Serving `-cram 0` while budgeting
+            # 8 GiB over-reserves every model and evicts pairs that fit; the inverse
+            # under-reserves on the box's freeze path.
+            "-cram",
+            "0",
             # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of a
             # matching
             # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is
@@ -384,12 +404,6 @@ def render(
         mmproj = m.get("mmproj_include")
         if mmproj:
             cmd += ["--mmproj", f"/models/{model_id}/{resolve_weight(root, model_id, str(mmproj))}"]
-        # KV-slot state files live on a dedicated writable volume (docker-compose `llm_kv`),
-        # so the primed prefix survives the model process being unloaded and reloaded. The
-        # trailing slash is load-bearing: llama-server concatenates path + filename. The
-        # directory must EXIST or llama-server refuses to start — the named volume guarantees
-        # that, which is why this is not a bind mount into the read-only weights dir.
-        cmd += ["--slot-save-path", KV_SLOT_DIR]
         # Full history on the sliding-window layers. Without it a slot restore on an SWA model
         # succeeds and is then thrown away (see LocalModel.kv_full_history).
         if m.get("kv_full_history"):

@@ -448,17 +448,24 @@ def test_check_cli_prints_the_incomplete_ids(tmp_path: Path, capsys: Any, monkey
     assert capsys.readouterr().out.strip() == ""
 
 
-def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
-    tmp_path: Path,
-) -> None:
-    """`--slot-save-path` is unconditional (the named volume guarantees the dir exists, and a
-    missing one would stop llama-server booting), while `--swa-full` is per-model: it is the
-    precondition for a KV restore doing anything on a sliding-window model, and pure cost
-    elsewhere."""
+def test_the_prompt_cache_is_off_and_only_swa_models_get_swa_full(tmp_path: Path) -> None:
+    """`-cram 0` is unconditional; `--swa-full` is per-model.
+
+    llama.cpp defaults `--cache-ram` to 8192 MiB, so NOT writing the flag costs 8 GiB of host
+    memory per resident model — and on Strix Halo host and device draw on one pool. MEASURED
+    2026-08-21: holding gpt-oss-120b and a Qwen3.8 27B together needs 109.3 GB with the default
+    against a 124.0 GB cap (8.7 GB of headroom, one bad estimate from this box's freeze), and
+    93.3 GB with the cache off. The flag is what makes the pair co-resident.
+
+    `local_catalog.CACHE_RAM_GB` must stay 0.0 while this is served — the two are one decision,
+    and the sibling test in test_llm_local_catalog pins the other half."""
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path))
     cmds = [ln for ln in text.splitlines() if "llama-server" in ln]
-    assert cmds and all("--slot-save-path /kv/" in ln for ln in cmds)
+    assert cmds and all("-cram 0" in ln for ln in cmds)
+    assert local_catalog.CACHE_RAM_GB == 0.0, "budget and serving flag drifted apart"
+    # The KV-slot feature is gone: nothing reads these files, and no volume provides the dir.
+    assert not any("--slot-save-path" in ln for ln in cmds)
     # Only the model the catalog flags carries --swa-full.
     flagged = [ln for ln in cmds if "--swa-full" in ln]
     assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))
