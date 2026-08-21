@@ -69,3 +69,5 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_
+
+- **`GPU_ADMISSION_INTEGRITY_PLAN.md`** — every load the box makes should go past the admission guard. Five defects measured 2026-08-21, all the same shape: the guard handed a picture that does not match reality. Two already fixed (#1186's mid-load baseline; `656c92a`'s self-reported `unannounced_load`, on branch). W0 `_plan`'s live-`used`-vs-catalog-footprint arithmetic; W1 split `running()`/`ready()` (gated on confirming llama-swap sends `state`); W2 stop inbox triage reloading through an owner's unload; W3 a declined admission should fail a background sweep; W4 make jcode's gateway fallback fail closed. Owns *whether* a load reaches the budget; `../plans/MEMORY_ADMISSION_PLAN.md` owns *how big* it is.
