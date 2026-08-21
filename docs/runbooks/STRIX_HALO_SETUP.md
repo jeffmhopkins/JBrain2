@@ -217,6 +217,31 @@ both resides and warms it.
 > slots are not being fought over. `local_catalog.CACHE_RAM_GB` is 0.0 to match, and the flag
 > is off the operator allowlist so it cannot be turned back on without the budget following.
 
+> **Model loads are a QUEUE — one at a time, across the whole box.** The runaway watchdog
+> anchors its ceiling to a GTT baseline sampled when a load starts (`gpu_guard.guarded_load`),
+> which only means anything if nothing else is still allocating. MEASURED 2026-08-21:
+> gpt-oss-120b was 30 s into a reload — GTT at 36.4 GB on its way to a measured 69.24 — when a
+> staged qwen3.8-27b-abliterated took that 36.4 as *its* baseline and set a ceiling of
+> `36.4 + 24.1 x 1.75 = 78.6`. GTT then reached 79.9 — gpt-oss finishing plus abliterated
+> starting — and the guard blamed the whole climb on abliterated and aborted it. Nothing ran
+> away; the previous model was still arriving. The per-model lock does not cover this (the two
+> models differ), so there is a second, global one.
+>
+> A false abort is not cheap: it unloads a healthy model **and** strands the weights it had
+> already read in the page cache, which `read_memory_gb` counts as used — so the next load sees
+> less headroom and is likelier to abort in turn. That ratchet is why the fix is serialisation
+> rather than a wider multiple: the ceiling exists to catch an order-of-magnitude balloon, and
+> loosening it enough to absorb a second model's allocation would blind it to exactly that.
+>
+> It is a queue and not a silent gate on purpose. A waiting load records
+> `queued — waiting for <model> to finish loading` to `box_events` before it blocks, so the
+> vitals surface names what is ahead of it. Staging a second model right after a first IS the
+> co-residency workflow, the wait behind a 120B is minutes, and the owner drives this box
+> through the PWA — a Load button that does nothing for that long is indistinguishable from a
+> broken one. A queued load costs latency, never correctness: the pre-flight re-samples once
+> the lock frees, so it is admitted against the box as it actually is after the model ahead of
+> it has landed.
+
 > **`--swa-full` on gpt-oss.** It was introduced as the precondition for a KV-slot restore
 > doing anything on an interleaved sliding-window model; that feature is gone, and the flag
 > stays because full history on those layers is what a long conversation needs. The original

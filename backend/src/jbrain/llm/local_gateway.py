@@ -126,6 +126,33 @@ class LocalGatewayClient:
         # One lock per served model, so two callers cannot load the same one at once. See
         # `load` for what that cost the owner without it.
         self._load_locks: dict[str, asyncio.Lock] = {}
+        # And ONE lock across all of them, so two DIFFERENT models never load concurrently.
+        #
+        # The runaway watchdog anchors its ceiling to a GTT baseline sampled when the load
+        # starts (`gpu_guard.guarded_load`), which is only meaningful if nothing else is still
+        # allocating. MEASURED 2026-08-21: gpt-oss-120b was 30 s into a reload — GTT at 36.4 GB
+        # on its way to a measured 69.24 — when a staged qwen3.8-27b-abliterated sampled that
+        # 36.4 as ITS baseline and set a ceiling of 78.6. GTT then reached 79.9, which was
+        # gpt-oss finishing plus abliterated starting, and the guard attributed the whole climb
+        # to abliterated and aborted it: "device memory ran away ... for a model predicted at
+        # 24.1 GB". Nothing ran away. The previous model was still arriving.
+        #
+        # A false abort is not cheap here. It unloads a model that was fine, and it strands the
+        # weights it had already read in the page cache, which `read_memory_gb` counts as used
+        # — so the next load sees less headroom and is likelier to abort in turn.
+        #
+        # Serialising is the honest fix rather than widening the multiple: the ceiling's job is
+        # to catch an order-of-magnitude balloon, and loosening it to absorb a second model's
+        # allocation would blind it to exactly what it exists for. It also halves the transient
+        # page cache, since only one model is reading weights at a time. Loads are the box's
+        # rare, expensive operation — a queued one costs latency, never correctness — and this
+        # is precisely the co-residency path, where a second model is staged right after a first.
+        self._global_load_lock = asyncio.Lock()
+        # Which model currently holds that lock, so a caller that has to wait can SAY what it
+        # is waiting for. A silent wait is the failure mode here: the owner drives this box
+        # through the PWA (CLAUDE.md #10), and a Load button that does nothing for three
+        # minutes is indistinguishable from one that is broken.
+        self._loading_now: str | None = None
         # The live per-model context-window and parallel-slot overrides (Settings → LLM), read
         # per load. They live here for the same chokepoint reason as the probe: KV is LINEAR in
         # the window, so a guard that reserves for the catalog default while llama-swap serves
@@ -569,10 +596,28 @@ class LocalGatewayClient:
                     box_events.MODEL_LOAD, served_model, detail="already loading — joined it"
                 )
                 return
-            async with box_events.span(box_events.MODEL_LOAD, served_model):
-                await self._load_and_warm(
-                    served_model, warm_system=warm_system, warm_tools=warm_tools
+            # QUEUE, not just a gate. Say so before blocking, and name what is ahead: this is
+            # the co-residency path — stage a second model right after a first — and a wait of
+            # two or three minutes with nothing on screen reads as a hung button.
+            if self._global_load_lock.locked():
+                ahead = self._loading_now
+                log.info("local_gateway.load_queued", model=served_model, behind=ahead)
+                await box_events.record(
+                    box_events.MODEL_LOAD,
+                    served_model,
+                    detail=f"queued — waiting for {ahead} to finish loading"
+                    if ahead
+                    else "queued — waiting for another load to finish",
                 )
+            async with self._global_load_lock:
+                self._loading_now = served_model
+                try:
+                    async with box_events.span(box_events.MODEL_LOAD, served_model):
+                        await self._load_and_warm(
+                            served_model, warm_system=warm_system, warm_tools=warm_tools
+                        )
+                finally:
+                    self._loading_now = None
 
     async def _load_and_warm(
         self,

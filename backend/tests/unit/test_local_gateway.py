@@ -631,3 +631,62 @@ async def test_a_config_regen_that_changes_nothing_records_no_eviction(
     )
     await client.load("qwen3-vl-30b-a3b")
     assert not [r for r in recorded if r.startswith("model_unload")], recorded
+
+
+async def test_two_different_models_never_load_at_the_same_time() -> None:
+    """The runaway watchdog anchors its ceiling to a GTT baseline sampled when a load starts,
+    which only means anything if nothing else is still allocating.
+
+    MEASURED 2026-08-21: gpt-oss-120b was 30 s into a reload — GTT 36.4 GB on its way to a
+    measured 69.24 — when a staged qwen3.8-27b-abliterated sampled that 36.4 as its OWN
+    baseline and set a ceiling of 36.4 + 24.1x1.75 = 78.6. GTT then reached 79.9, which was
+    gpt-oss finishing plus abliterated starting, and the guard blamed all of it on abliterated:
+    "device memory ran away ... for a model predicted at 24.1 GB". Nothing ran away.
+
+    The per-model lock does not cover this — the two models are different, so both proceed.
+    A false abort unloads a healthy model AND strands the weights it had read in the page
+    cache, which `read_memory_gb` counts as used, so the next load starts with less headroom
+    and is likelier to abort in turn."""
+    inflight = 0
+    overlapped = False
+
+    async def slow_load(self: object, served: str, **kw: object) -> None:
+        nonlocal inflight, overlapped
+        inflight += 1
+        overlapped = overlapped or inflight > 1
+        await asyncio.sleep(0.05)
+        inflight -= 1
+
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    # Stub the work itself: this test is about the gate around it, not the load.
+    gw._load_and_warm = slow_load.__get__(gw)  # type: ignore[attr-defined,method-assign]
+    await asyncio.gather(gw.load("gpt-oss-120b"), gw.load("qwen3.8-27b-abliterated"))
+    assert not overlapped, "two different models loaded concurrently — the guard's baseline moves"
+
+
+async def test_a_queued_load_says_what_it_is_waiting_for() -> None:
+    """A gate that blocks silently is a hung Load button. The owner drives this box entirely
+    through the PWA (CLAUDE.md #10), so a wait of two or three minutes behind a 120B has to
+    reach the vitals surface as a QUEUED state naming the model ahead of it — not as nothing."""
+    recorded: list[tuple[str, str | None]] = []
+
+    async def fake_record(kind: object, model: str, *, detail: str | None = None, **kw: object):
+        recorded.append((model, detail))
+
+    async def slow_load(self: object, served: str, **kw: object) -> None:
+        await asyncio.sleep(0.05)
+
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._load_and_warm = slow_load.__get__(gw)  # type: ignore[attr-defined,method-assign]
+    original = box_events.record
+    box_events.record = fake_record  # type: ignore[assignment]
+    try:
+        await asyncio.gather(gw.load("gpt-oss-120b"), gw.load("qwen3.8-27b-abliterated"))
+    finally:
+        box_events.record = original  # type: ignore[assignment]
+
+    queued = [(m, d) for m, d in recorded if d and d.startswith("queued")]
+    assert queued, f"a load waited its turn without saying so: {recorded}"
+    model, detail = queued[0]
+    # It names the model ahead, so the screen reads "waiting for gpt-oss-120b", not "waiting".
+    assert "gpt-oss-120b" in detail or "qwen3.8-27b-abliterated" in detail, detail
