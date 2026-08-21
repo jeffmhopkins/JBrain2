@@ -1644,6 +1644,23 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "-lv",
         "--checkpoint-min-step",
         "--cache-ram",
+        # KV cache quantisation. `-fa` is already served unconditionally (the gfx1151
+        # stability/perf flag), which is llama.cpp's prerequisite for a quantised cache, so
+        # this is reachable on this box today.
+        #
+        # It is the largest lever on demand that exists here: MEASURED 2026-08-21, the served
+        # KV is 8.0 GiB per 128k on a Qwen3.8 27B at f16 — bigger than half the weights — and
+        # q8_0 halves the cache proper (MODEL_PROMPTING.md derives 4.25). On a box whose
+        # roster runs windows up to 262144 that is tens of GB of admission pressure.
+        #
+        # Allowlisted rather than simply switched on because the quality cost is empirical:
+        # q8_0 is near-lossless in the literature and q4_0 is not, and neither claim has been
+        # tested against THIS box's models. Exactly the case this list exists for — try it,
+        # measure it, revert it, without a catalog edit and a release per iteration.
+        "-ctk",
+        "-ctv",
+        "--cache-type-k",
+        "--cache-type-v",
         # llama.cpp's replacement for the deprecated `--mmap`/`--no-mmap`/`--mlock` family:
         # auto | none | mmap | mlock | mmap+mlock | dio. Allowlisted so the ONE unexamined
         # decision behind this box's memory behaviour can be measured instead of asserted.

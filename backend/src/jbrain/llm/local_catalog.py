@@ -46,13 +46,27 @@ QWEN38_EFFORT_LEVELS: dict[str, str] = {"low": "low", "medium": "medium", "high"
 # `2 (K and V) x n_kv_heads x head_dim x bytes_per_element`; for this model that is
 # 2 x 4 x 256 x 2 (f16) = 4 KiB, and x16 attention layers = 64 KiB/token -> 8.0 GiB per 128k.
 #
-# The f16 is not a choice, it is the DEFAULT we inherit: the gateway passes no
-# `--cache-type-k`/`--cache-type-v`, so llama.cpp uses GGML_TYPE_F16. This figure previously
-# read 2.0, which is the q4_0 number (18 KiB/token) for a cache type we do not serve — so the
-# budget under-counted the model we actually run by 1.5 GiB at 32k, and would have been 6 GiB
-# light at a full 128k window. If the serving flags ever gain a KV quant, this must move with
-# them: q8_0 is 34 KiB/token (4.25) and q4_0 is 18 KiB/token (2.25).
-_QWEN38_KV_GB_PER_128K = 8.0
+# Now q8_0, and this number is MEASURED rather than derived — the two disagree, and the
+# measurement wins because it is the one the box has to survive.
+#
+# The derivation (MODEL_PROMPTING.md) gives the cache alone: 2 (K+V) x 4 kv-heads x 256
+# head-dim x 1.0625 bytes x 16 attention layers = 34 KiB/token = 4.25 GiB per 128k at q8_0,
+# against 8.0 at the f16 default we used to inherit. That much halves.
+#
+# But a sweep of this model at four served windows (2026-08-21, 8k/32k/64k/128k, one model
+# resident, device delta read per load) fits a slope of 9.53 GiB per 128k at f16 — 1.53 above
+# the 8.0 the cache accounts for. So something ELSE grows with the window by that much, and it
+# will not halve with the cache. The MTP draft context is the likely home: `MTP_OVERHEAD_GB`
+# is booked flat at 1.0 while its own comment says it "scales with context and with n-max".
+# That has not been isolated, so the residual rides here instead of hiding: under-reserving is
+# the direction that takes the host down, and a term that is measured but unattributed is
+# still better budgeted than dropped.
+#
+#   4.25 (q8_0 cache, derived) + 1.53 (window-scaling residual, measured) = 5.78
+#
+# MOVES WITH THE SERVING FLAG. The `-ctk`/`-ctv q8_0` on all three Qwen3.8 27B entries and
+# this number are one decision in two places; changing either alone mis-budgets every load.
+_QWEN38_KV_GB_PER_128K = 5.78
 
 # Everything a load pins that is neither weights nor KV, for this model family:
 #   ~0.14 GiB  Gated DeltaNet recurrent state across the 48 linear-attention layers (f32,
@@ -636,7 +650,26 @@ CATALOG: tuple[LocalModel, ...] = (
         # t/s figures behind the Q4 entry were taken on Q4_K_M. The load guard is the backstop
         # if Q8 behaves differently, and nothing routes here by default, so the first load is
         # the measurement. Pins to one slot, as any speculative model does.
-        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
+        extra_server_args=(
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+            # q8_0 KV. `-fa` is served unconditionally, which llama.cpp requires for a
+            # quantised cache. MEASURED 2026-08-21: this family's served KV is the single
+            # largest window-scaling cost on the box — 8.0 GiB per 128k at f16, more than
+            # half the weights again at the full window — and q8_0 halves the cache proper
+            # (MODEL_PROMPTING.md derives 4.25 from 2 x 4 x 256 x 1.0625 x 16 layers).
+            #
+            # `_QWEN38_KV_GB_PER_128K` MOVES WITH THIS and the two may never be changed
+            # apart: serving a quantised cache while budgeting f16 over-reserves every one
+            # of these models by ~4 GiB, which evicts models that fit — and the inverse,
+            # budgeting q8 while serving f16, under-reserves on the box's freeze path.
+            "-ctk",
+            "q8_0",
+            "-ctv",
+            "q8_0",
+        ),
         image_min_tokens=2048,
         quant="Q8_0",
         # GiB on disk (the catalog's unit): the single Q8_0 weight (~27.0 GiB from HF's 29
@@ -691,7 +724,26 @@ CATALOG: tuple[LocalModel, ...] = (
         # NOTE: this pins the model to ONE slot (see llama_swap_config) — llama.cpp's
         # speculative path serves a single sequence and acceptance collapses as concurrent
         # sequences rise, so the serving mode overrides the interactive-slot setting.
-        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
+        extra_server_args=(
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+            # q8_0 KV. `-fa` is served unconditionally, which llama.cpp requires for a
+            # quantised cache. MEASURED 2026-08-21: this family's served KV is the single
+            # largest window-scaling cost on the box — 8.0 GiB per 128k at f16, more than
+            # half the weights again at the full window — and q8_0 halves the cache proper
+            # (MODEL_PROMPTING.md derives 4.25 from 2 x 4 x 256 x 1.0625 x 16 layers).
+            #
+            # `_QWEN38_KV_GB_PER_128K` MOVES WITH THIS and the two may never be changed
+            # apart: serving a quantised cache while budgeting f16 over-reserves every one
+            # of these models by ~4 GiB, which evicts models that fit — and the inverse,
+            # budgeting q8 while serving f16, under-reserves on the box's freeze path.
+            "-ctk",
+            "q8_0",
+            "-ctv",
+            "q8_0",
+        ),
         image_min_tokens=2048,
         quant="Q4_K_M",
         # GiB on disk: the Q4_K_M weight (~15.9 GiB from HF's 17.1 decimal-GB listing) plus the
@@ -742,7 +794,26 @@ CATALOG: tuple[LocalModel, ...] = (
         # embedded (2026-08-16) precisely so no separate draft file is required. Pins to one
         # slot, as any speculative entry does. The image floor is the field below, not a flag
         # here, so an operator override replaces it rather than landing twice on the command line.
-        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
+        extra_server_args=(
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+            # q8_0 KV. `-fa` is served unconditionally, which llama.cpp requires for a
+            # quantised cache. MEASURED 2026-08-21: this family's served KV is the single
+            # largest window-scaling cost on the box — 8.0 GiB per 128k at f16, more than
+            # half the weights again at the full window — and q8_0 halves the cache proper
+            # (MODEL_PROMPTING.md derives 4.25 from 2 x 4 x 256 x 1.0625 x 16 layers).
+            #
+            # `_QWEN38_KV_GB_PER_128K` MOVES WITH THIS and the two may never be changed
+            # apart: serving a quantised cache while budgeting f16 over-reserves every one
+            # of these models by ~4 GiB, which evicts models that fit — and the inverse,
+            # budgeting q8 while serving f16, under-reserves on the box's freeze path.
+            "-ctk",
+            "q8_0",
+            "-ctv",
+            "q8_0",
+        ),
         # Same shipped floor as the aligned twins — the abliteration edits refusal directions,
         # it does not touch the vision tower, so the measurement behind 2048 carries over.
         image_min_tokens=2048,

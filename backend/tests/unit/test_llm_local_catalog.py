@@ -346,7 +346,9 @@ def test_qwen38_27b_abliterated_serves_exactly_like_its_aligned_twin() -> None:
     assert "--image-min-tokens" not in m.extra_server_args
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
     assert m.native_context_window == q4.native_context_window == 262144
-    assert m.kv_gb_per_128k == q4.kv_gb_per_128k == 8.0
+    # Same base weights, so the same cache type and the same budget for it.
+    assert m.kv_gb_per_128k == q4.kv_gb_per_128k == pytest.approx(5.78)
+    assert m.extra_server_args.count("q8_0") == q4.extra_server_args.count("q8_0") == 2
     # Weights + F16 projector, from the repo's real blob sizes (15.66 + 0.86 GiB).
     assert m.size_gb == 16.5
 
@@ -732,9 +734,22 @@ def test_qwen38_kv_estimate_reflects_its_hybrid_attention() -> None:
         model = local_catalog.get(model_id)
         assert model is not None
         # DERIVED from the model's own shape, not estimated: 2 (K+V) x 4 kv_heads x 256
-        # head_dim x 2 bytes (f16, llama.cpp's default — the gateway passes no --cache-type-*)
-        # x 16 attention layers = 64 KiB/token, which is 8.0 GiB per 128k.
-        assert model.kv_gb_per_128k == 8.0
+        # head_dim x 1.0625 bytes (q8_0 — the gateway now passes `-ctk/-ctv q8_0`; it was 2
+        # bytes while we inherited llama.cpp's f16 default) x 16 attention layers =
+        # 34 KiB/token, which is 4.25 GiB per 128k.
+        #
+        # The shipped figure is HIGHER than that, deliberately. A four-window sweep on the box
+        # (2026-08-21) fit 9.53 GiB per 128k at f16, against the 8.0 the cache alone explains —
+        # so 1.53 of window-scaling cost lives somewhere the catalog books flat, most likely
+        # the MTP draft context, whose own comment says it scales with context. Measured but
+        # unattributed, so it is carried here rather than dropped: under-reserving is the
+        # direction that takes the host down.
+        assert model.kv_gb_per_128k == pytest.approx(4.25 + 1.53)
+        # The serving flag and this number are ONE decision in two files. If the flag comes
+        # off without the number following, this is what makes it loud.
+        args = model.extra_server_args
+        assert "-ctk" in args and args[args.index("-ctk") + 1] == "q8_0"
+        assert "-ctv" in args and args[args.index("-ctv") + 1] == "q8_0"
         # This read 2.0 for a while, which is the q4_0 figure (18 KiB/token) for a cache type
         # this box does not serve — so the budget under-counted every Qwen3.8 entry by 1.5 GiB
         # at 32k and would have been 6 GiB light at a full window. If the serving flags ever
