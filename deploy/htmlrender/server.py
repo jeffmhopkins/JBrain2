@@ -22,11 +22,14 @@ photo never leaves the api, and the payload stays small.
 **Two rendering modes, because there are two kinds of caller.** The canvas composites
 into a rect it already sized, so it sends an explicit `height` and gets exactly that.
 A standalone card (`render_html`) does not know how tall its own content is: it omits
-`height` and the page is MEASURED, then the viewport is resized to fit and shot. That
-resize is the point — laying out at the final height is what makes `vh`, percentage
-heights and vertical centring resolve against the box the owner actually sees, and it
-is what stops a short card being padded out to a guessed height, which reads as a
-second empty frame inside the app's own card.
+`height`, and the page is measured and then CLIPPED to its own content box. Clipping
+rather than resizing the viewport is deliberate. Resizing looks like the tidier answer
+— lay out at the final height so `vh` resolves against the box that ships — but it does
+not converge: a `height:50vh` block halves on every pass, so the shot ends up taller
+than the content and leaves a band of empty ground, which is the exact second-frame
+failure this mode exists to prevent. A clip cannot leave a band: the captured region IS
+the measured content box. The cost is that `vh` and `window.innerHeight` resolve against
+a fixed probe viewport, which is a poor unit for a content-sized card anyway.
 
 Lazy-launches the browser on first call and idle-unloads it, the same shape as the
 `rapidocr` sidecar, so an idle box pays only the process baseline.
@@ -55,8 +58,9 @@ MAX_PIXELS = 8_000_000
 MAX_HTML_BYTES = 512_000
 RENDER_TIMEOUT_MS = 15_000
 
-# The provisional viewport height an auto-height render lays out in before it is
-# measured. Only tall enough to give a first layout; the real height replaces it.
+# The layout viewport a measured render lays out in. The capture is clipped to the
+# content rather than to this, so it does not bound how tall a card may be — but it IS
+# what `vh` and `window.innerHeight` resolve against on a page with no height of its own.
 PROBE_HEIGHT = 800
 
 # How tall the content is, in CSS pixels. NOT `documentElement.scrollHeight`: that floors
@@ -222,24 +226,19 @@ async def render(body: RenderRequest) -> RenderResponse:
         await page.set_content(_document(body), wait_until="load", timeout=RENDER_TIMEOUT_MS)
         if body.wait_ms:
             await page.wait_for_timeout(body.wait_ms)
+        shot: dict = {}
         if body.height is None:
-            # Two passes, then commit. The resize is the point — `vh`, percentage heights
-            # and vertical centring must resolve against the box that actually gets
-            # captured, not against the probe viewport — but resizing can itself change
-            # the content height, so the second pass lets that settle. It converges: a
-            # `100vh` block measures to whatever viewport it was just given.
-            height = 0
-            for _ in range(2):
-                measured = int(await page.evaluate(_MEASURE))
-                height = max(1, min(measured, ceiling))
-                clipped = measured > height
-                await page.set_viewport_size({"width": body.width, "height": height})
-                if body.wait_ms:
-                    await page.wait_for_timeout(body.wait_ms)
-                if int(await page.evaluate(_MEASURE)) == measured:
-                    break
+            measured = int(await page.evaluate(_MEASURE))
+            height = max(1, min(measured, ceiling))
+            clipped = measured > height
+            # `full_page` so the clip may reach past the probe viewport for a long card;
+            # the clip is what guarantees the image ends where the content does.
+            shot = {
+                "full_page": True,
+                "clip": {"x": 0, "y": 0, "width": body.width, "height": height},
+            }
         png = await page.screenshot(
-            omit_background=body.transparent, type="png", timeout=RENDER_TIMEOUT_MS
+            omit_background=body.transparent, type="png", timeout=RENDER_TIMEOUT_MS, **shot
         )
     except Exception as exc:  # noqa: BLE001 - a bad page must be a 400, never a 500
         raise HTTPException(status_code=400, detail=f"render failed: {exc}") from exc

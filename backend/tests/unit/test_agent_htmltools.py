@@ -16,7 +16,9 @@ import pytest
 from jbrain.agent.htmltools import (
     DEFAULT_PAD,
     DEFAULT_WIDTH,
+    MAX_PAD,
     MAX_WIDTH,
+    MIN_CONTENT_WIDTH,
     MIN_WIDTH,
     PROVENANCE_HTML,
     RENDER_SCALE,
@@ -142,6 +144,26 @@ async def test_an_explicit_height_is_honoured_and_clamped(monkeypatch, given, ex
     render, renderer, _p = _build(monkeypatch)
     await render({"html": "<p>x</p>", "height": given}, _ctx())
     assert renderer.calls[0]["height"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("given", [0, -5, "0"])
+async def test_a_zero_or_negative_height_means_measure_not_a_hairline(monkeypatch, given) -> None:
+    # The clamp would turn 0 into a 1px card that reports success with no `clipped`
+    # warning. A model spelling "no opinion" as 0 must land on the good path instead.
+    render, renderer, _p = _build(monkeypatch)
+    await render({"html": "<p>x</p>", "height": given}, _ctx())
+    assert renderer.calls[0]["height"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_gutter_cannot_eat_the_whole_card(monkeypatch) -> None:
+    # `border-box` means pad comes out of width: the documented extremes together would
+    # leave a 0px content box, which wraps to one word per line and runs off the bottom.
+    render, renderer, _p = _build(monkeypatch)
+    await render({"html": "<p>x</p>", "width": MIN_WIDTH, "pad": MAX_PAD}, _ctx())
+    call = renderer.calls[0]
+    assert call["width"] - 2 * call["pad"] >= MIN_CONTENT_WIDTH
 
 
 @pytest.mark.asyncio

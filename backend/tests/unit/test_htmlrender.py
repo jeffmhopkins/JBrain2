@@ -238,3 +238,15 @@ def test_max_css_height_keeps_the_output_inside_both_caps() -> None:
         out_w, out_h = round(width * scale), round(height * scale)
         assert out_h <= MAX_SIDE
         assert out_w * out_h <= MAX_PIXELS
+
+
+@pytest.mark.asyncio
+async def test_a_measured_render_with_no_reported_height_is_an_error() -> None:
+    # In measure mode nothing on this side knows how tall the page came out, so a
+    # missing height is a malformed response — not a zero to hand to a caller that
+    # would size a frame from it and collapse the aspect ratio.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"png_base64": base64.b64encode(PNG).decode()})
+
+    with pytest.raises(HtmlRenderError, match="no dimensions"):
+        await _client(handler).render("<p>x</p>", width=900)

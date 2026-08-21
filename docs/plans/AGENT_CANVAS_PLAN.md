@@ -619,10 +619,13 @@ per wave, exactly one PR per wave, CI green before merge.
   HTML and shows it, persisted as a `provenance="html"` chat image so `analyze_image` can
   resolve it by id in later turns. `HTML_RENDER_BUDGET` in `loop.py` caps it per turn — one
   counter, since the optional `look` only ever happens inside a render call.
-- The sidecar gained **measure-and-fit**: omit `height` and the page is laid out, measured,
-  the viewport resized to the content, then shot. The resize (rather than a full-page
-  screenshot) is what makes `vh`, percentage heights and vertical centring resolve against the
-  final box. Content past the cap sets `clipped`, which the tool reports rather than swallows.
+- The sidecar gained **measure-and-fit**: omit `height` and the page is measured, then
+  clipped to its own content box. Clipping, not resizing the viewport to the measurement —
+  that was tried first and does not converge, because a `height:50vh` block halves on every
+  pass and leaves a band of empty ground (measured live: a 200px image with 100px of it
+  empty, and `clipped` reporting False). A clip cannot leave a band: the captured region IS
+  the content box. The cost is that `vh` resolves against a fixed probe viewport, a poor unit
+  for a content-sized card. Content past the cap sets `clipped`, which the tool reports.
 - Two properties make the output readable by a VISION model, not just by the owner: it renders
   **opaque** (a transparent PNG flattens onto an unknown colour downstream and light text
   disappears) and at **2x** (every vision path downscales to a 2048px long side first).

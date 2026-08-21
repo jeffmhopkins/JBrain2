@@ -153,18 +153,24 @@ class HtmlRenderClient:
             png = base64.b64decode(encoded, validate=True)
         except (ValueError, TypeError) as exc:
             raise HtmlRenderError("the renderer returned a corrupt image") from exc
+        out_height = _dim(body.get("height"), height or 0)
+        if out_height <= 0:
+            # Only reachable in measure mode against a sidecar that did not report the
+            # height it produced — and there is nothing on this side that knows it. A
+            # zero would collapse the aspect ratio of any frame sized from it, so this
+            # is a malformed response, not a default to paper over.
+            raise HtmlRenderError("the renderer returned an image with no dimensions")
         return Rendered(
             png=png,
             width=_dim(body.get("width"), width),
-            height=_dim(body.get("height"), height or 0),
+            height=out_height,
             clipped=bool(body.get("clipped")),
         )
 
 
 def _dim(value: object, fallback: int) -> int:
-    """A dimension the sidecar reported, or the request's own as a floor. An older
-    sidecar that predates the honest-dimensions response must not yield a zero here —
-    a card sized from 0 collapses its aspect ratio."""
+    """A dimension the sidecar reported, or the request's own as a floor — so a sidecar
+    predating the honest-dimensions response still yields the size that was asked for."""
     return value if isinstance(value, int) and value > 0 else fallback
 
 

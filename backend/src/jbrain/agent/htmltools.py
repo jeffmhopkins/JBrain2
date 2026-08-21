@@ -70,6 +70,8 @@ MAX_WIDTH = 1600
 # the app's image card, which is the "frame inside a frame" this default exists to stop.
 DEFAULT_PAD = 28
 MAX_PAD = 120
+# The narrowest content box a gutter may leave behind — roughly a readable phrase.
+MIN_CONTENT_WIDTH = 160
 
 _LOOK_MAX_CHARS = 600
 
@@ -133,7 +135,13 @@ def build_html_handlers(
         if theme not in THEMES:
             return f"`theme` must be one of: {', '.join(sorted(THEMES))}."
         width = _clamp(arguments.get("width"), DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH)
-        pad = _clamp(arguments.get("pad"), DEFAULT_PAD, 0, MAX_PAD)
+        # The gutter is bounded by the width it eats into as well as by MAX_PAD: with
+        # `border-box`, a narrow card and a wide gutter leave a content box near zero,
+        # which does not fail — it wraps to one word per line and runs off the bottom.
+        pad = min(
+            _clamp(arguments.get("pad"), DEFAULT_PAD, 0, MAX_PAD),
+            max(0, (width - MIN_CONTENT_WIDTH) // 2),
+        )
         # An explicit height is honoured but clamped; omitting it is the good path — the
         # page is measured and shot at its own content height, so a short card is not
         # padded out to a guessed one.
@@ -194,8 +202,13 @@ def _optional_dim(value: object, low: int, high: int) -> int | None:
 
     Separate from `_clamp` because for height, absent is the GOOD answer — measure and
     fit — so a junk value must degrade to that rather than to some number."""
-    value = _number(value)
-    return None if value is None else max(low, min(high, int(value)))
+    number = _number(value)
+    if number is None or int(number) <= 0:
+        # A 0 (or a negative) is how a model spells "no opinion" at least as often as it
+        # is a mistake, and the clamp would otherwise turn it into a 1px hairline that
+        # reports success. Absent is the good answer here, so junk lands on it.
+        return None
+    return max(low, min(high, int(number)))
 
 
 def _number(value: object) -> float | None:
