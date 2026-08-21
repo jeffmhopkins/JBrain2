@@ -9,13 +9,18 @@ import pathlib
 import httpx
 import pytest
 
-from jbrain import host_metrics
+from jbrain import box_events, host_metrics
 from jbrain.llm import local_catalog, local_gateway, local_weights
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
     LocalGatewayError,
     _parse_running,
 )
+
+
+async def _resolved(value: set[str]) -> set[str]:
+    """`running()` as a coroutine, for the tests that stub residency."""
+    return value
 
 
 def _client(handler: object) -> LocalGatewayClient:
@@ -313,7 +318,7 @@ async def test_the_load_fraction_counts_what_went_PAST_the_cache_not_what_sits_i
     # Monotonic across the drops: a sawtooth in the LEVEL must not put a sawtooth in the bar.
     assert published == sorted(published)
     # And scaled into the weights phase, never past it — the warm-up owns the rest.
-    assert max(published) <= 0.4 + 1e-9
+    assert max(published) <= local_gateway._WEIGHTS_SHARE + 1e-9
 
 
 async def test_the_load_fraction_is_absent_when_the_catalog_cannot_size_the_model(
@@ -343,6 +348,99 @@ async def test_the_load_fraction_is_absent_when_the_catalog_cannot_size_the_mode
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert published == []
+
+
+async def test_a_second_load_of_a_model_already_loading_joins_it_rather_than_racing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEASURED on the box 2026-08-21: a gpt-oss-120b load was 48 s in, holding ~29 GB it had
+    already committed, when a deferred workflow retried it. The device guard refused the
+    second one — correct arithmetic, and a false alarm that put a red "failed to load" row in
+    front of the owner for a load that succeeded a minute later.
+
+    The second caller waits, then takes the first one's result: the model is resident, so
+    there is nothing left to do and no second load to guard."""
+    loads: list[str] = []
+    resident: set[str] = set()
+    release = asyncio.Event()
+
+    async def slow_load(self: object, served_model: str, **kw: object) -> None:
+        loads.append(served_model)
+        await release.wait()
+        resident.add(served_model)
+
+    monkeypatch.setattr(LocalGatewayClient, "_load_and_warm", slow_load)
+    monkeypatch.setattr(LocalGatewayClient, "running", lambda self: _resolved(set(resident)))
+    gw = _client(lambda r: httpx.Response(200, json={}))
+
+    first = asyncio.create_task(gw.load("gpt-oss-120b"))
+    await asyncio.sleep(0.05)  # let it take the lock
+    second = asyncio.create_task(gw.load("gpt-oss-120b"))
+    await asyncio.sleep(0.05)  # and let it queue behind
+
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert loads == ["gpt-oss-120b"], "the second caller started a duplicate load"
+
+
+async def test_a_second_load_still_runs_when_the_first_one_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Joining is only right when there is something to join. A load that failed leaves the
+    model absent, and the caller that waited for it wanted it LOADED — so that one is a
+    genuine retry, not a duplicate."""
+    loads: list[str] = []
+
+    async def failing_load(self: object, served_model: str, **kw: object) -> None:
+        loads.append(served_model)
+        raise LocalGatewayError("no room")
+
+    monkeypatch.setattr(LocalGatewayClient, "_load_and_warm", failing_load)
+    monkeypatch.setattr(LocalGatewayClient, "running", lambda self: _resolved(set()))
+    gw = _client(lambda r: httpx.Response(200, json={}))
+
+    for _ in range(2):
+        with contextlib.suppress(LocalGatewayError):
+            await gw.load("gpt-oss-120b")
+
+    assert loads == ["gpt-oss-120b", "gpt-oss-120b"]
+
+
+async def test_the_warm_completes_the_bar_however_the_warm_got_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one number on this path that is not an estimate.
+
+    MEASURED, two loads on 2026-08-21: with a saved KV slot restored (~90 ms) the warm
+    prefill never runs and the bar stopped at 0.384; without one the prefill ran but the
+    token estimate over-predicts by about a third, so it stopped at 0.841. Reaching the end
+    of `_warm` means the warm is done whichever way it went, so the bar is full."""
+    published: list[float] = []
+
+    async def capture(value: float) -> None:
+        published.append(value)
+
+    monkeypatch.setattr(box_events, "progress", capture)
+    gw = _client(lambda r: httpx.Response(200, json={"choices": []}))
+    await gw._warm("gpt-oss-120b", system="you are jerv", tools=[])
+
+    assert published and published[-1] == 1.0
+
+
+async def test_a_failed_warm_still_completes_the_bar(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The model is resident and serving either way; a warm-up failure only means the first
+    # real turn pays a cost. Leaving the bar short would be the worse lie.
+    published: list[float] = []
+
+    async def capture(value: float) -> None:
+        published.append(value)
+
+    monkeypatch.setattr(box_events, "progress", capture)
+    gw = _client(lambda r: httpx.Response(500, json={}))
+    await gw._warm("gpt-oss-120b", system="you are jerv", tools=[])
+
+    assert published and published[-1] == 1.0
 
 
 async def test_the_sweeper_is_a_no_op_without_a_weights_mount() -> None:

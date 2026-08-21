@@ -238,7 +238,9 @@ async def span(kind: str, subject: str, *, detail: str | None = None) -> AsyncIt
 
 
 @asynccontextmanager
-async def lazy_span(kind: str, subject: str) -> AsyncIterator[Callable[[float], Awaitable[None]]]:
+async def lazy_span(
+    kind: str, subject: str
+) -> AsyncIterator[tuple[Callable[[float], Awaitable[None]], Callable[[], Awaitable[None]]]]:
     """A `span` that only comes into existence if something is published to it.
 
     `span` opens its row up front, which is right for work we know is happening the moment we
@@ -247,8 +249,15 @@ async def lazy_span(kind: str, subject: str) -> AsyncIterator[Callable[[float], 
     explain a real spike. So the row is opened by the FIRST publish and settled on the way out
     only if it exists.
 
-    Yields the publish callable. Everything here is best-effort in the usual way: a database
-    hiccup costs a narration, never the turn."""
+    Yields `(publish, finish)`. FINISH MATTERS: the work being narrated here can end long
+    before the block does. A prefill ends at the turn's first token, while the block wraps the
+    whole stream — so a row left to the exit stays open for the entire generation, and
+    `in_flight` keeps handing it to the status line. MEASURED on the box 2026-08-21: a turn
+    read "Reading your prompt… 4%" while its reasoning was visibly streaming, because the row
+    outlived the prefill by the length of the answer.
+
+    Everything here is best-effort in the usual way: a database hiccup costs a narration,
+    never the turn."""
     row: uuid.UUID | None = None
     reason = _reason.get()
 
@@ -268,11 +277,18 @@ async def lazy_span(kind: str, subject: str) -> AsyncIterator[Callable[[float], 
             )
         await _write(_PROGRESS, {"id": row, "progress": min(1.0, max(0.0, fraction))})
 
-    try:
-        yield publish
-    finally:
+    async def finish() -> None:
+        """Settle now. Idempotent, so the caller may say so at the moment the work ends and
+        the block's exit can still be the backstop for the paths that never get there."""
+        nonlocal row
         if row is not None:
-            await _write(_SETTLE, {"id": row, "status": "ok", "detail": _clip(reason)})
+            settled, row = row, None
+            await _write(_SETTLE, {"id": settled, "status": "ok", "detail": _clip(reason)})
+
+    try:
+        yield publish, finish
+    finally:
+        await finish()
 
 
 async def progress(fraction: float) -> None:
