@@ -738,6 +738,26 @@ describe("ToolView registry", () => {
       />,
     );
     expect(compare.getByText("148 × 40 · side-by-side comparison")).toBeInTheDocument();
+    compare.unmount();
+    // A render_html page: same card again, so the meta must not read "seed 0 · htmlrender".
+    const rendered = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "h1",
+            kind: "generate",
+            width: 1800,
+            height: 562,
+            seed: 0,
+            model: "htmlrender",
+            provenance: "html",
+          },
+        })}
+      />,
+    );
+    expect(rendered.getByText("1800 × 562 · rendered page")).toBeInTheDocument();
+    expect(rendered.queryByText(/htmlrender/)).not.toBeInTheDocument();
   });
 
   it("a generate image drops the kind pill and offers a full-screen expand", () => {

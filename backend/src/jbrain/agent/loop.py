@@ -154,6 +154,10 @@ STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
 # effective step cap) is true wherever the tool can be called.
 CANVAS_CALL_BUDGET = 10
 CANVAS_LOOK_BUDGET = 3
+# `render_html`'s ceiling, for the same reason and on the same paths. One number covers
+# both costs because a look only ever happens INSIDE a render call: each unit is one
+# Chromium page on a memory-bound box, plus at most one vision round.
+HTML_RENDER_BUDGET = 6
 
 SUPERVISED_MAX_STEPS = 500
 SUPERVISED_MAX_COST_TOKENS = 2_000_000
@@ -318,6 +322,9 @@ class ToolContext:
     # otherwise iterate until the step cap, paying a full vision round each look.
     canvas_call_budget: "ToolCallBudget | None" = None
     canvas_look_budget: "ToolCallBudget | None" = None
+    # `render_html`'s ceiling — same reasoning as the canvas pair above, one counter for
+    # the render and the optional look it may carry.
+    html_render_budget: "ToolCallBudget | None" = None
 
 
 @dataclass(frozen=True)
@@ -717,6 +724,7 @@ class AgentLoop:
             fetch_budget=ToolCallBudget(limit=fetch_budget) if fetch_budget else None,
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
+            html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
@@ -993,6 +1001,7 @@ class AgentLoop:
             emit_event=live_q.put_nowait,
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
+            html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
         )
         cost = 0
         consecutive_errors = 0
@@ -1437,6 +1446,7 @@ class AgentLoop:
             run_id=run_id,
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
+            html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []

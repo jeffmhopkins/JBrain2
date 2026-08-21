@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-17 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-21 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0's measurement is DONE (2026-08-17).** Probed on the live box against
 > `qwen3.8-27b-q4`: the base is **`norm_1000`**, now pinned in `agent/grounding.py` for
@@ -13,6 +13,9 @@
 >
 > W1b added a capability the plan did not originally scope: a general-purpose HTML→PNG renderer
 > (§3b), which is now the sanctioned path for any tool wanting rich visual output.
+> **W7 (2026-08-21) cashed that in**: `render_html` is the standalone caller §3b predicted —
+> markup in, an image card out, no photograph and no retained scene — and it is deliberately
+> NOT model-gated, because the gate exists for grounding coordinates and this tool has none.
 > W2/W3 shipped the `canvas` + `show_canvas` pair, the model gate, and the engine
 > ceilings. W4 shipped `crop_regions` and the `image_set` card after the owner cleared
 > the three-mock gate (§10.7, variant B).
@@ -610,6 +613,27 @@ per wave, exactly one PR per wave, CI green before merge.
   grounding **and says so in the result** — degrading quietly would reintroduce exactly
   the silent undercount the detector exists to prevent.
 - Still zero new backend dependencies and zero new containers.
+
+### W7 — `render_html`, the standalone caller of §3b ✅
+- `agent/htmltools.py` + the `render_html.tool` sidecar: one call renders model-authored
+  HTML and shows it, persisted as a `provenance="html"` chat image so `analyze_image` can
+  resolve it by id in later turns. `HTML_RENDER_BUDGET` in `loop.py` caps it per turn — one
+  counter, since the optional `look` only ever happens inside a render call.
+- The sidecar gained **measure-and-fit**: omit `height` and the page is laid out, measured,
+  the viewport resized to the content, then shot. The resize (rather than a full-page
+  screenshot) is what makes `vh`, percentage heights and vertical centring resolve against the
+  final box. Content past the cap sets `clipped`, which the tool reports rather than swallows.
+- Two properties make the output readable by a VISION model, not just by the owner: it renders
+  **opaque** (a transparent PNG flattens onto an unknown colour downstream and light text
+  disappears) and at **2x** (every vision path downscales to a 2048px long side first).
+- Both size caps moved onto the OUTPUT image (after `scale`), and the response now reports the
+  PNG's own dimensions from its header — the card sets its frame's aspect-ratio from those, so a
+  disagreement would crop the picture.
+- Grounds are named (`dark`/`light`) and are the PWA's own `--surface` tokens, never a colour
+  string from a caller. See DESIGN.md "`render_html` renders — one frame, not two" for why that
+  and the measured height are the same requirement wearing two hats.
+- The canvas path is untouched: it passes an explicit height and `transparent=True`, and both
+  the text colour and the margin-collapse fix are confined to the measured branch.
 
 ### W6 — On-box validation and tuning
 - L1 end-to-end on real owner photos; L2 (blank canvas) exercised and honestly

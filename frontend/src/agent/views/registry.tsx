@@ -716,7 +716,9 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
           ? "side-by-side comparison"
           : provenance === "canvas"
             ? "drawn on the canvas"
-            : "";
+            : provenance === "html"
+              ? "rendered page"
+              : "";
   const meta = originLabel
     ? `${width} × ${height} · ${originLabel}`
     : `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${model ? ` · ${model}` : ""}`;

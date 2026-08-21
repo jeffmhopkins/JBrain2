@@ -63,12 +63,14 @@ async def _render_blocks(
         height = max(1, round((element.at["y2"] - element.at["y"]) * scene.height))
         async with semaphore:
             try:
-                png = await client.render(
+                # An explicit height, always: the block composites into a rect the fold
+                # already sized, so the sidecar's measure-and-fit mode does not apply.
+                rendered = await client.render(
                     element.html, width=width, height=height, transparent=True
                 )
             except HtmlRenderError as exc:
                 return element.id, None, f"{element.id} (html) did not render: {exc}"
-        return element.id, png, None
+        return element.id, rendered.png, None
 
     overlays: dict[str, bytes] = {}
     notes: list[str] = []

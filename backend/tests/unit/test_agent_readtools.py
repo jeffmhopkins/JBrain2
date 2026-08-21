@@ -1436,6 +1436,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "faacc3283d5a575dbdebc51208425ee156058715009853f09e5b8c3767c09486",
         ),
+        "render_html.tool": (
+            "render_html",
+            1,
+            "e1907956392d075818b21a3f795742f5fbd8b5260a94910f7fcfc32df2464b23",
+        ),
         "canvas.tool": (
             "canvas",
             2,

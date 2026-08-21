@@ -18,6 +18,7 @@ from jbrain.htmlrender import (
     MAX_SIDE,
     HtmlRenderClient,
     HtmlRenderError,
+    max_css_height,
 )
 
 PNG = b"\x89PNG\r\n\x1a\nfake"
@@ -35,7 +36,7 @@ def _ok(request: httpx.Request) -> httpx.Response:
 
 @pytest.mark.asyncio
 async def test_returns_decoded_png() -> None:
-    assert await _client(_ok).render("<b>hi</b>", width=10, height=10) == PNG
+    assert (await _client(_ok).render("<b>hi</b>", width=10, height=10)).png == PNG
 
 
 @pytest.mark.asyncio
@@ -144,3 +145,96 @@ async def test_oversized_html_is_refused_locally() -> None:
 
     with pytest.raises(HtmlRenderError, match="too large"):
         await _client(handler).render("x" * (MAX_HTML_BYTES + 1), width=10, height=10)
+
+
+@pytest.mark.asyncio
+async def test_omitting_height_asks_the_sidecar_to_measure() -> None:
+    # The standalone-card mode: a null height is what turns on measure-and-fit, so a
+    # short card comes back short instead of padded to a guess (the second-frame bug).
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(__import__("json").loads(request.content))
+        return httpx.Response(
+            200,
+            json={"png_base64": base64.b64encode(PNG).decode(), "width": 900, "height": 412},
+        )
+
+    rendered = await _client(handler).render("<p>x</p>", width=900, transparent=False, pad=28)
+    assert seen["height"] is None
+    assert (seen["transparent"], seen["pad"]) == (False, 28)
+    # The dimensions come back from the sidecar, not from the request — nothing on this
+    # side knows how tall the content turned out to be.
+    assert (rendered.width, rendered.height) == (900, 412)
+
+
+@pytest.mark.asyncio
+async def test_reported_dimensions_win_over_the_requested_ones() -> None:
+    # The PWA card sets its frame's aspect-ratio from these; a disagreement crops the
+    # image, so the sidecar's account of the PNG is the one that counts.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"png_base64": base64.b64encode(PNG).decode(), "width": 640, "height": 480},
+        )
+
+    rendered = await _client(handler).render("<b>x</b>", width=320, height=100)
+    assert (rendered.width, rendered.height) == (640, 480)
+
+
+@pytest.mark.asyncio
+async def test_a_sidecar_without_dimensions_falls_back_to_the_request() -> None:
+    # An older sidecar predates the honest-dimensions response; a zero here would
+    # collapse the card's aspect ratio, so the request's own numbers stand in.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"png_base64": base64.b64encode(PNG).decode()})
+
+    rendered = await _client(handler).render("<b>x</b>", width=320, height=100)
+    assert (rendered.width, rendered.height) == (320, 100)
+    assert rendered.clipped is False
+
+
+@pytest.mark.asyncio
+async def test_clipped_is_relayed_so_a_caller_can_say_so() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "png_base64": base64.b64encode(PNG).decode(),
+                "width": 900,
+                "height": 4096,
+                "clipped": True,
+            },
+        )
+
+    assert (await _client(handler).render("<p>x</p>", width=900)).clipped is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_theme_is_refused_locally() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        raise AssertionError("should not have called the sidecar")
+
+    with pytest.raises(HtmlRenderError, match="theme must be"):
+        await _client(handler).render("<b>x</b>", width=10, height=10, theme="neon")
+
+
+@pytest.mark.asyncio
+async def test_scale_is_counted_against_the_caps() -> None:
+    # Both caps are on the OUTPUT image: a 3000px viewport at 2x is a 6000px PNG, which
+    # is over MAX_SIDE even though the viewport itself is not.
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        raise AssertionError("should not have called the sidecar")
+
+    with pytest.raises(HtmlRenderError, match="after scaling"):
+        await _client(handler).render("<b>x</b>", width=3000, height=100, scale=2.0)
+    with pytest.raises(HtmlRenderError, match="too many pixels"):
+        await _client(handler).render("<b>x</b>", width=1000, height=3000, scale=2.0)
+
+
+def test_max_css_height_keeps_the_output_inside_both_caps() -> None:
+    for width, scale in ((900, 2.0), (1600, 2.0), (320, 1.0), (MAX_SIDE, 1.0)):
+        height = max_css_height(width, scale)
+        out_w, out_h = round(width * scale), round(height * scale)
+        assert out_h <= MAX_SIDE
+        assert out_w * out_h <= MAX_PIXELS
