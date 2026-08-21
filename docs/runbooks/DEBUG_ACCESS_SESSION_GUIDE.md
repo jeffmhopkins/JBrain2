@@ -179,8 +179,10 @@ scripts/debug-connect.sh extra-args qwen3.8-27b-q4      # no args = clear, back 
 scripts/debug-connect.sh metrics
 
 # See the live LLM routing, then switch which model serves a task — no restart.
+# The provider is the model's BARE id. `local:gpt-oss-120b` is refused with a 422
+# ("unknown provider"); `llm` lists the ids that are accepted.
 scripts/debug-connect.sh llm
-scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
+scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high
 
 # Warm / evict a local model on the gateway.
 scripts/debug-connect.sh load gpt-oss-120b
@@ -193,7 +195,22 @@ scripts/debug-connect.sh raw GET /api/debug/whoami
 The `complete` response includes the **resolved `provider` and `model`**, so you
 always know which model produced the output you're iterating against. To test a
 specific model, switch its task's routing with `llm-set` first, then `complete`
-with that `--task`.
+with that `--task`. **Check that resolved `model` before you read anything into
+the output** — a routing change that did not take leaves `complete` answering
+from the previous model, and the reply looks perfectly normal.
+
+> **A completion LOADS whatever it routes to.** That is the whole hazard of this
+> pair of commands on a box that has hard-locked three times under memory
+> pressure: point a task somewhere by accident and the next `complete` pulls a
+> 60 GB model in on top of whatever is already resident. MEASURED 2026-08-21 —
+> twice, from one unread 422. `debug-connect.sh` now exits non-zero on any
+> non-2xx, so `llm-set … || exit` is a real guard; before that a refusal printed
+> like a success.
+>
+> **To stop the warm keeper reloading a big model while you work**, point
+> `agent.turn` at `qwen3.5-0.8b` — the keeper then keeps a ~1 GB model warm
+> instead. Pointing it at a cloud model does NOT work here: this box exposes only
+> local ids in `llm`, so any `provider:model` cloud spec is refused.
 
 ### A typical prompt-iteration loop
 
