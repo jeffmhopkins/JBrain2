@@ -32,7 +32,11 @@ class _FakeGateway:
         props: object = _DEFAULT,
         saved=(),
         restore_raises: BaseException | None = None,
+        slot_tokens: int | None = None,
     ):
+        # What `/slots` reports the interactive slot is holding. None = no /slots at all, the
+        # "we cannot tell" path. A number lets a test put somebody else's context in the slot.
+        self._slot_tokens = slot_tokens
         self._running = set(running)
         # llama-server's own validity check: a state file whose per-layer K/V type does not
         # match the running server is a hard 400, not a silent wrong answer. Modelled so a test
@@ -47,12 +51,21 @@ class _FakeGateway:
         )
         self._saved = set(saved)  # filenames that exist on the gateway's slot-save path
         self.actions: list[tuple[str, str]] = []  # (action, filename)
-        self.slots: list[int] = []  # slot index each action targeted
+        self.slot_ids: list[int] = []  # slot index each action targeted
         self.events: list[str] = []  # load/restore/save/prime, in the order they happened
         self.props_calls = 0  # how many times the slot target was derived
 
     async def running(self) -> set[str]:
         return set(self._running)
+
+    async def slots(self, served_model: str) -> list[dict[str, object]]:
+        if self._slot_tokens is None:
+            raise RuntimeError("no /slots on this build")
+        total = self._props.get("total_slots", 1) if isinstance(self._props, dict) else 1
+        return [
+            {"id": i, "n_prompt_tokens": self._slot_tokens if i == int(total) - 1 else 0}
+            for i in range(int(total))
+        ]
 
     async def load(self, served_model: str, *, warm_system=None, warm_tools=None) -> None:
         # The real load brings weights up and runs a one-token readiness probe. Passing no warm
@@ -72,7 +85,7 @@ class _FakeGateway:
 
     async def slot_action(self, served_model, slot_id, action, *, filename=None):
         self.actions.append((action, str(filename)))
-        self.slots.append(slot_id)
+        self.slot_ids.append(slot_id)
         self.events.append(action)
         if served_model not in self._running:
             # llama-server has no slots for a model it has not loaded, and the gateway refuses
@@ -460,7 +473,7 @@ async def test_the_prefix_is_saved_into_a_slot_that_exists_on_a_single_slot_mode
     assert await keeper.reconcile_once() is True
     assert [a for a, _ in gw.actions] == ["restore", "save"]
     # Every action targeted slot 0 — the only slot a single-slot server has.
-    assert gw.slots == [0, 0]
+    assert gw.slot_ids == [0, 0]
     # And the save actually landed, rather than being swallowed as "skipped".
     assert any(a == "save" for a, _ in gw.actions)
     assert gw._saved
@@ -473,7 +486,7 @@ async def test_the_prefix_still_uses_the_last_slot_when_a_second_one_is_configur
     gw = _FakeGateway(props={"build_info": "b1-abc", "chat_template": "T", "total_slots": 2})
     keeper = _keeper(gateway=gw, router=_FakeRouter("gpt-oss-120b"))
     assert await keeper.reconcile_once() is True
-    assert gw.slots and set(gw.slots) == {1}
+    assert gw.slot_ids and set(gw.slot_ids) == {1}
 
 
 def test_the_interactive_slot_is_the_last_one_and_degrades_to_zero() -> None:
@@ -514,7 +527,7 @@ async def test_a_cold_model_is_loaded_before_the_restore_so_the_disk_cache_can_f
     assert gw.events.index("restore") > gw.events.index("load")
     # A slot was computed from the ENGINE's own total_slots (2 in this fixture → the last one),
     # rather than guessed — which is the other half of why the restore can now land.
-    assert gw.slots and set(gw.slots) == {1}
+    assert gw.slot_ids and set(gw.slot_ids) == {1}
 
 
 async def test_a_cold_start_restores_a_saved_prefix_instead_of_prefilling_it() -> None:
@@ -841,3 +854,37 @@ async def test_the_tripwire_would_actually_fire(tmp_path: Path) -> None:
     assert "--swa-full" not in _VIA_PROPS | _DIGEST_BLIND
     keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=_FakeGateway())
     assert "--swa-full" in (await keeper._server_args("gpt-oss-120b") or ())
+
+
+# A saved file that does NOT hold the primed prefix is worse than no file: it is NAMED as the
+# prefix, so every later cold start restores it, pays the full prefill anyway, and keeps doing
+# so until something overwrites it. The feature silently inverts.
+
+
+async def test_a_slot_that_lost_the_prefix_is_not_saved() -> None:
+    """MEASURED 2026-08-21 on gpt-oss-120b: the keeper primed, then saved a slot holding
+    2,164 tokens against a ~36k prefix. That model serves `-np 1` while note.extract,
+    entity.disambiguate and fact.adjudicate all route to it, so jerv shares its single slot
+    with every background task and the prime is evicted between the prime and the save."""
+    gw = _FakeGateway(slot_tokens=2164)
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw)
+    assert await keeper.reconcile_once() is True
+    assert [a for a, _ in gw.actions] == ["restore"], "it saved somebody else's context"
+
+
+async def test_a_slot_that_still_holds_the_prefix_is_saved() -> None:
+    """The guard must not cost the feature its whole point. A slot holding the prefix saves
+    exactly as before."""
+    gw = _FakeGateway(slot_tokens=40_000)
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw)
+    assert await keeper.reconcile_once() is True
+    assert "save" in [a for a, _ in gw.actions]
+
+
+async def test_a_build_without_slots_still_saves() -> None:
+    """No `/slots`, no opinion. The check is an extra veto on a measured failure, never a new
+    precondition — a gateway that cannot answer must behave exactly as it did before."""
+    gw = _FakeGateway()  # slots() raises
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw)
+    assert await keeper.reconcile_once() is True
+    assert "save" in [a for a, _ in gw.actions]
