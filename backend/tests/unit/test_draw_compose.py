@@ -87,7 +87,16 @@ async def test_the_photo_is_never_sent_to_the_sidecar() -> None:
     await compose_png(_scene_with_html(), photo, _client(handler))
     assert len(seen) == 1
     assert seen[0]["transparent"] is True
-    assert set(seen[0]) == {"html", "width", "height", "transparent", "wait_ms", "scale"}
+    assert set(seen[0]) == {
+        "html",
+        "width",
+        "height",
+        "transparent",
+        "theme",
+        "pad",
+        "wait_ms",
+        "scale",
+    }
     serialized = __import__("json").dumps(seen[0]).encode()
     assert base64.b64encode(photo)[:32] not in serialized
     assert photo[:16] not in serialized

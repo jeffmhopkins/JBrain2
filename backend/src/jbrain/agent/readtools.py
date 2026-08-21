@@ -119,6 +119,12 @@ OPTIONAL_FETCH_IMAGE_TOOL = frozenset({"fetch_image"})
 # jerv's multi-image compare (VIDEO_IMAGE_TOOLS_PLAN.md), dropped when no vision router
 # is configured. Router-gated, NOT ComfyUI-gated — a vision read needs no image-gen.
 OPTIONAL_COMPARE_TOOL = frozenset({"compare_images"})
+# The standalone HTML render (AGENT_CANVAS_PLAN §3b): dropped when no htmlrender sidecar
+# is configured, since without it the tool has nothing to rasterize with. Deliberately NOT
+# in the model-gated set below — the canvas gate exists for GROUNDING coordinates, and a
+# render with no photograph under it has no coordinates to place wrong, so any model that
+# can write HTML may call this one.
+OPTIONAL_HTML_TOOL = frozenset({"render_html"})
 # The canvas pair (AGENT_CANVAS_PLAN.md): optional because the handlers are only wired
 # when the image/attachment stores exist, and because a box with no htmlrender sidecar
 # still gets the shape ops — the `html` op degrades with a note rather than vanishing.
@@ -792,6 +798,7 @@ def build_registry(
     fetch_image_handlers: dict[str, ToolHandler] | None = None,
     compare_handlers: dict[str, ToolHandler] | None = None,
     ocr_handlers: dict[str, ToolHandler] | None = None,
+    html_handlers: dict[str, ToolHandler] | None = None,
     canvas_handlers: dict[str, ToolHandler] | None = None,
     crop_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
@@ -894,6 +901,10 @@ def build_registry(
             # hallucination-free counterpart to analyze_image. Present only when the sidecar
             # is configured; otherwise dropped below (docs/plans/RAPIDOCR_PLAN.md).
             **(ocr_handlers or {}),
+            # jerv's standalone HTML render (`web`-gated, on-box): model-authored markup
+            # rasterized to an image card. Present only when the htmlrender sidecar is
+            # configured; otherwise its sidecar is dropped below.
+            **(html_handlers or {}),
             **(canvas_handlers or {}),
             **(crop_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
@@ -944,6 +955,7 @@ def build_registry(
             | OPTIONAL_FETCH_IMAGE_TOOL
             | OPTIONAL_COMPARE_TOOL
             | OPTIONAL_OCR_TOOL
+            | OPTIONAL_HTML_TOOL
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL

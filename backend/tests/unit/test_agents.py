@@ -102,6 +102,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "render_chart",
             "fetch_image",
             "compare_images",
+            "render_html",
             "canvas",
             "show_canvas",
             "crop_regions",

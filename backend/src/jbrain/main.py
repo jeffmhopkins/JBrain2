@@ -27,6 +27,7 @@ from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
+from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
@@ -903,6 +904,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ocr_handlers = build_ocr_handlers(
             app.state.rapidocr, app.state.blob_store, app.state.turn_attachments
         )
+        # jerv's standalone HTML render (AGENT_CANVAS_PLAN §3b): model-authored markup
+        # rasterized by the same egress-free sidecar the canvas `html` op uses, shown as
+        # an image card. Wired only when the sidecar is configured, so a box without one
+        # drops the tool from the registry rather than offering a render it cannot do.
+        html_handlers = (
+            build_html_handlers(
+                maker,
+                app.state.blob_store,
+                app.state.generated_image_repo,
+                app.state.llm_router,
+                app.state.htmlrender,
+            )
+            if app.state.htmlrender.configured
+            else None
+        )
         # jerv's canvas (docs/plans/AGENT_CANVAS_PLAN.md): mark up the owner's photo,
         # or sketch on a blank sheet, through a retained scene the model edits by id.
         # The `html` op renders through the egress-free htmlrender sidecar; with no
@@ -970,6 +986,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fetch_image_handlers=fetch_image_handlers,
             compare_handlers=compare_handlers,
             ocr_handlers=ocr_handlers,
+            html_handlers=html_handlers,
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,

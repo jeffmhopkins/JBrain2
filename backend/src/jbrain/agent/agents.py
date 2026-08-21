@@ -153,6 +153,11 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Compare two or more chat images (grabbed frames, fetched web images, attachments)
         # and show the owner a side-by-side (VIDEO_IMAGE_TOOLS_PLAN.md).
         "compare_images",
+        # Write a page in HTML+CSS and show it as an image card (AGENT_CANVAS_PLAN §3b) —
+        # a comparison table, a spec sheet, a step card: the shapes prose is bad at. NOT
+        # model-gated like the canvas pair: there is no photograph under it, so there are
+        # no grounding coordinates to place wrong. Dropped when no htmlrender sidecar.
+        "render_html",
         # Mark up an image or sketch a figure: a retained scene the model edits by id,
         # rendered server-side (AGENT_CANVAS_PLAN.md). HIDDEN unless the turn's model is
         # a qualified vision model — see CANVAS_MODELS in readtools; on a text-only pick

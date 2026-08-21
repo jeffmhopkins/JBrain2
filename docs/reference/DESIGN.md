@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-20
+> **Status:** Living · **Last verified:** 2026-08-21
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1424,6 +1424,30 @@ Both are **photo-only**. On a blank sheet they are actively harmful — a dark p
 dark text is worse contrast than no plate — so the renderer paints neither, and `tone: auto`
 resolves to near-black instead of rose. A filled rect stays an ~18% tint, never opaque,
 because the point of boxing a thing in a photo is to keep seeing it.
+
+#### `render_html` renders — one frame, not two
+
+`render_html` (`docs/plans/AGENT_CANVAS_PLAN.md` §3b) reuses the same card again: model-authored
+HTML + CSS goes to the egress-free `htmlrender` sidecar and comes back as a `generated_images`
+row stamped `provenance="html"`, captioned "rendered page", no seed line. **No new component, no
+new payload shape** — and, as with the canvas, the model authors no markup that reaches the DOM.
+The PWA receives pixels, so I-1 holds by construction rather than by validation.
+
+Two rules exist because the app already frames what it is handed, and a render that carries its
+own frame reads as a bug:
+
+- **The page ground is a token, not a model choice.** The sidecar knows two grounds by NAME,
+  `dark` and `light`, and they are exactly this sheet's `--surface` values. The card paints
+  `--surface` behind the image, so a matching ground makes the render sit flush; a ground merely
+  *close* to it draws a visible second rectangle. A colour string is never accepted for it.
+- **The image is measured, not padded to a guess.** Height is omitted by default and the page is
+  shot at its own content height, so a short card is short. A guessed height leaves a band of
+  empty ground inside the frame, which is the same second-rectangle failure by another route. The
+  gutter is the page's (`pad`, default 28) so the markup needs no padded outer `<div>` either.
+
+The tool contract states the matching rule for the markup: no outer border, panel, radius or
+shadow around the whole page. Inside that, the render is free — it is an image, and unlike the
+canvas layer above it sits on a flat known ground, so it needs neither halo nor backing plate.
 
 ### `video_analysis` tool-view (settled in a GUI review — binding mock: `docs/mocks/analyze-video-approved.html`)
 
