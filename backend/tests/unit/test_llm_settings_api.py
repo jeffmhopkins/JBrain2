@@ -914,7 +914,8 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    assert body["victims"][0]["gb"] == 76.5  # incl. the 8 GB in-RAM prompt cache
+    # 68.5, not 76.5: the gateway serves `-cram 0`, so there is no in-RAM prompt cache term.
+    assert body["victims"][0]["gb"] == 68.5
     # 128 GB * (1 - 0.15). Was asserted at 96.0 (i.e. 0.25) because the harness above
     # omitted the fraction; production has always used the settings value.
     assert body["ceiling_gb"] == 108.8
