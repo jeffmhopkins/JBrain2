@@ -387,6 +387,17 @@ class LocalGatewayClient:
                 )
                 resp.raise_for_status()
                 parsed = resp.json()
+        except httpx.HTTPStatusError as exc:
+            # Carry llama.cpp's OWN words. httpx's string is only "Client error '400 Bad
+            # Request' for url …", and for a slot restore the status alone is useless: a
+            # missing file on a fresh box and `mismatched key type (8 != 1, layer 0)` from a
+            # state file the serving flags have outgrown are both 400, and they mean opposite
+            # things — the first is the system working, the second says the fingerprint failed
+            # to rotate and every restore from here on pays a cold prefill. MEASURED
+            # 2026-08-21: `warm_keeper.slot_restore_missed` logged a bare 400 for gpt-oss and
+            # the reason had to be dug out of llama-server's own log.
+            detail = (exc.response.text or "").strip().replace("\n", " ")[:300]
+            raise LocalGatewayError(f"{exc} — {detail}" if detail else str(exc)) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
@@ -711,7 +722,30 @@ class LocalGatewayClient:
             await self._warm(served_model, system=warm_system, tools=warm_tools)
             return
 
-        # PRE-FLIGHT, then WATCH — for every caller, with no way to opt out. The projection
+        # ALREADY RESIDENT means there is nothing to admit, so the pre-flight must not run.
+        # It samples device memory that already contains THIS model's own footprint and then
+        # asks for room for a second copy of it. MEASURED 2026-08-21: `POST /prime` on a
+        # resident gpt-oss-120b answered 500 — "needs ~68.5 GB but only 34.5 GB is safely
+        # available" — on a box holding exactly one healthy model and 105 GiB free. Warming a
+        # model that is already up is not a load and cannot need room for one.
+        #
+        # `warm_keeper` already worked around this at ITS call site (see the double-load note
+        # there), which left every other caller carrying it: the owner's Load button and the
+        # debug console's prime both reach here through `gateway_load`/`gateway_prime`. The
+        # check belongs in the one place all of them pass through.
+        #
+        # Read AFTER `config_regen` on purpose: a config change reloads llama-swap and kills
+        # the running server, so a model resident a moment ago may be gone — and then this
+        # reads False and the guard runs, which is correct.
+        if served_model in await self.running():
+            try:
+                await _do_load()
+            finally:
+                self._drop_weights_cache(model)
+            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            return
+
+        # PRE-FLIGHT, then WATCH — for every caller with something to admit. The projection
         # includes the VISION PROJECTOR BALLOON (`local_catalog.load_footprint_gb`): an
         # mmproj model pins tens of GB of GTT at load on an AMD iGPU (llama.cpp #27146), and
         # every freeze this box took was a projector-carrying model whose weights+KV

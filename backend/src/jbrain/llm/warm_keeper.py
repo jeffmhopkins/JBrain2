@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 
 import structlog
@@ -80,6 +81,11 @@ def _interactive_slot(total_slots: object) -> int:
 # The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
 # is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
 AGENT_TURN_TASK = "agent.turn"
+
+# Rough chars-per-token for the prefix-length estimate. Only ever used to separate "the slot
+# still holds our ~36k prefix" from "it holds 2k of something else", so precision is worthless
+# here — `llm.prefill` carries the calibrated ratio for the places that need one.
+_CHARS_PER_TOKEN = 4
 
 
 class WarmKeeper:
@@ -265,7 +271,7 @@ class WarmKeeper:
         if not restored:
             # Only write when we actually paid for the prefill. Saving after a restore would
             # rewrite a byte-identical file every tick for nothing.
-            await self._try_save(served, target)
+            await self._try_save(served, target, system, tools)
         return True
 
     async def _server_args(self, served_model: str) -> tuple[str, ...] | None:
@@ -372,11 +378,71 @@ class WarmKeeper:
         )
         return True
 
-    async def _try_save(self, served_model: str, target: tuple[str, int] | None) -> None:
+    async def _slot_holds_the_prefix(
+        self, served_model: str, slot: int, system: str, tools: list[LlmTool]
+    ) -> bool | None:
+        """Whether slot `slot` currently holds the jerv prefix — or None when we cannot tell.
+
+        MEASURED 2026-08-21 on gpt-oss-120b: the keeper primed, and the slot it then saved held
+        **2,164 tokens** against a ~36k prefix. That model serves `-np 1` while `note.extract`,
+        `entity.disambiguate` and `fact.adjudicate` all route to it, so jerv shares its single
+        slot with every background task and the prime is evicted between the prime and the
+        save. The saved file was somebody else's context.
+
+        That file is worse than no file. It is named as if it were the prefix, so every later
+        cold start restores 2 KB of unrelated KV, pays the full prefill anyway, and keeps doing
+        so until something happens to overwrite it — the feature silently inverted.
+
+        `n_prompt_tokens` is the slot's true total once it settles (`llm.prefill` documents the
+        busy-state caveat; a slot we are about to save is idle). The comparison is deliberately
+        coarse — half of a character-derived estimate — because the failure is an order of
+        magnitude, not a margin: 2k against 36k. None on any doubt, and the caller then saves,
+        which is the behaviour that shipped."""
+        expected = (len(system) + len(json.dumps(openai_tools(tools)))) // _CHARS_PER_TOKEN
+        try:
+            slots = await self._gateway.slots(served_model)
+        except Exception as exc:  # noqa: BLE001 — no /slots, no opinion
+            log.info("warm_keeper.slot_probe_failed", model=served_model, error=str(exc))
+            return None
+        held = next(
+            (s.get("n_prompt_tokens") for s in slots if s.get("id") == slot),
+            None,
+        )
+        if not isinstance(held, int) or expected <= 0:
+            return None
+        if held * 2 >= expected:
+            return True
+        log.warning(
+            "warm_keeper.slot_lost_the_prefix",
+            model=served_model,
+            slot=slot,
+            held_tokens=held,
+            expected_tokens=expected,
+        )
+        return False
+
+    async def _try_save(
+        self,
+        served_model: str,
+        target: tuple[str, int] | None,
+        system: str,
+        tools: list[LlmTool],
+    ) -> None:
         """Persist the just-primed slot so the next cold start skips the prefill."""
         if target is None:
             return
         name, slot = target
+        if await self._slot_holds_the_prefix(served_model, slot, system, tools) is False:
+            # Writing this would publish someone else's context under the prefix's name, and
+            # nothing would correct it until the next successful prime. Skipping costs a cold
+            # prefill next boot — the same cost as never having had the file.
+            log.info(
+                "warm_keeper.slot_save_skipped",
+                model=served_model,
+                slot=slot,
+                error="slot no longer holds the primed prefix",
+            )
+            return
         try:
             result = await self._gateway.slot_action(served_model, slot, "save", filename=name)
         except Exception as exc:  # noqa: BLE001 — no --slot-save-path, no disk, no permission

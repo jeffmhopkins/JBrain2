@@ -215,6 +215,18 @@ did nothing degrades to a slow prime, never a wrong answer.
 > for every model, which rewrote ~2 GB, orphaned the previous file, and made the interactive
 > model pay a ~100 s cold prefill for an unchanged prefix.
 >
+> **The keeper refuses to save a slot that no longer holds the prefix.** MEASURED 2026-08-21
+> on gpt-oss-120b: the prime landed, and the slot saved a moment later held **2,164 tokens**
+> against a ~36k prefix. That model serves `-np 1` while `note.extract`, `entity.disambiguate`
+> and `fact.adjudicate` all route to it, so jerv shares its single slot with every background
+> task and the prime is evicted between the prime and the save. The file that results is worse
+> than no file: it is *named* as the prefix, so every later cold start restores 2 KB of
+> unrelated KV, pays the full prefill anyway, and keeps doing so until something overwrites it.
+> The keeper now reads `/slots` first and skips the save when the slot has lost the prefix —
+> costing a cold prefill next boot, which is what no file costs. `-np 2` is the standing fix
+> for the collision itself (interactive prefix in the last slot, background traffic in slot 0);
+> it doubles `-c`, so it is a memory decision, not a free one.
+>
 > **Orphans are reclaimed by the update** (`deploy/prune-kv-state.sh`, run from
 > `update-inner.sh`), which keeps the newest 2 files per model and deletes the rest. The update
 > is where orphans come from — a rebuilt llama.cpp moves `build_info` — and it is the only

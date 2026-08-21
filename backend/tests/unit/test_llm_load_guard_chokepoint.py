@@ -612,3 +612,60 @@ def test_a_probe_less_load_reports_nothing_rather_than_zero(
 
     asyncio.run(run())
     assert "local_gateway.footprint_measured" not in events
+
+
+@pytest.mark.anyio
+async def test_warming_an_already_resident_model_is_not_asked_to_make_room_for_it() -> None:
+    """The pre-flight samples device memory that ALREADY holds this model's footprint, then
+    asks for room for a second copy of it. So the fuller the box is with the very model being
+    warmed, the likelier it is to refuse to warm it.
+
+    MEASURED 2026-08-21: `POST /api/debug/llm/local-models/gpt-oss-120b/prime` on a RESIDENT
+    gpt-oss-120b answered 500 — "needs ~68.5 GB but only 34.5 GB is safely available" — on a
+    box holding exactly one healthy model with 105 GiB free. `warm_keeper` had worked around
+    this at its own call site, which left every other caller carrying it: the owner's Load
+    button (`gateway_load`) and the debug console's prime (`gateway_prime`) both land here.
+
+    Warming a model that is already up is not a load and cannot need room for one."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    room = local_catalog.load_footprint_gb(model)
+    # Exactly the state a healthy resident model produces: its own footprint accounted for,
+    # and nowhere near enough left for a second copy. The old code refused here.
+    probe = _StubProbe(_mem(124.0 - room + 1.0))
+
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "gpt-oss-120b"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe
+    )
+    await gateway.load("gpt-oss-120b")  # must not raise
+    # And it really did warm — the point of the call is the prefill, not a no-op return.
+    assert any(p.endswith("/v1/chat/completions") for p in seen)
+
+
+@pytest.mark.anyio
+async def test_a_model_that_is_not_resident_is_still_admitted_first() -> None:
+    """The escape hatch above must not become a way to skip the guard. A COLD model on the
+    same too-full box is still refused — that is the freeze this whole chokepoint exists to
+    prevent, and it is one `running()` reading away from the case that must pass."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    probe = _StubProbe(_mem(124.0 - local_catalog.load_footprint_gb(model) + 1.0))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "something-else"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("gpt-oss-120b")

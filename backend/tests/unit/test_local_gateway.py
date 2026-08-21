@@ -661,3 +661,34 @@ async def test_a_config_regen_that_changes_nothing_records_no_eviction(
     )
     await client.load("qwen3-vl-30b-a3b")
     assert not [r for r in recorded if r.startswith("model_unload")], recorded
+
+
+async def test_a_failed_slot_action_carries_llama_cpp_s_own_words() -> None:
+    """A slot restore's STATUS is not a diagnosis. "no such file" on a fresh box and
+    `mismatched key type (8 != 1, layer 0)` from a state file the serving flags have outgrown
+    are both 400, and they mean opposite things: the first is the system working, the second
+    says the name failed to rotate and every restore from here on pays a ~100 s cold prefill.
+
+    MEASURED 2026-08-21: `warm_keeper.slot_restore_missed` logged a bare "400 Bad Request" for
+    gpt-oss-120b and the reason had to be dug out of llama-server's own log — httpx's string
+    carries the status and the URL, never the body."""
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "gpt-oss-120b"}]})
+        return httpx.Response(400, text="mismatched key type (8 != 1, layer 0)")
+
+    with pytest.raises(LocalGatewayError, match="mismatched key type"):
+        await _client(handle).slot_action("gpt-oss-120b", 0, "restore", filename="x.bin")
+
+
+async def test_a_body_less_failure_still_reports_the_status() -> None:
+    """Carrying the body must not LOSE the status when there is no body to carry."""
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "gpt-oss-120b"}]})
+        return httpx.Response(501, text="")
+
+    with pytest.raises(LocalGatewayError, match="501"):
+        await _client(handle).slot_action("gpt-oss-120b", 0, "save", filename="x.bin")
