@@ -94,7 +94,7 @@ not, and prints whole-box memory as though it were one model's need.
 
 ## Waves
 
-### L0 — Make the evidence base true ◻️
+### L0 — Make the evidence base true ✅
 
 `MODEL_ACCESS_INVENTORY.md` is the declared sole source for this work and it is stale: line
 numbers from a different tree, and at least five claims `origin/main` contradicts (two naked
@@ -103,6 +103,22 @@ loads it reports as open are closed; a `_default_residency` it cites no longer e
 never listed — `local_gateway`'s three internal short circuits, `state_of`/`_note_not_ready`,
 `dbless_coordinator`, `host_settings`'s TTM read — and record the **fifteen conflations** where
 one value answers two questions. Nothing else in this plan is trustworthy until this lands.
+
+**Done 2026-08-22.** Audited by a cold pass told to falsify rather than confirm. Findings, in
+the doc's own header and inline: the `Last verified` date was bumped by a commit whose line
+numbers describe its PARENT, so the rule "every row carries a file:line and a verbatim quote"
+was broken the day it was written; **123 of 503 citation pairs (24%) pointed at the wrong
+line** after four commits, though the quotes themselves were nearly all still right; and eight
+rows were factually contradicted, three of which reported gates as missing that had since been
+closed — the most dangerous kind, because a plan built on them re-fixes fixed code while the
+real holes go unlisted.
+
+The rows are corrected inline rather than deleted (the evidence is still good; the addressing
+rotted), and §G adds the sites the document never listed at all — including **G1a**, the
+gateway's own already-resident branch, where a load targeting a mid-stop model skips BOTH the
+device pre-flight and the watchdog and then makes llama-swap launch the process. That is the
+most consequential single finding in the audit and it is downstream of residency, so no
+residency-layer fix reaches it.
 
 *Risk:* none — documentation. *Test:* the docs gate.
 

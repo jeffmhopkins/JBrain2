@@ -20,6 +20,23 @@
 > plan lands, the rows it changed get re-verified and `Last verified` bumped. A row whose quote no
 > longer matches the file is a bug in this document, not a detail.
 
+> ⚠️ **READ THIS BEFORE CITING ANYTHING BELOW. Audited 2026-08-22 by a cold pass told to
+> falsify, not confirm.** The rule above was violated on the day it was written. `Last verified`
+> was bumped by `be1961a`, but the line numbers throughout describe **`be1961a^`, that commit's
+> parent** — and `be1961a` itself edited `residency.py`, `local_gateway.py`, `llm_settings.py`
+> and `worker.py`, fixing several defects this document still reported as live. Four further
+> commits have landed since.
+>
+> Measured drift at the time of the audit: **123 of 503 `file:line` + quote pairs pointed at the
+> wrong line (24%)**. The quotes were almost all still correct; only the addressing had rotted.
+> Eight rows were factually contradicted by the code and are marked inline below
+> (**WRONG WHEN WRITTEN**, **FIXED, and this row is stale**, **CORRECTED**, **DELETED**).
+>
+> **So: trust the quotes, distrust the line numbers, and re-grep before you cite.** A row that
+> says a gate is missing is the most dangerous kind here — three of the eight said exactly that
+> about gates which had since been closed, and a plan built on them would re-fix fixed code while
+> the real holes went unlisted. The sites this document never listed at all are in §G.
+
 ## The five consumers
 
 | # | consumer | reached via | notes |
@@ -42,7 +59,7 @@ plans. Each is a place where a reader who trusts the prose reaches the wrong con
 |---|---|---|
 | `backend/src/jbrain/config.py:392-393` | whisper is *"served by the same llama-swap gateway the local-llm profile runs"* | a separate llama-swap in the `tts-stt` container on `:8080`, separate models dir (`deploy/docker-compose.yml:492`, `deploy/tts-stt/entrypoint.sh:12`); all six whisper clients are constructed bare — no `gpu_probe`, no `models_dir`, no `config_regen` |
 | repo docstrings referring to gateway TTL | the gateway TTL-unloads an idle model | true for **whisper only** (`ttl: 300`, `scripts/whisper-setup.sh:110`). `llama_swap_config.py` emits no `ttl`/`globalTTL`; llama-swap's `GlobalTTL` defaults to `0`, which gates the TTL goroutine off. On the main pool the app is the sole evictor |
-| the commit that added `_global_load_lock` | "box-wide" | `local_gateway.py:151` is an `asyncio.Lock()`; the file itself says *"Per PROCESS, not per box."* |
+| the commit that added `_global_load_lock` | "box-wide" | `local_gateway.py` defines `_global_load_lock` as an `asyncio.Lock()` (the cited line pointed at the comment above it); the file itself says *"Per PROCESS, not per box."* |
 | `CODE_MODE_HOLD_KEY = "code_mode_hold_name"` | singular name | stores a **list** |
 
 ## §E — Live box state, read 2026-08-22
@@ -116,7 +133,7 @@ Three mechanisms that should each have prevented this did not:
    guarded it — consistent with the llama-swap load-on-request path (§A.5, I1).
 
 **Cause not established.** A stale residency read is consistent with all three — `running()`
-includes `stopping` models and `_parse_running` discards the state (§A.5), so a model on its way
+includes `stopping` models. **CORRECTED 2026-08-22:** the state is NOT discarded — `running()` parses it via `_parse_running_states`, caches it, and exposes it as `state_of`, a REQUIRED member of the `LocalGateway` Protocol. `_parse_running` still exists but is dead in `backend/src`. What remains true is that every BEHAVIOURAL consumer branches on the bare name set, so a model on its way
 out satisfies the precondition. That is a hypothesis. The reproduction is cheap: unload
 `gpt-oss-120b`, wait for the top of an hour with mail in the inbox, observe whether triage defers.
 
@@ -155,7 +172,7 @@ preserved verbatim below.
 | 6 | `RESERVE_GIB` | 16 | `strix-halo-host-setup.sh:57` |
 | 6b | same, hardcoded | `16 * 1024 * 1024` | `update-inner.sh:627` |
 | 7 | `HOST_RESERVE_GIB` | 16 | `host_settings.py:35` |
-| 8 | `CACHE_RAM_GB` | 8.0 | `local_catalog.py:95` |
+| 8 | ~~`CACHE_RAM_GB`~~ | ~~8.0~~ | **WRONG WHEN WRITTEN.** `local_catalog.py` has `CACHE_RAM_GB = 0.0` — *"ZERO because the gateway now serves `-cram 0`"* — changed in #1185, which had already landed. So this list is six live budgets, not eight. |
 
 ### D3 — the smoke test projects a window the gateway does not serve
 
@@ -345,7 +362,7 @@ process inside the `tts-stt` container, with a config written by a shell script,
 
 Five `LocalGatewayClient(settings.whisper_url)` constructions exist (main.py:799, 839,
 861; worker.py:627, 646, 664). They are marked **Gateway B** in the table and never touch
-Gateway A's residency budget, locks, or gpu_probe (none is passed a `gpu_probe`,
+Gateway A's residency budget, locks, or gpu_probe (there are SIX such constructions, not five as an earlier revision of this section said; none is passed a `gpu_probe`,
 `config_regen`, `windows_loader`, `slots_loader` or `models_dir`).
 
 ---
@@ -363,8 +380,8 @@ same function or its immediate caller — quoted.
 | L1 | `backend/src/jbrain/llm/residency.py:533` | `            await self._gateway.load(served_model)` | `self._gateway` ← ctor arg; `residency.py:177` `        self._gateway = gateway`. Instances: api `main.py:429-430` `app.state.residency = ResidencyCoordinator(` / `            app.state.local_gateway,`; worker `worker.py:539-540` `    residency = ResidencyCoordinator(` / `        llm_gateway,`; default `router.py:882-891` | Same function's caller `_ensure_room_core`: `residency.py:493` `        self._refuse_if_over_box(plan)  # raises before we evict anything` and `residency.py:505-506` `        if load_target and not plan.already_resident:` / `            await self._guarded_load(served_model, plan.target_gb)`. Reached only from `ensure_room` slow path, `residency.py:479-480` `        async with self._box_locked():` / `            await self._ensure_room_core(served_model, load_target=True)` | api + worker (both construct a coordinator) |
 | L2 | `backend/src/jbrain/llm/residency.py:645` | `                await self._gateway.load(served)` (inside `_restore`) | same as L1 | Not `ensure_room`/`free_room`. In-function gates quoted verbatim: `residency.py:601-603` `        if not await self._auto_restore():` / `            log.info("residency.restore_disabled", displaced=sorted(self._displaced))` / `            return`; `residency.py:609-610` `        if await self._held_names():` / `            return`; `residency.py:634-635` `            if used + fp > ceiling:` / `                continue  # no room without evicting a resident model — leave it for later`; and the suppression `residency.py:636-637` `            with (` / `                contextlib.suppress(LocalGatewayError, gpu_guard.GpuBudgetError),` | api (only `main.py` fires `schedule_restore`; worker comment `worker.py:537` `    # No schedule_restore here: a background job has no end-of-turn steady state to drift`) |
 | L3 | `backend/src/jbrain/llm/warm_keeper.py:182` | `                    await self._gateway.load(served)` | `self._gateway` ← kwarg; `warm_keeper.py:66` `        self._gateway = gateway`; wired `main.py:1164-1165` `        app.state.warm_keeper = WarmKeeper(` / `            gateway=app.state.local_gateway,` | `warm_keeper.py:180-181` `                await self._router.admit_local_load(served)` / `                if served not in await self._gateway.running():`. Also `warm_keeper.py:127-128` `        if held and served not in held:` / `            return True  # code mode owns the box; never load outside its reserved set` and `warm_keeper.py:136-140` `            if not await self._auto_restore_allowed():` … `                return True` | api only (`main.py:1176` `        warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())`) |
-| L4 | `backend/src/jbrain/api/llm_settings.py:1519` | `            await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)` (in `gateway_load`) | function param `gateway: LocalGatewayClient` (`llm_settings.py:1492`). Callers pass: owner route `llm_settings.py:1050` `    return await gateway_load(model_id, settings, gateway, registry=registry, liveness=liveness)` with `gateway: LocalGatewayDep` → `llm_settings.py:119-120` `def get_local_gateway(request: Request) -> LocalGatewayClient:` / `    return cast(LocalGatewayClient, request.app.state.local_gateway)`; debug route `debug.py:1366-1369` `    return await llm_settings.gateway_load(` … `        _gateway(request),` → `debug.py:102-103` `def _gateway(request: Request) -> Any:` / `    return request.app.state.local_gateway` | Owner route only: `llm_settings.py:1045-1049` `    if residency is not None:` / `        try:` / `            await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible` / `        except ResidencyError as exc:` / `            raise HTTPException(status_code=409, detail=str(exc)) from exc`. The debug route (`debug.py:1361-1372`) calls `gateway_load` with no residency argument and no `free_room`/`ensure_room` line in the function body; `gateway_load`'s own body from `llm_settings.py:1509` to `1519` contains no residency call. | api |
-| L5 | `backend/src/jbrain/api/llm_settings.py:1891` | `        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)` (in `gateway_prime`) | function param `gateway: LocalGatewayClient` (`llm_settings.py:1875`); sole caller `debug.py:1492-1495` `    return await llm_settings.gateway_prime(` / `        model_id,` / `        settings,` / `        _gateway(request),` | none in `gateway_prime` (body `llm_settings.py:1884-1893` contains `    model = _require_provisioned(settings, model_id)` and no residency call) | api |
+| L4 | `backend/src/jbrain/api/llm_settings.py:1519` | `            await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)` (in `gateway_load`) | function param `gateway: LocalGatewayClient` (`llm_settings.py:1492`). Callers pass: owner route `llm_settings.py:1050` `    return await gateway_load(model_id, settings, gateway, registry=registry, liveness=liveness)` with `gateway: LocalGatewayDep` → `llm_settings.py:119-120` `def get_local_gateway(request: Request) -> LocalGatewayClient:` / `    return cast(LocalGatewayClient, request.app.state.local_gateway)`; debug route `debug.py:1366-1369` `    return await llm_settings.gateway_load(` … `        _gateway(request),` → `debug.py:102-103` `def _gateway(request: Request) -> Any:` / `    return request.app.state.local_gateway` | Owner route only: `llm_settings.py:1045-1049` `    if residency is not None:` / `        try:` / `            await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible` / `        except ResidencyError as exc:` / `            raise HTTPException(status_code=409, detail=str(exc)) from exc`. **FIXED, and this row is stale.** The debug route now passes `residency=getattr(request.app.state, "residency", None)`, and `gateway_load`'s body begins `await _admit_or_409(residency, model.served_model)` with `residency` a REQUIRED keyword — the admission moved INSIDE the shared helper precisely so a route cannot omit it (commit `2f9904f`). | api |
+| L5 | `backend/src/jbrain/api/llm_settings.py:1891` | `        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)` (in `gateway_prime`) | function param `gateway: LocalGatewayClient` (`llm_settings.py:1875`); sole caller `debug.py:1492-1495` `    return await llm_settings.gateway_prime(` / `        model_id,` / `        settings,` / `        _gateway(request),` | **FIXED, and this row is stale.** `gateway_prime` now calls `await _admit_or_409(residency, model.served_model)` immediately after `_require_provisioned`, and its sole caller passes `residency=` (commit `2f9904f`). | api |
 | L6 | `backend/src/jbrain/api/jcode.py:168` | `        await gateway.load(served)` (in `_warm_model`) | function param `gateway: LocalGateway` (`jcode.py:145`); caller `jcode.py:180-191` `    gateway = getattr(request.app.state, "local_gateway", None)` … `    task = asyncio.create_task(_warm_model(gateway, served, residency))` | none in `_warm_model` (`jcode.py:153-168`); the in-function guard is `jcode.py:158-159` `        if served in resident:` / `            return` and the preceding unload loop `jcode.py:162-165`. `residency` is used only for `jcode.py:167` `            residency.note_evicted(evicted)  # type: ignore[attr-defined]` | api (background task) |
 | L7 | `backend/src/jbrain/llm/smoketest.py:237` | `        await gateway.load(smallest.served_model)` | `gateway: SmokeGateway` param (`smoketest.py:200`); constructed `cli.py:225-235` `    gateway = LocalGatewayClient(` / `        settings.local_llm_url,` / `        gpu_probe=gpu_guard.probe_for(settings),` / `        windows_loader=_windows,` / `        slots_loader=_slots,` / `        models_dir=settings.local_models_dir,` — a **fresh client**, not `app.state` | `smoketest.py:234-235` `    if not await _room_for(smallest, gateway, meminfo, messages):` / `        return False, messages` (a MemAvailable check, `smoketest.py:147-184`) — not residency | CLI (`cli.py:292-293` `    if args.command == "local-llm-smoketest":` / `        return asyncio.run(_local_llm_smoketest())`), run by deploy `update-inner.sh:695` `        python -m jbrain.cli local-llm-smoketest; then` |
 
@@ -462,7 +479,7 @@ The unload chokepoint itself:
 
 | # | file:line | verbatim | instance | process |
 |---|---|---|---|---|
-| A1 | `backend/src/jbrain/llm/router.py:359-361` | `    async def _admit_local(self, provider: str, model: str) -> None:` / `        if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:` / `            await self._residency.ensure_room(model)` | `self._residency` ← ctor `router.py:353` `        self._residency = residency`; api `main.py:478` `            residency=app.state.residency,`; worker `worker.py:570` `        residency=residency,`; fallback `router.py:857-861` `        residency=(` / `            residency` / `            if residency is not None` / `            else _default_residency(settings, local_windows_loader)` / `        ),` | api + worker |
+| A1 | `backend/src/jbrain/llm/router.py:359-361` | `    async def _admit_local(self, provider: str, model: str) -> None:` / `        if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:` / `            await self._residency.ensure_room(model)` | `self._residency` ← ctor `router.py:353` `        self._residency = residency`; api `main.py:478` `            residency=app.state.residency,`; worker `worker.py:570` `        residency=residency,`; fallback `router.py:857-861` `        residency=(` / `            residency` / `            if residency is not None` / `            else _default_residency (**DELETED** — `build_router` now takes `residency` as a required keyword-only argument; the fallback that made a silently weaker gate is gone, commit `c76288f`)(settings, local_windows_loader)` / `        ),` | api + worker |
 | A2 | `backend/src/jbrain/llm/router.py:619` | `        await self._admit_local(provider, model)` (in `complete`) | as A1 | api + worker |
 | A3 | `backend/src/jbrain/llm/router.py:696` | `        await self._admit_local(provider, model)` (in `converse`) | as A1 | api + worker |
 | A4 | `backend/src/jbrain/llm/router.py:747` | `        await self._admit_local(provider, model)` (in `converse_stream`) | as A1 | api + worker |
@@ -3781,3 +3798,83 @@ CLI invocations (`grep -rn "jbrain.cli" deploy scripts supervisor/src`).
    controls or cloud references.
 6. **`docs/mocks/*.html` and `docs/archive/**`** cloud matches — enumerated by command C5 but
    not individually quoted.
+
+---
+
+# §G — Sites this inventory never listed
+
+> Added 2026-08-22 from a cold falsification pass. Everything here is absent from §A–§F, and
+> two entries are the most consequential findings in the document. Cited by function name
+> rather than line number, deliberately: §A's numbers rotted 24% in four commits, and a name
+> survives a refactor that a number does not.
+
+## G1 — The gateway's OWN already-resident short circuits
+
+§A's call-site table tracks residency's four short circuits and none of `local_gateway`'s
+three. They are downstream of residency and **cannot be fixed there**:
+
+| where | the test | what it skips |
+|---|---|---|
+| `_load_and_warm`'s already-resident branch | `if served_model in await self.running():` | **`refuse_if_no_device_room` AND `guarded_load`, both** — then calls `_do_load()`, whose `/upstream/<model>/health` GET makes llama-swap launch the process |
+| the queued-load join in `load` | `if queued and served_model in await self.running():` | returns "already loaded" and records a `MODEL_LOAD` span for a load that did not happen |
+| `_require_resident` (diagnostic reads) | `if served_model not in await self.running():` | guards `props`/`slots`/`metrics`; its own docstring says reaching them on a cold model *"froze this host to a power cycle"* |
+
+**G1a is the hole.** `running()` lists a model llama-swap is STOPPING. So a load targeting a
+mid-stop model takes the branch written on the premise that *nothing will be allocated* — and
+allocates the entire model, with no pre-flight and no watchdog. This is the same window
+`residency._note_if_not_ready` was added to measure; nobody traced it down to the gateway's own
+short circuit. Seven already-resident short circuits exist across the two layers and all seven
+read the same state-blind set.
+
+## G2 — Loads that run outside the cross-process box lock
+
+Only `ensure_room`'s slow path holds `_box_locked()` across its load. Outside it: the owner's
+Load button, the debug prime, `_restore`, `jcode._warm_model`, the warm-keeper fallback, and
+`smoketest`. `_restore` is the likeliest instantiator — it fires at the end of every displaced
+turn, aims at exactly the memory a concurrent evict just freed, and takes its budget snapshot
+outside any lock. See `../plans/LOCAL_MODEL_LEDGER_PLAN.md` L1 item 5 for why this is recorded
+rather than fixed, and for the measurement (inconclusive: no worker loads in the window).
+
+A non-memory hazard of the same gap: `gateway.load` calls `_config_regen`, and a config change
+makes llama-swap reload, **killing every running llama-server**. Run outside the lock, the
+owner's Load can therefore destroy a model the worker admitted and loaded *under* it.
+
+## G3 — A fourth budget, and it is the one with teeth
+
+§3's "eight uncoordinated budgets" (six, after the `CACHE_RAM_GB` correction) omits
+`host_settings.HOST_RESERVE_GIB = 16` — what the host script reserves when deriving
+`ttm.pages_limit`. It is a **kernel-level** bound on the same physical pool, set outside the
+app, unreconciled with the others. `gpu_guard` records that the box currently sets
+`ttm.pages_limit` to ~100% of RAM, i.e. **the only bound with enforcement teeth is disabled in
+practice**.
+
+Related: `MIN_FREE_GTT_GB` is subtracted from the device headroom *and* from the host headroom
+inside one function, so it is also a second host-RAM reserve stacked on residency's fraction —
+one constant answering two different physical questions.
+
+## G4 — Two `/proc/meminfo` readers with different formulas
+
+`host_metrics.read_memory_gb` returns `(total, total - (MemFree + SReclaimable))`;
+`smoketest.mem_available_gb` returns `(MemFree + SReclaimable)` directly, via its own parser.
+Same semantics, two implementations, no shared helper — they agree by maintenance, not
+construction. `smoketest`'s keeps a name that no longer describes what it reads.
+
+## G5 — The warm phase runs outside the watchdog
+
+`guarded_load` returns, and only then does `_load_and_warm` call `_warm(...)` — measured in
+that file at **118 s of a 198 s gpt-oss-120b load**. So ~60% of a cold load allocates KV and
+graph-capture buffers with nothing watching for a runaway.
+
+## G6 — The measured-footprint series is biased
+
+`_record_measured_footprint` runs only on the fully-guarded path. Both the no-probe branch and
+the already-resident branch return before it. So the predicted-vs-measured series that the
+catalog is meant to be corrected from is **missing exactly the loads that took a shortcut** —
+which matters to any wave proposing "measure instead of predict".
+
+## G7 — `dbless_coordinator` is a sanctioned half-wired gate
+
+`ResidencyWiring`'s whole premise is that a half-wired coordinator should be a type error. The
+DB-less path builds one with no window sizing, no operator floor, no code-mode hold and no
+cross-process lock. Its docstring is honest about it, but it is an exemption from the invariant
+the type exists to enforce, and it is the kind of thing cited as precedent for the next one.
