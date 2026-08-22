@@ -166,6 +166,57 @@ and llama-swap relaunches it — no guard, no event. It is reachable *through* t
 the AST test nor any call-site audit finds it. Same shape satisfies `model_already_loaded`
 (`preconditions.py:44-71`), which is the precondition that did not defer at 22:41.
 
+**The 17 `running()` reads, classified — done 2026-08-22, ahead of step 2.**
+
+Attempting the "collapse to one `resident`" item first showed that it is under-specified as
+written: a SINGLE accessor cannot serve these callers, because two of them want opposite
+things. `_loaded_ids` feeds the owner's load indicator and must keep showing a model that is
+still loading (blanking it is this wave's stated hazard); `preconditions.check()` must not
+count a model on its way out (that is the bug that let a model serve an hourly sweep with no
+load event). So the collapse IS the split, and the only part separable from the measurement is
+deciding what each caller is actually asking. That is below, read from each call site.
+
+| site | the question it is really asking | wants |
+|---|---|---|
+| `preconditions.check` | can this serve the job **now**? | **ready** — the 22:41 miss |
+| `residency._plan` (already-resident) | may we skip admission? | **ready** — §E's stale read |
+| `residency.ensure_room` fast path | is it already serving? | **ready** |
+| `residency.ensure_room` hold branch | is it already serving? | **ready** |
+| `residency._restore` | is this member back already? | **ready** — a stopping model is not back |
+| `warm_keeper.reconcile_once` (cold?) | is the primary servable? | **ready** |
+| `warm_keeper` (prime survived?) | is our prefix still live? | **ready** |
+| `external_llm` proxy | can it serve this call? | **ready** |
+| `jcode` route | can it serve the session? | **ready** |
+| `llm_settings._loaded_ids` | what do we SHOW the owner? | **broad** — a loading model must stay on screen |
+| `llm_settings` context-window change | is there a process to unload? | **broad** — unloading a stopping model is harmless; missing one strands a stale window |
+| `llm_settings` window reconcile loop | which need a reload? | **broad** — same |
+| `llm_settings` mark-unavailable | is there memory to free? | **broad** — same |
+| `image_gen/render` | what holds memory to evict? | **broad** |
+| `smoketest` (×2) | memory accounting | **broad** |
+| `cli.local-llm-unload` | what to release before an update? | **broad** — must catch a stopping model too |
+
+Nine **ready**, eight **broad**. The rule that falls out: *asking permission to use a model
+wants `ready`; accounting for memory or telling the owner what is there wants the broad set.*
+`_parse_running_states` already carries the state field, so the gateway can answer both without
+a second round trip. What still waits on the box is whether the skip is real and how often —
+not which accessor each caller needs.
+
+**FIRST MEASUREMENT, 2026-08-22 18:20 UTC — inconclusive, and the test was mis-specified.**
+`be1961a` live, box empty (8.3/121.2 GB). A cold load of gpt-oss-120b via the debug console:
+200 in 104 s, `short_circuit_not_ready` **0**, `unannounced_load` **0**,
+`footprint_measured` predicted 68.55 / measured 69.26 / drift **+0.71 GB**,
+`load_cache_swept` read 57.6 of 59.0 GB with page cache flat at 1.9 GB.
+
+The zero proves nothing about §E. All three short circuits require the model to ALREADY be in
+`running()`; on an empty box none is reachable, so a cold load is the one shape that cannot
+produce the line whatever the truth of the stale read. What it does establish: the happy path
+is clean (no spurious narration, no guarded load reporting itself) and the footprint predictor
+is within 1% — slightly UNDER, where the earlier concern was over-prediction.
+
+The reproduction §E actually needs is the stopping window: unload a resident model, then demand
+that same model inside llama-swap's 10 s graceful stop, while `/running` still lists it. Until
+that runs, step 2 below stays unstarted.
+
 **Two steps, in this order, and the first is one line:**
 
 1. **Log the short-circuit with the state llama-swap actually reported.** This is the measurement
