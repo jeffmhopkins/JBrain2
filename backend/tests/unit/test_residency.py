@@ -959,3 +959,36 @@ async def test_short_circuit_is_silent_when_the_build_reports_no_state(
     coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
     await coord.ensure_room("gpt-oss-120b")
     assert seen == []
+
+
+class _StoppingGateway(FakeLocalGateway):
+    """Reports its model as `stopping` — llama-swap lists a model it is shutting down in
+    `/running`, which is the read the short-circuit narration exists to catch."""
+
+    def state_of(self, served_model: str) -> str:
+        return "stopping"
+
+
+@pytest.mark.asyncio
+async def test_the_stage_preview_does_not_count_as_a_skipped_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`short_circuit_not_ready` is the MEASUREMENT the running()/ready() split is gated on, so
+    what increments it has to be a real skipped admission and nothing else.
+
+    `plan_load` is the settings screen's stage preview — it admits nothing and its docstring
+    says "No side effects" — but it shares `_plan` with `ensure_room`/`free_room`. Narrating
+    from inside `_plan` counted every preview the operator opened, which would have read back
+    as evidence of the very bug the counter exists to confirm."""
+    gw = _StoppingGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=40.0, enabled=True)
+    seen: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append(ev))
+
+    await coord.plan_load("gpt-oss-120b")  # the preview: resident+stopping, short circuit hit
+    assert "residency.short_circuit_not_ready" not in seen, (
+        "the stage preview inflated the counter the next wave reads"
+    )
+
+    await coord.ensure_room("gpt-oss-120b")  # a REAL admission skipping on the same read
+    assert "residency.short_circuit_not_ready" in seen, "a real skipped admission went unnarrated"

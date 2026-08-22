@@ -36,21 +36,49 @@ from jbrain.evals.runner import CaseResult, load_cases, score_cases
 from jbrain.llm import build_router
 
 
-def _inert_residency() -> Any:
-    """This CLI scores prompts against the cloud provider, so nothing local is ever loaded and
-    admission has nothing to do — but `build_router` requires a coordinator rather than
-    defaulting to one, so that a real box cannot get a silently weaker gate (W0 of
-    docs/plans/LOCAL_MODEL_ACCESS_PLAN.md). Say inert out loud, as the sibling runner in
-    tests/eval/run.py does."""
+def _residency() -> Any:
+    """A REAL gate, not an inert one, because this CLI can route `note.extract` at a local
+    model (see the module docstring) and a local completion loads it. `enabled` therefore
+    tracks the box's own setting rather than being hardcoded off: an inert coordinator here
+    would mean unadmitted, unevicted local loads from the command line — the co-load-past-the-
+    floor path W0 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md exists to close.
+
+    The four DB-backed switches are None because `prompt-eval.sh` runs with no database: no
+    live window/slot overrides, no operator floor override, no code-mode hold, no cross-process
+    box lock. That is as much gate as a DB-less process can carry, and it is named switch by
+    switch rather than defaulted, so the shortfall is visible here instead of implied."""
+    from jbrain.llm import gpu_guard
+    from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
-    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
+    settings = Settings()
+    gateway = LocalGatewayClient(
+        settings.local_llm_url,
+        gpu_probe=gpu_guard.probe_for(settings),
+        models_dir=settings.local_models_dir,
+    )
+    return ResidencyCoordinator(
+        gateway,
+        ResidencyWiring(
+            windows_loader=None,
+            slots_loader=None,
+            models_dir=settings.local_models_dir,
+            enabled=settings.local_llm_enabled,
+            free_ram_fraction=settings.local_llm_free_ram_fraction,
+            fraction_loader=None,
+            hold_loader=None,
+            auto_restore_loader=None,
+            box_lock=None,
+            on_prefix_lost=None,
+            gpu_probe=gpu_guard.probe_for(settings),
+        ),
+    )
 
 
 async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     # Parse WITH the anchor, exactly as the pipeline does for a note whose client
     # offset is known (see score_cases) — a green eval then means a green app.
-    router = build_router(Settings(), residency=_inert_residency())
+    router = build_router(Settings(), residency=_residency())
     provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
     print(
         f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "

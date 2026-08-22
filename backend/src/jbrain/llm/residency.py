@@ -413,7 +413,7 @@ class ResidencyCoordinator:
         disk = weights_size_gb(self._models_dir, model.id) if self._models_dir else None
         return local_catalog.footprint_gb(model, window, disk_gb=disk, slots=n_slots)
 
-    async def _plan(self, served_model: str) -> EvictionPlan | None:
+    async def _plan(self, served_model: str, *, narrate_skip: bool = False) -> EvictionPlan | None:
         """Compute what loading `served_model` would cost right now — the eviction plan —
         with no side effects. None when disabled or the RAM reading is unavailable (can't
         project blindly). Shared by plan_load (dry-run) and the two eviction paths, so the
@@ -431,7 +431,13 @@ class ResidencyCoordinator:
         windows = await self._windows()
         slots = await self._slots()
         if served_model in running:
-            self._note_if_not_ready(served_model, "plan")
+            # Only when this plan is about to SKIP a real admission. `plan_load` shares this
+            # method for the settings screen's stage preview, which admits nothing and says so
+            # ("No side effects") — narrating there would count an operator opening the preview
+            # as a skipped admission, in the very counter the next wave reads to decide whether
+            # the stale-residency read is real.
+            if narrate_skip:
+                self._note_if_not_ready(served_model, "plan")
             return EvictionPlan(
                 target=served_model,
                 victims=(),
@@ -566,7 +572,7 @@ class ResidencyCoordinator:
         target after evicting so a cross-process holder sees it resident before the lock
         releases; off, the client triggers the load lazily (the un-serialized path)."""
         try:
-            plan = await self._plan(served_model)
+            plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.ensure_room_failed", model=served_model, error=repr(exc))
             return
@@ -667,7 +673,7 @@ class ResidencyCoordinator:
         if not self._enabled:
             return
         try:
-            plan = await self._plan(served_model)
+            plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.free_room_failed", model=served_model, error=repr(exc))
             return

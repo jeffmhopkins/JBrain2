@@ -48,7 +48,10 @@ class _Tally:
 
 def _inert_residency() -> LocalAdmitter:
     """A disabled coordinator. This harness routes to the cloud provider, so nothing
-    local is ever loaded and admission has nothing to do — but `build_router` requires
+    local is ever loaded and admission has nothing to do — this harness hard-gates on
+    `xai_api_key` (below), so every case routes to xAI and the local path is unreachable. That
+    is why inert is safe HERE and is not in `evals/run.py`, whose CLI can point note.extract at
+    a local model and therefore builds a real coordinator. `build_router` requires
     an admitter rather than silently building a half-wired one."""
     from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
