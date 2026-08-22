@@ -750,3 +750,54 @@ def test_production_never_wires_an_inert_residency() -> None:
         + " — inert() is for tests and cloud-only builds. A real box must name every switch, so "
         + "that a missing one is a pyright error rather than a gate that admits everything."
     )
+
+
+def test_a_no_room_refusal_defers_the_job_rather_than_burning_a_retry() -> None:
+    """A job that cannot get memory should wait for memory, not exhaust its retry budget
+    against it.
+
+    `ResidencyError` already deferred. `GpuBudgetError` — the same answer from the device
+    pre-flight rather than the host projection — fell through to the generic
+    `except Exception` handler, which FAILS the job and burns an attempt. A box briefly full
+    could therefore exhaust a job's retries without the job ever being wrong.
+
+    Structural rather than behavioural: the handler lives inside the worker's job loop, which
+    needs a live queue to drive, and nothing exercises those clauses today (the behavioural
+    test belongs with the integration suite). What this pins is the part that regressed — WHICH
+    exceptions reach the defer, and that the defer still precedes the catch-all."""
+    src = (_SRC / "worker.py").read_text()
+    tree = ast.parse(src)
+
+    defer_handlers = [
+        h
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        for h in node.handlers
+        if "queue.defer" in ast.unparse(h)
+    ]
+    assert defer_handlers, "no handler defers a job any more — the no-room path is gone"
+
+    caught = {
+        ast.unparse(t).rsplit(".", 1)[-1]
+        for h in defer_handlers
+        for t in (h.type.elts if isinstance(h.type, ast.Tuple) else [h.type])
+        if h.type is not None
+    }
+    assert {"ResidencyError", "GpuBudgetError"} <= caught, (
+        f"the defer handler catches {sorted(caught)} — a refusal it misses fails the job "
+        "and burns a retry attempt instead of waiting for the box to have room"
+    )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        names = [ast.unparse(h.type) if h.type else "bare" for h in node.handlers]
+        if any("queue.defer" in ast.unparse(h) for h in node.handlers):
+            deferring = next(
+                i for i, h in enumerate(node.handlers) if "queue.defer" in ast.unparse(h)
+            )
+            catch_alls = [i for i, n in enumerate(names) if n in ("Exception", "bare")]
+            assert all(i > deferring for i in catch_alls), (
+                "a catch-all precedes the defer handler, so a no-room refusal is swallowed "
+                "as a generic failure before it can defer"
+            )

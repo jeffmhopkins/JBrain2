@@ -381,11 +381,21 @@ class LocalGatewayClient:
         slow model, so a ComfyUI render begins with models still holding the pool; and
         `cli.py`'s pre-update unload reporting failure on a success inside `set -e`.
 
-        It also manufactures a `stopping` window: control returns to the caller while the
-        process is genuinely still stopping, which is a state `/running` reports as resident.
-        Every one of the six callers then reasons from a roster that says the model is still
-        there. Widened rather than made unbounded, because a genuinely wedged llama-swap must
-        still surface as an error rather than hanging a request."""
+        An earlier version of this docstring claimed the call "manufactures a `stopping`
+        window: control returns to the caller while the process is genuinely still stopping",
+        and six callers were reasoned about on that basis. It is NOT true of the pinned
+        llama-swap (`60226b6`, v250): `Process.Stop` sets `StateStopped` BEFORE responding
+        (`process_command.go:388` then `:390`), the router's `OnUnload` stops synchronously so
+        that "after Unload returns, the process is stopped" (`fifo.go:258-262`), and only then
+        does the handler write 200 (`apigroup.go:156-158`).
+
+        **A 200 from here means the child is reaped and its memory released.** The `stopping`
+        window is real but comes from elsewhere: a config reload killing every server, a stop
+        another process initiated, or THIS CALL TIMING OUT — a client that gives up early
+        returns to a model that is still stopping, which is precisely what the 3 s timeout
+        used to do against a 10 s graceful stop. Widened rather than made unbounded, because a
+        genuinely wedged llama-swap must still surface as an error rather than hang a
+        request."""
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 30.0), transport=self._transport

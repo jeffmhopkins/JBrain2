@@ -206,14 +206,18 @@ async def process_one(
             log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
             await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
-        except ResidencyError as exc:
+        except (ResidencyError, gpu_guard.GpuBudgetError) as exc:
             # Code mode reserved the box mid-run: this job started before the run_loop pause
             # engaged, and its model load was refused. DEFER (no attempt burned) so it simply
             # waits for code mode to clear instead of exhausting its retry budget — the pause
             # then keeps it un-claimed until the reservation lifts. The run step stays open (the
             # job isn't done), like a precondition defer.
+            # GpuBudgetError joins it: a device refusal is the same answer as a residency
+            # refusal — the box has no room right now — and it fell through to the generic
+            # handler below, which FAILS the job and burns a retry attempt. A job that could
+            # not get memory should wait for memory, not exhaust its budget against it.
             await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
-            log.info("worker.job_deferred_code_mode", job_id=job.id, kind=job.kind)
+            log.info("worker.job_deferred_no_room", job_id=job.id, kind=job.kind, error=repr(exc))
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
             log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))

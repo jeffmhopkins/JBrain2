@@ -564,9 +564,15 @@ class ResidencyCoordinator:
         models to make room for a load that would only OOM-crash the box. The distinct
         exception (not swallowed like a housekeeping hiccup) is surfaced to the caller."""
         if plan.over_box:
+            # `projected_gb` is the WHOLE BOX after the load, not what the target needs — it
+            # is `used + target − freed`. Rendering it as "{target} needs ~137 GB" told the
+            # owner a 17 GB model wanted more memory than the machine has, in text that
+            # reaches both the 409 body and the chat turn. Say the three numbers separately
+            # and name what is already resident, since that is the part they can act on.
             raise ResidencyError(
-                f"{plan.target} needs ~{plan.projected_gb:.0f} GB but the box has only "
-                f"{plan.total_gb:.0f} GB — refusing to load (it would run out of memory)."
+                f"{plan.target} needs ~{plan.target_gb:.0f} GB and {plan.resident_gb:.0f} GB "
+                f"is already in use, which would put the box at ~{plan.projected_gb:.0f} GB "
+                f"of {plan.total_gb:.0f} GB — refusing to load (it would run out of memory)."
             )
 
     async def ensure_room(self, served_model: str) -> None:

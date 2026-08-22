@@ -28,7 +28,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
-from jbrain.llm import llama_swap_config, local_catalog, local_weights
+from jbrain.llm import gpu_guard, llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import (
     LocalGateway,
@@ -1558,6 +1558,11 @@ async def gateway_load(
     try:
         with box_events.because("you loaded it"):
             await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+    except gpu_guard.GpuBudgetError as exc:
+        # 409, not an uncaught 500. A device refusal is the same class of answer as the
+        # residency refusal above — "it does not fit, and nothing was evicted" — and this
+        # route's own docstring promises 409 for it. It reached the owner as a bare 500.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
@@ -1935,6 +1940,8 @@ async def gateway_prime(
     started = time.monotonic()
     try:
         await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+    except gpu_guard.GpuBudgetError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway prime failed: {exc}") from exc
     return {

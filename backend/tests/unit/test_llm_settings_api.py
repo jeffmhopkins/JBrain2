@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
-from jbrain.llm import llama_swap_config, local_catalog, local_gateway
+from jbrain.llm import gpu_guard, llama_swap_config, local_catalog, local_gateway
 from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
@@ -1578,3 +1578,28 @@ def test_neither_deliberate_warm_records_a_displacement_nothing_drains(
             f"{label} recorded a displacement, but nothing on the operator path calls "
             "schedule_restore — it would surface during an unrelated later turn"
         )
+
+
+def test_a_device_refusal_on_the_load_button_is_a_409_not_a_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`gateway_load`'s docstring promises 409 when a model "can't fit". A residency refusal
+    got one; a DEVICE refusal (`GpuBudgetError`, raised by the gateway's own pre-flight) was
+    caught by nothing and reached the owner as a bare HTTP 500 — the same answer the box gives
+    for a genuine crash, on the surface they use when the box is already in trouble."""
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 10.0)
+    )
+
+    class _RefusingGateway(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: object) -> None:
+            raise gpu_guard.GpuBudgetError(
+                "refusing to load gpt-oss-120b: needs ~68.5 GB but only 34.5 GB is safely available"
+            )
+
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["gpt-oss-120b"])
+    c, _ = _authed_client(settings, _RefusingGateway(running=set()))
+    resp = c.post("/api/settings/llm/local-models/gpt-oss-120b/load")
+
+    assert resp.status_code == 409, f"a device refusal surfaced as {resp.status_code}"
+    assert "safely available" in resp.text, "the refusal's own arithmetic was dropped"

@@ -1109,3 +1109,25 @@ async def test_the_code_mode_short_circuit_is_measured_too(
     hits = [e for e in seen if e["event"] == "residency.short_circuit_not_ready"]
     assert hits, "the code-mode short circuit skipped an admission without measuring it"
     assert hits[0]["at"] == "hold"
+
+
+@pytest.mark.asyncio
+async def test_the_over_box_refusal_does_not_blame_the_model_for_the_whole_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`projected_gb` is `used + target - freed` — the whole box after the load. Rendering it
+    as "{target} needs ~N GB" told the owner a 17 GB model wanted more memory than the machine
+    has. That text reaches the 409 body and the chat turn, so it is the sentence they act on."""
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=121.0, used=110.0, enabled=True)
+
+    with pytest.raises(ResidencyError) as exc:
+        await coord.ensure_room("gpt-oss-120b")
+
+    msg = str(exc.value)
+    assert "121 GB" in msg, "the box's real size is missing"
+    assert "110 GB" in msg, "what is already resident is missing — the actionable part"
+    # the target's own footprint, not the post-load total, must be what it is said to need
+    assert "needs ~110 GB" not in msg and "needs ~178 GB" not in msg, (
+        f"the model is being blamed for the whole box: {msg}"
+    )
