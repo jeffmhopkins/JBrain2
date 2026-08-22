@@ -992,3 +992,38 @@ async def test_the_stage_preview_does_not_count_as_a_skipped_admission(
 
     await coord.ensure_room("gpt-oss-120b")  # a REAL admission skipping on the same read
     assert "residency.short_circuit_not_ready" in seen, "a real skipped admission went unnarrated"
+
+
+@pytest.mark.asyncio
+async def test_an_operator_load_evicts_code_modes_model_but_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner-decided 2026-08-22: the Load button outranks code mode's reservation, so this
+    does NOT refuse the way `ensure_room` refuses a chat turn. The defect was the silence —
+    the coder disappeared mid-session behind a reason that read like routine housekeeping, and
+    `free_room` schedules no restore, so it stayed gone.
+
+    Both halves are pinned here: the eviction still happens (authority preserved), and it is
+    narrated as the held model it was (traceability restored)."""
+    gw = FakeLocalGateway(running={"qwen3-coder-next"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=90.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    warnings: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "jbrain.llm.residency.log.warning",
+        lambda ev, **kw: warnings.append({"event": ev, **kw}),
+    )
+
+    await coord.free_room("gpt-oss-120b")
+
+    assert gw.unloaded == ["qwen3-coder-next"], "the operator's load must still win"
+    held_warnings = [w for w in warnings if w["event"] == "residency.evicted_held_model"]
+    assert held_warnings, "code mode lost its model with no warning — the silent break"
+    assert held_warnings[0]["model"] == "qwen3-coder-next"
+    assert held_warnings[0]["for_model"] == "gpt-oss-120b"

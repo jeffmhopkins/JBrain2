@@ -661,15 +661,18 @@ class ResidencyCoordinator:
         ResidencyError (before evicting) when the model can't fit the box, so the caller
         refuses instead of crashing. Housekeeping hiccups are swallowed, like ensure_room.
 
-        KNOWN GAP: unlike `ensure_room` and `_restore`, this does NOT consult
-        `_held_names()`, so an operator load evicts code mode's reserved model where a chat
-        turn would be refused outright — and `free_room` records no restore, so the coder does
-        not come back. The box stays safe (this evicts to fit rather than co-loading past the
-        floor, which is what the hold guards), but code mode breaks silently. Pre-existing on
-        the owner's PWA load; 2f9904f extended it to the debug console by giving that route
-        the same admission. Whether an explicit operator load should outrank the reservation
-        is an INTENT question — W1 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md — and is recorded
-        there rather than decided here."""
+        The code-mode hold does NOT refuse here, where `ensure_room` refuses a chat turn
+        outright. That is deliberate and owner-decided (2026-08-22): the operator pressing Load
+        is the box's authority, so the load proceeds even if it costs code mode its reserved
+        model. What was wrong was the SILENCE — the coder vanished mid-session with a
+        `model_unload` reason that read like any routine eviction, and `free_room` records no
+        restore, so it did not come back either. A held victim now says so, in the vitals
+        reason AND in the log, so a broken code session is traceable to the load that broke it
+        instead of looking like the box misbehaving.
+
+        Whether some intents should refuse rather than warn (an `agent` or `scheduled` demand
+        clearly should) is still W1 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md; this decides only
+        the operator's own two surfaces."""
         if not self._enabled:
             return
         try:
@@ -681,11 +684,27 @@ class ResidencyCoordinator:
             return
         self._refuse_if_over_box(plan)  # raises before we evict anything
         self._displaced.discard(served_model)
-        with box_events.because(f"to make room for {served_model}, which you loaded"):
-            for served in plan.victims:
-                with contextlib.suppress(LocalGatewayError):
-                    await self._gateway.unload(served)
-                    self._prefix_lost(served)
+        held = await self._held_names()
+        for served in plan.victims:
+            if served in held:
+                # The one eviction that breaks something the owner is actively using. Warned,
+                # not refused (see the docstring), and warned in both places: the log line the
+                # debug console greps, and the vitals reason the PWA shows.
+                log.warning(
+                    "residency.evicted_held_model",
+                    model=served,
+                    for_model=served_model,
+                    held=sorted(held),
+                )
+            reason = (
+                f"to make room for {served_model}, which you loaded — this was code mode's "
+                f"reserved model, so that session has lost it and it will NOT be restored"
+                if served in held
+                else f"to make room for {served_model}, which you loaded"
+            )
+            with box_events.because(reason), contextlib.suppress(LocalGatewayError):
+                await self._gateway.unload(served)
+                self._prefix_lost(served)
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows

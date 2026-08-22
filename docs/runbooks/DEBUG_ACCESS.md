@@ -179,7 +179,10 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   `elapsed_ms`, the measurement instrument for any prefill experiment.
 
   ⚠️ **A prime EVICTS to fit, exactly like a load, and what it evicts does not come back on
-  its own.** Both operator warms admit through the same evict-to-fit path; neither records a
+  its own.** If it takes code mode's reserved model, it says so: grep
+  `residency.evicted_held_model` in `GET /api/debug/logs/api`, and the vitals row names it as
+  code mode's. The load is allowed to win — you pressed it — but a code session that suddenly
+  lost its model is explained by that line, not by the box misbehaving. Both operator warms admit through the same evict-to-fit path; neither records a
   restore, because nothing on the debug-console path fires one (a restore is driven by a
   finished agent turn or by code-mode power-off). That is deliberate — a recorded-but-undrained
   displacement would pile up across an experiment and then reload all at once during whatever

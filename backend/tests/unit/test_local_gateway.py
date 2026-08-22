@@ -937,7 +937,8 @@ async def test_a_short_load_does_not_report_itself_after_the_claim_is_pruned(
     )
     gw = _client(lambda r: httpx.Response(200, json={}))
     gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
-    gw._polled = True  # not a first poll, so nothing is excused as a fresh-client artifact  # type: ignore[attr-defined]
+    # not a first poll, so nothing here is excused as a fresh-client artifact
+    gw._polled = True  # type: ignore[attr-defined]
 
     gw._loaded_here.add(
         "gpt-oss-120b"
