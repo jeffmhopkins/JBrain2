@@ -201,21 +201,31 @@ wants `ready`; accounting for memory or telling the owner what is there wants th
 a second round trip. What still waits on the box is whether the skip is real and how often —
 not which accessor each caller needs.
 
-**FIRST MEASUREMENT, 2026-08-22 18:20 UTC — inconclusive, and the test was mis-specified.**
-`be1961a` live, box empty (8.3/121.2 GB). A cold load of gpt-oss-120b via the debug console:
-200 in 104 s, `short_circuit_not_ready` **0**, `unannounced_load` **0**,
-`footprint_measured` predicted 68.55 / measured 69.26 / drift **+0.71 GB**,
-`load_cache_swept` read 57.6 of 59.0 GB with page cache flat at 1.9 GB.
+**MEASURED AND CONFIRMED, 2026-08-22 on `be1961a`.** §E is no longer a hypothesis.
 
-The zero proves nothing about §E. All three short circuits require the model to ALREADY be in
-`running()`; on an empty box none is reachable, so a cold load is the one shape that cannot
-produce the line whatever the truth of the stale read. What it does establish: the happy path
-is clean (no spurious narration, no guarded load reporting itself) and the footprint predictor
-is within 1% — slightly UNDER, where the earlier concern was over-prediction.
+*Run 1 — a cold load, which could not answer the question.* Box empty (8.3/121.2 GB), cold load
+of gpt-oss-120b: 200 in 104 s, counter **0**. That zero proves nothing: all three short circuits
+require the model to already be in `running()`, so an empty box cannot reach any of them. It did
+land other data — `footprint_measured` predicted 68.55 / measured 69.26 (**+0.71 GB, and UNDER**,
+where the standing concern was over-prediction), page cache flat through a 57.6 GB read.
 
-The reproduction §E actually needs is the stopping window: unload a resident model, then demand
-that same model inside llama-swap's 10 s graceful stop, while `/running` still lists it. Until
-that runs, step 2 below stays unstarted.
+*Run 2 — the stopping-window race, which did.* `qwen3.8-27b-q4` resident (the model every task
+routes to); unload fired, and a real `agent.turn` completion fired 1 s behind it. The unload took
+**11.0 s**, confirming llama-swap's 10 s graceful stop. The log, verbatim in order:
+
+| t | event | |
+|---|---|---|
+| 18:31:22.910 | `local_gateway.not_ready_in_running` | `/running` lists it, state **`stopping`** |
+| 18:31:23.320 | `residency.short_circuit_not_ready` | admission SKIPPED — **`at=fast_path`**, state `stopping` |
+| 18:31:32.788 | `llm.retry` status **502** | the completion reached llama-swap, which had stopped it |
+| 18:31:32.790 | `local_gateway.not_ready_in_running` | state **`starting`** — relaunched on demand, unguarded |
+
+Every link predicted by §E, plus one that was not: the turn does not fail, it takes a **502 and a
+retry**, so the owner-visible symptom is a ~10 s stall rather than an error. The completion
+returned 200 after 20.3 s.
+
+**It is `fast_path`, not `_plan`.** The lock-free already-resident short circuit in `ensure_room`
+is what fires; `_plan` never gets the chance. Step 2 should start there.
 
 **Two steps, in this order, and the first is one line:**
 
