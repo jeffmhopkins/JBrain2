@@ -50,9 +50,9 @@ def _inert_residency() -> LocalAdmitter:
     """A disabled coordinator. This harness routes to the cloud provider, so nothing
     local is ever loaded and admission has nothing to do — but `build_router` requires
     an admitter rather than silently building a half-wired one."""
-    from jbrain.llm.residency import ResidencyCoordinator
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
-    return ResidencyCoordinator(object(), enabled=False)  # type: ignore[arg-type]
+    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
 
 
 async def _evaluate(

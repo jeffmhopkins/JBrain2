@@ -34,9 +34,9 @@ def _inert_residency() -> LocalAdmitter:
     `test_build_router_requires_a_residency_admitter`), and disabled is the honest thing
     for a test that never loads a model — not a stub that silently admits everything,
     which is the exact failure the required parameter exists to prevent."""
-    from jbrain.llm.residency import ResidencyCoordinator
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
-    return ResidencyCoordinator(object(), enabled=False)  # type: ignore[arg-type]
+    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
 
 
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
@@ -96,7 +96,7 @@ async def test_local_swap_evicts_the_resident_model_through_the_router(
     is wired). The vision model is resident; the summary model can't fit beside it under the
     free-RAM floor, so admitting the summary completion unloads the vision model first —
     exactly the vision→reasoning swap the video worker makes."""
-    from jbrain.llm.residency import ResidencyCoordinator
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
     from tests.unit.fakes import FakeLocalGateway
 
     gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
@@ -106,7 +106,9 @@ async def test_local_swap_evicts_the_resident_model_through_the_router(
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (121.0, 45.0)
     )
-    residency = ResidencyCoordinator(gw, models_dir="", enabled=True, free_ram_fraction=0.125)
+    residency = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(models_dir="", enabled=True, free_ram_fraction=0.125)
+    )
     fake = FakeLlmClient(["caption", "summary"])
     router = LlmRouter(
         {"local": fake},
@@ -333,13 +335,13 @@ def test_build_router_requires_a_residency_admitter() -> None:
     could be live on the api's coordinator and invisible on this one. No production caller
     ever used it (`main.py` and `worker.py` both pass their own), so it existed only to be
     silently wrong for whoever forgot. It is gone; the parameter is required."""
-    from jbrain.llm.residency import ResidencyCoordinator
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
     with pytest.raises(TypeError):
         build_router(Settings(local_llm_enabled=True))  # type: ignore[call-arg]
 
     # A caller that owns a coordinator gets THAT instance (shared bookkeeping).
-    mine = ResidencyCoordinator(object(), enabled=True)  # type: ignore[arg-type]
+    mine = ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=True))  # type: ignore[arg-type]
     assert build_router(Settings(local_llm_enabled=True), residency=mine)._residency is mine
 
 

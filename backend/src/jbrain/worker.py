@@ -53,7 +53,7 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, pg_box_lock
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring, pg_box_lock
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -538,32 +538,44 @@ async def run() -> None:
     # back to, and the next on-demand load re-admits through ensure_room regardless.
     residency = ResidencyCoordinator(
         llm_gateway,
-        windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
-        slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
-        models_dir=settings.local_models_dir,
-        enabled=settings.local_llm_enabled,
-        free_ram_fraction=settings.local_llm_free_ram_fraction,
-        # Same live floor override the api reads (Settings → LLM), so a change applies to
-        # background jobs' model loads too — the worker is the second place this takes effect.
-        fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(queue.SYSTEM_CTX),
-        # Code-mode box reservation: while jcode holds the box, a background job's model load
-        # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
-        # never evict code mode's models or co-load past physical RAM.
-        hold_loader=lambda: worker_settings_store.code_mode_hold_names(queue.SYSTEM_CTX),
-        # The operator's restore switch, read live — the SAME key the api's coordinator and
-        # the WarmKeeper read (`main.py`). It was missing here, so the worker's coordinator
-        # answered "restore is on" no matter what the owner had set: an operator switch
-        # enforced in one process and invisible in the other. Absent loader degrades to on,
-        # so the omission failed OPEN, which is the direction that costs the owner RAM.
-        auto_restore_loader=lambda: worker_settings_store.llm_local_auto_restore(queue.SYSTEM_CTX),
-        # Serialize evict+load against the api process (which runs its own coordinator over
-        # the same box) so a background job's model swap can't co-load past the free-RAM
-        # floor while the api is loading for a chat turn — the cross-process double-load.
-        box_lock=pg_box_lock(maker),
-        # For the post-load measurement (predicted vs actual device cost). The guard itself
-        # lives on the gateway above, where no caller can route around it.
-        gpu_probe=gpu_guard.SupervisorGpuMemProbe(
-            lambda: supervisor_client, settings.supervisor_token
+        ResidencyWiring(
+            windows_loader=lambda: worker_settings_store.llm_local_context_windows(
+                queue.SYSTEM_CTX
+            ),
+            slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
+            models_dir=settings.local_models_dir,
+            enabled=settings.local_llm_enabled,
+            free_ram_fraction=settings.local_llm_free_ram_fraction,
+            # Same live floor override the api reads (Settings → LLM), so a change applies to
+            # background jobs' model loads too — the worker is the second place this takes effect.
+            fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(
+                queue.SYSTEM_CTX
+            ),
+            # Code-mode box reservation: while jcode holds the box, a background job's model load
+            # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
+            # never evict code mode's models or co-load past physical RAM.
+            hold_loader=lambda: worker_settings_store.code_mode_hold_names(queue.SYSTEM_CTX),
+            # The operator's restore switch, read live — the SAME key the api's coordinator and
+            # the WarmKeeper read (`main.py`). It was missing here, so the worker's coordinator
+            # answered "restore is on" no matter what the owner had set: an operator switch
+            # enforced in one process and invisible in the other. Absent loader degrades to on,
+            # so the omission failed OPEN, which is the direction that costs the owner RAM.
+            auto_restore_loader=lambda: worker_settings_store.llm_local_auto_restore(
+                queue.SYSTEM_CTX
+            ),
+            # Serialize evict+load against the api process (which runs its own coordinator over
+            # the same box) so a background job's model swap can't co-load past the free-RAM
+            # floor while the api is loading for a chat turn — the cross-process double-load.
+            box_lock=pg_box_lock(maker),
+            # For the post-load measurement (predicted vs actual device cost). The guard itself
+            # lives on the gateway above, where no caller can route around it.
+            gpu_probe=gpu_guard.SupervisorGpuMemProbe(
+                lambda: supervisor_client, settings.supervisor_token
+            ),
+            # No WarmKeeper in this process — the api owns priming — so there is no memo
+            # to invalidate. Named rather than omitted: this is the last way the worker's
+            # gate differs from the api's, and it should be visible at the wiring.
+            on_prefix_lost=None,
         ),
     )
     router = build_router(

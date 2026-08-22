@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
@@ -35,14 +35,16 @@ def _coord(
     )
     return ResidencyCoordinator(
         gw,
-        models_dir="",  # nominal catalog size_gb, no filesystem read
-        enabled=enabled,
-        free_ram_fraction=0.25,
-        fraction_loader=fraction_loader,  # type: ignore[arg-type]
-        hold_loader=hold_loader,  # type: ignore[arg-type]
-        slots_loader=slots_loader,  # type: ignore[arg-type]
-        on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
-        auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+        ResidencyWiring.inert(
+            models_dir="",  # nominal catalog size_gb, no filesystem read
+            enabled=enabled,
+            free_ram_fraction=0.25,
+            fraction_loader=fraction_loader,  # type: ignore[arg-type]
+            hold_loader=hold_loader,  # type: ignore[arg-type]
+            slots_loader=slots_loader,  # type: ignore[arg-type]
+            on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
+            auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+        ),
     )
 
 
@@ -269,7 +271,7 @@ async def test_ensure_room_is_a_noop_when_disabled() -> None:
     # enabled False (cloud-only box) → the app evicts nothing even with a full box (no
     # read_memory_gb call needed — it returns on the first line).
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == []
 
@@ -280,7 +282,7 @@ async def test_ensure_room_best_effort_when_memory_unreadable(
 ) -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
     monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
-    coord = ResidencyCoordinator(gw, models_dir="", enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(models_dir="", enabled=True))
     await coord.ensure_room("qwen3-coder-next")  # can't measure RAM → evict nothing, no raise
     assert gw.unloaded == []
 
@@ -290,14 +292,14 @@ async def test_ensure_room_best_effort_when_memory_unreadable(
 
 def test_note_evicted_records_only_known_catalog_models() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     coord.note_evicted(["gpt-oss-120b", "not-a-real-model"])
     assert coord._displaced == {"gpt-oss-120b"}  # noqa: SLF001 — the unknown name is ignored
 
 
 def test_note_evicted_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     coord.note_evicted(["gpt-oss-120b"])
     assert coord._displaced == set()  # noqa: SLF001
 
@@ -384,9 +386,12 @@ async def test_plan_load_is_none_when_disabled_or_unmeasurable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
-    assert await ResidencyCoordinator(gw, enabled=False).plan_load("qwen3.5-4b") is None
+    assert (
+        await ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False)).plan_load("qwen3.5-4b")
+        is None
+    )
     monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
-    coord = ResidencyCoordinator(gw, models_dir="", enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(models_dir="", enabled=True))
     assert await coord.plan_load("qwen3.5-4b") is None
 
 
@@ -417,7 +422,9 @@ async def test_free_room_evicts_nothing_when_it_fits(monkeypatch: pytest.MonkeyP
 @pytest.mark.asyncio
 async def test_free_room_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
-    await ResidencyCoordinator(gw, enabled=False).free_room("qwen3-coder-next")
+    await ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False)).free_room(
+        "qwen3-coder-next"
+    )
     assert gw.unloaded == []
 
 
@@ -522,7 +529,7 @@ async def test_restore_clears_a_member_that_came_back_on_its_own(
 @pytest.mark.asyncio
 async def test_restore_is_a_noop_when_nothing_to_do() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     await coord._restore()  # noqa: SLF001 — empty displaced set
     assert gw.loaded == []
 
@@ -543,7 +550,7 @@ async def test_restore_suppresses_a_load_failure_and_clears_the_entry(
 @pytest.mark.asyncio
 async def test_restore_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     coord.note_evicted(["gpt-oss-120b"])  # no-op (disabled), so nothing to restore
     await coord._restore()  # noqa: SLF001
     assert gw.loaded == []
@@ -577,12 +584,12 @@ async def test_schedule_restore_coalesces_and_no_ops_on_empty_set(
     await asyncio.gather(*list(coord._tasks))  # noqa: SLF001
 
     # Nothing displaced → never schedules anything.
-    empty = ResidencyCoordinator(gw, enabled=True)
+    empty = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     empty.schedule_restore()
     assert empty._tasks == set()  # noqa: SLF001
 
     # Disabled box never schedules either.
-    disabled = ResidencyCoordinator(gw, enabled=False)
+    disabled = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     disabled.note_evicted(["gpt-oss-120b"])
     disabled.schedule_restore()
     assert disabled._tasks == set()  # noqa: SLF001
@@ -657,7 +664,10 @@ async def test_box_lock_serializes_evict_and_load_of_the_target(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        ),
     )
     await coord.ensure_room("qwen3-coder-next")  # 90+59.6 > 96 → evict gpt-oss, then load it
     assert events == ["lock", "unload:gpt-oss-120b", "load:qwen3-coder-next", "unlock"]
@@ -674,7 +684,10 @@ async def test_box_lock_fast_path_takes_no_lock_when_already_resident(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        ),
     )
     await coord.ensure_room("gpt-oss-120b")  # already resident
     assert events == []  # no lock, no unload, no load
@@ -697,7 +710,10 @@ async def test_box_lock_degrades_to_unlocked_when_acquire_fails(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=failing_lock
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=failing_lock
+        ),
     )
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == ["gpt-oss-120b"]  # still evicted, unlocked
@@ -803,7 +819,9 @@ async def test_a_device_refusal_from_the_gateway_reaches_the_caller() -> None:
             raise gpu_guard.GpuBudgetError("no device room")
 
     gw = _RefusingGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, free_ram_fraction=0.05, box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, free_ram_fraction=0.05, box_lock=None)
+    )
     with pytest.raises(gpu_guard.GpuBudgetError):
         await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
 
@@ -826,7 +844,9 @@ async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
             return sample
 
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
@@ -853,7 +873,9 @@ async def test_a_failed_load_is_not_reported_as_a_measured_one(
             )
 
     gw = _FailingGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)  # non-fatal, as before
     text = capsys.readouterr().out
     assert "residency.load_failed" in text
@@ -872,7 +894,9 @@ async def test_a_healthy_load_still_goes_through_untouched() -> None:
             )
 
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
@@ -881,7 +905,9 @@ async def test_without_a_probe_the_load_path_is_unchanged() -> None:
     """A box that can't measure device memory (no amdgpu, supervisor down, every existing
     test) must keep working exactly as before — degrade, never block."""
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=None, box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=None, box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"]
 

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -145,6 +146,82 @@ class EvictionPlan:
     already_resident: bool
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class ResidencyWiring:
+    """Every switch the coordinator reads, as one explicit object.
+
+    None is still a legal value for most of these — it means a documented fallback, and the
+    comments on each field say which. What is no longer legal is LEAVING ONE OUT. These were
+    optional keyword arguments, and the inventory found two coordinators quietly missing
+    switches the other had: `router._default_residency` carried no `hold_loader`, so
+    `_held_names()` returned an empty set and empty means ADMIT EVERYTHING, and the worker's
+    carried no `auto_restore_loader` at all. An operator control was therefore enforced on one
+    instance of the gate and invisible on another, with nothing in the type system objecting.
+
+    Closing those two instances (c76288f) did not close the class: an omitted switch still
+    compiled. Here it does not. Production must name all eleven, so a twelfth half-wired gate
+    is a pyright error rather than a behaviour difference nobody sees. Tests and cloud-only
+    builds say `inert()` and mean it out loud."""
+
+    # Per-model context windows and llama-server slot counts (catalog id -> -c / -np), read
+    # live so an operator override sizes the eviction budget. KV is linear in both, so a
+    # coordinator reading the catalog default plans against the wrong number.
+    windows_loader: WindowsLoader | None
+    slots_loader: WindowsLoader | None
+    models_dir: str
+    # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op.
+    enabled: bool
+    # The config-default floor, with `fraction_loader` the live operator override that wins
+    # per load. Required rather than defaulted because it silently WAS 0.25 against a config
+    # of 0.15 — reserving 30 GiB instead of 18.2 on this box, one of the eight disagreeing
+    # memory budgets D0 of docs/plans/MEMORY_ADMISSION_PLAN.md had to reconcile.
+    free_ram_fraction: float
+    fraction_loader: FractionLoader | None
+    # Code mode's box reservation: while held, ensure_room refuses to load any other
+    # non-resident model. Absent loader -> nothing held -> admit everything.
+    hold_loader: HoldLoader | None
+    # The operator's end-of-turn RESTORE switch. Absent -> on, the long-standing behaviour.
+    auto_restore_loader: Callable[[], Awaitable[bool]] | None
+    # Cross-process serialization of evict+load. None -> evict only, client triggers the load.
+    box_lock: BoxLock | None
+    # Fired when this coordinator drops a model's primed KV prefix (WarmKeeper's memo).
+    on_prefix_lost: PrefixLostHook | None
+    # Reads the iGPU's DEVICE memory (GTT). None -> the prior unguarded behaviour.
+    gpu_probe: gpu_guard.GpuMemProbe | None
+
+    @classmethod
+    def inert(
+        cls,
+        *,
+        windows_loader: WindowsLoader | None = None,
+        slots_loader: WindowsLoader | None = None,
+        models_dir: str = "",
+        enabled: bool = False,
+        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
+        fraction_loader: FractionLoader | None = None,
+        hold_loader: HoldLoader | None = None,
+        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
+        box_lock: BoxLock | None = None,
+        on_prefix_lost: PrefixLostHook | None = None,
+        gpu_probe: gpu_guard.GpuMemProbe | None = None,
+    ) -> ResidencyWiring:
+        """A gate wired to do nothing, for tests and cloud-only builds. Named rather than
+        implied: production code may not call this, and a guard test holds that."""
+        return cls(
+            windows_loader=windows_loader,
+            slots_loader=slots_loader,
+            models_dir=models_dir,
+            enabled=enabled,
+            free_ram_fraction=free_ram_fraction,
+            fraction_loader=fraction_loader,
+            hold_loader=hold_loader,
+            auto_restore_loader=auto_restore_loader,
+            box_lock=box_lock,
+            on_prefix_lost=on_prefix_lost,
+            gpu_probe=gpu_probe,
+        )
+
+
 class ResidencyCoordinator:
     """The box's sole model evictor and restorer. One instance lives on app.state: the
     router awaits `ensure_room` before every local completion, the settings screen calls
@@ -153,61 +230,41 @@ class ResidencyCoordinator:
     finishes. The set to restore is remembered dynamically — the models evicted since the
     last restore (`note_evicted`)."""
 
-    def __init__(
-        self,
-        gateway: LocalGateway,
-        *,
-        windows_loader: WindowsLoader | None = None,
-        slots_loader: WindowsLoader | None = None,
-        models_dir: str = "",
-        enabled: bool = False,
-        # Matches `Settings.local_llm_free_ram_fraction` (0.15). It was 0.25, so any
-        # construction path that did not pass the fraction explicitly reserved 30 GiB
-        # instead of 18.2 on this box and planned against a ceiling 12 GiB tighter than
-        # the one the guard and the meter use — one of eight disagreeing memory budgets
-        # this repo carried (see docs/plans/MEMORY_ADMISSION_PLAN.md, D0).
-        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
-        fraction_loader: FractionLoader | None = None,
-        hold_loader: HoldLoader | None = None,
-        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
-        box_lock: BoxLock | None = None,
-        on_prefix_lost: PrefixLostHook | None = None,
-        gpu_probe: gpu_guard.GpuMemProbe | None = None,
-    ) -> None:
+    def __init__(self, gateway: LocalGateway, wiring: ResidencyWiring) -> None:
         self._gateway = gateway
         # Reads the iGPU's DEVICE memory (GTT) so a load is budgeted and watched against the
         # pool it actually allocates from, not just system RAM. None (tests, cloud-only, a box
         # with no amdgpu) keeps the prior unguarded behaviour — see `_guarded_load`.
-        self._gpu_probe = gpu_probe
+        self._gpu_probe = wiring.gpu_probe
         # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op and nothing
         # is ever recorded. Mirrors settings.local_llm_enabled.
-        self._enabled = enabled
-        self._windows_loader = windows_loader
+        self._enabled = wiring.enabled
+        self._windows_loader = wiring.windows_loader
         # Per-model llama-server slot counts (catalog id → -np). A second slot doubles the
         # model's KV, so the eviction budget must see it — sized like windows, read live.
-        self._slots_loader = slots_loader
-        self._models_dir = models_dir
+        self._slots_loader = wiring.slots_loader
+        self._models_dir = wiring.models_dir
         # The config-default floor. The live operator override (fraction_loader) wins over it
         # per load when wired and valid; this is the fallback when there's no override, no
         # loader, or the read fails — so the budget always has a floor.
-        self._free_ram_fraction = free_ram_fraction
-        self._fraction_loader = fraction_loader
+        self._free_ram_fraction = wiring.free_ram_fraction
+        self._fraction_loader = wiring.fraction_loader
         # When code mode holds the box, this loads the reserved coder's served name ("" when
         # code mode is off). While held, `ensure_room` refuses to load any other non-resident
         # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
-        self._hold_loader = hold_loader
+        self._hold_loader = wiring.hold_loader
         # The operator's end-of-turn RESTORE switch (Settings → LLM), read live so a flip
         # applies with no restart. Off means the box stops putting back what a displacement
         # took — models come back only when a turn actually needs them. It exists because a
         # restore is a model load the owner did not ask for at that moment, and while
         # diagnosing the box "nothing loads unless I say so" has to be reachable from the
         # PWA. Absent loader → on, the long-standing behaviour.
-        self._auto_restore_loader = auto_restore_loader
+        self._auto_restore_loader = wiring.auto_restore_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
         # is committed before release and a concurrent process's plan sees it (no co-load).
-        self._box_lock = box_lock
+        self._box_lock = wiring.box_lock
         # Served names evicted (by us or by another displacement) and awaiting restore. The
         # box's remembered steady state minus whatever currently holds the RAM. Bounded by the
         # provisioned model count; entries clear as they reload or are attempted.
@@ -228,7 +285,7 @@ class ResidencyCoordinator:
         # jerv message pays the full cold prefill IN THE FOREGROUND. This hook is the missing
         # edge, and it is a callback rather than a direct call so residency keeps knowing
         # nothing about personas or priming.
-        self._on_prefix_lost = on_prefix_lost
+        self._on_prefix_lost = wiring.on_prefix_lost
 
     def _prefix_lost(self, served_model: str) -> None:
         """Signal that `served_model`'s primed prefix is gone. Best-effort and synchronous —

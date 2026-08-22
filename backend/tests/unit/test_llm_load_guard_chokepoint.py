@@ -725,3 +725,28 @@ def test_every_shared_warm_is_handed_a_residency_by_an_approved_name() -> None:
         + ". A bare None (or a new getattr default) makes the warm evict nothing; if that is "
         + "really what you want, add the spelling to _APPROVED_RESIDENCY and say why."
     )
+
+
+def test_production_never_wires_an_inert_residency() -> None:
+    """`ResidencyWiring.inert()` fills every switch with its do-nothing fallback, which is what
+    tests and a cloud-only build want. It is also a way to satisfy the required-argument
+    constructor without wiring anything — the half-wired gate all over again, one call shorter.
+    Production says all eleven or it does not build."""
+    users = []
+    for path in _SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "inert"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "ResidencyWiring"
+            ):
+                users.append(f"{path.relative_to(_SRC)}:{node.lineno}")
+    assert not users, (
+        "ResidencyWiring.inert() called in production code at: "
+        + ", ".join(users)
+        + " — inert() is for tests and cloud-only builds. A real box must name every switch, so "
+        + "that a missing one is a pyright error rather than a gate that admits everything."
+    )

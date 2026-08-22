@@ -16,7 +16,7 @@ from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm import llama_swap_config, local_catalog, local_gateway
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
@@ -285,14 +285,16 @@ def _authed_client(
     # real evictor against the test's running set (memory is monkeypatched per test).
     app.state.residency = ResidencyCoordinator(
         app.state.local_gateway,
-        enabled=settings.local_llm_enabled,
-        models_dir="",
-        # Passed exactly as main.py / worker.py / router.py do. Omitting it left this
-        # harness on the constructor default while every production site passed the
-        # settings value, so these tests pinned a ceiling the box never used — 96.0 GB
-        # against a real 108.8. Two defaults for one number is how a preview ends up
-        # disagreeing with the evictor it is previewing.
-        free_ram_fraction=settings.local_llm_free_ram_fraction,
+        ResidencyWiring.inert(
+            enabled=settings.local_llm_enabled,
+            models_dir="",
+            # Passed exactly as main.py / worker.py / router.py do. Omitting it left this
+            # harness on the constructor default while every production site passed the
+            # settings value, so these tests pinned a ceiling the box never used — 96.0 GB
+            # against a real 108.8. Two defaults for one number is how a preview ends up
+            # disagreeing with the evictor it is previewing.
+            free_ram_fraction=settings.local_llm_free_ram_fraction,
+        ),
     )
     key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
     assert (
