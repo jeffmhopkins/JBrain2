@@ -122,8 +122,27 @@ Independent of the ledger, each small, each with a regression test:
    `contextlib.suppress(Exception)` and `residency` is used only for `note_evicted`. A third
    naked load path, which the plan's "exactly two" claim missed.
 
-*Risk:* low, and each is separable. *Test:* one regression test each; the 409/500 and
-defer-vs-burn cases have no coverage today.
+5. **Evict and load are only atomic on ONE of the four load paths.** `ensure_room`'s slow path
+   loads INSIDE `_box_locked()`, so its evict+load is serialized across the api and worker
+   processes. The owner's Load button does not: `_admit_or_409` → `free_room` evicts and
+   RETURNS, the route then awaits `jerv_prime_spec`, and only then loads. Between those two
+   awaits the freed memory — up to 60+ GB — is unclaimed and the worker can plan against it.
+   Verified 2026-08-22. The window is normally negligible because the prime-spec's ComfyUI
+   liveness probe is cached for 30 s, but on a miss it is a full ComfyUI round-trip — and a
+   miss correlates with ComfyUI being unhealthy, i.e. exactly when it is holding ~39 GB and
+   the race matters. `_restore` loads with no lock at all. Design pass commissioned: the fix
+   is not "lock inside `free_room`" (the load happens in the caller), so the lock has to span
+   the caller's evict+load, which is a real interface change.
+6. **The warm-up phase runs outside the runaway watchdog.** `guarded_load` returns, and only
+   then does `_load_and_warm` call `_warm(...)` — which the file itself measures at **118 s of
+   a 198 s gpt-oss-120b load**. So ~60% of a cold load allocates KV and graph-capture buffers
+   with nothing watching for a runaway. Verified 2026-08-22 (`local_gateway.py`, the
+   `guarded_load` call and the `_warm` call that follows it).
+
+*Risk:* low for 1-4, and each is separable. 5 and 6 are NOT low and are not separable from the
+ledger's admission story — they are listed here because they were verified while looking at
+something else, not because they belong in the same change. *Test:* one regression test each
+for 1-4; the 409/500 and defer-vs-burn cases have no coverage today.
 
 ### L2 — The ledger ◻️
 
