@@ -669,3 +669,59 @@ async def test_a_model_that_is_not_resident_is_still_admitted_first() -> None:
     )
     with pytest.raises(gpu_guard.GpuBudgetError):
         await gateway.load("gpt-oss-120b")
+
+
+def _admitted_load_calls() -> list[tuple[pathlib.Path, ast.Call, str]]:
+    """Every call to the two shared warm helpers, with the `residency` it passes."""
+    found: list[tuple[pathlib.Path, ast.Call, str]] = []
+    for path in _SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else func.id
+                if isinstance(func, ast.Name)
+                else ""
+            )
+            if name not in {"gateway_load", "gateway_prime"}:
+                continue
+            passed = next((kw for kw in node.keywords if kw.arg == "residency"), None)
+            found.append((path, node, "" if passed is None else ast.unparse(passed.value)))
+    return found
+
+
+# The only two ways a caller may name the coordinator. Both can evaluate to None on a build
+# with none wired, which is a DOCUMENTED degradation, not a hole: `LocalGatewayClient.load`
+# still runs the device-memory guard, so an unadmitted warm loses EVICTION (a model that
+# would have fit after freeing room is refused with a 409) but can never take the box down.
+# A third spelling is how that distinction gets lost, so it fails here until it is added
+# deliberately.
+_APPROVED_RESIDENCY = {
+    "residency",  # the DI dependency (get_residency) — owner + worker paths
+    "getattr(request.app.state, 'residency', None)",  # debug console routes
+}
+
+
+def test_every_shared_warm_is_handed_a_residency_by_an_approved_name() -> None:
+    """`residency` is a required keyword on both helpers, so pyright already catches an
+    omission. What it cannot see is the VALUE: `None` is legal, and a getattr default that
+    silently yields it is how the debug console spent two loads evicting nothing at all."""
+    calls = _admitted_load_calls()
+    assert calls, "the AST scan found no gateway_load/gateway_prime calls — the check has rotted"
+    wrong = [
+        f"{path.relative_to(_SRC)}:{call.lineno} passes {expr or '<nothing>'}"
+        for path, call, expr in calls
+        if expr not in _APPROVED_RESIDENCY
+    ]
+    assert not wrong, (
+        "unapproved residency= at: "
+        + "; ".join(wrong)
+        + " — a load helper must be handed the box's coordinator by one of "
+        + str(sorted(_APPROVED_RESIDENCY))
+        + ". A bare None (or a new getattr default) makes the warm evict nothing; if that is "
+        + "really what you want, add the spelling to _APPROVED_RESIDENCY and say why."
+    )
