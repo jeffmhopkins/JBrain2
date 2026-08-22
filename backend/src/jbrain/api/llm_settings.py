@@ -1041,13 +1041,9 @@ async def load_local_model(
     evicting everything is REFUSED with a 409 (loading it would OOM-crash the box) — nothing
     is evicted in that case. 404 for an unprovisioned id; 409 when hosting is off or the
     model can't fit; 502 if the gateway rejects or can't be reached."""
-    model = _require_provisioned(settings, model_id)
-    if residency is not None:
-        try:
-            await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible
-        except ResidencyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await gateway_load(model_id, settings, gateway, registry=registry, liveness=liveness)
+    return await gateway_load(
+        model_id, settings, gateway, residency=residency, registry=registry, liveness=liveness
+    )
 
 
 class ContextWindowIn(BaseModel):
@@ -1486,16 +1482,41 @@ async def apply_overrides(
     return await _snapshot(settings, store, ctx, gateway)
 
 
+async def _admit_or_409(residency: ResidencyCoordinator | None, served_model: str) -> None:
+    """Evict-to-fit before a deliberate load, or refuse with a 409.
+
+    `free_room`, not `ensure_room`: an operator load is a change to the box's steady state,
+    not a transient displacement, so what it evicts is NOT scheduled for restore. A model
+    that cannot fit even after evicting everything is refused and nothing is evicted.
+
+    A `None` coordinator (cloud-only box, or a test that wires none) admits — there is no
+    budget to hold. That is the one permissive branch left, and it is explicit."""
+    if residency is None:
+        return
+    try:
+        await residency.free_room(served_model)
+    except ResidencyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 async def gateway_load(
     model_id: str,
     settings: Settings,
     gateway: LocalGatewayClient,
     *,
+    residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
     liveness: HiddenToolsProbe | None = None,
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
+
+    `residency` is a REQUIRED keyword, and the admission happens here rather than in the
+    route. It used to live in the owner route only, so the debug console's load reached
+    `gateway.load` with nothing having evicted to fit — one of exactly two naked loads on
+    this box, and both were on the debug console, the surface the owner reaches when the
+    box is already in trouble. Required-and-explicit means a new route cannot quietly
+    become a third.
 
     The warm-up primes the interactive chat persona (jerv) — its system prompt AND its
     tool schemas — into the gateway KV cache so the operator's first conversation turn
@@ -1507,6 +1528,7 @@ async def gateway_load(
     ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);
     without it — a build with no agent wired — the warm falls back to persona-only."""
     model = _require_provisioned(settings, model_id)
+    await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:
@@ -1874,14 +1896,19 @@ async def gateway_prime(
     settings: Settings,
     gateway: LocalGatewayClient,
     *,
+    residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
     liveness: HiddenToolsProbe | None = None,
 ) -> dict[str, object]:
     """Prime one model with the real jerv prefix and TIME it — the measurement instrument for
     prefill experiments. `elapsed_ms` is the number that matters: a cold prefill and a
     post-restore prefill differ by ~50x, which is the only reliable way to tell whether a KV
-    restore actually took effect (a restore returns 200 either way)."""
+    restore actually took effect (a restore returns 200 either way).
+
+    Admits through `residency` first, for the same reason `gateway_load` does: this reached
+    `gateway.load` with no eviction at all, and it is reachable only from the debug console."""
     model = _require_provisioned(settings, model_id)
+    await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:

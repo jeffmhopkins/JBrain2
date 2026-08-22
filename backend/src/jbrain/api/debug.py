@@ -1367,6 +1367,10 @@ async def load_model(
         model_id,
         settings,
         _gateway(request),
+        # This load used to reach the gateway with nothing having evicted to fit — one of
+        # exactly two naked loads on the box, both of them here, on the surface the owner
+        # reaches when the box is already in trouble.
+        residency=getattr(request.app.state, "residency", None),
         registry=getattr(request.app.state, "agent_registry", None),
         liveness=getattr(request.app.state, "image_liveness", None),
     )
@@ -1493,6 +1497,7 @@ async def prime_model(
         model_id,
         settings,
         _gateway(request),
+        residency=getattr(request.app.state, "residency", None),
         registry=getattr(request.app.state, "agent_registry", None),
         liveness=getattr(request.app.state, "image_liveness", None),
     )
