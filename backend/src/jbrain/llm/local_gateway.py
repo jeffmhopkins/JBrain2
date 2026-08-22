@@ -339,10 +339,13 @@ class LocalGatewayClient:
                 )
                 self._drop_weights_cache(model)
         # Forget our own COMPLETED loads once they are gone, so a later request-driven reload
-        # of the same model is treated as unannounced (it is). `_loading` is deliberately NOT
-        # pruned here: a load in flight is not resident yet, and pruning its claim is exactly
-        # what made a guarded load report itself.
-        self._loaded_here &= resident
+        # of the same model is treated as unannounced (it is). A load still IN FLIGHT is spared:
+        # it is not resident yet, and `_load_and_warm` itself calls `running()` between claiming
+        # the model and it arriving. Pruning on that call destroyed the durable claim while
+        # `_loading` masked the symptom — so the false alarm surfaced later, on the first poll
+        # after `load()` released `_loading`, as `unannounced_load … first_poll=false` for this
+        # client's own guarded load. That is the reading DEBUG_ACCESS.md calls a real bypass.
+        self._loaded_here &= resident | self._loading
 
     async def unload(self, served_model: str) -> None:
         """Unload one model from memory. Raises LocalGatewayError on any failure.

@@ -916,3 +916,38 @@ async def test_an_idle_box_does_not_disguise_a_bypass_as_a_first_poll(
     hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
     assert len(hits) == 1 and hits[0]["model"] == "gpt-oss-120b"
     assert hits[0]["first_poll"] is False, "a real bypass was labelled a first-poll artifact"
+
+
+async def test_a_short_load_does_not_report_itself_after_the_claim_is_pruned(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim must survive the poll that `_load_and_warm` makes DURING the load.
+
+    Sequence, all one client: `load()` claims the model in `_loaded_here` before loading, then
+    `_load_and_warm` calls `running()` while it is still arriving. That poll pruned the claim
+    (`&= resident`, and it is not resident yet). `_loading` hid the damage at the time, but it
+    is released in `load()`'s `finally`, so the NEXT poll saw the model with no claim in either
+    set and logged `unannounced_load … first_poll=false` — a guarded load accusing itself, in
+    the one shape DEBUG_ACCESS.md tells the operator to trust as a real bypass."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+    gw._polled = True  # not a first poll, so nothing is excused as a fresh-client artifact  # type: ignore[attr-defined]
+
+    gw._loaded_here.add(
+        "gpt-oss-120b"
+    )  # claimed before the load runs (_load_and_warm)  # type: ignore[attr-defined]
+    gw._loading.add("gpt-oss-120b")  # and in flight  # type: ignore[attr-defined]
+    gw._drop_cache_for_unannounced(set())  # the poll _load_and_warm itself makes: not resident
+    gw._loading.discard(
+        "gpt-oss-120b"
+    )  # load() finally: the in-flight claim is released  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # now it arrives, on a later poll
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert not hits, f"a guarded load reported itself as unannounced: {hits}"
