@@ -813,7 +813,7 @@ def build_router(
     recorder: UsageRecorder | None = None,
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
-    residency: LocalAdmitter | None = None,
+    residency: LocalAdmitter,
     slots_probe: prefill.SlotsReader | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
@@ -823,11 +823,20 @@ def build_router(
     Residency admission (evict-to-make-room before a local load) is NOT an opt-in the
     caller can forget: the gateway never self-evicts (`swap: false`), so an unadmitted
     local load co-loads past the unified-memory budget and hard-locks the box (it did —
-    the worker used to build an unadmitted router). So this ALWAYS attaches a coordinator
-    — build one from `settings` when the caller passes none — making the memory-managed
-    path the only path. A caller that owns a coordinator (the API, for plan_load/restore;
-    the worker) passes it so admission runs on the same instance its displacement bookkeeping
-    uses; everyone else gets a default that is inert on a cloud-only box (enabled off).
+    the worker used to build an unadmitted router). `residency` is therefore REQUIRED.
+
+    It used to be optional, with a `_default_residency` built from `settings` for callers
+    that passed none. That default was the weaker of two gates: it carried no `hold_loader`,
+    so `_held_names()` returned an empty set — and empty means *not held*, i.e. admit
+    everything. An operator reservation could be enforced on the API's coordinator and be
+    invisible on this one. It had no `box_lock` either, so its `ensure_room` evicted without
+    loading and left the client to trigger the load unserialized.
+
+    Nothing in production ever used it: `main.py` and `worker.py` are the only two
+    `build_router` callers and both pass their own fully-wired coordinator. It existed only
+    to be silently wrong for whoever forgot. Deleting it is what makes "one way in" true by
+    construction rather than by convention — a caller that has no coordinator now fails to
+    compile instead of getting a gate that answers differently.
 
     `slots_probe` is the gateway's `/slots` reader, and is what turns the prefill diagnostic
     on (jbrain.llm.prefill). Optional in the way admission is NOT: this one only reads,
@@ -854,43 +863,7 @@ def build_router(
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
         local_windows_loader=local_windows_loader,
-        residency=(
-            residency
-            if residency is not None
-            else _default_residency(settings, local_windows_loader)
-        ),
+        residency=residency,
         slots_probe=slots_probe,
         local_enabled=settings.local_llm_enabled,
-    )
-
-
-def _default_residency(
-    settings: Settings,
-    windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
-) -> LocalAdmitter:
-    """The coordinator a build_router caller gets when it supplies none — sized from
-    settings and inert on a cloud-only box (`enabled=settings.local_llm_enabled`), so the
-    router is memory-managed by default and there is no unadmitted local path. Reuses the
-    router's own `local_windows_loader` so the budget sizes each model's KV against the
-    operator's live `-c`, not just the catalog default — else it under-counts KV and could
-    under-evict. Imported lazily to avoid an import cycle (residency imports back into the
-    jbrain.llm package)."""
-    from jbrain.llm import gpu_guard
-    from jbrain.llm.local_gateway import LocalGatewayClient
-    from jbrain.llm.residency import ResidencyCoordinator
-
-    return ResidencyCoordinator(
-        # The gpu_probe is what makes this default coordinator's loads pass the device-memory
-        # guard. It goes on the GATEWAY rather than the coordinator because `load()` is the
-        # chokepoint: a guard there covers callers that never touch a coordinator at all.
-        LocalGatewayClient(
-            settings.local_llm_url,
-            gpu_probe=gpu_guard.probe_for(settings),
-            windows_loader=windows_loader,
-            models_dir=settings.local_models_dir,
-        ),
-        windows_loader=windows_loader,
-        models_dir=settings.local_models_dir,
-        enabled=settings.local_llm_enabled,
-        free_ram_fraction=settings.local_llm_free_ram_fraction,
     )

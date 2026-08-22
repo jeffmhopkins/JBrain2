@@ -550,6 +550,12 @@ async def run() -> None:
         # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
         # never evict code mode's models or co-load past physical RAM.
         hold_loader=lambda: worker_settings_store.code_mode_hold_names(queue.SYSTEM_CTX),
+        # The operator's restore switch, read live — the SAME key the api's coordinator and
+        # the WarmKeeper read (`main.py`). It was missing here, so the worker's coordinator
+        # answered "restore is on" no matter what the owner had set: an operator switch
+        # enforced in one process and invisible in the other. Absent loader degrades to on,
+        # so the omission failed OPEN, which is the direction that costs the owner RAM.
+        auto_restore_loader=lambda: worker_settings_store.llm_local_auto_restore(queue.SYSTEM_CTX),
         # Serialize evict+load against the api process (which runs its own coordinator over
         # the same box) so a background job's model swap can't co-load past the free-RAM
         # floor while the api is loading for a chat turn — the cross-process double-load.

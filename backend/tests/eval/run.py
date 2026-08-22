@@ -45,6 +45,15 @@ class _Tally:
         self.calls += 1
 
 
+def _inert_residency() -> object:
+    """A disabled coordinator. This harness routes to the cloud provider, so nothing
+    local is ever loaded and admission has nothing to do — but `build_router` requires
+    an admitter rather than silently building a half-wired one."""
+    from jbrain.llm.residency import ResidencyCoordinator
+
+    return ResidencyCoordinator(object(), enabled=False)  # type: ignore[arg-type]
+
+
 async def _evaluate(
     cases: list[Case], run_one: Callable[[Case], Awaitable[list[str]]], *, db: bool = False
 ) -> int:
@@ -97,7 +106,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
     maker = async_sessionmaker(engine, expire_on_commit=False)
     tally = _Tally()
     settings = Settings()
-    router = build_router(settings, recorder=tally)
+    router = build_router(settings, recorder=tally, residency=_inert_residency())
 
     embedder = None
     embed_model = ""
@@ -224,7 +233,7 @@ async def main() -> int:
     # a requires_canon case, so skip them rather than burn Grok calls for nothing.
     cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
-    router = build_router(settings, recorder=tally)
+    router = build_router(settings, recorder=tally, residency=_inert_residency())
     facts_total = 0  # corpus-total proposed facts — the intent-mode leaner metric
 
     async def run_one_intent(case: Case) -> list[str]:
