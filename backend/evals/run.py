@@ -37,42 +37,11 @@ from jbrain.llm import build_router
 
 
 def _residency() -> Any:
-    """A REAL gate, not an inert one, because this CLI can route `note.extract` at a local
-    model (see the module docstring) and a local completion loads it. `enabled` therefore
-    tracks the box's own setting rather than being hardcoded off: an inert coordinator here
-    would mean unadmitted, unevicted local loads from the command line — the co-load-past-the-
-    floor path W0 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md exists to close.
+    """A REAL gate: this CLI can route `note.extract` at a local model (see the module
+    docstring) and a local completion loads it."""
+    from jbrain.llm.residency import dbless_coordinator
 
-    The four DB-backed switches are None because `prompt-eval.sh` runs with no database: no
-    live window/slot overrides, no operator floor override, no code-mode hold, no cross-process
-    box lock. That is as much gate as a DB-less process can carry, and it is named switch by
-    switch rather than defaulted, so the shortfall is visible here instead of implied."""
-    from jbrain.llm import gpu_guard
-    from jbrain.llm.local_gateway import LocalGatewayClient
-    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
-
-    settings = Settings()
-    gateway = LocalGatewayClient(
-        settings.local_llm_url,
-        gpu_probe=gpu_guard.probe_for(settings),
-        models_dir=settings.local_models_dir,
-    )
-    return ResidencyCoordinator(
-        gateway,
-        ResidencyWiring(
-            windows_loader=None,
-            slots_loader=None,
-            models_dir=settings.local_models_dir,
-            enabled=settings.local_llm_enabled,
-            free_ram_fraction=settings.local_llm_free_ram_fraction,
-            fraction_loader=None,
-            hold_loader=None,
-            auto_restore_loader=None,
-            box_lock=None,
-            on_prefix_lost=None,
-            gpu_probe=gpu_guard.probe_for(settings),
-        ),
-    )
+    return dbless_coordinator(Settings())
 
 
 async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:

@@ -146,6 +146,49 @@ class EvictionPlan:
     already_resident: bool
 
 
+def dbless_coordinator(settings: object) -> ResidencyCoordinator:
+    """The gate for a process with no database — the two eval CLIs (`prompt-eval.sh`,
+    `grok-eval.sh`), which run `--no-deps`.
+
+    Named and shared rather than hand-rolled per CLI, because the two got DIFFERENT answers
+    when they were: one built a real coordinator, the other passed `inert()` on the reasoning
+    that its `xai_api_key` gate made the local path unreachable. That gate checks a key is
+    PRESENT; `JBRAIN_LLM_TASKS` still decides where a task routes, so `note.extract` pinned
+    local would have loaded unadmitted from the command line — the co-load path W0 of
+    docs/plans/LOCAL_MODEL_ACCESS_PLAN.md exists to close.
+
+    `enabled` tracks the box's own setting, so this is inert on a cloud-only box for the real
+    reason rather than by assumption. The four DB-backed switches are None because there is no
+    database to read them from: no live window/slot overrides, no operator floor override, no
+    code-mode hold, no cross-process box lock. That is as much gate as a DB-less process can
+    carry, and naming each one keeps the shortfall visible."""
+    from jbrain.llm import gpu_guard
+    from jbrain.llm.local_gateway import LocalGatewayClient
+
+    models_dir = getattr(settings, "local_models_dir", "")
+    probe = gpu_guard.probe_for(settings)
+    return ResidencyCoordinator(
+        LocalGatewayClient(
+            getattr(settings, "local_llm_url", ""), gpu_probe=probe, models_dir=models_dir
+        ),
+        ResidencyWiring(
+            windows_loader=None,
+            slots_loader=None,
+            models_dir=models_dir,
+            enabled=bool(getattr(settings, "local_llm_enabled", False)),
+            free_ram_fraction=float(
+                getattr(settings, "local_llm_free_ram_fraction", DEFAULT_FREE_RAM_FRACTION)
+            ),
+            fraction_loader=None,
+            hold_loader=None,
+            auto_restore_loader=None,
+            box_lock=None,
+            on_prefix_lost=None,
+            gpu_probe=probe,
+        ),
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ResidencyWiring:
     """Every switch the coordinator reads, as one explicit object.

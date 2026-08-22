@@ -20,6 +20,11 @@ embed container up as well as Docker + Grok.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from jbrain.llm.residency import ResidencyCoordinator
+
 import asyncio
 import os
 import sys
@@ -27,7 +32,6 @@ from collections.abc import Awaitable, Callable
 
 from jbrain.config import Settings
 from jbrain.llm import build_router
-from jbrain.llm.router import LocalAdmitter
 from jbrain.llm.types import LlmUsage
 from tests.eval.assertions import check_case, check_case_db
 from tests.eval.cases import Case, load_corpus
@@ -46,16 +50,17 @@ class _Tally:
         self.calls += 1
 
 
-def _inert_residency() -> LocalAdmitter:
-    """A disabled coordinator. This harness routes to the cloud provider, so nothing
-    local is ever loaded and admission has nothing to do — this harness hard-gates on
-    `xai_api_key` (below), so every case routes to xAI and the local path is unreachable. That
-    is why inert is safe HERE and is not in `evals/run.py`, whose CLI can point note.extract at
-    a local model and therefore builds a real coordinator. `build_router` requires
-    an admitter rather than silently building a half-wired one."""
-    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
+def _residency() -> ResidencyCoordinator:
+    """A REAL gate — it was `_inert_residency` and it was wrong.
 
-    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
+    It used to pass `ResidencyWiring.inert()`, reasoning that the `xai_api_key` check below
+    made the local path unreachable. It does not: that check proves a KEY EXISTS, while
+    `JBRAIN_LLM_TASKS` still decides where a task routes — so `note.extract` pinned local would
+    have loaded unadmitted from `grok-eval.sh`. The sibling CLI in `evals/` reached the opposite
+    conclusion about the identical situation, which is how the bad reasoning showed up."""
+    from jbrain.llm.residency import dbless_coordinator
+
+    return dbless_coordinator(Settings())
 
 
 async def _evaluate(
@@ -110,7 +115,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
     maker = async_sessionmaker(engine, expire_on_commit=False)
     tally = _Tally()
     settings = Settings()
-    router = build_router(settings, recorder=tally, residency=_inert_residency())
+    router = build_router(settings, recorder=tally, residency=_residency())
 
     embedder = None
     embed_model = ""
@@ -237,7 +242,7 @@ async def main() -> int:
     # a requires_canon case, so skip them rather than burn Grok calls for nothing.
     cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
-    router = build_router(settings, recorder=tally, residency=_inert_residency())
+    router = build_router(settings, recorder=tally, residency=_residency())
     facts_total = 0  # corpus-total proposed facts — the intent-mode leaner metric
 
     async def run_one_intent(case: Case) -> list[str]:
