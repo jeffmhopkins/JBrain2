@@ -798,6 +798,8 @@ Each kwarg resolves to:
 459	            gpu_probe=gpu_probe,
 460	        )
 ```
+- ⚠️ **Historical — the coordinator default below was REMOVED on the local-model-access branch**
+  (`ResidencyWiring`, no defaults); quoted as read on 2026-08-22 because §3 row 4 cites it.
 - `free_ram_fraction` default `config.py:391` `    local_llm_free_ram_fraction: float = 0.15`; coordinator's own default `residency.py:169` `        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,` with `residency.py:68` `DEFAULT_FREE_RAM_FRACTION = 0.15`
 - `box_lock` → `residency.py:73` `def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:`
 - `on_prefix_lost` → `main.py:240` `def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:`
@@ -1713,7 +1715,9 @@ _DEFAULT_RESOLUTION = "medium"
 | M25 | `backend/src/jbrain/vitals_ring.py:29` | GPU busy only (no memory) | 0-100 | `from jbrain.host_metrics import read_gpu_busy_percent` |
 | M26 | `backend/src/jbrain/llm/gpu_guard.py:405` | post-load device delta | GB | `    delta = after.device_used_gb - before.device_used_gb` |
 
-The repo names the disagreement itself — `backend/src/jbrain/llm/residency.py:167-168`:
+The repo named the disagreement itself — `backend/src/jbrain/llm/residency.py:167-168`, **as
+read on 2026-08-22; these lines no longer exist**, the default having been removed rather than
+re-tuned:
 ```
         # the one the guard and the meter use — one of eight disagreeing memory budgets
         # this repo carried (see MEMORY_ADMISSION_PLAN.md (deleted), D0).
@@ -1744,7 +1748,7 @@ listed above with their `file:line`; reconciling them is out of scope for this i
 |---|---|---|
 | `backend/src/jbrain/config.py:391` | `    local_llm_free_ram_fraction: float = 0.15` | `backend/src/jbrain/config.py:379-384`: `    # The fraction of physical RAM the residency budget keeps FREE. The app is the box's sole` / `    # model evictor (the gateway never swaps on its own — every model is a llama-swap` / `    # `swap: false` member): before a model loads, jbrain.llm.residency.ensure_room evicts the` / `    # FEWEST resident models needed to keep >= this fraction free after it's resident (weights` / `    # + KV, biggest-first, staged last), so any model loads by unloading others until it fits.` / `    # Measured against live /proc/meminfo `used`, so image-gen and OS pressure count too. …` |
 | `backend/src/jbrain/llm/residency.py:68` | `DEFAULT_FREE_RAM_FRACTION = 0.15` | `residency.py:66-67`: `# `Settings.local_llm_free_ram_fraction`; the operator override rides the settings` / `# store and is threaded in via `fraction_loader`.` |
-| `backend/src/jbrain/llm/residency.py:169` | `        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,` | `residency.py:164-168` (verbatim, all five lines): `        # Matches `Settings.local_llm_free_ram_fraction` (0.15). It was 0.25, so any` / `        # construction path that did not pass the fraction explicitly reserved 30 GiB` / `        # instead of 18.2 on this box and planned against a ceiling 12 GiB tighter than` / `        # the one the guard and the meter use — one of eight disagreeing memory budgets` / `        # this repo carried (see MEMORY_ADMISSION_PLAN.md (deleted), D0).` |
+| `backend/src/jbrain/llm/residency.py:169` (**since removed**) | `        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,` | `residency.py:164-168` (verbatim, all five lines): `        # Matches `Settings.local_llm_free_ram_fraction` (0.15). It was 0.25, so any` / `        # construction path that did not pass the fraction explicitly reserved 30 GiB` / `        # instead of 18.2 on this box and planned against a ceiling 12 GiB tighter than` / `        # the one the guard and the meter use — one of eight disagreeing memory budgets` / `        # this repo carried (see MEMORY_ADMISSION_PLAN.md (deleted), D0).` |
 | `backend/src/jbrain/llm/residency.py:350` | `        ceiling = total * (1.0 - await self._fraction())  # keep used at/under this` | inline |
 | `backend/src/jbrain/llm/residency.py:619` | `        ceiling = total * (1.0 - await self._fraction())` | inline (restore path) |
 | `backend/src/jbrain/llm/gpu_guard.py:89` | `SAMPLE_INTERVAL_S = 1.0` | `gpu_guard.py:86-88`: `# How often the watchdog samples the device pool while a load runs. A model load is tens of` / `# seconds of I/O, so a 1s sample gives many chances to catch a climb; polling faster buys` / `# little and costs a supervisor round-trip each time.` |

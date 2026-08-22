@@ -1541,3 +1541,43 @@ def test_a_text_only_model_reports_no_image_floor_at_all() -> None:
     body = c.get("/api/settings/llm").json()
     m = next(x for x in body["local_models"] if x["id"] == "gpt-oss-120b")
     assert m["image_min_tokens"] is None and m["image_min_tokens_default"] is None
+
+
+def test_a_prime_puts_back_what_it_displaced_but_a_load_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two deliberate warms admit with DIFFERENT displacement semantics, and swapping them
+    is silent — both evict the same victim and both return 200.
+
+    A load is a steady-state change: the operator asked for this model, so the victim is gone
+    until they say otherwise (`free_room`, no restore recorded). A prime is the measurement
+    instrument for prefill experiments — run repeatedly, deliberately transient — so under
+    `free_room` each run would quietly strip the box of whatever it displaced. `ensure_room`
+    records the victim so the end-of-turn restore puts it back."""
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    from jbrain.api.llm_settings import _admit_or_409
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    settings = _cloud_settings(
+        local_llm_enabled=True, local_models=["qwen3-coder-next", "gpt-oss-120b"]
+    )
+    _c, _ = _authed_client(settings, gw)
+    residency = ResidencyCoordinator(
+        gw,
+        ResidencyWiring.inert(enabled=True, free_ram_fraction=settings.local_llm_free_ram_fraction),
+    )
+
+    asyncio.run(_admit_or_409(residency, "qwen3-coder-next"))
+    assert gw.unloaded == ["gpt-oss-120b"]
+    assert not residency._displaced, "an operator LOAD must not schedule its victim for restore"
+
+    gw2 = FakeLocalGateway(running={"gpt-oss-120b"})
+    residency2 = ResidencyCoordinator(
+        gw2,
+        ResidencyWiring.inert(enabled=True, free_ram_fraction=settings.local_llm_free_ram_fraction),
+    )
+    asyncio.run(_admit_or_409(residency2, "qwen3-coder-next", transient=True))
+    assert gw2.unloaded == ["gpt-oss-120b"]
+    assert residency2._displaced == {"gpt-oss-120b"}, "a PRIME must put back what it displaced"

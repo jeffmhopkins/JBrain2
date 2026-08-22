@@ -350,6 +350,17 @@ model; a hosting-off box shows a way back.
 
 ## Open questions the inventory could not answer from source
 
+**Does an explicit operator load outrank code mode's reservation?** `free_room` does not
+consult `_held_names()`, where `ensure_room` (`residency.py:541`) and `_restore` (`:691`) both
+do. So while code mode holds the box, a chat turn's load of a non-reserved model is refused,
+but the owner's Load button evicts the coder — and `free_room` records nothing for restore, so
+it does not come back. The box stays safe (evict-to-fit, not co-load), but code mode breaks
+with no narration. Pre-existing on the PWA route; `2f9904f` extended it to the debug console
+by giving that route the same admission, which is strictly safer than the naked load it
+replaced but inherits this gap. W1 has to answer it, because the answer differs by intent:
+`owner_turn` plausibly should win, `agent`/`scheduled` clearly should not. Found by
+adversarial review, 2026-08-22.
+
 These need a live read through the debug API before W1 and W4, and are listed rather than guessed:
 
 - the live `app.schedules` rows (the inventory reconstructed 17 from migrations `0036→0169`, but

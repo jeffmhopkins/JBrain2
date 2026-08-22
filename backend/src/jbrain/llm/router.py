@@ -344,9 +344,10 @@ class LlmRouter:
         # the memory budget evicts to hold the free-RAM floor. The gateway is configured
         # never to self-evict (llama_swap_config `swap: false`), so this is the ONLY thing
         # keeping a local load from co-loading past the unified-memory budget and
-        # hard-locking the box — build_router always attaches one (inert on a cloud-only
-        # box), so there is no unmanaged local path. None only on a bare test router with
-        # fake providers, which never routes to `local`. ensure_room swallows its own
+        # hard-locking the box — build_router REQUIRES one from its caller (it used to fall
+        # back to a default that was quietly the weaker gate; c76288f deleted it), so there is
+        # no unmanaged local path. None only on a bare test router with fake providers, which
+        # never routes to `local`. ensure_room swallows its own
         # housekeeping hiccups, but the deliberate over-box refusal (ResidencyError, when a
         # model can't fit the box even after evicting everything) propagates and fails the
         # turn/job by design — better one failed call than an OOM hard-lock.
