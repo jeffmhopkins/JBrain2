@@ -87,7 +87,12 @@ async def test_load_probes_health_then_warms_with_one_token() -> None:
     # first real turn isn't the cold load. The upstream capture runs alongside and is
     # covered separately — asserting it here would encode a race, since a load this fast
     # can finish before the watcher task is ever scheduled.
-    assert [c for c in seen if not c[1].startswith("/logs")] == [
+    # `/logs` and `/running` are bookkeeping, not the load: the upstream capture and the
+    # stop-settle read (`_settle_a_stopping_model`, which keeps a load from relaunching a
+    # model llama-swap is still stopping). What this pins is the ORDER of the two calls that
+    # are the load.
+    infra = ("/logs", "/running")
+    assert [c for c in seen if not c[1].startswith(infra)] == [
         ("GET", "/upstream/qwen3-vl-30b-a3b/health"),
         ("POST", "/upstream/qwen3-vl-30b-a3b/v1/chat/completions"),
     ]

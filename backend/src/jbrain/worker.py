@@ -53,7 +53,13 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring, pg_box_lock
+from jbrain.llm.residency import (
+    ResidencyCoordinator,
+    ResidencyError,
+    ResidencyWiring,
+    pg_box_lock,
+    pg_box_try_lock,
+)
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -576,6 +582,10 @@ async def run() -> None:
             # the same box) so a background job's model swap can't co-load past the free-RAM
             # floor while the api is loading for a chat turn — the cross-process double-load.
             box_lock=pg_box_lock(maker),
+            # Restore's lock is the NON-blocking one. It must skip rather than queue: a restore
+            # that waits is restoring to a steady state another process is already changing,
+            # and while it waits it can hold the per-process load lock against a chat turn.
+            box_try_lock=pg_box_try_lock(maker),
             # For the post-load measurement (predicted vs actual device cost). The guard itself
             # lives on the gateway above, where no caller can route around it.
             gpu_probe=gpu_guard.SupervisorGpuMemProbe(

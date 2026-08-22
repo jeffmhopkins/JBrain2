@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** Proposed · **Last verified:** 2026-08-22 · **Waves:** L0◻️ L1◻️ L2◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-22 · **Waves:** L0✅ L1✅ L2◻️ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -122,7 +122,7 @@ residency-layer fix reaches it.
 
 *Risk:* none — documentation. *Test:* the docs gate.
 
-### L1 — The unambiguous fixes the attempt surfaced ◻️
+### L1 — The unambiguous fixes the attempt surfaced ✅
 
 Independent of the ledger, each small, each with a regression test:
 
@@ -176,22 +176,42 @@ Independent of the ledger, each small, each with a regression test:
    loaders are queued), plus a dedicated engine so waiting on the lock cannot consume the
    request pool. All three or none.
 
-   The one piece that is correct today and NOT undone by L2: `_restore` should take a
-   **try-lock** (`pg_try_advisory_xact_lock`) and skip when it cannot get it. It fires at the
-   end of every displaced turn, aims at exactly the memory a concurrent evict just freed, and
-   "someone else is changing residency right now" is precisely when restoring to a remembered
-   steady state is meaningless. A background task that never blocks also cannot convoy.
+   **DONE 2026-08-22 — the one piece that is correct today and NOT undone by L2.** `_restore`
+   now takes a **try-lock** (`pg_try_advisory_xact_lock`, `residency.pg_box_try_lock`) and
+   SKIPS when it cannot get it, leaving `_displaced` intact so the next `schedule_restore`
+   picks the members up. It fires at the end of every displaced turn, aims at exactly the
+   memory a concurrent evict just freed, and "someone else is changing residency right now" is
+   precisely when restoring to a remembered steady state is meaningless. A background task
+   that never blocks also cannot convoy. The rest of item 5 — widening the lock over the other
+   three load paths — remains deliberately NOT DONE, for the three reasons above.
 
-6. **The warm-up phase runs outside the runaway watchdog.** `guarded_load` returns, and only
-   then does `_load_and_warm` call `_warm(...)` — which the file itself measures at **118 s of
-   a 198 s gpt-oss-120b load**. So ~60% of a cold load allocates KV and graph-capture buffers
-   with nothing watching for a runaway. Verified 2026-08-22 (`local_gateway.py`, the
-   `guarded_load` call and the `_warm` call that follows it).
+6. **The warm-up phase ran outside the runaway watchdog — CLOSED 2026-08-22.** `guarded_load`
+   returned, and only then did `_load_and_warm` call `_warm(...)` — which the file itself
+   measures at **118 s of a 198 s gpt-oss-120b load**. So ~60% of a cold load allocated KV and
+   graph-capture buffers with nothing watching for a runaway. The warm now runs INSIDE
+   `guarded_load` (`_load_then_warm`); the pre-flight already admitted weights + KV +
+   projector, so the ceiling covered the warm all along and only the watching stopped early.
+   The page-cache drop still lands between the two — the warm's allocations should meet the
+   memory it returns rather than race it — and the outer `finally` keeps it for the abort
+   path, where it must follow `abort()`'s unload.
 
-*Risk:* low for 1-4, and each is separable. 5 and 6 are NOT low and are not separable from the
-ledger's admission story — they are listed here because they were verified while looking at
-something else, not because they belong in the same change. *Test:* one regression test each
-for 1-4; the 409/500 and defer-vs-burn cases have no coverage today.
+7. **G1a — a STOPPING model took the already-resident free pass. CLOSED 2026-08-22.** The most
+   consequential finding of the L0 audit, and the one place a load could still reach llama-swap
+   with no pre-flight, no watchdog and no ledger: `/running` lists a model llama-swap is
+   stopping, `_load_and_warm`'s already-resident branch reads that list, and the health GET it
+   then issues makes llama-swap **launch a fresh process**. The fix WAITS
+   (`_settle_a_stopping_model`) rather than re-deciding on the state name — routing a stopping
+   model to the guarded path would ask for room while the dying model's footprint is still
+   charged to the device pool, which is the double-count three earlier attempts made. A stop
+   that has not landed in 20 s is a retryable `LocalGatewayError`, never a fallthrough.
+
+*Risk:* low for 1-4, and each is separable. 5's remaining half — widening the load lock over
+the other three paths — is NOT low and is not separable from the ledger's admission story, so
+it stays open by decision, not by omission. 6 and 7 turned out to be separable after all: both
+are about WHERE an existing guard is applied, and neither changes what the guard computes.
+*Test:* one regression test each, all mutation-checked (revert the fix, watch the test fail
+with the right message). The balloon-during-the-warm and stop-settle cases had no coverage
+at all before this wave.
 
 ### L2 — The ledger ◻️
 

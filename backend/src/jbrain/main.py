@@ -147,7 +147,12 @@ from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring, pg_box_lock
+from jbrain.llm.residency import (
+    ResidencyCoordinator,
+    ResidencyWiring,
+    pg_box_lock,
+    pg_box_try_lock,
+)
 from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
@@ -449,6 +454,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Serialize evict+load against the worker process (which runs its own coordinator
                 # over the same box) so a deferred worker load can't co-load past the floor here.
                 box_lock=pg_box_lock(maker),
+                # Restore's lock is the NON-blocking one. It must skip rather than queue: a restore
+                # that waits is restoring to a steady state another process is already changing,
+                # and while it waits it can hold the per-process load lock against a chat turn.
+                box_try_lock=pg_box_try_lock(maker),
                 # Tell the WarmKeeper when an eviction or a bare restore-load drops a model's
                 # primed prefix. LATE-BOUND on purpose: the keeper is constructed further down
                 # this same startup, so the lambda resolves it at call time and degrades to a

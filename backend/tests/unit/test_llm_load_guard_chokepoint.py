@@ -158,6 +158,41 @@ async def test_a_load_that_balloons_mid_flight_is_aborted_and_unloaded() -> None
     assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
 
 
+@pytest.mark.anyio
+async def test_a_balloon_during_the_WARM_is_caught_too() -> None:
+    """The warm-up runs INSIDE the watchdog, not after it.
+
+    The warm is not an epilogue: its prefill is what allocates the KV cache and the
+    graph-capture buffers, and it MEASURED at 118 s of a 198 s cold gpt-oss-120b. With the
+    warm outside `guarded_load`, roughly 60% of a cold load — the 60% doing the allocating —
+    ran with nothing sampling the device pool, so a balloon that appeared at prefill was seen
+    by nobody and the freeze it could cause needs a power cycle.
+
+    The probe here is roomy for the pre-flight, the watchdog's baseline AND the settled check
+    that follows a load. It only balloons once the warm is under way, so this fails outright
+    against a build that stops watching when the weights are read."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if "chat/completions" in request.url.path:
+            await asyncio.sleep(5.0)  # the prefill: slow, and where the balloon appears
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    probe = _StubProbe(_mem(10.0), _mem(10.0), _mem(10.0), _mem(118.0))
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe, timeout=30.0
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError) as exc:
+        await gateway.load("qwen3.8-27b-q4")
+    assert "aborted" in str(exc.value)
+    assert any("/health" in path for path in seen), "the weights read never ran: " + repr(seen)
+    assert any("chat/completions" in path for path in seen), (
+        "the warm never started, so this proves nothing about watching it: " + repr(seen)
+    )
+    assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
+
+
 def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:
     """Where the CLIP attention workspace belongs, which the first version of this got
     backwards.
@@ -671,6 +706,76 @@ async def test_a_model_that_is_not_resident_is_still_admitted_first() -> None:
         await gateway.load("gpt-oss-120b")
 
 
+@pytest.mark.anyio
+async def test_a_model_that_is_STOPPING_does_not_get_the_resident_free_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The already-resident escape hatch must not swallow a model on its way OUT.
+
+    llama-swap's `/running` filters only `stopped` and `shutdown`, so a model it is in the
+    middle of stopping is still listed there — and the branch above reads that list. Taking it
+    for a stopping model skips the device pre-flight AND the watchdog, and then issues a health
+    GET that makes llama-swap launch a fresh process: an unguarded load, which on this box is
+    the power-cycle path.
+
+    The fix WAITS for the stop rather than re-deciding on the state name (asking for room while
+    the dying model's footprint is still charged double-counts it — the error three earlier
+    attempts made). So the load here must reach the guard, and be refused by it: the box is
+    full, and a stopping model buys no exemption from that."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    probe = _StubProbe(_mem(124.0 - local_catalog.load_footprint_gb(model) + 1.0))
+    polls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if request.url.path == "/running":
+            polls += 1
+            # Stopping for the first two reads, then the process is reaped and gone.
+            listed = [{"model": "gpt-oss-120b", "state": "stopping"}] if polls <= 2 else []
+            return httpx.Response(200, json={"running": listed})
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("gpt-oss-120b")
+    assert probe.calls >= 1, "the guard never ran — the stopping model took the resident branch"
+    assert polls > 1, "it never waited for the stop to land"
+
+
+@pytest.mark.anyio
+async def test_a_stop_that_never_lands_is_refused_rather_than_loaded_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timeout's fallthrough is a REFUSAL, because the only other fallthrough is the
+    unguarded load this exists to prevent. Retryable by design — the caller's next attempt
+    meets a settled box — so it must not be a `GpuBudgetError`, which reads as 'this box
+    cannot hold this model'."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/running":
+            return httpx.Response(
+                200, json={"running": [{"model": "gpt-oss-120b", "state": "stopping"}]}
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=_StubProbe(_mem(10.0))
+    )
+    with pytest.raises(local_gateway.LocalGatewayError, match="stopping"):
+        await gateway.load("gpt-oss-120b")
+    assert not any("/health" in path for path in seen), (
+        "it issued the health GET anyway, which is what makes llama-swap relaunch: " + repr(seen)
+    )
+
+
 def _admitted_load_calls() -> list[tuple[pathlib.Path, ast.Call, str]]:
     """Every call to the two shared warm helpers, with the `residency` it passes."""
     found: list[tuple[pathlib.Path, ast.Call, str]] = []
@@ -731,7 +836,7 @@ def test_production_never_wires_an_inert_residency() -> None:
     """`ResidencyWiring.inert()` fills every switch with its do-nothing fallback, which is what
     tests and a cloud-only build want. It is also a way to satisfy the required-argument
     constructor without wiring anything — the half-wired gate all over again, one call shorter.
-    Production says all eleven or it does not build."""
+    Production names every switch or it does not build."""
     users = []
     for path in _SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))

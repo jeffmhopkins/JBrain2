@@ -60,6 +60,8 @@ log = structlog.get_logger()
 # only one process evicts+loads at a time. Returns an async context manager; `None` (the
 # default) means no locking — single-process/cloud/test callers keep the old behavior.
 BoxLock = Callable[[], "contextlib.AbstractAsyncContextManager[None]"]
+# The non-blocking form: yields whether the lock was taken. See `pg_box_try_lock`.
+BoxTryLock = Callable[[], "contextlib.AbstractAsyncContextManager[bool]"]
 
 # A fixed, arbitrary advisory-lock key shared by every process on the box (the api and the
 # worker), so `pg_advisory_xact_lock` serializes their model loads against each other.
@@ -85,6 +87,46 @@ def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:
             yield
 
     return _lock
+
+
+def pg_box_try_lock(maker: async_sessionmaker[AsyncSession]) -> BoxTryLock:
+    """The non-blocking form, for background work that must never queue behind a load.
+
+    `pg_try_advisory_xact_lock` returns immediately: it either takes the lock or says no. That
+    is the right primitive for `_restore`, where blocking is actively wrong — "another process
+    is changing the box's residency right now" is precisely the condition under which restoring
+    to a REMEMBERED steady state is meaningless, because the state being remembered is already
+    out of date. A background task that never blocks also cannot convoy: today `_restore` can
+    hold the per-process load lock for a 200 s load while a chat turn waits on it.
+
+    Yields True if the lock was taken (and holds it for the block), False if it was not. A
+    failure to reach the DB yields False as well — the caller skips, which for opportunistic
+    work is the safe direction, unlike `pg_box_lock` where a DB outage must not fail a turn."""
+
+    @contextlib.asynccontextmanager
+    async def _try() -> AsyncIterator[bool]:
+        # `acquired` is the marker for "we got past the lock query", and it is what keeps this
+        # from swallowing the CALLER's failures: an exception raised inside the caller's block
+        # arrives here through the `yield`, and catching it would both hide the real error and
+        # raise `generator didn't stop after throw()` at the second yield. Only a failure
+        # BEFORE the lock was decided means "DB unreachable, skip".
+        acquired: bool | None = None
+        try:
+            async with maker() as session, session.begin():
+                acquired = bool(
+                    await session.scalar(
+                        text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _BOX_LOCK_KEY}
+                    )
+                )
+                yield acquired
+                return
+        except Exception as exc:  # noqa: BLE001 — unreachable DB → skip, don't guess
+            if acquired is not None:
+                raise
+            log.warning("residency.box_try_lock_unavailable", error=repr(exc))
+        yield False
+
+    return _try
 
 
 # Loads the live per-model context-window overrides (catalog id → tokens), so the memory
@@ -183,6 +225,7 @@ def dbless_coordinator(settings: object) -> ResidencyCoordinator:
             hold_loader=None,
             auto_restore_loader=None,
             box_lock=None,
+            box_try_lock=None,
             on_prefix_lost=None,
             gpu_probe=probe,
         ),
@@ -202,7 +245,7 @@ class ResidencyWiring:
     instance of the gate and invisible on another, with nothing in the type system objecting.
 
     Closing those two instances (c76288f) did not close the class: an omitted switch still
-    compiled. Here it does not. Production must name all eleven, so a twelfth half-wired gate
+    compiled. Here it does not. Production must name EVERY field, so the next half-wired gate
     is a pyright error rather than a behaviour difference nobody sees. Tests and cloud-only
     builds say `inert()` and mean it out loud."""
 
@@ -229,6 +272,9 @@ class ResidencyWiring:
     auto_restore_loader: Callable[[], Awaitable[bool]] | None
     # Cross-process serialization of evict+load. None -> evict only, client triggers the load.
     box_lock: BoxLock | None
+    # The non-blocking form, used ONLY by `_restore`. None → restore runs unserialized, which
+    # is today's behaviour and is what a DB-less build gets.
+    box_try_lock: BoxTryLock | None
     # Fired when this coordinator drops a model's primed KV prefix (WarmKeeper's memo).
     on_prefix_lost: PrefixLostHook | None
     # Reads the iGPU's DEVICE memory (GTT). None -> the prior unguarded behaviour.
@@ -247,6 +293,7 @@ class ResidencyWiring:
         hold_loader: HoldLoader | None = None,
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
         box_lock: BoxLock | None = None,
+        box_try_lock: BoxTryLock | None = None,
         on_prefix_lost: PrefixLostHook | None = None,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
     ) -> ResidencyWiring:
@@ -262,6 +309,7 @@ class ResidencyWiring:
             hold_loader=hold_loader,
             auto_restore_loader=auto_restore_loader,
             box_lock=box_lock,
+            box_try_lock=box_try_lock,
             on_prefix_lost=on_prefix_lost,
             gpu_probe=gpu_probe,
         )
@@ -310,6 +358,10 @@ class ResidencyCoordinator:
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
         # is committed before release and a concurrent process's plan sees it (no co-load).
         self._box_lock = wiring.box_lock
+        # Restore's own lock. Deliberately a DIFFERENT primitive from `_box_lock`: restore must
+        # skip rather than queue, so it can neither convoy behind a load nor act on a steady
+        # state that another process is in the middle of changing.
+        self._box_try_lock = wiring.box_try_lock
         # Served names evicted (by us or by another displacement) and awaiting restore. The
         # box's remembered steady state minus whatever currently holds the RAM. Bounded by the
         # provisioned model count; entries clear as they reload or are attempted.
@@ -789,6 +841,21 @@ class ResidencyCoordinator:
         targets = set(self._displaced)
         if not targets:
             return
+        # Non-blocking, and a refusal means SKIP — not wait. Another process is mid-change, so
+        # the steady state this is restoring to is already stale; and waiting here would hold
+        # the per-process load lock against a chat turn for the length of someone else's load.
+        # `_displaced` is left untouched, so the next `schedule_restore` picks these up.
+        if self._box_try_lock is not None:
+            async with self._box_try_lock() as got:
+                if not got:
+                    log.info("residency.restore_skipped_box_busy", displaced=sorted(targets))
+                    return
+                await self._restore_core(targets)
+            return
+        await self._restore_core(targets)
+
+    async def _restore_core(self, targets: set[str]) -> None:
+        """The restore work itself, run with the box try-lock held when one is wired."""
         running = await self._gateway.running()
         mem = read_memory_gb()
         if mem is None:

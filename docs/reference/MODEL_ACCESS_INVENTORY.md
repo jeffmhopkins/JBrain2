@@ -3819,12 +3819,21 @@ three. They are downstream of residency and **cannot be fixed there**:
 | the queued-load join in `load` | `if queued and served_model in await self.running():` | returns "already loaded" and records a `MODEL_LOAD` span for a load that did not happen |
 | `_require_resident` (diagnostic reads) | `if served_model not in await self.running():` | guards `props`/`slots`/`metrics`; its own docstring says reaching them on a cold model *"froze this host to a power cycle"* |
 
-**G1a is the hole.** `running()` lists a model llama-swap is STOPPING. So a load targeting a
-mid-stop model takes the branch written on the premise that *nothing will be allocated* — and
-allocates the entire model, with no pre-flight and no watchdog. This is the same window
-`residency._note_if_not_ready` was added to measure; nobody traced it down to the gateway's own
-short circuit. Seven already-resident short circuits exist across the two layers and all seven
-read the same state-blind set.
+**G1a WAS the hole; CLOSED 2026-08-22.** `running()` lists a model llama-swap is STOPPING. So a
+load targeting a mid-stop model took the branch written on the premise that *nothing will be
+allocated* — and allocated the entire model, with no pre-flight and no watchdog. This is the
+same window `residency._note_if_not_ready` was added to measure; nobody traced it down to the
+gateway's own short circuit. Seven already-resident short circuits exist across the two layers
+and all seven read the same state-blind set.
+
+`_load_and_warm` now calls `_settle_a_stopping_model` before it picks a branch: it WAITS for the
+stop to land rather than re-spelling the state test, because routing a stopping model to the
+guarded path would ask for room while the dying model's footprint is still charged to the
+device pool — the double-count three earlier attempts made. Once the stop lands, "resident" and
+"absent" mean what they say and every existing number is right. A stop still unlanded after 20 s
+(llama-swap grants 10 s of graceful stop before escalating) is a retryable `LocalGatewayError`,
+because the only other fallthrough is the unguarded load. **The other two rows are unchanged and
+still read the state-blind set** — they are diagnostic/join paths, not loads.
 
 ## G2 — Loads that run outside the cross-process box lock
 

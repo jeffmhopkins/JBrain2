@@ -6,7 +6,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring
+from jbrain.llm.residency import (
+    ResidencyCoordinator,
+    ResidencyError,
+    ResidencyWiring,
+    pg_box_try_lock,
+)
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
@@ -29,6 +34,7 @@ def _coord(
     slots_loader: object = None,
     on_prefix_lost: object = None,
     auto_restore_loader: object = None,
+    box_try_lock: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -44,6 +50,7 @@ def _coord(
             slots_loader=slots_loader,  # type: ignore[arg-type]
             on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
             auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+            box_try_lock=box_try_lock,  # type: ignore[arg-type]
         ),
     )
 
@@ -1131,3 +1138,110 @@ async def test_the_over_box_refusal_does_not_blame_the_model_for_the_whole_box(
     assert "needs ~110 GB" not in msg and "needs ~178 GB" not in msg, (
         f"the model is being blamed for the whole box: {msg}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_busy_box_skips_the_restore_and_keeps_the_members(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restore takes a TRY-lock, and a refusal means skip — not wait.
+
+    Blocking would be wrong twice over: the steady state being restored to is already being
+    changed by whoever holds the lock, and while `_restore` waited it would hold the
+    per-process load lock against a chat turn for the length of someone else's 200 s load.
+
+    The load-bearing half of this test is the second assertion. A skipped restore MUST leave
+    `_displaced` intact — the normal path discards a member once attempted, and a skip that
+    reused that logic would forget the models permanently."""
+
+    @contextlib.asynccontextmanager
+    async def _busy() -> AsyncIterator[bool]:
+        yield False
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=40.0, enabled=True, box_try_lock=_busy)
+    coord._displaced.update({"gpt-oss-120b", "qwen3.5-4b"})
+
+    await coord._restore()
+
+    assert not gw.loaded, "restored while another process was changing the box"
+    assert coord._displaced == {"gpt-oss-120b", "qwen3.5-4b"}, (
+        "a skipped restore dropped its members — they would never be restored"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_idle_box_restores_under_the_try_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half: when the lock IS free, restore proceeds exactly as before."""
+
+    @contextlib.asynccontextmanager
+    async def _free() -> AsyncIterator[bool]:
+        yield True
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_free)
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+
+    assert gw.loaded == ["qwen3.5-4b"]
+    assert not coord._displaced
+
+
+# --- pg_box_try_lock: the helper itself -------------------------------------
+
+
+class _FakeSession:
+    """Just enough of AsyncSession for the advisory-lock helpers: `begin()` and `scalar()`."""
+
+    def __init__(self, answer: bool) -> None:
+        self._answer = answer
+
+    @contextlib.asynccontextmanager
+    async def begin(self) -> AsyncIterator[None]:
+        yield
+
+    async def scalar(self, _stmt: object, _params: object = None) -> bool:
+        return self._answer
+
+
+def _maker(answer: bool) -> object:
+    @contextlib.asynccontextmanager
+    async def _session() -> AsyncIterator[_FakeSession]:
+        yield _FakeSession(answer)
+
+    return _session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [True, False])
+async def test_pg_box_try_lock_reports_what_postgres_said(answer: bool) -> None:
+    async with pg_box_try_lock(_maker(answer))() as got:  # type: ignore[arg-type]
+        assert got is answer
+
+
+@pytest.mark.asyncio
+async def test_pg_box_try_lock_yields_false_when_the_db_is_unreachable() -> None:
+    """An opportunistic caller must SKIP, not fail, when the lock can't be consulted. False is
+    the safe direction here (unlike `pg_box_lock`, where a DB outage must not fail a turn)."""
+
+    @contextlib.asynccontextmanager
+    async def _dead() -> AsyncIterator[_FakeSession]:
+        raise RuntimeError("no route to host")
+        yield  # pragma: no cover — unreachable, satisfies the generator protocol
+
+    async with pg_box_try_lock(_dead)() as got:  # type: ignore[arg-type]
+        assert got is False
+
+
+@pytest.mark.asyncio
+async def test_pg_box_try_lock_does_not_swallow_the_callers_own_failure() -> None:
+    """The caller's exception travels back in through the `yield`. Catching it there would
+    hide the real error behind `generator didn't stop after throw()` and then hand the caller
+    a second, bogus `False` — so the lock must only treat PRE-acquisition failures as skips."""
+    with pytest.raises(ValueError, match="the restore itself blew up"):
+        async with pg_box_try_lock(_maker(True))() as got:  # type: ignore[arg-type]
+            assert got is True
+            raise ValueError("the restore itself blew up")
