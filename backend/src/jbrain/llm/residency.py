@@ -319,6 +319,27 @@ class ResidencyCoordinator:
                 return frozenset(names)
         return frozenset()
 
+    def _note_if_not_ready(self, served_model: str, at: str) -> None:
+        """Narrate an admission skipped for a model that is NOT ready.
+
+        MEASUREMENT, not a behaviour change. Both places this coordinator concludes "already
+        resident" read that from `/running`, and llama-swap lists a model it is STOPPING there
+        (`local_gateway._parse_running_states`). So either skip can fire for a model on its way
+        out — after which the completion reaches llama-swap, which relaunches it with no
+        admission, no device guard and no `box_events` row. That is the shape of the incident on
+        2026-08-21: a model the owner had unloaded served an hourly sweep an hour later, and no
+        load was ever recorded.
+
+        `at` distinguishes the two skips because they have different reach: `fast_path` runs only
+        when a box lock is wired, `plan` runs on every path. Best-effort throughout — a gateway
+        that reports no state must not turn housekeeping into a failure, and an unknown state is
+        never read as ready."""
+        state = ""
+        with contextlib.suppress(Exception):
+            state = self._gateway.state_of(served_model)  # type: ignore[attr-defined]
+        if state and state != "ready":
+            log.warning("residency.short_circuit_not_ready", model=served_model, state=state, at=at)
+
     async def _footprint(
         self, served_model: str, windows: Mapping[str, int], slots: Mapping[str, int]
     ) -> float:
@@ -351,6 +372,7 @@ class ResidencyCoordinator:
         windows = await self._windows()
         slots = await self._slots()
         if served_model in running:
+            self._note_if_not_ready(served_model, "plan")
             return EvictionPlan(
                 target=served_model,
                 victims=(),
@@ -473,6 +495,7 @@ class ResidencyCoordinator:
         with contextlib.suppress(Exception):
             if served_model in await self._gateway.running():
                 self._displaced.discard(served_model)
+                self._note_if_not_ready(served_model, "fast_path")
                 return
         # Slow path: a load is needed — serialize evict+load box-wide and load the target
         # under the lock so its memory is committed before the next process plans.

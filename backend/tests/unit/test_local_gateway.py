@@ -791,3 +791,101 @@ async def test_unload_waits_longer_than_the_default_client_timeout() -> None:
     await gw.unload("gpt-oss-120b")
     assert seen and seen[0] is not None
     assert seen[0] >= 30.0, f"unload still races llama-swap's 10 s graceful stop: {seen[0]}s"
+
+
+# --- /running carries a STATE, and a non-ready model is not serving -----------------
+# llama-swap lists a model it is STOPPING (only `stopped`/`shutdown` are filtered), so
+# every caller reading this as "resident" treats a model on its way out as one that is
+# up. These cover the measurement that lands before that behaviour changes.
+
+
+def test_parse_running_states_keeps_the_state() -> None:
+    states = local_gateway._parse_running_states(
+        {"running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "stopping"}]}
+    )
+    assert states == {"a": "ready", "b": "stopping"}
+
+
+def test_parse_running_states_is_empty_string_when_the_build_reports_none() -> None:
+    """An older gateway sends bare names. Unknown must not read as ready."""
+    assert local_gateway._parse_running_states(["a", "b"]) == {"a": "", "b": ""}
+
+
+def test_parse_running_still_returns_names_only() -> None:
+    """The set-returning parser is unchanged for every existing caller."""
+    payload = {"running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "stopping"}]}
+    assert _parse_running(payload) == {"a", "b"}
+
+
+async def test_running_still_lists_a_stopping_model() -> None:
+    """The behaviour this wave MEASURES but does not yet change."""
+    client = _client(
+        lambda r: httpx.Response(
+            200, json={"running": [{"model": "gpt-oss-120b", "state": "stopping"}]}
+        )
+    )
+    assert await client.running() == {"gpt-oss-120b"}
+
+
+async def test_state_of_reports_the_last_seen_state() -> None:
+    client = _client(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "starting"}]
+            },
+        )
+    )
+    await client.running()
+    assert client.state_of("a") == "ready"
+    assert client.state_of("b") == "starting"
+
+
+async def test_state_of_is_unknown_for_a_model_that_is_not_listed() -> None:
+    """`""` must mean "we do not know", never "ready" — a caller that reads an absent
+    model as ready would skip admission for a model that is not there at all."""
+    client = _client(lambda r: httpx.Response(200, json={"running": [{"model": "a"}]}))
+    await client.running()
+    assert client.state_of("nope") == ""
+
+
+async def test_not_ready_is_logged_once_per_transition(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`running()` is polled on every tick in both processes, so an unconditional line
+    would bury the transition it exists to show."""
+    lines: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append((ev, kw)))
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": "stopping"}]})
+    )
+    await client.running()
+    await client.running()
+    hits = [kw for ev, kw in lines if ev == "local_gateway.not_ready_in_running"]
+    assert len(hits) == 1
+    assert hits[0]["models"] == ["a"]
+    assert hits[0]["states"] == ["stopping"]
+
+
+async def test_a_ready_only_roster_logs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append(ev))
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": "ready"}]})
+    )
+    await client.running()
+    assert "local_gateway.not_ready_in_running" not in lines
+
+
+async def test_the_line_returns_when_a_model_goes_not_ready_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Log-on-change must not mean log-once-ever: a model that settles and later stops
+    again is a new transition and has to narrate."""
+    lines: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append(ev))
+    states = iter(["stopping", "ready", "stopping"])
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": next(states)}]})
+    )
+    for _ in range(3):
+        await client.running()
+    assert lines.count("local_gateway.not_ready_in_running") == 2

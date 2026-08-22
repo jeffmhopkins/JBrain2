@@ -84,6 +84,13 @@ _PROGRESS_STEP = 0.01
 _FOOTPRINT_DRIFT_GB = 1.0
 
 
+# llama-swap's own name for a model that is up and serving. Its process states are
+# `stopped, starting, ready, stopping, shutdown` (`internal/process/process.go`), and
+# `/running` filters only the first and last — so `starting` and `stopping` both reach us
+# and neither is serving. Confirmed at the pin in `deploy/Dockerfile.local-llm`.
+_STATE_READY = "ready"
+
+
 class LocalGatewayError(Exception):
     """A load/unload call the gateway rejected or couldn't be reached for."""
 
@@ -124,6 +131,11 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # What /running last reported, name -> state, and the non-ready subset we have
+        # already narrated. Cached so a caller can ask `state_of` without a second round
+        # trip; see `_note_not_ready`.
+        self._last_states: dict[str, str] = {}
+        self._last_not_ready: dict[str, str] = {}
         # One lock per served model, so two callers cannot load the same one at once. See
         # `load` for what that cost the owner without it.
         self._load_locks: dict[str, asyncio.Lock] = {}
@@ -214,12 +226,50 @@ class LocalGatewayClient:
             ) as client:
                 resp = await client.get(f"{self._root}/running")
                 resp.raise_for_status()
-                resident = _parse_running(resp.json())
+                states = _parse_running_states(resp.json())
         except (httpx.HTTPError, ValueError) as exc:
             log.info("local_gateway.running_unavailable", error=str(exc))
             return set()
+        self._last_states = dict(states)
+        self._note_not_ready(states)
+        resident = set(states)
         self._drop_cache_for_unannounced(resident)
         return resident
+
+    def _note_not_ready(self, states: Mapping[str, str]) -> None:
+        """Record — and narrate once per transition — any model /running lists in a state
+        that is not `ready`.
+
+        MEASUREMENT, not yet a behaviour change. `_parse_running_states` explains why a
+        non-ready model in this list is a hole; what nobody has measured is how often the
+        window is actually open on this box, and for which state. Landing the counter first
+        is deliberate: the fix removes the thing being measured, so shipping both together
+        would only ever report zero. A predecessor plan made this log the trigger for a wave
+        scheduled last, so the evidence could never be gathered at all.
+
+        Logged on change rather than per poll: `running()` is called on every poller tick in
+        both processes, so an unconditional line here would bury the transition it exists to
+        show."""
+        not_ready = {n: st for n, st in states.items() if st and st != _STATE_READY}
+        if not_ready != self._last_not_ready:
+            if not_ready:
+                log.info(
+                    "local_gateway.not_ready_in_running",
+                    models=sorted(not_ready),
+                    states=sorted(set(not_ready.values())),
+                    client=self._client_id,
+                )
+            self._last_not_ready = dict(not_ready)
+
+    def state_of(self, served_model: str) -> str:
+        """The state /running last reported for a model — `""` when it was absent from that
+        response, or when the gateway build reports no state at all. Best-effort and cached
+        from the most recent `running()` in this process, so a caller can narrate WHY it
+        treated a model as resident without paying a second round trip.
+
+        `""` is deliberately indistinguishable between "not listed" and "build reports no
+        state": both mean *we do not know*, and a caller must not read either as `ready`."""
+        return self._last_states.get(served_model, "")
 
     def _drop_cache_for_unannounced(self, resident: set[str]) -> None:
         """Drop the weights cache for any model that became resident without going through
@@ -1180,25 +1230,45 @@ def parse_spec_counters(metrics_text: str) -> dict[str, float]:
 
 
 def _parse_running(payload: object) -> set[str]:
+    """Served-model names from /running, discarding the state. See
+    `_parse_running_states` for why the state is worth keeping."""
+    return set(_parse_running_states(payload))
+
+
+def _parse_running_states(payload: object) -> dict[str, str]:
     """Tolerant parse of /running across llama-swap versions: accept a bare list,
     or an object wrapping the list under a common key; pull a model name from each
-    item whether it's a string or an object."""
+    item whether it's a string or an object. Maps name -> reported state, or "" when
+    the build reports none.
+
+    The state matters and was being thrown away. llama-swap's `RunningModels` filters
+    only `stopped` and `shutdown` (`internal/router/base.go`, confirmed at the pin in
+    `deploy/Dockerfile.local-llm`), so a model it is in the middle of **stopping** is
+    still listed here. Every caller that reads this as "resident" therefore treats a
+    model on its way out as one that is up: residency's already-resident short-circuit
+    returns without admitting, and `model_already_loaded` reports its precondition met.
+    The completion then reaches llama-swap, which relaunches the model — a load with no
+    admission, no device guard and no `box_events` row."""
     items: object = payload
     if isinstance(payload, dict):
         items = next(
             (payload[k] for k in ("running", "models", "data") if isinstance(payload.get(k), list)),
             [],
         )
-    out: set[str] = set()
+    out: dict[str, str] = {}
     if isinstance(items, list):
         for item in items:
             if isinstance(item, str):
-                out.add(item)
+                out[item] = ""
             elif isinstance(item, dict):
                 name = next(
                     (item[k] for k in ("model", "id", "name") if isinstance(item.get(k), str)),
                     None,
                 )
                 if name:
-                    out.add(name)
+                    state = next(
+                        (item[k] for k in ("state", "status") if isinstance(item.get(k), str)),
+                        "",
+                    )
+                    out[name] = state
     return out

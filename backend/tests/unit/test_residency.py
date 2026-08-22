@@ -884,3 +884,52 @@ async def test_without_a_probe_the_load_path_is_unchanged() -> None:
     coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=None, box_lock=None)
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"]
+
+
+# --- the already-resident short-circuit, and WHY it fired ---------------------------
+# `/running` lists a model llama-swap is STOPPING, so "resident" here can mean "on its
+# way out". This wave narrates that case; it does not yet change what admission does.
+
+
+def _warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """structlog does not route through caplog; capture the event names directly."""
+    seen: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append(ev))
+    return seen
+
+
+async def test_short_circuit_narrates_a_not_ready_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    gw.states = {"gpt-oss-120b": "stopping"}
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert "residency.short_circuit_not_ready" in seen
+    # Still a no-op on the box: the behaviour change is the NEXT wave.
+    assert gw.unloaded == []
+    assert gw.loaded == []
+
+
+async def test_short_circuit_is_silent_for_a_ready_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    gw.states = {"gpt-oss-120b": "ready"}
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert seen == []
+
+
+async def test_short_circuit_is_silent_when_the_build_reports_no_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown state is not evidence of a problem — it must not cry wolf on a
+    gateway build that reports no state at all."""
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert seen == []
