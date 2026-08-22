@@ -777,12 +777,12 @@ def test_a_no_room_refusal_defers_the_job_rather_than_burning_a_retry() -> None:
     ]
     assert defer_handlers, "no handler defers a job any more — the no-room path is gone"
 
-    caught = {
-        ast.unparse(t).rsplit(".", 1)[-1]
-        for h in defer_handlers
-        for t in (h.type.elts if isinstance(h.type, ast.Tuple) else [h.type])
-        if h.type is not None
-    }
+    caught: set[str] = set()
+    for handler in defer_handlers:
+        if handler.type is None:  # a bare `except:` catches everything and names nothing
+            continue
+        named = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        caught |= {ast.unparse(t).rsplit(".", 1)[-1] for t in named}
     assert {"ResidencyError", "GpuBudgetError"} <= caught, (
         f"the defer handler catches {sorted(caught)} — a refusal it misses fails the job "
         "and burns a retry attempt instead of waiting for the box to have room"
