@@ -1,6 +1,6 @@
 # One way in, one way out
 
-> **Status:** Scheduled · **Last verified:** 2026-08-22 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-08-22 · **Waves:** W0🟡 W1◻️ W2🟡 W3◻️ W4◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every LLM call still goes through the
 > adapter (rule 1) and W4 shrinks that surface; no storage or RLS changes (rules 2–3), no new
@@ -90,7 +90,32 @@ question still fails on a wrong answer.
 
 ## The waves
 
-### W0 — A gate that can be trusted ◻️
+### W0 — A gate that can be trusted 🟡
+
+> **Landed so far.** The half-wired-gate half is complete and the measurement is in place;
+> the collapse and the `ready()` split are not.
+>
+> | item | state |
+> |---|---|
+> | switches required, not optional | ✅ `c76288f` closed the two instances, `81ac6b9` closed the class — `ResidencyWiring` has no defaults, so an omitted switch is a pyright error |
+> | admission behind the shared warm helpers | ✅ `2f9904f` — moved *inside* `gateway_load`/`gateway_prime`, which is why the planned call-site AST walk was replaced (below) |
+> | collapse to one `admit`/`load`/`unload`/`resident` | ◻️ **not started** — the 7/14/17/28 counts below are unchanged |
+> | 1. log the short-circuit with llama-swap's state | ✅ `1c5fcb1` |
+> | 2. split `running()` from `ready()` | ◻️ **waits on the measurement above reaching the box** — see the note at the end of this wave |
+> | the AST guard | ✅ `68975dc` + `81ac6b9`, but narrower than planned — see below |
+>
+> **Why the AST guard is smaller than this wave specified.** The plan assumed admission would
+> stay at the call sites, so a walk over them was the only way to check it. Moving it inside the
+> two helpers made `residency` a required keyword, and pyright now rejects an omission — a
+> call-site walk would only re-check what the type system already enforces. What types cannot
+> see is the *value*: `None` is legal, and a `getattr` default that silently yields it is how the
+> debug console loaded twice while evicting nothing. So the guard pins the two approved spellings
+> of the coordinator, plus `ResidencyWiring.inert()` staying out of `src/`.
+>
+> **And a correction to this wave's own framing.** An unadmitted warm is a documented
+> *degradation*, not a hole: `LocalGatewayClient.load` still runs the device-memory guard, so it
+> loses eviction — a model that would have fit after freeing room gets a 409 — but cannot take
+> the box down. The freeze path is closed either way.
 
 **Make the switches required, not optional.** Replace the optional-kwarg constructor with one that
 takes a single explicit settings-source object, so a coordinator either has every loader or does
@@ -189,7 +214,20 @@ caught and what it catches. Two shapes:
 *Test:* every demand site declares an intent (AST-enforced); a refusal reaches the worker's defer
 rather than being swallowed; a per-item sweep defers once instead of failing 200 times.
 
-### W2 — Repurpose the existing toggle ◻️
+### W2 — Repurpose the existing toggle 🟡
+
+> **Landed so far.** Move 1 only, plus one item this wave did not list.
+>
+> | item | state |
+> |---|---|
+> | 1. wire the loader into the worker's coordinator | ✅ `c76288f`; `81ac6b9` then made omitting it a compile error rather than a convention |
+> | 2. move the check from `_restore` to `admit` | ◻️ **blocked on W1** — it gates *by intent*, and the intent argument does not exist yet |
+> | 3. decide by intent (the table below) | ◻️ same |
+> | copy + refusal-reason change | ◻️ not started |
+> | *(not in this wave as written)* admit the two debug-console loads | ✅ `2f9904f` — §A's two unadmitted loads were both on the debug console; they are W2's subject even though this wave was written around the toggle |
+>
+> Moves 2 and 3 are the substance of this wave and neither can start before W1. What is done is
+> the wiring they will need.
 
 **No new control.** `PUT /settings/llm/auto-restore` exists (`api/llm_settings.py:1228-1250`),
 persists to `LLM_LOCAL_AUTO_RESTORE_KEY` (`settings_store.py:99`) as an `app.settings` row that
