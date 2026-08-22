@@ -69,10 +69,10 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_
-- **`LOCAL_ONLY_BOX_PLAN.md`** — co-residency without surprises. Keeps `gpt-oss-120b` and the 27b
-  co-resident by closing the paths that load or evict silently: a `stopping` model that reads as
-  resident and gets relaunched with no admission, a gateway config regen that shuts down every
-  running server invisibly, two unadmitted debug-console loads, and refusals that emit no event at
-  all. Then an owner park control, PWA-recoverable local hosting, and cloud retirement — which
-  needs no code to begin, since a keyless provider is already hidden and any task can be re-pointed
-  from the PWA today. Successor to the superseded `../archive/GPU_ADMISSION_INTEGRITY_PLAN.md`.
+- **`LOCAL_MODEL_ACCESS_PLAN.md`** — one way in, one way out. Collapses every model load, unload,
+  admission and residency read onto a single gate that cannot be constructed half-wired, teaches
+  that gate who is asking (owner turn / tool-in-turn / agent / scheduled), repurposes the existing
+  auto-restore toggle into the switch that stops anything loading unless the owner initiates it,
+  accounts for all five consumers of box memory, and deletes the Anthropic and xAI providers
+  outright. Written from `../reference/MODEL_ACCESS_INVENTORY.md`. Replaces the deleted
+  `LOCAL_ONLY_BOX_PLAN.md` and `MEMORY_ADMISSION_PLAN.md`.

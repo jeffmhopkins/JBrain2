@@ -1,6 +1,6 @@
 # Reference — how the system is
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-22
 
 Binding design references: the architecture, the standards, and the models that
 describe how JBrain2 *is* built. These are `Living` docs (per
@@ -18,6 +18,7 @@ describe how JBrain2 *is* built. These are `Living` docs (per
 | `ENTITY_GRAPH_REFOCUS_PLAN.md` | The two-tier predicate model + entity-graph refocus (shipped; kept as the canonical description). |
 | `PREDICATE_CANONICALIZATION.md` | The original predicate-registry design (Superseded by `ENTITY_GRAPH_REFOCUS_PLAN.md`; kept — still cited). |
 | `ASSISTANT.md` | The tool-calling agent design: runtime, two-tier memory, security non-negotiables. |
+| `MODEL_ACCESS_INVENTORY.md` | Evidence-only inventory of every place that loads, unloads, admits, warms, evicts, measures or demands a model, across all five consumers of box memory. Every row carries a `file:line` and a verbatim quote. The evidence base for `../proposed/LOCAL_MODEL_ACCESS_PLAN.md`. |
 | `MODEL_PROMPTING.md` | Prompting reference for the two local models (gpt-oss-120b, Qwen3-VL) and the sampling gap. |
 | `WIKI_TYPE_GUIDES.md` | Phase-6 editorial config — per-entity-type article guides the wiki builder loads. |
 | `LOCATION_ASSISTANT_TOOLS.md` | Reference catalog of candidate location tools (✅ spine shipped; 🟡/⛔ parked ideas). |
