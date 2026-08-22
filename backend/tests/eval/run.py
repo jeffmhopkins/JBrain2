@@ -27,6 +27,7 @@ from collections.abc import Awaitable, Callable
 
 from jbrain.config import Settings
 from jbrain.llm import build_router
+from jbrain.llm.router import LocalAdmitter
 from jbrain.llm.types import LlmUsage
 from tests.eval.assertions import check_case, check_case_db
 from tests.eval.cases import Case, load_corpus
@@ -45,7 +46,7 @@ class _Tally:
         self.calls += 1
 
 
-def _inert_residency() -> object:
+def _inert_residency() -> LocalAdmitter:
     """A disabled coordinator. This harness routes to the cloud provider, so nothing
     local is ever loaded and admission has nothing to do — but `build_router` requires
     an admitter rather than silently building a half-wired one."""

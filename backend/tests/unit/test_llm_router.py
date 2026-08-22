@@ -19,10 +19,15 @@ from jbrain.llm import (
     Sampling,
     build_router,
 )
-from jbrain.llm.router import CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, JSON_NUDGE
+from jbrain.llm.router import (
+    CONTEXT_WINDOWS,
+    DEFAULT_CONTEXT_WINDOW,
+    JSON_NUDGE,
+    LocalAdmitter,
+)
 
 
-def _inert_residency() -> object:
+def _inert_residency() -> LocalAdmitter:
     """A disabled coordinator, for the tests that only care about routing.
 
     `residency` is required on build_router (see
