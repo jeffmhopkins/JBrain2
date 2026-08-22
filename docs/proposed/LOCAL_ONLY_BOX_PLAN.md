@@ -1,480 +1,481 @@
-# A local-only box with one door
+# Co-residency without surprises
 
-> **Status:** Proposed · **Last verified:** 2026-08-21 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** Proposed · **Last verified:** 2026-08-22 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every LLM call still goes through the
-> adapter (rule 1); no storage or RLS surface changes (rules 2–3), and no wave adds a table;
-> every wave names its test (rule 5); W1 adds a settings control and W4 removes two env keys,
-> and rule 10 is where this revision changed most — see W4's bootstrap paragraph.
+> adapter (rule 1); no storage or RLS surface changes (rules 2–3), and no wave adds a table; every
+> wave names its test (rule 5); rule 10 is load-bearing throughout and W5 exists only because of
+> it. **Three waves add a GUI surface and therefore each owe the `PROCESS.md` GUI gate** — see
+> *Process gates* below, which revision 2 omitted entirely.
 
-> **Standing rule for this plan, earned the hard way.** Its predecessor
-> (`../archive/GPU_ADMISSION_INTEGRITY_PLAN.md`) was withdrawn after four cold adversarial
-> reviews. Three of its central claims were a log label, a README summary and an env-var name
-> read as evidence; a fourth was a partial source fetch with the remainder inferred. **No claim
-> in this plan is load-bearing unless the primary source was opened and quoted.** Where a fact
-> could not be checked, it says so instead of rounding up.
+> **Standing rule for this plan, earned three times over.** Its predecessor
+> (`../archive/GPU_ADMISSION_INTEGRITY_PLAN.md`) was withdrawn after four cold reviews found three
+> central claims were a log label, a README summary and an env-var name read as evidence, plus a
+> partial source fetch with the rest inferred. **Revision 1** of this plan was withdrawn after
+> three more. **Revision 2** was withdrawn after three more. No claim here is load-bearing unless
+> the primary source was opened and quoted. The *Corrections log* at the bottom is cumulative and
+> deliberately unflattering: every row is a claim that survived one round of review and died in the
+> next.
 
-> **Revision 2, after three cold reviews (strategic, implementability, adversarial-technical).**
-> They agreed on two structural faults, and both are fixed here rather than annotated:
-> **(a)** the cloud-removal wave was ordered *before* the wave that makes the box safe to route
-> onto, manufacturing the exact window it was meant to close — it is now split and last;
-> **(b)** the park wave was built on `_held_names()`, whose empty set means *not held*, so the
-> mechanism it inherited was inverted, and a hold blocks admission without freeing a byte.
-> Waves are renumbered by safety order; the old numbering is noted at each heading.
-> Corrections to specific counts and citations are marked **[r2]** inline.
+## Revision 3 — what changed, and why the plan is now smaller
 
-## Why now
+Three cold reviews (strategic, implementability, adversarial-technical) converged on one verdict:
+**most of revision 2's waves were rebuilding mechanisms that already ship, and the owner's actual
+goal appeared in none of them.**
 
-The owner is removing the Anthropic and xAI cloud providers. That is not a subtraction:
+Revision 2's central W0 claim was **false**, and it failed in this plan's own signature way. It
+said a routed completion loads inside llama-swap with no `LocalGatewayClient.load` call, so the
+guard is bypassed. In the wired production configuration it is not: both processes pass a box lock
+(`main.py:450`, `worker.py:556`), so `ensure_room` takes the locked path and **loads the model
+itself** (`residency.py:479-480` → `_ensure_room_core(load_target=True)` → `:505-506`
+`_guarded_load` → `:533` `gateway.load`), which is where `refuse_if_no_device_room`
+(`local_gateway.py:801`) and `guarded_load` (`:803`) live. The evidence I cited was a docstring
+about *page-cache dropping* which explicitly names residency as a **covered** path
+(`local_gateway.py:228-229`) and attributes its unannounced sightings to cross-process
+`_loaded_here` bookkeeping (`:256-261`). I read a measured comment about one subject and drew a
+structural conclusion about another. That is the exact failure this plan's standing rule names.
 
-    $ grep -cE '": "xai:|": "anthropic:' backend/src/jbrain/llm/router.py   →  23
-    $ grep -cE '": "local:'              backend/src/jbrain/llm/router.py   →   0
+**The real hole is different, and better.** `ensure_room`'s fast path returns early when the model
+is already in `running()`:
 
-**[r2]** Those 23 hits are **20 `TASK_DEFAULTS` entries plus 3 `TIER_DEFAULTS`** (`high`, `low`,
-`vision` — `router.py:176-178`). A tier is not a task: it is what a prompt's `strength:` resolves
-to (`router.py:379-390`). The earlier headline "every one of the 23 task defaults" was false as
-phrased. The underlying fact is unchanged and verified: **nothing routes local today** — `": "local:`
-returns 0.
+```
+residency.py:473        with contextlib.suppress(Exception):
+residency.py:474            if served_model in await self._gateway.running():
+residency.py:475                self._displaced.discard(served_model)
+residency.py:476                return
+```
 
-**[r2]** And `TASK_DEFAULTS` is not the live routing table. `Router._resolve_live` folds in
-per-task DB overrides, which are highest-precedence and PWA-settable. The greps above describe a
-*fresh* box, not necessarily this one. W3's table must be built from live settings, not the
-constant.
+But `running()` includes models llama-swap is **stopping** — verified at the pin
+(`internal/router/base.go:366-375` filters only `StateStopped`/`StateShutdown`), and
+`_parse_running` (`local_gateway.py:1182-1204`) discards the state field and returns bare names. So
+a model mid-stop reads as resident, `ensure_room` returns without admitting, the completion reaches
+llama-swap, and llama-swap **relaunches it** — a load with no admission, no
+`refuse_if_no_device_room`, no `guarded_load`, and no `box_events` row. It is reachable *through*
+the door, so no call-site audit and no AST test can find it. **That is W0.** Revision 2 had it as
+W6, "explicitly last and explicitly conditional, correctly never built if no incident occurs."
 
-So removing cloud re-routes the entire system onto a box that holds about two models at once,
-with no fallback anywhere. Contention stops being a background concern and becomes the main one.
+And the plan's centre of gravity was wrong. The owner asked for co-residency of two named models
+without swapping; revision 2 had no wave for it. Meanwhile a second silent evictor was already
+diagnosed in-tree and unmentioned — see W1.
 
-That inverts the predecessor's risk calculus. Its reviews were right that a 10-file semantic
-refactor was disproportionate *to a box with a cloud escape hatch*. Once the hatch is gone, the
-parts of it that survived scrutiny are no longer optional — but they are also no longer the whole
-story, because the interesting question changes from "did this load skip the guard?" to "who gets
-the box next, and can the owner take it back?"
+## What the owner asked for, and what actually delivers it
 
-### The thing the owner can have today, for free
+| ask | delivered by | status |
+|---|---|---|
+| *"completely remove the anthropic or grok cloud services"* | W6 (route nothing to cloud), then W7 | **no code needed to start** — `providers.py:86` hides a keyless provider; `api/llm_settings.py:1443-1486` re-points any task from the PWA today |
+| *"a 'model' … we can load to ensure no other models can be loaded"* | W4 | ~80% ships already — see W4 |
+| *"only one way to load in and out … no surprises"* | W0, W1, W2 | the routed door already holds; the gaps are three **silent** paths |
+| *"oss120b + 4.8-27b co-resident without swapping"* | W0, W1, W3 | **measurably almost solved** — `local_catalog.py:213-214` measured the pair at 93.73 GiB against a ~103 GB ceiling (`residency.py:350`), and `llama_swap_config.py:428-438` puts every model in one `swap: false` group so llama-swap never evicts a member |
+| *"don't dual load, don't crash the server"* | W0, W1 | the two silent evictors are the remaining risk |
+| non-model memory kept growing; hourly triage reloaded through an unload | W3 | root cause fixed; W3 generalises it with the mechanism that already shipped |
 
-**[r2]** The owner's ask — *"I no longer want the anthropic or grok cloud services"* — needs no
-code. `providers.py:82` already states the posture:
+## What already ships — so it is NOT a wave
 
-> *"A keyless cloud provider is hidden — offering it would only let a task be pinned to a model
-> that fails at call time."*
+Revision 2 proposed building five things this repo already has. Each verified by opening the file:
 
-Unset `JBRAIN_XAI_API_KEY` and `JBRAIN_ANTHROPIC_API_KEY` and the cloud providers vanish from the
-PWA and cannot be selected. **That is the switch, and it is W4.** What it does *not* do is make
-the box work afterwards, because the 20 tasks still point at specs that now fail at call time.
-The work in this plan is the re-routing that has to land *before* the switch is flipped — not the
-deletion, which is cosmetic by comparison and is deliberately last (W5).
+| mechanism | where | revision 2 called it |
+|---|---|---|
+| defer a job on refusal, **no attempt burned**, `run_after` enforced DB-side | `worker.py:209-216` → `queue.defer`; `RETRY_AFTER = 5 min` (`preconditions.py:30`) | "W3 spans residency and the worker" |
+| a pre-handler gate that defers when the model isn't resident | `workflow/preconditions.py:44-71` `model_already_loaded` — resolves the **live** route, met if non-local, met if resident, else defer | "one mechanism, not six preconditions" |
+| drain the whole pool, narrated | `image_gen/render.py:199-211`, six lines, `box_events.because("an image render needs the whole memory pool")` | "park needs a drain step" (as if new) |
+| re-point any task to any local model from the PWA, validated server-side incl. vision capability | `api/llm_settings.py:1443-1486` `apply_overrides`, shared by the owner PUT and the debug console | "W2/W3: the substance of the cloud work" |
+| hide a keyless cloud provider; render a stranded override as `(unavailable)` | `providers.py:86-105`, `id_for_spec` `:118-124`, `LLMSettingsScreen.tsx:736-738` | correctly identified in r2 |
+| cancel an in-flight turn whose model is about to be unloaded | `api/jcode.py:511-518` `cancel_running(reason="cancelled: code mode activated")` | unmentioned; W4 needs it |
 
-## What is already true
-
-Kept short and sourced, because the predecessor's evidence section drifted from the code twice.
-
-| | |
-|---|---|
-| loads serialise **per process** | `local_gateway.py` `self._global_load_lock = asyncio.Lock()`. The commit that added it said "box-wide"; it is not, and the file says so: *"Per PROCESS, not per box."* Cross-process serialisation is residency's `pg_advisory_xact_lock`, on the routed path only. |
-| the device guard is real, at one chokepoint | `refuse_if_no_device_room` + `guarded_load`, both inside `LocalGatewayClient.load`. Anything that reaches llama-swap another way skips both. |
-| **most loads never call `load()` at all** **[r2]** | `local_gateway.py:224-241`, measured: *"llama-swap loads on REQUEST, so most loads never touch this client. … During one sweep the app's own turns swapped gpt-oss-120b in repeatedly and `Cached` climbed 2.36 → 47.83 GiB … and not one `weights_cache_*` line was logged, because no load we knew about had happened."* This is the single most important correction in r2 and it reshapes W0. |
-| `unload` no longer races its own success | was a 3 s client timeout against llama-swap's 10 s graceful stop; widened, shipped. |
-| `unannounced_load` no longer reports our own loads | shipped on branch; carries `client` and `first_poll` so a cross-process sighting is legible. |
-| `/running` carries three states | `starting`, `ready`, `stopping`. `stopped` and `shutdown` are filtered by `internal/router/base.go:366-375`, confirmed at the pin `60226b63` (`deploy/Dockerfile.local-llm:58`). `_parse_running` discards the field. |
-| an admission hold frees **no memory** **[r2]** | `residency.py:462-464` short-circuits a held load when the model is already resident (*"already resident — serving it needs no load"*), and nothing on the hold path evicts. A hold prevents the *next* load; it does not reclaim the ~68 GB already in the pool. W1 was written as if it did. |
+**The admission door on the routed path already holds.** `router.py:619, 696, 747` → `_admit_local`
+(`:359-361`) → `residency.ensure_room`, and `build_router` always attaches a coordinator
+(`:822-827`). There is no unadmitted *routed* local path. W0/W1/W2 are about paths that are
+**silent**, not paths that are missing.
 
 ## The waves
 
-Ordered so the box is *safer* after each one, and so the riskiest change lands last with the most
-scaffolding under it. **[r2]** Revision 1 violated its own ordering rule by putting cloud removal
-third of five; it is now split across W4/W5 and both come after the safety waves.
+Renumbered for the third time, because the gap set changed. Mapping from revision 2: r2-W6 →
+**W0** (it was the real hole all along); r2-W0 → **W2**, shrunk to two endpoints; r2-W3 → **W3**,
+shrunk to registration; r2-W1 → **W4**; r2-W2 → **W6**, demoted to an operating procedure; r2-W4 →
+**W6/W7**; r2-W5 → **W7**. **W1** and **W5** are new.
 
-### W0 — One *admission* door ◻️  *(was W0, goal restated)*
+### W0 — Stop a `stopping` model reading as resident ◻️  *(was r2-W6, "probably never built")*
 
-The enabling wave, and the one the owner asked for: *"make sure there's only one way to load in
-and out, and that everything on the box uses these."*
+The hole above. One state field, discarded at `local_gateway.py:1182-1204`, lets a load happen with
+no admission and no guard.
 
-**[r2] The goal was stated wrongly and the wave would have shipped a false guarantee.** Revision 1
-proposed an AST test that fails CI if anything outside `residency` calls `gateway.load`. That test
-is structurally blind to the dominant load path on this box: a routed completion to a non-resident
-model loads it *inside llama-swap*, with no `LocalGatewayClient.load` call anywhere, hence no
-`refuse_if_no_device_room` and no `guarded_load`. Three such passthrough doors, all verified:
+Two steps, in order:
 
-    router.py:841-847        the `local` client is a plain OpenAiCompatClient(settings.local_llm_url)
-    api/jcode_llm.py:182     client.stream("POST", "/chat/completions", …) — its own comment says
-                             "BEFORE the gateway loads it on the forwarded request"
-    api/external_llm.py:211  handled correctly today: "The coder must be resident — never trigger
-                             an on-demand load for a remote caller"
+1. **Earn the measurement first, because it is one line.** Log when the already-resident
+   short-circuit fires (`residency.py:473-476`) with the state llama-swap reported. Revision 2 made
+   this the trigger for a wave that was itself "explicitly last", so the evidence could never be
+   gathered. It ships first instead.
+2. **Then split `running()` from `ready()`** and make the fast path require *ready*. `_parse_running`
+   already sees the field and throws it away.
 
-`external_llm.py:211` is the **precedent this wave should generalise**, not the AST test. So the
-door is **admission (`residency.ensure_room`), not `load()`** — every path that can *cause* a
-load calls it, whether or not it calls the gateway. The routed path already does (`router.py:619,
-696, 747` all call `_admit_local`, verified), which is why W2's gate works at all. The AST test
-still earns its place as a *secondary* guard on direct calls; it is no longer the wave's claim.
+**The known hazard, from the predecessor's post-mortem:** `api/llm_settings.py:156-161`'s
+`_loaded_ids` is both a call site this changes **and** the owner's load indicator, so a careless
+change makes a loading model vanish from the screen. And billing a mid-stop model's remaining
+footprint is what reintroduced bug #1186 — the unguarded branch is `local_gateway.py:757`, the
+pre-flight `:800-801`. **[r3]** Revision 2 cited `:762` and `:801-802`; `:762` is a comment,
+`_drop_weights_cache(model)` is `:764`, and `refuse_if_no_device_room` is `:801` with `:802` the
+`try:`. My one correction was itself miscited.
 
-**The direct-call set, enumerated rather than estimated** — revision 1 got this wrong in both
-directions, and r2 found a further miss:
+*Files:* `local_gateway.py`, `residency.py`, `api/llm_settings.py`.
+*Risk:* medium — touches the load indicator. *Test:* a model reported `stopping` does not satisfy
+the fast path and is admitted; `_loaded_ids` still shows a loading model.
 
-    residency.py:502,533,589,645     the owner of the budget
-    api/llm_settings.py:833,908,1286,1519,1533
-    api/llm_settings.py:1891         [r2] MISSED — the debug console's prime (api/debug.py:1492),
-                                     on the LLM gateway, with nothing calling residency before it
-    api/jcode.py:164,168,474         code mode taking and releasing the box
-    warm_keeper.py:182
-    smoketest.py:237                 during a deploy
-    cli.py:73                        pre-update, no app process
-    image_gen/render.py:206          frees the pool for ComfyUI
-    local_gateway.py:808             the watchdog's own abort (see below)
+### W1 — Narrate the two silent evictors ◻️  *(new — the co-residency wave)*
 
-**Eighteen** sites, not seventeen. **[r2] And "thirteen of them bypass the budget" was arithmetic,
-not analysis — the real number is four.** Of the fourteen non-residency sites: **nine are unloads**
-(`llm_settings 833, 908, 1286, 1533`; `jcode 164, 474`; `cli 73`; `render 206`; `local_gateway 808`)
-and freeing memory cannot bypass an admission budget; `warm_keeper.py:182` is admitted one line
-earlier at `:181` (`await self._router.admit_local_load(served)`); `llm_settings.py:1519` is
-admitted on one of its two routes (`llm_settings.py:1047` calls `free_room` first; `debug.py:1366`
-does not).
+The owner's stated goal is two named models staying co-resident. Two mechanisms evict the whole
+resident set with **no `box_events` row**, so the box appears to lose models for no reason.
 
-**The genuinely unadmitted loads are four:**
+**a) A config regen shuts down every running server.** Already diagnosed in-tree, and the docstring
+records how long it went unbelieved:
 
-    api/jcode.py:168
-    smoketest.py:237
-    api/llm_settings.py:1519   via debug.py:1366 only
-    api/llm_settings.py:1891   via debug.py:1492
+> *"DIAGNOSED on the box 2026-08-20, after the owner reported — repeatedly, and was repeatedly told
+> it was a display artifact — that staging a model in the PWA unloaded gpt-oss-120b. … llama-swap
+> `reload()` builds a new server and calls `old.Shutdown()` → every running llama-server process
+> dies. … The unload happens inside llama-swap, so no `box_events` row is written and the vitals
+> surface stays silent — the app genuinely does not know it happened."*
+> — `llama_swap_config.py:462-481`
 
-Two of the four are the owner's debug console — the rule-10 surface. That is a much smaller, much
-better-targeted wave than "move thirteen callers", and it also shows why an AST test on call sites
-cannot carry the argument: it has no way to express *"1519 is safe from one caller and not the
-other."*
+This runs inside `gateway.load`, i.e. **inside the box lock**, so one admitted load can silently
+destroy the eviction plan the budget just computed. It is the single most direct threat to the
+owner's co-residency goal, and revision 2 never mentioned it.
 
-**Explicitly NOT in scope, and named so nobody "fixes" them:** `agent/transcribetools.py:146`,
-`ingest/video.py:441` and `ingest/transcribe_job.py:206` call `unload` on a **different gateway** —
-built on `settings.whisper_url` (`config.py:401`, separate from `config.py:333` `local_llm_url`) at
-`main.py:799` and `main.py:839/861`, plus `worker.py:627,646,664`. **[r2]** Revision 1 cited
-`main.py:789-798`; the constructor is at 799 and the worker's three were omitted. The exclusion
-itself is right, and matches the existing whisper exemption at
-`test_llm_load_guard_chokepoint.py:60`.
+**b) A refusal is invisible.** `box_events.py:51-66` defines `model_load`, `model_unload`,
+`image_render`, `prefill`, `gateway_config_stale` — **no refusal kind**, and the refusal sites emit
+nothing at all (`residency.py:461-468`, `:433-436`: raise with no `log`, no `box_events.record`).
+The only trace anywhere is a structured log at `worker.py:216` and `last_error = 'deferred: …'` on
+the Ops run. For an owner with no terminal, *"a load was refused and why"* is unobservable — and
+W3's deferral and W4's park both assume it is visible.
 
-**Two callers need care rather than mechanical replacement, and the wave is not done until both
-are resolved:**
+*Files:* `box_events.py`, `residency.py`, `llama_swap_config.py`, `api/llm_settings.py`, the vitals
+surface. *Risk:* low — additive narration, no behaviour change. *Test:* a config regen that kills
+the resident set emits an event naming the cause; a refused admission emits one with its reason.
+**GUI gate applies** (vitals surface).
 
-- `local_gateway.py:808`'s `abort=lambda: self.unload(...)` — the watchdog's own abort, *inside*
-  the gateway. **[r2] The hazard is worse than "a cycle".** `pg_box_lock` (`residency.py:73-86`)
-  opens a **new session per acquisition**, and `ensure_room` holds that lock across
-  `_ensure_room_core → _guarded_load → gateway.load` (`residency.py:478-480, 508-533`). Routing the
-  abort through `residency.release` would open a second session on the same advisory key and block
-  forever — a cross-session **self-deadlock**, turning "abort the runaway load" into "hang the
-  process holding the box-wide lock". So the rule W0 needs is broader than one exemption:
-  **nothing reachable from inside `_box_locked()` may go through the door**, and W0 must check the
-  other movers against that rule, not just this one.
-- **[r2] `cli.py:73` *and* `smoketest.py:237` — revision 1 flagged only the first.** Both run from
-  the CLI with no DB. The smoketest's own docstring (`cli.py:186-187`): *"Reads the installed set +
-  gateway URL from settings (env-wired in the api container); **no DB needed**, so it runs under
-  `docker compose run --rm --no-deps -T api`."* `deploy/update-inner.sh:695` runs exactly that, and
-  `:240` / `:498` run `local-llm-unload` the same way — `--no-deps` in all three, with `:498` firing
-  after the stack is quiesced. `_box_locked()` degrades gracefully rather than hanging
-  (`residency.py:548-560` logs `box_lock_unavailable` and proceeds unlocked), so the failure mode is
-  not a freeze — it is that **"one door" becomes a door that silently opens itself during an
-  update**, which is the moment the guard matters most. W0 answers for both or ships neither.
+### W2 — Admit the two debug-console loads ◻️  *(was r2-W0, 18 sites → 2)*
 
-*Files:* `residency.py`, `local_gateway.py`, `api/llm_settings.py`, `api/jcode.py`, `api/debug.py`,
-`warm_keeper.py`, `smoketest.py`, `cli.py`, `image_gen/render.py`, plus the AST test.
-*Risk:* medium — narrower than revision 1 believed (four real gaps, not thirteen), but the
-box-lock reentrancy rule is subtle and must be tested, not just documented.
-*Test:* the AST guard as a secondary check; one behavioural test per unadmitted caller proving it
-now evicts-to-budget; and one test that a load initiated from inside `_box_locked()` does not
-re-enter the door.
+**[r3] The count went 17 → 4 → 2, and each cut was a correction of the previous cut.** Revision 1
+said thirteen callers bypass the budget. Revision 2 cut it to four. Two of those four defend
+themselves:
 
-### W1 — The park model ◻️  *(was W1, rewritten)*
+- `api/jcode.py:168` — preceded by `:162-166`, which unloads **every** resident model first. It
+  cannot over-commit.
+- `smoketest.py:237` — gated at `:234` by `_room_for` (`:147-167`), its own admission check with its
+  own budget (`LOAD_HEADROOM_GB`). Routing it through the door is **budget consolidation**, which
+  belongs to `../plans/MEMORY_ADMISSION_PLAN.md`'s D0, not here — and doing it carelessly risks a
+  spurious gateway rollback (`update-inner.sh:694-702` sets `SMOKE_FAILED=1` → rollback;
+  `cli.py:203-212` records one such rollback already, on 2026-08-19, which then blocked the upstream
+  fix for the thing it was failing on).
 
-The owner's idea, and it is a better operator control than anything in the predecessor plan:
-**a way to occupy the box so nothing else can be admitted.** *"A 'model' that is a dead endpoint we
-can load when we want to ensure no other models can be loaded."* For a render, for an update, for
-debugging, or simply to stop background work touching the GPU.
+**The genuinely naked set is two, and both are the owner's debug console:**
 
-**[r2] Revision 1 said park "is not a new mechanism" and inherited `_held_names()`. That was
-wrong, and it was wrong in the most dangerous direction — the mechanism is inverted.**
-`residency.py:309-320`:
+    api/llm_settings.py:1519   via api/debug.py:1366 only (the PWA route admits at :1047)
+    api/llm_settings.py:1891   via api/debug.py:1492 (gateway_prime — never admitted)
 
-```python
-async def _held_names(self) -> frozenset[str]:
-    """... or an empty set (not held)..."""
-    if self._hold_loader is None:
-        return frozenset()
-    with contextlib.suppress(Exception):
-        names = await self._hold_loader()
-        if names:
-            return frozenset(names)
-    return frozenset()
-```
+So today the owner can over-commit their own box from the one surface they reach when the box is
+already in trouble. That is the shape of the seven-hour freeze. A ~10-line change with two tests.
 
-`if names:` collapses an empty result into the same `frozenset()` as "no loader configured" and
-"the read failed". Every consumer then reads emptiness as **unheld**:
+**[r3] Two things revision 2 got wrong here.** Its "three passthrough doors, all verified"
+paragraph listed sites that are all *already* admitted (`jcode_llm.py:176-177` calls `ensure_room`
+and re-raises `ResidencyError` before the forward at `:182`; `external_llm.py:211-222` refuses
+outright), which contradicts the paragraph below it — a builder could not tell what was in scope.
+And its self-deadlock analysis described a hazard of a design not yet chosen: there is no
+`residency.release`; the only unload path, `free_room` (`:568-590`), takes **no** box lock, so
+routing an abort through it would not deadlock. The `_box_locked()` re-entrancy **rule** is still
+worth stating — no `lock_timeout` is set anywhere, so a second acquisition on the same key would
+block forever — but both examples chosen to motivate it (`cli.py:73`, `local_gateway.py:808`) are
+**unloads**, which this plan's own taxonomy puts outside admission. Neither gates this wave.
 
-    residency.py:460-461   held = await self._held_names(); if held and served_model not in held:
-                           → empty ⇒ no refusal, everything admitted
-    residency.py:609       if await self._held_names(): return   → empty ⇒ restore proceeds
-    worker.py:388          held = bool(await settings.code_mode_hold_names(...))
-                           → empty ⇒ background loop keeps running
-    warm_keeper.py:127     if held and served not in held:       → same
+One thing to carry: `gateway.load` runs `regen_gateway_config` inside the box lock, including a
+deliberate `asyncio.sleep(_GATEWAY_RELOAD_SETTLE_S)` (`api/llm_settings.py:718-739`). The
+cross-process lock is held across a sleep. Related to W1(a); worth a note, not a fix here.
 
-"Park is that hold with an empty name set — nothing may be admitted" is **exactly backwards**: an
-empty set is the one value that means *admit everything*.
+Also: `api/llm_settings.py:833` is inside `_unload_if_loaded` (`:824`), which has **four** call
+sites (`:1095, :1139, :1176, :1827`) — "one test per caller" must know that.
 
-**Three further breakages, all primary-sourced, and each fatal on its own:**
+*Files:* `api/debug.py`, `api/llm_settings.py`. *Risk:* low. *Test:* a debug-console load and a
+debug-console prime each evict to budget, and each refuses rather than over-committing.
 
-1. **Park cannot survive a restart while sharing the key.** `main.py:390-391` clears the hold on
-   every boot (`await settings_store.set_code_mode_hold_names(SYSTEM_CTX, [])`), with a documented
-   rationale: a stranded hold wedges the box. W1 requires a park the owner set to survive a
-   restart. Irreconcilable on one key.
-2. **Code mode would clobber park.** `api/jcode.py:502-504` overwrites the hold with
-   `[executor, planner]` on power-on; `:523` clears it to `[]` on power-off. A code session would
-   silently release the owner's park — and W1's own release path would silently un-reserve code
-   mode.
-3. **The refusal message is hardcoded to blame code mode.** `residency.py:463-466` raises
-   *"Code mode is holding the box for {sorted(held)}. Turn code mode off…"*. With an empty set that
-   prints `[]` and misattributes the refusal.
+### W3 — Register the owner's intent on the sweeps ◻️  *(was r2-W3, wave → registration)*
 
-**So W1 builds a mechanism rather than inheriting one**, and its cost is honest:
+The mechanism ships (`workflow/preconditions.py:44-71`); `precondition=` has exactly **one**
+registered use (`gmail/triage.py:120`, registered `worker.py:786`). The work is registering it on
+the sweeps that lack it — plus two fixes review found:
 
-- a **separate settings key** beside `CODE_MODE_HOLD_KEY` (`settings_store.py:265`), not shared
-  with it, so boot-clear and jcode's toggle cannot touch it;
-- a **distinct sentinel** for "held against everything", since empty already means unheld — and
-  `_held_names()`'s return type changes accordingly, so all four consumers above change with it;
-- a **refusal reason** carried with the hold rather than hardcoded, so park, code mode and any
-  future holder each explain themselves.
+**[r3] The swallow set is not one site.** Revision 2 named only `api/jcode_llm.py:174-180`.
+`ResidencyError` is a bare `Exception` subclass (`residency.py:109`), and `wiki/lint.py:747` catches
+bare `Exception` (*"a verifier failure must not abort the whole sweep"*), so the sweep advances,
+calls `complete` again, is refused again — silently, per item — and `worker.py:209` never sees it.
+By contrast `analysis/pipeline.py:1204` catches `(LlmError, LlmBadResponseError)` only, so it does
+propagate. **W3 must enumerate the swallow set, not assume one.**
 
-**[r2] And the largest gap: a hold blocks admission but frees no memory.** `residency.py:462-464`
-short-circuits an already-resident model, and nothing on the hold path evicts. Parking for a render
-would leave ~68 GB resident and ComfyUI would still have nothing to work with — the exact scenario
-the owner named. **Park therefore needs a drain step**: set the hold *then* evict the resident set
-through W0's door. That is what makes park a real operator control instead of a sign on a full
-car park, and it is why park depends on W0 rather than standing alone.
+**[r3] Two of the five named "ungated per-item loops" are not that.**
+`agent/daily_briefing.py:501` makes exactly one router call, not a loop. `jpet/brain.py:473, 492`
+are **interactive** paths (a child talking to the wall), where "defer" is the wrong remedy — they
+need to fail with a message. Three of the five are sweeps.
 
-**Two decisions W1 must make explicitly:**
+**[r3] And the gate must run *before* the handler.** `worker.py:209`'s catch wraps `_invoke` at
+`:201`, so a refusal lands mid-handler: the sweep has already done partial, non-idempotent,
+token-spending work, and will redo it every five minutes for as long as the hold is held. The
+pre-handler seam is `worker.py:192-193` → `_deferred_on_precondition` (`:240-269`) — which is the
+precondition mechanism, i.e. the thing revision 2 dismissed as *"six preconditions"*. Revision 2
+also cited `:240-270` as the place that *catches* the refusal; it catches nothing.
 
-- **What does a task routed to a parked box get?** With cloud gone there is no fallback, so this is
-  W2's question arriving early: fail, or defer. For a background sweep, defer. For an interactive
-  turn, a clear "the box is parked" beats a timeout.
-- **Can the owner forget it?** A forgotten park silently stops all background work, so the PWA must
-  show it as a standing banner, not a checkbox buried in settings. Consider a TTL that auto-releases
-  and says so, since the owner operates this box remotely with no terminal (rule 10).
+Do **not** gate owner-initiated ingest — `model_already_loaded` on `ingest_note` would stall note
+integration indefinitely on a parked box. Sweeps only.
 
-*Files:* **[r2] corrected** — `residency.py`, `settings_store.py`, `worker.py`, `warm_keeper.py`,
-`main.py`, `api/jcode.py`, `api/llm_settings.py`, the settings screen. **Not** `local_catalog.py`:
-revision 1's *Files:* line listed it while the wave body argued at length that park must avoid a
-catalog entry, and the body is right — a fake entry would need special-casing in
-`llama_swap_config.render`, `footprint_gb`, `_require_provisioned`, the settings model list,
-`smoketest` and `deploy/local-models-sync.sh`.
-*Risk:* medium — higher than revision 1 claimed, because it changes a shared type and four
-consumers, one of which (`worker.py:388`) gates all background work.
-*Test:* with park held, an admission for any real model is refused with a reason naming park (not
-code mode); the drain leaves the pool free; a restart preserves park; toggling code mode on and off
-leaves park intact; releasing park admits again.
+*Files:* `wiki/lint.py`, `analysis/pipeline.py`, `ingest/ocr.py`, `jpet/brain.py`, the action specs,
+`api/jcode_llm.py`. *Risk:* low-medium — the failure mode is a stalled sweep, visible after W1.
+*Test:* an owner unload followed by each registered sweep defers before the handler runs, burning no
+attempt and doing no partial work; an interactive path fails with a message instead.
 
-### W2 — Make the owner's intent authoritative ◻️  *(was W3 — moved up, ahead of re-routing)*
+### W4 — Park ◻️  *(was r2-W1, "build a mechanism" → "reuse one")*
 
-The predecessor's best observation, which it then buried: `triage.classify` is the **only**
-registered precondition in the codebase (verified: `precondition=` → one hit, `gmail/triage.py:120`,
-`"reasoning_model_loaded"`, registered at `worker.py:786`). `wiki/lint.py`, `analysis/pipeline.py`,
-`ingest/ocr.py`, `agent/daily_briefing.py` and `jpet/brain.py` all run ungated per-item LLM loops —
-all five verified to exist — and every one of them can reload a model the owner just unloaded.
+*"A 'model' that is a dead endpoint we can load when we want to ensure no other models can be
+loaded."*
 
-**One mechanism, not six preconditions:** an owner action — unload, or park — is recorded, and
-admission honours it. Background work defers; interactive work is told plainly. One gate at the
-door W0 built, which is why W0 comes first.
+**[r3] Revision 2's design defeats itself in five seconds, and its own test would not catch it.**
+It specified a **separate** settings key so boot-clear and jcode could not touch park. But both
+auto-load paths read the **code-mode** key specifically — `main.py:444` (residency's restore guard)
+and `main.py:1169` (the warm keeper) — and the keeper's `interval_wait` is `5.0`
+(`warm_keeper.py:64`). Sequence on the live box: park set → drain frees ~68 GB → five seconds later
+the keeper reads an empty set for *its* key and loads the primary model straight back, while the PWA
+still shows "parked". Revision 2's test (*"the drain leaves the pool free"*) passes with no keeper
+attached and fails on the box.
 
-**[r2] Two corrections to how it must be built:**
+**A non-empty sentinel name in the existing key works with every consumer unchanged**, because
+emptiness is the only value that means *unheld*:
 
-- **The refusal must be a `ResidencyError` specifically.** `api/jcode_llm.py:174-180` re-raises
-  `ResidencyError` and swallows everything else (`except Exception: # noqa: BLE001 — housekeeping
-  never fails a completion`), then forwards to llama-swap, **which loads on demand**. A new
-  owner-intent exception type would be silently discarded and the load would happen anyway. Either
-  raise `ResidencyError` or add a second re-raise — and test that path, because it is the difference
-  between a gate and a log line.
-- **The gate lives at admission, not at the load.** Per W0: the routed completion never calls
-  `gateway.load`. `ensure_room` is the only thing on that path, so it is the only place this can
-  work.
-- **[r2]** Revision 1 said residency should also handle deferral. It cannot: residency can only
-  raise. Deferral lives in the worker (`worker.py:240-270`), which catches the refusal and requeues.
-  The wave spans both.
+    residency.py:460-461   if held and served_model not in held:   → refuses every real model ✓
+    residency.py:609       if await self._held_names(): return     → restore skipped ✓
+    worker.py:385-393      bool(...) → pauses the scheduler tick   ✓
+    warm_keeper.py:127     if held and served not in held:         → keeper stands down ✓
 
-**[r2]** Revision 1 justified this wave with *"with cloud gone, all of them are local, so this
-stops being a triage bug and becomes the system's default behaviour."* That is true — and it is
-precisely why this wave must land **before** cloud goes, not after. Revision 1 had the order
-inverted: it manufactured the condition in W2 and fixed it in W3.
+**[r3]** So revision 2's *"needs a distinct sentinel, a changed return type, and four consumer
+changes"* was half right and half overcorrection: the sentinel is needed, the type change and the
+consumer rewrites are not. Note also that `worker.py:388` reads `settings.code_mode_hold_names`
+**directly**, not `_held_names()`, so changing that method's return type would never have reached
+it — revision 2's "four consumers of `_held_names()`" grouping was wrong.
 
-*Files:* `residency.py`, `worker.py`, `api/jcode_llm.py`, the settings screen.
-*Risk:* medium — it can starve background work if the owner forgets a park is held, so the PWA must
-show it prominently (see W1).
-*Test:* an owner unload followed by a background sweep defers rather than reloading; the same with
-park held; releasing it lets the sweep resume; and a jcode completion to a gated model is refused
-rather than falling through to an on-demand load.
+Residual work, all small and all real:
+- **Tag the hold** so `main.py:390-391`'s boot-clear skips a park-tagged one, and `api/jcode.py:502`
+  **merges** rather than overwrites (`:523` likewise).
+- **Stop hardcoding the reason** — `residency.py:465-467` raises *"Code mode is holding the box…"*,
+  which would misattribute a park refusal.
+- **Reuse the drain** from `image_gen/render.py:199-211`.
+- **Cancel the in-flight turn** using the precedent at `api/jcode.py:511-518`; without it,
+  `gateway.unload` kills the llama-server mid-stream and the turn dies with an opaque transport
+  error.
+- **A mandatory TTL**, not an option. `main.py:382-389` documents that a stranded hold wedges the
+  box, which is why boot clears it; a park that survives restart deliberately reintroduces that
+  failure mode. `worker.py:385-393` shows the hold pauses the scheduler tick, so a forgotten park
+  silently stops all background work — on a box with no terminal, that is a rule-10 **regression**,
+  so the TTL and the banner ship in the same PR as park itself.
 
-### W3 — Re-route the task defaults to local ◻️  *(the substance of the old W2)*
+**[r3] Two hazards revision 2 did not ask about.** The hold is checked *before* the box lock, on
+purpose (`residency.py:458-459`: *"so a refused load never contends for it"*), so a load already
+past `:461` completes regardless of park — park is not a barrier against in-flight loads. And the
+drain's evictions run outside that lock (`free_room` takes none), so the drain can race a
+cross-process load it cannot see: park half-applies, hold set, pool not free. **Revision 2's drain
+test is inherently flaky, not deterministic.** W4 must state the ordering it guarantees. Eviction
+itself is safe — nothing on the unload path consults `_held_names()`, so the drain can always evict.
 
-**[r2] This, not deletion, is the cloud work.** Revision 1 bundled re-routing with deleting the
-provider code and called the result one wave; the deletion is cosmetic and the re-routing is a
-quality change across every feature the system has. They are separated so the hard one gets its own
-gate and the easy one cannot smuggle it through.
+*Files:* `residency.py`, `settings_store.py`, `main.py`, `api/jcode.py`, `warm_keeper.py`,
+`api/llm_settings.py`, the settings screen. **Not** `local_catalog.py` — a fake catalog entry would
+need special-casing in `llama_swap_config.render`, `footprint_gb`, `_require_provisioned`, the
+settings model list, `smoketest` and `deploy/local-models-sync.sh`.
+*Risk:* medium — it can wedge the box remotely if the TTL or banner slip. *Test:* park refuses every
+real model with a reason naming **park**; the drain leaves the pool free **with the keeper running**;
+a restart preserves park; toggling code mode leaves park intact; the TTL auto-releases and says so.
+**GUI gate applies** (park control + standing banner).
 
-**The hard part is what each of the 20 tasks becomes.** They span tiers the local roster serves
-unevenly, and the plan will not guess: W3 starts with a table of all 20 tasks — built from **live
-settings, not `TASK_DEFAULTS`** (see *Why now*) — the local model each moves to, and the tier
-evidence for that choice. The 3 tiers get their own short table; they are a different kind of thing.
-Any task with no adequate local answer is named as such rather than silently pointed at something
-that will do badly.
+### W5 — Make local hosting recoverable from the PWA ◻️  *(new — extracted from r2-W4)*
 
-**[r2] Named prerequisite: `../plans/MEMORY_ADMISSION_PLAN.md`'s guard fix.** Every model sits in
-one `swap: false` group (`llama_swap_config.py:23, 428-438`), so llama-swap never auto-evicts, and
-the 20 tasks span text-reasoning (`gpt-oss-120b` 59 GB, `nemotron-3-super-120b` 78 GB), vision
-(`vision.ocr`, `vision.caption`, `agent.vision`) and coding. Any cross-tier task therefore forces an
-evict+load cycle through the device guard — and that plan records, measured, that the guard
-**cannot load even a 4B model today** (`MEMORY_ADMISSION_PLAN.md:219`: *"`qwen3.5-4b` cannot load
-today, aborted on a 0.9% overshoot by a guard whose own docstring says it exists to catch the
-ORDER-OF-MAGNITUDE balloon … not ordinary overshoot"*). Revision 1 cited that fact in *What this
-plan does NOT do* as a reason to keep clear of the guard — and then routed all traffic into it.
-**W3 does not start until that fix has landed.**
+**[r3] Revision 2 buried this as a precondition line inside a wave it called "zero code". It is
+neither.** `local_llm_enabled` is a boot-time `Settings` field (`config.py:314`) read at 25+ sites,
+and it gates the PWA's own install path: `api/llm_settings.py:652-654` — *"409 when hosting is off
+(the gateway/GPU env is a one-time host setup **the PWA can't bootstrap**)"*. If it is ever false,
+`provider_choices()` returns `()` and every recovery control 409s: **there is no PWA path back.**
 
-**[r2] The quality instrument was named backwards.** Revision 1 said *"`tests/eval/` exists and is
-where a regression on the 23 would have to be measured."* `tests/eval/` is the **real-Grok** harness
-(`tests/eval/README.md:1`), hard-gated on the provider being removed — `run.py:167` and `:220` both
-`if not Settings().xai_api_key: … return 2` — and it routes through `TASK_DEFAULTS` to xai. It
-measures nothing after W4 and rebuilding it is part of this wave's cost, not its safety net. The two
-harnesses that **survive** were never mentioned: `backend/evals/run.py`, which is provider-agnostic
-(*"whatever provider/model your config points `note.extract` at"*, `scripts/prompt-eval.sh:5-6`),
-and `scripts/wiki-lint-eval.sh`, which routes through the debug console with no provider key. Those
-are the instruments. **Capture a cloud baseline on `backend/evals/` before W4 removes the keys** —
-after that the comparison is unavailable, and coverage today is 2 of 20 tasks, so most of the 20
-are being re-routed on judgement alone. W3 must say which is which.
+Worse, on a hosting-off box a stored `local:` override is **silently discarded** and falls back to
+the resolved default — `router.py:481-482` `log.warning("llm.local_override_ignored", …)`. So an
+owner who had set local routes sees them silently revert. Revision 2's proposed remedy ("an
+actionable message pointing at the control that fixes it") pointed at a control that does not
+exist; an actionable message with no action behind it is a rule-10 brick with better copy.
 
-*Files:* `router.py`, the per-task settings surface, `backend/evals/`, `tests/eval/`.
-*Risk:* **high, and not where it looks** — no deletion happens here at all; the risk is entirely
-that 18 of 20 tasks change model with no measurement.
-*Test:* each of the 20 tasks resolves to an installed local model; a task whose model is unavailable
-defers or fails per W1/W2 rather than hanging; `backend/evals/` run against the pre-W4 baseline.
+**[r3]** Revision 2 also cited `config.py:372` `local_models: list[str] = []` as a second cause of
+the empty tuple. It is not: an empty `local_models` with hosting **on** returns one choice
+(`providers.py:64-69`). Only `local_llm_enabled == False` yields `()`. (`local_models` itself *is*
+PWA-operable — `deploy/local-models-sync.sh:241-245` rewrites `LOCAL_MODELS=` and restarts, driven
+from Ops → Update.)
 
-### W4 — Retire the cloud keys ◻️  *(new — the owner's actual ask)*
+*Files:* `config.py`, `providers.py`, `api/llm_settings.py`, the settings screen, `deploy/`.
+*Risk:* medium — a boot-time field becoming live-settable raises a process-restart question.
+*Test:* with hosting off, the PWA offers a working control to turn it on; a stored `local:` override
+survives rather than silently reverting. **GUI gate applies.**
 
-Unset `JBRAIN_XAI_API_KEY` and `JBRAIN_ANTHROPIC_API_KEY`. **Zero code.** `providers.py:82` already
-hides a keyless cloud provider, and a stored override to one reverse-maps via `id_for_spec` so the
-screen surfaces it as unavailable rather than crashing. This is the switch; W3 is what makes it
-safe to flip.
+### W6 — Route nothing to cloud ◻️  *(was r2-W2/W4, wave → operating procedure)*
 
-**It is also fully reversible**, which is the reason it is a wave of its own and the reason W5 is
-separate: if W3's re-routing turns out to have hurt a task badly, restoring a key restores the
-comparison. Deleting the code destroys that.
+**[r3] This is not a code wave.** `apply_overrides` (`api/llm_settings.py:1443-1486`) already
+re-points any task to any local provider from the PWA or the debug console, validated server-side
+including the vision check (`:1473-1477`), and `_resolve_live` (`router.py:428-470`) makes a stored
+spec the highest-precedence persistent selector. So the re-routing is **19 PWA toggles and an eval
+habit**: one task at a time, reversible per task, measurable between each, fully rule-10 compliant.
 
-**[r2] Bootstrap and rule 10 — the gap revision 1 left.** `provider_choices()` returns
-`(*cloud, *_local_choices(settings))`. With no keys, `cloud` is empty; and `_local_choices` returns
-`()` when hosting is off — `config.py:314` `local_llm_enabled: bool = False`, `config.py:372`
-`local_models: list[str] = []`. A fresh or hosting-disabled box would then have **no working LLM and
-no PWA control to fix it**, which is a rule-10 brick: `local_llm_enabled` is `.env`-only, and the
-owner has no terminal. W4 does not ship until either `local_llm_enabled` is PWA- or
-debug-API-settable, or the empty-choices state renders as an actionable message pointing at the
-control that fixes it. Naming this is the whole reason W4 is a wave rather than a line in a runbook.
+**19, not 20 — and not 23. [r3]** `TASK_DEFAULTS` holds 20 entries (`router.py:50-124`); the other
+3 of revision 1's "23" are `TIER_DEFAULTS` (`:176-178`), a different kind of thing. And one of the
+20 cannot be set from the control surface at all: `research.title` is in `_HIDDEN_TASKS`
+(`api/llm_settings.py:96`), excluded from the snapshot (`:479`) and rejected on PUT (`:1459-1461`)
+because it follows `agent.turn` at the router (`:462-470`). So revision 2's *"a table of all 20
+built from live settings"* is unbuildable as stated: 19 are live-settable, the 20th is derived.
+**[r3]** `TASK_DEFAULTS` also contains **no coding task** — code generation runs through jcode's own
+model (`settings.jcode_model`), which W7 keeps. The real span is text reasoning, extraction and
+three vision tasks.
 
-*Files:* `deploy/` env template, `providers.py` (bootstrap message only), the settings screen.
-*Risk:* low, and reversible by restoring a key.
-*Test:* with both keys unset, no cloud provider appears in `provider_choices()` and no task resolves
-to a cloud spec; a box with hosting off shows an actionable message rather than an empty list.
+**Then, and only at the end, edit the `TASK_DEFAULTS` constant.** Until that happens a cleared
+override, a fresh box, or a rejected PUT falls back to a cloud default. **[r3] Which matters
+because unsetting the keys makes cloud unselectable but NOT unroutable:** `build_router` constructs
+both cloud clients unconditionally (`router.py:839-840`) and spec resolution validates only the
+provider *name* (`:223-224`), so all 20 defaults still resolve to `xai:grok-4.3` after the keys go —
+failing fast and cleanly (`retry.py:95-96` raises `LlmAuthError` on 401/403), but failing. Revision
+2's W4 test (*"no task resolves to a cloud spec"*) could not have passed.
 
-### W5 — Delete the cloud provider code ◻️  *(optional, last)*
+**Keep the keys until the local roster is proven.** Removing them is reversible only in the sense
+that a key can be re-added; what cannot be recovered is the comparison. The keys buy: a known-good
+baseline during the exact period 19 routes are changing, and a cheap answer to *"is this the model
+or the box?"* Billing stops either way once nothing routes there. **[r3] Revision 2 named the wrong
+eval instrument for the second time in a row.** Revision 1 said `tests/eval/`, which is hard-gated
+on the key being removed (`run.py:167`, `:220`). Revision 2 said `backend/evals/run.py`, which
+builds `build_router(Settings())` with **no overrides loader** (`:41`) and so routes off
+`TASK_DEFAULTS` — the very table this plan says is not live. The right instrument is
+`backend/evals/box/`: *"the ONLY eval path that calls the box … the same scorers CI uses"*
+(`evals/box/README.md:3-8`), three layers (`extract | integrate | disambiguate`), driven through the
+debug console with a minted token — the one eval surface that works with no terminal. Plus
+`scripts/wiki-lint-eval.sh`. Coverage is ~4-5 of 20, not 2.
 
-Delete `AnthropicClient`, the xAI provider wiring, and their config. **Nothing depends on this
-happening** — W4 already achieved what the owner asked for. It is housekeeping, and it is last
-because it is the only irreversible step.
+*Files:* none to start; `router.py`'s `TASK_DEFAULTS` at the end. *Risk:* the risk is quality, and
+it is paced by the owner one task at a time. *Test:* `evals/box` per layer between changes.
 
-**[r2] The blast radius in revision 1 is not reproducible and understates the total.** It claimed
-7 source / 50 tests / 23 docs / 11 frontend / 2 deploy = 86 files. No single consistent pattern
-yields those numbers. Consistent scans (excluding `__pycache__`/`node_modules`):
+### W7 — Retire the keys, then (optionally) the code ◻️  *(was r2-W4/W5)*
+
+Once nothing routes to cloud and the roster is proven: unset `JBRAIN_XAI_API_KEY` and
+`JBRAIN_ANTHROPIC_API_KEY`. Blocked on **W5** (bootstrap) and on W6 having edited `TASK_DEFAULTS`.
+
+Deleting the provider code is **optional housekeeping and nothing depends on it.** It is last
+because it is the only irreversible step and it destroys the baseline in W6.
+
+**[r3] Revision 2's blast-radius table reproduces exactly** (all 20 cells, with the command below),
+and its critique of revision 1's 86-file figure stands. Two fixes: its body says **127** and its own
+corrections log says 128 — 15 + 64 + 40 + 5 + 3 = **127**; and the count is only meaningful with the
+carve-outs applied, since the `grok`-derived frontend 11 includes `JcodeScreen.tsx`,
+`ExternalSessionScreen.tsx` and `jcode/types.ts` — the grok-CLI surface that **stays** — and the
+backend sweep catches `web/grokipedia.py` and `agent/tools/grokipedia.tool`, a website scraper.
 
 | pattern | src | tests | docs | frontend | deploy |
 |---|---|---|---|---|---|
-| `anthropic` | 8 | 12 | **23** | 3 | **2** |
+| `anthropic` | 8 | 12 | 23 | 3 | 2 |
 | `xai` | 13 | 63 | 28 | 3 | 3 |
 | `anthropic\|xai` | 15 | 64 | 40 | 5 | 3 |
-| `grok` | 22 | 72 | 40 | **11** | 2 |
+| `grok` | 22 | 72 | 40 | 11 | 2 |
 
-Reproduce with, for each pattern and each of `backend/src backend/tests docs frontend/src deploy`:
+    for d in backend/src backend/tests docs frontend/src deploy; do
+      grep -rliE "$pat" "$d" | grep -v __pycache__ | grep -v node_modules | wc -l
+    done
 
-    grep -rliE "$pat" "$d" | grep -v __pycache__ | grep -v node_modules | wc -l
+`openai_compat.py` is **shared** (`router.py:840` xai / `:841-847` local) — only the xAI
+construction goes. The jcode sandbox's `grok` CLI stays (`api/jcode_llm.py:1`).
 
-`docs: 23` and `deploy: 2` match an `anthropic`-only scan; `frontend: 11` matches a `grok`-only
-scan. Those cannot both be "the cloud reference surface". Nothing produces `src: 7` or `tests: 50`.
-On a consistent `anthropic|xai` scan the total is **127**, not 86.
+*Risk:* the key removal is low and reversible; the deletion is mechanical but irreversible.
+*Test:* no cloud provider is constructible; the suite passes with fixtures re-pointed.
 
-Worse, the `grok`-derived frontend count sweeps in files this wave explicitly carves out —
-`frontend/src/screens/JcodeScreen.tsx`, `ExternalSessionScreen.tsx`, `jcode/types.ts` are the
-grok-CLI surface that **stays** — and on the backend it catches `web/grokipedia.py` and
-`agent/tools/grokipedia.tool`, which are a website scraper, not a provider. **Revision 1 counted as
-blast radius the exact files it carved out.** W5 recounts from scratch with one stated pattern, or
-does not quote a number.
+## Prerequisites this plan does not own
 
-`openai_compat.py` is **shared** with the local provider — `router.py:840` (xai) and `:841-847`
-(local) construct the same class. It is not deleted; only its xAI construction goes.
+**`../plans/MEMORY_ADMISSION_PLAN.md`'s guard fix.** That plan records, measured, that
+`qwen3.5-4b` **cannot load today** — *"aborted on a 0.9% overshoot by a guard whose own docstring
+says it exists to catch the ORDER-OF-MAGNITUDE balloon … not ordinary overshoot"* (`:219`). Every
+model sits in one `swap: false` group (`llama_swap_config.py:428-438`), so any cross-tier task
+forces an evict+load through that guard.
 
-The jcode sandbox's `grok` CLI **stays**: `api/jcode_llm.py:1` — *"Residency-aware, multi-model
-proxy for the jcode sandbox's grok CLI"* — pointed at the box's own models. Removing the xAI
-*provider* does not touch it. *(Worth stating plainly because the predecessor plan got the jcode
-wiring wrong in the opposite direction and built a wave on it.)*
+**[r3] Revision 2 named this a prerequisite of its biggest wave and left it in a `Draft` document
+with nothing built** (`MEMORY_ADMISSION_PLAN.md:3`: `W0◻️ W1◻️ W2◻️ W3◻️ W4❌ W5◻️`), without
+identifying *which* wave is "the fix". That left this plan's back half with no start date and its
+dependency graph open at the root. Two honest options, and the roadmap must pick one: schedule that
+plan's W0 explicitly ahead of W6 here, or accept that W6 proceeds one task at a time on tiers that
+do not force a swap. **This plan does not proceed past W4 until the roadmap says which.**
 
-`llm/model_sampling.py`'s `CLOUD_SAMPLING` table and `llm/providers.py`'s choice list hold only
-preference-level coupling — mechanical, no correctness dependency.
+Reviewers also noted the prerequisite may be too *weak*: even with the guard fixed, a cross-tier
+switch costs a full evict+load of a 59–78 GB model, and no wave here prices that latency.
 
-*Files:* recount at wave start; the seven-file provider deletion plus a test-fixture sweep that is
-the actual bulk.
-*Risk:* medium and entirely mechanical — but irreversible, so it goes last.
-*Test:* no cloud provider can be constructed; the suite passes with cloud fixtures re-pointed.
+## Process gates
 
-### W6 — Re-derive the `running()`/`ready()` split, or drop it ◻️  *(was W4)*
+**[r3] Revision 2 omitted both.**
 
-Explicitly last, and explicitly conditional. The predecessor made this its keystone and cold review
-found the keystone hollow: its third category ("bill the remaining footprint") has no data source on
-this box, and applying it reintroduces the mid-load baseline bug #1186 fixed.
-
-**[r2] Citation corrected.** Revision 1 said *"at `local_gateway.py:762`"*, carried verbatim from
-the predecessor (`GPU_ADMISSION_INTEGRITY_PLAN.md:7, 150, 167`) and never re-verified — the exact
-failure this plan's standing rule targets. Line 762 today is `self._drop_weights_cache(model)`; the
-unguarded branch opens at **757** (`if self._gpu_probe is None:`) and the pre-flight is at
-**801-802**. (`local_gateway.py:808` and `llm_settings.py:156-161` were both cited correctly.)
-
-Revisit only when **all three** hold:
-
-1. W0 has landed, so there is one door to change.
-2. An incident occurs that the device guard did **not** catch. Cheap way to earn that evidence: log
-   when the already-resident short-circuit fires, and see whether the window ever opens now that
-   `unload` no longer returns early and loads serialise. **That is one line, and it turns this from
-   a code-reading argument into a measured one.**
-3. The PWA shows model state rather than a boolean, so the distinction is observable before anything
-   depends on it — `api/llm_settings.py`'s `_loaded_ids` is both a call site this would change *and*
-   the load indicator, so a careless change makes a loading model vanish from the owner's screen.
-
-If (2) never happens, this wave is correctly never built.
+- **The GUI gate** (`../reference/PROCESS.md:60-66`): any wave adding or changing a GUI surface
+  needs **three interactive mock HTML artifacts presented to the owner to choose from before
+  implementation begins** — *"a critical-decision interruption by design"* — with the chosen mock
+  landing in `docs/mocks/`. **W1, W4, W5** each add a surface, and none exists today (no hold or
+  park banner appears in `LLMSettingsScreen.tsx`, `OpsScreen.tsx` or `ControlScreen.tsx`). So three
+  waves cannot be planned as "one PR, start to finish", and each owes the owner a mock round.
+- **Doc lifecycle** (`../DOC_LIFECYCLE.md:115-116`, R5 at `:180`): *"Ideate → write a Proposed doc
+  … **No code.**"* then *"Commit to the roadmap → flip to `Scheduled`, `git mv` from `proposed/`"*.
+  **W0 cannot ship while this file sits in `docs/proposed/`.** Shipping code against a Proposed doc
+  is an R5 violation the `docs` gate is meant to catch.
 
 ## What this plan does NOT do
 
-- It does not touch `gpu_guard`'s ceiling arithmetic or `refuse_if_no_device_room`. Those are
-  `../plans/MEMORY_ADMISSION_PLAN.md`'s. **[r2]** Revision 1 cited that plan's "cannot load a 4B
-  model" finding as a reason to keep clear — and then W2 routed all traffic into it. That fix is now
-  a **named prerequisite of W3**, not a disclaimer.
+- It does not touch `gpu_guard`'s ceiling arithmetic or `refuse_if_no_device_room` — see
+  *Prerequisites*, which is now a scheduling question rather than a disclaimer.
 - It does not touch `ttm.pages_limit`. Same owner, and the predecessor got its direction backwards
   twice.
-- It does not remove the `grok` CLI from the jcode sandbox (see W5).
-- It does not add a catalog entry for park (see W1's *Files:*).
+- It does not remove the `grok` CLI from the jcode sandbox (W7).
+- It does not add a catalog entry for park (W4's *Files:*).
+- It does not consolidate `smoketest._room_for`'s budget with residency's — that is
+  `MEMORY_ADMISSION_PLAN`'s D0 (W2).
 
 ## Corrections log
 
-Kept because this plan's predecessor died of unverified claims, and a reader deserves to know which
-statements have already failed review once.
+Cumulative across three revisions. Every row survived one round of cold review and died in the next;
+that is the point of keeping it.
+
+### Revision 2 → 3
+
+| revision 2 said | primary source says |
+|---|---|
+| the dominant load path never calls `load()`, so the guard is bypassed | with a box lock wired (`main.py:450`, `worker.py:556`) `ensure_room` loads under the lock — `residency.py:479-480` → `:505-506` → `:533` → the guard at `local_gateway.py:801,803`. The cited docstring is about page-cache dropping and names residency as **covered** (`:228-229`) |
+| W6 (running/ready) is conditional and probably never built | it is the real hole: `running()` includes `stopping` (`base.go:366-375` at the pin; `_parse_running` discards state), so `ensure_room`'s fast path (`residency.py:473-476`) returns and llama-swap relaunches unadmitted |
+| four genuinely unadmitted loads | two — `jcode.py:168` unloads everything first (`:162-166`); `smoketest.py:237` is gated by `_room_for` (`:234`, `:147-167`) |
+| "three passthrough doors, all verified" | all three are already admitted (`jcode_llm.py:176-177`, `external_llm.py:211-222`, `router.py:619/696/747`) — the paragraph contradicts the one below it |
+| routing the abort through residency is a self-deadlock **today** | there is no `residency.release`; `free_room` (`:568-590`) takes no box lock. The rule is sound, the hazard is of a design not yet chosen, and both motivating examples are unloads |
+| park needs its own settings key | that defeats the drain in 5 s — the keeper and the restore guard read the **code-mode** key (`main.py:1169`, `:444`; `warm_keeper.py:64` `interval_wait=5.0`) |
+| park needs a changed return type and four consumer rewrites | a non-empty sentinel in the existing key works with all four unchanged; and `worker.py:388` reads `code_mode_hold_names` directly, so the type change never reached it |
+| deferral lives at `worker.py:240-270` and must be built | `:240-269` is `_deferred_on_precondition` and catches nothing; the refusal defer already ships at `:209-216` with no attempt burned |
+| one swallow site (`jcode_llm.py:174-180`) | `wiki/lint.py:747` catches bare `Exception` and `ResidencyError` is one (`residency.py:109`) — refused silently, per item, forever |
+| five ungated per-item loops | three — `daily_briefing.py:501` is a single call; `jpet/brain.py:473,492` are interactive, so "defer" is the wrong remedy |
+| a table of all 20 tasks from live settings | 19 — `research.title` is in `_HIDDEN_TASKS` (`api/llm_settings.py:96`, `:479`, `:1459-1461`) |
+| unsetting the keys means no task resolves to a cloud spec | unselectable ≠ unroutable: `router.py:839-840` builds both clients unconditionally and `:223-224` validates only the name; all 20 still resolve to `xai:grok-4.3` and fail at call time |
+| `backend/evals/run.py` is the surviving instrument | it has no overrides loader (`:41`), so it routes off `TASK_DEFAULTS`. The box-capable one is `backend/evals/box/` (`README.md:3-8`), via the debug console |
+| `local_models: list[str] = []` also yields empty choices | only `local_llm_enabled == False` does; empty `local_models` with hosting on returns one choice (`providers.py:64-69`) |
+| the bootstrap gap is a precondition line on a zero-code wave | 25+ read sites, gates the PWA's own install path (`api/llm_settings.py:652-654`), and a stored local override silently reverts (`router.py:481-482`). Own wave (W5) |
+| the `MEMORY_ADMISSION` guard fix is a named prerequisite | named, but left in a `Draft` doc with nothing built and no wave identified (`:3`) — the dependency graph was open at the root |
+| corrections log: `anthropic\|xai` totals 128 | 127, contradicting revision 2's own body |
+| `local_gateway.py:762` → `:757` / `:801-802` | `:762` is a comment, `_drop_weights_cache` is `:764`, the pre-flight is `:800-801`. The correction was itself miscited |
+| `providers.py:82` states the posture | `:82` is the `def`; the quoted sentence is `:86-87` |
+| `warm_keeper.py:181` is the admission | `:180` is; `:181` is the `running()` check |
+| `residency.py:463-466` raises the code-mode message | the `raise` is `:465`, message `:466-467` |
+| `test_llm_load_guard_chokepoint.py:60` is the whisper exemption | `:68` |
+| — (unmentioned) | a config regen calls `Shutdown()` on **every** running server, invisibly, inside the box lock (`llama_swap_config.py:462-481`) — the most direct threat to the co-residency goal |
+| — (unmentioned) | there is no `box_events` refusal kind and the refusal sites emit nothing (`box_events.py:51-66`, `residency.py:461-468`) — W3 and W4 both assume the owner can see it |
+| — (unmentioned) | the `PROCESS.md:60-66` GUI gate applies to three waves; `DOC_LIFECYCLE.md:115-116` blocks shipping code from `docs/proposed/` |
+
+### Revision 1 → 2
 
 | revision 1 said | primary source says |
 |---|---|
-| "every one of the 23 task defaults" | 20 tasks + 3 tiers (`router.py:50-124`, `:176-178`); and `TASK_DEFAULTS` is not the live table — `_resolve_live` folds in DB overrides |
-| park = `_held_names()` with an empty set | empty means **not held** (`residency.py:309-320`, `if names:`); four consumers read it that way |
-| park inherits a working mechanism | needs its own key, a sentinel, a carried reason, and reconciliation with `main.py:391` and `api/jcode.py:502/523` |
-| a hold reserves the box | a hold blocks the *next* load and frees nothing (`residency.py:462-464`); park needs a drain |
-| 17 load/unload sites | 18 — `api/llm_settings.py:1891` missed |
-| "thirteen bypass the budget" | four; nine are unloads, one is admitted a line earlier, one is admitted on one of two routes |
-| one door = an AST test on `.load()` | the dominant load path never calls `load()` (`local_gateway.py:224-241`, measured); the door is `ensure_room` |
-| only `cli.py` has the no-DB problem | `smoketest.py:237` too — `--no-deps` at `update-inner.sh:695`, `:240`, `:498` |
-| the abort lambda "cannot route through residency without a cycle" | a cross-session self-deadlock on the advisory key; the rule is *nothing inside `_box_locked()` goes through the door* |
-| remove cloud (W2) before honouring owner intent (W3) | inverted — W2 manufactured the condition W3 fixes; now W2 then W3/W4 |
-| `tests/eval/` measures the re-routing | it is the real-Grok harness, gated on `xai_api_key` (`run.py:167,220`); `backend/evals/` and `scripts/wiki-lint-eval.sh` survive |
-| 86 files of blast radius | not reproducible from any single pattern; a consistent `anthropic\|xai` scan gives 128, and the quoted frontend count includes files the wave carves out |
-| removing cloud requires code | two env keys — `providers.py:82` already hides a keyless provider |
-| `local_gateway.py:762` | `:757` (unguarded branch) / `:801-802` (pre-flight); `:762` is `_drop_weights_cache` |
+| "every one of the 23 task defaults" | 20 tasks + 3 tiers (`router.py:50-124`, `:176-178`); and `_resolve_live` folds in DB overrides, so `TASK_DEFAULTS` is not the live table |
+| park = `_held_names()` with an empty set | empty means **not held** (`residency.py:309-320`) |
+| a hold reserves the box | a hold blocks the next load and frees nothing (`residency.py:462-464`) |
+| 17 load/unload sites, 13 bypassing the budget | 18 sites (`api/llm_settings.py:1891` missed); nine are unloads |
+| only `cli.py` has the no-DB problem | `smoketest.py:237` too (`update-inner.sh:695`, `:240`, `:498`, all `--no-deps`) |
+| remove cloud before honouring owner intent | inverted — it manufactured the condition the next wave fixed |
+| `tests/eval/` measures the re-routing | gated on `xai_api_key` (`run.py:167`, `:220`) |
+| 86 files of blast radius | not reproducible from any single pattern |
+| removing cloud requires code | `providers.py:86` already hides a keyless provider |

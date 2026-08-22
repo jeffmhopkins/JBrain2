@@ -69,4 +69,10 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_
-- **`LOCAL_ONLY_BOX_PLAN.md`** — make this a local-only box with one door. Removes the Anthropic and xAI cloud providers (23 of 23 task defaults route to cloud today, 0 to local — so this re-routes every task onto a box that holds two models), funnels every model load and unload through a single admitting chokepoint so nothing can commit GPU memory behind the budget's back, and adds a `park` pseudo-model the owner can load to hold the box empty. Successor to the superseded `../archive/GPU_ADMISSION_INTEGRITY_PLAN.md`.
+- **`LOCAL_ONLY_BOX_PLAN.md`** — co-residency without surprises. Keeps `gpt-oss-120b` and the 27b
+  co-resident by closing the paths that load or evict silently: a `stopping` model that reads as
+  resident and gets relaunched with no admission, a gateway config regen that shuts down every
+  running server invisibly, two unadmitted debug-console loads, and refusals that emit no event at
+  all. Then an owner park control, PWA-recoverable local hosting, and cloud retirement — which
+  needs no code to begin, since a keyless provider is already hidden and any task can be re-pointed
+  from the PWA today. Successor to the superseded `../archive/GPU_ADMISSION_INTEGRITY_PLAN.md`.
