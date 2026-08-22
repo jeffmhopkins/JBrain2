@@ -174,7 +174,9 @@ class ResidencyWiring:
     # The config-default floor, with `fraction_loader` the live operator override that wins
     # per load. Required rather than defaulted because it silently WAS 0.25 against a config
     # of 0.15 — reserving 30 GiB instead of 18.2 on this box, one of the eight disagreeing
-    # memory budgets D0 of docs/plans/MEMORY_ADMISSION_PLAN.md had to reconcile.
+    # memory budgets recorded in docs/reference/MODEL_ACCESS_INVENTORY.md, "The eight
+    # uncoordinated budgets" — where this constructor default was budget #4. Required here
+    # is what removes it from that list.
     free_ram_fraction: float
     fraction_loader: FractionLoader | None
     # Code mode's box reservation: while held, ensure_room refuses to load any other

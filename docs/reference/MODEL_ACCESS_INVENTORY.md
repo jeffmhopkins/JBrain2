@@ -150,14 +150,12 @@ preserved verbatim below.
 | 1 | `MIN_FREE_GTT_GB` | 6.0 | `gpu_guard.py:100` |
 | 2 | `RUNAWAY_MULTIPLE` / `+2.0` | 1.75 | `gpu_guard.py:95` |
 | 3 | `llm_local_free_ram_fraction` | 0.15 (live) | Settings / `config.py` |
-| 4 | residency constructor default | **0.25** | `residency.py:159` |
+| 4 | ~~residency constructor default~~ | ~~**0.25**~~ | **RESOLVED** — `free_ram_fraction` has no default now (`ResidencyWiring`), so both boxes read budget #3 or fail to build |
 | 5 | `LOAD_HEADROOM_GB` | 20.0 | `smoketest.py:85` |
 | 6 | `RESERVE_GIB` | 16 | `strix-halo-host-setup.sh:57` |
 | 6b | same, hardcoded | `16 * 1024 * 1024` | `update-inner.sh:627` |
 | 7 | `HOST_RESERVE_GIB` | 16 | `host_settings.py:35` |
 | 8 | `CACHE_RAM_GB` | 8.0 | `local_catalog.py:95` |
-
-### D3 — the smoke test projects a window the gateway does not serve
 
 ### D3 — the smoke test projects a window the gateway does not serve
 

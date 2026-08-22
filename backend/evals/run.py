@@ -36,10 +36,21 @@ from jbrain.evals.runner import CaseResult, load_cases, score_cases
 from jbrain.llm import build_router
 
 
+def _inert_residency() -> Any:
+    """This CLI scores prompts against the cloud provider, so nothing local is ever loaded and
+    admission has nothing to do — but `build_router` requires a coordinator rather than
+    defaulting to one, so that a real box cannot get a silently weaker gate (W0 of
+    docs/plans/LOCAL_MODEL_ACCESS_PLAN.md). Say inert out loud, as the sibling runner in
+    tests/eval/run.py does."""
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
+
+    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
+
+
 async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     # Parse WITH the anchor, exactly as the pipeline does for a note whose client
     # offset is known (see score_cases) — a green eval then means a green app.
-    router = build_router(Settings())
+    router = build_router(Settings(), residency=_inert_residency())
     provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
     print(
         f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "

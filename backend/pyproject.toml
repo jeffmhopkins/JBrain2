@@ -96,7 +96,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "evals"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"

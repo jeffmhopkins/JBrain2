@@ -736,7 +736,8 @@ async def test_a_genuinely_unannounced_load_is_still_reported(
     )
     gw = _client(lambda r: httpx.Response(200, json={}))
     gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
-    gw._seen_resident = {"qwen3.5-4b"}  # not this client's first poll  # type: ignore[attr-defined]
+    gw._seen_resident = {"qwen3.5-4b"}  # type: ignore[attr-defined]
+    gw._polled = True  # not this client's first poll  # type: ignore[attr-defined]
 
     gw._drop_cache_for_unannounced({"qwen3.5-4b", "gpt-oss-120b"})
     hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
@@ -889,3 +890,29 @@ async def test_the_line_returns_when_a_model_goes_not_ready_again(
     for _ in range(3):
         await client.running()
     assert lines.count("local_gateway.not_ready_in_running") == 2
+
+
+async def test_an_idle_box_does_not_disguise_a_bypass_as_a_first_poll(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`first_poll` used to be `not self._seen_resident`, which is ALSO true of an idle box.
+    So an api restart with nothing resident, followed by a request-driven llama-swap load,
+    stamped the arrival `first_poll=true` — and DEBUG_ACCESS.md says to treat a line as a real
+    bypass only when `first_poll=false`. The one case the event exists to catch was the case
+    it told the reader to dismiss."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced(set())  # first poll of an EMPTY box — nothing to report
+    assert not [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # now something loads behind our back
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert len(hits) == 1 and hits[0]["model"] == "gpt-oss-120b"
+    assert hits[0]["first_poll"] is False, "a real bypass was labelled a first-poll artifact"

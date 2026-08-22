@@ -212,6 +212,12 @@ class LocalGatewayClient:
         # from us — the loads whose page-cache copy nothing was dropping. See
         # `_drop_cache_for_unannounced`.
         self._seen_resident: set[str] = set()
+        # Whether this client has polled AT ALL. Distinct from `_seen_resident` being empty,
+        # which is also true of an idle box: an api restart with nothing resident, then a
+        # request-driven load, would otherwise stamp the arrival `first_poll=true` and the
+        # runbook says to dismiss those — discarding the bypass signal in the one case it is
+        # reporting a real one.
+        self._polled = False
         self._loaded_here: set[str] = set()
 
     async def running(self) -> set[str]:
@@ -319,7 +325,8 @@ class LocalGatewayClient:
         if not self._models_dir:
             return
         arrived = resident - self._seen_resident
-        first_poll = not self._seen_resident
+        first_poll = not self._polled
+        self._polled = True
         self._seen_resident = set(resident)
         for served in sorted(arrived - self._loaded_here - self._loading):
             model = local_catalog.get_by_served(served)
