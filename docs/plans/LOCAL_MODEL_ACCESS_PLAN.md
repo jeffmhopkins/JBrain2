@@ -227,6 +227,45 @@ returned 200 after 20.3 s.
 **It is `fast_path`, not `_plan`.** The lock-free already-resident short circuit in `ensure_room`
 is what fires; `_plan` never gets the chance. Step 2 should start there.
 
+**STEP 2 WAS ATTEMPTED AND WITHDRAWN, 2026-08-22.** Four cold researchers (upstream
+semantics, design, prior art, a fresh call-site inventory), none of which saw the attempt,
+independently condemned its approach. Recorded here so it is not tried again.
+
+The attempt split `running()` into `ready()`/`present()` and, where a model was mid-stop,
+subtracted its footprint from the projection (`predicted = used + target_gb - reclaimed`).
+Dropped commits, recoverable from the remote reflog: `7866ea9`, `75a5e6f`, `451223f`,
+`080a0f6`.
+
+It is not merely fragile; it is three named anti-patterns, each with a documented failure:
+
+| what the attempt did | the anti-pattern | the record |
+|---|---|---|
+| subtracted a stopping model's memory before it was released | **optimistic release** — discharging on shutdown *intent*, not confirmed death | "the one that OOMs the box". Kubernetes considered releasing at exactly this point (issue #96515) and **closed it without implementing**; it holds the full charge until the pod is gone |
+| `predicted = used + target_gb` — a measured aggregate plus a catalog prediction | **level-triggered desired-vs-actual comparison** | KEP-1287: the kubelet "cannot reliably compare desired & actual resources", and adds a fourth ledger level purely to avoid it |
+| credited the target's CURRENT-config footprint against a process running its OLD config | **assuming footprint is stable across a restart** | the correct rule is `max(old, new)` for the whole restart window — and a config change is the commonest reason a model is stopping |
+
+Three review rounds found the same double-count at three different layers (`_plan`/`starting`,
+`_plan`/`stopping`, then the device pre-flight) because the arithmetic was wrong in a way that
+reappears wherever it is applied. The full suite was green for all three.
+
+**Two upstream facts the attempt was built on turned out to be false**, both established from
+llama-swap at the pinned commit `60226b6`:
+
+- `local_gateway.py`'s claim that `unload()` "manufactures a `stopping` window: control returns
+  to the caller while the process is genuinely still stopping" is **not true of v250**.
+  `setState(StateStopped)` precedes the response, which precedes the 200. A successful unload
+  means the child is reaped and its memory released. The window comes from config reloads,
+  concurrent stops, and OUR OWN client timing out early — not from the call returning.
+- llama-swap already serializes correctly. `EnsureReady` **waits out a stop and then starts**,
+  with the synchronisation inside the process's run loop. Upstream added it deliberately
+  (issue #946) with the comment "Callers must not inspect State() first — that read races the
+  run loop", which is the exact class of bug the attempt kept writing.
+
+**What replaces it** is a reservation ledger, specified in `LOCAL_MODEL_LEDGER_PLAN.md`. The
+key structural point: one row per model INSTANCE with a host column and a device column, so
+double-counting across the two budget layers cannot be expressed — rather than being corrected
+arithmetically at each layer, which is what failed here.
+
 **Two steps, in this order, and the first is one line:**
 
 1. **Log the short-circuit with the state llama-swap actually reported.** This is the measurement
