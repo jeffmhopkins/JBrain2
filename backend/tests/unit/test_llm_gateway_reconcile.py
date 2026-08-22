@@ -49,6 +49,11 @@ def _lay_down(root: Path) -> None:
 
 
 class _FakeGateway:
+    def state_of(self, served_model: str) -> str:
+        """No state known — this fake serves a path that never reads it. `""` is the
+        honest answer and is never treated as ready."""
+        return ""
+
     """Records unloads and reports a resident set; can simulate a down gateway on running()."""
 
     def __init__(self, running: set[str], *, running_raises: bool = False) -> None:

@@ -62,6 +62,11 @@ class FakeTranscribeClient:
 
 
 class FakeGateway:
+    def state_of(self, served_model: str) -> str:
+        """No state known — this fake serves a path that never reads it. `""` is the
+        honest answer and is never treated as ready."""
+        return ""
+
     """Records unload() calls so the unload-after behavior is observable."""
 
     def __init__(self) -> None:

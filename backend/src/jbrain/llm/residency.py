@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import gpu_guard, local_catalog
-from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
+from jbrain.llm.local_gateway import STATE_READY, LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
 log = structlog.get_logger()
@@ -392,13 +392,15 @@ class ResidencyCoordinator:
         `at` distinguishes the skips because they have different reach: `fast_path` runs only
         when a box lock is wired, `plan` runs on every path, and `hold` runs only while code
         mode owns the box — a third short-circuit reading the same `/running`, and one an
-        earlier version of this docstring missed by claiming there were two. Best-effort throughout — a gateway
+        earlier version of this docstring missed by claiming there were two.
+
+        Best-effort throughout — a gateway
         that reports no state must not turn housekeeping into a failure, and an unknown state is
         never read as ready."""
         state = ""
         with contextlib.suppress(Exception):
-            state = self._gateway.state_of(served_model)  # type: ignore[attr-defined]
-        if state and state != "ready":
+            state = self._gateway.state_of(served_model)
+        if state and state != STATE_READY:
             log.warning("residency.short_circuit_not_ready", model=served_model, state=state, at=at)
 
     async def _footprint(
@@ -695,14 +697,16 @@ class ResidencyCoordinator:
                 if served in held
                 else f"to make room for {served_model}, which you loaded"
             )
+            # OUTSIDE the suppress: an unload that times out may still have SUCCEEDED, and
+            # leaving the victim queued would have the next schedule_restore reload it —
+            # the restore fighting the operator, which is the whole reason this path records
+            # nothing, and it would make the vitals reason above ("will NOT be restored") a
+            # lie. Unconditional is safe: `_restore` skips members that are already resident,
+            # so discarding one the unload did not actually take costs nothing.
+            self._displaced.discard(served)
             with box_events.because(reason), contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
                 self._prefix_lost(served)
-                # A victim already awaiting restore from an EARLIER transient displacement would
-                # otherwise be reloaded by the next schedule_restore — the restore fighting the
-                # operator, which is the whole reason this path records nothing. It would also
-                # make the vitals reason above ("will NOT be restored") a lie.
-                self._displaced.discard(served)
                 if served in held:
                     # AFTER the unload, not before: the unload's LocalGatewayError is suppressed,
                     # so warning up front would assert that code mode had lost a model that is in

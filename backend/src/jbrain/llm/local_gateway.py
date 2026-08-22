@@ -88,7 +88,7 @@ _FOOTPRINT_DRIFT_GB = 1.0
 # `stopped, starting, ready, stopping, shutdown` (`internal/process/process.go`), and
 # `/running` filters only the first and last — so `starting` and `stopping` both reach us
 # and neither is serving. Confirmed at the pin in `deploy/Dockerfile.local-llm`.
-_STATE_READY = "ready"
+STATE_READY = "ready"  # llama-swap ProcessState; shared with residency so it is spelled once
 
 
 class LocalGatewayError(Exception):
@@ -105,6 +105,15 @@ class LocalGateway(Protocol):
     async def unload(self, served_model: str) -> None: ...
 
     async def load(self, served_model: str) -> None: ...
+
+    def state_of(self, served_model: str) -> str:
+        """The state `/running` last reported. REQUIRED, not optional: residency narrates
+        `short_circuit_not_ready` from it, and that counter is the evidence W0's
+        `running()`/`ready()` split is gated on. A gateway without it would make the counter
+        read zero — indistinguishable from "the bug is not happening" — so absence is a type
+        error rather than a silent all-clear, for the same reason `ResidencyWiring` has no
+        defaults. `""` means "no state known", which is never read as ready."""
+        ...
 
 
 class LocalGatewayClient:
@@ -256,7 +265,7 @@ class LocalGatewayClient:
         Logged on change rather than per poll: `running()` is called on every poller tick in
         both processes, so an unconditional line here would bury the transition it exists to
         show."""
-        not_ready = {n: st for n, st in states.items() if st and st != _STATE_READY}
+        not_ready = {n: st for n, st in states.items() if st and st != STATE_READY}
         if not_ready != self._last_not_ready:
             if not_ready:
                 log.info(
