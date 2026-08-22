@@ -655,7 +655,7 @@ class ResidencyCoordinator:
         ResidencyError (before evicting) when the model can't fit the box, so the caller
         refuses instead of crashing. Housekeeping hiccups are swallowed, like ensure_room.
 
-        KNOWN GAP: unlike `ensure_room` (:541) and `_restore` (:691), this does NOT consult
+        KNOWN GAP: unlike `ensure_room` and `_restore`, this does NOT consult
         `_held_names()`, so an operator load evicts code mode's reserved model where a chat
         turn would be refused outright — and `free_room` records no restore, so the coder does
         not come back. The box stays safe (this evicts to fit rather than co-loading past the

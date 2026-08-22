@@ -1482,34 +1482,32 @@ async def apply_overrides(
     return await _snapshot(settings, store, ctx, gateway)
 
 
-async def _admit_or_409(
-    residency: ResidencyCoordinator | None, served_model: str, *, transient: bool = False
-) -> None:
-    """Evict-to-fit before a deliberate load, or refuse with a 409.
+async def _admit_or_409(residency: ResidencyCoordinator | None, served_model: str) -> None:
+    """Evict-to-fit before a deliberate operator warm — load or prime — or refuse with a 409.
 
-    `transient` picks which kind of displacement this is, and the two are not
-    interchangeable:
+    `free_room`, not `ensure_room`, for BOTH. An operator load is plainly a steady-state
+    change: they asked for this model, so the victim stays gone until they say otherwise
+    (else the next turn's restore would fight the operator).
 
-    - **False — `free_room`.** An operator LOAD is a change to the box's steady state, so
-      what it evicts is NOT scheduled for restore (else the next turn's restore would fight
-      the operator).
-    - **True — `ensure_room`.** A PRIME is a measurement instrument, run repeatedly during a
-      prefill experiment. Under `free_room` each run would silently drop whatever it evicted
-      from the steady state for good, so measuring the box would quietly reshape it. What a
-      measurement displaces comes back.
+    A prime is the measurement instrument for prefill experiments, so `ensure_room` looks
+    right — record the victim, put it back afterwards. It is not, because on this path there
+    is no afterwards: `schedule_restore` fires only from a finished agent turn
+    (`api/agent.py`) and from code-mode power-off (`api/jcode.py`), and the debug console is
+    neither. `ensure_room` here would record a displacement nothing ever drains, so victims
+    would accumulate across an experiment and then reload EN MASSE during whatever unrelated
+    chat turn happened next — plausibly evicting the model the owner had just primed, which
+    corrupts the measurement they ran the instrument for. A prime therefore evicts like a
+    load, and DEBUG_ACCESS.md says to reload afterwards.
 
-    Either way a model that cannot fit even after evicting everything is refused and nothing
-    is evicted.
+    A model that cannot fit even after evicting everything is refused and nothing is
+    evicted.
 
     A `None` coordinator (cloud-only box, or a test that wires none) admits — there is no
     budget to hold. That is the one permissive branch left, and it is explicit."""
     if residency is None:
         return
     try:
-        if transient:
-            await residency.ensure_room(served_model)
-        else:
-            await residency.free_room(served_model)
+        await residency.free_room(served_model)
     except ResidencyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1923,7 +1921,7 @@ async def gateway_prime(
     Admits through `residency` first, for the same reason `gateway_load` does: this reached
     `gateway.load` with no eviction at all, and it is reachable only from the debug console."""
     model = _require_provisioned(settings, model_id)
-    await _admit_or_409(residency, model.served_model, transient=True)
+    await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:

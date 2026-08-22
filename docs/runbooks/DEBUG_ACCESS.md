@@ -178,6 +178,14 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment.
 
+  ⚠️ **A prime EVICTS to fit, exactly like a load, and what it evicts does not come back on
+  its own.** Both operator warms admit through the same evict-to-fit path; neither records a
+  restore, because nothing on the debug-console path fires one (a restore is driven by a
+  finished agent turn or by code-mode power-off). That is deliberate — a recorded-but-undrained
+  displacement would pile up across an experiment and then reload all at once during whatever
+  chat turn came next, evicting the model you had just primed. So check `GET …/local-models`
+  before a run, and reload what the experiment displaced when you are done.
+
 > **A 200 from `restore` does not mean the prefill was skipped.** On a sliding-window model
 > (gpt-oss) llama-server can accept a restore and then discard it, logging `forcing full prompt
 > re-processing`. Always pair a restore with `POST …/prime` and compare `elapsed_ms` against a

@@ -351,13 +351,13 @@ model; a hosting-off box shows a way back.
 ## Open questions the inventory could not answer from source
 
 **Does an explicit operator load outrank code mode's reservation?** `free_room` does not
-consult `_held_names()`, where `ensure_room` (`residency.py:541`) and `_restore` (`:691`) both
-do. So while code mode holds the box, a chat turn's load of a non-reserved model is refused,
+consult `_held_names()`, where `ensure_room` and `_restore` both do. So while code mode holds the box, a chat turn's load of a non-reserved model is refused,
 but the owner's Load button evicts the coder — and `free_room` records nothing for restore, so
 it does not come back. The box stays safe (evict-to-fit, not co-load), but code mode breaks
 with no narration. Pre-existing on the PWA route; `2f9904f` extended it to the debug console
 by giving that route the same admission, which is strictly safer than the naked load it
-replaced but inherits this gap. W1 has to answer it, because the answer differs by intent:
+replaced but inherits this gap. Both operator warms (load and prime) now take the same
+`free_room` path, so the gap is at least uniform rather than differing by route. W1 has to answer it, because the answer differs by intent:
 `owner_turn` plausibly should win, `agent`/`scheduled` clearly should not. Found by
 adversarial review, 2026-08-22.
 

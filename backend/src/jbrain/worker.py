@@ -556,10 +556,15 @@ async def run() -> None:
             # never evict code mode's models or co-load past physical RAM.
             hold_loader=lambda: worker_settings_store.code_mode_hold_names(queue.SYSTEM_CTX),
             # The operator's restore switch, read live — the SAME key the api's coordinator and
-            # the WarmKeeper read (`main.py`). It was missing here, so the worker's coordinator
-            # answered "restore is on" no matter what the owner had set: an operator switch
-            # enforced in one process and invisible in the other. Absent loader degrades to on,
-            # so the omission failed OPEN, which is the direction that costs the owner RAM.
+            # the WarmKeeper read. NOT reachable yet: `_auto_restore()` is consulted only inside
+            # `_restore`, and this process never calls `schedule_restore` (see above). Wired
+            # anyway because W2 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md moves the check from
+            # `_restore` to `admit`, where this coordinator WILL read it — and because
+            # `ResidencyWiring` requires every switch to be named, so the alternative is an
+            # explicit None claiming the worker does not care.
+            #
+            # An earlier commit message here claimed the omission "failed OPEN" and cost the owner
+            # RAM. That was wrong: with no restore path, the loader was never read at all.
             auto_restore_loader=lambda: worker_settings_store.llm_local_auto_restore(
                 queue.SYSTEM_CTX
             ),
