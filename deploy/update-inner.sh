@@ -52,6 +52,15 @@ HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"
 # generous ceiling. The toggle read is one small query and should answer in seconds.
 SMOKE_TIMEOUT_S=600
 TOGGLE_TIMEOUT_S=120
+# The model release gets its OWN ceiling, not the toggle's. `local-llm-unload` walks the
+# resident models SEQUENTIALLY, and each unload now waits up to 30 s on the client (llama-swap
+# grants its child a 10 s graceful stop, so 3 s used to abandon a stop that was still working).
+# Four resident models therefore reach 120 s exactly — the toggle ceiling — and being killed
+# there is the worst outcome available: `release_models` swallows the failure, the update
+# force-recreates the gateway with tens of GB still pinned, and that is the reclaim storm this
+# whole step exists to prevent. Sized for a pathological release instead, since the cost of
+# being generous is a slow update and the cost of being tight is a hard-locked host.
+UNLOAD_TIMEOUT_S=300
 # The floating gateway rebuild pulls a multi-GB base image on a rolling tag. Generous, but
 # not unbounded: it runs with the stack quiesced, so a stall here is a stall of the box.
 PULL_TIMEOUT_S=1800
@@ -236,7 +245,7 @@ drop_page_cache() {
 # script exists to avoid. Bounded, because an unreachable gateway must not wedge the
 # update.
 release_models() {
-  run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+  run_bounded "$UNLOAD_TIMEOUT_S" docker compose run --rm --no-deps -T api \
     python -m jbrain.cli local-llm-unload \
     || echo "[update] unload skipped (gateway unreachable?)"
 }

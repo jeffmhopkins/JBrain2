@@ -12,6 +12,11 @@ from jbrain.workflow.preconditions import model_already_loaded
 
 
 class FakeGateway:
+    def state_of(self, served_model: str) -> str:
+        """No state known — this fake serves a path that never reads it. `""` is the
+        honest answer and is never treated as ready."""
+        return ""
+
     """The runtime-state slice of LocalGateway: report which served models are loaded."""
 
     def __init__(self, running: Iterable[str] = ()):

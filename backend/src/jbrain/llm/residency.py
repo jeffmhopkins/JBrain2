@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -47,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import gpu_guard, local_catalog
-from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
+from jbrain.llm.local_gateway import STATE_READY, LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
 log = structlog.get_logger()
@@ -145,6 +146,127 @@ class EvictionPlan:
     already_resident: bool
 
 
+def dbless_coordinator(settings: object) -> ResidencyCoordinator:
+    """The gate for a process with no database — the two eval CLIs (`prompt-eval.sh`,
+    `grok-eval.sh`), which run `--no-deps`.
+
+    Named and shared rather than hand-rolled per CLI, because the two got DIFFERENT answers
+    when they were: one built a real coordinator, the other passed `inert()` on the reasoning
+    that its `xai_api_key` gate made the local path unreachable. That gate checks a key is
+    PRESENT; `JBRAIN_LLM_TASKS` still decides where a task routes, so `note.extract` pinned
+    local would have loaded unadmitted from the command line — the co-load path W0 of
+    docs/plans/LOCAL_MODEL_ACCESS_PLAN.md exists to close.
+
+    `enabled` tracks the box's own setting, so this is inert on a cloud-only box for the real
+    reason rather than by assumption. The four DB-backed switches are None because there is no
+    database to read them from: no live window/slot overrides, no operator floor override, no
+    code-mode hold, no cross-process box lock. That is as much gate as a DB-less process can
+    carry, and naming each one keeps the shortfall visible."""
+    from jbrain.llm import gpu_guard
+    from jbrain.llm.local_gateway import LocalGatewayClient
+
+    models_dir = getattr(settings, "local_models_dir", "")
+    probe = gpu_guard.probe_for(settings)
+    return ResidencyCoordinator(
+        LocalGatewayClient(
+            getattr(settings, "local_llm_url", ""), gpu_probe=probe, models_dir=models_dir
+        ),
+        ResidencyWiring(
+            windows_loader=None,
+            slots_loader=None,
+            models_dir=models_dir,
+            enabled=bool(getattr(settings, "local_llm_enabled", False)),
+            free_ram_fraction=float(
+                getattr(settings, "local_llm_free_ram_fraction", DEFAULT_FREE_RAM_FRACTION)
+            ),
+            fraction_loader=None,
+            hold_loader=None,
+            auto_restore_loader=None,
+            box_lock=None,
+            on_prefix_lost=None,
+            gpu_probe=probe,
+        ),
+    )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ResidencyWiring:
+    """Every switch the coordinator reads, as one explicit object.
+
+    None is still a legal value for most of these — it means a documented fallback, and the
+    comments on each field say which. What is no longer legal is LEAVING ONE OUT. These were
+    optional keyword arguments, and the inventory found two coordinators quietly missing
+    switches the other had: `router._default_residency` carried no `hold_loader`, so
+    `_held_names()` returned an empty set and empty means ADMIT EVERYTHING, and the worker's
+    carried no `auto_restore_loader` at all. An operator control was therefore enforced on one
+    instance of the gate and invisible on another, with nothing in the type system objecting.
+
+    Closing those two instances (c76288f) did not close the class: an omitted switch still
+    compiled. Here it does not. Production must name all eleven, so a twelfth half-wired gate
+    is a pyright error rather than a behaviour difference nobody sees. Tests and cloud-only
+    builds say `inert()` and mean it out loud."""
+
+    # Per-model context windows and llama-server slot counts (catalog id -> -c / -np), read
+    # live so an operator override sizes the eviction budget. KV is linear in both, so a
+    # coordinator reading the catalog default plans against the wrong number.
+    windows_loader: WindowsLoader | None
+    slots_loader: WindowsLoader | None
+    models_dir: str
+    # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op.
+    enabled: bool
+    # The config-default floor, with `fraction_loader` the live operator override that wins
+    # per load. Required rather than defaulted because it silently WAS 0.25 against a config
+    # of 0.15 — reserving 30 GiB instead of 18.2 on this box, one of the eight disagreeing
+    # memory budgets recorded in docs/reference/MODEL_ACCESS_INVENTORY.md, "The eight
+    # uncoordinated budgets" — where this constructor default was budget #4. Required here
+    # is what removes it from that list.
+    free_ram_fraction: float
+    fraction_loader: FractionLoader | None
+    # Code mode's box reservation: while held, ensure_room refuses to load any other
+    # non-resident model. Absent loader -> nothing held -> admit everything.
+    hold_loader: HoldLoader | None
+    # The operator's end-of-turn RESTORE switch. Absent -> on, the long-standing behaviour.
+    auto_restore_loader: Callable[[], Awaitable[bool]] | None
+    # Cross-process serialization of evict+load. None -> evict only, client triggers the load.
+    box_lock: BoxLock | None
+    # Fired when this coordinator drops a model's primed KV prefix (WarmKeeper's memo).
+    on_prefix_lost: PrefixLostHook | None
+    # Reads the iGPU's DEVICE memory (GTT). None -> the prior unguarded behaviour.
+    gpu_probe: gpu_guard.GpuMemProbe | None
+
+    @classmethod
+    def inert(
+        cls,
+        *,
+        windows_loader: WindowsLoader | None = None,
+        slots_loader: WindowsLoader | None = None,
+        models_dir: str = "",
+        enabled: bool = False,
+        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
+        fraction_loader: FractionLoader | None = None,
+        hold_loader: HoldLoader | None = None,
+        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
+        box_lock: BoxLock | None = None,
+        on_prefix_lost: PrefixLostHook | None = None,
+        gpu_probe: gpu_guard.GpuMemProbe | None = None,
+    ) -> ResidencyWiring:
+        """A gate wired to do nothing, for tests and cloud-only builds. Named rather than
+        implied: production code may not call this, and a guard test holds that."""
+        return cls(
+            windows_loader=windows_loader,
+            slots_loader=slots_loader,
+            models_dir=models_dir,
+            enabled=enabled,
+            free_ram_fraction=free_ram_fraction,
+            fraction_loader=fraction_loader,
+            hold_loader=hold_loader,
+            auto_restore_loader=auto_restore_loader,
+            box_lock=box_lock,
+            on_prefix_lost=on_prefix_lost,
+            gpu_probe=gpu_probe,
+        )
+
+
 class ResidencyCoordinator:
     """The box's sole model evictor and restorer. One instance lives on app.state: the
     router awaits `ensure_room` before every local completion, the settings screen calls
@@ -153,61 +275,41 @@ class ResidencyCoordinator:
     finishes. The set to restore is remembered dynamically — the models evicted since the
     last restore (`note_evicted`)."""
 
-    def __init__(
-        self,
-        gateway: LocalGateway,
-        *,
-        windows_loader: WindowsLoader | None = None,
-        slots_loader: WindowsLoader | None = None,
-        models_dir: str = "",
-        enabled: bool = False,
-        # Matches `Settings.local_llm_free_ram_fraction` (0.15). It was 0.25, so any
-        # construction path that did not pass the fraction explicitly reserved 30 GiB
-        # instead of 18.2 on this box and planned against a ceiling 12 GiB tighter than
-        # the one the guard and the meter use — one of eight disagreeing memory budgets
-        # this repo carried (see docs/plans/MEMORY_ADMISSION_PLAN.md, D0).
-        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
-        fraction_loader: FractionLoader | None = None,
-        hold_loader: HoldLoader | None = None,
-        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
-        box_lock: BoxLock | None = None,
-        on_prefix_lost: PrefixLostHook | None = None,
-        gpu_probe: gpu_guard.GpuMemProbe | None = None,
-    ) -> None:
+    def __init__(self, gateway: LocalGateway, wiring: ResidencyWiring) -> None:
         self._gateway = gateway
         # Reads the iGPU's DEVICE memory (GTT) so a load is budgeted and watched against the
         # pool it actually allocates from, not just system RAM. None (tests, cloud-only, a box
         # with no amdgpu) keeps the prior unguarded behaviour — see `_guarded_load`.
-        self._gpu_probe = gpu_probe
+        self._gpu_probe = wiring.gpu_probe
         # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op and nothing
         # is ever recorded. Mirrors settings.local_llm_enabled.
-        self._enabled = enabled
-        self._windows_loader = windows_loader
+        self._enabled = wiring.enabled
+        self._windows_loader = wiring.windows_loader
         # Per-model llama-server slot counts (catalog id → -np). A second slot doubles the
         # model's KV, so the eviction budget must see it — sized like windows, read live.
-        self._slots_loader = slots_loader
-        self._models_dir = models_dir
+        self._slots_loader = wiring.slots_loader
+        self._models_dir = wiring.models_dir
         # The config-default floor. The live operator override (fraction_loader) wins over it
         # per load when wired and valid; this is the fallback when there's no override, no
         # loader, or the read fails — so the budget always has a floor.
-        self._free_ram_fraction = free_ram_fraction
-        self._fraction_loader = fraction_loader
+        self._free_ram_fraction = wiring.free_ram_fraction
+        self._fraction_loader = wiring.fraction_loader
         # When code mode holds the box, this loads the reserved coder's served name ("" when
         # code mode is off). While held, `ensure_room` refuses to load any other non-resident
         # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
-        self._hold_loader = hold_loader
+        self._hold_loader = wiring.hold_loader
         # The operator's end-of-turn RESTORE switch (Settings → LLM), read live so a flip
         # applies with no restart. Off means the box stops putting back what a displacement
         # took — models come back only when a turn actually needs them. It exists because a
         # restore is a model load the owner did not ask for at that moment, and while
         # diagnosing the box "nothing loads unless I say so" has to be reachable from the
         # PWA. Absent loader → on, the long-standing behaviour.
-        self._auto_restore_loader = auto_restore_loader
+        self._auto_restore_loader = wiring.auto_restore_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
         # is committed before release and a concurrent process's plan sees it (no co-load).
-        self._box_lock = box_lock
+        self._box_lock = wiring.box_lock
         # Served names evicted (by us or by another displacement) and awaiting restore. The
         # box's remembered steady state minus whatever currently holds the RAM. Bounded by the
         # provisioned model count; entries clear as they reload or are attempted.
@@ -228,7 +330,7 @@ class ResidencyCoordinator:
         # jerv message pays the full cold prefill IN THE FOREGROUND. This hook is the missing
         # edge, and it is a callback rather than a direct call so residency keeps knowing
         # nothing about personas or priming.
-        self._on_prefix_lost = on_prefix_lost
+        self._on_prefix_lost = wiring.on_prefix_lost
 
     def _prefix_lost(self, served_model: str) -> None:
         """Signal that `served_model`'s primed prefix is gone. Best-effort and synchronous —
@@ -319,6 +421,31 @@ class ResidencyCoordinator:
                 return frozenset(names)
         return frozenset()
 
+    def _note_if_not_ready(self, served_model: str, at: str) -> None:
+        """Narrate an admission skipped for a model that is NOT ready.
+
+        MEASUREMENT, not a behaviour change. Both places this coordinator concludes "already
+        resident" read that from `/running`, and llama-swap lists a model it is STOPPING there
+        (`local_gateway._parse_running_states`). So either skip can fire for a model on its way
+        out — after which the completion reaches llama-swap, which relaunches it with no
+        admission, no device guard and no `box_events` row. That is the shape of the incident on
+        2026-08-21: a model the owner had unloaded served an hourly sweep an hour later, and no
+        load was ever recorded.
+
+        `at` distinguishes the skips because they have different reach: `fast_path` runs only
+        when a box lock is wired, `plan` runs on every path, and `hold` runs only while code
+        mode owns the box — a third short-circuit reading the same `/running`, and one an
+        earlier version of this docstring missed by claiming there were two.
+
+        Best-effort throughout — a gateway
+        that reports no state must not turn housekeeping into a failure, and an unknown state is
+        never read as ready."""
+        state = ""
+        with contextlib.suppress(Exception):
+            state = self._gateway.state_of(served_model)
+        if state and state != STATE_READY:
+            log.warning("residency.short_circuit_not_ready", model=served_model, state=state, at=at)
+
     async def _footprint(
         self, served_model: str, windows: Mapping[str, int], slots: Mapping[str, int]
     ) -> float:
@@ -333,7 +460,7 @@ class ResidencyCoordinator:
         disk = weights_size_gb(self._models_dir, model.id) if self._models_dir else None
         return local_catalog.footprint_gb(model, window, disk_gb=disk, slots=n_slots)
 
-    async def _plan(self, served_model: str) -> EvictionPlan | None:
+    async def _plan(self, served_model: str, *, narrate_skip: bool = False) -> EvictionPlan | None:
         """Compute what loading `served_model` would cost right now — the eviction plan —
         with no side effects. None when disabled or the RAM reading is unavailable (can't
         project blindly). Shared by plan_load (dry-run) and the two eviction paths, so the
@@ -351,6 +478,13 @@ class ResidencyCoordinator:
         windows = await self._windows()
         slots = await self._slots()
         if served_model in running:
+            # Only when this plan is about to SKIP a real admission. `plan_load` shares this
+            # method for the settings screen's stage preview, which admits nothing and says so
+            # ("No side effects") — narrating there would count an operator opening the preview
+            # as a skipped admission, in the very counter the next wave reads to decide whether
+            # the stale-residency read is real.
+            if narrate_skip:
+                self._note_if_not_ready(served_model, "plan")
             return EvictionPlan(
                 target=served_model,
                 victims=(),
@@ -461,6 +595,7 @@ class ResidencyCoordinator:
         if held and served_model not in held:
             with contextlib.suppress(Exception):
                 if served_model in await self._gateway.running():
+                    self._note_if_not_ready(served_model, "hold")
                     return  # already resident — serving it needs no load
             raise ResidencyError(
                 f"Code mode is holding the box for {sorted(held)}. Turn code mode off to run "
@@ -473,6 +608,7 @@ class ResidencyCoordinator:
         with contextlib.suppress(Exception):
             if served_model in await self._gateway.running():
                 self._displaced.discard(served_model)
+                self._note_if_not_ready(served_model, "fast_path")
                 return
         # Slow path: a load is needed — serialize evict+load box-wide and load the target
         # under the lock so its memory is committed before the next process plans.
@@ -484,7 +620,7 @@ class ResidencyCoordinator:
         target after evicting so a cross-process holder sees it resident before the lock
         releases; off, the client triggers the load lazily (the un-serialized path)."""
         try:
-            plan = await self._plan(served_model)
+            plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.ensure_room_failed", model=served_model, error=repr(exc))
             return
@@ -571,11 +707,24 @@ class ResidencyCoordinator:
         for restore — a manual load is a change to the steady state, not a transient
         displacement to undo (else the next turn's restore would fight the operator). Raises
         ResidencyError (before evicting) when the model can't fit the box, so the caller
-        refuses instead of crashing. Housekeeping hiccups are swallowed, like ensure_room."""
+        refuses instead of crashing. Housekeeping hiccups are swallowed, like ensure_room.
+
+        The code-mode hold does NOT refuse here, where `ensure_room` refuses a chat turn
+        outright. That is deliberate and owner-decided (2026-08-22): the operator pressing Load
+        is the box's authority, so the load proceeds even if it costs code mode its reserved
+        model. What was wrong was the SILENCE — the coder vanished mid-session with a
+        `model_unload` reason that read like any routine eviction, and `free_room` records no
+        restore, so it did not come back either. A held victim now says so, in the vitals
+        reason AND in the log, so a broken code session is traceable to the load that broke it
+        instead of looking like the box misbehaving.
+
+        Whether some intents should refuse rather than warn (an `agent` or `scheduled` demand
+        clearly should) is still W1 of docs/plans/LOCAL_MODEL_ACCESS_PLAN.md; this decides only
+        the operator's own two surfaces."""
         if not self._enabled:
             return
         try:
-            plan = await self._plan(served_model)
+            plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.free_room_failed", model=served_model, error=repr(exc))
             return
@@ -583,11 +732,34 @@ class ResidencyCoordinator:
             return
         self._refuse_if_over_box(plan)  # raises before we evict anything
         self._displaced.discard(served_model)
-        with box_events.because(f"to make room for {served_model}, which you loaded"):
-            for served in plan.victims:
-                with contextlib.suppress(LocalGatewayError):
-                    await self._gateway.unload(served)
-                    self._prefix_lost(served)
+        held = await self._held_names()
+        for served in plan.victims:
+            reason = (
+                f"to make room for {served_model}, which you loaded — this was code mode's "
+                f"reserved model, so that session has lost it and it will NOT be restored"
+                if served in held
+                else f"to make room for {served_model}, which you loaded"
+            )
+            # OUTSIDE the suppress: an unload that times out may still have SUCCEEDED, and
+            # leaving the victim queued would have the next schedule_restore reload it —
+            # the restore fighting the operator, which is the whole reason this path records
+            # nothing, and it would make the vitals reason above ("will NOT be restored") a
+            # lie. Unconditional is safe: `_restore` skips members that are already resident,
+            # so discarding one the unload did not actually take costs nothing.
+            self._displaced.discard(served)
+            with box_events.because(reason), contextlib.suppress(LocalGatewayError):
+                await self._gateway.unload(served)
+                self._prefix_lost(served)
+                if served in held:
+                    # AFTER the unload, not before: the unload's LocalGatewayError is suppressed,
+                    # so warning up front would assert that code mode had lost a model that is in
+                    # fact still resident — sending the owner to debug a session that is fine.
+                    log.warning(
+                        "residency.evicted_held_model",
+                        model=served,
+                        for_model=served_model,
+                        held=sorted(held),
+                    )
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows

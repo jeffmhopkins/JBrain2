@@ -71,6 +71,11 @@ class FakeClient:
 
 
 class FakeGateway:
+    def state_of(self, served_model: str) -> str:
+        """No state known — this fake serves a path that never reads it. `""` is the
+        honest answer and is never treated as ready."""
+        return ""
+
     def __init__(self) -> None:
         self.unloaded: list[str] = []
 

@@ -12,6 +12,7 @@ its ship evidence.
 ## Core pipeline & engine
 | Item | What it is |
 |---|---|
+| `GPU_ADMISSION_INTEGRITY_PLAN.md` | **Superseded** by `../plans/LOCAL_MODEL_ACCESS_PLAN.md`. Four cold adversarial reviews found its keystone wave unsound (its central category has no data source on this box, and applying it at `local_gateway.py:762` reintroduces the mid-load-baseline bug #1186 fixed), one wave unbuildable, one wave's premise unreachable, and two waves in contradiction. The one fix worth shipping — `unload()` racing llama-swap's 10 s graceful stop on a 3 s client timeout — was found BY the review and shipped separately. Kept for its evidence and for the record of how it failed: three of its claims were a log label, a README summary and an env-var name mistaken for evidence. |
 | `ASSISTANT_PLAN.md` | Phase-4 personal-agent implementation plan (P4.1–P4.9). |
 | `INTEGRATOR_PLAN.md` | Note→graph Integrator (v3) implementation plan. |
 | `CUTOVER_V1_REMOVAL.md` | Record of removing the v1 `analyze_note` path. |

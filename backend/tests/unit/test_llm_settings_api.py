@@ -16,7 +16,7 @@ from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm import llama_swap_config, local_catalog, local_gateway
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
@@ -285,14 +285,16 @@ def _authed_client(
     # real evictor against the test's running set (memory is monkeypatched per test).
     app.state.residency = ResidencyCoordinator(
         app.state.local_gateway,
-        enabled=settings.local_llm_enabled,
-        models_dir="",
-        # Passed exactly as main.py / worker.py / router.py do. Omitting it left this
-        # harness on the constructor default while every production site passed the
-        # settings value, so these tests pinned a ceiling the box never used — 96.0 GB
-        # against a real 108.8. Two defaults for one number is how a preview ends up
-        # disagreeing with the evictor it is previewing.
-        free_ram_fraction=settings.local_llm_free_ram_fraction,
+        ResidencyWiring.inert(
+            enabled=settings.local_llm_enabled,
+            models_dir="",
+            # Passed exactly as main.py / worker.py / router.py do. Omitting it left this
+            # harness on the constructor default while every production site passed the
+            # settings value, so these tests pinned a ceiling the box never used — 96.0 GB
+            # against a real 108.8. Two defaults for one number is how a preview ends up
+            # disagreeing with the evictor it is previewing.
+            free_ram_fraction=settings.local_llm_free_ram_fraction,
+        ),
     )
     key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
     assert (
@@ -1539,3 +1541,40 @@ def test_a_text_only_model_reports_no_image_floor_at_all() -> None:
     body = c.get("/api/settings/llm").json()
     m = next(x for x in body["local_models"] if x["id"] == "gpt-oss-120b")
     assert m["image_min_tokens"] is None and m["image_min_tokens_default"] is None
+
+
+def test_neither_deliberate_warm_records_a_displacement_nothing_drains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both operator warms evict with `free_room`, and the PRIME is the interesting one.
+
+    `ensure_room` reads as the right call for a measurement instrument — record the victim,
+    put it back. But `schedule_restore` fires only from a finished agent turn and from
+    code-mode power-off; the debug console is neither. A prime admitted through `ensure_room`
+    would leave `_displaced` entries nothing ever drains, so a session of prefill experiments
+    would accumulate them and dump them back EN MASSE during whatever chat turn came next —
+    evicting the model just primed, and corrupting the measurement.
+
+    So: an empty displaced set after either warm, and the runbook tells the owner to reload."""
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    from jbrain.api.llm_settings import _admit_or_409
+
+    settings = _cloud_settings(
+        local_llm_enabled=True, local_models=["qwen3-coder-next", "gpt-oss-120b"]
+    )
+    for label in ("load", "prime"):
+        gw = FakeLocalGateway(running={"gpt-oss-120b"})
+        residency = ResidencyCoordinator(
+            gw,
+            ResidencyWiring.inert(
+                enabled=True, free_ram_fraction=settings.local_llm_free_ram_fraction
+            ),
+        )
+        asyncio.run(_admit_or_409(residency, "qwen3-coder-next"))
+        assert gw.unloaded == ["gpt-oss-120b"], label
+        assert not residency._displaced, (
+            f"{label} recorded a displacement, but nothing on the operator path calls "
+            "schedule_restore — it would surface during an unrelated later turn"
+        )

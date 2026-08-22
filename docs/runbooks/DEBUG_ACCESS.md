@@ -50,6 +50,22 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   auth), so it clears on the next turn once the token lapses, is suspended, or is
   revoked. Diagnostics-only: the trace carries no owner text.
 
+> **Reading `local_gateway.unannounced_load`.** It means *the client that logged it* did not
+> load that model — NOT that the load skipped the residency budget. Two benign cases produce
+> it, and both were mistaken for a bypass on 2026-08-21:
+>
+> - `first_poll=true` — a fresh client reports every already-resident model, because it had no
+>   prior view. The worker logged two models at the same millisecond this way, both loaded by
+>   the api minutes earlier.
+> - a different `client` id — the api and the worker each hold their own client, so each
+>   reports the other's legitimate, guarded loads.
+>
+> A load this client has in flight no longer reports itself (it used to; `load_cache_swept`
+> and `unannounced_load` for the same model, same client, three seconds apart). Treat a line
+> as a real bypass only when `first_poll=false` **and** no other process was loading — confirm
+> against `box_events` (a guarded load leaves a `model_load` span; a true bypass leaves none)
+> and against llama-swap's own request log via `upstream-logs`.
+
 ## Streamed turns, buffered on the box
 
 `POST /api/debug/complete` takes `stream: true` (`scripts/debug-connect.sh complete --stream`),
@@ -161,6 +177,21 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment.
+
+  ⚠️ **A prime EVICTS to fit, exactly like a load, and nothing on this path schedules a
+  restore.** One exception, and it cuts the other way: if the victim is the **primary local
+  chat model** and the auto-restore toggle is ON, `WarmKeeper` finds it cold within 60 s and
+  reloads it through `ensure_room` — which can evict the model you just primed and corrupt the
+  measurement mid-experiment. Check the toggle before a run: with it OFF (its state on this box
+  at the time of writing) nothing reloads behind you, which is what you want while measuring. If it takes code mode's reserved model, it says so: grep
+  `residency.evicted_held_model` in `GET /api/debug/logs/api`, and the vitals row names it as
+  code mode's. The load is allowed to win — you pressed it — but a code session that suddenly
+  lost its model is explained by that line, not by the box misbehaving. Both operator warms admit through the same evict-to-fit path; neither records a
+  restore, because nothing on the debug-console path fires one (a restore is driven by a
+  finished agent turn or by code-mode power-off). That is deliberate — a recorded-but-undrained
+  displacement would pile up across an experiment and then reload all at once during whatever
+  chat turn came next, evicting the model you had just primed. So check `GET …/local-models`
+  before a run, and reload what the experiment displaced when you are done.
 
 > **A 200 from `restore` does not mean the prefill was skipped.** On a sliding-window model
 > (gpt-oss) llama-server can accept a restore and then discard it, logging `forcing full prompt

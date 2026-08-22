@@ -690,3 +690,265 @@ async def test_a_queued_load_says_what_it_is_waiting_for() -> None:
     model, detail = queued[0]
     # It names the model ahead, so the screen reads "waiting for gpt-oss-120b", not "waiting".
     assert "gpt-oss-120b" in detail or "qwen3.8-27b-abliterated" in detail, detail
+
+
+async def test_a_guarded_load_does_not_report_itself_as_unannounced(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`unannounced_load` is the box's only signal that something loaded a model outside the
+    residency budget and the GPU guard — the documented host-freeze path. It reported the
+    client's OWN guarded loads.
+
+    `load()` claims the model before the weights are read, but the prune at the end of
+    `_drop_cache_for_unannounced` ran while it was still not resident and dropped the claim,
+    so the warm-up's own `/slots` poll saw it arrive un-owned. MEASURED 2026-08-21 on the box:
+    `load_cache_swept qwen3.8-27b-q4` at 21:41:14.804 then `unannounced_load qwen3.8-27b-q4`
+    at 21:41:17.873 — same client, three seconds apart, one load. A false alarm on this
+    surface is expensive: it sent a live investigation after a bypass that never happened."""
+    events: list[str] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: events.append(ev),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    # A load is in flight: claimed, not yet resident — the state the prune used to destroy.
+    gw._loading.add("gpt-oss-120b")  # type: ignore[attr-defined]
+    gw._drop_cache_for_unannounced(set())  # a poll while the weights are still being read
+    # ...and now it arrives, on the warm-up's own poll.
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})
+    assert "local_gateway.unannounced_load" not in events, "a guarded load reported itself"
+
+
+async def test_a_genuinely_unannounced_load_is_still_reported(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The veto must not blind the signal. A model this client never claimed is exactly what
+    the event exists for, and it still fires — annotated, so a cross-process sighting is
+    legible as one rather than read as an unguarded load."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+    gw._seen_resident = {"qwen3.5-4b"}  # type: ignore[attr-defined]
+    gw._polled = True  # not this client's first poll  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"qwen3.5-4b", "gpt-oss-120b"})
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert len(hits) == 1 and hits[0]["model"] == "gpt-oss-120b"
+    assert hits[0]["first_poll"] is False
+    assert hits[0]["client"], "no client identity — a cross-process sighting reads as a bypass"
+
+
+async def test_a_fresh_clients_first_poll_is_marked_as_such(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new client reports every already-resident model, because `_seen_resident` starts
+    empty. MEASURED: the worker logged gpt-oss-120b and qwen3.8-27b-q4 at the same millisecond
+    (21:41:23.348/.349) — both loaded by the api minutes earlier. Unavoidable and harmless,
+    but it must be DISTINGUISHABLE from a load that appeared while the client was watching."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # the very first poll
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert hits and hits[0]["first_poll"] is True
+
+
+async def test_unload_waits_longer_than_the_default_client_timeout() -> None:
+    """llama-swap's unload BLOCKS until the process has stopped, and grants it
+    `DEFAULT_UNLOAD_TIMEOUT = 10` s of graceful stop first. The client default is 3 s, so
+    unloading a 69 GB model raced its own success: every other slow call on this client widens
+    (`max(self._timeout, 180.0)` for the slot ops, `120.0` for the load probe) and this one was
+    missed.
+
+    A false unload failure is expensive in four places, all while the unload succeeds
+    underneath: a `MODEL_UNLOAD status="failed"` row on the owner's vitals surface; a
+    `residency` plan that still counts the victim as resident; `image_gen.render` abandoning
+    the rest of its unload loop before a ComfyUI render; and `cli.py`'s pre-update unload
+    reporting failure inside `set -e`. It also hands control back while the process is still
+    `stopping` — a state `/running` reports as resident, so every caller then reasons from a
+    roster that is wrong."""
+    seen: list[float | None] = []
+
+    class _Recorder(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            seen.append(request.extensions.get("timeout", {}).get("connect"))
+            return httpx.Response(200, json={})
+
+    gw = LocalGatewayClient("http://gw:8080/v1", transport=_Recorder(), timeout=3.0)
+    await gw.unload("gpt-oss-120b")
+    assert seen and seen[0] is not None
+    assert seen[0] >= 30.0, f"unload still races llama-swap's 10 s graceful stop: {seen[0]}s"
+
+
+# --- /running carries a STATE, and a non-ready model is not serving -----------------
+# llama-swap lists a model it is STOPPING (only `stopped`/`shutdown` are filtered), so
+# every caller reading this as "resident" treats a model on its way out as one that is
+# up. These cover the measurement that lands before that behaviour changes.
+
+
+def test_parse_running_states_keeps_the_state() -> None:
+    states = local_gateway._parse_running_states(
+        {"running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "stopping"}]}
+    )
+    assert states == {"a": "ready", "b": "stopping"}
+
+
+def test_parse_running_states_is_empty_string_when_the_build_reports_none() -> None:
+    """An older gateway sends bare names. Unknown must not read as ready."""
+    assert local_gateway._parse_running_states(["a", "b"]) == {"a": "", "b": ""}
+
+
+def test_parse_running_still_returns_names_only() -> None:
+    """The set-returning parser is unchanged for every existing caller."""
+    payload = {"running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "stopping"}]}
+    assert _parse_running(payload) == {"a", "b"}
+
+
+async def test_running_still_lists_a_stopping_model() -> None:
+    """The behaviour this wave MEASURES but does not yet change."""
+    client = _client(
+        lambda r: httpx.Response(
+            200, json={"running": [{"model": "gpt-oss-120b", "state": "stopping"}]}
+        )
+    )
+    assert await client.running() == {"gpt-oss-120b"}
+
+
+async def test_state_of_reports_the_last_seen_state() -> None:
+    client = _client(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "running": [{"model": "a", "state": "ready"}, {"model": "b", "state": "starting"}]
+            },
+        )
+    )
+    await client.running()
+    assert client.state_of("a") == "ready"
+    assert client.state_of("b") == "starting"
+
+
+async def test_state_of_is_unknown_for_a_model_that_is_not_listed() -> None:
+    """`""` must mean "we do not know", never "ready" — a caller that reads an absent
+    model as ready would skip admission for a model that is not there at all."""
+    client = _client(lambda r: httpx.Response(200, json={"running": [{"model": "a"}]}))
+    await client.running()
+    assert client.state_of("nope") == ""
+
+
+async def test_not_ready_is_logged_once_per_transition(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`running()` is polled on every tick in both processes, so an unconditional line
+    would bury the transition it exists to show."""
+    lines: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append((ev, kw)))
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": "stopping"}]})
+    )
+    await client.running()
+    await client.running()
+    hits = [kw for ev, kw in lines if ev == "local_gateway.not_ready_in_running"]
+    assert len(hits) == 1
+    assert hits[0]["models"] == ["a"]
+    assert hits[0]["states"] == ["stopping"]
+
+
+async def test_a_ready_only_roster_logs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append(ev))
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": "ready"}]})
+    )
+    await client.running()
+    assert "local_gateway.not_ready_in_running" not in lines
+
+
+async def test_the_line_returns_when_a_model_goes_not_ready_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Log-on-change must not mean log-once-ever: a model that settles and later stops
+    again is a new transition and has to narrate."""
+    lines: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda ev, **kw: lines.append(ev))
+    states = iter(["stopping", "ready", "stopping"])
+    client = _client(
+        lambda r: httpx.Response(200, json={"running": [{"model": "a", "state": next(states)}]})
+    )
+    for _ in range(3):
+        await client.running()
+    assert lines.count("local_gateway.not_ready_in_running") == 2
+
+
+async def test_an_idle_box_does_not_disguise_a_bypass_as_a_first_poll(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`first_poll` used to be `not self._seen_resident`, which is ALSO true of an idle box.
+    So an api restart with nothing resident, followed by a request-driven llama-swap load,
+    stamped the arrival `first_poll=true` — and DEBUG_ACCESS.md says to treat a line as a real
+    bypass only when `first_poll=false`. The one case the event exists to catch was the case
+    it told the reader to dismiss."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced(set())  # first poll of an EMPTY box — nothing to report
+    assert not [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # now something loads behind our back
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert len(hits) == 1 and hits[0]["model"] == "gpt-oss-120b"
+    assert hits[0]["first_poll"] is False, "a real bypass was labelled a first-poll artifact"
+
+
+async def test_a_short_load_does_not_report_itself_after_the_claim_is_pruned(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim must survive the poll that `_load_and_warm` makes DURING the load.
+
+    Sequence, all one client: `load()` claims the model in `_loaded_here` before loading, then
+    `_load_and_warm` calls `running()` while it is still arriving. That poll pruned the claim
+    (`&= resident`, and it is not resident yet). `_loading` hid the damage at the time, but it
+    is released in `load()`'s `finally`, so the NEXT poll saw the model with no claim in either
+    set and logged `unannounced_load … first_poll=false` — a guarded load accusing itself, in
+    the one shape DEBUG_ACCESS.md tells the operator to trust as a real bypass."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log,
+        "info",
+        lambda ev, **kw: seen.append({"event": ev, **kw}),  # type: ignore[arg-type]
+    )
+    gw = _client(lambda r: httpx.Response(200, json={}))
+    gw._models_dir = str(tmp_path)  # type: ignore[attr-defined]
+    # not a first poll, so nothing here is excused as a fresh-client artifact
+    gw._polled = True  # type: ignore[attr-defined]
+
+    gw._loaded_here.add(
+        "gpt-oss-120b"
+    )  # claimed before the load runs (_load_and_warm)  # type: ignore[attr-defined]
+    gw._loading.add("gpt-oss-120b")  # and in flight  # type: ignore[attr-defined]
+    gw._drop_cache_for_unannounced(set())  # the poll _load_and_warm itself makes: not resident
+    gw._loading.discard(
+        "gpt-oss-120b"
+    )  # load() finally: the in-flight claim is released  # type: ignore[attr-defined]
+
+    gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # now it arrives, on a later poll
+    hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
+    assert not hits, f"a guarded load reported itself as unannounced: {hits}"

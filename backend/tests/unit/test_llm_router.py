@@ -19,7 +19,25 @@ from jbrain.llm import (
     Sampling,
     build_router,
 )
-from jbrain.llm.router import CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, JSON_NUDGE
+from jbrain.llm.router import (
+    CONTEXT_WINDOWS,
+    DEFAULT_CONTEXT_WINDOW,
+    JSON_NUDGE,
+    LocalAdmitter,
+)
+
+
+def _inert_residency() -> LocalAdmitter:
+    """A disabled coordinator, for the tests that only care about routing.
+
+    `residency` is required on build_router (see
+    `test_build_router_requires_a_residency_admitter`), and disabled is the honest thing
+    for a test that never loads a model — not a stub that silently admits everything,
+    which is the exact failure the required parameter exists to prevent."""
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
+
+    return ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=False))  # type: ignore[arg-type]
+
 
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
 
@@ -78,7 +96,7 @@ async def test_local_swap_evicts_the_resident_model_through_the_router(
     is wired). The vision model is resident; the summary model can't fit beside it under the
     free-RAM floor, so admitting the summary completion unloads the vision model first —
     exactly the vision→reasoning swap the video worker makes."""
-    from jbrain.llm.residency import ResidencyCoordinator
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
     from tests.unit.fakes import FakeLocalGateway
 
     gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
@@ -88,7 +106,9 @@ async def test_local_swap_evicts_the_resident_model_through_the_router(
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (121.0, 45.0)
     )
-    residency = ResidencyCoordinator(gw, models_dir="", enabled=True, free_ram_fraction=0.125)
+    residency = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(models_dir="", enabled=True, free_ram_fraction=0.125)
+    )
     fake = FakeLlmClient(["caption", "summary"])
     router = LlmRouter(
         {"local": fake},
@@ -225,7 +245,12 @@ async def test_build_router_wires_all_three_providers() -> None:
     async def no_sleep(seconds: float) -> None:  # injected so retries never wait in tests
         raise AssertionError("no retry expected")
 
-    router = build_router(settings, transport=httpx.MockTransport(handle), sleep=no_sleep)
+    router = build_router(
+        settings,
+        transport=httpx.MockTransport(handle),
+        sleep=no_sleep,
+        residency=_inert_residency(),
+    )
 
     assert (
         await router.complete("note.extract", system="s", user_text="u")
@@ -289,32 +314,34 @@ def test_resolve_tiers_defaults_overrides_and_unknown() -> None:
 
 
 def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
-    router = build_router(Settings(llm_tasks={"note.extract": "anthropic:claude-sonnet-4-6"}))
+    router = build_router(
+        Settings(llm_tasks={"note.extract": "anthropic:claude-sonnet-4-6"}),
+        residency=_inert_residency(),
+    )
     # The pinned task resolves to its pin even when a strength tier is requested.
     assert router.spec("note.extract", "high") == ("anthropic", "claude-sonnet-4-6")
     # An unpinned task still honours the tier.
     assert router.spec("vision.ocr", "high") == ("xai", "grok-4.3")
 
 
-def test_build_router_always_attaches_residency_admission() -> None:
-    """The core invariant: build_router NEVER yields a local-capable router without a
-    residency admitter. The gateway never self-evicts (`swap: false`), so an unadmitted
-    local load hard-locks the unified-memory box — the worker OOM was exactly a router
-    built without admission. A caller that passes none still gets one, sized from settings
-    and enabled iff local hosting is on, so the memory-managed path is the only path."""
-    from jbrain.llm.residency import ResidencyCoordinator
+def test_build_router_requires_a_residency_admitter() -> None:
+    """The core invariant, now enforced by the signature rather than by a fallback.
 
-    # Caller supplies nothing — build_router must still attach a coordinator.
-    off = build_router(Settings(local_llm_enabled=False))
-    assert isinstance(off._residency, ResidencyCoordinator)
-    assert off._residency._enabled is False  # inert on a cloud-only box
+    The gateway never self-evicts (`swap: false`), so an unadmitted local load hard-locks
+    the unified-memory box — the worker OOM was exactly a router built without admission.
+    build_router used to paper over that with a `_default_residency` built from settings.
+    That default was the WEAKER of two gates: no `hold_loader`, so `_held_names()` returned
+    an empty set, and empty means *not held* — admit everything. An operator reservation
+    could be live on the api's coordinator and invisible on this one. No production caller
+    ever used it (`main.py` and `worker.py` both pass their own), so it existed only to be
+    silently wrong for whoever forgot. It is gone; the parameter is required."""
+    from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring
 
-    on = build_router(Settings(local_llm_enabled=True))
-    assert isinstance(on._residency, ResidencyCoordinator)
-    assert on._residency._enabled is True  # live evictor when local hosting is on
+    with pytest.raises(TypeError):
+        build_router(Settings(local_llm_enabled=True))  # type: ignore[call-arg]
 
-    # A caller that owns a coordinator gets THAT instance (shared bookkeeping), not a fresh one.
-    mine = ResidencyCoordinator(object(), enabled=True)  # type: ignore[arg-type]
+    # A caller that owns a coordinator gets THAT instance (shared bookkeeping).
+    mine = ResidencyCoordinator(object(), ResidencyWiring.inert(enabled=True))  # type: ignore[arg-type]
     assert build_router(Settings(local_llm_enabled=True), residency=mine)._residency is mine
 
 

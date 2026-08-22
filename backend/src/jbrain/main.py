@@ -147,7 +147,7 @@ from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring, pg_box_lock
 from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
@@ -428,35 +428,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # cold-loading it. Inert on a cloud-only box (enabled off).
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
-            windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
-            slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
-            models_dir=settings.local_models_dir,
-            enabled=settings.local_llm_enabled,
-            free_ram_fraction=settings.local_llm_free_ram_fraction,
-            # The live operator override of the floor (Settings → LLM); falls back to the
-            # free_ram_fraction config default above when unset. Read per load, so a change
-            # applies with no restart. Wired identically in the worker (jbrain.worker).
-            fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
-            # Code-mode box reservation (jcode power ON writes it): while set, ensure_room
-            # refuses to load any model outside code mode's reserved set, so nothing evicts its
-            # models or co-loads past physical RAM. Read per load (SYSTEM_CTX), identically
-            # wired in the worker.
-            hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
-            # The operator's end-of-turn restore switch (Settings → LLM). Read per restore,
-            # so flipping it takes effect on the next turn with no restart.
-            auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
-            # Serialize evict+load against the worker process (which runs its own coordinator
-            # over the same box) so a deferred worker load can't co-load past the floor here.
-            box_lock=pg_box_lock(maker),
-            # Tell the WarmKeeper when an eviction or a bare restore-load drops a model's
-            # primed prefix. LATE-BOUND on purpose: the keeper is constructed further down
-            # this same startup, so the lambda resolves it at call time and degrades to a
-            # no-op on a build with no agent wired.
-            on_prefix_lost=_prefix_lost_notifier(app),
-            # Same probe the gateway guards with, here for the post-load MEASUREMENT: what a
-            # load actually cost in device memory, logged beside what the catalog predicted,
-            # so those numbers get corrected from data rather than from the next freeze.
-            gpu_probe=gpu_probe,
+            ResidencyWiring(
+                windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
+                slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
+                models_dir=settings.local_models_dir,
+                enabled=settings.local_llm_enabled,
+                free_ram_fraction=settings.local_llm_free_ram_fraction,
+                # The live operator override of the floor (Settings → LLM); falls back to the
+                # free_ram_fraction config default above when unset. Read per load, so a change
+                # applies with no restart. Wired identically in the worker (jbrain.worker).
+                fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
+                # Code-mode box reservation (jcode power ON writes it): while set, ensure_room
+                # refuses to load any model outside code mode's reserved set, so nothing evicts its
+                # models or co-loads past physical RAM. Read per load (SYSTEM_CTX), identically
+                # wired in the worker.
+                hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
+                # The operator's end-of-turn restore switch (Settings → LLM). Read per restore,
+                # so flipping it takes effect on the next turn with no restart.
+                auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
+                # Serialize evict+load against the worker process (which runs its own coordinator
+                # over the same box) so a deferred worker load can't co-load past the floor here.
+                box_lock=pg_box_lock(maker),
+                # Tell the WarmKeeper when an eviction or a bare restore-load drops a model's
+                # primed prefix. LATE-BOUND on purpose: the keeper is constructed further down
+                # this same startup, so the lambda resolves it at call time and degrades to a
+                # no-op on a build with no agent wired.
+                on_prefix_lost=_prefix_lost_notifier(app),
+                # Same probe the gateway guards with, here for the post-load MEASUREMENT: what a
+                # load actually cost in device memory, logged beside what the catalog predicted,
+                # so those numbers get corrected from data rather than from the next freeze.
+                gpu_probe=gpu_probe,
+            ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)

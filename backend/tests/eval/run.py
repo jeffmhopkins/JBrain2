@@ -20,6 +20,11 @@ embed container up as well as Docker + Grok.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from jbrain.llm.residency import ResidencyCoordinator
+
 import asyncio
 import os
 import sys
@@ -43,6 +48,19 @@ class _Tally:
         self.inp += usage.input_tokens
         self.out += usage.output_tokens
         self.calls += 1
+
+
+def _residency() -> ResidencyCoordinator:
+    """A REAL gate — it was `_inert_residency` and it was wrong.
+
+    It used to pass `ResidencyWiring.inert()`, reasoning that the `xai_api_key` check below
+    made the local path unreachable. It does not: that check proves a KEY EXISTS, while
+    `JBRAIN_LLM_TASKS` still decides where a task routes — so `note.extract` pinned local would
+    have loaded unadmitted from `grok-eval.sh`. The sibling CLI in `evals/` reached the opposite
+    conclusion about the identical situation, which is how the bad reasoning showed up."""
+    from jbrain.llm.residency import dbless_coordinator
+
+    return dbless_coordinator(Settings())
 
 
 async def _evaluate(
@@ -97,7 +115,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
     maker = async_sessionmaker(engine, expire_on_commit=False)
     tally = _Tally()
     settings = Settings()
-    router = build_router(settings, recorder=tally)
+    router = build_router(settings, recorder=tally, residency=_residency())
 
     embedder = None
     embed_model = ""
@@ -224,7 +242,7 @@ async def main() -> int:
     # a requires_canon case, so skip them rather than burn Grok calls for nothing.
     cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
-    router = build_router(settings, recorder=tally)
+    router = build_router(settings, recorder=tally, residency=_residency())
     facts_total = 0  # corpus-total proposed facts — the intent-mode leaner metric
 
     async def run_one_intent(case: Case) -> list[str]:

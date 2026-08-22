@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
@@ -35,14 +35,16 @@ def _coord(
     )
     return ResidencyCoordinator(
         gw,
-        models_dir="",  # nominal catalog size_gb, no filesystem read
-        enabled=enabled,
-        free_ram_fraction=0.25,
-        fraction_loader=fraction_loader,  # type: ignore[arg-type]
-        hold_loader=hold_loader,  # type: ignore[arg-type]
-        slots_loader=slots_loader,  # type: ignore[arg-type]
-        on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
-        auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+        ResidencyWiring.inert(
+            models_dir="",  # nominal catalog size_gb, no filesystem read
+            enabled=enabled,
+            free_ram_fraction=0.25,
+            fraction_loader=fraction_loader,  # type: ignore[arg-type]
+            hold_loader=hold_loader,  # type: ignore[arg-type]
+            slots_loader=slots_loader,  # type: ignore[arg-type]
+            on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
+            auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+        ),
     )
 
 
@@ -269,7 +271,7 @@ async def test_ensure_room_is_a_noop_when_disabled() -> None:
     # enabled False (cloud-only box) → the app evicts nothing even with a full box (no
     # read_memory_gb call needed — it returns on the first line).
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == []
 
@@ -280,7 +282,7 @@ async def test_ensure_room_best_effort_when_memory_unreadable(
 ) -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
     monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
-    coord = ResidencyCoordinator(gw, models_dir="", enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(models_dir="", enabled=True))
     await coord.ensure_room("qwen3-coder-next")  # can't measure RAM → evict nothing, no raise
     assert gw.unloaded == []
 
@@ -290,14 +292,14 @@ async def test_ensure_room_best_effort_when_memory_unreadable(
 
 def test_note_evicted_records_only_known_catalog_models() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     coord.note_evicted(["gpt-oss-120b", "not-a-real-model"])
     assert coord._displaced == {"gpt-oss-120b"}  # noqa: SLF001 — the unknown name is ignored
 
 
 def test_note_evicted_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     coord.note_evicted(["gpt-oss-120b"])
     assert coord._displaced == set()  # noqa: SLF001
 
@@ -384,9 +386,12 @@ async def test_plan_load_is_none_when_disabled_or_unmeasurable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
-    assert await ResidencyCoordinator(gw, enabled=False).plan_load("qwen3.5-4b") is None
+    assert (
+        await ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False)).plan_load("qwen3.5-4b")
+        is None
+    )
     monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
-    coord = ResidencyCoordinator(gw, models_dir="", enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(models_dir="", enabled=True))
     assert await coord.plan_load("qwen3.5-4b") is None
 
 
@@ -417,7 +422,9 @@ async def test_free_room_evicts_nothing_when_it_fits(monkeypatch: pytest.MonkeyP
 @pytest.mark.asyncio
 async def test_free_room_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
-    await ResidencyCoordinator(gw, enabled=False).free_room("qwen3-coder-next")
+    await ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False)).free_room(
+        "qwen3-coder-next"
+    )
     assert gw.unloaded == []
 
 
@@ -522,7 +529,7 @@ async def test_restore_clears_a_member_that_came_back_on_its_own(
 @pytest.mark.asyncio
 async def test_restore_is_a_noop_when_nothing_to_do() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     await coord._restore()  # noqa: SLF001 — empty displaced set
     assert gw.loaded == []
 
@@ -543,7 +550,7 @@ async def test_restore_suppresses_a_load_failure_and_clears_the_entry(
 @pytest.mark.asyncio
 async def test_restore_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=False)
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     coord.note_evicted(["gpt-oss-120b"])  # no-op (disabled), so nothing to restore
     await coord._restore()  # noqa: SLF001
     assert gw.loaded == []
@@ -577,12 +584,12 @@ async def test_schedule_restore_coalesces_and_no_ops_on_empty_set(
     await asyncio.gather(*list(coord._tasks))  # noqa: SLF001
 
     # Nothing displaced → never schedules anything.
-    empty = ResidencyCoordinator(gw, enabled=True)
+    empty = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=True))
     empty.schedule_restore()
     assert empty._tasks == set()  # noqa: SLF001
 
     # Disabled box never schedules either.
-    disabled = ResidencyCoordinator(gw, enabled=False)
+    disabled = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
     disabled.note_evicted(["gpt-oss-120b"])
     disabled.schedule_restore()
     assert disabled._tasks == set()  # noqa: SLF001
@@ -657,7 +664,10 @@ async def test_box_lock_serializes_evict_and_load_of_the_target(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        ),
     )
     await coord.ensure_room("qwen3-coder-next")  # 90+59.6 > 96 → evict gpt-oss, then load it
     assert events == ["lock", "unload:gpt-oss-120b", "load:qwen3-coder-next", "unlock"]
@@ -674,7 +684,10 @@ async def test_box_lock_fast_path_takes_no_lock_when_already_resident(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+        ),
     )
     await coord.ensure_room("gpt-oss-120b")  # already resident
     assert events == []  # no lock, no unload, no load
@@ -697,7 +710,10 @@ async def test_box_lock_degrades_to_unlocked_when_acquire_fails(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
     coord = ResidencyCoordinator(
-        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=failing_lock
+        gw,
+        ResidencyWiring.inert(
+            models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=failing_lock
+        ),
     )
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == ["gpt-oss-120b"]  # still evicted, unlocked
@@ -803,7 +819,9 @@ async def test_a_device_refusal_from_the_gateway_reaches_the_caller() -> None:
             raise gpu_guard.GpuBudgetError("no device room")
 
     gw = _RefusingGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, free_ram_fraction=0.05, box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, free_ram_fraction=0.05, box_lock=None)
+    )
     with pytest.raises(gpu_guard.GpuBudgetError):
         await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
 
@@ -826,7 +844,9 @@ async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
             return sample
 
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
@@ -853,7 +873,9 @@ async def test_a_failed_load_is_not_reported_as_a_measured_one(
             )
 
     gw = _FailingGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)  # non-fatal, as before
     text = capsys.readouterr().out
     assert "residency.load_failed" in text
@@ -872,7 +894,9 @@ async def test_a_healthy_load_still_goes_through_untouched() -> None:
             )
 
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
@@ -881,6 +905,207 @@ async def test_without_a_probe_the_load_path_is_unchanged() -> None:
     """A box that can't measure device memory (no amdgpu, supervisor down, every existing
     test) must keep working exactly as before — degrade, never block."""
     gw = FakeLocalGateway(running=set())
-    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=None, box_lock=None)
+    coord = ResidencyCoordinator(
+        gw, ResidencyWiring.inert(enabled=True, gpu_probe=None, box_lock=None)
+    )
     await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
     assert gw.loaded == ["qwen3.8-27b-q4"]
+
+
+# --- the already-resident short-circuit, and WHY it fired ---------------------------
+# `/running` lists a model llama-swap is STOPPING, so "resident" here can mean "on its
+# way out". This wave narrates that case; it does not yet change what admission does.
+
+
+def _warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """structlog does not route through caplog; capture the event names directly."""
+    seen: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append(ev))
+    return seen
+
+
+async def test_short_circuit_narrates_a_not_ready_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    gw.states = {"gpt-oss-120b": "stopping"}
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert "residency.short_circuit_not_ready" in seen
+    # Still a no-op on the box: the behaviour change is the NEXT wave.
+    assert gw.unloaded == []
+    assert gw.loaded == []
+
+
+async def test_short_circuit_is_silent_for_a_ready_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    gw.states = {"gpt-oss-120b": "ready"}
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert seen == []
+
+
+async def test_short_circuit_is_silent_when_the_build_reports_no_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown state is not evidence of a problem — it must not cry wolf on a
+    gateway build that reports no state at all."""
+    seen = _warnings(monkeypatch)
+    gw = FakeLocalGateway({"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=121.0, used=10.0)
+    await coord.ensure_room("gpt-oss-120b")
+    assert seen == []
+
+
+class _StoppingGateway(FakeLocalGateway):
+    """Reports its model as `stopping` — llama-swap lists a model it is shutting down in
+    `/running`, which is the read the short-circuit narration exists to catch."""
+
+    def state_of(self, served_model: str) -> str:
+        return "stopping"
+
+
+@pytest.mark.asyncio
+async def test_the_stage_preview_does_not_count_as_a_skipped_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`short_circuit_not_ready` is the MEASUREMENT the running()/ready() split is gated on, so
+    what increments it has to be a real skipped admission and nothing else.
+
+    `plan_load` is the settings screen's stage preview — it admits nothing and its docstring
+    says "No side effects" — but it shares `_plan` with `ensure_room`/`free_room`. Narrating
+    from inside `_plan` counted every preview the operator opened, which would have read back
+    as evidence of the very bug the counter exists to confirm."""
+    gw = _StoppingGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=40.0, enabled=True)
+    seen: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append(ev))
+
+    await coord.plan_load("gpt-oss-120b")  # the preview: resident+stopping, short circuit hit
+    assert "residency.short_circuit_not_ready" not in seen, (
+        "the stage preview inflated the counter the next wave reads"
+    )
+
+    await coord.ensure_room("gpt-oss-120b")  # a REAL admission skipping on the same read
+    assert "residency.short_circuit_not_ready" in seen, "a real skipped admission went unnarrated"
+
+
+@pytest.mark.asyncio
+async def test_an_operator_load_evicts_code_modes_model_but_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner-decided 2026-08-22: the Load button outranks code mode's reservation, so this
+    does NOT refuse the way `ensure_room` refuses a chat turn. The defect was the silence —
+    the coder disappeared mid-session behind a reason that read like routine housekeeping, and
+    `free_room` schedules no restore, so it stayed gone.
+
+    Both halves are pinned here: the eviction still happens (authority preserved), and it is
+    narrated as the held model it was (traceability restored)."""
+    gw = FakeLocalGateway(running={"qwen3-coder-next"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=90.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    warnings: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "jbrain.llm.residency.log.warning",
+        lambda ev, **kw: warnings.append({"event": ev, **kw}),
+    )
+
+    await coord.free_room("gpt-oss-120b")
+
+    assert gw.unloaded == ["qwen3-coder-next"], "the operator's load must still win"
+    held_warnings = [w for w in warnings if w["event"] == "residency.evicted_held_model"]
+    assert held_warnings, "code mode lost its model with no warning — the silent break"
+    assert held_warnings[0]["model"] == "qwen3-coder-next"
+    assert held_warnings[0]["for_model"] == "gpt-oss-120b"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_unload_does_not_claim_code_mode_lost_its_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unload's `LocalGatewayError` is suppressed, so warning BEFORE it asserted a loss
+    that may not have happened — sending the owner to debug a code session that is fine while
+    the model is still resident."""
+
+    from jbrain.llm.local_gateway import LocalGatewayError
+
+    class _RefusingGateway(FakeLocalGateway):
+        async def unload(self, served_model: str) -> None:
+            raise LocalGatewayError("gateway refused")
+
+    gw = _RefusingGateway(running={"qwen3-coder-next"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=90.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: warnings.append(ev))
+
+    await coord.free_room("gpt-oss-120b")
+
+    assert "residency.evicted_held_model" not in warnings, (
+        "claimed code mode lost its model, but the unload failed and it is still resident"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_operator_load_clears_a_victim_that_was_awaiting_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`free_room` records no restore for what it evicts — but a victim already displaced by an
+    EARLIER transient displacement was still sitting in `_displaced`, so the next
+    `schedule_restore` reloaded it. The restore fighting the operator is exactly what this path
+    exists to avoid, and it made the new vitals reason ("will NOT be restored") false."""
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=90.0, enabled=True)
+    coord._displaced.add("gpt-oss-120b")  # pending restore from an earlier image render
+
+    await coord.free_room("qwen3-coder-next")
+
+    assert gw.unloaded == ["gpt-oss-120b"]
+    assert "gpt-oss-120b" not in coord._displaced, (
+        "the operator's victim is still queued for restore — it will come back behind them"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_code_mode_short_circuit_is_measured_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three places conclude "already resident" from `/running`, not two: the fast path, the
+    plan, and the code-mode hold branch. The hold branch went unmeasured, so the counter the
+    running()/ready() split is gated on under-reported precisely while code mode owned the box
+    — a state the owner is in for hours at a time."""
+    gw = _StoppingGateway(running={"gpt-oss-120b"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=40.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append({"event": ev, **kw})
+    )
+
+    await coord.ensure_room("gpt-oss-120b")  # resident+stopping, and code mode holds the box
+
+    hits = [e for e in seen if e["event"] == "residency.short_circuit_not_ready"]
+    assert hits, "the code-mode short circuit skipped an admission without measuring it"
+    assert hits[0]["at"] == "hold"

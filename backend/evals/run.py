@@ -36,10 +36,18 @@ from jbrain.evals.runner import CaseResult, load_cases, score_cases
 from jbrain.llm import build_router
 
 
+def _residency() -> Any:
+    """A REAL gate: this CLI can route `note.extract` at a local model (see the module
+    docstring) and a local completion loads it."""
+    from jbrain.llm.residency import dbless_coordinator
+
+    return dbless_coordinator(Settings())
+
+
 async def _run(cases: list[dict[str, Any]]) -> list[CaseResult]:
     # Parse WITH the anchor, exactly as the pipeline does for a note whose client
     # offset is known (see score_cases) — a green eval then means a green app.
-    router = build_router(Settings())
+    router = build_router(Settings(), residency=_residency())
     provider, model = router.spec("note.extract", NOTE_EXTRACT_STRENGTH)
     print(
         f"prompt-eval — {provider}:{model} — {PROMPT_VERSION} — "

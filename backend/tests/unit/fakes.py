@@ -743,6 +743,13 @@ class FakeLocalGateway:
         # The tool schemas each load() was asked to prime alongside the persona (None when
         # unset), so a test can assert the prime carries tools, not just the persona.
         self.warmed_tools: list[list[dict[str, object]] | None] = []
+        # What /running would report as each model's state. Only set by tests that care;
+        # an unset model reads as "" (unknown), matching the real client for a build that
+        # reports no state.
+        self.states: dict[str, str] = {}
+
+    def state_of(self, served_model: str) -> str:
+        return self.states.get(served_model, "")
 
     async def running(self) -> set[str]:
         return set(self._running)
