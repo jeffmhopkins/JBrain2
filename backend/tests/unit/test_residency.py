@@ -1060,3 +1060,52 @@ async def test_a_failed_unload_does_not_claim_code_mode_lost_its_model(
     assert "residency.evicted_held_model" not in warnings, (
         "claimed code mode lost its model, but the unload failed and it is still resident"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_operator_load_clears_a_victim_that_was_awaiting_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`free_room` records no restore for what it evicts — but a victim already displaced by an
+    EARLIER transient displacement was still sitting in `_displaced`, so the next
+    `schedule_restore` reloaded it. The restore fighting the operator is exactly what this path
+    exists to avoid, and it made the new vitals reason ("will NOT be restored") false."""
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=90.0, enabled=True)
+    coord._displaced.add("gpt-oss-120b")  # pending restore from an earlier image render
+
+    await coord.free_room("qwen3-coder-next")
+
+    assert gw.unloaded == ["gpt-oss-120b"]
+    assert "gpt-oss-120b" not in coord._displaced, (
+        "the operator's victim is still queued for restore — it will come back behind them"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_code_mode_short_circuit_is_measured_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three places conclude "already resident" from `/running`, not two: the fast path, the
+    plan, and the code-mode hold branch. The hold branch went unmeasured, so the counter the
+    running()/ready() split is gated on under-reported precisely while code mode owned the box
+    — a state the owner is in for hours at a time."""
+    gw = _StoppingGateway(running={"gpt-oss-120b"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=40.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "jbrain.llm.residency.log.warning", lambda ev, **kw: seen.append({"event": ev, **kw})
+    )
+
+    await coord.ensure_room("gpt-oss-120b")  # resident+stopping, and code mode holds the box
+
+    hits = [e for e in seen if e["event"] == "residency.short_circuit_not_ready"]
+    assert hits, "the code-mode short circuit skipped an admission without measuring it"
+    assert hits[0]["at"] == "hold"

@@ -389,8 +389,10 @@ class ResidencyCoordinator:
         2026-08-21: a model the owner had unloaded served an hourly sweep an hour later, and no
         load was ever recorded.
 
-        `at` distinguishes the two skips because they have different reach: `fast_path` runs only
-        when a box lock is wired, `plan` runs on every path. Best-effort throughout — a gateway
+        `at` distinguishes the skips because they have different reach: `fast_path` runs only
+        when a box lock is wired, `plan` runs on every path, and `hold` runs only while code
+        mode owns the box — a third short-circuit reading the same `/running`, and one an
+        earlier version of this docstring missed by claiming there were two. Best-effort throughout — a gateway
         that reports no state must not turn housekeeping into a failure, and an unknown state is
         never read as ready."""
         state = ""
@@ -548,6 +550,7 @@ class ResidencyCoordinator:
         if held and served_model not in held:
             with contextlib.suppress(Exception):
                 if served_model in await self._gateway.running():
+                    self._note_if_not_ready(served_model, "hold")
                     return  # already resident — serving it needs no load
             raise ResidencyError(
                 f"Code mode is holding the box for {sorted(held)}. Turn code mode off to run "
@@ -695,6 +698,11 @@ class ResidencyCoordinator:
             with box_events.because(reason), contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
                 self._prefix_lost(served)
+                # A victim already awaiting restore from an EARLIER transient displacement would
+                # otherwise be reloaded by the next schedule_restore — the restore fighting the
+                # operator, which is the whole reason this path records nothing. It would also
+                # make the vitals reason above ("will NOT be restored") a lie.
+                self._displaced.discard(served)
                 if served in held:
                     # AFTER the unload, not before: the unload's LocalGatewayError is suppressed,
                     # so warning up front would assert that code mode had lost a model that is in
