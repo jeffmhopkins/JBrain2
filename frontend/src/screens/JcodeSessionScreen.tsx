@@ -423,6 +423,10 @@ export function JcodeSessionScreen({
         if (stale) return;
         setModel(s);
         const idle = !s.loaded && !s.warming && !warmRequested;
+        // A refused warm is TERMINAL: stop polling and stop the bar. Without this the poll
+        // ran forever, because `loading` below stays true while `warmRequested && !loaded`
+        // — so a load the box refused showed as a bar parked at its 96% cap indefinitely.
+        if (s.warm_error) return;
         if (!s.hosting || (s.loaded && !s.warming) || idle) return;
       } catch {
         if (stale) return;
@@ -440,12 +444,15 @@ export function JcodeSessionScreen({
   // evicting whatever's resident. Once the owner confirms (warmRequested) the bar takes over.
   const needsLoad =
     !shared && model?.hosting === true && !model.loaded && !model.warming && !warmRequested;
+  const warmError = model?.warm_error ?? null;
   const loading =
-    model?.hosting === true && (model.warming === true || (warmRequested && !model.loaded));
+    model?.hosting === true &&
+    !warmError &&
+    (model.warming === true || (warmRequested && !model.loaded));
 
   async function warmModel() {
     setWarmRequested(true);
-    setModel((m) => (m ? { ...m, warming: true } : m));
+    setModel((m) => (m ? { ...m, warming: true, warm_error: null } : m));
     try {
       setModel(await api.jcodeWarmModel());
     } catch {
@@ -546,7 +553,10 @@ export function JcodeSessionScreen({
   // stage hides it with CSS, never unmounts it) so the SAME shell — and everything running in
   // it — survives the round trip. Unmounting would drop the socket, and the control server
   // kills the PTY when the socket drops, so reconnecting would hand back a fresh bash.
-  const terminalLive = !stopped && !needsLoad && !loading;
+  // `!warmError` matters as much as the rest: making `loading` false on a refusal would
+  // otherwise flip this TRUE and drop the owner into a terminal for a coder that never
+  // loaded — a worse silence than the endless bar it replaced.
+  const terminalLive = !stopped && !needsLoad && !loading && !warmError;
 
   return (
     <section className={`jcode-screen${shared ? " jcode-screen--wide" : ""}`}>
@@ -711,6 +721,21 @@ export function JcodeSessionScreen({
                   </p>
                   <button type="button" className="jcode-act teal" onClick={warmModel}>
                     Load model
+                  </button>
+                </div>
+              </div>
+            ) : warmError && model ? (
+              // The terminal state a refused warm never had. The box has ALREADY been
+              // emptied by the time a refusal lands (code mode evicts before it loads), so
+              // saying nothing left the owner with no coder, no models, and a bar at 96%.
+              <div className="jcode-overlay" aria-label="Model load failed">
+                <div className="jcode-modelload">
+                  <div className="jcode-modelload-row">
+                    <span>Could not load {model.model}.</span>
+                  </div>
+                  <p className="jcode-modelload-why">{warmError}</p>
+                  <button type="button" className="jcode-act teal" onClick={warmModel}>
+                    Try again
                   </button>
                 </div>
               </div>

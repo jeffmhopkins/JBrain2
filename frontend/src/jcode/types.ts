@@ -94,6 +94,12 @@ export interface JcodeModelStatus {
   served: string;
   loaded: boolean;
   warming: boolean;
+  /**
+   * Why the LAST warm failed, or null. The bar's terminal state: `warming` only says a warm
+   * is in flight, so a refused load used to leave the bar up forever. Non-null means stop
+   * polling, drop the bar, show this sentence — it already names the real numbers.
+   */
+  warm_error: string | null;
   /** Real load fraction (0..1) while warming, or null when no parseable signal yet. */
   progress: number | null;
   hosting: boolean;

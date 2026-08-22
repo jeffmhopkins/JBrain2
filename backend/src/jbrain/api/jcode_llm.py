@@ -35,7 +35,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from jbrain.ingest.imageprep import pdf_page_images
-from jbrain.llm import local_catalog
+from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.residency import ResidencyError
 from jbrain.vision import OcrServiceError
 from jbrain.web.fetch import JS_SHELL_MESSAGE, JS_SHELL_NOTE, WebFetchError
@@ -174,7 +174,14 @@ async def chat_completions(request: Request) -> Response:
                 if residency is not None:
                     try:
                         await residency.ensure_room(served)
-                    except ResidencyError:
+                    except (ResidencyError, gpu_guard.GpuBudgetError):
+                        # GpuBudgetError joins ResidencyError here, and the omission was the
+                        # worst kind: it is not a subclass, so it fell to the blanket arm,
+                        # was logged as a "housekeeping" hiccup, and execution CONTINUED to
+                        # the POST below — which makes llama-swap load the model on demand,
+                        # with no admission, no device pre-flight and no watchdog. A DEVICE
+                        # REFUSAL was converted into precisely the unguarded load the guard
+                        # exists to prevent, on the box whose failure mode is a power cycle.
                         raise
                     except Exception:  # noqa: BLE001 - housekeeping never fails a completion
                         log.warning("jcode-llm ensure_room failed model=%s", served, exc_info=True)

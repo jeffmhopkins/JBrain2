@@ -432,3 +432,36 @@ def test_power_is_owner_gated() -> None:
     client = TestClient(_power_app(NON_OWNER, sup))
     assert client.get("/api/jcode/power").status_code == 403
     assert client.post("/api/jcode/power", json={"on": True}).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_refused_warm_is_recorded_instead_of_vanishing() -> None:
+    """Code mode evicts the box BEFORE it loads the coder. When the load was then refused,
+    `contextlib.suppress(Exception)` swallowed it and `_warm_model` returned normally — so the
+    owner was left with an empty box, no coder, no log line, no vitals row, and a progress bar
+    that never ends (the screen's `loading` stays true while `warmRequested && !loaded`).
+
+    The suppress justified itself as "a gateway hiccup must never break a session", but this
+    runs in a detached task after the route has returned: nothing it raises could reach a
+    session. It protected nothing and cost the only feedback channel."""
+    from jbrain.api.jcode import _warm_model
+    from jbrain.llm import gpu_guard
+    from tests.unit.fakes import FakeLocalGateway
+
+    class _Refusing(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: object) -> None:
+            raise gpu_guard.GpuBudgetError(
+                "refusing to load qwen3-coder-next: needs ~78 GB but only 34 GB is available"
+            )
+
+    gw = _Refusing(running={"gpt-oss-120b"})
+    errors: dict[str, str] = {}
+
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await _warm_model(gw, "qwen3-coder-next", None, errors)
+
+    assert gw.unloaded == ["gpt-oss-120b"], "the eviction should still have happened"
+    assert "qwen3-coder-next" in errors, (
+        "the box was emptied and the coder refused, and nothing recorded why"
+    )
+    assert "34 GB" in errors["qwen3-coder-next"], "the refusal's own numbers were dropped"

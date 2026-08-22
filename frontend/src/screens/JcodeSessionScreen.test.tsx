@@ -63,6 +63,7 @@ const MODEL_STATUS: JcodeModelStatus = {
   served: "qwen3-coder-next",
   loaded: true,
   warming: false,
+  warm_error: null,
   progress: null,
   hosting: true,
   size_gb: 49.6,
@@ -98,6 +99,53 @@ const SESSION: JcodeSession = {
 };
 
 describe("JcodeSessionScreen", () => {
+  it("shows a refused load as terminal instead of a bar that never ends", async () => {
+    // Code mode evicts the box BEFORE it loads the coder, so a refusal leaves the owner with
+    // nothing resident. The screen had no terminal state for it: `loading` is
+    // `warming || (warmRequested && !loaded)`, so once the owner confirmed the swap the bar
+    // parked at its 96% cap forever and the poll never stopped. The owner has no terminal
+    // (CLAUDE.md #10) — this overlay is the only place they can learn the box said no.
+    vi.spyOn(api, "jcodeModelStatus")
+      .mockResolvedValueOnce({ ...MODEL_STATUS, loaded: false, warming: false, resident: [] })
+      .mockResolvedValue({
+        ...MODEL_STATUS,
+        loaded: false,
+        warming: false,
+        resident: [],
+        warm_error:
+          "refusing to load qwen3-coder-next: needs ~78 GB but only 34 GB is safely available",
+      });
+    vi.spyOn(api, "jcodeWarmModel").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: false,
+      warming: true,
+      resident: [],
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Load model"));
+
+    // The refusal lands on the next 2 s poll, not on the warm POST — the warm task is
+    // asynchronous, so at the moment the route returns there is nothing to report yet.
+    expect(
+      await screen.findByText(/Could not load/i, undefined, { timeout: 4000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/only 34 GB is safely available/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Loading qwen3-coder-next onto the box/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Try again")).toBeInTheDocument();
+
+    // And the poll STOPS. A refusal is terminal, so continuing to poll every 2 s would ask
+    // the box the same question forever about a warm that already finished badly.
+    const callsAtFailure = (api.jcodeModelStatus as unknown as { mock: { calls: unknown[] } })
+      .mock.calls.length;
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(
+      (api.jcodeModelStatus as unknown as { mock: { calls: unknown[] } }).mock.calls.length,
+    ).toBe(callsAtFailure);
+  });
+
   it("opens the session's shell socket in the (default) Terminal tab", async () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     // The terminal mounts via a dynamic import once the coder is resident, then dials the
@@ -118,6 +166,7 @@ describe("JcodeSessionScreen", () => {
       ...MODEL_STATUS,
       loaded: false,
       warming: true,
+      warm_error: null,
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
@@ -129,6 +178,7 @@ describe("JcodeSessionScreen", () => {
       ...MODEL_STATUS,
       loaded: false,
       warming: true,
+      warm_error: null,
       progress: 0.42,
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
@@ -141,6 +191,7 @@ describe("JcodeSessionScreen", () => {
       ...MODEL_STATUS,
       loaded: false,
       warming: false,
+      warm_error: null,
       resident: ["gpt-oss-120b"],
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
