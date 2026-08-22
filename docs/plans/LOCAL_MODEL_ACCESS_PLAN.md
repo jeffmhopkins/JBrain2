@@ -1,6 +1,6 @@
 # One way in, one way out
 
-> **Status:** Proposed · **Last verified:** 2026-08-22 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-22 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every LLM call still goes through the
 > adapter (rule 1) and W4 shrinks that surface; no storage or RLS changes (rules 2–3), no new
@@ -90,7 +90,7 @@ question still fails on a wrong answer.
 
 ## The waves
 
-### W0 — A gate that cannot be built half-wired ◻️
+### W0 — A gate that can be trusted ◻️
 
 **Make the switches required, not optional.** Replace the optional-kwarg constructor with one that
 takes a single explicit settings-source object, so a coordinator either has every loader or does
@@ -122,10 +122,46 @@ the build if a `LocalGatewayClient` is built without a probe.
 **"One way in and out" therefore means: one way in and out *for our code*.** That is the honest
 claim, and it is the one the AST test can actually hold.
 
-*Files:* `residency.py`, `local_gateway.py`, `router.py`, `worker.py`, `main.py`, plus the AST test.
+**And stop the gate being fed a stale answer.** A gate that is wired correctly still fails if the
+question it asks returns the wrong value, and §E records that happening: `ensure_room`'s fast path
+returns early when the model is in `running()` —
+
+```
+residency.py:473        with contextlib.suppress(Exception):
+residency.py:474            if served_model in await self._gateway.running():
+residency.py:475                self._displaced.discard(served_model)
+residency.py:476                return
+```
+
+— but `running()` includes models llama-swap is **stopping**. Confirmed at the pinned commit:
+`internal/router/base.go:366-375` filters only `StateStopped`/`StateShutdown`, and `_parse_running`
+(`local_gateway.py:1182-1204`) discards the state field and returns bare names. A model mid-stop
+therefore reads as resident, admission returns without admitting, the completion reaches llama-swap,
+and llama-swap relaunches it — no guard, no event. It is reachable *through* the door, so neither
+the AST test nor any call-site audit finds it. Same shape satisfies `model_already_loaded`
+(`preconditions.py:44-71`), which is the precondition that did not defer at 22:41.
+
+**Two steps, in this order, and the first is one line:**
+
+1. **Log the short-circuit with the state llama-swap actually reported.** This is the measurement
+   that turns §E's hypothesis into evidence, and it must land before the behaviour change — a
+   predecessor plan made this the trigger for a wave that was itself scheduled last, so the
+   evidence could never be gathered.
+2. **Split `running()` from `ready()`** and make both the fast path and the precondition require
+   *ready*. `_parse_running` already receives the field and throws it away.
+
+**The known hazard:** `api/llm_settings.py:156-161`'s `_loaded_ids` is both a call site this changes
+**and** the owner's load indicator, so a careless change makes a loading model vanish from the
+screen. And billing a mid-stop model's remaining footprint is what reintroduced bug #1186 — the
+unguarded branch is `local_gateway.py:757`, the pre-flight `:800-801`.
+
+*Files:* `residency.py`, `local_gateway.py`, `router.py`, `worker.py`, `main.py`,
+`workflow/preconditions.py`, `api/llm_settings.py`, plus the AST test.
 *Risk:* medium — wide but mechanical, and a missed caller is a build failure rather than a silent
-hole. *Test:* the AST guard; a constructor test proving a half-wired coordinator cannot be built;
-one behavioural test per collapsed access point.
+hole; the residency-read change touches the load indicator. *Test:* the AST guard; a constructor
+test proving a half-wired coordinator cannot be built; one behavioural test per collapsed access
+point; a model reported `stopping` does not satisfy the fast path or the precondition, and
+`_loaded_ids` still shows a loading model.
 
 ### W1 — Admission learns who is asking ◻️
 

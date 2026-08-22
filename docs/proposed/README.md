@@ -69,10 +69,3 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_
-- **`LOCAL_MODEL_ACCESS_PLAN.md`** — one way in, one way out. Collapses every model load, unload,
-  admission and residency read onto a single gate that cannot be constructed half-wired, teaches
-  that gate who is asking (owner turn / tool-in-turn / agent / scheduled), repurposes the existing
-  auto-restore toggle into the switch that stops anything loading unless the owner initiates it,
-  accounts for all five consumers of box memory, and deletes the Anthropic and xAI providers
-  outright. Written from `../reference/MODEL_ACCESS_INVENTORY.md`. Replaces the deleted
-  `LOCAL_ONLY_BOX_PLAN.md` and `MEMORY_ADMISSION_PLAN.md`.
