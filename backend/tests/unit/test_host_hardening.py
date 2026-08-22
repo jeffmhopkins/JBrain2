@@ -160,3 +160,35 @@ def test_no_runtime_write_of_pages_limit_returns() -> None:
         "the update is writing ttm.pages_limit at runtime again — it cannot work, and it "
         "reports success while changing nothing"
     )
+
+
+def test_the_model_release_ceiling_accommodates_the_client_unload_timeout() -> None:
+    """`release_models` must not be killed mid-release.
+
+    `local-llm-unload` walks the resident models SEQUENTIALLY, and each unload waits up to
+    `max(client_timeout, 30s)` — widened from 3 s because llama-swap grants its child a 10 s
+    graceful stop, so the old ceiling abandoned stops that were still working. That multiplies:
+    under the 120 s toggle ceiling this ran on, four resident models reach it exactly. Being
+    killed there is the worst outcome available — `release_models` swallows the failure with
+    `|| echo`, and the update then force-recreates the gateway with tens of GB still pinned,
+    which is the reclaim storm the release exists to prevent (it once hard-locked this host).
+
+    So the release gets its own ceiling, and it has to stay ahead of the per-model wait. This
+    fails if either number moves without the other."""
+    update = _UPDATE.read_text()
+    gateway = (
+        Path(__file__).resolve().parents[2] / "src" / "jbrain" / "llm" / "local_gateway.py"
+    ).read_text()
+
+    per_model = re.search(r"max\(self\._timeout,\s*([\d.]+)\)", gateway)
+    assert per_model, "no per-model unload floor found in local_gateway.unload"
+
+    ceiling = re.search(r"^UNLOAD_TIMEOUT_S=(\d+)", update, re.MULTILINE)
+    assert ceiling, "release_models has no dedicated ceiling — it is back on the toggle's"
+    assert 'run_bounded "$UNLOAD_TIMEOUT_S"' in update, "release_models is not using it"
+
+    models_covered = int(ceiling.group(1)) / float(per_model.group(1))
+    assert models_covered >= 8, (
+        f"the release ceiling covers only {models_covered:.0f} sequential unloads at "
+        f"{per_model.group(1)}s each — a fuller box gets killed mid-release"
+    )
