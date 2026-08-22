@@ -1027,3 +1027,36 @@ async def test_an_operator_load_evicts_code_modes_model_but_says_so(
     assert held_warnings, "code mode lost its model with no warning — the silent break"
     assert held_warnings[0]["model"] == "qwen3-coder-next"
     assert held_warnings[0]["for_model"] == "gpt-oss-120b"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_unload_does_not_claim_code_mode_lost_its_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unload's `LocalGatewayError` is suppressed, so warning BEFORE it asserted a loss
+    that may not have happened — sending the owner to debug a code session that is fine while
+    the model is still resident."""
+
+    from jbrain.llm.local_gateway import LocalGatewayError
+
+    class _RefusingGateway(FakeLocalGateway):
+        async def unload(self, served_model: str) -> None:
+            raise LocalGatewayError("gateway refused")
+
+    gw = _RefusingGateway(running={"qwen3-coder-next"})
+    coord = _coord(
+        gw,
+        monkeypatch,
+        total=128.0,
+        used=90.0,
+        enabled=True,
+        hold_loader=lambda: _held("qwen3-coder-next"),
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr("jbrain.llm.residency.log.warning", lambda ev, **kw: warnings.append(ev))
+
+    await coord.free_room("gpt-oss-120b")
+
+    assert "residency.evicted_held_model" not in warnings, (
+        "claimed code mode lost its model, but the unload failed and it is still resident"
+    )

@@ -1499,6 +1499,12 @@ async def _admit_or_409(residency: ResidencyCoordinator | None, served_model: st
     corrupts the measurement they ran the instrument for. A prime therefore evicts like a
     load, and DEBUG_ACCESS.md says to reload afterwards.
 
+    Note what this does NOT protect against: if the victim is the primary local chat model and
+    auto-restore is on, `WarmKeeper` reloads it on its own 60 s tick — independently of
+    `_displaced`, because it is priming, not restoring — and that reload can evict the model
+    just primed. Nothing here can prevent it; the runbook tells the operator to check the
+    toggle before an experiment.
+
     A model that cannot fit even after evicting everything is refused and nothing is
     evicted.
 

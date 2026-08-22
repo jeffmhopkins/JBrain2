@@ -686,16 +686,6 @@ class ResidencyCoordinator:
         self._displaced.discard(served_model)
         held = await self._held_names()
         for served in plan.victims:
-            if served in held:
-                # The one eviction that breaks something the owner is actively using. Warned,
-                # not refused (see the docstring), and warned in both places: the log line the
-                # debug console greps, and the vitals reason the PWA shows.
-                log.warning(
-                    "residency.evicted_held_model",
-                    model=served,
-                    for_model=served_model,
-                    held=sorted(held),
-                )
             reason = (
                 f"to make room for {served_model}, which you loaded — this was code mode's "
                 f"reserved model, so that session has lost it and it will NOT be restored"
@@ -705,6 +695,16 @@ class ResidencyCoordinator:
             with box_events.because(reason), contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
                 self._prefix_lost(served)
+                if served in held:
+                    # AFTER the unload, not before: the unload's LocalGatewayError is suppressed,
+                    # so warning up front would assert that code mode had lost a model that is in
+                    # fact still resident — sending the owner to debug a session that is fine.
+                    log.warning(
+                        "residency.evicted_held_model",
+                        model=served,
+                        for_model=served_model,
+                        held=sorted(held),
+                    )
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows

@@ -178,8 +178,12 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment.
 
-  ⚠️ **A prime EVICTS to fit, exactly like a load, and what it evicts does not come back on
-  its own.** If it takes code mode's reserved model, it says so: grep
+  ⚠️ **A prime EVICTS to fit, exactly like a load, and nothing on this path schedules a
+  restore.** One exception, and it cuts the other way: if the victim is the **primary local
+  chat model** and the auto-restore toggle is ON, `WarmKeeper` finds it cold within 60 s and
+  reloads it through `ensure_room` — which can evict the model you just primed and corrupt the
+  measurement mid-experiment. Check the toggle before a run: with it OFF (its state on this box
+  at the time of writing) nothing reloads behind you, which is what you want while measuring. If it takes code mode's reserved model, it says so: grep
   `residency.evicted_held_model` in `GET /api/debug/logs/api`, and the vitals row names it as
   code mode's. The load is allowed to win — you pressed it — but a code session that suddenly
   lost its model is explained by that line, not by the box misbehaving. Both operator warms admit through the same evict-to-fit path; neither records a
