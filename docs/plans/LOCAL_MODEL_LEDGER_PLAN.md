@@ -122,17 +122,50 @@ Independent of the ledger, each small, each with a regression test:
    `contextlib.suppress(Exception)` and `residency` is used only for `note_evicted`. A third
    naked load path, which the plan's "exactly two" claim missed.
 
-5. **Evict and load are only atomic on ONE of the four load paths.** `ensure_room`'s slow path
-   loads INSIDE `_box_locked()`, so its evict+load is serialized across the api and worker
-   processes. The owner's Load button does not: `_admit_or_409` → `free_room` evicts and
-   RETURNS, the route then awaits `jerv_prime_spec`, and only then loads. Between those two
-   awaits the freed memory — up to 60+ GB — is unclaimed and the worker can plan against it.
-   Verified 2026-08-22. The window is normally negligible because the prime-spec's ComfyUI
-   liveness probe is cached for 30 s, but on a miss it is a full ComfyUI round-trip — and a
-   miss correlates with ComfyUI being unhealthy, i.e. exactly when it is holding ~39 GB and
-   the race matters. `_restore` loads with no lock at all. Design pass commissioned: the fix
-   is not "lock inside `free_room`" (the load happens in the caller), so the lock has to span
-   the caller's evict+load, which is a real interface change.
+5. **Evict and load are only atomic on ONE of the four load paths — DO NOT FIX THIS YET.**
+   `ensure_room`'s slow path loads INSIDE `_box_locked()`. The owner's Load button, the debug
+   prime, `_restore`, `jcode._warm_model`, the warm-keeper fallback and `smoketest` all load
+   outside it. A cold design pass (2026-08-22) confirmed the gap and then recommended
+   **against** closing it now, for three reasons worth keeping:
+
+   - **The direction is backwards relative to L2.** The ledger makes this window vanish by
+     charging a row at intent and holding the lock for the length of an `INSERT` —
+     milliseconds. Widening the lock now sets the hold to MINUTES on a request path, against a
+     15-connection pool with no `lock_timeout`, and L2's first act would be to shorten it back.
+   - **The severity claim would contradict a correction this branch already published.** W0 of
+     the access plan says an unadmitted warm "is a documented degradation, not a hole … the
+     freeze path is closed either way", because `LocalGatewayClient.load` still runs the device
+     guard. The unlocked route load is the same class. Framing a lock change as "closes a
+     freeze path" would assert something already written down as untrue — the exact failure
+     mode of the three withdrawn attempts.
+   - **A correction to my own note here.** I first wrote that the unclaimed window was the
+     `jerv_prime_spec` await. It is not: that probe is cached for 30 s and is typically
+     microseconds. The window is **the load itself**, 100-200 s, during which memory commits
+     incrementally and a competitor's `read_memory_gb()` sees only the part that has landed.
+     That is why moving the prime-spec above the admission would narrow nothing.
+
+   **MEASURED 2026-08-22, and inconclusive — by absence.** `box_events` records `model_load`
+   as a span with a `source`, so two overlapping spans from different sources IS this race,
+   recorded. The query returns **zero**. But the denominator is 5 `model_load` spans in the
+   whole 1-day retention window, **all from `api` and none from `worker`** — several of them
+   this session's own test loads. The race needs two processes and the second one has not
+   loaded a model. So this is "no opportunity", not "no race". Re-run after a stretch of real
+   background activity before drawing anything from it.
+
+   If the window ever must close before L2, the smallest correct form is
+   `free_room_and_load(served, load=...)` on the coordinator — NOT exposing the lock to the
+   route, which reverses two decisions this repo already made about guarding the chokepoint
+   rather than the wrapper — plus splitting `_box_locked`'s contention-vs-outage degradation
+   (today a pool-exhaustion timeout degrades to UNLOCKED, which fails open exactly when
+   loaders are queued), plus a dedicated engine so waiting on the lock cannot consume the
+   request pool. All three or none.
+
+   The one piece that is correct today and NOT undone by L2: `_restore` should take a
+   **try-lock** (`pg_try_advisory_xact_lock`) and skip when it cannot get it. It fires at the
+   end of every displaced turn, aims at exactly the memory a concurrent evict just freed, and
+   "someone else is changing residency right now" is precisely when restoring to a remembered
+   steady state is meaningless. A background task that never blocks also cannot convoy.
+
 6. **The warm-up phase runs outside the runaway watchdog.** `guarded_load` returns, and only
    then does `_load_and_warm` call `_warm(...)` — which the file itself measures at **118 s of
    a 198 s gpt-oss-120b load**. So ~60% of a cold load allocates KV and graph-capture buffers
