@@ -59,6 +59,35 @@ and never reaches its `agent.turn` entry. All 20 task defaults and all 3 tier de
 identical string `"xai:grok-4.3"`, so W4 is uniform — but it must target the **tiers**, which
 carry the dominant route.
 
+## What the live box added
+
+Read through the debug console on 2026-08-22 and recorded in §E of the inventory. Three things
+change the plan's sizing, and one is the reason W0 comes first.
+
+**Routing is already fully local.** All 19 selectable tasks resolve to on-box models; the provider
+list carries 12 local models and no cloud entries. Finding 6's "all 23 name the same cloud string"
+describes `TASK_DEFAULTS` on a *fresh* box, not this one. **W4 is therefore housekeeping, not a
+migration** — there is no re-routing to do first, and no quality risk to measure, because the box
+has been running local for some time.
+
+**The toggle is already off, and models load anyway.** `auto_restore: false` live. That is W2's
+thesis confirmed from the box rather than from source.
+
+**And a reproduction of the owner's complaint, with timestamps.** `gpt-oss-120b` was unloaded
+deliberately at 21:42; at 22:41 the hourly inbox sweep used it and billed 7,519 tokens; it has been
+resident ever since; **no `model_load` event exists between the unload and now.** Three mechanisms
+failed together — the toggle (does not gate admission), the codebase's only registered
+`precondition=` (did not defer), and event narration (absent, so the load did not go through
+`gateway.load`).
+
+A stale residency read explains all three, and it is what W0 fixes — but it is a **hypothesis**,
+not a finding. The reproduction is cheap and named in §E. **W0 must not ship on the hypothesis
+alone**: its step 1 (log the short-circuit with the state llama-swap reported) is what turns this
+into evidence, which is why that log line ships before the behaviour change.
+
+This also means W2 alone would not have prevented what happened. A gate that asks the right
+question still fails on a wrong answer.
+
 ## The waves
 
 ### W0 — A gate that cannot be built half-wired ◻️
@@ -140,14 +169,21 @@ called from **`_restore` only** (`residency.py:601`, not from `ensure_room`, `fr
 **The change is three moves:**
 1. Wire the loader into the worker's coordinator — W0 makes omitting it impossible.
 2. Move the check from `_restore` to `admit`, so it gates **loads**, not just restores.
-3. Decide by intent, per W1:
+3. Decide by intent, per W1. **Owner-decided 2026-08-22:**
 
-| intent | toggle ON |
-|---|---|
-| `owner_turn` | **allowed** — loads the model that turn needs |
-| `tool_in_turn` | **refused** — a second model mid-turn is the co-residency threat |
-| `agent` | **refused**, with a reason |
-| `scheduled` | **deferred** via `queue.defer`, no attempt burned |
+| intent | toggle ON | why |
+|---|---|---|
+| `owner_turn` | **allowed** — loads the model that turn needs | a person is waiting and asked for it |
+| `tool_in_turn` | **refused**, with the reason | a second model mid-turn is the co-residency threat; a person is waiting, so it cannot defer |
+| `agent` | **deferred** | the morning news and briefing arrive late rather than not at all |
+| `scheduled` | **deferred** via `queue.defer`, no attempt burned | the hourly and nightly sweeps |
+
+**The gate is at the model, not at the job.** This is the rule that settles ingestion, and it is
+simpler than a per-job-kind list: a job that never needs a model load is never gated. Storing and
+embedding a note both run freely — TEI is a separate always-up container with `mem_limit: 1g` and
+no load or unload path in our code (§B.2) — so nothing a note needs to be safe on disk waits on a
+model. Only the LLM-dependent step (`note.extract`, `integrate.note`) defers, and it defers by the
+same mechanism as any other background work. Notes are never silently stuck; the reasoning waits.
 
 Plus a copy change so the label describes what it now does, and the refusal reason names the
 toggle rather than code mode — `residency.py:465-467` currently hardcodes *"Code mode is holding
@@ -182,7 +218,16 @@ describes whisper as *"served by the same llama-swap gateway the local-llm profi
 not. That comment is the kind of artefact that has already caused a withdrawn plan, and it sits in
 the file a refactor reads first.
 
-*Files:* `image_gen/render.py`, the whisper call sites in §B.1, `config.py`, `box_events.py`.
+**And expose the GTT counters to the debug console.** `gpu_guard.SupervisorGpuMemProbe` already
+reads `gpu_mem` from the supervisor's `/metrics`, and the Ops screen draws it — but `/api/ops/*`
+rejects a capability token and no `/api/debug/*` route carries it. So the surface the owner hands
+an assistant is blind to resident model memory: with 69 GB resident the `local-llm` container reads
+0.23 GiB and no `llama-server` process is listed. During this plan's own research that produced a
+wrong diagnosis (§E). A read-only `gpu_mem` passthrough on the debug surface is the fix, and it is
+a rule-10 item: the owner cannot diagnose their box through a console that cannot see the number.
+
+*Files:* `image_gen/render.py`, the whisper call sites in §B.1, `config.py`, `box_events.py`,
+`api/debug.py`.
 *Risk:* low-medium. *Test:* an image render's eviction and a whisper unload both appear at the
 gate; Kokoro's footprint is measured and recorded.
 

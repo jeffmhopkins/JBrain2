@@ -45,6 +45,98 @@ plans. Each is a place where a reader who trusts the prose reaches the wrong con
 | the commit that added `_global_load_lock` | "box-wide" | `local_gateway.py:151` is an `asyncio.Lock()`; the file itself says *"Per PROCESS, not per box."* |
 | `CODE_MODE_HOLD_KEY = "code_mode_hold_name"` | singular name | stores a **list** |
 
+## §E — Live box state, read 2026-08-22
+
+Read through the owner debug console against the running box (`git_sha 399b15e`, started
+2026-08-21T21:34:50Z). These are the four things the source sweeps flagged as undeterminable
+from the tree, plus one reproduction. **Live state differs from what the source implies in three
+places**, which is why this section exists.
+
+### Routing is already fully local
+
+All 19 selectable tasks resolve to on-box models — 16 to `gpt-oss-120b`, 3 vision to
+`qwen3.8-27b-abliterated` — as `llm_task_overrides` rows, which `_resolve_live` ranks above the
+tier and the task default. `provider_choices()` returns **12 local models and no cloud entries**.
+
+So the premise that "every task routes to cloud" is true only of `TASK_DEFAULTS` on a fresh box.
+It was never true of this box. Any plan sized on that grep is sized wrong.
+
+### The auto-restore toggle is already off
+
+`auto_restore: false` in the live snapshot, and models load anyway — see the reproduction below.
+This is direct confirmation that the toggle gates `_restore` and the WarmKeeper only, never
+admission.
+
+Also live: `free_ram` is `{"fraction": 0.05, "default": 0.15, "override": 0.05}`. The ceiling is
+therefore ~115 GiB, not the ~103 GiB a reader would compute from the default.
+
+### The live schedule set is 16, and differs from the migrations
+
+Enabled triggers joined to enabled schedules, by interval:
+
+| pipeline | interval |
+|---|---|
+| `reconcile_pending_integration`, `reconcile_pending_notes`, `reconcile_unembedded_notes` | 300 s |
+| `geofence_sweep` | 900 s |
+| `daily_inbox_triage` | **3600 s** |
+| `expire_research_reports`, `nightly_consolidate_predicates`, `nightly_entity_hygiene`, `nightly_purge_deleted_artifacts`, `nightly_reembed_stale`, `nightly_sync_predicates`, `nightly_tag_consolidate`, `nightly_wiki_lint`, `nightly_wiki_prune`, `nightly_wiki_refresh` | 86400 s |
+| `wiki_rebuild_all` | on demand |
+
+`nightly_entity_hygiene` and `nightly_reembed_stale` are **enabled live**; a reconstruction from
+migrations `0036→0169` concluded the hygiene sweeps ship disabled. The migration-derived answer was
+wrong for this box.
+
+### REPRODUCTION — a model the owner unloaded came back, unrecorded
+
+The clearest evidence in this document, and the reason the plan is ordered as it is:
+
+```
+08-21 21:42:12  model_unload  gpt-oss-120b   "you unloaded it"        source=api
+                auto_restore = false
+08-21 22:41:48  daily_inbox_triage → triage_inbox  ok  7,519 tokens
+                                     task: triage.classify, model: gpt-oss-120b
+08-21 23:42:09  daily_inbox_triage → triage_inbox  ok  0 tokens  (triage_inbox.empty)
+08-22 00:42:14  daily_inbox_triage → triage_inbox  ok  0 tokens  (triage_inbox.empty)
+08-22 01:19:29  prefill  gpt-oss-120b
+08-22 09:04:15  prefill  gpt-oss-120b            ← still resident, 69 GB, at time of reading
+```
+
+**No `model_load` event exists anywhere between the unload and now.** The model was unloaded
+deliberately, an hourly sweep used it 59 minutes later and billed 7,519 tokens, and it has been
+resident since — with the load never narrated.
+
+Three mechanisms that should each have prevented this did not:
+
+1. `auto_restore` was off — but it does not gate admission (above).
+2. `triage.classify` carries the **only** registered `precondition=` in the codebase
+   (`reasoning_model_loaded`), written for exactly this case. It did not defer. The two later runs
+   returning `triage_inbox.empty` with 0 tokens show the machinery runs; at 22:41 there was mail
+   and it proceeded.
+3. No `model_load` event means the load did not go through `gateway.load`, so nothing narrated or
+   guarded it — consistent with the llama-swap load-on-request path (§A.5, I1).
+
+**Cause not established.** A stale residency read is consistent with all three — `running()`
+includes `stopping` models and `_parse_running` discards the state (§A.5), so a model on its way
+out satisfies the precondition. That is a hypothesis. The reproduction is cheap: unload
+`gpt-oss-120b`, wait for the top of an hour with mail in the inbox, observe whether triage defers.
+
+### The debug console cannot see resident model memory
+
+`/api/debug/host/metrics` reports container cgroup memory and per-process RSS. A GTT-resident
+model appears in **neither**: with `gpt-oss-120b` resident at 69 GB, the `local-llm` container
+reads 0.23 GiB and no `llama-server` process is listed at all. Every process on the box sums to
+~3.5 GiB against 83.5 GiB unavailable.
+
+The GTT counters exist — `gpu_guard.SupervisorGpuMemProbe` reads `gpu_mem` from the supervisor's
+`/metrics`, and the Ops screen draws them — but `/api/ops/*` rejects a capability token
+(`{"detail":"not authenticated"}`), and no `/api/debug/*` route exposes them.
+
+Consequence, recorded because it caused a wrong diagnosis during this very session: a reader
+working through the debug console sees ~80 GiB unaccounted and no model, and can reasonably
+conclude a leak. The PWA shows `1 resident · 81 GB — GPT-OSS 69G, system 7 GB, cache 5 GB`, which
+is correct and complete. **The surface the owner hands an assistant is blind to the single number
+that matters most for this class of problem.**
+
 ## Facts carried forward from the deleted memory-admission plan
 
 `MEMORY_ADMISSION_PLAN.md` (deleted) was deleted along with `LOCAL_ONLY_BOX_PLAN.md` when this
