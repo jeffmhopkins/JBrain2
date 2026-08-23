@@ -38,6 +38,7 @@ import structlog
 
 from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import UserMessage
@@ -60,6 +61,7 @@ class WarmKeeper:
         router: LlmRouter,
         hold_loader: Callable[[], Awaitable[Collection[str]]],
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
+        kv_prefix: KvPrefixStore | None = None,
         interval_ready: float = 60.0,
         interval_wait: float = 5.0,
     ):
@@ -79,6 +81,10 @@ class WarmKeeper:
         # told something untrue by the UI. It gates LOADING only: a model already resident is
         # still kept primed, because holding a warm prefix costs nothing and is not a load.
         self._auto_restore_loader = auto_restore_loader
+        # The disk layer under the prime (jbrain.llm.kv_prefix): restore before priming so
+        # the prime is a ~1 s cache hit instead of a ~60 s prefill, save after priming so
+        # the next boot can do the same. Optional — unwired keeps the prior behaviour.
+        self._kv_prefix = kv_prefix
         # What we last successfully primed: (served_model, hidden-tool-set). None until primed
         # (or after the model is found evicted). Re-prime when this no longer matches the desired.
         self._primed: tuple[str, frozenset[str]] | None = None
@@ -146,6 +152,15 @@ class WarmKeeper:
         system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness, served)
         want = (served, hidden)
         if served in running and self._primed == want:
+            # Primed as far as the memo knows — but the memo cannot see a slot being
+            # overwritten by traffic (a single-slot configuration loses the prefix to any
+            # background task). The store CAN, by reading /slots, and puts it back from
+            # disk off-turn — one cheap read per tick when nothing is wrong.
+            if self._kv_prefix is not None:
+                try:
+                    await self._kv_prefix.restore_if_lost(served, system, tools)
+                except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
+                    log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
             return True  # already primed with the current tool set — leave any live conversation be
         # Bring the WEIGHTS up before priming, when the model is cold.
         #
@@ -182,11 +197,21 @@ class WarmKeeper:
                     await self._gateway.load(served)
             except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
                 log.info("warm_keeper.preload_failed", model=served, error=str(exc))
+        # The disk layer's moment: with the weights up but the prefix cold, a valid saved
+        # slot turns the prime below into a ~1 s cache hit. Best-effort — a miss just
+        # means the prime pays the prefill, which is exactly the old behaviour. (This is
+        # v2 of a removed idea; the module docstring of `kv_prefix` carries the post-mortem
+        # of v1 and the verification rules that answer it.)
+        if self._kv_prefix is not None:
+            try:
+                await self._kv_prefix.restore_if_lost(served, system, tools)
+            except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
+                log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a
         # real turn reuses. max_tokens=1 — we want the prefill in cache, not the output.
         try:
-            await self._router.converse(
+            prime_turn = await self._router.converse(
                 AGENT_TURN_TASK,
                 system=system,
                 messages=[UserMessage(text="warmup")],
@@ -197,6 +222,15 @@ class WarmKeeper:
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))
             return False
         self._primed = want
+        # Persist what was just primed, in the same breath — the only moment the slot
+        # provably holds exactly this prefix, identified by the prime's own token count.
+        if self._kv_prefix is not None:
+            try:
+                await self._kv_prefix.save_after_prime(
+                    served, system, tools, prime_turn.usage.input_tokens
+                )
+            except Exception:  # noqa: BLE001 — a failed save costs a future restore, nothing now
+                log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
         log.info(
             "warm_keeper.primed",
             model=served,

@@ -993,3 +993,83 @@ async def test_a_fast_local_turn_costs_no_probe(monkeypatch: pytest.MonkeyPatch)
     await _drain(router)
     await asyncio.sleep(0.3)
     assert probed == [], "the watch must not outlive the turn"
+
+
+class _RecordingKvStore:
+    """The router-facing surface of the disk layer, recording what reached it."""
+
+    def __init__(self) -> None:
+        self.restores: list[str] = []
+        self.noted: list[tuple[str, int]] = []
+        self.raise_on_restore = False
+
+    async def restore_if_lost(self, served: str, system: str, tools) -> bool:
+        self.restores.append(served)
+        if self.raise_on_restore:
+            raise RuntimeError("disk went away")
+        return True
+
+    def note_agent_turn(self, served: str, input_tokens: int) -> None:
+        self.noted.append((served, input_tokens))
+
+
+async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> None:
+    """Between admission and dispatch is the one moment a lost prefix can still be restored
+    for ~2 s instead of the turn paying a ~60 s prefill — and afterwards the turn's own
+    prompt size is recorded, so the conversation's slot keeps reading as 'prefix present'."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    await router.converse("agent.turn", system="s", messages=[])
+    assert store.restores == ["gpt-oss-120b"]
+    assert len(store.noted) == 1 and store.noted[0][0] == "gpt-oss-120b"
+
+
+async def test_background_tasks_and_cloud_routes_never_touch_the_disk_layer() -> None:
+    """Only the interactive task earns the extra /slots read: a background task restoring
+    the jerv prefix over its own working slot would be actively wrong, and a cloud model
+    has no slots at all."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    router = LlmRouter(
+        {"local": fake, "xai": fake},
+        {"note.extract": ("local", "gpt-oss-120b"), "agent.turn": ("xai", "grok-4.3")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    await router.converse("note.extract", system="s", messages=[])  # local, wrong task
+    await router.converse("agent.turn", system="s", messages=[])  # right task, cloud
+    assert store.restores == []
+    assert store.noted == []
+
+
+async def test_a_broken_disk_layer_never_fails_a_turn() -> None:
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    store.raise_on_restore = True
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    turn = await router.converse("agent.turn", system="s", messages=[])
+    assert turn is not None and len(fake.converse_calls) == 1
+
+
+async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
+    """converse_stream is the path a real jerv turn takes; the hook must not live only on
+    the non-streaming twin."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    async for _ in router.converse_stream("agent.turn", system="s", messages=[]):
+        pass
+    assert store.restores == ["gpt-oss-120b"]
+    assert len(store.noted) == 1

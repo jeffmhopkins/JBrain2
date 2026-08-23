@@ -114,6 +114,10 @@ def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[s
     return tuple(missing)
 
 
+# Where llama-server may save/restore KV-slot files, under the models volume — one
+# subdirectory per model, so `kv_prefix`'s pruning can never reach past its own model.
+KVSLOT_DIR = ".kvslots"
+
 # Flags an operator flag SUPERSEDES rather than duplicates. `--load-mode` is llama.cpp's
 # replacement for the deprecated `--mmap`/`--no-mmap`/`--mlock` family, and it warns when both
 # appear ("only the last flag on the command line will take effect"). Resting on argv order is
@@ -386,6 +390,13 @@ def render(
         # KV in one slot while title/background traffic uses the other — neither can evict the
         # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
         cmd += ["-np", str(n_slots)]
+        # KV-slot save/restore target (jbrain.llm.kv_prefix) — attention models only. A
+        # recurrent model's slot cannot be restored (the path clears the context checkpoints
+        # that are its only prefix-reuse mechanism), and a speculative entry carries draft
+        # state no slot file captures — neither gets the flag, so a misdirected save fails
+        # loudly at the server instead of writing a file that can only restore garbage.
+        if not m.get("recurrent") and not speculative:
+            cmd += ["--slot-save-path", f"/models/{KVSLOT_DIR}/{model_id}"]
         # Prompt-prefix KV reuse — for an ATTENTION model only. On a recurrent/hybrid stack you
         # cannot KV-shift the state, and the partial-range `seq_rm` this path calls returns false
         # for recurrent memory, which reaches GGML_ABORT: the server dies. It has never fired
@@ -488,6 +499,13 @@ def write(
         image_min_tokens=image_min_tokens,
     )
     path = os.path.join(root, "llama-swap.yaml")
+    # llama-server does not create its --slot-save-path, and a save into a missing
+    # directory fails exactly once — on the first prime after a fresh volume, where
+    # nobody is watching. Best-effort: a read-only mount (the smoketest's) just skips.
+    for m in models:
+        if not m.get("recurrent"):
+            with contextlib.suppress(OSError):
+                os.makedirs(os.path.join(root, KVSLOT_DIR, str(m.get("id"))), exist_ok=True)
     # Compare CONTENT, not mtime: the caller re-stamps on every settings PUT and the common
     # case is that nothing about the served commands changed. A read failure (absent file,
     # first boot) falls through to the write, which is the safe direction.
@@ -499,6 +517,28 @@ def write(
         f.write(text)
     os.replace(tmp, path)
     return path
+
+
+def launch_line(root: str, served_model: str) -> str | None:
+    """The exact cmd llama-swap executes for one served model, read back out of the rendered
+    config — the same source `served_shape_from_config` trusts, for the same reason: it cannot
+    disagree with what the server actually runs. `jbrain.llm.kv_prefix` fingerprints THIS
+    string, so anything that could invalidate a saved KV-slot file (a window or slot change,
+    new extra args, a new build's flag set) moves the fingerprint with it. Best-effort:
+    an absent or unparseable config returns None and callers skip disk save/restore."""
+    path = os.path.join(root, "llama-swap.yaml")
+    try:
+        with open(path) as handle:
+            parsed = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    spec = (parsed.get("models") or {}).get(served_model)
+    cmd = spec.get("cmd") if isinstance(spec, dict) else None
+    if isinstance(cmd, list):
+        cmd = " ".join(str(token) for token in cmd)
+    return cmd if isinstance(cmd, str) and cmd.strip() else None
 
 
 def served_shape_from_config(root: str) -> dict[str, tuple[int, int]]:

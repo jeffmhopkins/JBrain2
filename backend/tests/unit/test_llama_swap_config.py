@@ -464,8 +464,10 @@ def test_the_prompt_cache_is_off_and_only_swa_models_get_swa_full(tmp_path: Path
     cmds = [ln for ln in text.splitlines() if "llama-server" in ln]
     assert cmds and all("-cram 0" in ln for ln in cmds)
     assert local_catalog.CACHE_RAM_GB == 0.0, "budget and serving flag drifted apart"
-    # The KV-slot feature is gone: nothing reads these files, and no volume provides the dir.
-    assert not any("--slot-save-path" in ln for ln in cmds)
+    # The KV-slot feature is BACK (v2, jbrain.llm.kv_prefix) — the two objections this line
+    # used to pin are both answered: the store reads the files, and write() provides the
+    # dir. The flag's placement rules (attention models only) have their own test below.
+    assert any("--slot-save-path" in ln for ln in cmds)
     # Only the model the catalog flags carries --swa-full.
     flagged = [ln for ln in cmds if "--swa-full" in ln]
     assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))
@@ -782,3 +784,54 @@ def test_the_catalog_floor_is_served_when_no_operator_override_exists(tmp_path: 
     assert "--image-min-tokens 1024" in line
     # A text-only entry never gets the flag: llama.cpp would not read it.
     assert sum("--image-min-tokens" in ln for ln in text.splitlines()) == 1
+
+
+def test_slot_save_path_is_rendered_for_attention_models_only(tmp_path: Path) -> None:
+    """The disk KV layer (jbrain.llm.kv_prefix) needs llama-server launched with a save
+    path — but ONLY where a saved slot can ever be valid. A recurrent model's restore
+    clears its context checkpoints (inert by construction) and a speculative entry's
+    draft state is not in the file, so giving either the flag would let a misdirected
+    save write a file that can only restore garbage."""
+    _lay_down(tmp_path)
+    (tmp_path / "qwen3.8-27b-q4").mkdir()
+    (tmp_path / "qwen3.8-27b-q4" / "model-Q4_K_M.gguf").write_bytes(b"\0")
+    manifest = [
+        *_manifest(),
+        {
+            "id": "qwen3.8-27b-q4",
+            "served_model": "qwen3.8-27b-q4",
+            "gguf_include": "*Q4_K_M*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "recurrent": True,
+        },
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    assert f"--slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/gpt-oss-120b" in text
+    assert f"/models/{llama_swap_config.KVSLOT_DIR}/qwen3.8-27b-q4" not in text
+
+
+def test_write_creates_the_kvslot_dirs_llama_server_will_not(tmp_path: Path) -> None:
+    """llama-server does not create its --slot-save-path; without this, the first save
+    after a fresh volume fails exactly once, in the background, where nobody looks."""
+    _lay_down(tmp_path)
+    llama_swap_config.write(str(tmp_path), _manifest())
+    assert (tmp_path / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b").is_dir()
+
+
+def test_launch_line_reads_back_the_exact_served_command(tmp_path: Path) -> None:
+    """The kv-prefix fingerprint hashes this string, so it must be the command llama-swap
+    actually executes — any window/slots/extra-args/build change must move it."""
+    _lay_down(tmp_path)
+    llama_swap_config.write(str(tmp_path), _manifest())
+    line = llama_swap_config.launch_line(str(tmp_path), "gpt-oss-120b")
+    assert line is not None and "-c 131072" in line and "gpt-oss-120b" in line
+    assert llama_swap_config.launch_line(str(tmp_path), "not-served") is None
+    llama_swap_config.write(str(tmp_path), _manifest(), windows={"gpt-oss-120b": 65536})
+    changed = llama_swap_config.launch_line(str(tmp_path), "gpt-oss-120b")
+    assert changed is not None and changed != line
+
+
+def test_launch_line_survives_a_missing_config(tmp_path: Path) -> None:
+    assert llama_swap_config.launch_line(str(tmp_path), "gpt-oss-120b") is None

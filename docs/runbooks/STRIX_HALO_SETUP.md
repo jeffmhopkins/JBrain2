@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-21
+> **Status:** Living · **Last verified:** 2026-08-23
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -189,16 +189,26 @@ resolved effort — so the primed KV prefix is byte-identical to what a real tur
 reuse actually lands. That call also loads the model on demand through residency, so one prime
 both resides and warms it.
 
-> **There is no disk KV cache, and there deliberately isn't.** The keeper used to persist the
-> primed slot to `--slot-save-path /kv/` and restore it on a cold start. Removed 2026-08-21,
-> because it never worked on either family this box serves. On a HYBRID (every Qwen3.8 27B
-> entry) the restore path calls `prompt.clear()`, wiping the context checkpoints that are a
-> recurrent model's only prefix-reuse mechanism — inert by construction. On gpt-oss it wrote
-> whatever held the single slot at save time: measured at **2,164 tokens** against a ~36k
-> prefix, because `note.extract`, `entity.disambiguate` and `fact.adjudicate` all route there
-> and evict jerv between the prime and the save. A file named as the prefix that restores 2 KB
-> of unrelated KV is worse than no file — every cold start pays the full prefill anyway and
-> nothing corrects it. Residency plus the prime above are what keep the first message fast.
+> **The disk KV cache is BACK (v2, `jbrain.llm.kv_prefix`) — rebuilt 2026-08-23 against the
+> reasons v1 was removed.** v1 (removed 2026-08-21) never worked on either family this box
+> serves: on a HYBRID (every Qwen3.8 27B entry) the restore path calls `prompt.clear()`,
+> wiping the context checkpoints that are a recurrent model's only prefix-reuse mechanism —
+> inert by construction — and on gpt-oss it wrote whatever held the single slot at save time
+> (measured **2,164 tokens** against a ~36k prefix, because the analysis tasks routed there
+> and evicted jerv between the prime and the save). v2 answers each: hybrids and speculative
+> entries are refused up front (`--slot-save-path` is only rendered for attention models);
+> a save happens ONLY when a slot's `n_prompt_tokens` exactly equals the prime's own
+> `usage.input_tokens`, read in the same breath as the prime, and the server's `n_saved`
+> must agree or the file is deleted; a restore's `n_restored` is verified against the same
+> count and floor before it is trusted, falling back to the prefill otherwise. Files are
+> fingerprinted over the model's rendered launch line + persona + tool schemas (any change
+> that could stale a slot moves the filename) and each save prunes its model's stale
+> fingerprints, so the cost is one ~2 GiB file per model under
+> `/models/.kvslots/<model>/`. The keeper restores before it primes (a cold prime becomes a
+> ~1 s cache hit instead of a ~60 s prefill), saves after, and probes every settled tick so
+> a single-slot clobber heals off-turn; the router restores inline before an agent turn
+> that would otherwise re-prefill. Saves and restores land in Vitals as
+> `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to
 > 8192 MiB, so every resident model silently reserved 8 GiB of host memory — and on Strix Halo

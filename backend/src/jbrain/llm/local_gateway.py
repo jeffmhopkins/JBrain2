@@ -624,6 +624,43 @@ class LocalGatewayClient:
                 "it first (which evicts to make room), then read."
             )
 
+    async def save_slot(self, served_model: str, slot_id: int, filename: str) -> dict:
+        """Ask llama-server to write one slot's KV state to `filename` under its
+        --slot-save-path. The response's `n_saved` is the caller's verification hook —
+        `jbrain.llm.kv_prefix` refuses to keep a file whose count does not exactly match
+        the prime it believes it captured (the v1 failure was trusting this blindly)."""
+        body = await self._upstream_post(
+            served_model, "slots-save", f"/slots/{slot_id}?action=save", {"filename": filename}
+        )
+        return body if isinstance(body, dict) else {}
+
+    async def restore_slot(self, served_model: str, slot_id: int, filename: str) -> dict:
+        """Restore a saved KV state into one slot; `n_restored` verifies it. ~2 s for the
+        ~2 GiB jerv prefix off NVMe, against the ~60 s prefill it replaces."""
+        body = await self._upstream_post(
+            served_model,
+            "slots-restore",
+            f"/slots/{slot_id}?action=restore",
+            {"filename": filename},
+        )
+        return body if isinstance(body, dict) else {}
+
+    async def _upstream_post(
+        self, served_model: str, what: str, path: str, payload: dict
+    ) -> object:
+        await self._require_resident(served_model, what)
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}{path}", json=payload
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LocalGatewayError(str(exc)) from exc
+
     async def _upstream_get(self, served_model: str, what: str, path: str) -> object:
         await self._require_resident(served_model, what)
         try:

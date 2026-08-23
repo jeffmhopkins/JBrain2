@@ -146,6 +146,7 @@ from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
@@ -486,6 +487,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
         # on each call so the settings screen takes effect without a restart.
+        app.state.kv_prefix = KvPrefixStore(app.state.local_gateway, settings.local_models_dir)
         app.state.llm_router = build_router(
             settings,
             recorder=SqlUsageRecorder(maker),
@@ -499,6 +501,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Turns on the prefill diagnostic: on a local turn slow to say anything, this
             # reads `/slots` off the SAME gateway the coordinator drives.
             slots_probe=app.state.local_gateway.slots,
+            # The disk layer for the agent-turn prefix: restores jerv's saved prompt cache
+            # in ~2 s where a turn (or the keeper's prime) would otherwise pay a ~60 s
+            # prefill. Shares the models volume with the weights (jbrain.llm.kv_prefix).
+            kv_prefix=app.state.kv_prefix,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.
@@ -1192,6 +1198,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # matter what the setting said — so turning auto-reload off stopped restores while
             # a 68 GiB model kept coming straight back, which is not what the switch claims.
             auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
+            # Restore-before-prime and save-after-prime: the same store the router uses
+            # inline, so a boot re-prime is ~1 s off a saved slot instead of a ~60 s prefill.
+            kv_prefix=app.state.kv_prefix,
         )
         warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to

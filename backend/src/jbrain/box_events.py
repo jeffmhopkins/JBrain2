@@ -87,6 +87,12 @@ LEDGER_REFUSAL = "ledger_refusal"
 # failure otherwise exists only in `app.jobs.last_error`, which no owner surface projects.
 JOB_REFUSED_NO_ROOM = "job_refused_no_room"
 
+# The jerv prompt cache moving between a slot and disk (jbrain.llm.kv_prefix): a save is
+# rare (once per prefix change), a restore is the ~2 s that replaced a ~60 s prefill —
+# both owner-visible because the wait they explain lands on the owner's own turn.
+KV_PREFIX_SAVED = "kv_prefix_saved"
+KV_PREFIX_RESTORED = "kv_prefix_restored"
+
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.
 RETENTION = timedelta(days=1)
