@@ -1503,3 +1503,42 @@ async def test_ledger_plan_infeasible_refuses_before_evicting_anything() -> None
     with pytest.raises(ResidencyError):
         await coord.ensure_room("gpt-oss-120b")
     assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_evicts_the_biggest_first_and_spares_the_tiny_model() -> None:
+    # Two charged residents; the coder needs the big one's room and nothing more. The
+    # ranking must be biggest-first — a smallest-first order would burn the tiny model's
+    # eviction for ~nothing and still have to take the big one (the mutant an adversarial
+    # review proved the single-resident tests could not kill, 2026-08-23).
+    gpt = local_catalog.get_by_served("gpt-oss-120b")
+    assert gpt is not None
+    gpt_gb, _ = local_catalog.declared_gb(gpt, gpt.context_window)
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.5-4b"})
+    ledger = _FakeLedger(
+        [_row("gpt-oss-120b", Phase.RESIDENT, gpt_gb), _row("qwen3.5-4b", Phase.RESIDENT, 4.6)],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.05).plan_load("qwen3-coder-next")
+    assert plan is not None
+    assert plan.victims == ("gpt-oss-120b",), "one big eviction, the tiny model spared"
+
+
+@pytest.mark.asyncio
+async def test_a_generous_floor_is_never_reported_as_would_crash_the_box() -> None:
+    # over_box means PHYSICAL infeasibility — the settings screen renders it permanent
+    # ("would crash the box") and ensure_room refuses outright. An operator floor of 45%
+    # leaves gpt-oss (~69.6 declared) over the FLOORED usable but comfortably inside the
+    # box; that must read as `over` (evict everything, let the charge decide), never
+    # over_box — the charge itself would admit it.
+    gw = FakeLocalGateway(running=set())
+    ledger = _FakeLedger(
+        [],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=110.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=110.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.45).plan_load("gpt-oss-120b")
+    assert plan is not None
+    assert not plan.over_box, "a floor refusal is transient, not 'cannot exist'"
+    assert plan.over

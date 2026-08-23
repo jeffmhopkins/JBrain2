@@ -276,10 +276,14 @@ async def test_a_prime_below_the_floor_is_not_worth_a_file(root: Path) -> None:
 
 
 async def test_an_existing_current_file_short_circuits_the_2_gig_write(root: Path) -> None:
+    # ...and the skipped write still refreshes the LRU clock: the prime that got here is a
+    # use, and without the touch a re-primed unchanged config reads as the store's stalest.
     store, gw = _store(root)
-    _plant_file(root, store, "persona")
+    path = _plant_file(root, store, "persona")
+    os.utime(path, (1_000, 1_000))
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
     assert gw.saved == []
+    assert path.stat().st_mtime > 1_000, "the short-circuit must touch the file it trusts"
 
 
 # ---- restore ----------------------------------------------------------------------------
@@ -311,7 +315,8 @@ async def test_anything_prefix_sized_blocks_the_restore_whatever_it_is(root: Pat
     prompt reads the same and is deliberately also left alone: that mistake costs one
     un-accelerated prefill, the inverse mistake costs a conversation."""
     store, gw = _store(root)
-    _plant_file(root, store, "persona")
+    path = _plant_file(root, store, "persona")
+    os.utime(path, (1_000, 1_000))
     store._prime_tokens[SERVED] = PRIME
     for cached in (PRIME, PRIME + 240, 33000):  # prime, conversation, big foreign prompt
         gw.slot_state = [
@@ -320,6 +325,9 @@ async def test_anything_prefix_sized_blocks_the_restore_whatever_it_is(root: Pat
         ]
         assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, cached
     assert gw.restored == []
+    # The blocked branch is the ONLY one a healthy hot config ever reaches (the keeper's
+    # settled tick), so it must be the one that keeps its file fresh in the LRU budget.
+    assert path.stat().st_mtime > 1_000, "a hot config's tick must refresh its file"
 
 
 async def test_before_any_prime_the_floor_protects_a_long_running_servers_cache(

@@ -88,11 +88,11 @@ AGENT_TURN_TASK = "agent.turn"
 # prefill is strictly better than trusting a stub.
 MIN_PREFIX_TOKENS = 4096
 
-# The whole `.kvslots` tree's disk allowance — the owner's trade (2026-08-23): up to 25 GB
-# of hard drive for prompt caches. Files are ~2.2 GiB each, so this holds every config the
-# operator actually flips between with room to spare; past it, the least-recently-USED file
-# goes first (mtime is the clock — a restore touches its file, a save writes it — because
-# atime is unreliable under noatime mounts).
+# The whole `.kvslots` tree's disk allowance — the trade the owner chose on 2026-08-23
+# (25 GiB of hard drive for prompt caches; changing it is a release, there is no knob).
+# Files are ~2.2 GiB each, so this holds every config the operator actually flips between
+# with room to spare; past it, the least-recently-USED file goes first (mtime is the clock
+# — restores, primes and saves all touch it — because atime is unreliable under noatime).
 MAX_STORE_BYTES = 25 * 1024**3
 
 _SLOT_FILE_SUFFIX = ".kvslot"
@@ -290,23 +290,27 @@ class KvPrefixStore:
         just-saved file is never a candidate, whatever its mtime — deleting the thing the
         save just verified would turn a full store into a store that forgets its newest
         state. Files an operator parked outside the standard tree (a --slot-save-path
-        override) are simply not this budget's to manage."""
+        override) are simply not this budget's to manage.
+
+        The keep-path guard protects only THIS process's save: today that is sound
+        because exactly one KvPrefixStore exists (the api's — the worker wires none), but
+        a second store pruning concurrently could evict the first's fresh file. If a
+        store ever grows into another process, this needs a cross-process story first."""
         root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
         entries: list[tuple[float, int, str]] = []
         total = 0
-        try:
-            for folder, _dirs, names in os.walk(root):
-                for name in names:
-                    if not name.endswith(_SLOT_FILE_SUFFIX):
-                        continue
-                    path = os.path.join(folder, name)
+        for folder, _dirs, names in os.walk(root):
+            for name in names:
+                if not name.endswith(_SLOT_FILE_SUFFIX):
+                    continue
+                path = os.path.join(folder, name)
+                # Per-file, so one entry vanishing between listdir and stat skips that
+                # entry rather than silently abandoning the whole prune round.
+                with contextlib.suppress(OSError):
                     stat = os.stat(path)
                     total += stat.st_size
-                    if os.path.abspath(path) == os.path.abspath(keep_path):
-                        continue  # counted in the total, never a deletion candidate
-                    entries.append((stat.st_mtime, stat.st_size, path))
-        except OSError:
-            return  # a vanished dir mid-walk is not worth failing a save over
+                    if os.path.abspath(path) != os.path.abspath(keep_path):
+                        entries.append((stat.st_mtime, stat.st_size, path))
         entries.sort()
         for _mtime, size, path in entries:
             if total <= MAX_STORE_BYTES:
@@ -359,7 +363,13 @@ class KvPrefixStore:
             threshold = prime if prime is not None else MIN_PREFIX_TOKENS
             occupied = [s for s in slots if isinstance(s, dict)]
             if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
-                return False  # something prefix-sized is cached — never restore over it
+                # Something prefix-sized is cached — never restore over it. This branch is
+                # ALSO the only one a healthy hot config ever reaches (the keeper's settled
+                # tick lands here every minute), so it must refresh the LRU clock: without
+                # this touch the hottest config's file keeps its boot-time mtime and is the
+                # FIRST out of the budget (adversarial review, 2026-08-23).
+                await asyncio.to_thread(self._touch, path)
+                return False
             idle = [s for s in occupied if not s.get("is_processing")]
             if not idle:
                 return False  # every slot busy — restoring now would fight a live request

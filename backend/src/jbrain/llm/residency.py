@@ -602,6 +602,13 @@ class ResidencyCoordinator:
         rows = await self._ledger.live()
         charged_host = admission.charged_gb(rows, admission.Layer.HOST)
         fraction = await self._fraction()
+        # PHYSICAL infeasibility is judged against admission's OWN reserve, before the
+        # operator floor folds in below. `over_box` means "would crash the box, never load
+        # it" — permanent, rendered as such on the settings screen — so it must carry the
+        # same meaning the charge's INFEASIBLE does. A generous floor (the knob accepts up
+        # to 0.5) must only ever make a plan `over` (evict more / let the charge decide),
+        # never turn a model that physically fits into one the box claims cannot exist.
+        physical_usable = total_gb - host.reserve_gb  # admission's own reserve, pre-floor
         floor_gb = max(host.reserve_gb, total_gb * fraction)
         host = dataclasses.replace(host, reserve_gb=floor_gb)
         ceiling = total_gb - floor_gb
@@ -652,6 +659,30 @@ class ResidencyCoordinator:
             host_gb=host_need,
             device_gb=device_need,
         )
+        # Physical feasibility, on the UNFLOORED pools (admission's own reserve): the
+        # same test `ledger.charge` will apply. Decided before any eviction is planned,
+        # so a model no unload can ever fit refuses without costing a resident one.
+        device_usable = (
+            device.total_gb - device.reserve_gb
+            if device.total_gb is not None and device.total_gb > 0
+            else None
+        )
+        if host_need > physical_usable or (
+            device_usable is not None and device_need > device_usable
+        ):
+            return EvictionPlan(
+                target=served_model,
+                victims=(),
+                resident_gb=charged_host,
+                projected_gb=charged_host + host_need,
+                target_gb=host_need,
+                ceiling_gb=ceiling,
+                total_gb=total_gb,
+                fits=False,
+                over=True,
+                over_box=True,
+                already_resident=False,
+            )
         # Eviction candidates, biggest-first by what evicting them actually releases.
         candidates: list[tuple[float, float, str]] = []
         for served in running:
@@ -672,8 +703,11 @@ class ResidencyCoordinator:
         freed_host = freed_device = 0.0
         decision = admission.admit(request, sim_rows, host=sim_host, device=sim_device)
         for neg_host, neg_device, served in candidates:
-            if decision.admitted or decision.outcome is admission.Outcome.INFEASIBLE:
+            if decision.admitted:
                 break
+            # A floored-reserve INFEASIBLE is NOT a physical one (that returned above): a
+            # model bigger than the operator's floor evicts everything and takes the box
+            # alone — the paradigm the module docstring promises — so the loop runs on.
             victims.append(served)
             sim_rows = [r for r in sim_rows if r.served_model != served]
             freed_host += -neg_host
@@ -687,7 +721,6 @@ class ResidencyCoordinator:
                     device, measured_free_gb=device.measured_free_gb + freed_device
                 )
             decision = admission.admit(request, sim_rows, host=sim_host, device=sim_device)
-        over_box = decision.outcome is admission.Outcome.INFEASIBLE
         return EvictionPlan(
             target=served_model,
             victims=tuple(victims),
@@ -699,8 +732,8 @@ class ResidencyCoordinator:
             ceiling_gb=ceiling,
             total_gb=total_gb,
             fits=decision.admitted and not victims,
-            over=not decision.admitted and not over_box,
-            over_box=over_box,
+            over=not decision.admitted,
+            over_box=False,  # the physical test returned above; the floor never means this
             already_resident=False,
         )
 
@@ -868,8 +901,12 @@ class ResidencyCoordinator:
         # this path deadlocked against it: the charge takes the SAME advisory key on a second
         # pooled connection, so the load refused itself after its eviction had already
         # unloaded the resident model — the box ended EMPTY. The co-load race the long hold
-        # closed is closed by the charge row instead: it is written before the weights move,
-        # so the next process's plan (which reads the ledger) sees the claim immediately.
+        # closed is closed by the charge row instead: it is written before any weights move.
+        # The residual window is the pre-charge work between the evict and the row (shape
+        # reads, a possible config regen, a stop-settle wait) — two processes planning in it
+        # can both evict, but the atomic charge then refuses one with a transient "retry
+        # shortly" rather than co-loading. A refused turn after an eviction is the accepted
+        # cost; the pre-change behaviour on this path refused BOTH loads every time.
         async with self._box_locked():
             plan = await self._ensure_room_core(served_model)
         if plan is not None and not plan.already_resident:

@@ -510,10 +510,17 @@ size back to both terms until the same arithmetic the load's charge will apply s
 in-flight load is visible as its PLANNED/STARTING row long before any measurement moves
 (which is what makes releasing the box lock before the load safe, per L1 item 5's
 resolution). The operator's free-RAM headroom folds in as extra host reserve, never below
-admission's own. The measured+predicted planner survives only as `_plan_measured`, the
-fallback for a build with no ledger (DB-less CLIs) or a ledger read that fails. Still open
-here: the device pre-flight's own derivation, `smoketest`'s 20 GiB gate, and `_restore_plan`,
-which still budgets from the measurement.
+admission's own — though PHYSICAL infeasibility (`over_box`, the permanent "would crash
+the box" verdict) is always judged against admission's own reserve, never the floor: a
+generous floor makes a plan `over` (evict more, let the charge decide), never "cannot
+exist". The measured+predicted planner survives only as `_plan_measured`, the fallback
+for a build with no ledger (DB-less CLIs) or a ledger read that fails. Known residual:
+between a released evict and the load's charge sits pre-charge work (shape reads, a
+possible config regen, a stop-settle wait) where two processes can both plan and both
+evict — the atomic charge then refuses one transiently rather than co-loading, and
+nothing yet retries that refused turn after its eviction already ran. Still open here:
+that retry, the device pre-flight's own derivation, `smoketest`'s 20 GiB gate, and
+`_restore_plan`, which still budgets from the measurement.
 
 *Risk:* medium. *Test:* one budget, asserted from a single constant.
 
