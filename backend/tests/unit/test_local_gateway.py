@@ -10,7 +10,9 @@ import httpx
 import pytest
 
 from jbrain import box_events, host_metrics
-from jbrain.llm import local_catalog, local_gateway, local_weights
+from jbrain.llm import gpu_guard, local_catalog, local_gateway, local_weights
+from jbrain.llm.admission import Decision, Layer, Outcome, Phase
+from jbrain.llm.ledger import Charge
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
     LocalGatewayError,
@@ -998,3 +1000,65 @@ async def test_a_short_load_does_not_report_itself_after_the_claim_is_pruned(
     gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # now it arrives, on a later poll
     hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
     assert not hits, f"a guarded load reported itself as unannounced: {hits}"
+
+
+class _RefusingLedger:
+    """A ledger that refuses, which the real one only does once `shadow=False`.
+
+    Hand-rolled rather than a `ReservationLedger` against a database: the branch under test is
+    the gateway's REACTION to a refusal, and a fake keeps that reaction the only variable."""
+
+    def __init__(self, outcome: Outcome) -> None:
+        self._outcome = outcome
+
+    async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:
+        return Charge(Decision(self._outcome, f"{served_model} refused", Layer.HOST), None)
+
+
+def _catalog_model() -> local_catalog.LocalModel:
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    return model
+
+
+@pytest.mark.parametrize(
+    ("outcome", "permanent"),
+    [(Outcome.INFEASIBLE, True), (Outcome.DEFERRED, False)],
+)
+async def test_a_refused_charge_carries_whether_waiting_could_ever_help(
+    outcome: Outcome, permanent: bool
+) -> None:
+    """The one branch that goes live at the `shadow=False` flip, and the reason it needed a
+    flag: the worker defers on a GpuBudgetError, so an INFEASIBLE that arrived indistinguishable
+    from a DEFERRED would be re-attempted against a condition that cannot arrive."""
+    gw = _client(lambda r: httpx.Response(200, json={"running": []}))
+    gw._reservations = _RefusingLedger(outcome)  # type: ignore[assignment]
+    model = _catalog_model()
+
+    with pytest.raises(gpu_guard.GpuBudgetError) as exc:
+        async with gw._reservation(model.served_model, model, window=4096, slots=1):
+            pytest.fail("the body must not run when the charge was refused")
+
+    assert exc.value.permanent is permanent
+    assert "refused" in str(exc.value)
+
+
+async def test_an_admitted_charge_runs_the_body_and_does_not_raise() -> None:
+    """The companion assertion: the refusal path above must not have made every load raise."""
+    admitted: list[str] = []
+
+    class _AdmittingLedger:
+        async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:
+            return Charge(Decision(Outcome.ADMIT, "fits", None), "instance-1")
+
+        async def advance(self, instance_id: str, phase: Phase) -> None:
+            admitted.append(f"{instance_id}:{phase.value}")
+
+    gw = _client(lambda r: httpx.Response(200, json={"running": []}))
+    gw._reservations = _AdmittingLedger()  # type: ignore[assignment]
+    model = _catalog_model()
+
+    async with gw._reservation(model.served_model, model, window=4096, slots=1):
+        pass
+
+    assert admitted == ["instance-1:starting", "instance-1:resident"]

@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 
 from jbrain import queue, worker
+from jbrain.llm import gpu_guard
+from jbrain.llm.residency import ResidencyError
 from jbrain.queue import Job
 
 
@@ -741,3 +743,48 @@ async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
     assert engine.disposed
+
+
+async def test_transient_no_room_defers_without_burning_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DEFERRED refusal means the box is full NOW — waiting is the right answer."""
+    fake = FakeQueue([job(kind="integrate_note")])
+    install(monkeypatch, fake)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise gpu_guard.GpuBudgetError("no room right now")
+
+    assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
+    assert fake.deferred == [("job-1", "GpuBudgetError('no room right now')")]
+    assert fake.completed == [] and fake.failed == [] and fake.permanent == []
+
+
+async def test_a_model_that_never_fits_fails_instead_of_deferring_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """INFEASIBLE is not a wait. The request exceeds the pool's whole usable capacity, so no
+    eviction can ever satisfy it — deferring would re-attempt a condition that cannot arrive."""
+    fake = FakeQueue([job(kind="integrate_note")])
+    install(monkeypatch, fake)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise gpu_guard.GpuBudgetError("needs 200.0 GB, box has 118.0", permanent=True)
+
+    assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
+    assert fake.deferred == []
+    assert fake.permanent == ["job-1"]
+
+
+async def test_a_residency_refusal_still_defers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The permanence carve-out is GpuBudgetError-only: ResidencyError has no such flag, and
+    reading one off it via getattr would silently make every future error type permanent."""
+    fake = FakeQueue([job(kind="integrate_note")])
+    install(monkeypatch, fake)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise ResidencyError("code mode holds the box")
+
+    assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
+    assert fake.deferred == [("job-1", "ResidencyError('code mode holds the box')")]
+    assert fake.permanent == []

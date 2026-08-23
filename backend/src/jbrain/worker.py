@@ -223,8 +223,30 @@ async def process_one(
             # refusal — the box has no room right now — and it fell through to the generic
             # handler below, which FAILS the job and burns a retry attempt. A job that could
             # not get memory should wait for memory, not exhaust its budget against it.
-            await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
-            log.info("worker.job_deferred_no_room", job_id=job.id, kind=job.kind, error=repr(exc))
+            if isinstance(exc, gpu_guard.GpuBudgetError) and exc.permanent:
+                # ...unless the refusal is INFEASIBLE: the request exceeds the pool's whole
+                # usable capacity, so no eviction can ever satisfy it and the defer above
+                # becomes an infinite one. Fail it the way `PermanentJobError` is failed —
+                # retrying cannot help, so do not pretend it might.
+                exhausted = await queue.fail(
+                    maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True
+                )
+                log.error(
+                    "worker.job_failed_never_fits",
+                    job_id=job.id,
+                    kind=job.kind,
+                    error=repr(exc),
+                )
+                await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
+                await _after_exhaustion(maker, job, exhausted)
+            else:
+                await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
+                log.info(
+                    "worker.job_deferred_no_room",
+                    job_id=job.id,
+                    kind=job.kind,
+                    error=repr(exc),
+                )
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
             log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))

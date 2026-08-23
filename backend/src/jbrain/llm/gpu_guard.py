@@ -227,7 +227,18 @@ def parse_gpu_mem(body: object) -> GpuMem | None:
 class GpuBudgetError(Exception):
     """A load was refused or aborted on device-memory grounds. Distinct from a housekeeping
     hiccup so callers surface it instead of swallowing it — the operator needs to know the
-    box declined to do something, not silently get a model that never loaded."""
+    box declined to do something, not silently get a model that never loaded.
+
+    `permanent` separates the two refusals `admission.Outcome` already distinguishes and this
+    class used to flatten: a DEFERRED request fits the box but not right now, so waiting is the
+    correct response; an INFEASIBLE one exceeds the pool's whole usable capacity, so waiting is
+    a wait for a condition that CANNOT arrive. A worker that defers on the latter re-attempts
+    forever. Defaults False because every pre-ledger raise site is a live-measurement refusal,
+    which is transient by nature — something may yet leave."""
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.permanent = permanent
 
 
 def refuse_if_no_device_room(

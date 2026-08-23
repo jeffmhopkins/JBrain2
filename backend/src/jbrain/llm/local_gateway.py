@@ -44,7 +44,7 @@ import structlog
 
 from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, prefill
-from jbrain.llm.admission import Phase
+from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
 
 log = structlog.get_logger()
@@ -934,7 +934,13 @@ class LocalGatewayClient:
             # already handles it — 409 on the settings screen, a defer in the worker, a
             # suppression on the restore — so making the ledger speak the language the box
             # already understands is what lets L2b be a one-line change rather than a sweep.
-            raise gpu_guard.GpuBudgetError(charge.decision.reason)
+            # The outcome rides along because that language was one word short: the worker's
+            # defer is right for DEFERRED and a forever-loop for INFEASIBLE, which by
+            # definition no eviction can satisfy.
+            raise gpu_guard.GpuBudgetError(
+                charge.decision.reason,
+                permanent=charge.decision.outcome is Outcome.INFEASIBLE,
+            )
         await ledger.advance(charge.instance_id, Phase.STARTING)
         try:
             yield
