@@ -146,8 +146,14 @@ from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyWiring, pg_box_lock
+from jbrain.llm.residency import (
+    ResidencyCoordinator,
+    ResidencyWiring,
+    pg_box_lock,
+    pg_box_try_lock,
+)
 from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
@@ -410,6 +416,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.local_gateway = LocalGatewayClient(
             settings.local_llm_url,
             gpu_probe=gpu_probe,
+            # The reservation ledger (docs/plans/LOCAL_MODEL_LEDGER_PLAN.md), IN SHADOW: it
+            # charges and releases against every real load this process runs and records what
+            # it WOULD have admitted, and it refuses nothing. A ledger that has never charged a
+            # live load has no numbers to be judged on, and this repo has the precedent —
+            # `_note_not_ready` landed as measurement first for the same reason.
+            reservations=ReservationLedger(maker, source="api", device_probe=gpu_probe),
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
             # Re-stamp the gateway config HERE rather than on every settings edit: rewriting
@@ -449,6 +461,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Serialize evict+load against the worker process (which runs its own coordinator
                 # over the same box) so a deferred worker load can't co-load past the floor here.
                 box_lock=pg_box_lock(maker),
+                # Restore's lock is the NON-blocking one. It must skip rather than queue: a restore
+                # that waits is restoring to a steady state another process is already changing,
+                # and while it waits it can hold the per-process load lock against a chat turn.
+                box_try_lock=pg_box_try_lock(maker),
                 # Tell the WarmKeeper when an eviction or a bare restore-load drops a model's
                 # primed prefix. LATE-BOUND on purpose: the keeper is constructed further down
                 # this same startup, so the lambda resolves it at call time and degrades to a

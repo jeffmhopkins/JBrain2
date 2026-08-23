@@ -26,8 +26,9 @@ from jbrain import box_events, queue
 from jbrain.api.deps import JcodeAccessDep, OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
-from jbrain.llm import local_catalog
+from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
+from jbrain.llm.residency import ResidencyError
 from jbrain.models.jcode import JcodeSessionRepo, JcodeSessionRow
 from jbrain.settings_store import JCODE_PLANNER_SAME, SqlSettingsStore
 
@@ -119,6 +120,21 @@ async def _resolve_planner_model(request: Request, owner_id: str) -> str:
     return _served_model(stored or settings.jcode_planner_model)
 
 
+def _warm_errors(request: Request) -> dict[str, str]:
+    """Why the last warm of each served name failed, or absent if it did not.
+
+    The companion to `_warming_models`: that Counter says a warm is IN FLIGHT, and the screen
+    keys its bar off it. Nothing said a warm had FINISHED BADLY, so a refused load left the
+    bar up forever (`loading = warming || (warmRequested && !loaded)` never settles). Cleared
+    when a fresh warm starts, so a retry is not shown the previous failure."""
+    state = request.app.state
+    errors = getattr(state, "jcode_warm_errors", None)
+    if errors is None:
+        errors = {}
+        state.jcode_warm_errors = errors
+    return cast("dict[str, str]", errors)
+
+
 def _warming_models(request: Request) -> Counter[str]:
     """In-flight warm tasks per served-model name — the readiness signal the loading bar
     polls. Tied to the warm task's lifecycle (not gateway `running()`, which lists a model
@@ -142,30 +158,57 @@ def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
     return cast("set[asyncio.Task[None]]", tasks)
 
 
-async def _warm_model(gateway: LocalGateway, served: str, residency: object | None = None) -> None:
+async def _warm_model(
+    gateway: LocalGateway,
+    served: str,
+    residency: object | None = None,
+    errors: dict[str, str] | None = None,
+) -> None:
     # Give the coder the whole box: if it's NOT already resident, evict every OTHER model
     # then load it; if it IS already resident, do nothing (no evict, no reload). A cold
     # 80B load reads tens of GB (blocks up to ~2 min), so this runs in the background —
     # never blocking session creation. NOT unloaded later: the coder stays resident until
     # another JBrain task loads a different model (the gateway swaps it then). The evicted
-    # models are recorded so code power-off's restore returns the box to its prior set. All
-    # best-effort: a gateway hiccup must never break a session.
-    with contextlib.suppress(Exception):
-        resident = await gateway.running()
-        # Already loaded → no-op: don't evict anything and don't re-probe a load (which
-        # could force the gateway to re-read the weights). Switching to the coder when
-        # it's already on the box must be instant.
-        if served in resident:
-            return
-        evicted: list[str] = []
-        with box_events.because("code mode is taking the box"):
-            for other in resident:
-                with contextlib.suppress(LocalGatewayError):
-                    await gateway.unload(other)
-                    evicted.append(other)
-        if evicted and residency is not None:
-            residency.note_evicted(evicted)  # type: ignore[attr-defined]
+    # models are recorded so code power-off's restore returns the box to its prior set.
+    #
+    # This used to wrap the whole body in `contextlib.suppress(Exception)`, justified as "a
+    # gateway hiccup must never break a session". It could not: this runs in a detached
+    # `create_task` and the route returned before it started, so nothing raised here was ever
+    # able to reach a session. What the suppress actually did was eat a DELIBERATE refusal —
+    # `GpuBudgetError` from the device pre-flight — AFTER the eviction loop had already
+    # emptied the box. The owner was left with nothing resident, no coder, no log line, no
+    # vitals row, and a progress bar that never ends (the screen's `loading` stays true while
+    # `warmRequested && !loaded`). Every failure below is now named and surfaced.
+    resident = await gateway.running()
+    # Already loaded → no-op: don't evict anything and don't re-probe a load (which
+    # could force the gateway to re-read the weights). Switching to the coder when
+    # it's already on the box must be instant.
+    if served in resident:
+        return
+    evicted: list[str] = []
+    with box_events.because("code mode is taking the box"):
+        for other in resident:
+            with contextlib.suppress(LocalGatewayError):
+                await gateway.unload(other)
+                evicted.append(other)
+    if evicted and residency is not None:
+        residency.note_evicted(evicted)  # type: ignore[attr-defined]
+    try:
         await gateway.load(served)
+    except (ResidencyError, gpu_guard.GpuBudgetError) as exc:
+        # A refusal, not a fault: the box said no and nothing is wrong with it. The eviction
+        # above has already happened, so this is the state the owner most needs told about —
+        # they asked for the coder and now have an empty box.
+        log.warning("jcode.warm_refused model=%s evicted=%s error=%s", served, evicted, exc)
+        if errors is not None:
+            errors[served] = str(exc)
+        await box_events.record(box_events.MODEL_LOAD, served, detail=str(exc), status="failed")
+        raise
+    except Exception as exc:
+        log.warning("jcode.warm_failed model=%s evicted=%s error=%r", served, evicted, exc)
+        if errors is not None:
+            errors[served] = f"the gateway could not load {served}: {exc}"
+        raise
 
 
 def _warm_coder(request: Request, model_id: str) -> None:
@@ -188,7 +231,9 @@ def _warm_coder(request: Request, model_id: str) -> None:
     warming = _warming_models(request)
     warming[served] += 1
     residency = getattr(request.app.state, "residency", None)
-    task = asyncio.create_task(_warm_model(gateway, served, residency))
+    errors = _warm_errors(request)
+    errors.pop(served, None)  # a retry must not be shown the previous failure
+    task = asyncio.create_task(_warm_model(gateway, served, residency, errors))
     tasks = _warm_tasks(request)
     tasks.add(task)
 
@@ -197,6 +242,12 @@ def _warm_coder(request: Request, model_id: str) -> None:
         warming[served] -= 1
         if warming[served] <= 0:
             del warming[served]
+        # Retrieve the exception even though `_warm_model` has already recorded it: an
+        # un-retrieved task exception surfaces only as "Task exception was never retrieved"
+        # at GC, which is silence wearing a different hat. The error store is the channel;
+        # this just stops the interpreter warning about the one we deliberately raised.
+        if not t.cancelled():
+            t.exception()
 
     task.add_done_callback(_done)
 
@@ -300,6 +351,10 @@ async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
         "served": served,
         "loaded": served in running,
         "warming": warming,
+        # Why the last warm failed, or None. Without it the screen has no terminal state for a
+        # failed warm: `loading` is `warming || (warmRequested && !loaded)`, so a refused load
+        # left the bar up at its 96% cap forever.
+        "warm_error": _warm_errors(request).get(served),
         "progress": progress,
         "hosting": settings.local_llm_enabled,
         "size_gb": cat.size_gb if cat else 0.0,

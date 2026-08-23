@@ -6,7 +6,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring
+from jbrain.llm.residency import (
+    ResidencyCoordinator,
+    ResidencyError,
+    ResidencyWiring,
+    pg_box_try_lock,
+)
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
@@ -29,6 +34,7 @@ def _coord(
     slots_loader: object = None,
     on_prefix_lost: object = None,
     auto_restore_loader: object = None,
+    box_try_lock: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -44,6 +50,7 @@ def _coord(
             slots_loader=slots_loader,  # type: ignore[arg-type]
             on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
             auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
+            box_try_lock=box_try_lock,  # type: ignore[arg-type]
         ),
     )
 
@@ -1109,3 +1116,207 @@ async def test_the_code_mode_short_circuit_is_measured_too(
     hits = [e for e in seen if e["event"] == "residency.short_circuit_not_ready"]
     assert hits, "the code-mode short circuit skipped an admission without measuring it"
     assert hits[0]["at"] == "hold"
+
+
+@pytest.mark.asyncio
+async def test_the_over_box_refusal_does_not_blame_the_model_for_the_whole_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`projected_gb` is `used + target - freed` — the whole box after the load. Rendering it
+    as "{target} needs ~N GB" told the owner a 17 GB model wanted more memory than the machine
+    has. That text reaches the 409 body and the chat turn, so it is the sentence they act on."""
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=121.0, used=110.0, enabled=True)
+
+    with pytest.raises(ResidencyError) as exc:
+        await coord.ensure_room("gpt-oss-120b")
+
+    msg = str(exc.value)
+    assert "121 GB" in msg, "the box's real size is missing"
+    assert "110 GB" in msg, "what is already resident is missing — the actionable part"
+    # the target's own footprint, not the post-load total, must be what it is said to need
+    assert "needs ~110 GB" not in msg and "needs ~178 GB" not in msg, (
+        f"the model is being blamed for the whole box: {msg}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_busy_box_skips_the_restore_and_keeps_the_members(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restore takes a TRY-lock, and a refusal means skip — not wait.
+
+    Blocking would be wrong twice over: the steady state being restored to is already being
+    changed by whoever holds the lock, and while `_restore` waited it would hold the
+    per-process load lock against a chat turn for the length of someone else's 200 s load.
+
+    The load-bearing half of this test is the second assertion. A skipped restore MUST leave
+    `_displaced` intact — the normal path discards a member once attempted, and a skip that
+    reused that logic would forget the models permanently."""
+
+    @contextlib.asynccontextmanager
+    async def _busy() -> AsyncIterator[bool]:
+        yield False
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=40.0, enabled=True, box_try_lock=_busy)
+    coord._displaced.update({"gpt-oss-120b", "qwen3.5-4b"})
+
+    await coord._restore()
+
+    assert not gw.loaded, "restored while another process was changing the box"
+    assert coord._displaced == {"gpt-oss-120b", "qwen3.5-4b"}, (
+        "a skipped restore dropped its members — they would never be restored"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_idle_box_restores_under_the_try_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half: when the lock IS free, restore proceeds exactly as before."""
+
+    @contextlib.asynccontextmanager
+    async def _free() -> AsyncIterator[bool]:
+        yield True
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_free)
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+
+    assert gw.loaded == ["qwen3.5-4b"]
+    assert not coord._displaced
+
+
+@pytest.mark.asyncio
+async def test_the_restore_releases_the_box_lock_BEFORE_it_loads_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The try-lock covers the CENSUS, never the loads. This is the assertion that keeps the
+    skip from becoming worse than no lock at all.
+
+    `ensure_room` takes the BLOCKING form of the same advisory lock, and there is no
+    `lock_timeout` anywhere in this repo. So a restore holding it across its loads — 100-200 s
+    each, several of them — makes a chat turn in the OTHER process wait out a background task,
+    with every waiter pinning one of the fifteen pooled connections while it waits. That is not
+    an absent convoy, it is the convoy inverted onto the interactive path."""
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def _recording() -> AsyncIterator[bool]:
+        events.append("lock")
+        try:
+            yield True
+        finally:
+            events.append("unlock")
+
+    class _NotingGateway(FakeLocalGateway):
+        async def load(
+            self,
+            served_model: str,
+            *,
+            warm_system: str | None = None,
+            warm_tools: list[dict[str, object]] | None = None,
+        ) -> None:
+            events.append(f"load:{served_model}")
+            await super().load(served_model, warm_system=warm_system, warm_tools=warm_tools)
+
+    gw = _NotingGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_recording)
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+
+    assert gw.loaded == ["qwen3.5-4b"]
+    assert events == ["lock", "unlock", "load:qwen3.5-4b"], (
+        f"the lock was still held while the model loaded: {events}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_restore_arms_a_retry_rather_than_waiting_for_the_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`schedule_restore` fires from a finished agent turn and from code-mode power-off, and
+    nowhere else. So a skip on the last turn of the evening would leave the box displaced until
+    somebody starts another conversation — the members are still remembered, all that is
+    missing is an occasion. The skip creates one."""
+    monkeypatch.setattr("jbrain.llm.residency.RESTORE_RETRY_S", 0.01)
+
+    busy = True
+
+    @contextlib.asynccontextmanager
+    async def _busy_then_free() -> AsyncIterator[bool]:
+        yield not busy
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_busy_then_free
+    )
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+    assert not gw.loaded, "it restored while the box was busy"
+
+    busy = False
+    await asyncio.sleep(0.05)  # let the armed retry fire
+    assert gw.loaded == ["qwen3.5-4b"], "the skip never came back for the displaced member"
+
+
+# --- pg_box_try_lock: the helper itself -------------------------------------
+
+
+class _FakeSession:
+    """Just enough of AsyncSession for the advisory-lock helpers: `begin()` and `scalar()`."""
+
+    def __init__(self, answer: bool) -> None:
+        self._answer = answer
+
+    @contextlib.asynccontextmanager
+    async def begin(self) -> AsyncIterator[None]:
+        yield
+
+    async def scalar(self, _stmt: object, _params: object = None) -> bool:
+        return self._answer
+
+
+def _maker(answer: bool) -> object:
+    @contextlib.asynccontextmanager
+    async def _session() -> AsyncIterator[_FakeSession]:
+        yield _FakeSession(answer)
+
+    return _session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [True, False])
+async def test_pg_box_try_lock_reports_what_postgres_said(answer: bool) -> None:
+    async with pg_box_try_lock(_maker(answer))() as got:  # type: ignore[arg-type]
+        assert got is answer
+
+
+@pytest.mark.asyncio
+async def test_pg_box_try_lock_yields_false_when_the_db_is_unreachable() -> None:
+    """An opportunistic caller must SKIP, not fail, when the lock can't be consulted. False is
+    the safe direction here (unlike `pg_box_lock`, where a DB outage must not fail a turn)."""
+
+    @contextlib.asynccontextmanager
+    async def _dead() -> AsyncIterator[_FakeSession]:
+        raise RuntimeError("no route to host")
+        yield  # pragma: no cover — unreachable, satisfies the generator protocol
+
+    async with pg_box_try_lock(_dead)() as got:  # type: ignore[arg-type]
+        assert got is False
+
+
+@pytest.mark.asyncio
+async def test_pg_box_try_lock_does_not_swallow_the_callers_own_failure() -> None:
+    """The caller's exception travels back in through the `yield`. Catching it there would
+    hide the real error behind `generator didn't stop after throw()` and then hand the caller
+    a second, bogus `False` — so the lock must only treat PRE-acquisition failures as skips."""
+    with pytest.raises(ValueError, match="the restore itself blew up"):
+        async with pg_box_try_lock(_maker(True))() as got:  # type: ignore[arg-type]
+            assert got is True
+            raise ValueError("the restore itself blew up")

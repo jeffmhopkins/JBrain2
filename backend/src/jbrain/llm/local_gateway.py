@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import json
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Protocol
 
 import httpx
@@ -44,6 +44,8 @@ import structlog
 
 from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, prefill
+from jbrain.llm.admission import Phase
+from jbrain.llm.ledger import ReservationLedger
 
 log = structlog.get_logger()
 
@@ -89,6 +91,24 @@ _FOOTPRINT_DRIFT_GB = 1.0
 # `/running` filters only the first and last — so `starting` and `stopping` both reach us
 # and neither is serving. Confirmed at the pin in `deploy/Dockerfile.local-llm`.
 STATE_READY = "ready"  # llama-swap ProcessState; shared with residency so it is spelled once
+# The one that is NOT resident and NOT absent. A model llama-swap is stopping is still listed
+# by `/running`, so "in running()" reads it as up — and a health GET against it does not join
+# a live process, it makes llama-swap RELAUNCH one. See `_settle_a_stopping_model`.
+STATE_STOPPING = "stopping"
+
+# How long to wait for a stop to finish before refusing the load.
+#
+# NOT sized off llama-swap's `DEFAULT_UNLOAD_TIMEOUT = 10`, which an earlier version of this
+# doubled and called a bound. That figure is when llama-swap sends SIGKILL, not when the kernel
+# has finished tearing down 85 GB of pinned GTT — and `/running` is waiting on the latter. The
+# case that decides the number is a config regen: `regen_gateway_config` reloads llama-swap,
+# which kills EVERY running llama-server, and then waits a fixed 4 s because llama-swap exposes
+# no reload-done signal to poll. So the owner's Load button can arrive with an 85 GB server four
+# seconds into its teardown on a memory-pressured box. A minute is long enough for that to be a
+# real refusal rather than an impatient one, and short enough that the owner is told rather than
+# left watching a spinner.
+STOP_SETTLE_TIMEOUT_S = 60.0
+STOP_SETTLE_POLL_S = 0.5
 
 
 class LocalGatewayError(Exception):
@@ -124,6 +144,7 @@ class LocalGatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        reservations: ReservationLedger | None = None,
         config_regen: Callable[[], Awaitable[None]] | None = None,
         windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
@@ -140,6 +161,11 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # The reservation ledger (jbrain.llm.ledger), or None on a box without a database.
+        # IN SHADOW while it is being characterised: it charges and releases against the real
+        # load lifecycle and records what it WOULD have decided, and decides nothing. See
+        # `_reservation`.
+        self._reservations = reservations
         # What /running last reported, name -> state, and the non-ready subset we have
         # already narrated. Cached so a caller can ask `state_of` without a second round
         # trip; see `_note_not_ready`.
@@ -235,6 +261,20 @@ class LocalGatewayClient:
 
         Also the observation point for a model that arrived WITHOUT us: see
         `_drop_cache_for_unannounced`."""
+        return set(await self.running_states() or ())
+
+    async def running_states(self) -> dict[str, str] | None:
+        """`running()` with the states kept — name -> llama-swap ProcessState, `""` when the
+        build reports none. **None means the read FAILED**, which an empty dict does not: an
+        empty dict is a box with nothing loaded, and a caller that cannot tell those apart
+        decides "the stop landed, the box is clear" off a dropped connection.
+
+        Returned rather than only cached because `state_of` reads PROCESS-GLOBAL state that
+        every caller of this method overwrites, and this client is shared: `warm_keeper`
+        reconciles on its own loop against the same instance. A caller that tests the cache and
+        then acts on its own older snapshot is reading two different observations as one, which
+        is how a stopping model could still take the already-resident free pass. Anyone whose
+        decision spans more than one poll takes the dict."""
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
@@ -244,12 +284,12 @@ class LocalGatewayClient:
                 states = _parse_running_states(resp.json())
         except (httpx.HTTPError, ValueError) as exc:
             log.info("local_gateway.running_unavailable", error=str(exc))
-            return set()
+            return None
         self._last_states = dict(states)
         self._note_not_ready(states)
         resident = set(states)
         self._drop_cache_for_unannounced(resident)
-        return resident
+        return dict(states)
 
     def _note_not_ready(self, states: Mapping[str, str]) -> None:
         """Record — and narrate once per transition — any model /running lists in a state
@@ -285,6 +325,79 @@ class LocalGatewayClient:
         `""` is deliberately indistinguishable between "not listed" and "build reports no
         state": both mean *we do not know*, and a caller must not read either as `ready`."""
         return self._last_states.get(served_model, "")
+
+    async def _settle_a_stopping_model(
+        self, served_model: str, states: Mapping[str, str]
+    ) -> set[str] | None:
+        """Wait out a stop in progress, so the load that follows decides against a settled box.
+
+        THE HOLE THIS CLOSES. `/running` filters only `stopped` and `shutdown`, so a model
+        llama-swap is in the middle of stopping is still listed — and `_load_and_warm`'s
+        already-resident branch reads that list. Taking that branch skips BOTH the device
+        pre-flight and the runaway watchdog, on the premise that a resident model needs no room
+        for a second copy of itself. For a STOPPING model that premise is false twice over: the
+        process is going away, and the health GET the branch then issues makes llama-swap
+        launch a fresh one. A completely unguarded load, on the one box where an unadmitted
+        load is a power cycle.
+
+        WAIT, do not re-decide. Routing a stopping model to the guarded path instead would ask
+        for room while the dying model's own footprint is still charged to the device pool —
+        counting one model twice, which is the exact error three earlier attempts at this made
+        (see `docs/plans/LOCAL_MODEL_LEDGER_PLAN.md`). Waiting removes the ambiguity rather
+        than arbitrating it: once the stop lands, "resident" and "absent" mean what they say
+        and every existing number is right.
+
+        A stop that never lands is a REFUSAL, not a fallthrough — the fallthrough is the
+        unguarded load this exists to prevent. Retryable on purpose: the caller's next attempt
+        meets a settled box.
+
+        WHAT IT DOES NOT COVER, said plainly. It reads `state_of`, which is `""` when the
+        build reports no state at all — and `""` means *we do not know*, so a stopping model on
+        such a build still reads as resident and still takes the free pass. This narrows the
+        hole to builds that report states (the pinned one does); it does not remove it. The
+        removal is L2's ledger, which does not ask the gateway what is resident.
+
+        `starting` is deliberately NOT waited on — but NOT because "another loader already
+        admitted it", which this said first and which is false: llama-swap loads on REQUEST, so
+        most loads never touch this client at all (`_drop_cache_for_unannounced` exists because
+        of that, and measured `Cached` climbing 2.36 -> 47.83 GiB with nothing logged). The
+        actual reason is narrower and still holds: a `starting` process EXISTS and is already
+        allocating, so the health GET joins it rather than launching a second one — which is the
+        specific harm this method is here to prevent. Whether that load was admitted is a real
+        question, and it is the ledger's, not this method's.
+
+        It waits for the TARGET only. A DIFFERENT model stuck in `stopping` still has its
+        footprint charged to the device pool when the pre-flight samples, so that model is still
+        counted twice — a spurious refusal, which is the safe direction, and the one this cannot
+        fix without the ledger.
+
+        `states` is the caller's own `running_states()` reading, passed in rather than read
+        from the cache for the reason above.
+
+        Returns the fresh `/running` set when it waited (the caller's own read is stale by
+        exactly the stop it just waited out), or None when there was nothing to wait for.
+        """
+        if states.get(served_model) != STATE_STOPPING:
+            return None
+        deadline = asyncio.get_running_loop().time() + STOP_SETTLE_TIMEOUT_S
+        while True:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise LocalGatewayError(
+                    f"{served_model} has been stopping for over "
+                    f"{STOP_SETTLE_TIMEOUT_S:.0f}s — refusing to load it on top of a process "
+                    "that is still holding its memory. Try again in a moment."
+                )
+            await asyncio.sleep(STOP_SETTLE_POLL_S)
+            # ONE observation decides both the exit and the answer. Re-reading `state_of` here
+            # would test a cache any concurrent `running()` on this shared client may have
+            # rewritten, and then return a set from a different moment — two observations worn
+            # as one, which puts the stopping model straight back on the resident free pass.
+            polled = await self.running_states()
+            if polled is None:
+                continue  # a dropped poll is not a settled stop; wait for a real reading
+            if polled.get(served_model) != STATE_STOPPING:
+                log.info("local_gateway.stop_settled", model=served_model)
+                return set(polled)
 
     def _drop_cache_for_unannounced(self, resident: set[str]) -> None:
         """Drop the weights cache for any model that became resident without going through
@@ -381,22 +494,43 @@ class LocalGatewayClient:
         slow model, so a ComfyUI render begins with models still holding the pool; and
         `cli.py`'s pre-update unload reporting failure on a success inside `set -e`.
 
-        It also manufactures a `stopping` window: control returns to the caller while the
-        process is genuinely still stopping, which is a state `/running` reports as resident.
-        Every one of the six callers then reasons from a roster that says the model is still
-        there. Widened rather than made unbounded, because a genuinely wedged llama-swap must
-        still surface as an error rather than hanging a request."""
+        An earlier version of this docstring claimed the call "manufactures a `stopping`
+        window: control returns to the caller while the process is genuinely still stopping",
+        and six callers were reasoned about on that basis. It is NOT true of the pinned
+        llama-swap (`60226b6`, v250): `Process.Stop` sets `StateStopped` BEFORE responding
+        (`process_command.go:388` then `:390`), the router's `OnUnload` stops synchronously so
+        that "after Unload returns, the process is stopped" (`fifo.go:258-262`), and only then
+        does the handler write 200 (`apigroup.go:156-158`).
+
+        **A 200 from here means the child is reaped and its memory released.** The `stopping`
+        window is real but comes from elsewhere: a config reload killing every server, a stop
+        another process initiated, or THIS CALL TIMING OUT — a client that gives up early
+        returns to a model that is still stopping, which is precisely what the 3 s timeout
+        used to do against a 10 s graceful stop. Widened rather than made unbounded, because a
+        genuinely wedged llama-swap must still surface as an error rather than hang a
+        request."""
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 30.0), transport=self._transport
             ) as client:
+                if self._reservations is not None:
+                    # Before the call, and it KEEPS THE FULL CHARGE. Discharging on the
+                    # shutdown intent is the one anti-pattern every prior-art scheduler names,
+                    # because the kernel has freed nothing at the moment the request is made.
+                    await self._reservations.draining(served_model)
                 resp = await client.post(f"{self._root}/api/models/unload/{served_model}")
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             await box_events.record(
                 box_events.MODEL_UNLOAD, served_model, status="failed", detail=str(exc)
             )
+            # The rows stay DRAINING and stay charged: a failed unload is a model that may
+            # well still be running, and the TTL sweep is what eventually decides otherwise.
             raise LocalGatewayError(str(exc)) from exc
+        if self._reservations is not None:
+            # CONFIRMED DEATH. This endpoint blocks until each targeted process has stopped, so
+            # a 200 is the one moment this codebase can honestly say the memory is back.
+            await self._reservations.discharge_model(served_model)
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
 
     async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
@@ -406,6 +540,13 @@ class LocalGatewayClient:
         `old.Shutdown()` — killing EVERY running llama-server, not only the one whose setting
         changed. `regen_gateway_config` waits for that reload to land before returning, so by
         the time we get here the casualties are observed fact, not a prediction.
+
+        SURVIVORS ARE THE READY ONES, not everything `/running` lists. `/running` filters only
+        `stopped` and `shutdown`, so a server llama-swap is four seconds into killing is still
+        in that list — and subtracting it as a survivor is how this method came to report an
+        empty casualty list in exactly the case it was written for. `regen_gateway_config`'s
+        wait is a fixed 4 s sleep (llama-swap exposes no reload-done signal to poll), which is
+        nowhere near an 85 GB teardown, so this is the common shape of a casualty.
 
         Why this exists at all: the kill happens INSIDE llama-swap, so nothing writes an
         `app.box_events` row and the vitals surface says nothing. That silence is precisely how
@@ -420,8 +561,21 @@ class LocalGatewayClient:
             model = local_catalog.get_by_served(loading)
             name = model.id if model is not None else loading
             reason = f"the gateway reloaded to apply changed settings for {name}"
-            for served in sorted(before - await self.running() - {loading}):
+            states = await self.running_states()
+            if states is None:
+                # A failed poll is not a casualty list. A phantom eviction row is worse than a
+                # missing one: it teaches the operator to ignore the row that matters.
+                return
+            survived = {n for n, st in states.items() if st != STATE_STOPPING}
+            for served in sorted(before - survived - {loading}):
                 await box_events.record(box_events.MODEL_UNLOAD, served, detail=reason)
+                if self._reservations is not None:
+                    # THE ONE EVICTION NOBODY ELSE REPORTS. llama-swap's reload kills these
+                    # inside itself, so no `unload()` runs and nothing would ever release their
+                    # charges — they would sit RESIDENT until a process restart reconciled them,
+                    # shrinking the budget the whole time. This narration is already the only
+                    # place that knows they died; releasing here is the same fact, acted on.
+                    await self._reservations.discharge_model(served)
 
     async def props(self, served_model: str) -> dict[str, object]:
         """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
@@ -751,6 +905,44 @@ class LocalGatewayClient:
                     self._loading_now = None
                     self._loading.discard(served_model)
 
+    @contextlib.asynccontextmanager
+    async def _reservation(
+        self, served_model: str, model: local_catalog.LocalModel | None, window: int, slots: int
+    ) -> AsyncIterator[None]:
+        """Charge the ledger for the load about to run, and release it if the load fails.
+
+        The declaration is written down ONCE here and never recomputed for this instance —
+        the arithmetic that admitted a model is the arithmetic that protects it. `STARTING`
+        goes in before the load rather than after, because the phase describes what the process
+        is about to do and the TTL sweep needs to know a long load is legitimately in progress.
+
+        RELEASE ON ANY FAILURE, including cancellation: a charge with no process behind it
+        shrinks the budget permanently, and the box would slowly refuse everything. The TTL is
+        the backstop for a process that dies before it gets here, not the mechanism.
+
+        A no-op when no ledger is wired (a cloud-only box, tests, the CLI) or when the model is
+        not in the catalog, because a declaration is the one thing that cannot be guessed."""
+        ledger = self._reservations
+        if ledger is None or model is None:
+            yield
+            return
+        host_gb, device_gb = local_catalog.declared_gb(model, window, slots=slots)
+        charge = await ledger.charge(served_model, host_gb=host_gb, device_gb=device_gb)
+        if charge.instance_id is None:
+            # Only reachable once the ledger is authoritative; in shadow it always charges.
+            # `GpuBudgetError` on purpose rather than a new class: every caller of `load`
+            # already handles it — 409 on the settings screen, a defer in the worker, a
+            # suppression on the restore — so making the ledger speak the language the box
+            # already understands is what lets L2b be a one-line change rather than a sweep.
+            raise gpu_guard.GpuBudgetError(charge.decision.reason)
+        await ledger.advance(charge.instance_id, Phase.STARTING)
+        try:
+            yield
+        except BaseException:
+            await ledger.discharge(charge.instance_id)
+            raise
+        await ledger.advance(charge.instance_id, Phase.RESIDENT)
+
     async def _load_and_warm(
         self,
         served_model: str,
@@ -763,6 +955,7 @@ class LocalGatewayClient:
         load_timeout = max(self._timeout, 120.0)
         model = local_catalog.get_by_served(served_model)
         projected_gb = 0.0
+        window, slots = 0, 1
         if model:
             window, slots = await self._served_shape(model)
             projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
@@ -820,18 +1013,35 @@ class LocalGatewayClient:
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that
         # raises has still read the weights — so claiming it up front, rather than on
-        # success, keeps a failed load from being dropped twice.
+        # success, keeps a failed load from being dropped twice. Ordered before the poll below
+        # for tidiness rather than for safety: `_loading` already covers this window (`load`
+        # adds to it before calling here, and the prune is `_loaded_here &= resident |
+        # _loading`), so the false `unannounced_load` this looks like it prevents was already
+        # prevented.
         self._loaded_here.add(served_model)
 
+        # A stop in flight makes both branches below wrong (see `_settle_a_stopping_model`),
+        # and it is read AFTER `config_regen` because a config reload kills every running
+        # llama-server — so the state this waits on is the one the load will actually meet.
+        states = await self.running_states() or {}
+        resident = set(states)
+        # `is not None`, NOT `or`: an EMPTY set is the most important answer this can give —
+        # the stop landed and the box is now clear — and `or` would discard it for the stale
+        # read that still lists the model as up.
+        settled = await self._settle_a_stopping_model(served_model, states)
+        if settled is not None:
+            resident = settled
+
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
-            try:
-                await _do_load()
-            finally:
-                # `finally`, not the next line: a load that raises has still READ the
-                # weights, so its page-cache copy exists and nothing else will ever drop
-                # it. See the guarded branch below for the measurement that proved it.
-                self._drop_weights_cache(model)
-            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            async with self._reservation(served_model, model, window, slots):
+                try:
+                    await _do_load()
+                finally:
+                    # `finally`, not the next line: a load that raises has still READ the
+                    # weights, so its page-cache copy exists and nothing else will ever drop
+                    # it. See the guarded branch below for the measurement that proved it.
+                    self._drop_weights_cache(model)
+                await self._warm(served_model, system=warm_system, tools=warm_tools)
             return
 
         # ALREADY RESIDENT means there is nothing to admit, so the pre-flight must not run.
@@ -849,7 +1059,7 @@ class LocalGatewayClient:
         # Read AFTER `config_regen` on purpose: a config change reloads llama-swap and kills
         # the running server, so a model resident a moment ago may be gone — and then this
         # reads False and the guard runs, which is correct.
-        if served_model in await self.running():
+        if served_model in resident:
             try:
                 await _do_load()
             finally:
@@ -868,15 +1078,35 @@ class LocalGatewayClient:
         # delta that `_record_measured_footprint` compares against the catalog.
         baseline = await self._gpu_probe.sample()
         gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
+
+        async def _load_then_warm() -> None:
+            # The WARM RUNS INSIDE THE WATCHDOG. It used to sit after `guarded_load` returned,
+            # which left the phase that allocates the KV cache and the graph-capture buffers
+            # with nothing sampling the device pool — MEASURED at 118 s of a 198 s cold
+            # gpt-oss-120b, so roughly 60% of a cold load was unwatched, and it was the 60%
+            # doing the allocating. The pre-flight already admitted the full footprint (weights
+            # + KV + projector), so `guarded_load`'s ceiling covers the warm as it stands; only
+            # the watching stopped early.
+            await _do_load()
+            # Between the load and the warm, exactly where it was: the warm's allocations
+            # should meet the memory this returns rather than race it. See
+            # `_drop_weights_cache`.
+            self._drop_weights_cache(model)
+            await self._warm(served_model, system=warm_system, tools=warm_tools)
+
         try:
-            await gpu_guard.guarded_load(
-                _do_load,
-                probe=self._gpu_probe,
-                projected_gb=projected_gb,
-                target=served_model,
-                abort=lambda: self.unload(served_model),
-            )
-        finally:
+            # The reservation wraps the WATCHDOG, not the other way round: an aborted load has
+            # its charge released by the same failure path as any other, and the abort's unload
+            # runs inside the charge rather than after it has gone.
+            async with self._reservation(served_model, model, window, slots):
+                await gpu_guard.guarded_load(
+                    _load_then_warm,
+                    probe=self._gpu_probe,
+                    projected_gb=projected_gb,
+                    target=served_model,
+                    abort=lambda: self.unload(served_model),
+                )
+        except BaseException:
             # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
             # weight file — while a successful 16.8 GB load left it unchanged. The drop
             # works; it simply never ran here, because `guarded_load` raises
@@ -891,8 +1121,16 @@ class LocalGatewayClient:
             # `abort` unloads the model before this runs, so llama-server has released the
             # file and its folios are unlocked — which is what makes the drop effective
             # here rather than racing an in-flight read.
+            #
+            # UNCONDITIONAL, and on `except` rather than `finally`. A flag that skipped this
+            # when the inner drop had already run got the one path that matters backwards: a
+            # breach DURING THE WARM drops inside `_load_then_warm` while llama-server still
+            # holds the weight file, and then `abort()` unloads — so the only effective drop
+            # would be the one the flag suppressed. Dropping twice on that path costs a second
+            # sweep of `posix_fadvise` calls over already-evicted files; not dropping once
+            # strands the whole weight file in `Cached`, which is the ratchet above.
             self._drop_weights_cache(model)
-        await self._warm(served_model, system=warm_system, tools=warm_tools)
+            raise
         # After the warm on purpose: its prefill allocates KV and capture buffers that a
         # served model holds for its whole life, so they belong in the measured cost.
         self._record_measured_footprint(

@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from jbrain.llm import gpu_guard, local_catalog, local_gateway
-from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.llm.local_gateway import STATE_READY, LocalGatewayClient
 
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
 
@@ -156,6 +156,127 @@ async def test_a_load_that_balloons_mid_flight_is_aborted_and_unloaded() -> None
         await gateway.load("qwen3.8-27b-q4")
     assert "aborted" in str(exc.value)
     assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
+
+
+@pytest.mark.anyio
+async def test_a_balloon_during_the_WARM_is_caught_too() -> None:
+    """The warm-up runs INSIDE the watchdog, not after it.
+
+    The warm is not an epilogue: its prefill is what allocates the KV cache and the
+    graph-capture buffers, and it MEASURED at 118 s of a 198 s cold gpt-oss-120b. With the
+    warm outside `guarded_load`, roughly 60% of a cold load — the 60% doing the allocating —
+    ran with nothing sampling the device pool, so a balloon that appeared at prefill was seen
+    by nobody and the freeze it could cause needs a power cycle.
+
+    The probe here is roomy for the pre-flight, the watchdog's baseline AND the settled check
+    that follows a load. It only balloons once the warm is under way, so this fails outright
+    against a build that stops watching when the weights are read."""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if "chat/completions" in request.url.path:
+            await asyncio.sleep(5.0)  # the prefill: slow, and where the balloon appears
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    probe = _StubProbe(_mem(10.0), _mem(10.0), _mem(10.0), _mem(118.0))
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe, timeout=30.0
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError) as exc:
+        await gateway.load("qwen3.8-27b-q4")
+    assert "aborted" in str(exc.value)
+    assert any("/health" in path for path in seen), "the weights read never ran: " + repr(seen)
+    assert any("chat/completions" in path for path in seen), (
+        "the warm never started, so this proves nothing about watching it: " + repr(seen)
+    )
+    assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
+
+
+@pytest.mark.anyio
+async def test_an_abort_during_the_WARM_still_drops_the_cache_after_the_unload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The page-cache drop must FOLLOW `abort()`'s unload, on the warm's breach path too.
+
+    An aborted load strands the entire weight file in `Cached` — MEASURED at +4.29 GiB for a
+    4.3 GB model — and `read_memory_gb` counts page cache as USED, so a stranded copy shrinks
+    the apparent headroom, which makes the next load likelier to abort, which strands more. The
+    drop only works once llama-server has released the file, i.e. after the unload.
+
+    Moving the warm inside the watchdog created a path where that ordering could invert: the
+    drop between the load and the warm has already run when a breach fires DURING the warm, and
+    a flag that skipped the post-abort drop as redundant would leave the only effective one
+    unrun. Dropping twice costs a second sweep over already-evicted files; skipping the second
+    costs the ratchet."""
+    order: list[str] = []
+
+    def _record_drop(models_dir: str, model_id: str) -> float:
+        order.append("drop")
+        return 0.0
+
+    monkeypatch.setattr(local_gateway.local_weights, "drop_weights_page_cache", _record_drop)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "/unload/" in request.url.path:
+            order.append("unload")
+        if "chat/completions" in request.url.path:
+            await asyncio.sleep(5.0)  # the prefill, and where the balloon appears
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    probe = _StubProbe(_mem(10.0), _mem(10.0), _mem(10.0), _mem(118.0))
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=httpx.MockTransport(handler),
+        gpu_probe=probe,
+        timeout=30.0,
+        models_dir=str(tmp_path),  # without this the drop is a no-op and proves nothing
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("qwen3.8-27b-q4")
+
+    assert "unload" in order, f"the abort never unloaded: {order}"
+    assert order.index("unload") < len(order) - 1 and order[-1] == "drop", (
+        f"nothing dropped the weights cache after the unload released the file: {order}"
+    )
+
+
+@pytest.mark.anyio
+async def test_the_stop_settle_ignores_the_shared_state_cache_entirely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One observation must decide both when to stop waiting and what the answer is.
+
+    `state_of` reads `_last_states`, which is PROCESS-GLOBAL on a client that is shared —
+    `warm_keeper` reconciles on its own loop against the same instance, so between this loop's
+    poll returning and a cache read, somebody else's poll can have rewritten it. A settle that
+    exited on that write and then returned its own older snapshot would be wearing two
+    observations as one, and the snapshot still lists the stopping model — putting it straight
+    back on the already-resident free pass this exists to close.
+
+    So the concurrent writer is simulated exactly: every poll leaves behind a cache saying
+    `ready` while returning the truth. Nothing may read that cache."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    gateway = LocalGatewayClient("http://gw", transport=_transport())
+    polls = 0
+
+    async def _polls_with_an_interloper() -> dict[str, str]:
+        nonlocal polls
+        polls += 1
+        truth = {"gpt-oss-120b": "stopping"} if polls <= 2 else {}
+        # What a concurrent `running()` on this shared client leaves behind mid-loop.
+        gateway._last_states = {"gpt-oss-120b": STATE_READY}
+        return truth
+
+    monkeypatch.setattr(gateway, "running_states", _polls_with_an_interloper)
+    gateway._last_states = {"gpt-oss-120b": STATE_READY}
+
+    settled = await gateway._settle_a_stopping_model("gpt-oss-120b", {"gpt-oss-120b": "stopping"})
+
+    assert polls == 3, f"it exited on the interloper's cache write, after {polls} poll(s)"
+    assert settled == set(), (
+        f"it returned a set from a different moment than the one it exited on: {settled}"
+    )
 
 
 def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:
@@ -671,6 +792,76 @@ async def test_a_model_that_is_not_resident_is_still_admitted_first() -> None:
         await gateway.load("gpt-oss-120b")
 
 
+@pytest.mark.anyio
+async def test_a_model_that_is_STOPPING_does_not_get_the_resident_free_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The already-resident escape hatch must not swallow a model on its way OUT.
+
+    llama-swap's `/running` filters only `stopped` and `shutdown`, so a model it is in the
+    middle of stopping is still listed there — and the branch above reads that list. Taking it
+    for a stopping model skips the device pre-flight AND the watchdog, and then issues a health
+    GET that makes llama-swap launch a fresh process: an unguarded load, which on this box is
+    the power-cycle path.
+
+    The fix WAITS for the stop rather than re-deciding on the state name (asking for room while
+    the dying model's footprint is still charged double-counts it — the error three earlier
+    attempts made). So the load here must reach the guard, and be refused by it: the box is
+    full, and a stopping model buys no exemption from that."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    probe = _StubProbe(_mem(124.0 - local_catalog.load_footprint_gb(model) + 1.0))
+    polls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if request.url.path == "/running":
+            polls += 1
+            # Stopping for the first two reads, then the process is reaped and gone.
+            listed = [{"model": "gpt-oss-120b", "state": "stopping"}] if polls <= 2 else []
+            return httpx.Response(200, json={"running": listed})
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=probe
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("gpt-oss-120b")
+    assert probe.calls >= 1, "the guard never ran — the stopping model took the resident branch"
+    assert polls > 1, "it never waited for the stop to land"
+
+
+@pytest.mark.anyio
+async def test_a_stop_that_never_lands_is_refused_rather_than_loaded_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timeout's fallthrough is a REFUSAL, because the only other fallthrough is the
+    unguarded load this exists to prevent. Retryable by design — the caller's next attempt
+    meets a settled box — so it must not be a `GpuBudgetError`, which reads as 'this box
+    cannot hold this model'."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/running":
+            return httpx.Response(
+                200, json={"running": [{"model": "gpt-oss-120b", "state": "stopping"}]}
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    gateway = LocalGatewayClient(
+        "http://gw", transport=httpx.MockTransport(handler), gpu_probe=_StubProbe(_mem(10.0))
+    )
+    with pytest.raises(local_gateway.LocalGatewayError, match="stopping"):
+        await gateway.load("gpt-oss-120b")
+    assert not any("/health" in path for path in seen), (
+        "it issued the health GET anyway, which is what makes llama-swap relaunch: " + repr(seen)
+    )
+
+
 def _admitted_load_calls() -> list[tuple[pathlib.Path, ast.Call, str]]:
     """Every call to the two shared warm helpers, with the `residency` it passes."""
     found: list[tuple[pathlib.Path, ast.Call, str]] = []
@@ -731,7 +922,7 @@ def test_production_never_wires_an_inert_residency() -> None:
     """`ResidencyWiring.inert()` fills every switch with its do-nothing fallback, which is what
     tests and a cloud-only build want. It is also a way to satisfy the required-argument
     constructor without wiring anything — the half-wired gate all over again, one call shorter.
-    Production says all eleven or it does not build."""
+    Production names every switch or it does not build."""
     users = []
     for path in _SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -750,3 +941,54 @@ def test_production_never_wires_an_inert_residency() -> None:
         + " — inert() is for tests and cloud-only builds. A real box must name every switch, so "
         + "that a missing one is a pyright error rather than a gate that admits everything."
     )
+
+
+def test_a_no_room_refusal_defers_the_job_rather_than_burning_a_retry() -> None:
+    """A job that cannot get memory should wait for memory, not exhaust its retry budget
+    against it.
+
+    `ResidencyError` already deferred. `GpuBudgetError` — the same answer from the device
+    pre-flight rather than the host projection — fell through to the generic
+    `except Exception` handler, which FAILS the job and burns an attempt. A box briefly full
+    could therefore exhaust a job's retries without the job ever being wrong.
+
+    Structural rather than behavioural: the handler lives inside the worker's job loop, which
+    needs a live queue to drive, and nothing exercises those clauses today (the behavioural
+    test belongs with the integration suite). What this pins is the part that regressed — WHICH
+    exceptions reach the defer, and that the defer still precedes the catch-all."""
+    src = (_SRC / "worker.py").read_text()
+    tree = ast.parse(src)
+
+    defer_handlers = [
+        h
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        for h in node.handlers
+        if "queue.defer" in ast.unparse(h)
+    ]
+    assert defer_handlers, "no handler defers a job any more — the no-room path is gone"
+
+    caught: set[str] = set()
+    for handler in defer_handlers:
+        if handler.type is None:  # a bare `except:` catches everything and names nothing
+            continue
+        named = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        caught |= {ast.unparse(t).rsplit(".", 1)[-1] for t in named}
+    assert {"ResidencyError", "GpuBudgetError"} <= caught, (
+        f"the defer handler catches {sorted(caught)} — a refusal it misses fails the job "
+        "and burns a retry attempt instead of waiting for the box to have room"
+    )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        names = [ast.unparse(h.type) if h.type else "bare" for h in node.handlers]
+        if any("queue.defer" in ast.unparse(h) for h in node.handlers):
+            deferring = next(
+                i for i, h in enumerate(node.handlers) if "queue.defer" in ast.unparse(h)
+            )
+            catch_alls = [i for i, n in enumerate(names) if n in ("Exception", "bare")]
+            assert all(i > deferring for i in catch_alls), (
+                "a catch-all precedes the defer handler, so a no-room refusal is swallowed "
+                "as a generic failure before it can defer"
+            )

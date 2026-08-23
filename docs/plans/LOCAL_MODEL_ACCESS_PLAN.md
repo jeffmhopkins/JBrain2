@@ -166,6 +166,106 @@ and llama-swap relaunches it — no guard, no event. It is reachable *through* t
 the AST test nor any call-site audit finds it. Same shape satisfies `model_already_loaded`
 (`preconditions.py:44-71`), which is the precondition that did not defer at 22:41.
 
+**The 17 `running()` reads, classified — done 2026-08-22, ahead of step 2.**
+
+Attempting the "collapse to one `resident`" item first showed that it is under-specified as
+written: a SINGLE accessor cannot serve these callers, because two of them want opposite
+things. `_loaded_ids` feeds the owner's load indicator and must keep showing a model that is
+still loading (blanking it is this wave's stated hazard); `preconditions.check()` must not
+count a model on its way out (that is the bug that let a model serve an hourly sweep with no
+load event). So the collapse IS the split, and the only part separable from the measurement is
+deciding what each caller is actually asking. That is below, read from each call site.
+
+| site | the question it is really asking | wants |
+|---|---|---|
+| `preconditions.check` | can this serve the job **now**? | **ready** — the 22:41 miss |
+| `residency._plan` (already-resident) | may we skip admission? | **ready** — §E's stale read |
+| `residency.ensure_room` fast path | is it already serving? | **ready** |
+| `residency.ensure_room` hold branch | is it already serving? | **ready** |
+| `residency._restore` | is this member back already? | **ready** — a stopping model is not back |
+| `warm_keeper.reconcile_once` (cold?) | is the primary servable? | **ready** |
+| `warm_keeper` (prime survived?) | is our prefix still live? | **ready** |
+| `external_llm` proxy | can it serve this call? | **ready** |
+| `jcode` route | can it serve the session? | **ready** |
+| `llm_settings._loaded_ids` | what do we SHOW the owner? | **broad** — a loading model must stay on screen |
+| `llm_settings` context-window change | is there a process to unload? | **broad** — unloading a stopping model is harmless; missing one strands a stale window |
+| `llm_settings` window reconcile loop | which need a reload? | **broad** — same |
+| `llm_settings` mark-unavailable | is there memory to free? | **broad** — same |
+| `image_gen/render` | what holds memory to evict? | **broad** |
+| `smoketest` (×2) | memory accounting | **broad** |
+| `cli.local-llm-unload` | what to release before an update? | **broad** — must catch a stopping model too |
+
+Nine **ready**, eight **broad**. The rule that falls out: *asking permission to use a model
+wants `ready`; accounting for memory or telling the owner what is there wants the broad set.*
+`_parse_running_states` already carries the state field, so the gateway can answer both without
+a second round trip. What still waits on the box is whether the skip is real and how often —
+not which accessor each caller needs.
+
+**MEASURED AND CONFIRMED, 2026-08-22 on `be1961a`.** §E is no longer a hypothesis.
+
+*Run 1 — a cold load, which could not answer the question.* Box empty (8.3/121.2 GB), cold load
+of gpt-oss-120b: 200 in 104 s, counter **0**. That zero proves nothing: all three short circuits
+require the model to already be in `running()`, so an empty box cannot reach any of them. It did
+land other data — `footprint_measured` predicted 68.55 / measured 69.26 (**+0.71 GB, and UNDER**,
+where the standing concern was over-prediction), page cache flat through a 57.6 GB read.
+
+*Run 2 — the stopping-window race, which did.* `qwen3.8-27b-q4` resident (the model every task
+routes to); unload fired, and a real `agent.turn` completion fired 1 s behind it. The unload took
+**11.0 s**, confirming llama-swap's 10 s graceful stop. The log, verbatim in order:
+
+| t | event | |
+|---|---|---|
+| 18:31:22.910 | `local_gateway.not_ready_in_running` | `/running` lists it, state **`stopping`** |
+| 18:31:23.320 | `residency.short_circuit_not_ready` | admission SKIPPED — **`at=fast_path`**, state `stopping` |
+| 18:31:32.788 | `llm.retry` status **502** | the completion reached llama-swap, which had stopped it |
+| 18:31:32.790 | `local_gateway.not_ready_in_running` | state **`starting`** — relaunched on demand, unguarded |
+
+Every link predicted by §E, plus one that was not: the turn does not fail, it takes a **502 and a
+retry**, so the owner-visible symptom is a ~10 s stall rather than an error. The completion
+returned 200 after 20.3 s.
+
+**It is `fast_path`, not `_plan`.** The lock-free already-resident short circuit in `ensure_room`
+is what fires; `_plan` never gets the chance. Step 2 should start there.
+
+**STEP 2 WAS ATTEMPTED AND WITHDRAWN, 2026-08-22.** Four cold researchers (upstream
+semantics, design, prior art, a fresh call-site inventory), none of which saw the attempt,
+independently condemned its approach. Recorded here so it is not tried again.
+
+The attempt split `running()` into `ready()`/`present()` and, where a model was mid-stop,
+subtracted its footprint from the projection (`predicted = used + target_gb - reclaimed`).
+Dropped commits, recoverable from the remote reflog: `7866ea9`, `75a5e6f`, `451223f`,
+`080a0f6`.
+
+It is not merely fragile; it is three named anti-patterns, each with a documented failure:
+
+| what the attempt did | the anti-pattern | the record |
+|---|---|---|
+| subtracted a stopping model's memory before it was released | **optimistic release** — discharging on shutdown *intent*, not confirmed death | "the one that OOMs the box". Kubernetes considered releasing at exactly this point (issue #96515) and **closed it without implementing**; it holds the full charge until the pod is gone |
+| `predicted = used + target_gb` — a measured aggregate plus a catalog prediction | **level-triggered desired-vs-actual comparison** | KEP-1287: the kubelet "cannot reliably compare desired & actual resources", and adds a fourth ledger level purely to avoid it |
+| credited the target's CURRENT-config footprint against a process running its OLD config | **assuming footprint is stable across a restart** | the correct rule is `max(old, new)` for the whole restart window — and a config change is the commonest reason a model is stopping |
+
+Three review rounds found the same double-count at three different layers (`_plan`/`starting`,
+`_plan`/`stopping`, then the device pre-flight) because the arithmetic was wrong in a way that
+reappears wherever it is applied. The full suite was green for all three.
+
+**Two upstream facts the attempt was built on turned out to be false**, both established from
+llama-swap at the pinned commit `60226b6`:
+
+- `local_gateway.py`'s claim that `unload()` "manufactures a `stopping` window: control returns
+  to the caller while the process is genuinely still stopping" is **not true of v250**.
+  `setState(StateStopped)` precedes the response, which precedes the 200. A successful unload
+  means the child is reaped and its memory released. The window comes from config reloads,
+  concurrent stops, and OUR OWN client timing out early — not from the call returning.
+- llama-swap already serializes correctly. `EnsureReady` **waits out a stop and then starts**,
+  with the synchronisation inside the process's run loop. Upstream added it deliberately
+  (issue #946) with the comment "Callers must not inspect State() first — that read races the
+  run loop", which is the exact class of bug the attempt kept writing.
+
+**What replaces it** is a reservation ledger, specified in `LOCAL_MODEL_LEDGER_PLAN.md`. The
+key structural point: one row per model INSTANCE with a host column and a device column, so
+double-counting across the two budget layers cannot be expressed — rather than being corrected
+arithmetically at each layer, which is what failed here.
+
 **Two steps, in this order, and the first is one line:**
 
 1. **Log the short-circuit with the state llama-swap actually reported.** This is the measurement

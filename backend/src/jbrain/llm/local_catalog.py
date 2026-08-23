@@ -1235,6 +1235,48 @@ def load_footprint_gb(model: LocalModel, window: int | None = None, *, slots: in
     return round(total, 2)
 
 
+def declared_gb(
+    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
+) -> tuple[float, float]:
+    """The reservation ledger's two columns for one instance: (host_gb, device_gb).
+
+    THE ONE PLACE A DECLARATION IS COMPUTED. The ledger charges a row at intent and holds that
+    charge, unchanged, for the instance's whole life — so this number is not an estimate the
+    system revisits, it is the promise the box is then protected by. Derived here rather than at
+    the call sites because a second derivation is a second answer, and eight uncoordinated
+    memory budgets is the state this work exists to end.
+
+    THE SPLIT IS REAL EVEN THOUGH THE POOL IS ONE. On Strix Halo the iGPU draws GTT from system
+    RAM, so every device byte is also a host byte — device is a SUBSET of host, never a second
+    pool to add on. What distinguishes them is what is host-ONLY: today that is the context
+    checkpoints (`common_prompt_checkpoint` holds `std::vector<uint8_t>`, CONFIRMED on the box —
+    raising the count from 2 to 16 left GTT unchanged to the centibyte), plus `--cache-ram`,
+    which is carried in the sum but currently contributes NOTHING because `CACHE_RAM_GB` is 0.0
+    — it is here so that flipping the serving flag moves this number with it, not because it is
+    doing work today. Those cost host RAM and add nothing to the GTT cap pressure that is this
+    box's documented hang mode, so charging them to the device column would refuse loads that
+    are safe, and charging them to neither is how the host ran out while GTT looked
+    comfortable.
+
+    The vision attention buffer is counted at its RESIDENT size, not the load-time warmup size
+    `load_footprint_gb` uses. That difference is deliberate and points the other way from the
+    usual: a pre-flight asks "what will be allocated in the next three minutes", where the
+    warmup cap is right; a reservation asks "what will this instance be holding for its whole
+    life", and `ggml_gallocr_reserve_n_impl` only ever grows the allocation — a smaller later
+    image releases nothing. Declaring the warmup figure would silently under-reserve every
+    vision model from its first real image onward."""
+    device = (
+        (disk_gb if disk_gb is not None else model.size_gb)
+        + _kv_gb(model, window, slots)
+        + _runtime_overhead_gb(model)
+        + _vision_resident_gb(model)
+    )
+    host_only = (
+        model.checkpoint_gb * ctx_checkpoints(model.checkpoint_gb) * model.effective_slots(slots)
+    ) + CACHE_RAM_GB
+    return round(device + host_only, 2), round(device, 2)
+
+
 def recommended_ids() -> tuple[str, ...]:
     """The default-enabled set the install prompt offers first."""
     return tuple(m.id for m in CATALOG if m.recommended)
