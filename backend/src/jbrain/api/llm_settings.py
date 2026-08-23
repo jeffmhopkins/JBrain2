@@ -286,7 +286,10 @@ class LoadPlanOut(BaseModel):
     # commit would 409). The screen disables "Load" and says why.
     over_box: bool
     victims: list[EvictionVictimOut]
-    # Measured used memory now, projected used after the load, the free-RAM floor, total.
+    # Model memory now and projected after the load, the free-RAM floor, and total. With
+    # the ledger wired (production) these are DECLARED charge sums — the same numbers the
+    # admission decides on and the memory bar draws — not a whole-box measurement; only
+    # the no-ledger fallback planner reports measured used here.
     resident_gb: float
     projected_gb: float
     ceiling_gb: float

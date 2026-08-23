@@ -23,8 +23,13 @@ post-mortem lives at `warm_keeper.py`'s prime step):
   - It was inert-by-construction on the recurrent hybrids (restore clears the context
     checkpoints that are their only prefix-reuse mechanism) — they are refused up front,
     as are speculative entries, whose draft state no slot file captures.
-  - Its files could only be pruned by a deploy. Here each save prunes its model's stale
-    fingerprints, so the cost is one ~2 GiB file per model, not a graveyard.
+  - Its files could only be pruned by a deploy. Here the store holds itself to an
+    owner-set byte budget (`MAX_STORE_BYTES`), evicting least-recently-USED files — a
+    restore refreshes its file's clock — so every config the operator flips between
+    (slot count, window) keeps its ~2 GiB file warm and only genuinely unused ones age
+    out, not a graveyard and not a re-prefill on every config flip either (the
+    one-file-per-model policy this replaces charged a full prefill each time the owner
+    toggled the interactive slot, observed live 2026-08-23).
 
 WHAT "/slots" ACTUALLY REPORTS (verified against llama.cpp server source, 2026-08-23,
 by the adversarial review of this module's first draft): an idle slot's `n_prompt_tokens`
@@ -50,9 +55,9 @@ The FINGERPRINT is the validity rule: sha256 over the model's rendered launch li
 back from llama-swap.yaml — the same source `served_shape_from_config` trusts, because it
 cannot disagree with what the server executes) plus the exact system text and tool schema
 the prime sent. Any change that could make a saved state stale — window, slots, extra
-args, a new build's flags, a persona or tool edit — moves the filename, and the stale file
-is pruned on the next save. Everything here is best-effort: the worst case of any failure
-is the prefill that would have happened anyway.
+args, a new build's flags, a persona or tool edit — moves the filename, and files nobody
+uses again age out of the byte budget. Everything here is best-effort: the worst case of
+any failure is the prefill that would have happened anyway.
 """
 
 from __future__ import annotations
@@ -82,6 +87,13 @@ AGENT_TURN_TASK = "agent.turn"
 # ~29k tokens, and v1's garbage files restored a few hundred. Falling back to the
 # prefill is strictly better than trusting a stub.
 MIN_PREFIX_TOKENS = 4096
+
+# The whole `.kvslots` tree's disk allowance — the trade the owner chose on 2026-08-23
+# (25 GiB of hard drive for prompt caches; changing it is a release, there is no knob).
+# Files are ~2.2 GiB each, so this holds every config the operator actually flips between
+# with room to spare; past it, the least-recently-USED file goes first (mtime is the clock
+# — restores, primes and saves all touch it — because atime is unreliable under noatime).
+MAX_STORE_BYTES = 25 * 1024**3
 
 _SLOT_FILE_SUFFIX = ".kvslot"
 
@@ -192,7 +204,11 @@ class KvPrefixStore:
         fingerprint, save_dir = resolved
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         if await asyncio.to_thread(os.path.exists, path):
-            return True  # this exact prefix is already on disk — a save is a 2 GiB write
+            # This exact prefix is already on disk — skip the 2 GiB write, but the prime
+            # that got us here is still a USE: refresh the LRU clock, or a config that
+            # stays hot in RAM for weeks reads as the store's stalest file.
+            await asyncio.to_thread(self._touch, path)
+            return True
         try:
             slots = await self._gateway.slots(served_model)
         except LocalGatewayError as exc:
@@ -236,16 +252,18 @@ class KvPrefixStore:
         n_saved = resp.get("n_saved")
         if n_saved != prime_tokens:
             # The slot moved under the save, or the server saved something else. The file
-            # on disk is NOT the prime — remove it, or a later restore trusts it.
+            # on disk is NOT the prime — remove it, or a later restore trusts it. Only THIS
+            # file: other configs' files were saved under their own verified counts and a
+            # bad write here says nothing about them.
             log.warning(
                 "kv_prefix.save_mismatch",
                 model=served_model,
                 expected=prime_tokens,
                 n_saved=n_saved,
             )
-            await asyncio.to_thread(self._prune, save_dir, None)
+            await asyncio.to_thread(self._remove_quietly, path)
             return False
-        await asyncio.to_thread(self._prune, save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
+        await asyncio.to_thread(self._prune_to_budget, path)
         await box_events.record(
             box_events.KV_PREFIX_SAVED,
             served_model,
@@ -259,14 +277,47 @@ class KvPrefixStore:
         with contextlib.suppress(OSError):
             os.remove(path)
 
-    def _prune(self, folder: str, keep: str | None) -> None:
-        """Runs in a thread (asyncio.to_thread) — plain blocking fs on purpose."""
-        try:
-            for name in os.listdir(folder):
-                if name.endswith(_SLOT_FILE_SUFFIX) and name != keep:
-                    os.remove(os.path.join(folder, name))
-        except OSError:
-            pass  # a missing dir or a busy file is not worth failing a save over
+    def _touch(self, path: str) -> None:
+        """Runs in a thread — bump the file's mtime, the LRU clock a restore refreshes."""
+        with contextlib.suppress(OSError):
+            os.utime(path, None)
+
+    def _prune_to_budget(self, keep_path: str) -> None:
+        """Runs in a thread (asyncio.to_thread) — plain blocking fs on purpose.
+
+        Hold the whole `.kvslots` tree at or under MAX_STORE_BYTES by deleting
+        least-recently-used files (oldest mtime first), across every model's folder. The
+        just-saved file is never a candidate, whatever its mtime — deleting the thing the
+        save just verified would turn a full store into a store that forgets its newest
+        state. Files an operator parked outside the standard tree (a --slot-save-path
+        override) are simply not this budget's to manage.
+
+        The keep-path guard protects only THIS process's save: today that is sound
+        because exactly one KvPrefixStore exists (the api's — the worker wires none), but
+        a second store pruning concurrently could evict the first's fresh file. If a
+        store ever grows into another process, this needs a cross-process story first."""
+        root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
+        entries: list[tuple[float, int, str]] = []
+        total = 0
+        for folder, _dirs, names in os.walk(root):
+            for name in names:
+                if not name.endswith(_SLOT_FILE_SUFFIX):
+                    continue
+                path = os.path.join(folder, name)
+                # Per-file, so one entry vanishing between listdir and stat skips that
+                # entry rather than silently abandoning the whole prune round.
+                with contextlib.suppress(OSError):
+                    stat = os.stat(path)
+                    total += stat.st_size
+                    if os.path.abspath(path) != os.path.abspath(keep_path):
+                        entries.append((stat.st_mtime, stat.st_size, path))
+        entries.sort()
+        for _mtime, size, path in entries:
+            if total <= MAX_STORE_BYTES:
+                break
+            with contextlib.suppress(OSError):
+                os.remove(path)
+                total -= size
 
     # ---- restore --------------------------------------------------------------------
 
@@ -312,7 +363,13 @@ class KvPrefixStore:
             threshold = prime if prime is not None else MIN_PREFIX_TOKENS
             occupied = [s for s in slots if isinstance(s, dict)]
             if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
-                return False  # something prefix-sized is cached — never restore over it
+                # Something prefix-sized is cached — never restore over it. This branch is
+                # ALSO the only one a healthy hot config ever reaches (the keeper's settled
+                # tick lands here every minute), so it must refresh the LRU clock: without
+                # this touch the hottest config's file keeps its boot-time mtime and is the
+                # FIRST out of the budget (adversarial review, 2026-08-23).
+                await asyncio.to_thread(self._touch, path)
+                return False
             idle = [s for s in occupied if not s.get("is_processing")]
             if not idle:
                 return False  # every slot busy — restoring now would fight a live request
@@ -354,6 +411,9 @@ class KvPrefixStore:
                 # First restore of this process life (a boot): adopt the restored count as
                 # the prime size so slot identification works before any prime has run.
                 self._prime_tokens[served_model] = n_restored
+            # A restore IS a use: refresh the file's mtime so the budget prune keeps the
+            # caches that earn their disk and ages out the ones nothing restores.
+            await asyncio.to_thread(self._touch, path)
             # The slot will report NO size until a request uses it — remember the restore,
             # or every keeper tick re-streams the same 2 GiB until the first message.
             self._restored_unused.add(served_model)

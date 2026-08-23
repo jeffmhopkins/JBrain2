@@ -663,6 +663,9 @@ async def run() -> None:
             # to invalidate. Named rather than omitted: this is the last way the worker's
             # gate differs from the api's, and it should be visible at the wiring.
             on_prefix_lost=None,
+            # The SAME ledger instance this process's gateway charges through, so the worker's
+            # eviction plans and its admission verdicts come from one arithmetic (L3).
+            ledger=worker_reservations,
         ),
     )
     router = build_router(

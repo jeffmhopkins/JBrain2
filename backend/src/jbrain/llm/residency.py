@@ -48,17 +48,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import admission, gpu_guard, local_catalog
+from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import STATE_READY, LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
 log = structlog.get_logger()
 
-# A box-wide critical section around evict+load. `ResidencyCoordinator` is a PER-PROCESS
-# evictor, so the api and the worker each hold the free-RAM floor on their own — two loads
-# in different processes can both read low memory, both skip eviction, and co-load past the
-# floor (the deferred-video-vs-chat race). A cross-process lock serializes the load path so
-# only one process evicts+loads at a time. Returns an async context manager; `None` (the
-# default) means no locking — single-process/cloud/test callers keep the old behavior.
+# A box-wide critical section around the EVICTION DECISION and the evictions themselves —
+# never a load. `ResidencyCoordinator` is a PER-PROCESS evictor, so the api and the worker
+# each hold the free-RAM floor on their own — two loads in different processes can both read
+# low memory, both skip eviction, and co-load past the floor (the deferred-video-vs-chat
+# race). The lock serializes the deciding; the LOAD then runs unlocked, protected by the
+# ledger's charge row instead — holding this key across a load is what self-deadlocked the
+# box on 2026-08-23, because the charge takes the same key on a second pooled connection.
+# Returns an async context manager; `None` (the default) means no locking —
+# single-process/cloud/test callers keep the old behavior.
 BoxLock = Callable[[], "contextlib.AbstractAsyncContextManager[None]"]
 # The non-blocking form: yields whether the lock was taken. See `pg_box_try_lock`.
 BoxTryLock = Callable[[], "contextlib.AbstractAsyncContextManager[bool]"]
@@ -83,7 +87,9 @@ def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:
     one lock that spans the api and worker processes (an asyncio.Lock is per-process). The
     transaction-level variant auto-releases when the txn ends (even if the pooled connection
     is reused) and when the holding process dies, so a crash can never leak the lock. Held
-    only across a model's evict+load, which is seconds and infrequent."""
+    only across a model's eviction decision and unloads, which is seconds and infrequent —
+    NEVER across a load: `ledger.charge` takes this same key on its own connection, so a
+    holder that loads inside the lock refuses its own admission (the 2026-08-23 incident)."""
 
     @contextlib.asynccontextmanager
     async def _lock() -> AsyncIterator[None]:
@@ -239,6 +245,8 @@ def dbless_coordinator(settings: object) -> ResidencyCoordinator:
             box_try_lock=None,
             on_prefix_lost=None,
             gpu_probe=probe,
+            # No database -> no ledger -> the measured+predicted fallback planner.
+            ledger=None,
         ),
     )
 
@@ -281,7 +289,8 @@ class ResidencyWiring:
     hold_loader: HoldLoader | None
     # The operator's end-of-turn RESTORE switch. Absent -> on, the long-standing behaviour.
     auto_restore_loader: Callable[[], Awaitable[bool]] | None
-    # Cross-process serialization of evict+load. None -> evict only, client triggers the load.
+    # Cross-process serialization of the eviction decision (never the load — see pg_box_lock).
+    # None -> evict only, client triggers the load.
     box_lock: BoxLock | None
     # The non-blocking form, used ONLY by `_restore`. None → restore runs unserialized, which
     # is today's behaviour and is what a DB-less build gets.
@@ -290,6 +299,12 @@ class ResidencyWiring:
     on_prefix_lost: PrefixLostHook | None
     # Reads the iGPU's DEVICE memory (GTT). None -> the prior unguarded behaviour.
     gpu_probe: gpu_guard.GpuMemProbe | None
+    # THIS process's reservation ledger — the same instance the gateway charges through.
+    # Wired, `_plan` decides evictions with the ledger's own arithmetic (declared rows,
+    # min-ed with the measurement), so "whom must I evict" and "will the charge admit"
+    # are one calculation. None (DB-less CLIs, cloud-only, tests) falls back to the
+    # measured+predicted planner — the last place that duplicate survives (L3).
+    ledger: ReservationLedger | None
 
     @classmethod
     def inert(
@@ -307,6 +322,7 @@ class ResidencyWiring:
         box_try_lock: BoxTryLock | None = None,
         on_prefix_lost: PrefixLostHook | None = None,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        ledger: ReservationLedger | None = None,
     ) -> ResidencyWiring:
         """A gate wired to do nothing, for tests and cloud-only builds. Named rather than
         implied: production code may not call this, and a guard test holds that."""
@@ -323,6 +339,7 @@ class ResidencyWiring:
             box_try_lock=box_try_lock,
             on_prefix_lost=on_prefix_lost,
             gpu_probe=gpu_probe,
+            ledger=ledger,
         )
 
 
@@ -364,10 +381,11 @@ class ResidencyCoordinator:
         # diagnosing the box "nothing loads unless I say so" has to be reachable from the
         # PWA. Absent loader → on, the long-standing behaviour.
         self._auto_restore_loader = wiring.auto_restore_loader
-        # Cross-process serialization of the evict+load path (pg_box_lock in production).
+        # Cross-process serialization of the eviction decision (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
-        # Set → hold the lock across evict AND the target load, so the loaded model's memory
-        # is committed before release and a concurrent process's plan sees it (no co-load).
+        # Set → decide+evict under the lock, then load OUTSIDE it; the ledger's charge row
+        # is what a concurrent process's plan sees (holding the lock across the load is the
+        # self-deadlock of 2026-08-23 — charge takes the same key on its own connection).
         self._box_lock = wiring.box_lock
         # Restore's own lock. Deliberately a DIFFERENT primitive from `_box_lock`: restore must
         # skip rather than queue, so it can neither convoy behind a load nor act on a steady
@@ -382,6 +400,9 @@ class ResidencyCoordinator:
         # flight is dropped (the running one already restores the whole set), which coalesces a
         # multi-image turn's repeated displacements into a single end-of-turn restore.
         self._tasks: set[asyncio.Task[None]] = set()
+        # The process's reservation ledger, for the one-arithmetic eviction plan. None keeps
+        # the measured+predicted fallback (DB-less CLIs, cloud-only, tests).
+        self._ledger = wiring.ledger
         # Called with a served name whenever this coordinator does something that DROPS that
         # model's primed KV prefix — an eviction, or a bare reload during restore. WarmKeeper
         # registers it to clear its "already primed" memo.
@@ -539,13 +560,192 @@ class ResidencyCoordinator:
 
     async def _plan(self, served_model: str, *, narrate_skip: bool = False) -> EvictionPlan | None:
         """Compute what loading `served_model` would cost right now — the eviction plan —
-        with no side effects. None when disabled or the RAM reading is unavailable (can't
-        project blindly). Shared by plan_load (dry-run) and the two eviction paths, so the
-        preview matches what the load does. Ranks victims biggest-footprint first: freeing
-        the room costs the fewest evictions and spares the tiny models (evict one big model,
-        not several small ones)."""
+        with no side effects. None when disabled or nothing about capacity can be read.
+        Shared by plan_load (dry-run) and the two eviction paths, so the preview matches
+        what the load does.
+
+        With a ledger wired this runs `admission.admit` over the ledger's own pools and
+        rows — the SAME arithmetic the charge inside the load will apply — so the evict
+        verdict and the admission verdict cannot disagree. The measured+predicted planner
+        below survives only as the fallback for a build with no ledger (and for a ledger
+        read that fails): it reads whole-box used memory and adds a predicted footprint,
+        which double-counts the box's ~10 GB of non-model overhead against the headroom and
+        is why it evicted gpt-oss for a pair of models the ledger's terms had room for
+        (2026-08-23)."""
         if not self._enabled:
             return None
+        if self._ledger is not None:
+            try:
+                plan = await self._plan_ledger(served_model, narrate_skip=narrate_skip)
+                if plan is not None:
+                    return plan
+            except Exception as exc:  # noqa: BLE001 — dry-run: degrade to the fallback, never raise
+                log.warning("residency.ledger_plan_failed", model=served_model, error=repr(exc))
+        return await self._plan_measured(served_model, narrate_skip=narrate_skip)
+
+    async def _plan_ledger(self, served_model: str, *, narrate_skip: bool) -> EvictionPlan | None:
+        """The one-arithmetic plan: simulate evictions until `admission.admit` says yes.
+
+        Victims are ranked biggest-first by what the ledger actually holds for them (their
+        charged declaration; a resident model with no row — a foreign one — falls back to
+        the catalog prediction), and each simulated eviction removes the victim's rows and
+        credits its size back to the measured term, so both of admission's estimates see
+        the room the unload will really free. The operator's free-RAM headroom (Settings →
+        LLM) folds in as extra host reserve — never below admission's own floor — so the
+        knob keeps meaning what the screen says while the arithmetic stays the ledger's."""
+        assert self._ledger is not None
+        running = await self._gateway.running()
+        host, device = await self._ledger.pools()
+        total_gb = host.total_gb
+        if total_gb is None:
+            return None  # no capacity reading — can't project blindly (fallback may know more)
+        rows = await self._ledger.live()
+        charged_host = admission.charged_gb(rows, admission.Layer.HOST)
+        fraction = await self._fraction()
+        # PHYSICAL infeasibility is judged against admission's OWN reserve, before the
+        # operator floor folds in below. `over_box` means "would crash the box, never load
+        # it" — permanent, rendered as such on the settings screen — so it must carry the
+        # same meaning the charge's INFEASIBLE does. A generous floor (the knob accepts up
+        # to 0.5) must only ever make a plan `over` (evict more / let the charge decide),
+        # never turn a model that physically fits into one the box claims cannot exist.
+        physical_usable = total_gb - host.reserve_gb  # admission's own reserve, pre-floor
+        floor_gb = max(host.reserve_gb, total_gb * fraction)
+        host = dataclasses.replace(host, reserve_gb=floor_gb)
+        ceiling = total_gb - floor_gb
+        if served_model in running:
+            if narrate_skip:
+                self._note_if_not_ready(served_model, "plan")
+            return EvictionPlan(
+                target=served_model,
+                victims=(),
+                resident_gb=charged_host,
+                projected_gb=charged_host,
+                target_gb=0.0,  # already resident: nothing more gets allocated
+                ceiling_gb=ceiling,
+                total_gb=total_gb,
+                fits=True,
+                over=False,
+                over_box=False,
+                already_resident=True,
+            )
+        model = local_catalog.get_by_served(served_model)
+        if model is None:
+            # Outside the catalog it can't be declared or sized; mirror the fallback planner:
+            # it never drives (or blocks) an eviction, and the charge inside the load is a
+            # no-op for it too.
+            return EvictionPlan(
+                target=served_model,
+                victims=(),
+                resident_gb=charged_host,
+                projected_gb=charged_host,
+                target_gb=0.0,
+                ceiling_gb=ceiling,
+                total_gb=total_gb,
+                fits=True,
+                over=False,
+                over_box=False,
+                already_resident=False,
+            )
+        windows = await self._windows()
+        slots = await self._slots()
+        window = windows.get(model.id, model.context_window)
+        n_slots = slots.get(model.id, 1)
+        # The exact declaration `LocalGatewayClient._reservation` will charge for this load.
+        host_need, device_need = local_catalog.declared_gb(model, window, slots=n_slots)
+        request = admission.Reservation(
+            instance_id="dry-run",
+            served_model=served_model,
+            phase=admission.Phase.PLANNED,
+            host_gb=host_need,
+            device_gb=device_need,
+        )
+        # Physical feasibility, on the UNFLOORED pools (admission's own reserve): the
+        # same test `ledger.charge` will apply. Decided before any eviction is planned,
+        # so a model no unload can ever fit refuses without costing a resident one.
+        device_usable = (
+            device.total_gb - device.reserve_gb
+            if device.total_gb is not None and device.total_gb > 0
+            else None
+        )
+        if host_need > physical_usable or (
+            device_usable is not None and device_need > device_usable
+        ):
+            return EvictionPlan(
+                target=served_model,
+                victims=(),
+                resident_gb=charged_host,
+                projected_gb=charged_host + host_need,
+                target_gb=host_need,
+                ceiling_gb=ceiling,
+                total_gb=total_gb,
+                fits=False,
+                over=True,
+                over_box=True,
+                already_resident=False,
+            )
+        # Eviction candidates, biggest-first by what evicting them actually releases.
+        candidates: list[tuple[float, float, str]] = []
+        for served in running:
+            if served == served_model:
+                continue
+            row_host = sum(r.host_gb for r in rows if r.served_model == served)
+            row_device = sum(r.device_gb for r in rows if r.served_model == served)
+            if row_host <= 0.0 and row_device <= 0.0:
+                # Resident with no charge — a foreign model. Its unload frees measured
+                # memory only, sized by the catalog prediction (0.0 for an unknown name,
+                # which keeps it out of the ranking, same as the fallback planner).
+                row_host = row_device = await self._footprint(served, windows, slots)
+            candidates.append((-row_host, -row_device, served))
+        candidates.sort()
+        victims: list[str] = []
+        sim_rows = list(rows)
+        sim_host, sim_device = host, device
+        freed_host = freed_device = 0.0
+        decision = admission.admit(request, sim_rows, host=sim_host, device=sim_device)
+        for neg_host, neg_device, served in candidates:
+            if decision.admitted:
+                break
+            # A floored-reserve INFEASIBLE is NOT a physical one (that returned above): a
+            # model bigger than the operator's floor evicts everything and takes the box
+            # alone — the paradigm the module docstring promises — so the loop runs on.
+            victims.append(served)
+            sim_rows = [r for r in sim_rows if r.served_model != served]
+            freed_host += -neg_host
+            freed_device += -neg_device
+            if host.measured_free_gb is not None:
+                sim_host = dataclasses.replace(
+                    host, measured_free_gb=host.measured_free_gb + freed_host
+                )
+            if device.measured_free_gb is not None:
+                sim_device = dataclasses.replace(
+                    device, measured_free_gb=device.measured_free_gb + freed_device
+                )
+            decision = admission.admit(request, sim_rows, host=sim_host, device=sim_device)
+        return EvictionPlan(
+            target=served_model,
+            victims=tuple(victims),
+            resident_gb=charged_host,
+            projected_gb=charged_host
+            - sum(r.host_gb for r in rows if r.served_model in set(victims))
+            + host_need,
+            target_gb=host_need,
+            ceiling_gb=ceiling,
+            total_gb=total_gb,
+            fits=decision.admitted and not victims,
+            over=not decision.admitted,
+            over_box=False,  # the physical test returned above; the floor never means this
+            already_resident=False,
+        )
+
+    async def _plan_measured(
+        self, served_model: str, *, narrate_skip: bool = False
+    ) -> EvictionPlan | None:
+        """The FALLBACK plan for a build with no ledger: measured whole-box used memory plus
+        a predicted footprint, against the free-RAM floor. Kept only because a DB-less
+        process has no rows to admit against; wherever a ledger exists, `_plan_ledger`
+        answers. Ranks victims biggest-footprint first: freeing the room costs the fewest
+        evictions and spares the tiny models (evict one big model, not several small
+        ones)."""
         running = await self._gateway.running()
         mem = read_memory_gb()
         if mem is None:
@@ -661,10 +861,12 @@ class ResidencyCoordinator:
         raises ResidencyError instead of loading into an OOM. Probe/evict/meminfo hiccups are
         swallowed (housekeeping never fails a turn); the deliberate over-box refusal is not.
 
-        With a `box_lock` (production), the evict AND the target load run inside a
-        cross-process lock, so two processes can't both read low memory, skip eviction, and
-        co-load past the floor. Without one, this is the original per-process evict-only path
-        (the client triggers the load), so single-process/cloud/test callers are unchanged."""
+        With a `box_lock` (production), the plan and the evictions run inside a
+        cross-process lock and the target's load runs AFTER it releases — the ledger's
+        charge row, written before the weights move, is what stops two processes deciding
+        against the same free memory. Without one, this is the original per-process
+        evict-only path (the client triggers the load), so single-process/cloud/test
+        callers are unchanged."""
         if not self._enabled:
             return
         # Code-mode exclusivity: while the box is reserved for code mode, refuse to load ANY
@@ -685,7 +887,7 @@ class ResidencyCoordinator:
                 "other models (chat, vision, or background research)."
             )
         if self._box_lock is None:
-            await self._ensure_room_core(served_model, load_target=False)
+            await self._ensure_room_core(served_model)
             return
         # Fast path, lock-free: already resident → no evict, no load, no race to serialize.
         with contextlib.suppress(Exception):
@@ -693,22 +895,34 @@ class ResidencyCoordinator:
                 self._displaced.discard(served_model)
                 self._note_if_not_ready(served_model, "fast_path")
                 return
-        # Slow path: a load is needed — serialize evict+load box-wide and load the target
-        # under the lock so its memory is committed before the next process plans.
+        # Slow path: a load is needed. THE LOCK COVERS THE DECISION AND THE EVICTIONS, NEVER
+        # THE LOAD — the same rule `_restore` documents and the ledger's charge assumes. It
+        # was held across the load until 2026-08-23, when the first authoritative charge on
+        # this path deadlocked against it: the charge takes the SAME advisory key on a second
+        # pooled connection, so the load refused itself after its eviction had already
+        # unloaded the resident model — the box ended EMPTY. The co-load race the long hold
+        # closed is closed by the charge row instead: it is written before any weights move.
+        # The residual window is the pre-charge work between the evict and the row (shape
+        # reads, a possible config regen, a stop-settle wait) — two processes planning in it
+        # can both evict, but the atomic charge then refuses one with a transient "retry
+        # shortly" rather than co-loading. A refused turn after an eviction is the accepted
+        # cost; the pre-change behaviour on this path refused BOTH loads every time.
         async with self._box_locked():
-            await self._ensure_room_core(served_model, load_target=True)
+            plan = await self._ensure_room_core(served_model)
+        if plan is not None and not plan.already_resident:
+            await self._guarded_load(served_model, plan.target_gb)
 
-    async def _ensure_room_core(self, served_model: str, *, load_target: bool) -> None:
-        """The evict (and, under the box lock, load) work. `load_target` loads+warms the
-        target after evicting so a cross-process holder sees it resident before the lock
-        releases; off, the client triggers the load lazily (the un-serialized path)."""
+    async def _ensure_room_core(self, served_model: str) -> EvictionPlan | None:
+        """The plan+evict work, returning the plan so the caller can run the target's load
+        AFTER the box lock is released (see ensure_room; without a lock the client triggers
+        the load lazily and the return value is unused)."""
         try:
             plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.ensure_room_failed", model=served_model, error=repr(exc))
-            return
+            return None
         if plan is None:
-            return
+            return None
         self._refuse_if_over_box(plan)  # raises before we evict anything
         # It's being loaded for active use now, so it's no longer awaiting restore.
         self._displaced.discard(served_model)
@@ -721,8 +935,7 @@ class ResidencyCoordinator:
                     await self._gateway.unload(served)
                     self._displaced.add(served)  # remember it for the end-of-turn restore
                     self._prefix_lost(served)
-        if load_target and not plan.already_resident:
-            await self._guarded_load(served_model, plan.target_gb)
+        return plan
 
     async def _guarded_load(self, served_model: str, projected_gb: float) -> None:
         """Load, and log what the load ACTUALLY cost in device memory.

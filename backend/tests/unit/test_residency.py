@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from jbrain.llm import local_catalog
+from jbrain.llm.admission import Phase, Pool, Reservation
 from jbrain.llm.residency import (
     ResidencyCoordinator,
     ResidencyError,
@@ -685,12 +686,15 @@ def _recording_lock(events: list[str]):
 
 
 @pytest.mark.asyncio
-async def test_box_lock_serializes_evict_and_load_of_the_target(
+async def test_box_lock_covers_the_evict_and_releases_before_the_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # With a box_lock, ensure_room evicts the victim AND loads the target — both strictly
-    # inside the lock — so the target's memory is committed before the lock releases and a
-    # concurrent process's plan can see it (no cross-process co-load).
+    # With a box_lock, ensure_room decides and evicts INSIDE the lock and loads the target
+    # strictly AFTER it releases. The load must never run under this key: `ledger.charge`
+    # takes the same advisory lock on its own pooled connection, so a load inside the lock
+    # refuses its own admission — the 2026-08-23 self-deadlock, which evicted the resident
+    # model and then left the box empty. The charge row, not the lock, is what a concurrent
+    # process's plan sees during the load.
     events: list[str] = []
     gw = _RecordingGateway(events, running={"gpt-oss-120b"})
     monkeypatch.setattr(
@@ -703,7 +707,7 @@ async def test_box_lock_serializes_evict_and_load_of_the_target(
         ),
     )
     await coord.ensure_room("qwen3-coder-next")  # 90+59.6 > 96 → evict gpt-oss, then load it
-    assert events == ["lock", "unload:gpt-oss-120b", "load:qwen3-coder-next", "unlock"]
+    assert events == ["lock", "unload:gpt-oss-120b", "unlock", "load:qwen3-coder-next"]
 
 
 @pytest.mark.asyncio
@@ -1346,3 +1350,195 @@ async def test_pg_box_try_lock_does_not_swallow_the_callers_own_failure() -> Non
         async with pg_box_try_lock(_maker(True))() as got:  # type: ignore[arg-type]
             assert got is True
             raise ValueError("the restore itself blew up")
+
+
+# --- the ledger-arithmetic plan (L3): one calculation for evict and admit ----------------
+
+
+class _FakeLedger:
+    """`pools()` + `live()` as `_plan_ledger` reads them. Raising flavors prove fallback."""
+
+    def __init__(
+        self, rows: list[Reservation], host: Pool, device: Pool, *, broken: bool = False
+    ) -> None:
+        self._rows = rows
+        self._host = host
+        self._device = device
+        self._broken = broken
+
+    async def pools(self) -> tuple[Pool, Pool]:
+        if self._broken:
+            raise RuntimeError("db down")
+        return (self._host, self._device)
+
+    async def live(self) -> list[Reservation]:
+        return list(self._rows)
+
+
+def _row(served: str, phase: Phase, gb: float) -> Reservation:
+    return Reservation(
+        instance_id=f"{served}-row", served_model=served, phase=phase, host_gb=gb, device_gb=gb
+    )
+
+
+def _ledger_coord(
+    gw: FakeLocalGateway,
+    ledger: _FakeLedger,
+    *,
+    free_ram_fraction: float = 0.15,
+) -> ResidencyCoordinator:
+    return ResidencyCoordinator(
+        gw,
+        ResidencyWiring.inert(
+            models_dir="",
+            enabled=True,
+            free_ram_fraction=free_ram_fraction,
+            ledger=ledger,  # type: ignore[arg-type]
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_counts_a_concurrent_processes_in_flight_load() -> None:
+    # The row-based plan is what makes releasing the box lock before the load safe: another
+    # process's charge is a STARTING row long before its memory shows up in a measurement.
+    # Here the worker is mid-load of the coder (59.6 declared, nothing measurable yet) and
+    # this process plans gpt-oss: the measured planner would say "10 used + 69 fits", the
+    # ledger term says 103.0 usable − 59.6 promised < 69 — and with nothing resident to
+    # evict, the plan must come back over (charge would refuse), never fits.
+    coder = local_catalog.get_by_served("qwen3-coder-next")
+    assert coder is not None
+    coder_gb, _ = local_catalog.declared_gb(coder, coder.context_window)
+    gw = FakeLocalGateway(running=set())
+    ledger = _FakeLedger(
+        [_row("qwen3-coder-next", Phase.STARTING, coder_gb)],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=111.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=111.0),
+    )
+    plan = await _ledger_coord(gw, ledger).plan_load("gpt-oss-120b")
+    assert plan is not None
+    assert not plan.fits
+    assert plan.victims == ()
+    assert plan.over and not plan.over_box
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_evicts_by_charged_size_until_the_charge_would_admit() -> None:
+    # gpt-oss holds a charged 69.6 GB row; the coder needs 59.6 and the ledger term has only
+    # ~45 left — one eviction, credited back to BOTH terms at its charged size, and the same
+    # `admit` that will run inside the load says yes. Victims come from what the ledger
+    # holds, not from a fresh prediction.
+    gpt = local_catalog.get_by_served("gpt-oss-120b")
+    assert gpt is not None
+    gpt_gb, _ = local_catalog.declared_gb(gpt, gpt.context_window)
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    ledger = _FakeLedger(
+        [_row("gpt-oss-120b", Phase.RESIDENT, gpt_gb)],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.05).plan_load("qwen3-coder-next")
+    assert plan is not None
+    assert plan.victims == ("gpt-oss-120b",)
+    assert not plan.fits and not plan.over and not plan.over_box
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_admits_a_co_resident_pair_with_no_eviction() -> None:
+    # The 2026-08-23 shape with the interactive slot OFF: gpt-oss charged at ~69.6, real
+    # free memory 43 GB, and the vision model (33.5 declared) wants in. Both of admission's
+    # terms have room, so the plan must load it BESIDE gpt-oss — no victims — where a
+    # headroom-vs-overhead disagreement in a second budget could have evicted.
+    gpt = local_catalog.get_by_served("gpt-oss-120b")
+    assert gpt is not None
+    gpt_gb, _ = local_catalog.declared_gb(gpt, gpt.context_window)
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    ledger = _FakeLedger(
+        [_row("gpt-oss-120b", Phase.RESIDENT, gpt_gb)],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.05).plan_load("qwen3-vl-30b-a3b")
+    assert plan is not None
+    assert plan.fits and plan.victims == ()
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_falls_back_to_measured_when_the_ledger_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A DB hiccup must not take eviction planning down with it — the measured planner is
+    # still wired underneath, and its verdict (evict gpt-oss for the coder at these numbers)
+    # comes through.
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    broken = _FakeLedger([], host=Pool(1.0, 0.0, None), device=Pool(1.0, 0.0, None), broken=True)
+    coord = ResidencyCoordinator(
+        gw,
+        ResidencyWiring.inert(
+            models_dir="",
+            enabled=True,
+            free_ram_fraction=0.25,
+            ledger=broken,  # type: ignore[arg-type]
+        ),
+    )
+    plan = await coord.plan_load("qwen3-coder-next")
+    assert plan is not None
+    assert plan.victims == ("gpt-oss-120b",)
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_infeasible_refuses_before_evicting_anything() -> None:
+    # A model bigger than the box's whole usable pool is INFEASIBLE in admission's terms —
+    # over_box here — and ensure_room must refuse (ResidencyError) without unloading a thing.
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})
+    ledger = _FakeLedger(
+        [_row("qwen3.5-4b", Phase.RESIDENT, 4.6)],
+        host=Pool(total_gb=60.0, reserve_gb=6.0, measured_free_gb=50.0),
+        device=Pool(total_gb=60.0, reserve_gb=6.0, measured_free_gb=50.0),
+    )
+    coord = _ledger_coord(gw, ledger)
+    with pytest.raises(ResidencyError):
+        await coord.ensure_room("gpt-oss-120b")
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ledger_plan_evicts_the_biggest_first_and_spares_the_tiny_model() -> None:
+    # Two charged residents; the coder needs the big one's room and nothing more. The
+    # ranking must be biggest-first — a smallest-first order would burn the tiny model's
+    # eviction for ~nothing and still have to take the big one (the mutant an adversarial
+    # review proved the single-resident tests could not kill, 2026-08-23).
+    gpt = local_catalog.get_by_served("gpt-oss-120b")
+    assert gpt is not None
+    gpt_gb, _ = local_catalog.declared_gb(gpt, gpt.context_window)
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.5-4b"})
+    ledger = _FakeLedger(
+        [_row("gpt-oss-120b", Phase.RESIDENT, gpt_gb), _row("qwen3.5-4b", Phase.RESIDENT, 4.6)],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=43.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.05).plan_load("qwen3-coder-next")
+    assert plan is not None
+    assert plan.victims == ("gpt-oss-120b",), "one big eviction, the tiny model spared"
+
+
+@pytest.mark.asyncio
+async def test_a_generous_floor_is_never_reported_as_would_crash_the_box() -> None:
+    # over_box means PHYSICAL infeasibility — the settings screen renders it permanent
+    # ("would crash the box") and ensure_room refuses outright. An operator floor of 45%
+    # leaves gpt-oss (~69.6 declared) over the FLOORED usable but comfortably inside the
+    # box; that must read as `over` (evict everything, let the charge decide), never
+    # over_box — the charge itself would admit it.
+    gw = FakeLocalGateway(running=set())
+    ledger = _FakeLedger(
+        [],
+        host=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=110.0),
+        device=Pool(total_gb=121.2, reserve_gb=6.0, measured_free_gb=110.0),
+    )
+    plan = await _ledger_coord(gw, ledger, free_ram_fraction=0.45).plan_load("gpt-oss-120b")
+    assert plan is not None
+    assert not plan.over_box, "a floor refusal is transient, not 'cannot exist'"
+    assert plan.over

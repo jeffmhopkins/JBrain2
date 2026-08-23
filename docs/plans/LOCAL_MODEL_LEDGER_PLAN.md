@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b✅ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -202,6 +202,17 @@ deliberately left open.
    precisely when restoring to a remembered steady state is meaningless. A background task
    that never blocks also cannot convoy. The rest of item 5 — widening the lock over the other
    three load paths — remains deliberately NOT DONE, for the three reasons above.
+
+   **RESOLVED IN THE OPPOSITE DIRECTION, 2026-08-23.** The lock was never widened — it was
+   narrowed, and the first authoritative charge on the slow path is what forced it: with L2b
+   live, `ensure_room`'s load-inside-the-lock deadlocked against its OWN admission
+   (`ledger.charge` takes the same advisory key on a second pooled connection, 15 s
+   `lock_timeout`, refuse) — the box evicted gpt-oss to make room for the vision model and
+   then refused both the target load and the reload, ending EMPTY. `ensure_room` now
+   decides+evicts under the key and loads OUTSIDE it, exactly the rule `_restore` already
+   followed; the charge row, written at intent, is what a concurrent process's plan sees
+   mid-load — see L3's eviction-plan note. The "if the window ever must close" design above
+   is thereby obsolete: the ledger is how the window closed.
 
 6. **The warm-up phase ran outside the runaway watchdog — CLOSED 2026-08-22.** `guarded_load`
    returned, and only then did `_load_and_warm` call `_warm(...)` — which the file itself
@@ -487,10 +498,29 @@ changing, which is the one thing the lock was for.
 *Risk:* high — this is the part that changes behaviour, and it cannot be split further: the
 moment admission stops reading memory, every layer that still does is inconsistent with it.
 
-### L3 — Retire the duplicate budgets ◻️
+### L3 — Retire the duplicate budgets ◻️ (eviction planning done 2026-08-23)
 
 Three host-RAM reserves collapse to one. The device pre-flight consumes the admitting row
 rather than re-deriving. `smoketest`'s gate reads the same ledger.
+
+**Landed first: the eviction plan.** `residency._plan` now runs `admission.admit` over the
+ledger's own `pools()` and `live()` rows — simulated evictions credit the victim's CHARGED
+size back to both terms until the same arithmetic the load's charge will apply says yes — so
+"whom must I evict" and "will the charge admit" cannot disagree, and a concurrent process's
+in-flight load is visible as its PLANNED/STARTING row long before any measurement moves
+(which is what makes releasing the box lock before the load safe, per L1 item 5's
+resolution). The operator's free-RAM headroom folds in as extra host reserve, never below
+admission's own — though PHYSICAL infeasibility (`over_box`, the permanent "would crash
+the box" verdict) is always judged against admission's own reserve, never the floor: a
+generous floor makes a plan `over` (evict more, let the charge decide), never "cannot
+exist". The measured+predicted planner survives only as `_plan_measured`, the fallback
+for a build with no ledger (DB-less CLIs) or a ledger read that fails. Known residual:
+between a released evict and the load's charge sits pre-charge work (shape reads, a
+possible config regen, a stop-settle wait) where two processes can both plan and both
+evict — the atomic charge then refuses one transiently rather than co-loading, and
+nothing yet retries that refused turn after its eviction already ran. Still open here:
+that retry, the device pre-flight's own derivation, `smoketest`'s 20 GiB gate, and
+`_restore_plan`, which still budgets from the measurement.
 
 *Risk:* medium. *Test:* one budget, asserted from a single constant.
 
