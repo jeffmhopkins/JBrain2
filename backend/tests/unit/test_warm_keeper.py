@@ -96,7 +96,7 @@ class _FakeRouter:
         return LlmTurn(
             text="",
             tool_calls=(),
-            stop_reason="stop",
+            stop_reason="end_turn",
             usage=LlmUsage(input_tokens=12345, output_tokens=1),
         )
 
