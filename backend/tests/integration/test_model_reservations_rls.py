@@ -322,3 +322,48 @@ async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker
     # an RLS test that cannot tell a firewall from a syntax error is not testing the firewall.
     async with scoped_session(maker, owner) as session:
         await session.execute(insert)
+
+
+async def test_an_enforced_refusal_reaches_the_owner_not_just_the_log(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The box must narrate the refusals it ACTS on, not only the ones it merely observed.
+
+    `box_events.record` sat BELOW the enforcing-mode early return, so a shadow ledger announced
+    every refusal it did not enforce and an authoritative one would have gone silent at exactly
+    the moment a refusal starts costing the owner a load. The owner runs this box remotely with
+    no terminal: a verdict that reaches only the container log is a verdict nobody can act on."""
+    recorded: list[tuple[str, str, str | None]] = []
+
+    async def _spy(kind: str, subject: str, *, detail: str | None = None, **kw: object) -> None:
+        recorded.append((kind, subject, detail))
+
+    monkeypatch.setattr("jbrain.llm.ledger.box_events.record", _spy)
+
+    ledger = ReservationLedger(maker, source="api", shadow=False)
+    refused = await ledger.charge("gpt-oss-120b", host_gb=900.0, device_gb=900.0)
+
+    assert refused.instance_id is None
+    assert refused.decision.outcome is Outcome.INFEASIBLE
+    assert [k for k, _, _ in recorded] == ["ledger_refusal"]
+    assert recorded[0][1] == "gpt-oss-120b"
+    assert "will not fit however long you wait" in (recorded[0][2] or "")
+
+
+async def test_a_shadow_refusal_still_records_as_a_shadow_refusal(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The companion: hoisting the record above the return must not have relabelled shadow."""
+    recorded: list[str] = []
+
+    async def _spy(kind: str, subject: str, *, detail: str | None = None, **kw: object) -> None:
+        recorded.append(kind)
+
+    monkeypatch.setattr("jbrain.llm.ledger.box_events.record", _spy)
+
+    ledger = ReservationLedger(maker, source="api", shadow=True)
+    charge = await ledger.charge("gpt-oss-120b", host_gb=900.0, device_gb=900.0)
+
+    # Shadow charges anyway — that is the whole point of shadow — but still says so.
+    assert charge.instance_id is not None
+    assert recorded == ["ledger_shadow_refusal"]

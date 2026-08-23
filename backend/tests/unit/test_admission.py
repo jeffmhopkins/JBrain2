@@ -61,7 +61,7 @@ def test_a_restart_charges_both_instances_while_they_overlap() -> None:
 # --- admission --------------------------------------------------------------
 
 
-def _pool(total: float, reserve: float = 6.0, measured: float | None = None) -> Pool:
+def _pool(total: float | None, reserve: float = 6.0, measured: float | None = None) -> Pool:
     return Pool(total_gb=total, reserve_gb=reserve, measured_free_gb=measured)
 
 
@@ -283,3 +283,42 @@ def test_reconcile_split_gives_the_same_answer_for_a_generator() -> None:
     as_list = reconcile_split(rows, {"gpt-oss-120b"})
     as_generator = reconcile_split((r for r in rows), {"gpt-oss-120b"})
     assert as_generator == as_list == ([], [])
+
+
+def test_an_unreadable_capacity_never_says_never() -> None:
+    """A layer whose total could not be read must not produce INFEASIBLE.
+
+    It used to arrive as `total_gb=0.0`, which makes `usable` the NEGATIVE reserve — so every
+    model, however small, "needs more than this box has". INFEASIBLE means never retry, so a
+    transient unreadable `/proc/meminfo` would have permanently failed every background job on
+    the box, and permanent failures do not heal when the file comes back."""
+    d = admit(_res("qwen3.5-4b", 1.0, 1.0), [], host=_pool(None), device=_pool(None))
+    assert d.outcome is Outcome.DEFERRED
+    assert "will not fit however long you wait" not in d.reason
+
+
+def test_an_unreadable_capacity_still_uses_a_measurement_it_does_have() -> None:
+    """Unknown capacity is not unknown everything: a live free-memory reading still binds."""
+    roomy = _pool(None, measured=90.0)
+    assert (
+        admit(_res("qwen3.5-4b", 4.6, 4.6), [], host=roomy, device=roomy).outcome is Outcome.ADMIT
+    )
+    tight = _pool(None, measured=7.0)
+    assert admit(_res("gpt-oss-120b", 69.6, 69.6), [], host=tight, device=tight).outcome is (
+        Outcome.DEFERRED
+    )
+
+
+def test_a_measured_capacity_still_reports_the_impossible_as_impossible() -> None:
+    """The companion assertion: the guard above must not have disarmed INFEASIBLE entirely."""
+    d = admit(_res("huge", 500.0, 500.0), [], host=_pool(128.0), device=_pool(128.0))
+    assert d.outcome is Outcome.INFEASIBLE
+    assert "will not fit however long you wait" in d.reason
+
+
+def test_a_probe_reporting_zeros_is_unknown_capacity_not_a_zero_capacity() -> None:
+    """`gpu_guard.parse_gpu_mem` accepts `gtt_total_bytes = 0` as a valid reading, so a flaky
+    device probe hands the ledger a 0.0 that LOOKS like data. Treated as a capacity it makes
+    every model INFEASIBLE — permanent failure for every local-model job on the box."""
+    d = admit(_res("qwen3.5-4b", 1.0, 1.0), [], host=_pool(121.0), device=_pool(0.0))
+    assert d.outcome is not Outcome.INFEASIBLE

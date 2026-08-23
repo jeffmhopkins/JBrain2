@@ -916,8 +916,15 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    # 68.5, not 76.5: the gateway serves `-cram 0`, so there is no in-RAM prompt cache term.
-    assert body["victims"][0]["gb"] == 68.5
+    # The victim's size comes from the catalog, not a literal — this test is about the ROUTE
+    # reporting the coordinator's plan faithfully, and pinning gpt-oss's footprint here would
+    # make a re-measurement of that model surface as a bug in this endpoint. (It went from 68.5
+    # to 69.6 when its KV coefficient was measured on the box and found 11.4% light.) The
+    # `-cram 0` point the old literal was making still holds: there is no in-RAM prompt-cache
+    # term, which is why this is ~69 and not ~77.
+    gpt = local_catalog.get("gpt-oss-120b")
+    assert gpt is not None
+    assert body["victims"][0]["gb"] == round(local_catalog.footprint_gb(gpt, 131072), 1)
     # 128 GB * (1 - 0.15). Was asserted at 96.0 (i.e. 0.25) because the harness above
     # omitted the fraction; production has always used the settings value.
     assert body["ceiling_gb"] == 108.8

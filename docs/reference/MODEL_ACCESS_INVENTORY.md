@@ -1,6 +1,6 @@
 # Model-access inventory
 
-> **Status:** Living · **Last verified:** 2026-08-22
+> **Status:** Living · **Last verified:** 2026-08-23
 
 > **What this is.** A factual inventory of every place in this tree that loads, unloads, admits,
 > warms, evicts, measures, or *demands* a model — across all five things that consume this box's
@@ -2618,7 +2618,7 @@ Its docstring, `jbrain/llm/residency.py:110-115`:
     box into an out-of-memory hard-freeze, so the load is refused rather than attempted. The
     caller surfaces it (a 409 on the manual load, a failed completion on the router path)."""
 ```
-`jbrain/llm/gpu_guard.py:227`: `class GpuBudgetError(Exception):` — subclasses `Exception`.
+`jbrain/llm/gpu_guard.py:227`: `class GpuBudgetError(Exception):` — subclasses `Exception`, and carries a keyword-only `permanent: bool = False`. It is the ONE refusal type callers branch on rather than merely surface. Exactly two sites set it, and both derive it from a total capacity they actually READ rather than from the size of the shortfall: the ledger, on an `admission.Outcome.INFEASIBLE`; and `refuse_if_no_device_room`, which runs BEFORE the charge and is therefore what decides this on a probe-wired box. Being out of room right now is transient however far out of room it is. Known gap, recorded in the class docstring: the runaway-watchdog abort reports transient and, for a mis-catalogued model, is not.
 `jbrain/llm/local_gateway.py:87`: `class LocalGatewayError(Exception):` — subclasses `Exception`.
 `jbrain/jcode/client.py:19`: `class JcodeError(RuntimeError):`
 
@@ -2643,12 +2643,13 @@ Because `ResidencyError` is not an `LlmError`, every `except LlmError` site belo
 
 | file:line | catches | effect (verbatim) |
 |---|---|---|
-| `jbrain/worker.py:209` | `        except ResidencyError as exc:` | `            await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))` / `            log.info("worker.job_deferred_code_mode", job_id=job.id, kind=job.kind)` |
-| `jbrain/worker.py:216` | `        except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker` | `            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))` |
-| `jbrain/worker.py:202` | `        except queue.PermanentJobError as exc:` | `            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)` |
+| `jbrain/worker.py:216` | `        except (ResidencyError, gpu_guard.GpuBudgetError) as exc:` — **this row was stale.** It read `except ResidencyError as exc:` at `:209`, which asserted that a `GpuBudgetError` fell through to the generic `except Exception` below and FAILED the job. It no longer does: `GpuBudgetError` is caught in the SAME clause as `ResidencyError` (`LOCAL_MODEL_LEDGER_PLAN.md` L1 item 2). | `                await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))` / `                    "worker.job_deferred_no_room",` — a defer, so **no attempt is burned** (§7). CONDITIONAL since the INFEASIBLE split: the clause first tests `isinstance(exc, gpu_guard.GpuBudgetError) and exc.permanent` and, when true, takes `queue.fail(…, permanent=True)` + `worker.job_failed_never_fits` instead — a refusal that exceeds the pool's whole usable capacity cannot be waited out, so deferring it would re-attempt a condition that cannot arrive. That branch also records `box_events.JOB_REFUSED_NO_ROOM` (a directly-enqueued job has no run step, so `_finalize_run_step` returns early and `app.jobs.last_error` is projected nowhere) and deliberately SKIPS `_after_exhaustion`, whose content fallbacks would discard an attachment's text over a capacity refusal the owner can fix in Settings. |
+| `jbrain/worker.py:250` | `        except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker` | `            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))` |
+| `jbrain/worker.py:209` | `        except queue.PermanentJobError as exc:` | `            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)` |
 | `jbrain/ingest/video.py:522` | `        except ResidencyError as exc:` | `            raise queue.PermanentJobError(str(exc)) from exc` |
 | `jbrain/api/jcode_llm.py:177-180` | `                    except ResidencyError:` / `                        raise` / `                    except Exception:  # noqa: BLE001 - housekeeping never fails a completion` | `                        log.warning("jcode-llm ensure_room failed model=%s", served, exc_info=True)` |
-| `jbrain/api/llm_settings.py:1048` | `        except ResidencyError as exc:` | (manual load path) |
+| `jbrain/api/llm_settings.py:1517-1518` | `    except ResidencyError as exc:` / `        raise HTTPException(status_code=409, detail=str(exc)) from exc` (inside `_admit_or_409`, `:1485`) — **this row was stale.** It cited an inline `except ResidencyError as exc:` at `:1048`; the admission moved INSIDE the shared warm helper (commit `2f9904f`, §A rows L4/L5), so the catch lives here and both `gateway_load` and `gateway_prime` get it. | HTTP 409 (manual load path) |
+| `jbrain/api/llm_settings.py:1561` (in `gateway_load`) and `:1943` (in `gateway_prime`) | `    except gpu_guard.GpuBudgetError as exc:` | `        raise HTTPException(status_code=409, detail=str(exc)) from exc` — with the comment `        # 409, not an uncaught 500. A device refusal is the same class of answer as the` (`:1562`). A device refusal is **no longer a 500** on either owner-reachable warm path. |
 | `jbrain/api/agent.py:1134` | `        except LlmContextOverflowError as exc:` | `            status, stop_reason = "error", "context_overflow"` / `            live.emit(b'data: {"type": "done", "stop_reason": "context_overflow"}\n\n')` |
 | `jbrain/api/agent.py:1142` | `        except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream` | `            log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))` / `            live.emit(b'data: {"type": "done", "stop_reason": "error"}\n\n')` |
 | `jbrain/api/agent.py:1118` | `        except TimeoutError:` | `            status, stop_reason = "error", "turn_timeout"` |
@@ -2694,7 +2695,7 @@ Because `ResidencyError` is not an `LlmError`, every `except LlmError` site belo
 |---|---|---|---|
 | precondition defer | `jbrain/worker.py:265-267` | `    await report_progress(f"deferred: {result.reason}")` / `    await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=result.reason)` / `    log.info("worker.job_deferred", job_id=job.id, kind=job.kind, reason=result.reason)` | **no** — `jbrain/queue.py:505-506` `    """Reschedule a claimed (running) job to run again after `delay`, WITHOUT burning` / `    an attempt — the worker's "not now, try again soon" for an unmet precondition.` ; SQL at `:518-527` sets only `status`, `locked_at`, `last_error`, `run_after` |
 | defer delay | `jbrain/workflow/preconditions.py:181` | `RETRY_AFTER = timedelta(minutes=5)` | — |
-| code-mode residency defer | `jbrain/worker.py:209-215` | `        except ResidencyError as exc:` … `            await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))` | **no** (same `defer`) |
+| no-room defer (code-mode residency **and** device budget) | `jbrain/worker.py:216` | `        except (ResidencyError, gpu_guard.GpuBudgetError) as exc:` … `                await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))` | **no** for a transient refusal (same `defer`) — **yes, terminally**, for a `GpuBudgetError` carrying `permanent=True` (`admission.Outcome.INFEASIBLE`), which takes `queue.fail(…, permanent=True)` instead. **This row was stale**: it named `ResidencyError` alone, i.e. a `GpuBudgetError` burning an attempt via the generic fail. A job that could not get memory waits for memory — unless the memory could never exist. |
 | ordinary failure retry | `jbrain/queue.py:470-492` | `        attempts = row.attempts + 1` / `        exhausted = permanent or attempts >= row.max_attempts` … `                    run_after = now() + make_interval(secs => :delay),` | **yes** |
 | backoff schedule | `jbrain/queue.py:146-151` | `def backoff(attempts: int) -> timedelta:` / `    """Retry delay after the Nth failed attempt: 2^N minutes, capped."""` … `    return min(timedelta(minutes=2 ** min(attempts, 10)), BACKOFF_CAP)`; `jbrain/queue.py:26` `BACKOFF_CAP = timedelta(hours=1)` | — |
 | retry budget | `backend/migrations/versions/0003_jobs_chunks_ingest_state.py:40` | `            max_attempts int NOT NULL DEFAULT 5,` | — |

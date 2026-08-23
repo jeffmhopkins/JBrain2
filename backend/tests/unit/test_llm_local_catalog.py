@@ -512,18 +512,23 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     gpt = local_catalog.get("gpt-oss-120b")
     vl = local_catalog.get("qwen3-vl-30b")
     assert gpt is not None and vl is not None
-    # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference), DOUBLED to
-    # 9.0 because it serves with `--swa-full` — full history on its sliding-window layers —
+    # gpt-oss at its native 128k window: weights 59 + KV 5.01 (the 128k reference), DOUBLED to
+    # 10.02 because it serves with `--swa-full` — full history on its sliding-window layers —
     # plus the 0.55 runtime term every entry carries. NO prompt-cache term: the gateway serves
     # `-cram 0`, so CACHE_RAM_GB is 0.0. It was 8.0 (llama.cpp's default, inherited without
     # writing the flag) and that 8 GiB per resident model is what stood between this box and
     # holding gpt-oss + a Qwen3.8 27B together — 109.3 GB against a 124.0 GB cap, versus 93.3.
+    #
+    # The 5.01 was 4.5 until it was MEASURED on the box at four windows and found to be 11.4%
+    # light — an error proportional to the KV term, so it grew with exactly the window an
+    # operator is most likely to raise. See the catalog entry, and the measurement table at the
+    # bottom of this file.
     assert local_catalog.CACHE_RAM_GB == 0.0, "serving flag and budget term must move together"
-    assert local_catalog.footprint_gb(gpt, 131072) == 68.55
+    assert local_catalog.footprint_gb(gpt, 131072) == 69.57
     # With the cache off, resident and load now agree for a text-only model: the split existed
     # only because the cache filled lazily after the load. The vision peak and the context
     # checkpoints still split the same way — see the vl assertions below.
-    assert local_catalog.load_footprint_gb(gpt, 131072) == 68.55
+    assert local_catalog.load_footprint_gb(gpt, 131072) == 69.57
     # KV still scales linearly with the window. vl also carries a projector, so its resident
     # figure includes the CLIP attention workspace (see vision_attn_buffer_gb): 32 + 6*(32768/
     # 131072) + 0.55 + 0.47 + 8.0 prompt cache = 42.52. The 0.47 is MEASURED with flash
@@ -535,12 +540,16 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     # KV, runtime and vision are unaffected (31.9 + 1.5 + 0.55 + 0.47).
     assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 34.42
     # A second slot doubles ONLY the KV term (weights are shared), and it compounds with
-    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) + 0.55 runtime = 77.55. The
-    # number the owner trades against — halving the window takes 9 off it, and the 16 GB the
+    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*5.01) + 0.55 runtime = 79.59. The
+    # number the owner trades against — halving the window takes 10 off it, and the 16 GB the
     # prompt cache used to take across a co-resident pair is what pays for the second slot.
-    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.55
-    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.55
-    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.55
+    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 79.59
+    # Two slots at half the window costs the same as one slot at the full one — the identity
+    # that makes the second slot affordable, and it holds at any coefficient.
+    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == local_catalog.footprint_gb(
+        gpt, 131072, slots=1
+    )
+    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 69.57
 
 
 def test_footprint_budgets_the_checkpoints_a_hybrid_actually_pins() -> None:
@@ -767,7 +776,11 @@ def test_full_history_doubles_the_kv_term_so_the_budget_stays_honest() -> None:
     assert model is not None and model.kv_full_history is True
     plain = dataclasses.replace(model, kv_full_history=False)
     delta = local_catalog.footprint_gb(model, 131072) - local_catalog.footprint_gb(plain, 131072)
-    assert delta == pytest.approx(4.5, abs=0.01)  # exactly one extra kv_gb_per_128k
+    # Exactly one extra `kv_gb_per_128k`, whatever that figure currently is — asserted against
+    # the model's own field rather than a literal, because the literal was 4.5 and went stale
+    # the moment the coefficient was measured. A test that pins a number the code derives from
+    # another number is a test that has to be edited every time the measurement improves.
+    assert delta == pytest.approx(model.kv_gb_per_128k, abs=0.01)
 
 
 def test_halving_the_window_pays_for_full_history() -> None:
@@ -886,3 +899,81 @@ def test_the_declaration_grows_with_the_served_window_and_the_slot_count() -> No
     two_slots = local_catalog.declared_gb(model, 32768, slots=2)
     assert wide[0] > small[0] and wide[1] > small[1]
     assert two_slots[0] > small[0] and two_slots[1] > small[1]
+
+
+# --- the footprint predictions, against measurements taken on the box ---------
+
+# Device footprint MEASURED on the live box 2026-08-23 with the GPU probe (the same
+# `gpu_guard.measure_footprint` reading the gateway logs as `footprint_measured`). Each load
+# was cold, and each baseline was taken only after free memory had settled — the first attempt
+# at this measured 69.41 GB at a 64k window against 69.26 at 128k, which cannot both be true,
+# because its baseline was sampled one second after a 69 GB model was unloaded and was still
+# falling. A measurement that agrees with your prediction for the wrong reason is worse than
+# one that disagrees.
+_MEASURED_DEVICE_GB = {
+    # (catalog id, served window): measured GiB
+    ("gpt-oss-120b", 16384): 60.47,
+    ("gpt-oss-120b", 32768): 61.76,
+    ("gpt-oss-120b", 65536): 64.26,
+    ("gpt-oss-120b", 131072): 69.26,
+    ("qwen3.8-27b-q4", 16384): 18.87,
+    ("qwen3.8-27b-q4", 65536): 21.09,
+    ("qwen3.8-27b-q4", 131072): 23.96,
+    ("qwen3.8-27b-q4", 262144): 29.71,
+    ("qwen3.8-27b-abliterated", 65536): 20.81,
+}
+
+
+@pytest.mark.parametrize(("key", "measured"), sorted(_MEASURED_DEVICE_GB.items()))
+def test_the_load_prediction_matches_what_the_box_actually_allocated(
+    key: tuple[str, int], measured: float
+) -> None:
+    """Within 1 GB of the real allocation, on every model and window ever measured here.
+
+    This is the number the pre-flight refuses loads on and the number the reservation ledger
+    charges, so an error in it is an error in the only thing standing between a co-resident
+    box and a hard freeze. One GB is the tolerance because that is comfortably inside the 6 GB
+    device reserve while still catching the 11% KV error this table was written to close."""
+    model_id, window = key
+    model = local_catalog.get(model_id)
+    assert model is not None
+    predicted = local_catalog.load_footprint_gb(model, window)
+    assert abs(predicted - measured) < 1.0, (
+        f"{model_id} at {window}: predicted {predicted:.2f}, box allocated {measured:.2f}"
+    )
+
+
+@pytest.mark.parametrize("model_id", ["gpt-oss-120b", "qwen3.8-27b-q4"])
+def test_the_prediction_error_does_not_grow_with_the_context_window(model_id: str) -> None:
+    """The error must be a flat offset, not proportional to the KV term.
+
+    This is the shape that distinguishes a wrong COEFFICIENT from a missing CONSTANT, and it is
+    what the measurements were taken to settle. gpt-oss ran -0.20, -0.04, +0.21, +0.71 against
+    its old 4.5 — an error tracking the KV term at +11.4%, which no constant can explain and
+    which grows with exactly the window an operator is most likely to raise. A proportional
+    error is also the dangerous one: it is smallest where it is harmless and largest at the top
+    of the range, where the box is fullest."""
+    model = local_catalog.get(model_id)
+    assert model is not None
+    drifts = [
+        _MEASURED_DEVICE_GB[(model_id, w)] - local_catalog.load_footprint_gb(model, w)
+        for (mid, w) in _MEASURED_DEVICE_GB
+        if mid == model_id
+    ]
+    assert max(drifts) - min(drifts) < 0.25, (
+        f"{model_id}: the error moves by {max(drifts) - min(drifts):.2f} GB across the measured "
+        f"windows ({[round(d, 2) for d in drifts]}) — that is a KV coefficient, not an offset"
+    )
+
+
+def test_every_prediction_errs_on_the_side_of_reserving_too_much() -> None:
+    """Sign matters more than size. Over-reserving costs a model that could have fitted;
+    under-reserving costs a power cycle, because nothing downstream re-checks the figure once
+    admission has accepted it."""
+    for (model_id, window), measured in _MEASURED_DEVICE_GB.items():
+        model = local_catalog.get(model_id)
+        assert model is not None
+        predicted = local_catalog.load_footprint_gb(model, window)
+        assert predicted >= measured, (
+            f"{model_id} at {window} is UNDER-predicted: {predicted:.2f} < {measured:.2f}"
+        )

@@ -80,9 +80,17 @@ class Pool:
 
     `measured_free_gb` is None for "we could not read it" — never 0.0, which is a reading that
     would refuse everything. A layer with no reading falls back to the ledger term alone, which
-    is the ledger's own answer and is what a box with no probe gets."""
+    is the ledger's own answer and is what a box with no probe gets.
 
-    total_gb: float
+    `total_gb` is None on the SAME principle, and for a sharper reason. It used to fall back to
+    0.0 when `/proc/meminfo` could not be read, which made `usable` the NEGATIVE reserve — so
+    every model, however small, "needs more than this box has" and came back INFEASIBLE. That
+    verdict means never retry: a transient unreadable file would have permanently failed every
+    background job on the box, and permanent failures do not heal when the file comes back.
+    None instead means the capacity is unknown, and an unknown capacity CANNOT prove a request
+    impossible — the strongest thing it can say is "not now"."""
+
+    total_gb: float | None
     reserve_gb: float
     measured_free_gb: float | None
 
@@ -120,6 +128,20 @@ def charged_gb(rows: Iterable[Reservation], layer: Layer) -> float:
     return sum(r.host_gb if layer is Layer.HOST else r.device_gb for r in rows)
 
 
+def _usable_gb(pool: Pool) -> float | None:
+    """A layer's capacity net of its reserve, or None when the capacity is not known.
+
+    NON-POSITIVE COUNTS AS NOT KNOWN, not as a capacity of zero. `Pool.total_gb` being None is
+    only one of the two ways an unread total arrives: `gpu_guard.parse_gpu_mem` accepts a
+    `gtt_total_bytes` of 0 as a valid reading, so a device probe that reports zeros hands over
+    a 0.0 that looks like data. Either way the arithmetic below would make `usable` the
+    negative reserve and call every model in the catalogue INFEASIBLE — a verdict that means
+    never retry. One flaky probe would permanently fail every local-model job on the box."""
+    if pool.total_gb is None or pool.total_gb <= 0:
+        return None
+    return pool.total_gb - pool.reserve_gb
+
+
 def _available_gb(pool: Pool, charged: float) -> tuple[float, str]:
     """Room for a NEW instance in one pool, and a sentence saying how it was derived.
 
@@ -129,7 +151,19 @@ def _available_gb(pool: Pool, charged: float) -> tuple[float, str]:
     Kokoro holds a model resident with no accounting anywhere in `backend/src`. The measurement
     is blind to transitions — the thing the ledger exists for. `min` is the only combination
     whose error always points at "refuse"."""
-    from_ledger = pool.total_gb - pool.reserve_gb - charged
+    usable = _usable_gb(pool)
+    if usable is None or pool.total_gb is None:
+        # No capacity figure, so the ledger term cannot be computed at all. Fall back to the
+        # measurement alone, and to zero room when that is missing too: with nothing known,
+        # "wait" is the only honest answer, and it is the one that heals itself.
+        if pool.measured_free_gb is None:
+            return 0.0, "no reading of either this layer's capacity or its free memory"
+        from_measurement = pool.measured_free_gb - pool.reserve_gb
+        return from_measurement, (
+            f"{from_measurement:.1f} GB free by measurement ({pool.measured_free_gb:.1f} free, "
+            f"{pool.reserve_gb:.1f} reserved) — the layer's total capacity could not be read"
+        )
+    from_ledger = usable - charged
     if pool.measured_free_gb is None:
         return from_ledger, (
             f"{from_ledger:.1f} GB free by the ledger ({pool.total_gb:.1f} total, "
@@ -173,8 +207,11 @@ def admit(
     refusals: list[Decision] = []
     for layer, pool in ((Layer.HOST, host), (Layer.DEVICE, device)):
         need = request.host_gb if layer is Layer.HOST else request.device_gb
-        usable = pool.total_gb - pool.reserve_gb
-        if need > usable:
+        # An unknown capacity is structurally incapable of proving a request impossible. Only a
+        # layer whose total was actually READ may return INFEASIBLE, which is the verdict that
+        # means never retry; anything else falls through to the DEFERRED test below.
+        usable = _usable_gb(pool)
+        if usable is not None and need > usable:
             refusals.append(
                 Decision(
                     Outcome.INFEASIBLE,

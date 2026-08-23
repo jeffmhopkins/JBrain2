@@ -130,14 +130,19 @@ class ReservationLedger:
         would refuse every load on a box whose probe merely went away. The ledger term still
         binds in that case."""
         mem = read_memory_gb()
+        # None, NOT 0.0, when the read failed — the same rule `measured_free_gb` has always
+        # had, and for a harder reason. A 0.0 capacity makes `usable` the negative reserve, so
+        # `admit` calls every model INFEASIBLE ("never retry") and a transient unreadable
+        # `/proc/meminfo` permanently fails every background job on the box, box-wide, with no
+        # recovery when the file comes back.
         host = Pool(
-            total_gb=mem[0] if mem else 0.0,
+            total_gb=mem[0] if mem else None,
             reserve_gb=gpu_guard.MIN_FREE_GTT_GB,
             measured_free_gb=(mem[0] - mem[1]) if mem else None,
         )
         sample = await self._device_probe.sample() if self._device_probe is not None else None
         device = Pool(
-            total_gb=sample.gtt_total_gb if sample else (mem[0] if mem else 0.0),
+            total_gb=sample.gtt_total_gb if sample else (mem[0] if mem else None),
             reserve_gb=gpu_guard.MIN_FREE_GTT_GB,
             measured_free_gb=sample.gtt_free_gb if sample else None,
         )
@@ -216,18 +221,22 @@ class ReservationLedger:
                     layer=str(decision.layer),
                     reason=decision.reason,
                 )
-                if not self._shadow:
-                    return Charge(decision, None)
                 # ON THE SURFACE THE OWNER ACTUALLY READS, not only in a log line. They run
                 # this box remotely with no terminal, so a verdict that only exists in the
-                # container log is a verdict nobody can act on — and this verdict is the whole
-                # evidence base for whether the ledger is allowed to start deciding.
+                # container log is a verdict nobody can act on — and in shadow this verdict is
+                # the whole evidence base for whether the ledger may start deciding.
+                #
+                # ABOVE the enforcing-mode return, not below it, which is where it used to sit:
+                # the box narrated every refusal it did NOT act on and would have gone silent
+                # on the ones it did, at exactly the moment a refusal starts costing a load.
                 await box_events.record(
-                    box_events.LEDGER_SHADOW_REFUSAL,
+                    box_events.LEDGER_SHADOW_REFUSAL if self._shadow else box_events.LEDGER_REFUSAL,
                     served_model,
                     detail=decision.reason,
                     status="failed",
                 )
+                if not self._shadow:
+                    return Charge(decision, None)
             session.add(
                 ModelReservation(
                     instance_id=uuid.UUID(instance_id),

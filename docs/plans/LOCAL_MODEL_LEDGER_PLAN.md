@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2b◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b◻️ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -88,9 +88,12 @@ optimisation over a ledger that is already correct without it — never a correc
 
 **Refuse loudly and retryably.** `Deferred` (fits this box, not right now — here is the
 arithmetic, retry) versus `Infeasible` (exceeds total capacity, never retry). Conservative
-admission is only tolerable when refusal is cheap and legible. Today's refusal is neither: it
-returns HTTP 500 where its docstring promises 409, burns a worker retry where a defer would
-not, and prints whole-box memory as though it were one model's need.
+admission is only tolerable when refusal is cheap and legible. The refusal this plan was written
+against was neither: it returned HTTP 500 where its docstring promised 409, burned a worker retry
+where a defer would not, and printed whole-box memory as though it were one model's need. **L1
+closed all three** (item 2 below), so both outcomes already have a delivery path standing ready —
+what L2b still owes is making the LEDGER, rather than a live measurement, the thing that produces
+them.
 
 ## Waves
 
@@ -124,14 +127,29 @@ residency-layer fix reaches it.
 
 ### L1 — The unambiguous fixes the attempt surfaced ✅
 
-Independent of the ledger, each small, each with a regression test:
+Independent of the ledger, each small, each with a regression test. **Items 1-4 state the
+DEFECT in the present tense of the day it was written — the wave's ✅ is what says they are
+closed**, and reading them as open work is how a plan re-fixes fixed code (the L0 audit's
+most dangerous finding). Items 5-7 carry their own inline status because parts of 5 were
+deliberately left open.
 
 1. `unload()`'s docstring asserts a stopping window that v250 does not produce, and **six
    callers reason from it**. Correct it; re-examine whether our client timeout is what actually
    manufactures the window.
-2. `GpuBudgetError` reaches the owner's Load button as **HTTP 500** where the docstring promises
-   409, and **fails a worker job, burning a retry**, where `ResidencyError` defers. `run_smoketest`
-   documents "Never raises" and can.
+2. `GpuBudgetError` reached the owner's Load button as **HTTP 500** where the docstring promised
+   409, and **failed a worker job, burning a retry**, where `ResidencyError` defers. **Both are
+   CLOSED.** `api/llm_settings.py` raises `HTTPException(status_code=409, …)` on
+   `gpu_guard.GpuBudgetError` in BOTH shared warm helpers (`gateway_load` and `gateway_prime`),
+   and `worker.py` catches it in the SAME clause as `ResidencyError` —
+   `except (ResidencyError, gpu_guard.GpuBudgetError)` → `queue.defer(…)`, which burns no
+   attempt — UNLESS the refusal is permanent (the INFEASIBLE split, in L2b below). This is
+   load-bearing for L2b: the ledger's refusal is spelled as a `GpuBudgetError` precisely
+   because these two paths already exist.
+
+   The third clause of this item is **NOT closed**: `run_smoketest` still documents "Never
+   raises" and still can. It wraps `gateway.load` in `except LocalGatewayError` only, so a
+   `GpuBudgetError` from the device pre-flight escapes to the CLI. It belongs with L3's
+   "`smoketest`'s gate reads the same ledger" rather than here.
 3. The refusal message renders `projected_gb` — the whole box after the load — as
    "{model} needs ~137 GB". Say what the model needs and what the box has, separately.
 4. `jcode._warm_model` loads with **no admission at all**: the body is inside
@@ -359,13 +377,100 @@ constraint and it is checked — but "both layers protect the GTT hang mode" wou
 overstatement, and the two-layer shape earns its keep as future-proofing (a vLLM-style sleep
 moves bytes between the columns) rather than as a second live gate today.
 
+### L2a-m — The declarations, measured on the box ✅
+
+The shadow ledger's first job was to be judged against reality, and the box was available, so
+it was judged immediately rather than after a week of waiting. Nine cold loads across two model
+families and five context windows, read from `gpu_guard.measure_footprint` (the device probe),
+not inferred from `/proc/meminfo`.
+
+| model | window | KV term | predicted | measured | drift |
+|---|---|---|---|---|---|
+| gpt-oss-120b | 16384 | 1.13 | 60.67 | 60.47 | −0.20 |
+| gpt-oss-120b | 32768 | 2.25 | 61.80 | 61.76 | −0.04 |
+| gpt-oss-120b | 65536 | 4.50 | 64.05 | 64.26 | **+0.21** |
+| gpt-oss-120b | 131072 | 9.00 | 68.55 | 69.26 | **+0.71** |
+| qwen3.8-27b-q4 | 16384 | 0.72 | 19.31 | 18.87 | −0.44 |
+| qwen3.8-27b-q4 | 65536 | 2.89 | 21.48 | 21.09 | −0.39 |
+| qwen3.8-27b-q4 | 131072 | 5.78 | 24.37 | 23.96 | −0.41 |
+| qwen3.8-27b-q4 | 262144 | 11.56 | 30.15 | 29.71 | −0.44 |
+| qwen3.8-27b-abliterated | 65536 | 2.89 | 21.18 | 20.81 | −0.37 |
+
+**The 27B family is correct and needs nothing.** Sixteen-fold KV range, drift flat at −0.41
+± 0.03, regression slope −0.0015. Both builds agree. A flat negative offset is the safe shape:
+it reserves slightly more than the box takes.
+
+**gpt-oss's KV coefficient was 11.4% light**, and the error was PROPORTIONAL to the KV term —
+so it grew with exactly the window an operator is most likely to raise, and was largest at the
+top of the range where the box is fullest. `kv_gb_per_128k` 4.50 → **5.01** turns the four
+drifts into −0.33, −0.30, −0.30, −0.32: the same flat, conservative offset the 27B has.
+
+*Which number is actually wrong is not settled.* gpt-oss is the only `kv_full_history` entry,
+so "the base KV is 11% bigger" and "the `--swa-full` doubling is really ~2.23x" fit these
+measurements identically. Recorded on the model, because a per-model figure is what was
+measured; the next `--swa-full` model must be measured rather than inherit either guess.
+
+**Two measurement failures are recorded here because they nearly produced a wrong answer.**
+The first sweep re-printed the previous window's reading whenever a load outlived the client's
+timeout, so three of six rows were stale duplicates. The second measured 69.41 GB at a 64k
+window against 69.26 at 128k — impossible — because its baseline was sampled one second after a
+69 GB model was unloaded and was still falling; the companion reading in that same run AGREED
+with the prediction to 0.03 GB while being equally contaminated. A measurement that confirms
+you for the wrong reason is worse than one that contradicts you. The final numbers come from
+loads that were cold, whose window override was verified before loading, and whose baseline was
+taken only after free memory stopped moving.
+
+**The ledger raised no shadow refusal across any of it**, including four gpt-oss loads at
+60-69 GB. Its arithmetic never disagreed with the live gate — on a box that was mostly empty,
+so this is evidence of no false positives, not evidence the ledger binds correctly under
+pressure.
+
 ### L2b — Let it decide ◻️
 
-Flip `shadow=False`, and act on the two outcomes the arithmetic already separates: `DEFERRED`
-must defer a worker job rather than burn a retry, and `INFEASIBLE` must reach the owner as a 409
-that says the model will never fit. Do it after a stretch of real box traffic has been read back
-from `ledger.shadow_would_refuse` — if the ledger would have refused loads that in fact
-succeeded, the declaration is wrong and no amount of correct plumbing fixes that.
+Flip `shadow=False`. Do it after a stretch of real box traffic has been read back from
+`ledger.shadow_would_refuse` — if the ledger would have refused loads that in fact succeeded, the
+declaration is wrong and no amount of correct plumbing fixes that.
+
+**Acting on the outcomes is NOT part of this wave — the deliveries are already built**, and an
+earlier version of this section asked for them again. There are THREE, not two. A
+`GpuBudgetError` reaching the owner's Load button is a 409 (`api/llm_settings.py`, both warm
+helpers); one reaching a worker job is a `queue.defer` in the same clause as `ResidencyError`,
+burning no attempt (`worker.py`); and — the third, added after L1 — a refusal whose decision was
+`Outcome.INFEASIBLE` is raised as `GpuBudgetError(…, permanent=True)` and FAILS that job
+terminally instead.
+
+Without the third, the flip would have turned a model too large for the box into a job that
+defers, wakes, is refused for the same unchangeable reason, and defers again, forever: it is the
+one refusal no eviction can ever satisfy. Four things had to be true for that split to be safe,
+and each was a real defect found in review:
+
+* the device pre-flight (`gpu_guard.refuse_if_no_device_room`) runs BEFORE the charge, so on a
+  probe-wired box it — not `admit` — is what refuses a device-bound request. It now decides
+  permanence itself, from the pool's total capacity; otherwise the ledger's verdict never got
+  the chance and the forever-loop survived on the path that actually runs.
+* an UNREAD capacity must not read as a capacity of zero. `total_gb` fell back to `0.0`, making
+  `usable` the negative reserve, so every model was INFEASIBLE and one unreadable
+  `/proc/meminfo` would have permanently failed every background job on the box. `Pool.total_gb`
+  is now `float | None`, and a non-positive total counts as unread (a device probe can report a
+  zero total that looks like data).
+* a permanent failure must not fire `_after_exhaustion`'s content fallbacks. They discard an
+  attachment's text and analyze the body alone — right for a corrupt file, wrong for a capacity
+  refusal built from the owner's own window/slot settings, where raising slots in the PWA would
+  have silently stripped OCR text from every affected note on the FIRST refusal.
+* the refusal must reach the owner. `box_events.record` sat below the enforcing-mode early
+  return, so the box narrated only the refusals it did NOT act on; and a directly-enqueued job
+  has no run step, so its permanent failure lived solely in `app.jobs.last_error`, which no
+  owner surface projects. Hence `LEDGER_REFUSAL` and `JOB_REFUSED_NO_ROOM`. That is
+why `ledger.charge`'s refusal is raised as a `GpuBudgetError` rather than a new class: the box
+already speaks the language, which is what keeps this wave a flip rather than a sweep.
+
+So what is genuinely left is the flip plus **one decision the shadow build deferred to this
+wave — the charge's `lock_timeout`.** `ledger.charge` bounds its wait for the box lock because
+`residency.ensure_room`'s slow path still holds the same advisory key across a whole
+evict-and-load (L1 item 5, open by decision), and its docstring hands the decision here: "Once
+the ledger is authoritative a timeout must refuse, which is one more line in the same place, and
+by then item 5 should be closed." A timed-out charge decided against a census somebody else is
+changing, which is the one thing the lock was for.
 
 *Risk:* high — this is the part that changes behaviour, and it cannot be split further: the
 moment admission stops reading memory, every layer that still does is inconsistent with it.

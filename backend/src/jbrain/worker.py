@@ -223,8 +223,46 @@ async def process_one(
             # refusal — the box has no room right now — and it fell through to the generic
             # handler below, which FAILS the job and burns a retry attempt. A job that could
             # not get memory should wait for memory, not exhaust its budget against it.
-            await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
-            log.info("worker.job_deferred_no_room", job_id=job.id, kind=job.kind, error=repr(exc))
+            if isinstance(exc, gpu_guard.GpuBudgetError) and exc.permanent:
+                # ...unless the refusal is INFEASIBLE: the request exceeds the pool's whole
+                # usable capacity, so no eviction can ever satisfy it and the defer above
+                # becomes an infinite one. Fail it the way `PermanentJobError` is failed —
+                # retrying cannot help, so do not pretend it might.
+                exhausted = await queue.fail(
+                    maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True
+                )
+                log.error(
+                    "worker.job_failed_never_fits",
+                    job_id=job.id,
+                    kind=job.kind,
+                    error=repr(exc),
+                )
+                # ON THE OWNER'S SURFACE, because this is where a permanent failure would
+                # otherwise vanish: a directly-enqueued job (OCR, a note analysis) has no run
+                # step, so `_finalize_run_step` returns early and the only other trace is
+                # `app.jobs.last_error`, which nothing projects. They have no terminal.
+                await box_events.record(
+                    box_events.JOB_REFUSED_NO_ROOM,
+                    job.kind,
+                    detail=str(exc),
+                    status="failed",
+                )
+                await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
+                # NOT `_after_exhaustion`. Its content fallbacks exist for work that will never
+                # finish — a corrupt PDF, a dead audio file — and they DEGRADE the note to
+                # body-only analysis, discarding the attachment's text. A capacity refusal is
+                # not that: the declaration that produced it is built from the owner's own
+                # window and slot settings, so raising slots in the PWA can make every model
+                # "never fit" and, on the very first refusal, silently strip OCR text from
+                # every affected note. Leave the note alone; the box event above says why.
+            else:
+                await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
+                log.info(
+                    "worker.job_deferred_no_room",
+                    job_id=job.id,
+                    kind=job.kind,
+                    error=repr(exc),
+                )
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
             log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
