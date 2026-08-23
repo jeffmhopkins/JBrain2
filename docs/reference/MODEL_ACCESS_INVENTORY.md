@@ -24,8 +24,8 @@
 > falsify, not confirm.** The rule above was violated on the day it was written. `Last verified`
 > was bumped by `be1961a`, but the line numbers throughout describe **`be1961a^`, that commit's
 > parent** — and `be1961a` itself edited `residency.py`, `local_gateway.py`, `llm_settings.py`
-> and `worker.py`, fixing several defects this document still reported as live. Four further
-> commits have landed since.
+> and `worker.py`, fixing several defects this document still reported as live. Further
+> commits have landed since — re-grep before citing.
 >
 > Measured drift at the time of the audit: **123 of 503 `file:line` + quote pairs pointed at the
 > wrong line (24%)**. The quotes were almost all still correct; only the addressing had rotted.
@@ -211,12 +211,15 @@ the two terms swap is exactly **8/3 GiB**. Measured against the real ceiling:
 | qwen3.5-4b | 7.25 | 12.69 | 12.80 | **+0.9%** |
 | qwen3.8-27b-q4 | 20.59 | 36.05 | 26.10 | −28% |
 
-`qwen3.5-4b` **cannot load today**, aborted on a 0.9% overshoot by a guard whose
-own docstring says it exists to catch "the ORDER-OF-MAGNITUDE balloon … not
-ordinary overshoot". The projection is light by 5.55 GiB, most of it the
-warm-up phase: `guarded_load` returns *before* `_warm()` runs, so KV allocation
-and graph capture land after the guard's last sample. That is not a one-interval
-race, it is an entire unwatched phase.
+`qwen3.5-4b` **could not load at the time of this measurement**, aborted on a
+0.9% overshoot by a guard whose own docstring says it exists to catch "the
+ORDER-OF-MAGNITUDE balloon … not ordinary overshoot". The projection was light
+by 5.55 GiB, most of it the warm-up phase: `guarded_load` returned *before*
+`_warm()` ran, so KV allocation and graph capture landed after the guard's last
+sample — not a one-interval race, an entire unwatched phase (since closed; §G5).
+The under-declaration itself was fixed by #1191: a measured
+`runtime_overhead_gb=9.5` override (`local_catalog.py:1008`, floor-anchored —
+verify against a completed load post-deploy).
 
 Note the direction is the opposite of the intuitive one: the effective allowed
 multiple is `max(1.75, 1 + 2/p)`, so the guard is *looser* on small models
@@ -496,6 +499,14 @@ The unload chokepoint itself:
 | A15 | `backend/src/jbrain/workflow/preconditions.py:64-70` | `    async def check() -> PreconditionResult:` / `        provider, model = await router.effective_spec(task, strength)` / `        if provider != "local":` / `            return PreconditionResult(met=True)` / `        if model in await gateway.running():` / `            return PreconditionResult(met=True)` / `        return PreconditionResult(met=False, reason=f"local model {model!r} not loaded")` | `worker.py:786` `        "reasoning_model_loaded": model_already_loaded(router, llm_gateway, task="triage.classify"),` → `worker.py:516` client | worker |
 | A16 | `backend/src/jbrain/api/external_llm.py:221-222` | `    if served not in resident:` / `        raise HTTPException(status_code=503, detail="the coder model is not loaded")` | `external_llm.py:213` `    gateway = getattr(request.app.state, "local_gateway", None)` | api |
 | A17 | `backend/src/jbrain/llm/local_gateway.py:391-402` | `    async def _require_resident(self, served_model: str, what: str) -> None:` … `        if served_model not in await self.running():` / `            raise LocalGatewayError(` | the client itself; guards `props`/`slots`/`metrics` | api + worker |
+| A18 | `backend/src/jbrain/llm/ledger.py:165` | `    async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:` — decide and, if admitted, INSERT the reservation row in one transaction under the box lock; the verdict is `admission.admit` (`admission.py:185`). **AUTHORITATIVE since 2026-08-23** (`docs/plans/LOCAL_MODEL_LEDGER_PLAN.md` L2b): `shadow=False` in BOTH processes, pinned by an AST test. A box-lock timeout or DB hiccup on the charge refuses transiently as `GpuBudgetError` (`ledger.py:191-208`), never a 500 | one `ReservationLedger` per process — `main.py:422-424` (`source="api"`), `worker.py:590-592` (`source="worker"`) — charged through by `LocalGatewayClient` (`main.py:428`, `worker.py:599`) | api + worker |
+| A19 | `backend/src/jbrain/llm/residency.py:586` | `    async def _plan_ledger(self, served_model: str, *, narrate_skip: bool) -> EvictionPlan \| None:` — the eviction plan simulates evictions until `admission.admit` says yes, over the ledger's own pools/rows: the SAME arithmetic A18's charge applies, so plan and charge cannot disagree. The measured planner survives only as `_plan_measured`, the fallback for a build with no ledger or a failed ledger read (`residency.py:577-584`) | coordinator; `ledger=` wired `main.py:483` / `worker.py:668` | api + worker |
+
+**A9–A14 are the PRE-LEDGER layer.** They still run, but since the ledger flipped
+authoritative (2026-08-23) the admitting arithmetic on the load path is A18/A19: A9/A10
+feed from A19's plan, A11/A12 remain the device-side pre-flight/watchdog on the gateway
+chokepoint, A13 never was a gate (its row says so), and A14 is the CLI's own
+`/proc/meminfo` check, untouched by the ledger until L3.
 
 ### 1d. WARM / PRIME / RESTORE
 
@@ -511,6 +522,9 @@ The unload chokepoint itself:
 | W8 | `backend/src/jbrain/llm/residency.py:243-253` | `    def note_evicted(self, served_names: Iterable[str]) -> None:` … `                self._displaced.add(name)` / `                self._prefix_lost(name)` | coordinator | callers: `main.py:747` `                on_evicted=app.state.residency.note_evicted,`; `jcode.py:167` | api |
 | W9 | `backend/src/jbrain/llm/warm_keeper.py:104-113` | `    def note_prefix_lost(self, served_model: str) -> None:` … `        if self._primed is not None and self._primed[0] == served_model:` / `            self._primed = None` | wired `main.py:455` `            on_prefix_lost=_prefix_lost_notifier(app),` → `main.py:245-248` `    def notify(served_model: str) -> None:` / `        keeper = getattr(app.state, "warm_keeper", None)` / `        if keeper is not None:` / `            keeper.note_prefix_lost(served_model)` | — | api |
 | W10 | `backend/src/jbrain/llm/prefill.py:54` + `router.py:761-766` | `SlotsReader = Callable[[str], Awaitable[list[dict[str, object]]]]` ; `            prefill.watch(` / `                probe,` / `                model,` / `                prompt_chars=prompt_chars,` / `                on_progress=publish if probe is not None else None,` / `            ) as streaming,` | `main.py:481` `            slots_probe=app.state.local_gateway.slots,`; `worker.py:574` `        slots_probe=llm_gateway.slots,` | reads only; `slots` runs A17 | api + worker |
+| W11 | `backend/src/jbrain/llm/kv_prefix.py:198` | `    async def save_after_prime(` — persist the freshly primed slot's KV state to disk, only when the slot's `n_prompt_tokens` exactly equals the prime's own token count (v1 saved garbage; the module docstring is the post-mortem). Caller: `warm_keeper.py:243` | `KvPrefixStore` — api only, `main.py:494` `        app.state.kv_prefix = KvPrefixStore(app.state.local_gateway, settings.local_models_dir)` | best-effort, never raises | api |
+| W12 | `backend/src/jbrain/llm/kv_prefix.py:340` | `    async def restore_if_lost(` — stream the saved slot back (~2 s vs ~60 s prefill) when the primed prefix is missing. Callers: the keeper's tick and prime (`warm_keeper.py:171`, `:219`), the router before an `agent.turn` (`router.py:402`), and — added #1195 — the load-time warm hook: `_warm_identity` (`api/llm_settings.py:1536-1571`) wires it as `before_warm`, so a Load's prime meets a restored cache instead of re-prefilling | as W11 | conservative threshold gate: a slot holding at least a prefix-sized cache is never wiped | api |
+| W13 | `backend/src/jbrain/llm/kv_prefix.py:123` | `def _fingerprint(` — sha256 over the rendered launch line + system text + tool schema + `reasoning_effort` (effort keyed in by #1195: it is part of the RENDERED prompt, so it must move the filename). A stale file is never matched again and ages out of the byte budget (see §B.5 `MAX_STORE_BYTES`) | module fn | identity, not a gate | api |
 
 ### 1e. RESIDENCY-STATE READS (`running()` and friends)
 
@@ -959,7 +973,7 @@ worker.py:664	            gateway=LocalGatewayClient(settings.whisper_url) if tr
 |---|---|---|---|
 | per-model load lock (asyncio, per client instance) | `local_gateway.py:129` `        self._load_locks: dict[str, asyncio.Lock] = {}` | `local_gateway.py:648-650` `        lock = self._load_locks.setdefault(served_model, asyncio.Lock())` / `        queued = lock.locked()` / `        async with lock:` | the whole of `load()` for one served model, including the join check `local_gateway.py:651` `            if queued and served_model in await self.running():` |
 | global load lock (asyncio, per client instance) | `local_gateway.py:151` `        self._global_load_lock = asyncio.Lock()` | `local_gateway.py:673` `            async with self._global_load_lock:` (preceded by the queue narration `local_gateway.py:663-665` `            if self._global_load_lock.locked():` / `                ahead = self._loading_now` / `                log.info("local_gateway.load_queued", model=served_model, behind=ahead)`) | `_load_and_warm` — config regen, device pre-flight, guarded load, page-cache drop, warm-up, footprint measurement |
-| cross-process box lock (Postgres advisory) | `residency.py:70` `_BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"`; `residency.py:80-86` `    @contextlib.asynccontextmanager` / `    async def _lock() -> AsyncIterator[None]:` / `        async with maker() as session, session.begin():` / `            await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BOX_LOCK_KEY})` / `            yield` | `residency.py:479-480` `        async with self._box_locked():` / `            await self._ensure_room_core(served_model, load_target=True)`; the wrapper is `residency.py:547-566` and degrades: `residency.py:558-560` `        except Exception as exc:  # noqa: BLE001 — lock is best-effort; proceed unlocked` / `            log.warning("residency.box_lock_unavailable", error=repr(exc))` / `            cm = None` | eviction + target load, across api and worker. Wired `main.py:450` / `worker.py:556` (`box_lock=pg_box_lock(maker)`). NOT taken on `free_room`, `_restore`, or `ensure_room`'s `load_target=False` branch (`residency.py:469-470` `        if self._box_lock is None:` / `            await self._ensure_room_core(served_model, load_target=False)`) |
+| cross-process box lock (Postgres advisory) | `residency.py:77` `_BOX_LOCK_KEY = admission.BOX_LOCK_KEY` (`admission.py:31` `BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"`); blocking form `residency.py:97` `            await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BOX_LOCK_KEY})`; try-lock form `residency.py:135` `                        text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _BOX_LOCK_KEY}` | `residency.py:910-911` `        async with self._box_locked():` / `            plan = await self._ensure_room_core(served_model)`; the wrapper is `residency.py:979-998` and degrades: `residency.py:990-992` `        except Exception as exc:  # noqa: BLE001 — lock is best-effort; proceed unlocked` / `            log.warning("residency.box_lock_unavailable", error=repr(exc))` / `            cm = None` | **decision + evictions ONLY, across api and worker — never the load** (inverted 2026-08-23, #1194: holding it across the evict-and-load self-deadlocked against the ledger's own charge). The target's load runs AFTER release, protected by the charge row written at intent — `ledger.charge` takes the same advisory key under a bounded `lock_timeout` and a timeout refuses transiently (`ledger.py:191-208`). `_restore` TRY-locks its plan (`residency.py:1101-1107`, skip-on-busy) and also loads outside the lock. Wired `main.py:467` / `worker.py:653` (`box_lock=pg_box_lock(maker)`). NOT taken on `free_room` or when `box_lock is None` (`residency.py:889-891`) |
 | jcode LLM swap lock (asyncio, api process) | `main.py:464` `        app.state.jcode_llm_swap_lock = asyncio.Lock()` | `jcode_llm.py:159` `    swap_lock = getattr(request.app.state, "jcode_llm_swap_lock", None)`; `jcode_llm.py:166-168` `        guard = swap_lock if swap_lock is not None else contextlib.nullcontext()` / `        try:` / `            async with guard:` | `ensure_room` + the entire streamed completion for one jcode request |
 | provisioning flocks (shell, not runtime) | `scripts/local-llm-setup.sh:29` `exec 9>"$INSTALL_DIR/.local-llm-setup.lock"`; `scripts/whisper-setup.sh:26` `exec 9>"$INSTALL_DIR/.whisper-setup.lock"` | `if ! flock -n 9; then` (next line in each) | one provisioning run at a time |
 
@@ -1798,6 +1812,8 @@ listed above with their `file:line`; reconciling them is out of scope for this i
 | `deploy/update-inner.sh:265` | `QUIESCE_KEEP="db api supervisor proxy cloudflared"` | `update-inner.sh:259-264` |
 | `backend/src/jbrain/ops_metrics.py:52` | `_SAMPLE_INTERVAL_SECONDS = 30` | (host-metrics sampling cadence) |
 | `backend/src/jbrain/image_gen/liveness.py:52` | `        ttl_s: float = 30.0,` | `liveness.py:10-13`: `One cached bool with a short TTL keeps the per-turn cost at zero on the hot path` … |
+| `backend/src/jbrain/llm/kv_prefix.py:96` | `MAX_STORE_BYTES = 25 * 1024**3` | `kv_prefix.py:91-95` (abbrev.): `# The whole \`.kvslots\` tree's disk allowance — the trade the owner chose on 2026-08-23` / `# (25 GiB of hard drive for prompt caches; changing it is a release, there is no knob).` — a DISK budget, not memory: LRU by mtime, least-recently-USED slot file evicted first (`kv_prefix.py:304-338`); files are ~2.2 GiB each. See §A.1d W11–W13 for the save/restore behaviour |
+| `deploy/docker-compose.yml:418` | `      - ./local-models/.kvslots:/models/.kvslots` | `docker-compose.yml:411-417` (abbrev.): `      # The ONE writable carve-out in the otherwise read-only weights mount: llama-server` / `      # saves/restores KV-slot files here (jbrain.llm.kv_prefix, --slot-save-path).` … `      # The api holds the tree to its 25 GiB budget through its own rw mount` |
 
 ---
 
@@ -2476,7 +2492,7 @@ Code-mode pause on the worker (`jbrain/worker.py:452-456`):
             ):
 ```
 
-### 4.2 Seeded `app.schedules` rows still present at head (`0169`)
+### 4.2 Seeded `app.schedules` rows still present at the migration head as of 2026-08-22 (see `backend/migrations/versions/` for the current head)
 
 Derived from the migration set; `enabled` is the value after every later `UPDATE`.
 Nothing after `0121` touches any of these schedule ids (grep of the ids over
@@ -3670,7 +3686,7 @@ Command C5 lists 37 files. The non-archive, non-mock ones:
 - `docs/ROADMAP.md:95` `LLM adapter (Anthropic + OpenAI-compatible). Fact and entity extraction on`
 - `docs/runbooks/STRIX_HALO_SETUP.md:101` `- **Anthropic / xAI keys** — paste, or leave blank to run fully local.`
 - `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md:282`, `:416`; `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md:275`; `docs/plans/AGENT_CANVAS_PLAN.md:353`
-- `LOCAL_ONLY_BOX_PLAN.md` (deleted) (an existing plan document on this same removal — e.g. `:384` `` `openai_compat.py` is **shared** (`router.py:840` xai / `:841-847` local) — only the xAI ``); `docs/proposed/TOOL_CATALOG_PLAN.md:50`, `:53`; `docs/proposed/TEACHER_MODE_AGENTS_PLAN.md:423`
+- `LOCAL_ONLY_BOX_PLAN.md` (deleted) (an existing plan document on this same removal — e.g. `:384` `` `openai_compat.py` is **shared** (`router.py:840` xai / `:841-847` local) — only the xAI ``); `docs/plans/TOOL_CATALOG_PLAN.md:50`, `:53`; `docs/proposed/TEACHER_MODE_AGENTS_PLAN.md:423`
 
 Archive/mocks (17 further files) are listed by C5 and not re-quoted here.
 
@@ -3838,6 +3854,12 @@ still read the state-blind set** — they are diagnostic/join paths, not loads.
 
 ## G2 — Loads that run outside the cross-process box lock
 
+**OVERTAKEN 2026-08-23 (#1194).** NO load runs under the box lock any more — `ensure_room` now
+decides+evicts under it and loads outside it, the rule `_restore` already followed. The
+protection across the load is the ledger's charge row, written at intent (see §A.1c A18 and
+`../plans/LOCAL_MODEL_LEDGER_PLAN.md` L1 item 5). The paragraphs below record the pre-ledger
+shape.
+
 Only `ensure_room`'s slow path holds `_box_locked()` across its load. Outside it: the owner's
 Load button, the debug prime, `_restore`, `jcode._warm_model`, the warm-keeper fallback, and
 `smoketest`. `_restore` is the likeliest instantiator — it fires at the end of every displaced
@@ -3871,9 +3893,12 @@ construction. `smoketest`'s keeps a name that no longer describes what it reads.
 
 ## G5 — The warm phase runs outside the watchdog
 
-`guarded_load` returns, and only then does `_load_and_warm` call `_warm(...)` — measured in
-that file at **118 s of a 198 s gpt-oss-120b load**. So ~60% of a cold load allocates KV and
-graph-capture buffers with nothing watching for a runaway.
+**G5 WAS the gap; CLOSED 2026-08-22 (#1188).** `guarded_load` returned, and only then did
+`_load_and_warm` call `_warm(...)` — measured in that file at **118 s of a 198 s gpt-oss-120b
+load**. So ~60% of a cold load allocated KV and graph-capture buffers with nothing watching
+for a runaway. The warm now runs INSIDE `guarded_load` via `_load_then_warm`
+(`local_gateway.py:1145`); the pre-flight had already admitted weights + KV + projector, so
+the ceiling covered the warm all along — only the watching stopped early.
 
 ## G6 — The measured-footprint series is biased
 

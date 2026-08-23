@@ -1,6 +1,6 @@
 # Cross-Turn Tool Results (Fetched-Document Artifacts) — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ · **Adopters:** research reports (reference-only) ✅
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ · **Adopters:** research reports (reference-only) ✅
 
 Give jerv durable, referenceable memory of expensive tool results — starting with
 `web_fetch` (and its YouTube/transcript branch) — so a fetched page and its paging
@@ -67,8 +67,9 @@ Pure steering edits. No storage, no migration, no cross-turn state.
   you did not read; do **not** reach for `analyze_video` / `analyze_stream` /
   `search_external_video` / `read_external_video` to get a transcript captions already
   provide here.
-- **`read_external_video.tool`** (v2→3) & **`search_external_video.tool`** (v1→2) — add a
-  hard boundary line: reads/searches **only** videos already analysed into the owner's
+- **`read_external_video.tool`** (v2→3) & **`search_external_video.tool`** (v1→2) — both
+  since folded into the `external_video.tool` umbrella (PR #1030), which carries the same
+  boundary line — add a hard boundary line: reads/searches **only** videos already analysed into the owner's
   library, not an arbitrary URL the owner just gave you (that returns "no analysed video
   matches"); for a fresh YouTube/web URL's transcript, `web_fetch` the URL instead.
 - **`jerv.prompt`** (v30→v31; update the version asserts in
@@ -250,8 +251,8 @@ contract, and both already work).
 - `docs/reference/ASSISTANT.md` — the new cross-turn artifact memory + `read_artifact`
   tool; jerv "Agent selection" tool list.
 - `CLAUDE.md` non-negotiables checklist — new table's RLS isolation test.
-- Promote this doc `proposed/` → `plans/` on scheduling, then archive on the last wave;
-  add a `ROADMAP.md` entry (and a note tracking Cluster A as a future de-dup).
+- Archive this doc on the last wave; add a `ROADMAP.md` entry (and a note tracking
+  Cluster A as a future de-dup).
 - `scripts/dev-setup.sh` — only if a new dependency lands (none expected).
 
 ## 9. Decisions (resolved in W1) + open items

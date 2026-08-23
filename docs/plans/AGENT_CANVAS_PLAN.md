@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-21 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0's measurement is DONE (2026-08-17).** Probed on the live box against
 > `qwen3.8-27b-q4`: the base is **`norm_1000`**, now pinned in `agent/grounding.py` for
@@ -272,12 +272,13 @@ model was handed, and the rotation is baked into the stored bytes.
 phone photo is the case where uniform scaling by the long side looks *nearly* right
 and drifts — the failure reported against Qwen3-VL for far-from-square aspect ratios.
 
-**5.4 Serving prerequisite.** `llm/llama_swap_config.py:157-159` passes `--mmproj` but
-**neither `--image-min-tokens` nor `--image-max-tokens`.** Ecosystem consensus is that
-Qwen-VL needs `--image-min-tokens 1024` for grounding to work at all; below it, a
-low-resolution photo gets too few image tokens and grounding degrades to guessing.
-This is a per-entry `extra_server_args` change on the vision catalog rows, and it
-gates the whole feature.
+**5.4 Serving prerequisite.** At scoping time `llm/llama_swap_config.py` passed
+`--mmproj` but **neither `--image-min-tokens` nor `--image-max-tokens`.** Ecosystem
+consensus is that Qwen-VL needs `--image-min-tokens 1024` for grounding to work at all;
+below it, a low-resolution photo gets too few image tokens and grounding degrades to
+guessing. Since shipped as a **first-class catalog field**: `image_min_tokens` on
+`LocalModel` (default 2048 on the vision entries), threaded through
+`llama_swap_config.py` — no `extra_server_args` hack needed.
 
 **5.5 Take the box from a detector when one exists.** For a *text* target the repo
 already has ground truth: RapidOCR returns `{text, box, score}` per line
@@ -287,11 +288,12 @@ already has ground truth: RapidOCR returns `{text, box, score}` per line
 
 ## 6. The tool surface — three tools, and the anti-bloat argument
 
-**The budget is real and tighter than the existing catalog plan assumed.** jerv holds
-**41 tools ≈ 103KB of sidecars ≈ 26–29.5k tokens**, sent on every ReAct step.
-`docs/proposed/TOOL_CATALOG_PLAN.md` §1 measured this against gpt-oss-120b's 128k and
+**The budget is real and tighter than the existing catalog plan assumed.** At scoping
+(2026-08-16) jerv held **41 tools ≈ 103KB of sidecars ≈ 26–29.5k tokens**, sent on every
+ReAct step.
+`docs/plans/TOOL_CATALOG_PLAN.md` §1 measured this against gpt-oss-120b's 128k and
 called it 18–20% of the window — but **`qwen3.8-27b` serves at the catalog default
-`-c 32768`** (`local_catalog.py:83`), where the tool block alone is ~80% of the window.
+`-c 32768`** (`local_catalog.py`), where the tool block alone is ~80% of the window.
 Fifteen drawing primitives would be a budget failure, not a tax. TOOL_CATALOG_PLAN W1
 went the other way — a measured 48→37 consolidation collapsing families into `action=`
 umbrellas with *no measurable tool-selection regression*. **This plan follows that
@@ -448,11 +450,13 @@ domain-stamped (`agent/attachments.py:89-107`); `generated_images` is **owner-on
 no domain column** (`0078_generated_images.py:22-51`). Cropping a photo attached in a
 health-scoped session would produce rows readable by id from a finance-scoped session.
 `grab_frame` and `compare_images` already do this, but **faces make the blast radius
-qualitatively different from a video still.** So crops of a domain-stamped attachment
-are served through a **scope-validating route** that checks the id under the
-attachment's own scope — mirroring `TurnAttachmentRepo.frame_thumb`
-(`attachments.py:214-229`, designed at `DESIGN.md:1285-1298`) — not by raw id through
-the un-domained table. This keeps invariant #3 intact and adds no new table.
+qualitatively different from a video still.** The proposal here was a
+**scope-validating route** that checks the id under the attachment's own scope —
+mirroring `TurnAttachmentRepo.frame_thumb` — not raw id through the un-domained table.
+**Deferred to W6** (see the banner): the shipped W4 persists crops through
+`persist_chat_image` (`agent/drawtools.py`) like every other chat image, inheriting the
+same firewall step-down `grab_frame`/`compare_images` already have; the consistent fix
+is a `domain_code` on `generated_images` covering every provenanced chat image at once.
 
 ### 6.5 Faces need a detector, not a VLM
 
@@ -488,11 +492,14 @@ plainly that it may miss people in a crowded photo.
 
 ## 7. Gating to the vision model — nearly free
 
-Canvas tools are useless on a text-only pick. `qwen3.8-27b-q4` is
-`supports_vision=False` (`local_catalog.py:407-416` — llama.cpp's MTP path can't run
-alongside `--mmproj`), and `api/agent.py:811-817` silently drops image bytes for a
-text-only model. Without gating, the owner on the fast MTP variant would get blind
-drawing with no signal.
+Canvas tools are useless on a text-only pick, and `api/agent.py` silently drops image
+bytes for a text-only model — without gating, a text-only pick would get blind drawing
+with no signal. (The original motivating case — the `qwen3.8-27b-q4` twin serving
+`supports_vision=False` because llama.cpp's MTP path couldn't run alongside `--mmproj` —
+is gone: PR #1150 made MTP a serving mode rather than a catalog entry, and the q4 twin
+is now `supports_vision=True` in `local_catalog.py`. The gate still earns its keep as
+the `CANVAS_MODELS` allowlist in `agent/readtools.py`: a model must be
+grounding-qualified, not merely vision-capable.)
 
 **The mechanism already exists and needs no signature change.** `hidden_tools_provider`
 (`loop.py:521`) is the one dynamic per-turn tool-visibility hook, and it is composed
@@ -585,7 +592,10 @@ per wave, exactly one PR per wave, CI green before merge.
 
 ### W4 — The crop lane *(GUI gate — owner interruption by design)*
 - `crop_regions` handler + sidecar; Pillow `Image.crop()`; `provenance="crop"`; cap 12.
-- The **scope-validating crop route** (§6.4).
+- ~~The **scope-validating crop route** (§6.4).~~ **Deferred to W6** (see the banner above):
+  crops persist through `persist_chat_image` (`agent/drawtools.py`) like every other chat
+  image; the right fix is a `domain_code` on `generated_images` covering all provenanced
+  chat images at once.
 - **New `image_set` registered view.** Per `PROCESS.md`, this requires **three
   interactive mock HTML artifacts presented to the owner before implementation**, the
   chosen mock landing in `docs/mocks/`, plus a new `### image_set tool-view` section in
@@ -802,7 +812,8 @@ failure from a silent runtime crash-loop into a loud build failure on the box, w
 flexbox + `border-radius` block end to end: exactly the layout PyMuPDF `Story` dropped
 in §3b, correct in 5.7 KB of PNG.
 
-**Not a defect, but the number to watch:** the turn cost. Per ReAct step the model
+**Not a defect, but the number to watch:** the turn cost. Per ReAct step (as measured
+2026-08-17) the model
 re-pays a ~35–39k-token prefill (the tool block dominates), so steps run 1–5 minutes on
 the Q4 twin and the first annotation took roughly eight. The canvas did not cause this —
 jerv was already at 41 tools — but the canvas is where it hurts most, because the loop

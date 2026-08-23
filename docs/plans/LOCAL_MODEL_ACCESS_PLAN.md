@@ -1,6 +1,7 @@
 # One way in, one way out
 
-> **Status:** In progress · **Last verified:** 2026-08-22 · **Waves:** W0🟡 W1◻️ W2🟡 W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
+> (W0 and W2 are partially landed — each wave's "Landed so far" table is the item-level truth)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every LLM call still goes through the
 > adapter (rule 1) and W4 shrinks that surface; no storage or RLS changes (rules 2–3), no new
@@ -13,6 +14,11 @@
 > inventory exists so that no claim here has to be taken on trust — every number below is a row
 > count in that document, and every row there carries a verbatim quote. **If a statement in this
 > plan is not traceable to an inventory row, it is a defect.**
+
+> ⚠️ **Line numbers below are snapshots — trust the quotes, distrust the addressing.** The
+> commits that landed W0's pieces and the ledger (#1188–#1194, all merged by 2026-08-23)
+> restructured the very call sites this plan cites, so a `file:line` here may be several
+> functions adrift. Re-grep before citing one; the inventory's own banner says the same.
 
 ## What the inventory found
 
@@ -90,7 +96,7 @@ question still fails on a wrong answer.
 
 ## The waves
 
-### W0 — A gate that can be trusted 🟡
+### W0 — A gate that can be trusted ◻️ (partially landed)
 
 > **Landed so far.** The half-wired-gate half is complete and the measurement is in place;
 > the collapse and the `ready()` split are not.
@@ -99,9 +105,9 @@ question still fails on a wrong answer.
 > |---|---|
 > | switches required, not optional | ✅ `c76288f` closed the two instances, `81ac6b9` closed the class — `ResidencyWiring` has no defaults, so an omitted switch is a pyright error |
 > | admission behind the shared warm helpers | ✅ `2f9904f` — moved *inside* `gateway_load`/`gateway_prime`, which is why the planned call-site AST walk was replaced (below) |
-> | collapse to one `admit`/`load`/`unload`/`resident` | ◻️ **not started** — the 7/14/17/28 counts below are unchanged |
+> | collapse to one `admit`/`load`/`unload`/`resident` | ◻️ **not started** — the 7/14/17/28 counts below are a 2026-08-22 snapshot; #1188–#1194 restructured call sites since, so re-count before relying on them |
 > | 1. log the short-circuit with llama-swap's state | ✅ `1c5fcb1` |
-> | 2. split `running()` from `ready()` | ◻️ **waits on the measurement above reaching the box** — see the note at the end of this wave |
+> | 2. split `running()` from `ready()` | replaced — see `LOCAL_MODEL_LEDGER_PLAN.md` (L2b live 2026-08-23) |
 > | the AST guard | ✅ `68975dc` + `81ac6b9`, but narrower than planned — see below |
 >
 > **Why the AST guard is smaller than this wave specified.** The plan assumed admission would
@@ -266,6 +272,13 @@ key structural point: one row per model INSTANCE with a host column and a device
 double-counting across the two budget layers cannot be expressed — rather than being corrected
 arithmetically at each layer, which is what failed here.
 
+**And it did replace it, 2026-08-23.** The ledger is authoritative (that plan's L2b):
+admission's authoritative path no longer reads `/proc/meminfo` — `residency._plan` runs the
+ledger's own arithmetic (`_plan_ledger`), and the measured planner survives only as the
+no-ledger fallback. The stopping-window race documented above is mitigated at the gateway
+itself: `_load_and_warm` now waits out a mid-stop model via `_settle_a_stopping_model`
+(`local_gateway.py:329`) instead of deciding against its stale `running()` entry.
+
 **Two steps, in this order, and the first is one line:**
 
 1. **Log the short-circuit with the state llama-swap actually reported.** This is the measurement
@@ -314,7 +327,7 @@ caught and what it catches. Two shapes:
 *Test:* every demand site declares an intent (AST-enforced); a refusal reaches the worker's defer
 rather than being swallowed; a per-item sweep defers once instead of failing 200 times.
 
-### W2 — Repurpose the existing toggle 🟡
+### W2 — Repurpose the existing toggle ◻️ (partially landed)
 
 > **Landed so far.** Move 1 only, plus one item this wave did not list.
 >
@@ -466,8 +479,8 @@ stays with W1; this settles only the two owner surfaces.
 
 These need a live read through the debug API before W1 and W4, and are listed rather than guessed:
 
-- the live `app.schedules` rows (the inventory reconstructed 17 from migrations `0036→0169`, but
-  the deployed state may differ)
+- the live `app.schedules` rows (the inventory reconstructed 17 from the migration set through
+  the head at the time — 2026-08-22 — but the deployed state may differ)
 - the live `llm_task_overrides` row — highest-precedence persistent routing
 - the deployed `JBRAIN_LLM_TASKS` value — highest precedence of all, and the only thing that would
   make an agent turn use its task entry rather than the tier

@@ -1,6 +1,6 @@
 # Report Presets & Batch Runs — uniform reports, run down a list
 
-> **Status:** In progress · **Last verified:** 2026-08-10 (live-run tuned) · **Waves:** P1✅ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 (live-run tuned) · **Waves:** P1✅ P2◻️ P3✅
 
 The deep-research engine plans each report's shape fresh every run, so two reports on
 comparable subjects (say, two candidates on the same ballot) come out structurally
@@ -37,9 +37,15 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   accuracy checklist from the prior fix (search the FEC by name; read an authoritative bio,
   not just the campaign site; verify an absence before asserting it), and its objective
   carries the per-section fill spec + the `Not established — …` sentinel for an empty section.
+  A successor, `presets/candidate_profile_v2.preset`, has its own plan
+  (`CANDIDATE_PROFILE_V2_PLAN.md`).
 - `backend/src/jbrain/agent/presets/daily_news.preset` — a spoken, text-to-speech-ready daily
-  news briefing for the owner's morning commute. One-call for the caller (its single `{{today}}`
-  variable is auto-supplied by the engine — see REPORT_EXPIRY_PLAN.md), and dated so each day is a
+  news briefing for the owner's morning commute. **Superseded for `daily_news`:** since the
+  V3 promotion (2026-08-13, `DAILY_NEWS_V2_PLAN.md`) this preset runs the lean `briefing`
+  engine (`agent/daily_briefing.py`), so the tuning narrative below — including the
+  two-phase scout→read gather it drove — is historical for this preset. The two-phase
+  gather itself stays live in the engine for future `min_reads` presets. One-call for the caller (its single `{{today}}`
+  variable is auto-supplied by the engine — see docs/archive/REPORT_EXPIRY_PLAN.md), and dated so each day is a
   distinct library row rather than clobbering yesterday; `output_kind: brief` so it stays ~10
   minutes read aloud (a preset forces `complexity=deep`, so `report` would balloon). It opts into a
   `retention_days: 7` TTL, so the nightly expiry sweep keeps only a rolling week. Its objective
@@ -59,11 +65,11 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   and the objective requires each angle to OPEN ≥3 real articles and pull specifics (not skim
   headlines) before calling a category empty. A systemic follow-up — flagging paywalled/blocked
   domains in the fetch/search layer so they're auto-excluded for ~24h — shipped
-  (DOMAIN_HEALTH_PLAN.md). A second live run (2026-08-09) drove two more fixes: (1) the preset now
+  (docs/archive/DOMAIN_HEALTH_PLAN.md). A second live run (2026-08-09) drove two more fixes: (1) the preset now
   forbids sourcing a specific dated event to a monthly/"trending" roundup (open the wire/primary
   instead) and adds a status/tense guard (a schedule or press release is a PLAN — "scheduled for",
   never "launched"), and names fetch-friendly economy/world fallbacks (text.npr.org, BBC) so a
-  bot-walled Reuters/CNBC/AP doesn't leave Business/World empty; (2) `jerv.prompt` (v44) now REQUIRES
+  bot-walled Reuters/CNBC/AP doesn't leave Business/World empty; (2) a `jerv.prompt` rule (added in v44, carried in later versions) REQUIRES
   fetching a saved report via `research_report(action=read)` and reproducing it verbatim when the
   owner asks to see the full text — the earlier "don't re-paste" rule had let jerv confabulate a
   fresh briefing (invented entertainment items + a launch that never happened) instead of reading
@@ -99,7 +105,10 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
     research persona ("open and READ at least three of these ~12 sources, cover HEAVILY, don't
     conclude a category empty, pivot to another outlet if one blocks") — a named-source CHECKLIST the
     model swept one search at a time, in direct conflict with the scout's soft "stop early" plea.
-    The fix is prompt-only (no budget/effort change), in three layers: (1) scout prompt v5 replaces
+    The fix was initially prompt-only (no budget/effort change) — the search ceiling has since
+    been ENGINE-enforced (`SCOUT_SEARCH_BUDGET = 8` in `agents.py`, the `web_search` handler
+    refusing past it, plus a matching fetch ceiling; the scout prompt lineage has run on to v8
+    stating the same number) — in three layers: (1) scout prompt v5 replaces
     the ignored "stop early" plea with ONE countable ceiling stated once — AT MOST 6 `web_search`
     calls and 5 URLs, whichever comes first, `web_fetch` unlimited — plus "the named sources are a
     MENU to sample, not a checklist" and an explicit priority ("when the brief conflicts with the
@@ -199,7 +208,7 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   reports THAT claim, checking STATUS/TENSE (a scheduled launch is not a completed one), and flagging
   any fabrication or unsupported claim EXPLICITLY as one to CUT or hedge so the revise pass removes
   it. This fires on every deep-research run, not just presets.
-  (3) The `deep_research_report` card gained a **read-aloud play button** next to
+  A third fix from the same run: the `deep_research_report` card gained a **read-aloud play button** next to
   copy/download (`registry.tsx` `DeepResearchReport`, threaded through `ToolView`/`ViewProps` from
   the surface's `useReadAloud`), so the owner plays the report's TTS straight from the card — which
   removes the reason to have jerv paste the text into a turn at all (the root cause of the confab).
@@ -242,7 +251,7 @@ option. See the design artifact for the option analysis. (Note: the deepest-lane
 predates the owner's 2026-08-06 decision to avoid the deepest tool; the batch host is being
 re-chosen — Jerv Tasks runner is the leading candidate — before P2 is built.)
 
-## P3 — Compare-and-contrast preset (from the library) ◻️ (in progress)
+## P3 — Compare-and-contrast preset (from the library) ✅ (shipped 2026-08-06, `0c3169a`)
 
 A follow-up preset that produces ONE contrast-and-compare report across every candidate in a
 race, synthesized **only from the per-candidate accountability profiles already in the research
@@ -263,7 +272,7 @@ library** — no web, no video corpus. Design decisions (owner, 2026-08-06):
   flags any unsupported claim; and (follow-on) a deterministic tripwire that flags any number/
   name/date in the draft absent from every source profile.
 
-**Built (this branch):**
+**Built (merged):**
 - `presets/compare_candidates.preset` — the outline, the five per-dimension angles, and the
   grounding/attribution objective.
 - The `reports` source mode in `deep_research.py` (`_SOURCE_MODES` + the six source-mode
@@ -273,13 +282,13 @@ library** — no web, no video corpus. Design decisions (owner, 2026-08-06):
   tool allowlists (`search`/`read`/`list_research_report` + clock, no web): `research_reports`
   (gather/refill) and `review_reports` (the analyst + critique grounding reviewer, whose prompt
   makes it a faithfulness gate — flag any draft claim the reports don't support).
-- Discoverability: `deep_research.tool` (v6) now lists both presets and the compare workflow,
+- Discoverability: `deep_research.tool` (since v6) lists both presets and the compare workflow,
   so jerv reaches for them.
 - Tests: reports-mode persona routing, the compare preset run (planner skipped, five
   dimension angles, no web/corpus persona ever spawned), the empty-gather refusal, and all the
   persona/sidecar pin updates.
 
-**Deferred to a follow-on:** the deterministic new-entity tripwire (a number/name in the draft
+**Deferred to a follow-on (not part of the shipped P3):** the deterministic new-entity tripwire (a number/name in the draft
 absent from every source report) — the LLM `review_reports` grounding gate is the v1 check, and
 a string-level number check is brittle against honest reformatting ("$10.8M" vs "$10,802,229"),
 so it needs care. Also deferred: the `reports_first` web-verify variant.
