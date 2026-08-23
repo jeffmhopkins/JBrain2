@@ -421,7 +421,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # it WOULD have admitted, and it refuses nothing. A ledger that has never charged a
             # live load has no numbers to be judged on, and this repo has the precedent —
             # `_note_not_ready` landed as measurement first for the same reason.
-            reservations=ReservationLedger(maker, source="api", device_probe=gpu_probe),
+            reservations=ReservationLedger(
+                maker, source="api", device_probe=gpu_probe, shadow=False
+            ),
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
             # Re-stamp the gateway config HERE rather than on every settings edit: rewriting

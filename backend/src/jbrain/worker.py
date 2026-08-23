@@ -587,7 +587,9 @@ async def run() -> None:
     # ONE ledger for this process, shared by the gateway that charges and the loop that sweeps.
     # Two instances would each keep their own record of what they charged, and the sweeper would
     # be collecting rows the other one still believes it is holding.
-    worker_reservations = ReservationLedger(maker, source="worker", device_probe=worker_gpu_probe)
+    worker_reservations = ReservationLedger(
+        maker, source="worker", device_probe=worker_gpu_probe, shadow=False
+    )
     llm_gateway = LocalGatewayClient(
         settings.local_llm_url,
         gpu_probe=worker_gpu_probe,
