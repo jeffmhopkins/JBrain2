@@ -175,10 +175,11 @@ class ReservationLedger:
         decision. So until that changes, a charge CAN queue behind a real load, and with a
         15-connection pool fifteen queued charges would be the api's whole capacity.
 
-        Hence `lock_timeout`: the wait is bounded, and a timeout is reported rather than
-        endured. In shadow it charges anyway and says so — an unmeasured box is not made safer
-        by an api that stops answering. Once the ledger is authoritative a timeout must refuse,
-        which is one more line in the same place, and by then item 5 should be closed.
+        Hence `lock_timeout`: the wait is bounded, and a timeout REFUSES — a transient
+        `GpuBudgetError`, so the settings screen 409s and the worker defers instead of a raw
+        DB error surfacing as a 500. (An earlier docstring promised shadow would charge
+        through a timeout; the code never did — it leaked the DBAPIError — and now that the
+        ledger decides, refusing is the only honest answer anyway.)
 
         `host_gb`/`device_gb` are the caller's declaration, from `local_catalog.declared_gb`.
         They are written down verbatim and never recomputed for this instance's life."""
@@ -192,8 +193,17 @@ class ReservationLedger:
                 # The box lock is held by something long — see the docstring. Recorded loudly
                 # because it means the ledger's decision was made against a census somebody
                 # else may be changing, which is the one thing the lock was for.
+                #
+                # REFUSE, in the language every caller already speaks: a raw DBAPIError
+                # surfaced as a 500-class failure, which is neither the shadow promise
+                # ("charge anyway") nor the authoritative one ("a timeout must refuse").
+                # Transient on purpose — the lock-holder's load will end, so waiting CAN
+                # help, and the worker's defer is exactly right.
                 log.error("ledger.lock_timeout", model=served_model, error=str(exc))
-                raise
+                raise gpu_guard.GpuBudgetError(
+                    f"the box is busy deciding another load — {served_model} was not "
+                    "admitted; retry shortly"
+                ) from exc
             rows = [
                 _to_reservation(r)
                 for r in (await session.execute(select(ModelReservation))).scalars()

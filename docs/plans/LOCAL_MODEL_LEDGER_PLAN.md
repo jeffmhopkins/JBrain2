@@ -425,11 +425,23 @@ taken only after free memory stopped moving.
 so this is evidence of no false positives, not evidence the ledger binds correctly under
 pressure.
 
-### L2b — Let it decide ◻️
+### L2b — Let it decide ✅
 
-Flip `shadow=False`. Do it after a stretch of real box traffic has been read back from
-`ledger.shadow_would_refuse` — if the ledger would have refused loads that in fact succeeded, the
-declaration is wrong and no amount of correct plumbing fixes that.
+Flipped 2026-08-23: both constructions (`main.py` api, `worker.py`) now pass `shadow=False`,
+pinned by an AST test that fails on any construction omitting it. The evidence the flip waited
+for came from a live roster sweep the same day — every model the router can reach was loaded on
+an empty box at its configured window with a 2-second memory sampler running, and measured after
+a real prefill: gpt-oss-120b 67.65 measured vs 69.57 declared, qwen3.8-27b-q4 22.42/29.08,
+qwen3.8-27b-abliterated 19.21/24.45, qwen3-coder-next 52.51/60.15, qwen3-coder-next-q8
+84.86/95.55 — all conservative, zero false shadow refusals across the whole session including
+one genuine freeze. The sweep also caught the two declarations that were NOT conservative: the
+tiny Qwen3.5 hybrids, whose non-weight buffers dwarf their weights and blew through the flat
+`RUNTIME_OVERHEAD_GB` (0.8b measured 3.83 vs 1.57 declared; the 4b aborted by the runaway
+watchdog — its first live firing — at 12.8 vs 5.15). Both now carry a measured
+`runtime_overhead_gb` override; the 4b's is floor-anchored and wants verifying against a
+completed load post-deploy. A charge that times out on the box lock now refuses with a transient
+`GpuBudgetError` (409 / worker-defer) instead of leaking a `DBAPIError` as a 500 — the code had
+never matched the old docstring's "shadow charges through a timeout" in either direction.
 
 **Acting on the outcomes is NOT part of this wave — the deliveries are already built**, and an
 earlier version of this section asked for them again. There are THREE, not two. A

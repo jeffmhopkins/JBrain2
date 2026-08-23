@@ -947,3 +947,32 @@ def test_every_prediction_errs_on_the_side_of_reserving_too_much() -> None:
         assert predicted >= measured, (
             f"{model_id} at {window} is UNDER-predicted: {predicted:.2f} < {measured:.2f}"
         )
+
+
+def test_the_tiny_qwen35_declarations_carry_their_measured_overhead() -> None:
+    """The 2026-08-23 on-box sweep: the 0.8b held 3.83 GiB resident after a real prefill
+    against 1.57 declared, and the 4b's load was aborted by the runaway watchdog at
+    12.8 GiB, still climbing, against 5.15 — the flat RUNTIME_OVERHEAD_GB collapses on
+    models whose buffers dwarf their weights. Each declaration must clear what the box
+    actually measured, with margin."""
+    small = local_catalog.get("qwen3.5-0.8b")
+    assert small is not None and small.runtime_overhead_gb == 3.3
+    host, device = local_catalog.declared_gb(small, 32768, slots=1)
+    assert host == device == 4.32
+    assert host > 3.83, "must clear the measured resident footprint"
+
+    four = local_catalog.get("qwen3.5-4b")
+    assert four is not None and four.runtime_overhead_gb == 9.5
+    host4, device4 = local_catalog.declared_gb(four, 32768, slots=1)
+    assert host4 == device4 == 14.1
+    assert host4 > 12.8, "must clear the watchdog abort floor (the true peak is above it)"
+
+
+def test_the_overhead_override_does_not_leak_to_models_that_did_not_set_it() -> None:
+    """A None override must mean the flat constant, not zero and not somebody else's
+    number — gpt-oss's declaration was verified on the box (67.65 measured vs 69.57)
+    the same day the override was introduced, so it is the canary."""
+    m = local_catalog.get("gpt-oss-120b")
+    assert m is not None and m.runtime_overhead_gb is None
+    host, _ = local_catalog.declared_gb(m, 131072, slots=1)
+    assert host == 69.57

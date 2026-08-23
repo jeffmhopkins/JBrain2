@@ -992,3 +992,26 @@ def test_a_no_room_refusal_defers_the_job_rather_than_burning_a_retry() -> None:
                 "a catch-all precedes the defer handler, so a no-room refusal is swallowed "
                 "as a generic failure before it can defer"
             )
+
+
+def test_every_reservation_ledger_in_src_decides_rather_than_shadows() -> None:
+    """The L2b flip, pinned. shadow=True was the observation period; it ended with the
+    2026-08-23 roster sweep (every enforceable declaration measured, zero false shadow
+    refusals). A construction that omits the shadow argument silently inherits the default and
+    that process's box goes back to narrating refusals it does not act on."""
+    found: list[tuple[str, int]] = []
+    bad: list[tuple[str, int]] = []
+    for path in _SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ReservationLedger"
+            ):
+                found.append((path.name, node.lineno))
+                shadow = {k.arg: k.value for k in node.keywords}.get("shadow")
+                if not (isinstance(shadow, ast.Constant) and shadow.value is False):
+                    bad.append((path.name, node.lineno))
+    assert found, "no ReservationLedger constructions found in src/ — did the name change?"
+    assert not bad, f"constructions not explicitly shadow=False: {bad}"

@@ -17,8 +17,10 @@ from sqlalchemy.pool import NullPool
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm import gpu_guard
+from jbrain.llm import ledger as ledger_module
 from jbrain.llm.admission import Outcome, Phase
-from jbrain.llm.ledger import ReservationLedger
+from jbrain.llm.ledger import BOX_LOCK_KEY, ReservationLedger
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -367,3 +369,24 @@ async def test_a_shadow_refusal_still_records_as_a_shadow_refusal(
     # Shadow charges anyway — that is the whole point of shadow — but still says so.
     assert charge.instance_id is not None
     assert recorded == ["ledger_shadow_refusal"]
+
+
+async def test_a_charge_that_cannot_get_the_box_lock_refuses_instead_of_erroring(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The authoritative ledger's bounded wait: while another transaction holds the box
+    lock past the timeout, a charge must come back as the refusal every caller already
+    handles (409 on the settings screen, a defer in the worker) — not as a raw DBAPIError
+    surfacing to the owner as a 500."""
+    monkeypatch.setattr(ledger_module, "CHARGE_LOCK_TIMEOUT_MS", 500)
+    ledger = ReservationLedger(maker, source="api", shadow=False)
+
+    async with maker() as holder:
+        await holder.execute(text("SELECT set_config('app.principal_kind','system', false)"))
+        await holder.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": BOX_LOCK_KEY})
+        with pytest.raises(gpu_guard.GpuBudgetError) as exc:
+            await ledger.charge("gpt-oss-120b", host_gb=68.0, device_gb=68.0)
+        await holder.rollback()
+
+    assert exc.value.permanent is False, "a busy lock is a wait, never a never-fits"
+    assert "was not admitted" in str(exc.value)

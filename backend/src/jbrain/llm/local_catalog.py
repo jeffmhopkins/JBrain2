@@ -333,6 +333,12 @@ class LocalModel:
     # 0.28 above was obtained (275-284 MiB observed, against a catalog 0.15 taken from upstream
     # #27211's figure for a different quant).
     checkpoint_gb: float = 0.0
+    # Measured override for the flat RUNTIME_OVERHEAD_GB, for a model whose resident
+    # non-weight cost the constant misrepresents. The tiny Qwen3.5 hybrids are why this
+    # exists: their compute/state buffers dwarf their weights, so the flat 0.55 declared a
+    # 0.9 GiB model at 1.57 while it held 3.83 on the box — and the ledger, the load
+    # pre-flight and the runaway ceiling all inherited the lie. None = use the constant.
+    runtime_overhead_gb: float | None = None
     # Rough KV-cache size (GB) at the model's full 131072-token window — an ESTIMATE
     # (not a measurement) the settings drawer's memory bar uses to size the context
     # portion of each model's segment, scaled linearly by the configured window.
@@ -953,6 +959,10 @@ CATALOG: tuple[LocalModel, ...] = (
         # memory-bandwidth-bound box the Q4 savings (~0.3 GB) buy nothing, so the
         # tiny model keeps its quality rather than shaving already-thin headroom.
         size_gb=0.9,
+        # Measured 2026-08-23 on the box: 3.83 GiB resident after a real prefill at 32768,
+        # against 1.57 declared — the flat overhead constant was 2.3 GiB light on a model
+        # this small. 3.3 anchors the declaration at 4.33, +0.5 over the measurement.
+        runtime_overhead_gb=3.3,
         note="Tiniest catalog model — a fast, cheap worker for side projects that "
         "don't need to be smart (classification, extraction, short one-shots). "
         "Newer generation than qwen3-30b: a hybrid reasoner whose thinking is a "
@@ -990,6 +1000,12 @@ CATALOG: tuple[LocalModel, ...] = (
         # 8-bit of a 4B dense model (~4.3 GB) — the step up from 0.8b when the tiny
         # model is too weak but you still want an instant, low-footprint local worker.
         size_gb=4.3,
+        # FLOOR-ANCHORED, not fully measured: on 2026-08-23 the runaway watchdog aborted this
+        # model's load at 12.8 GiB GTT, still climbing, against 5.15 declared — the same flat-
+        # overhead defect as the 0.8b, scaled up. 9.5 puts the declaration at 14.1, above the
+        # abort floor with margin; verify against a completed load once this ships (the old
+        # under-prediction also set the watchdog ceiling too low to let one finish).
+        runtime_overhead_gb=9.5,
         note="Small dense model — noticeably smarter than qwen3.5-0.8b while still "
         "loading instantly and co-residing beside anything. A solid low-tier daily "
         "driver for local one-shots. A hybrid reasoner: set its thinking level per "
@@ -1160,7 +1176,10 @@ def _runtime_overhead_gb(model: LocalModel) -> float:
     any linear-attention layers, compute and output buffers, and the MTP draft context on a
     speculative entry. Small individually, but omitting all of them is what made the MTP
     entry's estimate 3 GiB light against the measurement."""
-    return RUNTIME_OVERHEAD_GB + (MTP_OVERHEAD_GB if model.is_speculative else 0.0)
+    base = (
+        model.runtime_overhead_gb if model.runtime_overhead_gb is not None else RUNTIME_OVERHEAD_GB
+    )
+    return base + (MTP_OVERHEAD_GB if model.is_speculative else 0.0)
 
 
 def _vision_resident_gb(model: LocalModel) -> float:
