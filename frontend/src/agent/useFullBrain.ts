@@ -212,9 +212,14 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
 // "edit that" or "use the same seed" turn can act on a picture it can't otherwise see.
 function historyContent(m: TranscriptMessage): string {
   if (m.role === "user") {
-    // An attached image rides the model context for ONE turn (its bytes aren't re-sent),
-    // but its id must persist so a later "is the person female?" / "make it night" turn can
-    // pass it to analyze_image or edit_image instead of guessing an id ("latest").
+    // An attached image's id must persist in history so a later "is the person female?" /
+    // "make it night" turn can pass it to analyze_image or edit_image instead of guessing
+    // an id ("latest").
+    // CACHE CONTRACT: the server mirrors this exact suffix format when it renders an
+    // image-attach turn (backend attachment_content.decorated_history_text), so the
+    // follow-up turn's KV prefix matches byte-for-byte and the image is never re-encoded.
+    // Change the format there in the same PR, or every follow-up turn silently re-pays
+    // the full vision encode (~35 s on the box).
     const imgs = (m.attachments ?? []).filter((a) => a.media_type.startsWith("image/"));
     if (imgs.length === 0) return m.text;
     const refs = imgs.map((a) => `source_attachment_id=${a.id} (${a.filename})`).join("; ");

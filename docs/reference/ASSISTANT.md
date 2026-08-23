@@ -591,7 +591,14 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   **recent** user turns — the union of the **last 4 turns** (`AgentTurn.seq`) **OR** anything
   within the **last 15 minutes** (`created_at`); an image drops only once it is BOTH past the
   turn floor and older than the window — and inserts each as its own user message DIRECTLY
-  AFTER its attaching turn in history, byte-identical every render. The anchor matters for the
+  AFTER its attaching turn in history, byte-identical every render. The ATTACHING turn
+  itself already renders in this shape: its question text is spelled exactly as the client's
+  next-turn history entry will spell it (the id-reference suffix is a shared format —
+  `attachment_content.decorated_history_text` mirrors the PWA's `historyContent`, a cache
+  contract), followed by the anchor message with the bytes, with the volatile remainder
+  (PDF/text blocks, hints, a pointer at the question) on the final message — so even the
+  FIRST follow-up reuses the image from cache instead of re-encoding it. PDF-page renders
+  are not anchored and stay on the volatile final message. The anchor matters for the
   local KV cache: llama-server matches a media chunk by content hash + position, so an anchored
   image is vision-encoded once and then rides the cached prefix, where the earlier design
   (re-injecting on the volatile tail) re-paid the whole encode every turn — the ~35 s

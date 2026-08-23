@@ -34,6 +34,7 @@ from jbrain.agent.attachment_content import (
     anchored_image_content,
     build_attachment_content,
     carry_forward_content,
+    decorated_history_text,
 )
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.brainevents import brain_text_enabled
@@ -627,12 +628,26 @@ def _model_message(body: ChatRequest) -> str:
     )
 
 
+def _model_hint(body: ChatRequest) -> str:
+    """Just the appended instruction of `_model_message`, without the owner's text —
+    for the live-anchor shape, where the question rides its own earlier message and
+    only the hint may still belong on the volatile final message."""
+    appt_id = _appt_hint(body.appointment_id)
+    if appt_id is None:
+        return ""
+    return (
+        f"(The owner is asking about the appointment with id={appt_id}. "
+        "Call read_appointment with this id before answering or staging any change.)"
+    )
+
+
 def _conversation(
     body: ChatRequest,
     images: Sequence[LlmImage] = (),
     extra_text: str = "",
     *,
     anchored: Mapping[int, tuple[str, tuple[LlmImage, ...]]] | None = None,
+    live_anchor: tuple[str, str, tuple[LlmImage, ...]] | None = None,
 ) -> list[LlmMessage]:
     """The conversation to feed the loop. The turn's own attachments ride the FINAL
     user message: its `images` carry the vision content and `extra_text` (PDF text +
@@ -652,6 +667,23 @@ def _conversation(
         if anchor is not None:
             note, anchor_images = anchor
             messages.append(UserMessage(text=note, images=anchor_images))
+    if live_anchor is not None:
+        # This turn's own image goes straight to its cache-stable home: the question
+        # text spelled exactly as the client's next-turn history entry will spell it,
+        # then the anchor message — the same two messages the NEXT turn's history
+        # render reproduces byte-for-byte, so the follow-up prefill skips the image
+        # entirely instead of re-encoding it once more (sloth conversation,
+        # 2026-08-23: 39 s on the first follow-up). The final message keeps the
+        # volatile remainder: PDF/text blocks, hints, and a pointer at the question.
+        pre_text, note, anchor_images = live_anchor
+        messages.append(UserMessage(text=pre_text))
+        messages.append(UserMessage(text=note, images=anchor_images))
+        pointer = "(Answer the owner's message above — the attached image is shown above.)"
+        hint = _model_hint(body)
+        parts = [p for p in (hint, extra_text) if p]
+        text = "\n\n".join([*parts, pointer]) if parts else pointer
+        messages.append(UserMessage(text=text, images=tuple(images)))
+        return messages
     text = _model_message(body)
     if extra_text:
         text = f"{text}\n\n{extra_text}"
@@ -789,7 +821,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         )
     except Exception:  # noqa: BLE001
         log.warning("agent.call_stamp_failed", run_id=run_id)
-    images, attach_text = await build_attachment_content(
+    content = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),
         attachment_ctx,
@@ -799,13 +831,41 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         transcribe_enabled="transcribe" in get_agent_registry(request),
         can_see_images=can_see_images,
     )
+    attach_text = content.extra_text
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn
     # model can't see. The attachment's id still rides in attach_text, so the model
     # can edit it (edit_image) or look at it (analyze_image) BY REFERENCE without the
     # bytes; a vision-capable route keeps the images inline as before.
-    if images and not can_see_images:
-        images = []
+    images = content.images if can_see_images else []
+    # An image attached THIS turn goes straight to its cache-stable home (the owner's
+    # sloth conversation, 2026-08-23: the old shape paid the vision encode a second
+    # time on the very next turn when the anchor moved the image into history). The
+    # live turn renders [question text decorated exactly as the client's next-turn
+    # history entry will spell it → the anchor message with the bytes → volatile
+    # blocks → final message], so the follow-up's rendered prefix is byte-identical
+    # through the image and nothing re-encodes. PDF-page renders are NOT anchored
+    # (the carry window is images-only) — they stay on the volatile final message.
+    live_anchor: tuple[str, str, tuple[LlmImage, ...]] | None = None
+    # A framed turn (proposal/deferred outcome) rewrites the model-facing message with a
+    # data-framing preamble the client never echoes back — no stable pre-text exists, so
+    # such a turn keeps the classic shape (bytes on the final message).
+    if (
+        can_see_images
+        and content.image_infos
+        and not body.proposal_outcome
+        and not body.deferred_outcome
+    ):
+        live_note_images, live_note = await anchored_image_content(
+            get_blob_store(request), content.image_infos, image_budget=MAX_IMAGES_PER_TURN
+        )
+        if live_note_images:
+            live_anchor = (
+                decorated_history_text(body.message, content.image_infos),
+                live_note,
+                tuple(live_note_images),
+            )
+            images = content.other_images  # the direct images now ride the anchor
     # Keep a RECENT earlier image in view (docs/reference/ASSISTANT.md): history is
     # text-only, so a follow-up like "re-evaluate the picture" otherwise can't see an image
     # from a prior turn and must delegate to analyze_image. When the turn model can see,
@@ -824,7 +884,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         recent = await get_agent_transcript(request).recent_image_turns(
             attachment_ctx, body.session_id, now=datetime.now(UTC)
         )
-        image_budget = MAX_IMAGES_PER_TURN - len(images)
+        live_count = len(live_anchor[2]) if live_anchor is not None else 0
+        image_budget = MAX_IMAGES_PER_TURN - len(images) - live_count
         unanchored: list[AttachmentInfo] = []
         # The transcript stores the owner's raw message, but the PWA's history entry for
         # an image turn carries an id-reference suffix appended client-side (useFullBrain
@@ -901,7 +962,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             if carried_notes:
                 note_block = "\n\n".join(carried_notes)
                 attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
-    conversation = _conversation(body, images, attach_text, anchored=anchored)
+    conversation = _conversation(
+        body, images, attach_text, anchored=anchored, live_anchor=live_anchor
+    )
     # Cache-stable prompt layout (docs/archive/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local
     # gateway's KV cache can reuse turn-over-turn; put the VOLATILE blocks (presence, "now")
