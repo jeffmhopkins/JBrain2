@@ -408,6 +408,14 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./local-models:/models:ro
+      # The ONE writable carve-out in the otherwise read-only weights mount: llama-server
+      # saves/restores KV-slot files here (jbrain.llm.kv_prefix, --slot-save-path). A nested
+      # bind overlays rw on exactly this subtree, so the server still cannot touch a weight
+      # file. Verified the hard way on 2026-08-23: without it the first live save failed
+      # `Read-only file system` and the whole disk layer was silently inert. The api prunes
+      # stale files through its own rw mount (line above, service `api`); docker creates the
+      # host dir on first up.
+      - ./local-models/.kvslots:/models/.kvslots
     # Also joins the `jcode` network so the coding sandbox can reach the model
     # endpoint here — and ONLY this — without being on the shared `internal` net.
     networks: [internal, jcode]
