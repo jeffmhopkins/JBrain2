@@ -480,3 +480,40 @@ async def test_a_cancelled_caller_does_not_leave_the_load_running_unwatched() ->
 
     assert not finished, "the load outlived the caller that was watching it"
     assert aborted == ["unloaded"], "the orphaned load was never unloaded"
+
+
+def test_a_merely_full_box_is_a_transient_refusal() -> None:
+    """Out of room NOW is a wait, however far out of room it is: something may yet leave."""
+    with pytest.raises(GpuBudgetError) as exc:
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=110.0), projected_gb=21.0, target="m", host_free_gb=100.0
+        )
+    assert exc.value.permanent is False
+
+
+def test_a_request_beyond_the_whole_pool_is_a_permanent_refusal() -> None:
+    """This pre-flight runs BEFORE the ledger charges, so on a probe-wired box it — not
+    `admission.admit` — is what refuses a device-bound request. Reporting a request larger
+    than the box's entire capacity as transient is what makes the worker retry it forever."""
+    with pytest.raises(GpuBudgetError) as exc:
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=0.0, gtt_total=120.0),
+            projected_gb=200.0,
+            target="too-big",
+            host_free_gb=119.0,
+        )
+    assert exc.value.permanent is True
+
+
+def test_an_unreadable_device_total_never_concludes_never() -> None:
+    """With no device sample there is no capacity figure, so "it can never fit" is unprovable
+    — and a probe reporting a zero total is no sample at all, not a box with no memory."""
+    with pytest.raises(GpuBudgetError) as exc:
+        gpu_guard.refuse_if_no_device_room(None, projected_gb=900.0, target="m", host_free_gb=7.0)
+    assert exc.value.permanent is False
+
+    with pytest.raises(GpuBudgetError) as zero:
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=0.0, gtt_total=0.0), projected_gb=900.0, target="m", host_free_gb=7.0
+        )
+    assert zero.value.permanent is False

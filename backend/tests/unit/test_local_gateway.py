@@ -1002,6 +1002,12 @@ async def test_a_short_load_does_not_report_itself_after_the_claim_is_pruned(
     assert not hits, f"a guarded load reported itself as unannounced: {hits}"
 
 
+# Deliberately says nothing a refusal would plausibly say. A reason built from the served model
+# ("... refused") let production swap in a canned string and still satisfy a substring assertion,
+# which is how the owner's 409 body and the box-event narration could quietly lose their numbers.
+_REASON = "tokamak overpressure"
+
+
 class _RefusingLedger:
     """A ledger that refuses, which the real one only does once `shadow=False`.
 
@@ -1012,7 +1018,7 @@ class _RefusingLedger:
         self._outcome = outcome
 
     async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:
-        return Charge(Decision(self._outcome, f"{served_model} refused", Layer.HOST), None)
+        return Charge(Decision(self._outcome, _REASON, Layer.HOST), None)
 
 
 def _catalog_model() -> local_catalog.LocalModel:
@@ -1040,15 +1046,21 @@ async def test_a_refused_charge_carries_whether_waiting_could_ever_help(
             pytest.fail("the body must not run when the charge was refused")
 
     assert exc.value.permanent is permanent
-    assert "refused" in str(exc.value)
+    # EQUALITY, not a substring: the decision's reason is the only thing carrying the sizes the
+    # owner needs ("needs 200.0 GB … this box has 118.0 GB to give"), and it is what reaches the
+    # 409 body and the box event. A canned message would pass any looser check.
+    assert str(exc.value) == _REASON
 
 
 async def test_an_admitted_charge_runs_the_body_and_does_not_raise() -> None:
     """The companion assertion: the refusal path above must not have made every load raise."""
     admitted: list[str] = []
 
+    charged: list[tuple[str, float, float]] = []
+
     class _AdmittingLedger:
         async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:
+            charged.append((served_model, host_gb, device_gb))
             return Charge(Decision(Outcome.ADMIT, "fits", None), "instance-1")
 
         async def advance(self, instance_id: str, phase: Phase) -> None:
@@ -1056,9 +1068,40 @@ async def test_an_admitted_charge_runs_the_body_and_does_not_raise() -> None:
 
     gw = _client(lambda r: httpx.Response(200, json={"running": []}))
     gw._reservations = _AdmittingLedger()  # type: ignore[assignment]
-    model = _catalog_model()
+    # NOT gpt-oss: its host and device declarations are numerically EQUAL (no checkpoint, no
+    # CACHE_RAM), so swapping the two columns is undetectable against it. This model carries a
+    # host-only checkpoint term, which makes the two numbers actually discriminate.
+    model = local_catalog.get("qwen3.8-27b-q4")
+    assert model is not None
+    expected = local_catalog.declared_gb(model, 32768, slots=1)
 
-    async with gw._reservation(model.served_model, model, window=4096, slots=1):
+    async with gw._reservation(model.served_model, model, window=32768, slots=1):
         pass
 
     assert admitted == ["instance-1:starting", "instance-1:resident"]
+    # The declaration the ledger is charged is the whole point of the reservation: the columns
+    # must not be swapped, and the window/slots must be the ones the load will actually use.
+    assert charged == [(model.served_model, expected[0], expected[1])]
+    assert expected[0] > expected[1], "this model must discriminate host from device"
+
+
+async def test_a_model_absent_from_the_catalog_is_not_charged_at_all() -> None:
+    """`_load_and_warm` resolves `model` from the catalog and passes None for anything it does
+    not know, with `window, slots = 0, 1`. Without that half of the guard, `declared_gb` is
+    called on None and every such load dies with an AttributeError once a ledger is wired —
+    a declaration is the one thing that cannot be guessed."""
+    touched = False
+
+    class _ExplodingLedger:
+        async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:
+            nonlocal touched
+            touched = True
+            raise AssertionError("an uncatalogued model must never reach the ledger")
+
+    gw = _client(lambda r: httpx.Response(200, json={"running": []}))
+    gw._reservations = _ExplodingLedger()  # type: ignore[assignment]
+
+    async with gw._reservation("something-llama-swap-has-that-we-do-not", None, window=0, slots=1):
+        pass
+
+    assert touched is False

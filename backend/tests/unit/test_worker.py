@@ -311,6 +311,21 @@ async def test_process_one_fails_permanently_on_permanent_job_error(
     assert fake.permanent == ["job-1"]
 
 
+def install_run_step_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bool]]:
+    """`_finalize_run_step` swallows every exception and `maker` is None in these tests, so
+    without a spy BOTH directions of the run-step half are unfalsifiable: dropping the close
+    from the permanent branch, and adding one to the defer branch, each pass silently."""
+    calls: list[tuple[str, bool]] = []
+
+    async def spy(
+        maker: Any, ctx: Any, job_id: str, *, ok: bool, cost_tokens: int, detail: Any
+    ) -> None:
+        calls.append((job_id, ok))
+
+    monkeypatch.setattr(worker, "finalize_job_step", spy)
+    return calls
+
+
 def install_fallback_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
 
@@ -755,9 +770,55 @@ async def test_transient_no_room_defers_without_burning_an_attempt(
     async def handler(_payload: dict[str, Any]) -> None:
         raise gpu_guard.GpuBudgetError("no room right now")
 
+    steps = install_run_step_spy(monkeypatch)
+
     assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
     assert fake.deferred == [("job-1", "GpuBudgetError('no room right now')")]
     assert fake.completed == [] and fake.failed == [] and fake.permanent == []
+    # "The run step stays open (the job isn't done)" — worker.py's own invariant. Closing it on
+    # a defer would show a job that is merely waiting as a finished failure.
+    assert steps == []
+
+
+async def test_a_capacity_refusal_does_not_degrade_the_note_to_body_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_after_exhaustion`'s fallbacks discard an attachment's text and analyze the body alone.
+    They are for work that will NEVER finish. A capacity refusal is not that: the declaration
+    behind it is built from the owner's own window/slot settings, so raising slots in the PWA
+    would otherwise strip OCR text from every affected note on the very first refusal."""
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-1"})])
+    install(monkeypatch, fake)
+    fallbacks = install_fallback_spy(monkeypatch)
+    recorded: list[tuple[str, str, str | None]] = []
+
+    async def _spy(kind: str, subject: str, *, detail: str | None = None, **kw: object) -> None:
+        recorded.append((kind, subject, detail))
+
+    monkeypatch.setattr(worker.box_events, "record", _spy)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise gpu_guard.GpuBudgetError("needs 200.0 GB, box has 118.0", permanent=True)
+
+    assert await worker.process_one(None, {"ocr_attachment": handler}) is True  # type: ignore[arg-type]
+    assert fake.permanent == ["job-1"]
+    assert fallbacks == [], "the attachment's text must not be discarded over a capacity refusal"
+    # The DETAIL is the payload, not decoration: this event exists precisely because the only
+    # other trace of the failure is `app.jobs.last_error`, which nothing projects.
+    assert recorded == [("job_refused_no_room", "ocr_attachment", "needs 200.0 GB, box has 118.0")]
+
+
+async def test_an_ordinary_exhausted_ocr_job_still_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The companion: the carve-out above must not have disabled the fallback in general."""
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-1"})])
+    fake.fail_exhausts = True
+    install(monkeypatch, fake)
+    fallbacks = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"ocr_attachment": boom_handler}) is True  # type: ignore[arg-type]
+    assert fallbacks == ["att-1"]
 
 
 async def test_a_model_that_never_fits_fails_instead_of_deferring_forever(
@@ -771,9 +832,18 @@ async def test_a_model_that_never_fits_fails_instead_of_deferring_forever(
     async def handler(_payload: dict[str, Any]) -> None:
         raise gpu_guard.GpuBudgetError("needs 200.0 GB, box has 118.0", permanent=True)
 
+    steps = install_run_step_spy(monkeypatch)
+
     assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
     assert fake.deferred == []
     assert fake.permanent == ["job-1"]
+    # The recorded text is the ONLY durable trace: `app.jobs.last_error` is projected on no
+    # owner surface, so a canned message here loses the model and the sizes for good.
+    assert fake.failed == [
+        ("job-1", "GpuBudgetError('needs 200.0 GB, box has 118.0')"),
+    ]
+    # The run step must CLOSE — a permanently failed job left open shows as forever-running.
+    assert steps == [("job-1", False)]
 
 
 async def test_a_residency_refusal_still_defers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -783,7 +853,12 @@ async def test_a_residency_refusal_still_defers(monkeypatch: pytest.MonkeyPatch)
     install(monkeypatch, fake)
 
     async def handler(_payload: dict[str, Any]) -> None:
-        raise ResidencyError("code mode holds the box")
+        exc = ResidencyError("code mode holds the box")
+        # A `permanent` attribute on a NON-GpuBudgetError. The guard is deliberately an
+        # isinstance test, not `getattr(exc, "permanent", False)` — the getattr form would
+        # hand every future exception type the power to end a job permanently by accident.
+        exc.permanent = True  # type: ignore[attr-defined]
+        raise exc
 
     assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
     assert fake.deferred == [("job-1", "ResidencyError('code mode holds the box')")]

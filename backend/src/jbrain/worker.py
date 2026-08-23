@@ -237,8 +237,24 @@ async def process_one(
                     kind=job.kind,
                     error=repr(exc),
                 )
+                # ON THE OWNER'S SURFACE, because this is where a permanent failure would
+                # otherwise vanish: a directly-enqueued job (OCR, a note analysis) has no run
+                # step, so `_finalize_run_step` returns early and the only other trace is
+                # `app.jobs.last_error`, which nothing projects. They have no terminal.
+                await box_events.record(
+                    box_events.JOB_REFUSED_NO_ROOM,
+                    job.kind,
+                    detail=str(exc),
+                    status="failed",
+                )
                 await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
-                await _after_exhaustion(maker, job, exhausted)
+                # NOT `_after_exhaustion`. Its content fallbacks exist for work that will never
+                # finish — a corrupt PDF, a dead audio file — and they DEGRADE the note to
+                # body-only analysis, discarding the attachment's text. A capacity refusal is
+                # not that: the declaration that produced it is built from the owner's own
+                # window and slot settings, so raising slots in the PWA can make every model
+                # "never fit" and, on the very first refusal, silently strip OCR text from
+                # every affected note. Leave the note alone; the box event above says why.
             else:
                 await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
                 log.info(

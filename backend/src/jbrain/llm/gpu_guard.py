@@ -233,12 +233,37 @@ class GpuBudgetError(Exception):
     class used to flatten: a DEFERRED request fits the box but not right now, so waiting is the
     correct response; an INFEASIBLE one exceeds the pool's whole usable capacity, so waiting is
     a wait for a condition that CANNOT arrive. A worker that defers on the latter re-attempts
-    forever. Defaults False because every pre-ledger raise site is a live-measurement refusal,
-    which is transient by nature — something may yet leave."""
+    forever.
+
+    Defaults False because being out of room is transient however far out of room you are, and
+    a refusal that cannot prove otherwise must not claim to. Only two things set it: the ledger,
+    from an `admission.Outcome.INFEASIBLE`, and the device pre-flight, which runs FIRST and so
+    is what actually decides this on a probe-wired box. Both derive it from a total capacity
+    they actually read; neither infers it from a shortfall.
+
+    KNOWN GAP: the runaway-watchdog abort (`_watch_load`) is reported transient, and for a
+    mis-catalogued model — one that reliably allocates far past its declaration — it is not.
+    That aborts identically every attempt, so the worker retries it every 5 minutes, reading
+    the weights off disk each time. Marking it permanent is NOT obviously right (a genuine
+    one-off runaway would then kill the job for good), and the real repair is correcting the
+    catalogue entry the abort already measures."""
 
     def __init__(self, message: str, *, permanent: bool = False) -> None:
         super().__init__(message)
         self.permanent = permanent
+
+
+def _capacity_gb(sample: GpuMem | None, host_free_gb: float | None) -> float | None:
+    """The largest `projected_gb` this box could EVER hold, or None when it cannot be known.
+
+    Total capacity, not free space: the question is whether any amount of eviction could make
+    room. Only the device total answers it — the host term above is `free` pages, which says
+    nothing about the ceiling — so a box with no device sample cannot conclude "never", and
+    says None rather than guessing. A non-positive total is a probe that reported nothing
+    useful (`parse_gpu_mem` accepts a zero), NOT a box with no memory."""
+    if sample is None or sample.gtt_total_gb <= 0:
+        return None
+    return sample.gtt_total_gb - MIN_FREE_GTT_GB
 
 
 def refuse_if_no_device_room(
@@ -292,10 +317,21 @@ def refuse_if_no_device_room(
     free = (
         f"{host_free_gb:.1f} GB host pages free" if host_free_gb is not None else "host unreadable"
     )
+    # WHETHER WAITING COULD EVER HELP, decided here rather than left to the caller. This
+    # pre-flight runs BEFORE the ledger's charge, so it — not `admission.admit` — is what
+    # actually refuses a device-bound request on a probe-wired box. A refusal it reports as
+    # transient is retried forever by the worker, which is precisely the loop the INFEASIBLE
+    # split exists to close; the ledger's verdict would never get the chance to say otherwise.
+    #
+    # Permanent only when the request exceeds the pool's WHOLE capacity net of the reserve —
+    # a fact about the box and the declaration, independent of what happens to be resident.
+    # Being merely out of room right now is transient, however far out of room it is.
+    capacity_gb = _capacity_gb(sample, host_free_gb)
     raise GpuBudgetError(
         f"{target} needs ~{projected_gb:.1f} GB but only {headroom:.1f} GB is safely "
         f"available — bound by the {binding} limit ({where}, {free}, holding "
-        f"{MIN_FREE_GTT_GB:.0f} GB back) — refusing to load rather than risk freezing the host."
+        f"{MIN_FREE_GTT_GB:.0f} GB back) — refusing to load rather than risk freezing the host.",
+        permanent=capacity_gb is not None and projected_gb > capacity_gb,
     )
 
 

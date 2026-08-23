@@ -75,6 +75,18 @@ GATEWAY_CONFIG_STALE = "gateway_config_stale"
 # ledger would have refused something safe. Which one it is decides whether L2b ships.
 LEDGER_SHADOW_REFUSAL = "ledger_shadow_refusal"
 
+# Its authoritative twin: a refusal the ledger ENFORCED, once out of shadow. It exists because
+# the shadow event above was recorded BELOW the enforcing-mode early return, so the box
+# narrated only the refusals it did not act on and would have fallen silent at the flip —
+# exactly when a refusal starts costing the owner a load. Same surface, same reason.
+LEDGER_REFUSAL = "ledger_refusal"
+
+# A background job the box gave up on because the model it needs cannot fit. Distinct from the
+# two above: those are the verdict, this is the CONSEQUENCE, and it is the only trace of it the
+# owner has. A directly-enqueued job (an OCR pass, a note analysis) has no run step, so its
+# failure otherwise exists only in `app.jobs.last_error`, which no owner surface projects.
+JOB_REFUSED_NO_ROOM = "job_refused_no_room"
+
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.
 RETENTION = timedelta(days=1)
