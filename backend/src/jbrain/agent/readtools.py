@@ -823,7 +823,7 @@ def build_registry(
     spawn_ref = SpawnRef()
     # Deep research is late-bound like the spawn primitive: its service needs the spawn
     # service (which needs the very registry being built), so it is wired below once both
-    # exist (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
+    # exist (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md).
     deep_research_ref = DeepResearchRef()
     # The deep_produce verb shares the same DeepResearchService (one engine, two verbs);
     # late-bound below alongside deep_research (DEEP_PRODUCE_PLAN.md, W1).
@@ -922,7 +922,7 @@ def build_registry(
             # owner-only `agent_session_plans` table — always wired (the table always
             # exists); curator never sees them (the opt-in web class). read_plan/write_plan
             # let jerv draft a plan the owner approves, then execute against it
-            # (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+            # (docs/archive/JERV_PLANNING_TOOL_PLAN.md).
             **build_plan_handlers(maker),
             # The sub-agent spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md). A
             # late-bound handler: the service it forwards to needs the very registry

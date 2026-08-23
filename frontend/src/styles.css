@@ -17877,7 +17877,7 @@ button.auto-sect[aria-expanded="true"] > svg {
     animation: none;
   }
 }
-/* --- plan_card tool-view (docs/plans/JERV_PLANNING_TOOL_PLAN.md) ---------
+/* --- plan_card tool-view (docs/archive/JERV_PLANNING_TOOL_PLAN.md) ---------
    jerv's plan: body + live checklist, a flag-enum status chip, the owner-only
    Approve/Edit foot, and the auto-resume countdown. Tokens only; the status flag is
    an enum the theme colors (amber=awaiting, green=working, violet=waiting-for-you,

@@ -1,4 +1,4 @@
-"""Plan auto-continuation (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+"""Plan auto-continuation (docs/archive/JERV_PLANNING_TOOL_PLAN.md).
 
 A long owner-approved plan can't finish in one turn (the per-turn step/cost/wall-clock
 guardrails). So execution is chunked across turns: when a jerv turn ends while its plan

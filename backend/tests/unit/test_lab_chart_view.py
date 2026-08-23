@@ -1,4 +1,4 @@
-"""Unit tests for the `lab_chart` tool-view builder (docs/plans/CHAT_CHARTS_PLAN.md W2).
+"""Unit tests for the `lab_chart` tool-view builder (docs/archive/CHAT_CHARTS_PLAN.md W2).
 
 The builder is pure over the projection rows, so it needs no database — the handler
 wiring + RLS firewall are covered by the integration suite (real Postgres); here we pin

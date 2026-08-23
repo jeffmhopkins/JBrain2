@@ -95,7 +95,7 @@ TASK_DEFAULTS: dict[str, str] = {
     # Individually routable so an on-box operator can point them at a local model.
     "wiki.rewrite": "xai:grok-4.3",
     "wiki.ground": "xai:grok-4.3",
-    # The Phase-6 wiki HEALTH sweep (docs/plans/WIKI_LINT_PLAN.md, Wave B):
+    # The Phase-6 wiki HEALTH sweep (docs/archive/WIKI_LINT_PLAN.md, Wave B):
     # `wiki.lint.contradiction` adjudicates whether two firewall-compatible subjects' facts
     # contradict; `wiki.lint.stale` judges whether an article frames a superseded fact as current.
     # Metered against the SEPARATE wiki-lint budget; individually routable to a local model.
@@ -106,7 +106,7 @@ TASK_DEFAULTS: dict[str, str] = {
     # The prompt declares the `low` tier (a cheap one-shot judgment over many emails);
     # individually routable so an on-box operator can point it at a local model.
     "triage.classify": "xai:grok-4.3",
-    # JPet — the family wall pet (docs/plans/JPET_PLAN.md). `pet.turn` answers a child
+    # JPet — the family wall pet (docs/archive/JPET_PLAN.md). `pet.turn` answers a child
     # in character; `pet.thought` is the idle daydream. Cheap and snappy; an on-box
     # operator points these at the local model via the JPet settings card so the pet
     # never spends API budget and always takes second seat.

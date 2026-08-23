@@ -1,5 +1,5 @@
 """The Research Library HTTP API end-to-end against real Postgres (build plan
-docs/plans/RESEARCH_LIBRARY_PLAN.md, Wave R1).
+docs/archive/RESEARCH_LIBRARY_PLAN.md, Wave R1).
 
 Drives the actual FastAPI app: owner login, then list / view / delete for BOTH corpora
 (deep-research reports + analysed videos) seeded directly into their `external`-domain

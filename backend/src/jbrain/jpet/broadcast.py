@@ -1,4 +1,4 @@
-"""In-process fan-out of pet state to connected surfaces (docs/plans/JPET_PLAN.md W1).
+"""In-process fan-out of pet state to connected surfaces (docs/archive/JPET_PLAN.md W1).
 
 The pet is server-authoritative: the drives tick and `/pet/command` mutate the one
 `pet_state` row, and every change is published here so the Wall and the phone Control

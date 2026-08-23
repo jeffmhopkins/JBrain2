@@ -1,4 +1,4 @@
-"""jerv's planning tools' guards + web-gating (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+"""jerv's planning tools' guards + web-gating (docs/archive/JERV_PLANNING_TOOL_PLAN.md).
 
 The DB round-trip and the approval state machine are covered by the RLS integration
 test; here we cover the no-DB branches (no conversation, empty args, oversized body,

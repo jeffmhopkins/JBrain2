@@ -1,4 +1,4 @@
-"""Unit tests for the generic charting tools (docs/plans/CHAT_CHARTS_PLAN.md W3).
+"""Unit tests for the generic charting tools (docs/archive/CHAT_CHARTS_PLAN.md W3).
 
 The two view builders are pure over their inputs (a model-supplied series /
 `app.facts` rows), so they need no database — the `chart_measurements` SQL + RLS

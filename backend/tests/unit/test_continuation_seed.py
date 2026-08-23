@@ -1,4 +1,4 @@
-"""The continuation-turn seed (docs/plans/JERV_PLANNING_TOOL_PLAN.md §9). A pure function, so
+"""The continuation-turn seed (docs/archive/JERV_PLANNING_TOOL_PLAN.md §9). A pure function, so
 it needs no DB. Regression guard for the observed failure where every continuation turn wrote a
 transition line and the final step asked "shall I write the guide?" instead of writing it — so
 a plan reached "complete" with no deliverable. The seed must re-inject the recorded results

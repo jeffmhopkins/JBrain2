@@ -1,4 +1,4 @@
-"""JPet talk intent classifier (docs/plans/JPET_V3_PLAN.md W3) — pure, no DB, no LLM.
+"""JPet talk intent classifier (docs/archive/JPET_V3_PLAN.md W3) — pure, no DB, no LLM.
 
 Proves the keyword router matches common kid requests to an action or a colour (so talk
 never needs the LLM to do something), folds colour aliases, and returns None for genuinely

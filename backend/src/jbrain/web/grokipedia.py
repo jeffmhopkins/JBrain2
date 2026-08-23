@@ -1,4 +1,4 @@
-"""Grokipedia access for the jerv agent (docs/plans/GROKIPEDIA_TOOL_PLAN.md).
+"""Grokipedia access for the jerv agent (docs/archive/GROKIPEDIA_TOOL_PLAN.md).
 
 Grokipedia is xAI's AI-generated encyclopedia. This client reaches it over the
 **open internet only** — no xAI/Grok API key — via the site's own first-party

@@ -135,7 +135,7 @@ DR_READ_DOWNSTREAM_RESERVE = 2
 DR_MAX_STAGES = 4
 DR_MIN_STAGES = 2
 
-# Deepest mode (docs/proposed/DEEPEST_RESEARCH_TOOL_PLAN.md, Wave R1). `mode="deepest"`
+# Deepest mode (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, Wave R1). `mode="deepest"`
 # turns the single fixed refill into an ADAPTIVE, resource-terminated loop: keep
 # reflect→refill going until the run is covered, the coverage judge calls it stable
 # (further rounds would only add marginal detail), a round stops adding new sources

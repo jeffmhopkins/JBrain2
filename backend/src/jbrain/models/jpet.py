@@ -1,4 +1,4 @@
-"""JPet ORM model (docs/plans/JPET_PLAN.md). `pet_state` is the server-authoritative
+"""JPet ORM model (docs/archive/JPET_PLAN.md). `pet_state` is the server-authoritative
 wall-pet row — owner-only, single-domain, one per (principal, domain). The Wall and
 the phone Control screen both render this row; a drives tick and `/pet/command`
 mutate it. Mirrors migration 0123 (the migration is the source of truth)."""
@@ -16,7 +16,7 @@ from jbrain.models.core import Base
 
 class PetMemory(Base):
     """One episodic memory — a child's message, a care event — the pet recalls. The
-    most recent are woven back into the `pet.turn` prompt (docs/plans/JPET_PLAN.md W5).
+    most recent are woven back into the `pet.turn` prompt (docs/archive/JPET_PLAN.md W5).
     Owner-only, single-domain (mirror of `pet_state`; migration 0124)."""
 
     __tablename__ = "pet_memory"

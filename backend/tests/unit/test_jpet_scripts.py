@@ -1,4 +1,4 @@
-"""JPet v2 action scripts (docs/proposed/JPET_V2_PLAN.md) — pure, no DB.
+"""JPet v2 action scripts (docs/archive/JPET_V2_PLAN.md) — pure, no DB.
 
 Proves the bounding + settling that keeps the pet safe: `clean_script` drops unknown/
 ungrounded steps, caps length, and always terminates; `settle_script` computes the pet +

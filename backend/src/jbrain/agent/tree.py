@@ -27,7 +27,7 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
 MAX_WAVES = 2
 
-# Deepest-research two-tier recursion (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2). The
+# Deepest-research two-tier recursion (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2). The
 # amplification bound on a task agent's own sub-fan: at most this many sub agents per
 # decomposition, AND a task agent decomposes at most ONCE (the one-shot flag on
 # TreeState). Together they cap how much attacker-steered research one laundered task-
@@ -38,7 +38,7 @@ MAX_SUBFAN_PER_TASK_AGENT = 3
 # The depth a background deepest-research run seeds (orchestrator 0 → task agent 1 → sub
 # agent 2). Exactly one tier deeper than the ordinary MAX_DEPTH; minted ONLY by
 # TreeState.rooted_deepest, so the extra tier can never appear in an interactive or
-# scheduled turn (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R4).
+# scheduled turn (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R4).
 DEEPEST_MAX_DEPTH = MAX_DEPTH + 1
 
 # Deep research (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) bounds its gather rounds the same
@@ -147,7 +147,7 @@ class TreeState:
     # only the root spawns, children are leaves — the shipped behaviour. A deepest run
     # seeds it at 2 (orchestrator → task agent → sub agent); a sub agent at depth 2 is a
     # hard leaf. The interactive/scheduled seed paths never raise it, so a depth-2 tree
-    # can arise only from the trusted deepest driver (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    # can arise only from the trusted deepest driver (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
     max_depth: int = MAX_DEPTH
     # 0 means "budget not seeded" (a non-spawn turn that still passes a TreeState):
     # charge/exhaustion are no-ops, so an ordinary turn is governed only by its own
@@ -196,7 +196,7 @@ class TreeState:
         and the owner-set token + wall-clock ceiling — NOT the interactive SPAWN_MULTIPLIER.
         This is the ONLY constructor that mints `max_depth > MAX_DEPTH`; `rooted()` and the
         bare `TreeState()` stay at the default, so the extra tier can never leak into an
-        interactive or scheduled turn (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R4). The
+        interactive or scheduled turn (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R4). The
         monotonic deadline is refactored to an absolute-UTC, restart-safe one in R5."""
         budget = max(0, budget_tokens)
         return cls(

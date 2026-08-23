@@ -3165,7 +3165,7 @@ function BarChartCard({ data }: ViewProps): ReactNode {
 }
 
 // --- plan_card -------------------------------------------------------------
-// jerv's per-conversation plan (docs/plans/JERV_PLANNING_TOOL_PLAN.md). The tool result
+// jerv's per-conversation plan (docs/archive/JERV_PLANNING_TOOL_PLAN.md). The tool result
 // seeds {session_id, body, status}; the card then owns its own live state, polling
 // GET /plans/{id} while the plan is in work so the checklist, the status chip, and the
 // auto-resume countdown track the server. Every control POSTs a plan endpoint and folds
@@ -3284,7 +3284,7 @@ function planFromOut(out: PlanOut): PlanLocal {
   };
 }
 
-/** Live state for one conversation's plan (docs/plans/JERV_PLANNING_TOOL_PLAN.md): seeds
+/** Live state for one conversation's plan (docs/archive/JERV_PLANNING_TOOL_PLAN.md): seeds
  * from the tool-view payload (or a bare status for the omnibox surfaces), then polls
  * GET /plans/{id} while the plan is in work so the checklist, the flag-enum status chip,
  * and the auto-resume countdown track the server-side continuation sweep. Shared by the

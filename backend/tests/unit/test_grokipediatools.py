@@ -1,4 +1,4 @@
-"""jerv's Grokipedia umbrella tool (docs/plans/GROKIPEDIA_TOOL_PLAN.md). ONE
+"""jerv's Grokipedia umbrella tool (docs/archive/GROKIPEDIA_TOOL_PLAN.md). ONE
 `grokipedia(action=…)` tool dispatches the five operations; the client's HTTP is faked via
 MockTransport — no live network."""
 

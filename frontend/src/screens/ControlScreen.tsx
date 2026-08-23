@@ -1,4 +1,4 @@
-// The JPet phone Control screen (docs/proposed/JPET_V2_PLAN.md) — the mobile "remote"
+// The JPet phone Control screen (docs/archive/JPET_V2_PLAN.md) — the mobile "remote"
 // the kids hold, paired to the Wall. It subscribes to /api/pet/stream for live status
 // and issues /api/pet/command. v2 is command-and-response PLAY: big, few, non-destructive
 // buttons a 3–4-year-old can hit (dance, kick ball, jump, wave, spin, jump rope, play

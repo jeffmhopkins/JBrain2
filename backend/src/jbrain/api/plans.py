@@ -1,5 +1,5 @@
 """The per-conversation Plan API — the owner's approve/edit surface for a jerv plan
-(docs/plans/JERV_PLANNING_TOOL_PLAN.md). Owner-only.
+(docs/archive/JERV_PLANNING_TOOL_PLAN.md). Owner-only.
 
 jerv drafts and rewrites plans through its `write_plan` tool, but the `approved`
 transition is the OWNER's alone — so web content jerv reads can never talk it into

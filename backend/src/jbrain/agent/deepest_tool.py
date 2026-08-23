@@ -1,4 +1,4 @@
-"""The `deepest_research` kickoff tool (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
+"""The `deepest_research` kickoff tool (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
 
 Unlike `deep_research` (which runs inline and returns the report), `deepest_research`
 **enqueues and returns**: it mints a run id, launches the background run on the

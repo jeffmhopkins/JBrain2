@@ -1,4 +1,4 @@
-"""JPet v2 scripts + the sync contract against real Postgres (docs/proposed/JPET_V2_PLAN.md).
+"""JPet v2 scripts + the sync contract against real Postgres (docs/archive/JPET_V2_PLAN.md).
 
 Proves running a script mutates the authoritative row (the ball is carried to a corner,
 lights toggle, a nap sleeps), a raw `move` walks the pet, and the resulting state — the

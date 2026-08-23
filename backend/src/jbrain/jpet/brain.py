@@ -1,4 +1,4 @@
-"""JPet's talking brain (docs/proposed/JPET_V2_PLAN.md) — the `pet.turn` LLM route.
+"""JPet's talking brain (docs/archive/JPET_V2_PLAN.md) — the `pet.turn` LLM route.
 
 The pet's personality is an LLM, never trained: it is *told* the pet's state, the room's
 objects, and its recent memories, and answers in character as a small, safe, playful robot

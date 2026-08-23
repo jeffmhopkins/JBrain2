@@ -58,7 +58,7 @@ class WikiBuildGate:
 class WikiLintBudgetExceeded(Exception):
     """Raised when the wiki_lint verifier budget/kill-switch refuses a batch — the verifier stops
     (fail-closed) rather than spending. SEPARATE from the build budget so a corpus-wide audit can
-    never starve the nightly build (docs/plans/WIKI_LINT_PLAN.md §4)."""
+    never starve the nightly build (docs/archive/WIKI_LINT_PLAN.md §4)."""
 
 
 class WikiLintGate:

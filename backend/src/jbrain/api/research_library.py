@@ -1,5 +1,5 @@
 """The Research Library API — the owner-only browse surface behind the card-launcher
-"Research" tile (build plan: docs/plans/RESEARCH_LIBRARY_PLAN.md).
+"Research" tile (build plan: docs/archive/RESEARCH_LIBRARY_PLAN.md).
 
 The human's door to the two `external`-corpus artifacts jerv produces on its own turns:
 deep-research reports (`app.research_reports`) and analysed videos (`app.external_sources`).

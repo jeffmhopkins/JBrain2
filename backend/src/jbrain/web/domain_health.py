@@ -1,4 +1,4 @@
-"""The 24h paywall/bot-wall skip list (docs/plans/DOMAIN_HEALTH_PLAN.md).
+"""The 24h paywall/bot-wall skip list (docs/archive/DOMAIN_HEALTH_PLAN.md).
 
 `DomainSkipRepo` is the read/write seam over `app.blocked_domains` (migration
 0163): the web fetcher records a DOMAIN when it hits a persistent hard block
