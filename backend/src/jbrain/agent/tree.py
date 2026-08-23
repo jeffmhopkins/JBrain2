@@ -147,7 +147,8 @@ class TreeState:
     # only the root spawns, children are leaves — the shipped behaviour. A deepest run
     # seeds it at 2 (orchestrator → task agent → sub agent); a sub agent at depth 2 is a
     # hard leaf. The interactive/scheduled seed paths never raise it, so a depth-2 tree
-    # can arise only from the trusted deepest driver (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    # can arise only from the trusted deepest driver
+    # (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
     max_depth: int = MAX_DEPTH
     # 0 means "budget not seeded" (a non-spawn turn that still passes a TreeState):
     # charge/exhaustion are no-ops, so an ordinary turn is governed only by its own
