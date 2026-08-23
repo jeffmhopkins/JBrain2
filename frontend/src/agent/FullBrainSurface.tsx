@@ -9,7 +9,7 @@
 // to expand in place); each step is itself a pulldown showing its arguments,
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -161,7 +161,7 @@ export function FullBrainSurface({
   planWaiting,
   modelLoad,
 }: Props): ReactNode {
-  const chatRef = useRef<HTMLElement>(null);
+  const chatRef = useRef<HTMLElement | null>(null);
   const { panel, setPanel } = fb;
 
   // Follow the stream only while the reader is already at the foot — scrolling
@@ -201,16 +201,25 @@ export function FullBrainSurface({
   // re-snap whenever the reader is already at the foot, so any out-of-band reflow
   // keeps the live turn in view. Re-armed per session: the scroll box only exists
   // while a chat is open, and a fresh open mounts a new element to observe.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the id re-attaches the observer when the chat element remounts.
-  useEffect(() => {
-    const el = chatRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      if (stickRef.current) el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [fb.active?.id]);
+  // Armed via CALLBACK REF, not an effect keyed on the session id: when the chat element
+  // mounts in a later commit than the id change (a slow environment resolving its gates
+  // across two renders — CI reproduced it), an id-keyed effect has already run against a
+  // null ref and never re-fires, leaving the observer unarmed for the whole session. The
+  // callback ref runs at the moment the element itself appears, which is the only event
+  // this observer actually cares about.
+  const chatResizeRo = useRef<ResizeObserver | null>(null);
+  const attachChat = useCallback((el: HTMLElement | null) => {
+    chatRef.current = el;
+    chatResizeRo.current?.disconnect();
+    chatResizeRo.current = null;
+    if (el && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        if (stickRef.current) el.scrollTop = el.scrollHeight;
+      });
+      ro.observe(el);
+      chatResizeRo.current = ro;
+    }
+  }, []);
 
   // Keep a text selection penned inside the single bubble it started in. On mobile
   // Chrome the long-press text toolbar's "Select all" expands the selection to the
@@ -286,7 +295,12 @@ export function FullBrainSurface({
     <div className="fb-shell">
       <div className="fullbrain">
         {fb.active ? (
-          <main className="fb-chat" aria-label="Conversation" ref={chatRef} onScroll={onChatScroll}>
+          <main
+            className="fb-chat"
+            aria-label="Conversation"
+            ref={attachChat}
+            onScroll={onChatScroll}
+          >
             {fb.messages.map((m, i) => (
               <Bubble
                 // Transcript is append-only; the positional key is stable.
