@@ -593,9 +593,7 @@ describe("what the box was doing", () => {
     expect(
       await screen.findByText("restored gpt-oss-120b's prompt cache from disk"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("saved gpt-oss-120b's prompt cache to disk"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("saved gpt-oss-120b's prompt cache to disk")).toBeInTheDocument();
     expect(
       screen.getByText("28757-token jerv prefix restored from disk in 1840 ms"),
     ).toBeInTheDocument();
