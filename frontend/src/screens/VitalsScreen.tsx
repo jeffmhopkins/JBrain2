@@ -384,6 +384,14 @@ function eventLabel(event: BoxEvent): string {
   if (event.kind === "model_unload") {
     return failed ? `could not unload ${event.subject}` : `unloaded ${event.subject}`;
   }
+  if (event.kind === "ledger_shadow_refusal") {
+    // The reservation ledger disagreeing with the gate that actually decided. Named as a
+    // QUESTION rather than a fault, because that is what it is: either the box really was too
+    // full and the live gate let a load through, or the declaration over-predicts and the
+    // ledger would have refused something safe. Which one it is decides whether the ledger is
+    // allowed to start deciding (backend: docs/plans/LOCAL_MODEL_LEDGER_PLAN.md L2b).
+    return `the memory ledger would have refused ${event.subject}`;
+  }
   if (event.kind === "image_render") {
     if (failed) return `image render failed (${event.subject})`;
     return `render${running ? "ing" : "ed"} an image (${event.subject})${running ? "…" : ""}`;

@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain import box_events
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.admission import Phase
 from jbrain.llm.ledger import ReservationLedger
@@ -136,3 +137,45 @@ async def test_the_ledger_in_shadow_never_refuses_a_load(maker: async_sessionmak
 
     await _gateway(maker, handler).load(MODEL)  # must not raise
     assert len(await full.live()) == 2
+
+
+async def test_a_shadow_refusal_reaches_the_surface_the_owner_reads(
+    maker: async_sessionmaker,
+) -> None:
+    """The verdict must not live only in a log line.
+
+    The owner runs this box remotely with no terminal — that is the standing constraint this
+    repo has (root CLAUDE.md rule 10), and "grep the container logs" is not something they can
+    do. The shadow verdict is the ENTIRE evidence base for whether the ledger is allowed to
+    start deciding, so it rides `box_events`, which the vitals surface already reads, next to
+    the load it disagreed with."""
+    box_events.configure(maker, source="api")
+    try:
+        full = ReservationLedger(maker, source="worker")
+        await full.charge("gpt-oss-120b", host_gb=115.0, device_gb=115.0)
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+        await _gateway(maker, handler).load(MODEL)  # admitted anyway — it is a shadow
+
+        async with scoped_session(maker, SessionContext(principal_kind="owner")) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT subject, detail, status FROM app.box_events"
+                        " WHERE kind = :k ORDER BY at DESC"
+                    ),
+                    {"k": box_events.LEDGER_SHADOW_REFUSAL},
+                )
+            ).all()
+    finally:
+        box_events.reset()
+
+    assert len(rows) == 1, f"the shadow verdict never reached the vitals surface: {rows}"
+    subject, detail, status = rows[0]
+    assert subject == MODEL
+    assert status == "failed"
+    # The row has to say WHAT it needed and WHAT was there, or it is a refusal the owner
+    # cannot act on — the exact defect the old "needs ~137 GB" message had.
+    assert "GB of host memory" in detail and "Waiting for room" in detail, detail

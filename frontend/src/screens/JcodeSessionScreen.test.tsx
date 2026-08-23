@@ -131,15 +131,13 @@ describe("JcodeSessionScreen", () => {
       await screen.findByText(/Could not load/i, undefined, { timeout: 4000 }),
     ).toBeInTheDocument();
     expect(screen.getByText(/only 34 GB is safely available/)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/Loading qwen3-coder-next onto the box/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Loading qwen3-coder-next onto the box/i)).not.toBeInTheDocument();
     expect(screen.getByText("Try again")).toBeInTheDocument();
 
     // And the poll STOPS. A refusal is terminal, so continuing to poll every 2 s would ask
     // the box the same question forever about a warm that already finished badly.
-    const callsAtFailure = (api.jcodeModelStatus as unknown as { mock: { calls: unknown[] } })
-      .mock.calls.length;
+    const callsAtFailure = (api.jcodeModelStatus as unknown as { mock: { calls: unknown[] } }).mock
+      .calls.length;
     await new Promise((r) => setTimeout(r, 2500));
     expect(
       (api.jcodeModelStatus as unknown as { mock: { calls: unknown[] } }).mock.calls.length,

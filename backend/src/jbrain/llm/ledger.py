@@ -24,6 +24,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain import box_events
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import gpu_guard
@@ -217,6 +218,16 @@ class ReservationLedger:
                 )
                 if not self._shadow:
                     return Charge(decision, None)
+                # ON THE SURFACE THE OWNER ACTUALLY READS, not only in a log line. They run
+                # this box remotely with no terminal, so a verdict that only exists in the
+                # container log is a verdict nobody can act on — and this verdict is the whole
+                # evidence base for whether the ledger is allowed to start deciding.
+                await box_events.record(
+                    box_events.LEDGER_SHADOW_REFUSAL,
+                    served_model,
+                    detail=decision.reason,
+                    status="failed",
+                )
             session.add(
                 ModelReservation(
                     instance_id=uuid.UUID(instance_id),

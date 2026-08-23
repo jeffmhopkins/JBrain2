@@ -64,6 +64,16 @@ PREFILL = "prefill"
 # stale flags is exactly the kind of thing that reads as "the model is behaving oddly" weeks
 # later. Never fails the load — the model still starts, just not at the settings the meter shows.
 GATEWAY_CONFIG_STALE = "gateway_config_stale"
+# The reservation ledger would have refused a load that in fact went ahead — its verdict while
+# it is in shadow (jbrain.llm.ledger, docs/plans/LOCAL_MODEL_LEDGER_PLAN.md L2a). This is the
+# ONLY evidence L2b can be decided on, so it must not live in a log line: the owner runs this
+# box remotely with no terminal, and "grep the container logs" is not a thing they can do. It
+# rides the surface they already read, timestamped next to the load it disagreed with.
+#
+# Every one of these is a QUESTION, not a fault: either the box really was too full and the
+# live gate let a load through it should not have, or the declaration over-predicts and the
+# ledger would have refused something safe. Which one it is decides whether L2b ships.
+LEDGER_SHADOW_REFUSAL = "ledger_shadow_refusal"
 
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.

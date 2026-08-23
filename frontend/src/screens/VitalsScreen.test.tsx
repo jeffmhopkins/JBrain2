@@ -522,6 +522,31 @@ describe("what the box was doing", () => {
     expect(screen.getByText("to make room for gpt-oss-120b")).toBeInTheDocument();
   });
 
+  it("says when the memory ledger disagreed with the gate that let a load through", async () => {
+    // The reservation ledger runs in shadow: it records what it WOULD have refused and
+    // refuses nothing. That verdict is the entire evidence base for whether it is ever allowed
+    // to decide — and the owner runs this box remotely with no terminal, so a verdict that
+    // only exists in a container log is one nobody can act on.
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "ledger_shadow_refusal",
+        subject: "qwen3-coder-next",
+        detail: "qwen3-coder-next needs 59.6 GB of host memory and there is 47.0 GB free",
+        status: "failed",
+        ended_ms: Date.now() - 5_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(
+      await screen.findByText("the memory ledger would have refused qwen3-coder-next"),
+    ).toBeInTheDocument();
+    // The arithmetic has to come with it, or it is a refusal the owner cannot act on.
+    expect(
+      screen.getByText("qwen3-coder-next needs 59.6 GB of host memory and there is 47.0 GB free"),
+    ).toBeInTheDocument();
+  });
+
   it("marks work the background half of the box started", async () => {
     // A load nothing on screen asked for is the confusing one — say where it came from.
     opsVitalsEvents.mockResolvedValue([event({ source: "worker" })]);
