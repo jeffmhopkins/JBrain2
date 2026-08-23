@@ -63,6 +63,37 @@ def openai_tools(tools: Sequence[LlmTool]) -> list[dict[str, Any]]:
     ]
 
 
+def apply_local_reasoning(payload: dict[str, Any], reasoning_effort: str | None) -> None:
+    """Put a LOCAL model's reasoning setting on the wire, translated per family — the one
+    encoding, shared by real turns and the gateway's load-time warm-up. Under `--jinja`
+    the chat template renders this into the prompt's LEADING tokens (gpt-oss's harmony
+    template writes a literal "Reasoning: <level>" header), so a warm that encodes it
+    differently from the turn it warms for shares no cache prefix at all — observed live
+    2026-08-23 as a full ~62 s prefill on every load, right past a 497 ms KV restore.
+
+      - A Qwen HYBRID reasoner toggles thinking through its chat template, NOT a
+        top-level `reasoning_effort` (which its template ignores): "none" →
+        enable_thinking=false, any other level → thinking on.
+      - A NEWER hybrid (Qwen3.8 onward) also reads a mapped `reasoning_effort` level from
+        the same chat-template kwargs bag (its own default is `xhigh`, which burns
+        thousands of reasoning tokens on trivial prompts).
+      - The harmony/GLM reasoners take the effort verbatim (they understand "none").
+
+    `payload["model"]` must be the served name; a None effort is a no-op (non-reasoning
+    models must not carry the field — their templates would still render it)."""
+    if reasoning_effort is None:
+        return
+    model = local_catalog.get_by_served(str(payload["model"]))
+    if model is not None and model.hybrid_thinking:
+        kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
+        kwargs["enable_thinking"] = reasoning_effort != "none"
+        mapped = model.thinking_effort_map.get(reasoning_effort)
+        if mapped:
+            kwargs["reasoning_effort"] = mapped
+        return
+    payload["reasoning_effort"] = reasoning_effort
+
+
 def _user_content(text: str, images: Sequence[LlmImage]) -> str | list[dict[str, Any]]:
     if not images:
         return text
@@ -193,30 +224,15 @@ class OpenAiCompatClient:
     def _apply_reasoning(self, payload: dict[str, Any], reasoning_effort: str | None) -> None:
         # Put the routed reasoning setting on the wire. The ROUTER gates eligibility
         # (it only sets a level for a reasoning-capable provider+model), so a
-        # non-reasoning local model never reaches here with a level set. Translation is
-        # per model family:
-        #   - A Qwen HYBRID reasoner toggles thinking through its chat template, NOT a
-        #     top-level `reasoning_effort` (which its template ignores). So map the level
-        #     onto that toggle — "none" → enable_thinking=false (a real "reasoning off"),
-        #     any other level → thinking on.
-        #   - A NEWER hybrid (Qwen3.8 onward) reads a `reasoning_effort` level from that same
-        #     chat-template kwargs bag, and falls back to the card's own default when given
-        #     none — `xhigh` for Qwen3.8, which spends thousands of reasoning tokens on trivial
-        #     prompts. So when the model publishes a level map, send the mapped level too. The
-        #     toggle still leads: "none" turns thinking off and no level is sent.
-        #   - xAI Grok and the harmony/GLM local reasoners take the effort verbatim
-        #     (they understand "none").
+        # non-reasoning local model never reaches here with a level set. xAI Grok takes
+        # the effort verbatim; the local families each have their own wire shape — see
+        # `apply_local_reasoning`, module-level because the gateway's load-time warm-up
+        # must render EXACTLY this too (the effort lands in the prompt's leading tokens,
+        # so a warm that omits it shares no cache with the turns it claims to warm).
         if reasoning_effort is None or self.provider not in ("xai", "local"):
             return
-        model = (
-            local_catalog.get_by_served(str(payload["model"])) if self.provider == "local" else None
-        )
-        if model is not None and model.hybrid_thinking:
-            kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
-            kwargs["enable_thinking"] = reasoning_effort != "none"
-            mapped = model.thinking_effort_map.get(reasoning_effort)
-            if mapped:
-                kwargs["reasoning_effort"] = mapped
+        if self.provider == "local":
+            apply_local_reasoning(payload, reasoning_effort)
             return
         payload["reasoning_effort"] = reasoning_effort
 

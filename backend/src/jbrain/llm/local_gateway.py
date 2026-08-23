@@ -43,7 +43,7 @@ import httpx
 import structlog
 
 from jbrain import box_events, host_metrics
-from jbrain.llm import gpu_guard, local_catalog, local_weights, prefill
+from jbrain.llm import gpu_guard, local_catalog, local_weights, openai_compat, prefill
 from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
 
@@ -848,6 +848,8 @@ class LocalGatewayClient:
         *,
         warm_system: str | None = None,
         warm_tools: list[dict[str, object]] | None = None,
+        warm_reasoning_effort: str | None = None,
+        before_warm: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         """Load `served_model` into memory AND warm it for inference. The health probe
         makes llama-swap load the model (request-driven; with --no-mmap the weights are
@@ -936,7 +938,11 @@ class LocalGatewayClient:
                 try:
                     async with box_events.span(box_events.MODEL_LOAD, served_model):
                         await self._load_and_warm(
-                            served_model, warm_system=warm_system, warm_tools=warm_tools
+                            served_model,
+                            warm_system=warm_system,
+                            warm_tools=warm_tools,
+                            warm_reasoning_effort=warm_reasoning_effort,
+                            before_warm=before_warm,
                         )
                 finally:
                     self._loading_now = None
@@ -992,6 +998,8 @@ class LocalGatewayClient:
         *,
         warm_system: str | None = None,
         warm_tools: list[dict[str, object]] | None = None,
+        warm_reasoning_effort: str | None = None,
+        before_warm: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         """`load` minus its narration: the health probe that makes llama-swap read the
         weights, the device-memory guard around it, and the inference warm-up."""
@@ -1084,7 +1092,13 @@ class LocalGatewayClient:
                     # weights, so its page-cache copy exists and nothing else will ever drop
                     # it. See the guarded branch below for the measurement that proved it.
                     self._drop_weights_cache(model)
-                await self._warm(served_model, system=warm_system, tools=warm_tools)
+                await self._warm(
+                    served_model,
+                    system=warm_system,
+                    tools=warm_tools,
+                    reasoning_effort=warm_reasoning_effort,
+                    before_warm=before_warm,
+                )
             return
 
         # ALREADY RESIDENT means there is nothing to admit, so the pre-flight must not run.
@@ -1107,7 +1121,13 @@ class LocalGatewayClient:
                 await _do_load()
             finally:
                 self._drop_weights_cache(model)
-            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            await self._warm(
+                served_model,
+                system=warm_system,
+                tools=warm_tools,
+                reasoning_effort=warm_reasoning_effort,
+                before_warm=before_warm,
+            )
             return
 
         # PRE-FLIGHT, then WATCH — for every caller with something to admit. The projection
@@ -1135,7 +1155,13 @@ class LocalGatewayClient:
             # should meet the memory this returns rather than race it. See
             # `_drop_weights_cache`.
             self._drop_weights_cache(model)
-            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            await self._warm(
+                served_model,
+                system=warm_system,
+                tools=warm_tools,
+                reasoning_effort=warm_reasoning_effort,
+                before_warm=before_warm,
+            )
 
         try:
             # The reservation wraps the WATCHDOG, not the other way round: an aborted load has
@@ -1188,6 +1214,8 @@ class LocalGatewayClient:
         *,
         system: str | None = None,
         tools: list[dict[str, object]] | None = None,
+        reasoning_effort: str | None = None,
+        before_warm: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         """Exercise the inference path with one discarded token. Best-effort: the model is
         already loaded, so a warm-up failure is logged, not raised — it only means the
@@ -1214,6 +1242,15 @@ class LocalGatewayClient:
         and sit there. Worse, a restored slot skips the prefill entirely and published
         nothing at all. Arriving here means the warm is DONE, however it got done, so the
         honest reading is full."""
+        # A restore hook runs FIRST: with a saved KV slot on disk, putting it back before
+        # this request turns the prefill below into a cache hit — and the order matters on a
+        # single-slot server, where a full warm prefill would CLOBBER a restored cache
+        # instead of reusing it. Best-effort like everything else here.
+        if before_warm is not None:
+            try:
+                await before_warm()
+            except Exception:  # noqa: BLE001 — a failed restore just means a real prefill
+                log.warning("local_gateway.before_warm_failed", model=served_model, exc_info=True)
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -1226,6 +1263,11 @@ class LocalGatewayClient:
         }
         if tools:
             body["tools"] = tools
+        # The SAME reasoning encoding a real routed turn carries (openai_compat): the chat
+        # template renders it into the prompt's leading tokens, so omitting it here primed a
+        # DIFFERENT prefix from the one every turn actually sends — a warm that warmed
+        # nothing, at full prefill cost (observed live 2026-08-23, ~62 s per load).
+        openai_compat.apply_local_reasoning(body, reasoning_effort)
 
         async def _publish(fraction: float) -> None:
             await box_events.progress(_WEIGHTS_SHARE + fraction * (1.0 - _WEIGHTS_SHARE))

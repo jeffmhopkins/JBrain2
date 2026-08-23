@@ -10,7 +10,7 @@ implicit pre-P7; the store's RLS enforces it regardless.
 import asyncio
 import contextlib
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
-from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
+from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
@@ -29,7 +29,10 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
 from jbrain.llm import gpu_guard, llama_swap_config, local_catalog, local_weights
+from jbrain.llm import kv_prefix as kv_prefix_mod
+from jbrain.llm import router as llm_router
 from jbrain.llm.errors import LlmError
+from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import (
     LocalGateway,
     LocalGatewayClient,
@@ -1029,12 +1032,14 @@ async def unload_local_model(
 @router.post("/settings/llm/local-models/{model_id}/load")
 async def load_local_model(
     model_id: str,
+    request: Request,
     principal: PrincipalDep,
     settings: SettingsDep,
     gateway: LocalGatewayDep,
     residency: ResidencyDep,
     registry: AgentRegistryDep,
     liveness: ImageLivenessDep,
+    store: SettingsStoreDep,
 ) -> LoadedModelsOut:
     """Make the gateway load one model into memory (the settings screen's stage → Load).
     First frees room the deliberate way — evict the fewest, biggest resident models to hold
@@ -1045,7 +1050,14 @@ async def load_local_model(
     is evicted in that case. 404 for an unprovisioned id; 409 when hosting is off or the
     model can't fit; 502 if the gateway rejects or can't be reached."""
     return await gateway_load(
-        model_id, settings, gateway, residency=residency, registry=registry, liveness=liveness
+        model_id,
+        settings,
+        gateway,
+        residency=residency,
+        registry=registry,
+        liveness=liveness,
+        settings_store=store,
+        kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
 
 
@@ -1521,6 +1533,44 @@ async def _admit_or_409(residency: ResidencyCoordinator | None, served_model: st
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+async def _warm_identity(
+    served_model: str,
+    *,
+    settings_store: SqlSettingsStore | None,
+    kv_prefix: "KvPrefixStore | None",
+    registry: ToolRegistry | None,
+    liveness: HiddenToolsProbe | None,
+) -> tuple[str | None, "Callable[[], Awaitable[object]] | None"]:
+    """(warm_reasoning_effort, before_warm) for a gateway load's priming warm-up.
+
+    The effort is part of the RENDERED prompt (the template writes it into the leading
+    tokens), so the warm must carry exactly what a routed agent.turn would — else it primes
+    a prefix no turn ever sends, at full prefill cost (observed live 2026-08-23). The
+    before_warm hook restores the saved KV slot ahead of the warm, turning that prefill
+    into a cache hit; on a single-slot server the order is what stops the warm from
+    clobbering the restored cache. Both halves are best-effort and None-tolerant."""
+    stored: str | None = None
+    if settings_store is not None:
+        with contextlib.suppress(Exception):
+            entry = (await settings_store.llm_task_overrides(queue.SYSTEM_CTX)).get(
+                kv_prefix_mod.AGENT_TURN_TASK
+            ) or {}
+            stored = entry.get("reasoning_effort")
+    effort = llm_router.warm_reasoning_effort(kv_prefix_mod.AGENT_TURN_TASK, served_model, stored)
+    before_warm: Callable[[], Awaitable[object]] | None = None
+    if kv_prefix is not None and registry is not None:
+        store = kv_prefix
+
+        async def _restore() -> object:
+            p_system, p_tools, _hidden = await jerv_prime_inputs(registry, liveness, served_model)
+            return await store.restore_if_lost(
+                served_model, p_system, p_tools, reasoning_effort=effort
+            )
+
+        before_warm = _restore
+    return effort, before_warm
+
+
 async def gateway_load(
     model_id: str,
     settings: Settings,
@@ -1529,6 +1579,8 @@ async def gateway_load(
     residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
     liveness: HiddenToolsProbe | None = None,
+    settings_store: SqlSettingsStore | None = None,
+    kv_prefix: "KvPrefixStore | None" = None,
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
@@ -1558,9 +1610,22 @@ async def gateway_load(
         # here — a prefix primed with a different tool block than the turn will send is
         # worse than no prime, since the reuse misses from the tools block onward.
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
+    effort, before_warm = await _warm_identity(
+        model.served_model,
+        settings_store=settings_store,
+        kv_prefix=kv_prefix,
+        registry=registry,
+        liveness=liveness,
+    )
     try:
         with box_events.because("you loaded it"):
-            await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+            await gateway.load(
+                model.served_model,
+                warm_system=warm_system,
+                warm_tools=warm_tools,
+                warm_reasoning_effort=effort,
+                before_warm=before_warm,
+            )
     except gpu_guard.GpuBudgetError as exc:
         # 409, not an uncaught 500. A device refusal is the same class of answer as the
         # residency refusal above — "it does not fit, and nothing was evicted" — and this
@@ -1926,6 +1991,8 @@ async def gateway_prime(
     residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
     liveness: HiddenToolsProbe | None = None,
+    settings_store: SqlSettingsStore | None = None,
+    kv_prefix: "KvPrefixStore | None" = None,
 ) -> dict[str, object]:
     """Prime one model with the real jerv prefix and TIME it — the measurement instrument for
     prefill experiments. `elapsed_ms` is the number that matters: a cold prefill and a
@@ -1940,9 +2007,22 @@ async def gateway_prime(
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
+    effort, before_warm = await _warm_identity(
+        model.served_model,
+        settings_store=settings_store,
+        kv_prefix=kv_prefix,
+        registry=registry,
+        liveness=liveness,
+    )
     started = time.monotonic()
     try:
-        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+        await gateway.load(
+            model.served_model,
+            warm_system=warm_system,
+            warm_tools=warm_tools,
+            warm_reasoning_effort=effort,
+            before_warm=before_warm,
+        )
     except gpu_guard.GpuBudgetError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LocalGatewayError as exc:

@@ -73,6 +73,12 @@ class _FakeRouter:
     async def primary_local_served_model(self) -> str | None:
         return self._served
 
+    async def effective_reasoning_effort(self, task: str) -> str | None:
+        # The live box carries a stored "low" on agent.turn — the value whose absence from
+        # the gateway warm caused the 2026-08-23 mismatch. Distinctive, not None, so a
+        # keeper that drops it on the way to the store cannot pass.
+        return "low"
+
     async def admit_local_load(self, served_model: str) -> None:
         # The REAL one loads. `ensure_room` takes the slow path for a non-resident target and
         # calls `gateway.load` itself, so admission and load are one step in production. A fake
@@ -394,21 +400,31 @@ class _FakeKvStore:
     def __init__(self, gateway: _FakeGateway) -> None:
         self._gateway = gateway
         self.restores: list[str] = []
-        self.saves: list[tuple[str, int]] = []
+        self.saves: list[tuple[str, int, str | None]] = []  # (served, tokens, effort)
         self.restore_result = False
         self.raise_on_restore = False
         self.raise_on_save = False
 
-    async def restore_if_lost(self, served: str, system: str, tools) -> bool:
+    async def restore_if_lost(
+        self, served: str, system: str, tools, *, reasoning_effort: str | None = None
+    ) -> bool:
         self._gateway.events.append("kv_restore")
         self.restores.append(served)
         if self.raise_on_restore:
             raise RuntimeError("disk went away")
         return self.restore_result
 
-    async def save_after_prime(self, served: str, system: str, tools, prime_tokens: int) -> bool:
+    async def save_after_prime(
+        self,
+        served: str,
+        system: str,
+        tools,
+        prime_tokens: int,
+        *,
+        reasoning_effort: str | None = None,
+    ) -> bool:
         self._gateway.events.append("kv_save")
-        self.saves.append((served, prime_tokens))
+        self.saves.append((served, prime_tokens, reasoning_effort))
         if self.raise_on_save:
             raise RuntimeError("disk went away")
         return True
@@ -439,7 +455,7 @@ async def test_a_cold_prime_restores_from_disk_first_then_saves_what_it_primed()
     keeper, gateway, router, store = _kept_with_store()
     assert await keeper.reconcile_once() is True
     assert gateway.events == ["load", "kv_restore", "prime", "kv_save"]
-    assert store.saves == [("gpt-oss-120b", 12345)], (
+    assert store.saves == [("gpt-oss-120b", 12345, "low")], (
         "the count must be the prime turn's own usage, not any constant"
     )
 

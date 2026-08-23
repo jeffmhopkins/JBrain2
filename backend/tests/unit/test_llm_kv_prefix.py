@@ -95,7 +95,7 @@ def _slot_files(root: Path) -> list[str]:
 
 def _plant_file(root: Path, store: KvPrefixStore, system: str) -> Path:
     """The file a prior successful save would have left, at the CURRENT fingerprint."""
-    resolved = store._resolve(SERVED, system, TOOLS)
+    resolved = store._resolve(SERVED, system, TOOLS, None)
     assert resolved is not None
     fingerprint, save_dir = resolved
     assert Path(save_dir) == _id_dir(root), "the store must look where the server saves"
@@ -444,10 +444,10 @@ def test_the_store_looks_exactly_where_the_launch_line_says_the_server_saves(
     from the served name — so the store and the server cannot disagree about the
     directory, and an operator's --slot-save-path override moves both together."""
     store, _ = _store(root)
-    resolved = store._resolve(SERVED, "persona", TOOLS)
+    resolved = store._resolve(SERVED, "persona", TOOLS, None)
     assert resolved is not None and Path(resolved[1]) == _id_dir(root)
     _write_config(root, save_path="/models/.kvslots/elsewhere")
-    moved = store._resolve(SERVED, "persona", TOOLS)
+    moved = store._resolve(SERVED, "persona", TOOLS, None)
     assert moved is not None
     assert Path(moved[1]) == root / ".kvslots" / "elsewhere"
 
@@ -459,16 +459,16 @@ def test_the_fingerprint_moves_with_launch_line_system_and_tools(root: Path) -> 
     store, _ = _store(root)
 
     def fp() -> str:
-        resolved = store._resolve(SERVED, "persona", TOOLS)
+        resolved = store._resolve(SERVED, "persona", TOOLS, None)
         assert resolved is not None
         return resolved[0]
 
     base = fp()
     assert fp() == base
-    r2 = store._resolve(SERVED, "persona v2", TOOLS)
+    r2 = store._resolve(SERVED, "persona v2", TOOLS, None)
     assert r2 is not None and r2[0] != base
     other_tools = [LlmTool(name="notes", description="CHANGED", input_schema={"type": "object"})]
-    r3 = store._resolve(SERVED, "persona", other_tools)
+    r3 = store._resolve(SERVED, "persona", other_tools, None)
     assert r3 is not None and r3[0] != base
     _write_config(root, window=262144)
     assert fp() != base
@@ -476,4 +476,44 @@ def test_the_fingerprint_moves_with_launch_line_system_and_tools(root: Path) -> 
 
 def test_no_rendered_config_means_no_identity_and_no_disk_activity(tmp_path: Path) -> None:
     store, _ = _store(tmp_path)  # no llama-swap.yaml written
-    assert store._resolve(SERVED, "persona", TOOLS) is None
+    assert store._resolve(SERVED, "persona", TOOLS, None) is None
+
+
+def test_the_fingerprint_moves_with_the_reasoning_effort(root: Path) -> None:
+    """The effort is part of the RENDERED prompt (gpt-oss's template writes a literal
+    "Reasoning: <level>" header), so a cache saved under one effort can never match a
+    prompt sent under another. If the effort didn't move the filename, changing the agent
+    task's effort would restore a permanently-stale file whose save is short-circuited by
+    its own existence — every reload restoring a cache no turn can use."""
+    store, _ = _store(root)
+    base = store._resolve(SERVED, "persona", TOOLS, None)
+    low = store._resolve(SERVED, "persona", TOOLS, "low")
+    high = store._resolve(SERVED, "persona", TOOLS, "high")
+    assert base is not None and low is not None and high is not None
+    assert len({base[0], low[0], high[0]}) == 3, "each effort keys its own file"
+    assert store._resolve(SERVED, "persona", TOOLS, "low") == low  # stable per effort
+
+
+async def test_a_mid_conversation_loss_restores_the_prefix_not_the_conversation(
+    root: Path,
+) -> None:
+    """The owner's scenario (2026-08-23): a conversation several turns past the prefix,
+    then an unload/reload wipes the cache. The store's job is to put the PREFIX back —
+    the server's native leading-prefix match then reuses it under the conversation's
+    prompt and prefills only the tail. What this pins: a lost cache mid-conversation is
+    restorable (empty slot → restore fires), while a conversation still LIVE in a slot is
+    never restored over (the threshold gate) — the two sides that make "restore, then
+    stack the turns on top" safe."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    # The conversation's slot survived (cache = prefix + turns, bigger than the prime):
+    # nothing to do, and restoring would wipe the turns.
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME + 900, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
+    # The reload wiped it (empty slot): the prefix comes back from disk, ready for the
+    # next turn's prompt to extend.
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert [r[0] for r in gw.restored] == [SERVED]

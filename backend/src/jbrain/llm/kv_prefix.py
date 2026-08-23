@@ -120,13 +120,21 @@ def _save_dir_from_line(launch_line: str, models_root: str) -> str | None:
     return os.path.join(models_root, raw[len(prefix) :].rstrip("/"))
 
 
-def _fingerprint(launch_line: str, system: str, tools: Sequence[LlmTool]) -> str:
+def _fingerprint(
+    launch_line: str, system: str, tools: Sequence[LlmTool], reasoning_effort: str | None
+) -> str:
     tool_blob = json.dumps(
         [{"name": t.name, "description": t.description, "schema": t.input_schema} for t in tools],
         sort_keys=True,
     )
     digest = hashlib.sha256()
-    for part in (launch_line, system, tool_blob):
+    # The effort is part of the RENDERED PROMPT, not just a decoding knob: gpt-oss's
+    # harmony template writes a literal "Reasoning: <level>" header, and the hybrids
+    # toggle whole template branches. A cache saved under one effort never matches a
+    # prompt sent under another, so the effort must move the filename — or an owner
+    # changing the agent task's effort would restore a permanently-stale file whose
+    # save is short-circuited by its own existence (observed design gap, 2026-08-23).
+    for part in (launch_line, system, tool_blob, reasoning_effort or ""):
         digest.update(part.encode())
         digest.update(b"\x00")
     return digest.hexdigest()[:32]
@@ -162,7 +170,11 @@ class KvPrefixStore:
         return model
 
     def _resolve(
-        self, served_model: str, system: str, tools: Sequence[LlmTool]
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
     ) -> tuple[str, str] | None:
         """(fingerprint, save-dir) for the CURRENT launch line, or None when the model is
         not served, or is served without --slot-save-path (no disk layer). One read of the
@@ -173,7 +185,7 @@ class KvPrefixStore:
         save_dir = _save_dir_from_line(line, self._models_root)
         if save_dir is None:
             return None
-        return _fingerprint(line, system, tools), save_dir
+        return _fingerprint(line, system, tools, reasoning_effort), save_dir
 
     def note_agent_turn(self, served_model: str, input_tokens: int) -> None:
         """A real jerv turn completed — whatever was restored has now been used, and the
@@ -189,6 +201,8 @@ class KvPrefixStore:
         system: str,
         tools: Sequence[LlmTool],
         prime_tokens: int,
+        *,
+        reasoning_effort: str | None = None,
     ) -> bool:
         """Persist the freshly primed slot, called by the keeper in the same breath as a
         successful prime. Returns True when a valid file exists afterwards (already
@@ -198,7 +212,9 @@ class KvPrefixStore:
         self._prime_tokens[served_model] = prime_tokens
         # A fresh prime supersedes any restored-but-unused state.
         self._restored_unused.discard(served_model)
-        resolved = await asyncio.to_thread(self._resolve, served_model, system, tools)
+        resolved = await asyncio.to_thread(
+            self._resolve, served_model, system, tools, reasoning_effort
+        )
         if resolved is None:
             return False
         fingerprint, save_dir = resolved
@@ -322,7 +338,12 @@ class KvPrefixStore:
     # ---- restore --------------------------------------------------------------------
 
     async def restore_if_lost(
-        self, served_model: str, system: str, tools: Sequence[LlmTool]
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        *,
+        reasoning_effort: str | None = None,
     ) -> bool:
         """Put the prefix back if nothing prefix-sized is cached anywhere and a valid file
         exists. Returns True only when a verified restore happened.
@@ -340,7 +361,9 @@ class KvPrefixStore:
             return False
         if served_model in self._restored_unused:
             return False  # already restored; the slot reports nothing until a turn uses it
-        resolved = await asyncio.to_thread(self._resolve, served_model, system, tools)
+        resolved = await asyncio.to_thread(
+            self._resolve, served_model, system, tools, reasoning_effort
+        )
         if resolved is None:
             return False
         fingerprint, save_dir = resolved

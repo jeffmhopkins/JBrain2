@@ -1132,3 +1132,66 @@ async def test_slot_save_and_restore_speak_llama_servers_exact_dialect() -> None
 
     with pytest.raises(LocalGatewayError):
         await gw.save_slot("not-resident-model", 0, "abc.kvslot")
+
+
+async def test_load_warms_with_the_turns_reasoning_encoding() -> None:
+    # The effort lands in the prompt's LEADING tokens (gpt-oss's harmony template writes a
+    # literal "Reasoning: <level>" header), so a warm that omits it primes a prefix no real
+    # turn ever sends — a full ~62 s prefill that warmed nothing, observed live 2026-08-23,
+    # right past a 497 ms KV restore it then clobbered. The warm must carry exactly what
+    # `openai_compat` puts on a routed turn's wire.
+    body: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("gpt-oss-120b", warm_system="PERSONA", warm_reasoning_effort="high")
+    assert body["reasoning_effort"] == "high"  # harmony family: verbatim
+
+
+async def test_load_translates_a_hybrids_reasoning_like_a_real_turn() -> None:
+    # The Qwen hybrids ignore a top-level reasoning_effort — their template reads the
+    # chat_template_kwargs bag. The warm must go through the same per-family translation
+    # a routed turn does, or the rendered prefixes diverge exactly as above.
+    body: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("qwen3.8-27b-q4", warm_system="PERSONA", warm_reasoning_effort="low")
+    kwargs = body.get("chat_template_kwargs")
+    assert isinstance(kwargs, dict) and kwargs["enable_thinking"] is True
+    assert "reasoning_effort" not in body, "a hybrid must not carry the top-level field"
+
+
+async def test_before_warm_runs_before_the_warm_request() -> None:
+    # The hook is the KV restore: it must land BEFORE the warm's completion request, or on
+    # a single-slot server the warm's prefill clobbers the freshly restored cache instead
+    # of cache-hitting it.
+    order: list[str] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            order.append("warm_request")
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    async def restore() -> bool:
+        order.append("restore")
+        return True
+
+    await _client(handle).load("gpt-oss-120b", warm_system="P", before_warm=restore)
+    assert order == ["restore", "warm_request"]
+
+
+async def test_a_failing_before_warm_never_fails_the_load() -> None:
+    async def broken() -> bool:
+        raise RuntimeError("disk layer down")
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("gpt-oss-120b", warm_system="P", before_warm=broken)

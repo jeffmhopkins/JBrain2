@@ -668,6 +668,8 @@ class _RecordingGateway(FakeLocalGateway):
         *,
         warm_system: str | None = None,
         warm_tools: list[dict[str, object]] | None = None,
+        warm_reasoning_effort: str | None = None,
+        before_warm=None,
     ) -> None:
         self._events.append(f"load:{served_model}")
         await super().load(served_model, warm_system=warm_system, warm_tools=warm_tools)
@@ -1249,6 +1251,8 @@ async def test_the_restore_releases_the_box_lock_BEFORE_it_loads_anything(
             *,
             warm_system: str | None = None,
             warm_tools: list[dict[str, object]] | None = None,
+            warm_reasoning_effort: str | None = None,
+            before_warm=None,
         ) -> None:
             events.append(f"load:{served_model}")
             await super().load(served_model, warm_system=warm_system, warm_tools=warm_tools)
