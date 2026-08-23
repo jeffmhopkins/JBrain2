@@ -201,9 +201,12 @@ both resides and warms it.
 > `usage.input_tokens`, read in the same breath as the prime, and the server's `n_saved`
 > must agree or the file is deleted; a restore's `n_restored` is verified against the same
 > count and floor before it is trusted, falling back to the prefill otherwise. Files are
-> fingerprinted over the model's rendered launch line + persona + tool schemas (any change
-> that could stale a slot moves the filename), and the store holds the whole tree to a
-> 25 GB budget by evicting least-recently-USED files (a restore refreshes its file's
+> fingerprinted over the model's rendered launch line + persona + tool schemas + the
+> agent task's reasoning effort (any change that could stale a slot moves the filename —
+> the effort included, because the chat template renders it into the prompt's leading
+> tokens: gpt-oss writes a literal "Reasoning: low" header), and the store holds the
+> whole tree to a
+> 25 GiB budget by evicting least-recently-USED files (a restore refreshes its file's
 > clock) — so each config the owner flips between (interactive slot on/off, window) keeps
 > its own ~2 GiB file and flips restore in ~100 ms instead of re-paying a ~2 min prefill.
 > Files live under
@@ -212,7 +215,11 @@ both resides and warms it.
 > themselves stay untouchable by the inference process). The keeper restores before it primes (a cold prime becomes a
 > ~1 s cache hit instead of a ~60 s prefill), saves after, and probes every settled tick so
 > a single-slot clobber heals off-turn; the router restores inline before an agent turn
-> that would otherwise re-prefill. Saves and restores land in Vitals as
+> that would otherwise re-prefill; and the gateway's load-time warm restores first and
+> renders the SAME prompt a routed turn sends (system + tools + the reasoning effort) —
+> until 2026-08-23 it omitted the effort, primed a "Reasoning: medium" variant no turn
+> ever used, and burned a full ~62 s prefill on every load while clobbering the freshly
+> restored cache on a 1-slot server. Saves and restores land in Vitals as
 > `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to

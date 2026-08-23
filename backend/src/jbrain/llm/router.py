@@ -226,6 +226,21 @@ def _split_spec(label: str, spec: str) -> tuple[str, str]:
     return provider, model
 
 
+def warm_reasoning_effort(task: str, served_model: str, stored: str | None) -> str | None:
+    """The reasoning effort a `task` turn would carry on a LOCAL `served_model` — for the
+    gateway's load-time warm-up, which must render the exact prompt a routed turn will
+    send (the effort lands in the prompt's leading tokens; see
+    `openai_compat.apply_local_reasoning`). Mirrors `_resolve_live`'s stored-override-else-
+    default fold, then gates on the model itself: the model being LOADED is not always the
+    model the task routes to, and a non-reasoning model must not carry the field."""
+    effort = TASK_REASONING_DEFAULTS.get(task)
+    if stored:
+        effort = stored
+    if not _reasoning_capable(local_catalog.LOCAL_PROVIDER, served_model):
+        return None
+    return effort
+
+
 def _reasoning_capable(provider: str, model: str) -> bool:
     """Whether (provider, model) honors `reasoning_effort` / emits a thinking trace:
     xAI Grok, or a local reasoning model (gpt-oss/GLM). A stored effort is dropped
@@ -365,7 +380,13 @@ class LlmRouter:
         self._slots_probe = slots_probe
 
     async def _ensure_agent_prefix(
-        self, task: str, provider: str, model: str, system: str, tools: Sequence[LlmTool]
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
     ) -> None:
         """Between admission and dispatch, put the agent-turn prefix back from disk if no
         slot holds it — ~2 s against the ~60 s prefill the turn would otherwise pay. Only
@@ -378,7 +399,9 @@ class LlmRouter:
         ):
             return
         try:
-            await self._kv_prefix.restore_if_lost(model, system, tools)
+            await self._kv_prefix.restore_if_lost(
+                model, system, tools, reasoning_effort=reasoning_effort
+            )
         except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
             log.warning("llm.kv_restore_failed", model=model, exc_info=True)
 
@@ -731,7 +754,7 @@ class LlmRouter:
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._admit_local(provider, model)
-        await self._ensure_agent_prefix(task, provider, model, system, tools)
+        await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         start = time.perf_counter()
         turn = await client.converse(
             model=model,
@@ -791,7 +814,7 @@ class LlmRouter:
         # longest silence a local turn has. `watch` publishes how far in it is while the gap
         # runs, and stops the moment anything streams. The denominator is an estimate off the
         # prompt's own size, which `calibrate` below corrects from the turn's real usage.
-        await self._ensure_agent_prefix(task, provider, model, system, tools)
+        await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         prompt_chars = _prompt_chars(system, messages, tools)
         # The row is opened by the first published fraction, so a turn that answers off a

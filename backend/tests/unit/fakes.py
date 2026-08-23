@@ -1,5 +1,6 @@
 """In-memory AuthRepo for unit-testing auth flows without Postgres."""
 
+import contextlib
 import dataclasses
 import uuid
 from collections.abc import Sequence
@@ -768,8 +769,15 @@ class FakeLocalGateway:
         *,
         warm_system: str | None = None,
         warm_tools: list[dict[str, object]] | None = None,
+        warm_reasoning_effort: str | None = None,
+        before_warm=None,
     ) -> None:
         from jbrain.llm.local_gateway import LocalGatewayError
+
+        # Mirror the real gateway: the restore hook runs ahead of the warm, best-effort.
+        if before_warm is not None:
+            with contextlib.suppress(Exception):
+                await before_warm()
 
         if self.fail_load:
             raise LocalGatewayError("simulated gateway failure")

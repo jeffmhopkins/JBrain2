@@ -24,6 +24,7 @@ from jbrain.llm.router import (
     CONTEXT_WINDOWS,
     DEFAULT_CONTEXT_WINDOW,
     JSON_NUDGE,
+    TASK_REASONING_DEFAULTS,
     LocalAdmitter,
 )
 
@@ -1000,16 +1001,18 @@ class _RecordingKvStore:
     """The router-facing surface of the disk layer, recording what reached it."""
 
     def __init__(self, dispatched: list | None = None) -> None:
-        self.restores: list[tuple[str, str, int]] = []  # (served, system, tool_count)
+        self.restores: list[tuple[str, str, int, str | None]] = []  # (+ reasoning effort)
         self.noted: list[tuple[str, int]] = []
         self.raise_on_restore = False
         # Shared with the FakeLlmClient's call list, so ORDER is assertable: a restore
         # that ran after dispatch would be pure waste — the prefill already happened.
         self._dispatched = dispatched
 
-    async def restore_if_lost(self, served: str, system: str, tools) -> bool:
+    async def restore_if_lost(
+        self, served: str, system: str, tools, *, reasoning_effort: str | None = None
+    ) -> bool:
         assert not self._dispatched, "restore must run BEFORE the turn is dispatched"
-        self.restores.append((served, system, len(list(tools))))
+        self.restores.append((served, system, len(list(tools)), reasoning_effort))
         if self.raise_on_restore:
             raise RuntimeError("disk went away")
         return True
@@ -1031,9 +1034,13 @@ async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> 
         kv_prefix=store,  # type: ignore[arg-type]
     )
     await router.converse("agent.turn", system="the persona", messages=[], tools=tools)
-    # The store fingerprints (system, tools): the router must pass the turn's own, not
-    # placeholders — anything else makes the file-exists check miss forever, silently.
-    assert store.restores == [("gpt-oss-120b", "the persona", 1)]
+    # The store fingerprints (system, tools, effort): the router must pass the turn's own,
+    # not placeholders — anything else makes the file-exists check miss forever, silently.
+    # The effort is the RESOLVED one (part of the rendered prompt, so part of the file's
+    # identity — the 2026-08-23 warm-mismatch incident).
+    assert store.restores == [
+        ("gpt-oss-120b", "the persona", 1, TASK_REASONING_DEFAULTS.get("agent.turn"))
+    ]
     # The noted size must be the INPUT tokens (the fake splits input=7/output=1 exactly
     # so the wrong field cannot hide).
     assert store.noted == [("gpt-oss-120b", 7)]
@@ -1081,5 +1088,22 @@ async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
     )
     async for _ in router.converse_stream("agent.turn", system="s", messages=[]):
         pass
-    assert store.restores == [("gpt-oss-120b", "s", 0)]
+    assert store.restores == [("gpt-oss-120b", "s", 0, TASK_REASONING_DEFAULTS.get("agent.turn"))]
     assert store.noted == [("gpt-oss-120b", 7)]
+
+
+def test_warm_reasoning_effort_mirrors_a_routed_turns_encoding() -> None:
+    """The gateway's load-time warm asks this helper what a real agent.turn would carry on
+    the model being LOADED (not the model the task happens to route to). A stored override
+    wins over the bucket default; a non-reasoning model gets None — its template would
+    still render a carried field, diverging the warmed prefix from every real turn."""
+    from jbrain.llm.router import warm_reasoning_effort
+
+    # gpt-oss is reasoning-capable: the stored override rides through verbatim.
+    assert warm_reasoning_effort("agent.turn", "gpt-oss-120b", "low") == "low"
+    # No override → the task's bucket default (whatever it is — pinned by identity, not value).
+    assert warm_reasoning_effort("agent.turn", "gpt-oss-120b", None) == (
+        TASK_REASONING_DEFAULTS.get("agent.turn")
+    )
+    # A non-reasoning model must never carry the field, whatever is stored.
+    assert warm_reasoning_effort("agent.turn", "qwen3-vl-30b-a3b", "high") is None

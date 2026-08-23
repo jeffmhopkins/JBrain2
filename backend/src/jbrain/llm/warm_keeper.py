@@ -150,6 +150,16 @@ class WarmKeeper:
         # onward, and the memo below would record that miss as success. The manual Load path
         # already passes it (api/llm_settings.gateway_load); this closes the gap.
         system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness, served)
+        # The effort the prime's turn will carry — part of the rendered prompt and so part
+        # of the disk cache's identity (see kv_prefix._fingerprint). Resolved the same way
+        # the prime's converse below resolves it; a resolution hiccup degrades to None,
+        # which at worst keys the file under the wrong effort and costs one prefill.
+        effort: str | None = None
+        if self._kv_prefix is not None:
+            try:
+                effort = await self._router.effective_reasoning_effort(AGENT_TURN_TASK)
+            except Exception:  # noqa: BLE001 — identity input only, never wedge the keeper
+                log.warning("warm_keeper.effort_resolve_failed", model=served, exc_info=True)
         want = (served, hidden)
         if served in running and self._primed == want:
             # Primed as far as the memo knows — but the memo cannot see a slot being
@@ -158,7 +168,9 @@ class WarmKeeper:
             # disk off-turn — one cheap read per tick when nothing is wrong.
             if self._kv_prefix is not None:
                 try:
-                    await self._kv_prefix.restore_if_lost(served, system, tools)
+                    await self._kv_prefix.restore_if_lost(
+                        served, system, tools, reasoning_effort=effort
+                    )
                 except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                     log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
             return True  # already primed with the current tool set — leave any live conversation be
@@ -204,7 +216,9 @@ class WarmKeeper:
         # of v1 and the verification rules that answer it.)
         if self._kv_prefix is not None:
             try:
-                await self._kv_prefix.restore_if_lost(served, system, tools)
+                await self._kv_prefix.restore_if_lost(
+                    served, system, tools, reasoning_effort=effort
+                )
             except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                 log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
@@ -227,7 +241,7 @@ class WarmKeeper:
         if self._kv_prefix is not None:
             try:
                 await self._kv_prefix.save_after_prime(
-                    served, system, tools, prime_turn.usage.input_tokens
+                    served, system, tools, prime_turn.usage.input_tokens, reasoning_effort=effort
                 )
             except Exception:  # noqa: BLE001 — a failed save costs a future restore, nothing now
                 log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
