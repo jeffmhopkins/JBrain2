@@ -539,7 +539,25 @@ CATALOG: tuple[LocalModel, ...] = (
         # keeps the f16 KV cache modest (~half the layers grow with context), so
         # 128k fits the box's unified memory beside the MXFP4 weights.
         context_window=131072,
-        kv_gb_per_128k=4.5,
+        # MEASURED ON THE BOX 2026-08-23, at four windows (16k/32k/64k/128k) with the device
+        # probe, each load cold and each baseline taken only after free memory had SETTLED —
+        # the first attempt at this measured 69.41 GB at a 64k window against 69.26 at 128k,
+        # which is impossible, because its baseline was sampled one second after a 69 GB model
+        # was unloaded and was still falling.
+        #
+        # Against the old 4.5 the drift ran -0.20, -0.04, +0.21, +0.71 — an error PROPORTIONAL
+        # to the KV term (slope +11.4%, r-squared effectively 1), so the coefficient was light
+        # rather than the model carrying a missing constant. At 5.01 the same four points give
+        # -0.33, -0.30, -0.30, -0.32: a flat, conservative offset, which is the same shape the
+        # 27B family already has (-0.41 across a 16x window range) and is what a correct
+        # coefficient looks like here.
+        #
+        # WHICH NUMBER IS ACTUALLY WRONG IS NOT SETTLED. gpt-oss is the only `kv_full_history`
+        # entry in the catalog, so "the base KV is 11% bigger" and "the --swa-full doubling is
+        # really ~2.23x" fit these measurements identically. It is recorded on the model rather
+        # than on the multiplier because a per-model figure is what was measured; the next
+        # `--swa-full` model must be measured too rather than inheriting either guess.
+        kv_gb_per_128k=5.01,
         # The interactive persona lives here, so it is the one model whose cold prefill the
         # owner actually waits on — and the only one where a KV-slot restore pays for itself.
         kv_full_history=True,

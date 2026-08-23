@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2b◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b◻️ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -358,6 +358,54 @@ binds only through its MEASUREMENT. That is conservative — the host arm is the
 constraint and it is checked — but "both layers protect the GTT hang mode" would be an
 overstatement, and the two-layer shape earns its keep as future-proofing (a vLLM-style sleep
 moves bytes between the columns) rather than as a second live gate today.
+
+### L2a-m — The declarations, measured on the box ✅
+
+The shadow ledger's first job was to be judged against reality, and the box was available, so
+it was judged immediately rather than after a week of waiting. Nine cold loads across two model
+families and five context windows, read from `gpu_guard.measure_footprint` (the device probe),
+not inferred from `/proc/meminfo`.
+
+| model | window | KV term | predicted | measured | drift |
+|---|---|---|---|---|---|
+| gpt-oss-120b | 16384 | 1.13 | 60.67 | 60.47 | −0.20 |
+| gpt-oss-120b | 32768 | 2.25 | 61.80 | 61.76 | −0.04 |
+| gpt-oss-120b | 65536 | 4.50 | 64.05 | 64.26 | **+0.21** |
+| gpt-oss-120b | 131072 | 9.00 | 68.55 | 69.26 | **+0.71** |
+| qwen3.8-27b-q4 | 16384 | 0.72 | 19.31 | 18.87 | −0.44 |
+| qwen3.8-27b-q4 | 65536 | 2.89 | 21.48 | 21.09 | −0.39 |
+| qwen3.8-27b-q4 | 131072 | 5.78 | 24.37 | 23.96 | −0.41 |
+| qwen3.8-27b-q4 | 262144 | 11.56 | 30.15 | 29.71 | −0.44 |
+| qwen3.8-27b-abliterated | 65536 | 2.89 | 21.18 | 20.81 | −0.37 |
+
+**The 27B family is correct and needs nothing.** Sixteen-fold KV range, drift flat at −0.41
+± 0.03, regression slope −0.0015. Both builds agree. A flat negative offset is the safe shape:
+it reserves slightly more than the box takes.
+
+**gpt-oss's KV coefficient was 11.4% light**, and the error was PROPORTIONAL to the KV term —
+so it grew with exactly the window an operator is most likely to raise, and was largest at the
+top of the range where the box is fullest. `kv_gb_per_128k` 4.50 → **5.01** turns the four
+drifts into −0.33, −0.30, −0.30, −0.32: the same flat, conservative offset the 27B has.
+
+*Which number is actually wrong is not settled.* gpt-oss is the only `kv_full_history` entry,
+so "the base KV is 11% bigger" and "the `--swa-full` doubling is really ~2.23x" fit these
+measurements identically. Recorded on the model, because a per-model figure is what was
+measured; the next `--swa-full` model must be measured rather than inherit either guess.
+
+**Two measurement failures are recorded here because they nearly produced a wrong answer.**
+The first sweep re-printed the previous window's reading whenever a load outlived the client's
+timeout, so three of six rows were stale duplicates. The second measured 69.41 GB at a 64k
+window against 69.26 at 128k — impossible — because its baseline was sampled one second after a
+69 GB model was unloaded and was still falling; the companion reading in that same run AGREED
+with the prediction to 0.03 GB while being equally contaminated. A measurement that confirms
+you for the wrong reason is worse than one that contradicts you. The final numbers come from
+loads that were cold, whose window override was verified before loading, and whose baseline was
+taken only after free memory stopped moving.
+
+**The ledger raised no shadow refusal across any of it**, including four gpt-oss loads at
+60-69 GB. Its arithmetic never disagreed with the live gate — on a box that was mostly empty,
+so this is evidence of no false positives, not evidence the ledger binds correctly under
+pressure.
 
 ### L2b — Let it decide ◻️
 
