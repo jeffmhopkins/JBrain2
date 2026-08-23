@@ -247,7 +247,7 @@ class TurnAttachmentRepo:
                     await session.execute(
                         select(TurnAttachment)
                         .where(TurnAttachment.session_id == session_id)
-                        .order_by(TurnAttachment.created_at)
+                        .order_by(TurnAttachment.created_at, TurnAttachment.id)
                     )
                 )
                 .scalars()
@@ -270,7 +270,7 @@ class TurnAttachmentRepo:
                     await session.execute(
                         select(TurnAttachment)
                         .where(TurnAttachment.turn_id.in_([uuid.UUID(t) for t in turn_ids]))
-                        .order_by(TurnAttachment.created_at)
+                        .order_by(TurnAttachment.created_at, TurnAttachment.id)
                     )
                 )
                 .scalars()

@@ -138,21 +138,25 @@ class AgentTranscript:
                 )
             )
 
-    async def recent_image_attachments(
+    async def recent_image_turns(
         self, ctx: SessionContext, session_id: str, *, now: datetime
-    ) -> list[AttachmentInfo]:
-        """Image attachments from the session's RECENT user turns — the ones a vision-capable
-        follow-up turn should re-see inline without an analyze_image round-trip. "Recent" is the
-        `_carry_forward_turn_ids` union (last N turns OR within the time window). Returned in
-        chronological turn order, images only (a re-injected PDF's pages would be heavy; the
-        owner's case is a picture). Empty when this transcript has no attachment repo, or the
-        session has no recent image."""
+    ) -> list[tuple[str, list[AttachmentInfo]]]:
+        """`(turn content, image attachments)` for the session's RECENT user turns that
+        carried an image — what a vision-capable follow-up turn should still see. "Recent"
+        is the `_carry_forward_turn_ids` union (last N turns OR within the time window).
+        The content is the key the caller uses to ANCHOR the image at its own turn in the
+        client-supplied history, so the bytes sit at a byte-stable position the gateway's
+        KV prefix cache can hold through (llama-server matches a media chunk by content
+        hash + position) instead of re-encoding every turn. Oldest-first; turns without an
+        image are dropped; images only (a re-injected PDF's pages would be heavy; the
+        owner's case is a picture). Empty when this transcript has no attachment repo, or
+        the session has no recent image."""
         if self._attachments is None:
             return []
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
-                    select(AgentTurn.id, AgentTurn.created_at)
+                    select(AgentTurn.id, AgentTurn.created_at, AgentTurn.content)
                     .where(
                         AgentTurn.session_id == uuid.UUID(session_id),
                         AgentTurn.role == "user",
@@ -164,13 +168,14 @@ class AgentTranscript:
         turn_ids = _carry_forward_turn_ids([(r[0], r[1]) for r in rows], now=now)
         if not turn_ids:
             return []
+        content_by_id = {str(r[0]): r[2] for r in rows}
         by_turn = await self._attachments.list_for_turns(ctx, turn_ids)
-        return [
-            info
-            for tid in turn_ids  # oldest-first, so the images read chronologically
-            for info in by_turn.get(tid, [])
-            if info.media_type.startswith("image/")
-        ]
+        out: list[tuple[str, list[AttachmentInfo]]] = []
+        for tid in turn_ids:  # oldest-first, so the images read chronologically
+            images = [i for i in by_turn.get(tid, []) if i.media_type.startswith("image/")]
+            if images:
+                out.append((content_by_id.get(tid, ""), images))
+        return out
 
     async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
         async with scoped_session(self._maker, ctx) as session:

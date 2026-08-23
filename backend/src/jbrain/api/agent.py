@@ -17,7 +17,8 @@ import asyncio
 import contextlib
 import time
 import uuid
-from collections.abc import Sequence
+from bisect import bisect_left
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -30,10 +31,11 @@ from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, AgentProfile, ag
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_IMAGES_PER_TURN,
+    anchored_image_content,
     build_attachment_content,
     carry_forward_content,
 )
-from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
+from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
 from jbrain.agent.continuation import maybe_schedule_continuation
@@ -626,17 +628,30 @@ def _model_message(body: ChatRequest) -> str:
 
 
 def _conversation(
-    body: ChatRequest, images: Sequence[LlmImage] = (), extra_text: str = ""
+    body: ChatRequest,
+    images: Sequence[LlmImage] = (),
+    extra_text: str = "",
+    *,
+    anchored: Mapping[int, tuple[str, tuple[LlmImage, ...]]] | None = None,
 ) -> list[LlmMessage]:
-    """The conversation to feed the loop. The turn's attachments ride ONLY the FINAL
+    """The conversation to feed the loop. The turn's own attachments ride the FINAL
     user message: its `images` carry the vision content and `extra_text` (PDF text +
-    decoded text files) is appended to the model-facing message. History stays text —
-    past images are deliberately NOT re-sent (they'd re-cost vision every turn), so an
-    attachment lives exactly one turn in the model context."""
-    messages: list[LlmMessage] = [
-        UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
-        for m in body.history
-    ]
+    decoded text files) is appended to the model-facing message. History stays text,
+    EXCEPT `anchored` inserts: {history index → (note, images)} places a recent earlier
+    turn's images as their own user message directly after that turn, byte-identical
+    every render, so the KV prefix cache holds through them instead of re-encoding
+    (see the chat() carry block). An image outside the carry window lives on only as
+    text (its id note), reachable by reference via analyze_image."""
+    anchors = anchored or {}
+    messages: list[LlmMessage] = []
+    for i, m in enumerate(body.history):
+        messages.append(
+            UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
+        )
+        anchor = anchors.get(i)
+        if anchor is not None:
+            note, anchor_images = anchor
+            messages.append(UserMessage(text=note, images=anchor_images))
     text = _model_message(body)
     if extra_text:
         text = f"{text}\n\n{extra_text}"
@@ -791,29 +806,102 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # bytes; a vision-capable route keeps the images inline as before.
     if images and not can_see_images:
         images = []
-    # Carry a RECENT earlier image back into view (docs/reference/ASSISTANT.md): history is
+    # Keep a RECENT earlier image in view (docs/reference/ASSISTANT.md): history is
     # text-only, so a follow-up like "re-evaluate the picture" otherwise can't see an image
-    # from a prior turn and must delegate to analyze_image. When the turn model can see, re-fetch
-    # the persisted bytes of images from recent turns (the last-N-turns-OR-15-min window) and
-    # re-inject them inline — excluding any already attached THIS turn, and within the shared
-    # image budget. Only for a vision-capable turn (a text-only model would just drop them).
+    # from a prior turn and must delegate to analyze_image. When the turn model can see,
+    # re-fetch the persisted bytes of images from recent turns (the last-N-turns-OR-15-min
+    # window) and ANCHOR each at its own turn in history as a byte-stable inserted message —
+    # the gateway's KV prefix cache matches a media chunk by content hash + position, so an
+    # anchored image is encoded once and then rides the cached prefix, where the previous
+    # tail re-injection re-paid the whole vision encode every turn (the ~35 s "Reading your
+    # prompt" the owner watched on 2026-08-23). A turn whose text can't be matched against
+    # the client-supplied history falls back to that tail injection so the image is never
+    # silently dropped. Excludes ids already attached THIS turn, shares the image budget,
+    # and only runs for a vision-capable turn (a text-only model would just drop the bytes).
+    anchored: dict[int, tuple[str, tuple[LlmImage, ...]]] = {}
     if can_see_images:
         already = set(body.attachment_ids)
-        recent = [
-            info
-            for info in await get_agent_transcript(request).recent_image_attachments(
-                attachment_ctx, body.session_id, now=datetime.now(UTC)
-            )
-            if info.id not in already
-        ]
-        carried, carried_notes = await carry_forward_content(
-            get_blob_store(request), recent, image_budget=MAX_IMAGES_PER_TURN - len(images)
+        recent = await get_agent_transcript(request).recent_image_turns(
+            attachment_ctx, body.session_id, now=datetime.now(UTC)
         )
-        images.extend(carried)
-        if carried_notes:
-            note_block = "\n\n".join(carried_notes)
-            attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
-    conversation = _conversation(body, images, attach_text)
+        image_budget = MAX_IMAGES_PER_TURN - len(images)
+        unanchored: list[AttachmentInfo] = []
+        # The transcript stores the owner's raw message, but the PWA's history entry for
+        # an image turn carries an id-reference suffix appended client-side (useFullBrain
+        # historyContent) — so exact equality would miss precisely the turns that have
+        # images, including a caption-less photo send whose raw text is "". Index the
+        # history ONCE (the arrays are client-sized) under both keys: the text before the
+        # marker for a decorated entry, and the verbatim text for any entry. Lookups are
+        # then O(log n) per window turn, so a large or adversarial history can't turn the
+        # matching into an event-loop-stalling scan (review, 2026-08-23).
+        marker = "\n\n[Images the owner attached this turn"
+        decorated_index: dict[str, list[int]] = {}
+        exact_index: dict[str, list[int]] = {}
+        for i, m in enumerate(body.history):
+            if m.role != "user":
+                continue
+            at = m.content.find(marker)
+            if at >= 0:
+                decorated_index.setdefault(m.content[:at], []).append(i)
+            exact_index.setdefault(m.content, []).append(i)
+
+        def _claim(content: str, floor: int) -> int | None:
+            # The first UNCLAIMED occurrence at/after the floor, preferring a decorated
+            # (image-bearing) entry over a plain one with the same text — so an image
+            # binds to its true turn, not to an image-less repeat of the same words.
+            for index_map in (decorated_index, exact_index):
+                positions = index_map.get(content)
+                if positions:
+                    at = bisect_left(positions, floor)
+                    if at < len(positions):
+                        return positions[at]
+            return None
+
+        # Claim OLDEST-first with a forward floor: the oldest matching occurrence never
+        # moves as the conversation grows, so an anchor keeps its position render-over-
+        # render — matching newest-first would drift the anchor onto each new repeat of
+        # the same text and re-break the cache (review, 2026-08-23). A window turn whose
+        # images are all excluded still consumes its claimed entry, so an older same-text
+        # turn can't be mis-attributed to it.
+        floor = 0
+        for content, infos in recent:  # oldest-first
+            claimed = _claim(content, floor)
+            if claimed is not None:
+                floor = claimed + 1
+            infos = [info for info in infos if info.id not in already]
+            if not infos:
+                continue
+            if claimed is None:
+                unanchored.extend(infos)
+                continue
+            anchor_images, anchor_note = await anchored_image_content(
+                get_blob_store(request), infos, image_budget=image_budget
+            )
+            if len(anchor_images) < len(infos):
+                # The shared budget starved this anchor (a heavy-attachment current turn).
+                # Route the overflow through the tail fallback rather than dropping it
+                # silently — the fallback shares the same budget, so this only ever helps —
+                # and say so, since a budget-starved anchor also changes bytes between
+                # renders (one extra re-encode when the budget recovers).
+                unanchored.extend(infos[len(anchor_images) :])
+                log.info(
+                    "chat.anchor_budget_starved",
+                    anchored=len(anchor_images),
+                    dropped_to_fallback=len(infos) - len(anchor_images),
+                )
+            if not anchor_images:
+                continue
+            image_budget -= len(anchor_images)
+            anchored[claimed] = (anchor_note, tuple(anchor_images))
+        if unanchored:
+            carried, carried_notes = await carry_forward_content(
+                get_blob_store(request), unanchored, image_budget=image_budget
+            )
+            images.extend(carried)
+            if carried_notes:
+                note_block = "\n\n".join(carried_notes)
+                attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
+    conversation = _conversation(body, images, attach_text, anchored=anchored)
     # Cache-stable prompt layout (docs/archive/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local
     # gateway's KV cache can reuse turn-over-turn; put the VOLATILE blocks (presence, "now")

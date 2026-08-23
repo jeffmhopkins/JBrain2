@@ -363,3 +363,29 @@ async def test_encrypted_pdf_is_skipped_not_crashed() -> None:
     images, text = await _build(repo, blobs, [bad, good])
     assert images == []  # nothing rendered from the encrypted file
     assert "plain text survives" in text  # the sibling text file still converted
+
+
+async def test_anchored_image_content_is_deterministic_and_budgeted() -> None:
+    """The anchor's whole point is byte-stability across renders: same note, same blob
+    order, every time — and the budget truncates rather than overflowing."""
+    from jbrain.agent.attachment_content import anchored_image_content
+
+    blobs = FakeBlobs()
+    blobs.put("s1", b"png-one")
+    blobs.put("s2", b"png-two")
+    infos = [
+        AttachmentInfo("i1", "one.png", "image/png", 7, "s1", "general"),
+        AttachmentInfo("i2", "two.png", "image/png", 7, "s2", "general"),
+    ]
+    first = await anchored_image_content(blobs, infos, image_budget=10)  # type: ignore[arg-type]
+    second = await anchored_image_content(blobs, infos, image_budget=10)  # type: ignore[arg-type]
+    assert first == second  # identical across renders — the cache contract
+    images, note = first
+    assert [base64.b64decode(i.data) for i in images] == [b"png-one", b"png-two"]
+    assert "one.png" in note and "i2" in note and "still in view" in note
+
+    capped, capped_note = await anchored_image_content(blobs, infos, image_budget=1)  # type: ignore[arg-type]
+    assert len(capped) == 1 and "two.png" not in capped_note
+
+    missing = await anchored_image_content(FakeBlobs(), infos[:1], image_budget=5)  # type: ignore[arg-type]
+    assert missing == ([], "")
