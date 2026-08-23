@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from jbrain.llm import gpu_guard, local_catalog, local_gateway
-from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.llm.local_gateway import STATE_READY, LocalGatewayClient
 
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
 
@@ -191,6 +191,92 @@ async def test_a_balloon_during_the_WARM_is_caught_too() -> None:
         "the warm never started, so this proves nothing about watching it: " + repr(seen)
     )
     assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
+
+
+@pytest.mark.anyio
+async def test_an_abort_during_the_WARM_still_drops_the_cache_after_the_unload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The page-cache drop must FOLLOW `abort()`'s unload, on the warm's breach path too.
+
+    An aborted load strands the entire weight file in `Cached` — MEASURED at +4.29 GiB for a
+    4.3 GB model — and `read_memory_gb` counts page cache as USED, so a stranded copy shrinks
+    the apparent headroom, which makes the next load likelier to abort, which strands more. The
+    drop only works once llama-server has released the file, i.e. after the unload.
+
+    Moving the warm inside the watchdog created a path where that ordering could invert: the
+    drop between the load and the warm has already run when a breach fires DURING the warm, and
+    a flag that skipped the post-abort drop as redundant would leave the only effective one
+    unrun. Dropping twice costs a second sweep over already-evicted files; skipping the second
+    costs the ratchet."""
+    order: list[str] = []
+
+    def _record_drop(models_dir: str, model_id: str) -> float:
+        order.append("drop")
+        return 0.0
+
+    monkeypatch.setattr(local_gateway.local_weights, "drop_weights_page_cache", _record_drop)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "/unload/" in request.url.path:
+            order.append("unload")
+        if "chat/completions" in request.url.path:
+            await asyncio.sleep(5.0)  # the prefill, and where the balloon appears
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    probe = _StubProbe(_mem(10.0), _mem(10.0), _mem(10.0), _mem(118.0))
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=httpx.MockTransport(handler),
+        gpu_probe=probe,
+        timeout=30.0,
+        models_dir=str(tmp_path),  # without this the drop is a no-op and proves nothing
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("qwen3.8-27b-q4")
+
+    assert "unload" in order, f"the abort never unloaded: {order}"
+    assert order.index("unload") < len(order) - 1 and order[-1] == "drop", (
+        f"nothing dropped the weights cache after the unload released the file: {order}"
+    )
+
+
+@pytest.mark.anyio
+async def test_the_stop_settle_ignores_the_shared_state_cache_entirely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One observation must decide both when to stop waiting and what the answer is.
+
+    `state_of` reads `_last_states`, which is PROCESS-GLOBAL on a client that is shared —
+    `warm_keeper` reconciles on its own loop against the same instance, so between this loop's
+    poll returning and a cache read, somebody else's poll can have rewritten it. A settle that
+    exited on that write and then returned its own older snapshot would be wearing two
+    observations as one, and the snapshot still lists the stopping model — putting it straight
+    back on the already-resident free pass this exists to close.
+
+    So the concurrent writer is simulated exactly: every poll leaves behind a cache saying
+    `ready` while returning the truth. Nothing may read that cache."""
+    monkeypatch.setattr(local_gateway, "STOP_SETTLE_POLL_S", 0.01)
+    gateway = LocalGatewayClient("http://gw", transport=_transport())
+    polls = 0
+
+    async def _polls_with_an_interloper() -> dict[str, str]:
+        nonlocal polls
+        polls += 1
+        truth = {"gpt-oss-120b": "stopping"} if polls <= 2 else {}
+        # What a concurrent `running()` on this shared client leaves behind mid-loop.
+        gateway._last_states = {"gpt-oss-120b": STATE_READY}
+        return truth
+
+    monkeypatch.setattr(gateway, "running_states", _polls_with_an_interloper)
+    gateway._last_states = {"gpt-oss-120b": STATE_READY}
+
+    settled = await gateway._settle_a_stopping_model("gpt-oss-120b", {"gpt-oss-120b": "stopping"})
+
+    assert polls == 3, f"it exited on the interloper's cache write, after {polls} poll(s)"
+    assert settled == set(), (
+        f"it returned a set from a different moment than the one it exited on: {settled}"
+    )
 
 
 def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:

@@ -608,6 +608,47 @@ async def test_a_config_reload_that_kills_a_bystander_is_recorded(
     assert evictions[0][1] == "the gateway reloaded to apply changed settings for qwen3-vl-30b"
 
 
+async def test_a_casualty_still_being_killed_is_recorded_as_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model llama-swap is four seconds into killing has NOT survived the reload.
+
+    `/running` filters only `stopped` and `shutdown`, so a dying server is still in that list —
+    and subtracting it as a survivor made this narration report nothing in exactly the case it
+    was written for. `regen_gateway_config`'s wait is a fixed 4 s sleep (llama-swap exposes no
+    reload-done signal to poll), which is nowhere near an 85 GB teardown, so this is the common
+    shape of a reload casualty rather than a corner of it."""
+    recorded: list[tuple[str, str]] = []
+
+    async def _record(kind: str, subject: str, **_: object) -> None:
+        recorded.append((kind, subject))
+
+    monkeypatch.setattr(local_gateway.box_events, "record", _record)
+    states = {"gpt-oss-120b": "ready", "qwen3.5-4b": "ready"}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(
+                200, json=[{"model": n, "state": st} for n, st in sorted(states.items())]
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    async def regen() -> None:
+        # What four seconds after llama-swap's reload actually looks like: the big one is still
+        # being torn down and is still listed; the small one is already gone.
+        states["gpt-oss-120b"] = "stopping"
+        del states["qwen3.5-4b"]
+
+    client = LocalGatewayClient(
+        "http://gw:8080/v1", transport=httpx.MockTransport(handle), config_regen=regen
+    )
+    await client.load("qwen3-vl-30b-a3b")
+    killed = sorted(subject for kind, subject in recorded if kind == "model_unload")
+    assert killed == ["gpt-oss-120b", "qwen3.5-4b"], (
+        f"a model still being killed was counted as a survivor: {recorded}"
+    )
+
+
 async def test_a_config_regen_that_changes_nothing_records_no_eviction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

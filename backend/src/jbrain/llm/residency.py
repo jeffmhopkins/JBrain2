@@ -72,6 +72,11 @@ DEFAULT_FREE_RAM_FRACTION = 0.15
 
 _BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"
 
+# How long a skipped restore waits before trying again. Long enough that whatever held the box
+# has finished a model load (measured at 100-200 s here), short enough that the box is back in
+# its remembered state within one idle stretch rather than at the next conversation.
+RESTORE_RETRY_S = 240.0
+
 
 def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:
     """A cross-process box lock backed by a Postgres transaction-level advisory lock — the
@@ -96,8 +101,14 @@ def pg_box_try_lock(maker: async_sessionmaker[AsyncSession]) -> BoxTryLock:
     is the right primitive for `_restore`, where blocking is actively wrong — "another process
     is changing the box's residency right now" is precisely the condition under which restoring
     to a REMEMBERED steady state is meaningless, because the state being remembered is already
-    out of date. A background task that never blocks also cannot convoy: today `_restore` can
-    hold the per-process load lock for a 200 s load while a chat turn waits on it.
+    out of date. A background task that never blocks also cannot WAIT behind a load, which
+    matters because `_restore` holds the per-process load lock while it runs and a chat turn
+    waits on that.
+
+    NOT BLOCKING IS ONLY HALF OF IT, and the half that is easy to get wrong: a task that never
+    waits on this lock can still make everyone else wait, by holding it. That is why `_restore`
+    releases it before it loads anything — see the comment there. Never hold this across a model
+    load.
 
     Yields True if the lock was taken (and holds it for the block), False if it was not. A
     failure to reach the DB yields False as well — the caller skips, which for opportunistic
@@ -416,7 +427,21 @@ class ResidencyCoordinator:
             return
         task = asyncio.create_task(self._restore())
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._forget_task)
+
+    def _forget_task(self, task: asyncio.Task[None]) -> None:
+        """Drop a finished background task, and SAY SO if it failed.
+
+        A bare `self._tasks.discard` left the exception unretrieved, so a restore that died —
+        an unreachable database at the lock, a bug in the plan — surfaced only as asyncio's
+        "Task exception was never retrieved" at garbage-collection time, in a log nobody
+        correlates with the box quietly no longer restoring anything."""
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("residency.restore_task_failed", error=repr(exc))
 
     async def _auto_restore(self) -> bool:
         """The live end-of-turn restore switch. Defaults to ON when no loader is wired or the
@@ -841,29 +866,66 @@ class ResidencyCoordinator:
         targets = set(self._displaced)
         if not targets:
             return
-        # Non-blocking, and a refusal means SKIP — not wait. Another process is mid-change, so
-        # the steady state this is restoring to is already stale; and waiting here would hold
-        # the per-process load lock against a chat turn for the length of someone else's load.
-        # `_displaced` is left untouched, so the next `schedule_restore` picks these up.
+        # The operator switches are read BEFORE the lock is taken, deliberately. Each is a
+        # settings-store round trip that checks out its own pooled connection, and doing that
+        # while holding a connection that is itself inside an open transaction is the classic
+        # pool-deadlock shape against a 15-connection pool.
+        fraction = await self._fraction()
+        windows = await self._windows()
+        slots = await self._slots()
+        # THE LOCK COVERS THE DECISION, NOT THE LOADS. Non-blocking, and a refusal means SKIP —
+        # another process is mid-change, so the steady state this is restoring to is already
+        # stale. `_displaced` is left untouched and a retry is armed below.
+        #
+        # It is released before a single model is loaded, and that is the load-bearing part.
+        # Holding it across the loads would put a 200 s hold on the BLOCKING `pg_box_lock` that
+        # `ensure_room` takes — no `lock_timeout` anywhere — so a chat turn in the other process
+        # would wait out this background restore, and every waiter would pin one of the fifteen
+        # pooled connections while it did. That is not "cannot convoy": it is the convoy
+        # inverted, with the interactive path on the losing side. A restore that decides under
+        # the lock and loads outside it is exactly as serialized as it needs to be, because what
+        # the lock is protecting is the census the decision is made from.
         if self._box_try_lock is not None:
             async with self._box_try_lock() as got:
                 if not got:
                     log.info("residency.restore_skipped_box_busy", displaced=sorted(targets))
+                    self._rearm_restore()
                     return
-                await self._restore_core(targets)
-            return
-        await self._restore_core(targets)
+                plan = await self._restore_plan(targets, fraction, windows, slots)
+        else:
+            plan = await self._restore_plan(targets, fraction, windows, slots)
+        await self._restore_core(plan)
 
-    async def _restore_core(self, targets: set[str]) -> None:
-        """The restore work itself, run with the box try-lock held when one is wired."""
+    def _rearm_restore(self) -> None:
+        """Try again after a skip. Without this a skipped restore waits for the next END OF
+        TURN — `schedule_restore` fires from a finished agent turn and from code-mode power-off,
+        nowhere else — so a collision on the last turn of the evening leaves the box in its
+        displaced state until someone starts another conversation, possibly hours later. The
+        members are still in `_displaced`; all that is missing is an occasion."""
+
+        async def _later() -> None:
+            await asyncio.sleep(RESTORE_RETRY_S)
+            await self._restore()
+
+        task = asyncio.create_task(_later())
+        self._tasks.add(task)
+        task.add_done_callback(self._forget_task)
+
+    async def _restore_plan(
+        self,
+        targets: set[str],
+        fraction: float,
+        windows: Mapping[str, int],
+        slots: Mapping[str, int],
+    ) -> list[str]:
+        """Which displaced members to bring back, in order — the part that must see a census
+        nobody is changing underneath it. Returns served names, biggest footprint first."""
         running = await self._gateway.running()
         mem = read_memory_gb()
         if mem is None:
-            return  # can't budget the restore — leave cold members to load on demand
+            return []  # can't budget the restore — leave cold members to load on demand
         total, used = mem
-        ceiling = total * (1.0 - await self._fraction())
-        windows = await self._windows()
-        slots = await self._slots()
+        ceiling = total * (1.0 - fraction)
         # Deterministic order when not everything fits: biggest footprint first, so we bring
         # back the model the turn was actually using before a smaller one. A bare set would
         # restore an arbitrary subset.
@@ -871,6 +933,7 @@ class ResidencyCoordinator:
         for served in targets:
             scored.append((-await self._footprint(served, windows, slots), served))
         scored.sort()
+        plan: list[str] = []
         for neg_fp, served in scored:
             fp = -neg_fp
             if served in running:
@@ -878,6 +941,18 @@ class ResidencyCoordinator:
                 continue
             if used + fp > ceiling:
                 continue  # no room without evicting a resident model — leave it for later
+            used += fp  # bound the pass so several missing members don't over-commit
+            plan.append(served)
+        return plan
+
+    async def _restore_core(self, plan: list[str]) -> None:
+        """Load what `_restore_plan` chose, WITHOUT the box lock held.
+
+        Unlocked on purpose: see `_restore`. The window this leaves — a competitor loading
+        between the census and these loads — is the same window every other load path on this
+        box has, and it is what the ledger closes by charging a row rather than by holding a
+        lock across three minutes of I/O."""
+        for served in plan:
             with (
                 contextlib.suppress(LocalGatewayError, gpu_guard.GpuBudgetError),
                 # A restore is a load nobody asked for at that moment, so it is the one most
@@ -889,7 +964,6 @@ class ResidencyCoordinator:
                 # (set before the eviction) makes it skip the re-prime the model now needs.
                 await self._gateway.load(served)
                 self._prefix_lost(served)
-                used += fp  # bound the pass so several missing members don't over-commit
             # Attempted (loaded, or the gateway refused) → no longer pending. A transient miss
             # is re-displaced when it's next evicted, so we never spin retrying a since-removed
             # model.

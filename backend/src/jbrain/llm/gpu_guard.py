@@ -259,8 +259,7 @@ def refuse_if_no_device_room(
     before — with nothing to read, refusing every load would be worse than the risk."""
     device_headroom = None if sample is None else sample.gtt_free_gb - MIN_FREE_GTT_GB
     if host_free_gb is None:
-        mem = read_memory_gb()
-        host_free_gb = None if mem is None else mem[0] - mem[1]
+        host_free_gb = _host_free_gb()
     host_headroom = None if host_free_gb is None else host_free_gb - MIN_FREE_GTT_GB
 
     limits = [
@@ -287,6 +286,14 @@ def refuse_if_no_device_room(
         f"available — bound by the {binding} limit ({where}, {free}, holding "
         f"{MIN_FREE_GTT_GB:.0f} GB back) — refusing to load rather than risk freezing the host."
     )
+
+
+def _host_free_gb() -> float | None:
+    """Free host pages, or None when `/proc/meminfo` cannot be read. Separate from the device
+    probe on purpose — the two answer different questions, and on this hardware only this one
+    moves before the machine stops answering."""
+    mem = read_memory_gb()
+    return None if mem is None else mem[0] - mem[1]
 
 
 async def guarded_load(
@@ -338,7 +345,23 @@ async def guarded_load(
             now = await probe.sample()
             if now is None:
                 continue  # lost the probe mid-load: fall back to running unwatched
-            if now.gtt_used_gb > ceiling_gb:
+            host_free = _host_free_gb()
+            if host_free is not None and host_free < MIN_FREE_GTT_GB:
+                # THE FLOOR THAT CAN ACTUALLY FIRE ON THIS BOX. `gtt_free` is not a second
+                # opinion here: `strix-halo-host-setup.sh` sets `amdgpu.gttsize` to 124 GiB on a
+                # 121 GiB machine, so the device pool is essentially all of RAM and `gtt_used`
+                # would have to pass ~118 GiB — which the pre-flight already refuses — before
+                # the check below trips. `refuse_if_no_device_room` was given the host term
+                # after the 2026-08-19 livelock, where the device ceiling reported 50.4 GB of
+                # headroom on a box with 8.0 GB of free pages; the WATCHDOG never was, so the
+                # guard that is supposed to protect the first load of an uncharacterised model
+                # was watching the one number that cannot move.
+                breach = (
+                    f"free host memory fell to {host_free:.1f} GB while loading {target} "
+                    f"(floor {MIN_FREE_GTT_GB:.0f} GB) — the reclaim livelock this box hangs "
+                    "on starts here, not at the GTT cap"
+                )
+            elif now.gtt_used_gb > ceiling_gb:
                 breach = (
                     f"device memory ran away while loading {target}: GTT "
                     f"{now.gtt_used_gb:.1f} GB, past the {ceiling_gb:.1f} GB ceiling for a "
@@ -376,6 +399,19 @@ async def guarded_load(
                 if breach:
                     log.error("gpu_guard.unloading_after_load", model=target, reason=breach)
     finally:
+        if breach is None and not task.done():
+            # THE CALLER WAS CANCELLED (shutdown, a jcode swap, an enclosing timeout). Without
+            # this the load runs on, orphaned: no sampling — the watchdog loop above is gone —
+            # while `load()`'s own `finally` has already released the per-process load lock, so
+            # a second load can start beside it. That was survivable while the orphan was only
+            # the weights read; since the warm moved inside, the orphan is the whole load. Kill
+            # it and unload, for the same reason a breach does.
+            log.warning("gpu_guard.cancelling_orphaned_load", model=target)
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            with contextlib.suppress(Exception):
+                await abort()
         if breach is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await task

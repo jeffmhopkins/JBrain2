@@ -1190,6 +1190,81 @@ async def test_an_idle_box_restores_under_the_try_lock(
     assert not coord._displaced
 
 
+@pytest.mark.asyncio
+async def test_the_restore_releases_the_box_lock_BEFORE_it_loads_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The try-lock covers the CENSUS, never the loads. This is the assertion that keeps the
+    skip from becoming worse than no lock at all.
+
+    `ensure_room` takes the BLOCKING form of the same advisory lock, and there is no
+    `lock_timeout` anywhere in this repo. So a restore holding it across its loads — 100-200 s
+    each, several of them — makes a chat turn in the OTHER process wait out a background task,
+    with every waiter pinning one of the fifteen pooled connections while it waits. That is not
+    an absent convoy, it is the convoy inverted onto the interactive path."""
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def _recording() -> AsyncIterator[bool]:
+        events.append("lock")
+        try:
+            yield True
+        finally:
+            events.append("unlock")
+
+    class _NotingGateway(FakeLocalGateway):
+        async def load(
+            self,
+            served_model: str,
+            *,
+            warm_system: str | None = None,
+            warm_tools: list[dict[str, object]] | None = None,
+        ) -> None:
+            events.append(f"load:{served_model}")
+            await super().load(served_model, warm_system=warm_system, warm_tools=warm_tools)
+
+    gw = _NotingGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_recording)
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+
+    assert gw.loaded == ["qwen3.5-4b"]
+    assert events == ["lock", "unlock", "load:qwen3.5-4b"], (
+        f"the lock was still held while the model loaded: {events}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_restore_arms_a_retry_rather_than_waiting_for_the_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`schedule_restore` fires from a finished agent turn and from code-mode power-off, and
+    nowhere else. So a skip on the last turn of the evening would leave the box displaced until
+    somebody starts another conversation — the members are still remembered, all that is
+    missing is an occasion. The skip creates one."""
+    monkeypatch.setattr("jbrain.llm.residency.RESTORE_RETRY_S", 0.01)
+
+    busy = True
+
+    @contextlib.asynccontextmanager
+    async def _busy_then_free() -> AsyncIterator[bool]:
+        yield not busy
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=10.0, enabled=True, box_try_lock=_busy_then_free
+    )
+    coord._displaced.add("qwen3.5-4b")
+
+    await coord._restore()
+    assert not gw.loaded, "it restored while the box was busy"
+
+    busy = False
+    await asyncio.sleep(0.05)  # let the armed retry fire
+    assert gw.loaded == ["qwen3.5-4b"], "the skip never came back for the displaced member"
+
+
 # --- pg_box_try_lock: the helper itself -------------------------------------
 
 

@@ -406,3 +406,77 @@ async def test_supervisor_probe_tolerates_a_client_that_does_not_exist_yet() -> 
 
 async def _never_aborts() -> None:
     raise AssertionError("a healthy load must not be aborted")
+
+
+async def test_the_watchdog_aborts_when_HOST_pages_run_out_even_with_GTT_calm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor that can actually fire on this box.
+
+    `strix-halo-host-setup.sh` sets `amdgpu.gttsize` to 124 GiB on a 121 GiB machine, so the
+    device pool is essentially all of RAM: for `gtt_free < MIN_FREE_GTT_GB` to trip, `gtt_used`
+    would have to pass ~118 GiB, which the pre-flight already refuses. The pre-flight was given
+    a host term after the 2026-08-19 livelock — where the device ceiling reported 50.4 GB of
+    headroom on a box with 8.0 GB of free pages — and the WATCHDOG never was. So the guard whose
+    whole job is protecting the first load of an uncharacterised model was watching the one
+    number that cannot move before the machine stops answering."""
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0), _sample(3.0)])  # GTT perfectly calm
+    free = [100.0]
+
+    def _meminfo(path: str = "/proc/meminfo") -> tuple[float, float]:
+        return 121.0, 121.0 - free[0]
+
+    monkeypatch.setattr("jbrain.llm.gpu_guard.read_memory_gb", _meminfo)
+    aborted: list[str] = []
+
+    async def load() -> None:
+        free[0] = 2.0  # the pages go, and GTT says nothing about it
+        await asyncio.sleep(0.2)
+
+    async def abort() -> None:
+        aborted.append("unloaded")
+
+    with pytest.raises(GpuBudgetError) as exc:
+        await gpu_guard.guarded_load(
+            load, probe=probe, projected_gb=21.0, target="m", abort=abort, sample_interval_s=0.01
+        )
+    assert "free host memory" in str(exc.value)
+    assert aborted == ["unloaded"]
+
+
+async def test_a_cancelled_caller_does_not_leave_the_load_running_unwatched() -> None:
+    """Cancelling the caller must take the load with it.
+
+    `guarded_load` only ever cancelled its task on a breach, so an outer cancellation — a
+    shutdown, a jcode swap, an enclosing timeout — left the load running with NO sampling at
+    all (the watchdog loop is gone with the canceller) while `load()`'s own `finally` had
+    already released the per-process load lock, so a second load could start beside it. That
+    was survivable while the orphan was just the weights read; since the warm moved inside the
+    watchdog the orphan is the entire load."""
+    probe = _ScriptedProbe([_sample(1.0)])
+    started = asyncio.Event()
+    finished = False
+    aborted: list[str] = []
+
+    async def load() -> None:
+        nonlocal finished
+        started.set()
+        await asyncio.sleep(5.0)
+        finished = True
+
+    async def abort() -> None:
+        aborted.append("unloaded")
+
+    task = asyncio.ensure_future(
+        gpu_guard.guarded_load(
+            load, probe=probe, projected_gb=21.0, target="m", abort=abort, sample_interval_s=0.01
+        )
+    )
+    await started.wait()
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not finished, "the load outlived the caller that was watching it"
+    assert aborted == ["unloaded"], "the orphaned load was never unloaded"

@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-22 · **Waves:** L0✅ L1✅ L2◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2◻️ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -212,6 +212,59 @@ are about WHERE an existing guard is applied, and neither changes what the guard
 *Test:* one regression test each, all mutation-checked (revert the fix, watch the test fail
 with the right message). The balloon-during-the-warm and stop-settle cases had no coverage
 at all before this wave.
+
+### L1a — What a cold adversarial review of L1 found ✅
+
+L1 shipped, and an independent reviewer barred from reading the branch was asked to falsify it
+rather than confirm it. It returned three HIGH findings, all of them regressions L1 itself
+introduced. Recorded here because the pattern is the point: each was a fix whose COMMENT was
+true and whose CODE was not, which is the same failure mode as the three withdrawn attempts.
+
+1. **The try-lock inverted the convoy instead of removing it.** `_restore` took the box lock
+   and then held it across its loads — 100-200 s each. `ensure_room` takes the BLOCKING form of
+   the same advisory lock, and there is no `lock_timeout` anywhere in this repo, so a chat turn
+   in the other process would wait out a background restore, with every waiter pinning one of
+   the fifteen pooled connections. The docstring's "a background task that never blocks also
+   cannot convoy" was false as written: the task never waited, it made everyone else wait.
+   **Fixed** by splitting the restore into `_restore_plan` (under the lock — the census, which
+   is what the lock protects) and `_restore_core` (outside it — the loads). The operator
+   switches are read before the lock, too: three settings round trips while holding a
+   connection inside an open transaction is the classic pool-deadlock shape.
+
+2. **The stop-settle could still hand a stopping model the resident free pass.** Its loop
+   exited on `state_of`, which reads a process-global cache that every `running()` caller
+   overwrites — and this client is shared with `warm_keeper`'s reconcile loop. A concurrent poll
+   could end the wait, after which the settle returned its OWN older snapshot, which still
+   listed the model. **Fixed** by `running_states()`: one observation decides both the exit and
+   the answer. It also returns None for "the read failed", which an empty dict does not — a
+   dropped poll was being read as "the stop landed and the box is clear".
+
+3. **The abort's cache drop landed before the unload on the new warm path.** A flag meant to
+   avoid a redundant second drop suppressed the only EFFECTIVE one: a breach during the warm
+   drops while llama-server still holds the weight file, and `abort()` unloads afterwards. An
+   aborted load strands the whole weight file in `Cached` (MEASURED at +4.29 GiB for a 4.3 GB
+   model), `read_memory_gb` counts page cache as used, and residency suppresses `GpuBudgetError`
+   on the restore — so the ratchet turns silently. **Fixed** by dropping unconditionally on the
+   exception path; a redundant second sweep over evicted files is the cheap side of that trade.
+
+Five more, all fixed in the same pass: a skipped restore had no retry and would wait for the
+next end-of-turn, possibly hours (`_rearm_restore`); an outer cancellation orphaned the load —
+now the whole load+warm — running unwatched with the load lock already released
+(`guarded_load` now cancels and unloads it); the watchdog had **no host-pages term**, so on this
+box's `amdgpu.gttsize=126976` configuration its floor essentially could not fire and the "warm
+inside the watchdog" change was nearly inert (the host floor is now the one that can fire, the
+same asymmetry `refuse_if_no_device_room` was given after 2026-08-19); a failed restore task's
+exception was never retrieved; and `_narrate_reload_casualties` counted a model still being
+KILLED as a survivor, so it reported an empty casualty list in exactly the case it exists for.
+
+Two comments were corrected rather than their code: the reason given for not waiting on
+`starting` ("another loader already admitted it") is false, because llama-swap loads on request
+and most loads never touch this client; and `STOP_SETTLE_TIMEOUT_S` was justified by llama-swap's
+10 s graceful budget, which bounds when SIGKILL is SENT, not when the kernel finishes tearing
+down 85 GB — it is now 60 s, sized off the config-regen case that actually produces the window.
+
+*Risk:* low individually; the batch is the point. *Test:* one regression test each, every one
+mutation-checked by reverting the fix and confirming the failure message.
 
 ### L2 — The ledger ◻️
 
