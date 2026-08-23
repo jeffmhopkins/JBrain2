@@ -584,21 +584,25 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds frames or audio
   inline, so a "video-capable" model's native video support does not apply to the top-level turn.
 
-  **A recent image is carried forward so a later turn re-sees it — no re-attach, no tool call.**
-  History is text-only (past image bytes are dropped so they don't re-cost vision every turn),
-  so a follow-up like "re-evaluate the picture" would otherwise have no image in context and
-  fall back to `analyze_image`. Instead, on a vision-capable turn the endpoint re-fetches the
-  persisted bytes of images from **recent** user turns — the union of the **last 4 turns**
-  (`AgentTurn.seq`) **OR** anything within the **last 15 minutes** (`created_at`), so a rapid
-  back-and-forth AND a slow-but-recent discussion both keep the picture in view; an image drops
-  only once it is BOTH past the turn floor and older than the window — and re-injects them inline
-  on the current (volatile) user message, flagged as carried-forward. It excludes ids already
-  attached this turn and honors the per-turn image budget, and the bytes ride the volatile tail
-  so history's KV-cache prefix is untouched (only this turn re-pays the vision tokens). Bounded
-  by `transcript_store.CARRY_TURN_WINDOW` / `CARRY_TIME_WINDOW`; images only (a re-injected PDF's
+  **A recent image stays in view, ANCHORED at its own turn in history — no re-attach, no tool
+  call, no per-turn re-encode.** History is otherwise text-only, so a follow-up like
+  "re-evaluate the picture" would have no image in context and fall back to `analyze_image`.
+  On a vision-capable turn the endpoint re-fetches the persisted bytes of images from
+  **recent** user turns — the union of the **last 4 turns** (`AgentTurn.seq`) **OR** anything
+  within the **last 15 minutes** (`created_at`); an image drops only once it is BOTH past the
+  turn floor and older than the window — and inserts each as its own user message DIRECTLY
+  AFTER its attaching turn in history, byte-identical every render. The anchor matters for the
+  local KV cache: llama-server matches a media chunk by content hash + position, so an anchored
+  image is vision-encoded once and then rides the cached prefix, where the earlier design
+  (re-injecting on the volatile tail) re-paid the whole encode every turn — the ~35 s
+  "Reading your prompt" the owner watched on 2026-08-23. The attaching turn is found by
+  matching its stored text against the client-supplied history; a turn that can't be matched
+  falls back to the old tail injection so the image is never silently dropped. Excludes ids
+  already attached this turn and honors the per-turn image budget; bounded by
+  `transcript_store.CARRY_TURN_WINDOW` / `CARRY_TIME_WINDOW`; images only (a re-injected PDF's
   pages would be heavy). A tool *result* cannot carry an image back on the local stack — only a
-  user message can (llama.cpp serializes tool messages as text) — so this re-attach is the only
-  native way to re-see a prior image; a `view_image`-style tool is not viable there.
+  user message can (llama.cpp serializes tool messages as text) — so this anchor is the only
+  native way to keep seeing a prior image; a `view_image`-style tool is not viable there.
 
   **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
   reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no

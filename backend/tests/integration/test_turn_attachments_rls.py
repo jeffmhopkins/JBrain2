@@ -375,13 +375,14 @@ async def test_multi_scope_session_round_trips_its_general_attachment(
     assert await repo.get(location, att.id) is None
 
 
-async def test_recent_image_attachments_returns_recent_turns_images_chronologically(
+async def test_recent_image_turns_returns_recent_turns_images_chronologically(
     repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
 ) -> None:
-    # The carry-forward source: images from the session's recent user turns, chronological,
-    # images only. All three turns are freshly recorded (well within the window), so both
-    # arms include them; this exercises the DB wiring (RLS ctx, turn ordering, image filter)
-    # — the turn/time boundary itself is unit-tested in test_transcript_store.py.
+    # The anchor source: (turn content, images) for the session's recent user turns,
+    # chronological, images only, image-less turns dropped. All three turns are freshly
+    # recorded (well within the window), so both arms include them; this exercises the DB
+    # wiring (RLS ctx, turn ordering, image filter, content keying) — the turn/time
+    # boundary itself is unit-tested in test_transcript_store.py.
     pid = await _owner_principal(maker)
     owner = SessionContext(principal_id=pid, principal_kind="owner")
     att_ctx = read_context(pid, attachment_scopes(()))  # a jerv session's widened context
@@ -412,9 +413,13 @@ async def test_recent_image_attachments_returns_recent_turns_images_chronologica
     await _turn("a note", sha="b" * 64, filename="notes.txt", media_type="text/plain")
     await _turn("third", sha="c" * 64, filename="third.png", media_type="image/png")
 
-    recent = await transcript.recent_image_attachments(att_ctx, session_id, now=datetime.now(UTC))
-    # Both images, oldest turn first; the text file is excluded (images only).
-    assert [a.filename for a in recent] == ["first.png", "third.png"]
+    recent = await transcript.recent_image_turns(att_ctx, session_id, now=datetime.now(UTC))
+    # Both image turns, oldest first, keyed by their user text; the text-file-only turn is
+    # dropped entirely (images only), so the anchor matcher never sees it.
+    assert [(content, [a.filename for a in infos]) for content, infos in recent] == [
+        ("first", ["first.png"]),
+        ("third", ["third.png"]),
+    ]
 
 
 def test_attachment_scopes_rule() -> None:

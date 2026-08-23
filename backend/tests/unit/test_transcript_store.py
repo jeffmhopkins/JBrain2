@@ -1,5 +1,5 @@
 """The carry-forward window (transcript_store._carry_forward_turn_ids): which earlier user
-turns' images a vision-capable follow-up re-sees. The DB-backed recent_image_attachments is
+turns' images a vision-capable follow-up re-sees. The DB-backed recent_image_turns is
 covered against real Postgres in tests/integration/test_turn_attachments_rls.py."""
 
 from datetime import UTC, datetime, timedelta

@@ -174,6 +174,38 @@ def _convert_one(
     return _text_block(info, data)
 
 
+async def anchored_image_content(
+    blobs: BlobStore, infos: Sequence[AttachmentInfo], *, image_budget: int
+) -> tuple[list[LlmImage], str]:
+    """One history-anchored message body for the images of ONE earlier turn: `(images,
+    note)` the caller inserts as its own user message DIRECTLY AFTER that turn in
+    history. Everything here must be DETERMINISTIC across turns — the note text and the
+    byte-exact blobs — because the whole point of the anchor is that the gateway's KV
+    prefix cache matches this message verbatim turn-over-turn (llama-server compares a
+    media chunk by content hash + position), so the image is encoded once and then
+    rides the cached prefix instead of re-costing vision every turn. Capped at
+    `image_budget`; a blob that outlived its row is skipped; `("", ...)` note when
+    nothing survives."""
+    images: list[LlmImage] = []
+    names: list[str] = []
+    for info in infos:
+        if len(images) >= image_budget:
+            break
+        try:
+            data = await blobs.get(info.sha256)
+        except FileNotFoundError:
+            continue  # row outlived its blob — skip, like build_attachment_content
+        images.append(LlmImage(media_type=info.media_type, data=_b64(data)))
+        names.append(f'"{info.filename}" (id {info.id})')
+    if not images:
+        return [], ""
+    listed = ", ".join(names)
+    return images, (
+        f"[image {listed} attached at the turn above — still in view here; "
+        "describe or re-evaluate it directly.]"
+    )
+
+
 async def carry_forward_content(
     blobs: BlobStore, infos: Sequence[AttachmentInfo], *, image_budget: int
 ) -> tuple[list[LlmImage], list[str]]:
@@ -182,7 +214,12 @@ async def carry_forward_content(
     it as a prior image now back in view — so a vision-capable follow-up ("re-evaluate the
     picture") sees it directly instead of paying an analyze_image round-trip. Capped at
     `image_budget`; a blob that outlived its row is skipped. The bytes ride the CURRENT
-    (volatile) user message, so history's cache prefix is untouched — only this turn re-pays."""
+    (volatile) user message, so history's cache prefix is untouched — only this turn re-pays.
+
+    FALLBACK path only (the anchored form above is preferred): used when an earlier turn's
+    text can't be matched against the client-supplied history, so there is no stable anchor
+    position — the image still reaches the model this turn, at the old per-turn re-encode
+    cost."""
     images: list[LlmImage] = []
     text_blocks: list[str] = []
     for info in infos:

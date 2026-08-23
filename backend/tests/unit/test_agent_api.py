@@ -124,9 +124,10 @@ class FakeTranscript:
     def __init__(self) -> None:
         self.recorded: list[dict] = []
         self.turns: dict[str, list[TurnRecord]] = {}
-        # Images the carry-forward path (recent_image_attachments) should hand back for a
-        # session; empty by default so the chat path never re-injects unless a test opts in.
-        self.recent_images: dict[str, list] = {}
+        # (turn content, images) pairs the carry window (recent_image_turns) should hand
+        # back for a session; empty by default so the chat path never re-injects unless a
+        # test opts in.
+        self.recent_image_turn_rows: dict[str, list] = {}
 
     async def record_exchange(  # type: ignore[no-untyped-def]
         self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
@@ -147,8 +148,8 @@ class FakeTranscript:
     async def load(self, ctx, session_id):  # type: ignore[no-untyped-def]
         return self.turns.get(session_id, [])
 
-    async def recent_image_attachments(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
-        return self.recent_images.get(session_id, [])
+    async def recent_image_turns(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
+        return self.recent_image_turn_rows.get(session_id, [])
 
 
 class FakeChatBlobs:
@@ -1046,23 +1047,220 @@ def test_chat_carries_a_recent_prior_image_back_into_view(
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
     fake = cast(FakeLlmClient, router._clients["xai"])
-    # A picture from an earlier turn: its blob persists, and recent_image_attachments (the
-    # last-4-turns-OR-15-min window) surfaces it for this follow-up.
+    # A picture from an earlier turn: its blob persists, and recent_image_turns (the
+    # last-4-turns-OR-15-min window) surfaces it with its turn's content for this follow-up.
     chat_blobs.data["sha-prior"] = b"\x89PNGprior"
-    transcript.recent_images["sess-1"] = [
-        AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")
+    transcript.recent_image_turn_rows["sess-1"] = [
+        (
+            "look at this",
+            [AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")],
+        )
     ]
 
-    # The follow-up turn attaches nothing new, yet the vision model gets the prior image inline
-    # (no analyze_image round-trip) with a note flagging it as carried forward.
+    # The follow-up turn attaches nothing new. The prior turn appears in the client history,
+    # so the image is ANCHORED: inserted as its own user message right after that turn —
+    # byte-stable across renders so the KV prefix cache holds through it — not appended to
+    # the volatile final message.
     resp = client.post(
-        "/api/chat", json={"session_id": "sess-1", "message": "re-evaluate the picture"}
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "re-evaluate the picture",
+            "history": [
+                {
+                    "role": "user",
+                    # The PWA decorates an image turn's history entry with the
+                    # id-reference suffix (useFullBrain historyContent) — the matcher
+                    # must anchor on the stored RAW text underneath it.
+                    "content": "look at this\n\n[Images the owner attached this turn"
+                    " — source_attachment_id=old1 (prior.png)]",
+                },
+                {"role": "assistant", "content": "a mower blade"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    # The anchor rides DIRECTLY after its attaching turn in history — a byte-stable
+    # position — with the assistant reply still following it; the volatile blocks and
+    # the final user message come later and carry no image.
+    attaching = next(
+        i for i, m in enumerate(messages) if getattr(m, "text", "").startswith("look at this")
+    )
+    anchor = messages[attaching + 1]
+    assert type(anchor).__name__ == "UserMessage"
+    assert [im.media_type for im in anchor.images] == ["image/png"]
+    assert base64.b64decode(anchor.images[0].data) == b"\x89PNGprior"
+    assert "still in view" in anchor.text and "prior.png" in anchor.text
+    assert messages[attaching + 2].text == "a mower blade"
+    final = messages[-1]
+    assert final.images == ()
+    assert "prior.png" not in final.text
+
+
+def test_chat_falls_back_to_tail_carry_when_history_does_not_match(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    import base64
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-prior"] = b"\x89PNGprior"
+    transcript.recent_image_turn_rows["sess-1"] = [
+        (
+            "a turn the client edited away",
+            [AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")],
+        )
+    ]
+
+    # No history entry matches the stored turn text, so there is no stable anchor position;
+    # the image still reaches the model on the final message (the old tail behaviour).
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "re-evaluate the picture",
+            "history": [{"role": "user", "content": "different text"}],
+        },
     )
     assert resp.status_code == 200
     final = fake.stream_calls[0]["messages"][-1]
     assert [im.media_type for im in final.images] == ["image/png"]
     assert base64.b64decode(final.images[0].data) == b"\x89PNGprior"
     assert "carried forward" in final.text and "prior.png" in final.text
+
+
+def test_chat_anchors_a_captionless_photo_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    """A photo sent with NO text stores content "" while the client entry is only the
+    id-reference suffix — the decorated index must still anchor it (review F2)."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-prior"] = b"\x89PNGprior"
+    transcript.recent_image_turn_rows["sess-1"] = [
+        ("", [AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")])
+    ]
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "what is it?",
+            "history": [
+                {
+                    "role": "user",
+                    "content": "\n\n[Images the owner attached this turn"
+                    " — source_attachment_id=old1 (prior.png)]",
+                },
+                {"role": "assistant", "content": "a blade"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    anchored = [m for m in messages if getattr(m, "images", ())]
+    assert len(anchored) == 1
+    assert "still in view" in anchored[0].text
+    assert anchored[0] is not messages[-1]  # anchored in history, not the volatile tail
+
+
+def test_chat_anchor_stays_on_the_oldest_occurrence_of_repeated_text(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    """The owner repeating the attaching turn's words must not drag the anchor onto the
+    newer, image-less repeat — that would move its position and re-break the cache
+    (review F3). The decorated entry is preferred, and claims run oldest-first."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-prior"] = b"\x89PNGprior"
+    transcript.recent_image_turn_rows["sess-1"] = [
+        (
+            "check this",
+            [AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")],
+        )
+    ]
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "and now?",
+            "history": [
+                {
+                    "role": "user",
+                    "content": "check this\n\n[Images the owner attached this turn"
+                    " — source_attachment_id=old1 (prior.png)]",
+                },
+                {"role": "assistant", "content": "looks fine"},
+                {"role": "user", "content": "check this"},
+                {"role": "assistant", "content": "still fine"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    attaching = next(
+        i for i, m in enumerate(messages) if getattr(m, "text", "").startswith("check this\n\n[")
+    )
+    anchor = messages[attaching + 1]
+    assert getattr(anchor, "images", ())
+    # The plain repeat renders with no anchor after it.
+    repeat = next(i for i, m in enumerate(messages) if getattr(m, "text", "") == "check this")
+    assert not getattr(messages[repeat + 1], "images", ())
+
+
+def test_chat_anchor_excludes_ids_attached_this_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_attachments: FakeChatAttachments,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-img"] = b"\x89PNGdata"
+    chat_attachments.add(AttachmentInfo("a1", "pic.png", "image/png", 9, "sha-img", "general"))
+    # The window surfaces the SAME id the client re-attached this turn (e.g. a rapid
+    # duplicate send) — it must ride once, on the final message, never twice.
+    transcript.recent_image_turn_rows["sess-1"] = [
+        ("look", [AttachmentInfo("a1", "pic.png", "image/png", 9, "sha-img", "general")])
+    ]
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "again",
+            "attachment_ids": ["a1"],
+            "history": [{"role": "user", "content": "look"}],
+        },
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    with_images = [m for m in messages if getattr(m, "images", ())]
+    assert len(with_images) == 1 and with_images[0] is messages[-1]
 
 
 def test_chat_binds_attachments_to_the_user_turn(
