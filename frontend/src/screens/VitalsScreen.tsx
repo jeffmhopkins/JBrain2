@@ -392,6 +392,16 @@ function eventLabel(event: BoxEvent): string {
     // allowed to start deciding (backend: docs/plans/LOCAL_MODEL_LEDGER_PLAN.md L2b).
     return `the memory ledger would have refused ${event.subject}`;
   }
+  if (event.kind === "ledger_refusal") {
+    // The shadow kind's authoritative twin — no longer a question. Once the ledger decides,
+    // a refusal is an action taken, and it must not read softer than what it did.
+    return `the memory ledger refused ${event.subject}`;
+  }
+  if (event.kind === "job_refused_no_room") {
+    // A background job the box gave up on because the model it needs cannot fit. The subject
+    // is the job kind, not a model: this row is the only trace the owner has of the job.
+    return `gave up on the ${event.subject.replace(/_/g, " ")} job — its model cannot fit`;
+  }
   if (event.kind === "image_render") {
     if (failed) return `image render failed (${event.subject})`;
     return `render${running ? "ing" : "ed"} an image (${event.subject})${running ? "…" : ""}`;

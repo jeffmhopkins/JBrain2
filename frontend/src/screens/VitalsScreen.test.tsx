@@ -547,6 +547,52 @@ describe("what the box was doing", () => {
     ).toBeInTheDocument();
   });
 
+  it("names an ENFORCED ledger refusal as an action, not a question", async () => {
+    // The shadow kind's authoritative twin. Out of shadow, a refusal costs the owner a load,
+    // so it must not read softer than what it did — and it must still carry the arithmetic.
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "ledger_refusal",
+        subject: "qwen3-coder-next",
+        detail: "qwen3-coder-next needs 59.6 GB of host memory and there is 47.0 GB free",
+        status: "failed",
+        ended_ms: Date.now() - 5_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(
+      await screen.findByText("the memory ledger refused qwen3-coder-next"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("qwen3-coder-next needs 59.6 GB of host memory and there is 47.0 GB free"),
+    ).toBeInTheDocument();
+  });
+
+  it("says when a background job was given up on because its model cannot fit", async () => {
+    // The subject is the JOB KIND: a directly-enqueued job has no run step, so this row is
+    // the only trace of the failure the owner has, and the detail is its payload.
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "job_refused_no_room",
+        subject: "ocr_attachment",
+        detail: "gpt-oss-120b needs 200.0 GB of host memory and this box has 118.0 GB to give",
+        status: "failed",
+        ended_ms: Date.now() - 5_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(
+      await screen.findByText("gave up on the ocr attachment job — its model cannot fit"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "gpt-oss-120b needs 200.0 GB of host memory and this box has 118.0 GB to give",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("marks work the background half of the box started", async () => {
     // A load nothing on screen asked for is the confusing one — say where it came from.
     opsVitalsEvents.mockResolvedValue([event({ source: "worker" })]);
