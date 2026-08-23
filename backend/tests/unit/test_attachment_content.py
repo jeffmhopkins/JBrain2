@@ -101,7 +101,8 @@ def _png_dimensions(png: bytes) -> tuple[int, int]:
 
 
 async def _build(repo: FakeRepo, blobs: FakeBlobs, ids: list[str]) -> tuple[list, str]:
-    return await build_attachment_content(repo, blobs, CTX, ids)  # type: ignore[arg-type]
+    content = await build_attachment_content(repo, blobs, CTX, ids)  # type: ignore[arg-type]
+    return content.images, content.extra_text
 
 
 async def test_audio_becomes_a_transcribe_hint_not_inline_bytes() -> None:
@@ -123,13 +124,14 @@ async def test_audio_hint_says_not_configured_when_transcription_is_off() -> Non
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-aud", b"RIFF audio")
     aid = repo.add("audio/wav", "sha-aud", filename="memo.wav")
-    images, text = await build_attachment_content(
+    _content = await build_attachment_content(
         repo,  # type: ignore[arg-type]
         blobs,  # type: ignore[arg-type]
         CTX,
         [aid],
         transcribe_enabled=False,
     )
+    images, text = _content.images, _content.extra_text
     assert images == []
     assert "memo.wav" in text and "not configured" in text
     assert "source_attachment_id" not in text  # never points at the missing tool
@@ -173,13 +175,14 @@ async def test_vision_capable_turn_tells_the_model_to_look_directly() -> None:
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-img", b"\x89PNG-bytes")
     aid = repo.add("image/png", "sha-img", filename="scan.png")
-    images, text = await build_attachment_content(
+    _content = await build_attachment_content(
         repo,  # type: ignore[arg-type]
         blobs,  # type: ignore[arg-type]
         CTX,
         [aid],
         can_see_images=True,
     )
+    images, text = _content.images, _content.extra_text
     assert len(images) == 1  # the bytes still ride inline
     assert aid in text and "scan.png" in text
     assert "see this image directly" in text
@@ -389,3 +392,40 @@ async def test_anchored_image_content_is_deterministic_and_budgeted() -> None:
 
     missing = await anchored_image_content(FakeBlobs(), infos[:1], image_budget=5)  # type: ignore[arg-type]
     assert missing == ([], "")
+
+
+async def test_content_separates_direct_images_from_pdf_pages() -> None:
+    """The live anchor needs the direct image attachments separable from PDF-page
+    renders (only the former anchor; pages stay volatile), aligned with image_infos."""
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-img", b"\x89PNG-bytes")
+    blobs.put("sha-pdf", make_pdf("page one"))
+    iid = repo.add("image/png", "sha-img", filename="photo.png")
+    pid = repo.add("application/pdf", "sha-pdf", filename="doc.pdf")
+    content = await build_attachment_content(
+        repo,  # type: ignore[arg-type]
+        blobs,  # type: ignore[arg-type]
+        CTX,
+        [iid, pid],
+    )
+    assert len(content.direct_images) == 1
+    assert len(content.other_images) >= 1  # the PDF page render
+    assert [i.id for i in content.image_infos] == [iid]
+    assert content.images == [*content.direct_images, *content.other_images]
+
+
+def test_decorated_history_text_mirrors_the_client_format() -> None:
+    """CACHE CONTRACT with frontend historyContent (useFullBrain.ts): raw text plus
+    `\n\n[Images the owner attached this turn — source_attachment_id=ID (NAME); ...]`.
+    Drift here silently re-costs the vision encode on every follow-up turn."""
+    from jbrain.agent.attachment_content import decorated_history_text
+
+    a = AttachmentInfo("id1", "one.png", "image/png", 3, "s1", "general")
+    b = AttachmentInfo("id2", "two.jpg", "image/jpeg", 3, "s2", "general")
+    assert decorated_history_text("look", [a, b]) == (
+        "look\n\n[Images the owner attached this turn — "
+        "source_attachment_id=id1 (one.png); source_attachment_id=id2 (two.jpg)]"
+    )
+    assert decorated_history_text("", [a]) == (
+        "\n\n[Images the owner attached this turn — source_attachment_id=id1 (one.png)]"
+    )

@@ -1025,12 +1025,21 @@ def test_chat_attachments_ride_the_final_user_message(
         json={"session_id": "sess-1", "message": "what is this?", "attachment_ids": ["a1", "a2"]},
     )
     assert resp.status_code == 200
-    # The FINAL user message carries the image and the appended text-file block.
-    final = fake.stream_calls[0]["messages"][-1]
+    # The live-anchor shape: the question rides its own message spelled exactly as the
+    # client's next-turn history entry (raw + id-reference suffix), the image bytes ride
+    # the anchor message right after it, and the FINAL message keeps the volatile
+    # remainder (the text-file block, the image guidance notes, the pointer) — no bytes.
+    messages = fake.stream_calls[0]["messages"]
+    pre = next(m for m in messages if getattr(m, "text", "").startswith("what is this?\n\n[Images"))
+    assert "source_attachment_id=a1" in pre.text and "(scan.png)" in pre.text
+    anchor = messages[messages.index(pre) + 1]
+    assert [im.media_type for im in anchor.images] == ["image/png"]
+    assert base64.b64decode(anchor.images[0].data) == b"\x89PNGdata"
+    assert "still in view" in anchor.text
+    final = messages[-1]
     assert type(final).__name__ == "UserMessage"
-    assert [im.media_type for im in final.images] == ["image/png"]
-    assert base64.b64decode(final.images[0].data) == b"\x89PNGdata"
-    assert "what is this?" in final.text
+    assert final.images == ()
+    assert "message above" in final.text
     assert "[notes.txt]:" in final.text and "some notes" in final.text
 
 
@@ -1228,6 +1237,74 @@ def test_chat_anchor_stays_on_the_oldest_occurrence_of_repeated_text(
     assert not getattr(messages[repeat + 1], "images", ())
 
 
+def test_live_anchor_matches_the_follow_up_render_byte_for_byte(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_attachments: FakeChatAttachments,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    """The whole point of the live anchor: the attaching turn renders its question text
+    and image EXACTLY as the follow-up's history render reproduces them, so the KV
+    prefix holds through the image and the follow-up skips the vision encode. Any byte
+    of drift here is a silent ~35 s regression on the box."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    chat_blobs.data["sha-img"] = b"\x89PNGsloth"
+    info = AttachmentInfo("a1", "sloth.jpg", "image/jpeg", 10, "sha-img", "general")
+    chat_attachments.add(info)
+
+    # Turn N: the attaching turn.
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "what creature is this?",
+            "attachment_ids": ["a1"],
+        },
+    )
+    assert resp.status_code == 200
+    live = fake.stream_calls[0]["messages"]
+    live_pre = next(m for m in live if getattr(m, "text", "").startswith("what creature"))
+    live_anchor = live[live.index(live_pre) + 1]
+    assert live_anchor.images
+
+    # Turn N+1: the client echoes the decorated entry (same format the server minted);
+    # the window hands back the turn's content + image.
+    transcript.recent_image_turn_rows["sess-1"] = [("what creature is this?", [info])]
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "tell me about the fur",
+            "history": [
+                {"role": "user", "content": live_pre.text},
+                {"role": "assistant", "content": "a sloth"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    follow = fake.stream_calls[1]["messages"]
+    follow_pre = next(m for m in follow if getattr(m, "text", "") == live_pre.text)
+    follow_anchor = follow[follow.index(follow_pre) + 1]
+    # Byte-identical pair — text and image payloads — at the same relative position.
+    assert follow_pre.text == live_pre.text
+    assert follow_anchor.text == live_anchor.text
+    assert [(i.media_type, i.data) for i in follow_anchor.images] == [
+        (i.media_type, i.data) for i in live_anchor.images
+    ]
+    # And the prefix up to the anchor is unchanged: everything before the pre message in
+    # the live render reappears verbatim at the head of the follow-up render.
+    live_head = live[: live.index(live_pre)]
+    follow_head = follow[: follow.index(follow_pre)]
+    assert [getattr(m, "text", "") for m in follow_head[: len(live_head)]] == [
+        getattr(m, "text", "") for m in live_head
+    ]
+
+
 def test_chat_anchor_excludes_ids_attached_this_turn(
     client: TestClient,
     repo: FakeAuthRepo,
@@ -1259,8 +1336,12 @@ def test_chat_anchor_excludes_ids_attached_this_turn(
     )
     assert resp.status_code == 200
     messages = fake.stream_calls[0]["messages"]
+    # Exactly one message carries the bytes: the LIVE anchor (this turn's own
+    # attachment), never a second history-anchored copy of the same id.
     with_images = [m for m in messages if getattr(m, "images", ())]
-    assert len(with_images) == 1 and with_images[0] is messages[-1]
+    assert len(with_images) == 1
+    assert "still in view" in with_images[0].text
+    assert messages[-1].images == ()
 
 
 def test_chat_binds_attachments_to_the_user_turn(

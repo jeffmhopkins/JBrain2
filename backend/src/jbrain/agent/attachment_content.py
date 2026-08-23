@@ -237,6 +237,39 @@ async def carry_forward_content(
     return images, text_blocks
 
 
+# The client-side decoration a user turn's history entry carries when it attached
+# images (frontend/src/agent/useFullBrain.ts `historyContent`). The server mirrors it
+# in `decorated_history_text` so an image-attach turn's rendered question is
+# byte-identical to the entry the client sends back next turn — a CACHE CONTRACT: any
+# drift between the two formats costs a full vision re-encode on the follow-up turn,
+# silently. Change both together.
+HISTORY_IMAGE_MARKER = "\n\n[Images the owner attached this turn"
+
+
+def decorated_history_text(raw: str, infos: Sequence[AttachmentInfo]) -> str:
+    """The attaching turn's user text exactly as the client's next-turn history entry
+    will spell it — the raw message plus the id-reference suffix, in the given
+    attachment order (the request's order live; the client mirrors its own array)."""
+    refs = "; ".join(f"source_attachment_id={i.id} ({i.filename})" for i in infos)
+    return f"{raw}{HISTORY_IMAGE_MARKER} — {refs}]"
+
+
+@dataclass(frozen=True)
+class AttachmentContent:
+    """One turn's converted attachments, with the direct image attachments kept
+    separable from PDF-page renders so the caller can anchor the images at their
+    cache-stable position while the page images stay on the volatile final message."""
+
+    direct_images: list[LlmImage]  # aligned one-to-one with image_infos
+    other_images: list[LlmImage]  # PDF page renders
+    extra_text: str
+    image_infos: list[AttachmentInfo]  # direct image attachments actually included
+
+    @property
+    def images(self) -> list[LlmImage]:
+        return [*self.direct_images, *self.other_images]
+
+
 async def build_attachment_content(
     repo: TurnAttachmentRepo,
     blobs: BlobStore,
@@ -245,8 +278,8 @@ async def build_attachment_content(
     *,
     transcribe_enabled: bool = True,
     can_see_images: bool = False,
-) -> tuple[list[LlmImage], str]:
-    """`(images, extra_text)` for the turn's attachments, in request order.
+) -> AttachmentContent:
+    """The turn's attachments converted for the model, in request order.
 
     Each id is fetched under the session's narrowed firewall (`repo.get(ctx, id)`):
     an out-of-scope or unknown id reads as missing and is SKIPPED (a stray id must
@@ -264,7 +297,9 @@ async def build_attachment_content(
     analyze_image by id. Defaults False — the safe, text-only wording for any caller that
     can't vouch for vision.
     """
-    images: list[LlmImage] = []
+    direct_images: list[LlmImage] = []
+    other_images: list[LlmImage] = []
+    image_infos: list[AttachmentInfo] = []
     text_blocks: list[str] = []
     for attachment_id in attachment_ids[:MAX_ATTACHMENTS_PER_TURN]:
         info = await repo.get(ctx, attachment_id)
@@ -274,7 +309,8 @@ async def build_attachment_content(
             data = await blobs.get(info.sha256)
         except FileNotFoundError:
             continue  # the row outlived its blob (rare) — skip rather than break the turn
-        budget = MAX_IMAGES_PER_TURN - len(images)
+        included = len(direct_images) + len(other_images)
+        budget = MAX_IMAGES_PER_TURN - included
         try:
             converted = await asyncio.to_thread(
                 _convert_one,
@@ -293,7 +329,13 @@ async def build_attachment_content(
             _log.warning("attachment %s could not be read; skipping", info.id, exc_info=True)
             text_blocks.append(f"[{info.filename}]: could not be read.")
             continue
-        images.extend(converted.images[: MAX_IMAGES_PER_TURN - len(images)])
+        kept = converted.images[: MAX_IMAGES_PER_TURN - included]
+        if info.media_type.startswith("image/"):
+            direct_images.extend(kept)
+            if kept:
+                image_infos.append(info)
+        else:
+            other_images.extend(kept)
         text_blocks.extend(converted.text_blocks)
     extra_text = ("\n\n".join(text_blocks)).strip()
-    return images, extra_text
+    return AttachmentContent(direct_images, other_images, extra_text, image_infos)
