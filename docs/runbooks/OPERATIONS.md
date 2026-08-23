@@ -1,6 +1,6 @@
 # JBrain360 operations runbook
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Operating the family-location surface (Phase 7) safely: the controls the owner
 runs, and the deploy-time invariants the in-app security rests on. The in-database
@@ -71,7 +71,11 @@ restore:
 - **The owner key is the root of trust.** It mints pairing codes and is the only
   credential that can re-provision devices, so *it* is what must be backed up — keep
   the owner key in a password manager / hardware token, offline. Losing it means
-  rotating it over SSH with `jbrain reset-owner-key`, not data loss.
+  rotating it over SSH with `jbrain reset-owner-key`, not data loss. (That
+  rotation is terminal-only by design — the root of trust cannot be re-minted
+  from a surface it authenticates — but per CLAUDE.md #10 the host-access
+  dependency is an acknowledged, inherent gap, not a workflow to point the owner
+  at casually.)
 - Pairing codes are **one-time and short-lived**; never reuse or store a redeemed
   code.
 

@@ -112,9 +112,11 @@ Cloudflare side (`CLOUDFLARE_TUNNEL.md`).
 sudo jbrain strix-halo-host-setup
 ```
 Idempotently (confirming before the GRUB edit):
-- kernel params `amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=32505856`
-  (lets the iGPU address ~124 GB of the unified pool — a ceiling, not a
-  reservation),
+- kernel params `amd_iommu=off` plus a **derived** `ttm.pages_limit` — MemTotal
+  minus a 16 GiB host reserve, so the GTT ceiling is a genuine backstop instead
+  of ~100% of RAM (which disables it; see "Reading the memory instruments
+  correctly" below for the mechanism). `amdgpu.gttsize` is deprecated and no
+  longer written; the script prints the derived pages figure it will set.
 - adds you to `video`/`render`,
 - installs a `tuned` accelerator-performance profile.
 
@@ -122,7 +124,10 @@ Then:
 ```bash
 sudo reboot
 ```
-✅ **Checkpoint:** `cat /proc/cmdline` contains the three params.
+✅ **Checkpoint:** `cat /proc/cmdline` contains `amd_iommu=off` and a
+`ttm.pages_limit=` whose GiB value (pages / 262144) is MemTotal minus ~16 GiB —
+**not** the old hardcoded `32505856` (124 GiB), which on a 128 GB box means the
+backstop is off.
 
 > **26.04 note — `crashkernel`.** Ubuntu 26.04 adds a `crashkernel=…:4096M`
 > reservation on a 128 GB box (it shows up in `/proc/cmdline`, and it's why
@@ -144,8 +149,13 @@ and starts the gateway.
 **The app is the box's sole model evictor, and it restores.** Every model is a llama-swap
 non-swapping group member, so the gateway never auto-evicts anyone — instead, before a
 model loads, the app (`jbrain.llm.residency`) frees the **fewest** resident models needed to
-keep **≥15% of RAM free** after it's resident (weights + KV, measured against live
-`/proc/meminfo` so image-gen and OS pressure count too), evicting biggest-first. So you can
+keep **≥15% of RAM free** after it's resident, evicting biggest-first. Since 2026-08-23 the
+**reservation ledger is the authority** for that arithmetic (`jbrain.llm.ledger`): the plan
+runs the same `admission.admit` the load's charge applies, over the ledger's own pools and
+rows, so the evict verdict and the admission verdict cannot disagree; a live `/proc/meminfo`
+reading survives as the ledger's *measured* term — it is what sees consumers the ledger
+didn't create (image-gen, whisper, OS pressure) — and the whole-box measured+predicted
+planner is now only the fallback for a build (or a moment) with no ledger read. So you can
 **load any model**: a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, requesting
 the coder evicts the *big* model — not the tiny one — and a model too large to co-reside
 evicts everything and takes the box. Whatever a *transient* eviction removed (an image render
@@ -265,23 +275,28 @@ both resides and warms it.
 > it has landed.
 
 > **`--swa-full` on gpt-oss.** It was introduced as the precondition for a KV-slot restore
-> doing anything on an interleaved sliding-window model; that feature is gone, and the flag
-> stays because full history on those layers is what a long conversation needs. The original
+> doing anything on an interleaved sliding-window model; that feature was removed in v1 and
+> rebuilt in v2 **for attention models** (see "The disk KV cache is BACK" above), and the flag
+> stays because full history on those layers is what a long conversation needs — and it
+> remains what lets a v2 restore land on gpt-oss. The original
 > measurement, kept because it is what the `kv_full_history` budget doubling is derived from:
 > a restore into a windowed cache reports full success and is then discarded — same
 > token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
 > box: **69,373 ms without the flag, 194 ms with it.** The catalog carries it as
 > `kv_full_history=True` on gpt-oss-120b, and the shared `_kv_gb` term doubles that model's KV
-> to match (4.5 → 9.0 GB per 128k) so the memory meter, the eviction budget **and the load
-> pre-flight** stay honest. The pre-flight used to skip the doubling: it reserved 64.0 GB for a
-> model that measured 69.24, and now reserves 68.55. The
+> to match — since the 2026-08-23 four-window remeasure the base coefficient is 5.01, so the
+> doubled term is **≈10.0 GB per 128k** (it was 4.5 → 9.0 when this note was first written) —
+> so the memory meter, the eviction budget **and the load pre-flight** stay honest. The
+> pre-flight used to skip the doubling: against a model that measured 69.24 GB it reserved
+> 64.0 GB, corrected to 68.55 (2026-08-18 figures at the old 4.5 coefficient; the 5.01
+> remeasure lifts the reservation ~1 GB further). The
 > lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
 > 64k costs exactly what 128k did before the flag.
 
 > **The numbers above are gpt-oss. Here are the MEASURED ones for a hybrid** (Qwen3.8-27B
 > `qwen35`, 262k window, on this box, 2026-08-18). Qwen3.8 runs 48 of its 65 layers as Gated
-> DeltaNet — linear attention carrying a recurrent state — and the Nemotron Lightning/Super
-> entries are Mamba-2 hybrids of the same shape.
+> DeltaNet — linear attention carrying a recurrent state — and the Nemotron Lightning entry is
+> a Mamba-2 hybrid of the same shape.
 >
 > | what | measured |
 > |---|---|
@@ -337,18 +352,20 @@ both resides and warms it.
 >   quant.
 > - **The raise is gated on that measurement, not applied flat.** Checkpoints are created for a
 >   hybrid, or an SWA model served without `--swa-full` (that flag zeroes `n_swa`, so gpt-oss
->   creates none at all). Both Nemotron hybrids qualify and are still unmeasured
->   (`checkpoint_gb=0.0`), and `nemotron-3.5-lightning-30b` runs **two slots** — so a flat raise
->   would have put 32 checkpoints of unknown size on the box against a budget of zero. A model
->   earns the higher count by having its cost measured; everything else stays at 2. Measure a
->   Nemotron and it picks up the raise with no code change beyond the catalog number.
+>   creates none at all). The Nemotron hybrid (`nemotron-3.5-lightning-30b`, the only one left
+>   in the catalog) qualifies and is still unmeasured (`checkpoint_gb=0.0`), and it runs
+>   **two slots** — so a flat raise would have put 32 checkpoints of unknown size on the box
+>   against a budget of zero. A model earns the higher count by having its cost measured;
+>   everything else stays at 2. Measure the Nemotron and it picks up the raise with no code
+>   change beyond the catalog number.
 > - **Both flags ARE settable live**, via `PUT /api/debug/llm/local-models/{id}/extra-args` — no
 >   deploy. That is how the above was measured before it became the default.
 > - **`--cache-reuse` is not merely a no-op on a hybrid — it is a hazard.** Its partial-range
 >   `seq_rm` returns false for recurrent memory, which reaches `GGML_ABORT`, i.e. the server dies.
 >   On an identical prompt the reuse loop never executes, which is why we have not seen it.
 > - **A slot restore could never deliver prefix reuse on a hybrid** — one of the reasons the
->   disk KV cache was removed. Restore calls
+>   v1 disk KV cache was removed, and why the v2 rebuild refuses hybrids up front (see "The
+>   disk KV cache is BACK" above). Restore calls
 >   `prompt.clear()`, which clears the checkpoints, so a disk-restored slot full-reprocesses its
 >   next request. The KV-slot cache is a gpt-oss win; on a hybrid it loads bytes that buy nothing.
 > - **`--swa-full` is inert here** — llama.cpp auto-disables it when `n_swa == 0`, which holds for
@@ -521,9 +538,9 @@ per-model GB bar reading the bytes on disk); the coarse phase and the verbose
 per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
 through the same sync one-shot, dropping it from `LOCAL_MODELS` and pruning its
-weights. A large model that can't co-reside (e.g. the ~85 GB Q8 coder, or Nemotron
-3 Super at ~78 GB) evicts down to at most a small low-tier model when loaded — it
-runs effectively standalone with the box to itself. Going the other way,
+weights. A large model that can't co-reside (e.g. the ~85 GB Q8 coder) evicts
+down to at most a small low-tier model when loaded — it runs effectively
+standalone with the box to itself. Going the other way,
 **Qwen3-VL 30B at Q4_K_M (~18 GB)** sits in the catalog beside the recommended Q8 vision
 model as a memory-saver twin: half the weights, so it co-resides with gpt-oss-120b under the
 free-RAM floor instead of evicting it — at some OCR-fidelity cost on dense/small text (its
@@ -603,7 +620,7 @@ Three things to know:
 > the real load-time cost (~4 GiB of warmup buffer), freeze #2 was ~90 GiB against a ~124 GiB
 > pool, which does not freeze anything.
 >
-> **The mechanism is the host's GTT configuration, not any single model.** Phase 5 sets
+> **The mechanism is the host's GTT configuration, not any single model.** Phase 5 used to set
 > `ttm.pages_limit=32505856` — **124 GiB, i.e. ~100% of system RAM.** That matters because of
 > how the kernel behaves (all verified in v6.18 source):
 >
@@ -636,11 +653,15 @@ Three things to know:
 > reading is multiples of that, suspect the instrument before the model. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
 update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-q4`.
 
-> **Reading what the engine actually did.** llama-server prints its build, allocated context,
-> batch sizes and resolved slot count once at startup, and llama-swap neither forwards that
-> banner nor keeps it — its log is a ~100 KB ring buffer the access log floods within minutes,
-> and `logs local-llm` is that same stream, so **llama-server's stdout reaches no debug
-> surface at all**. Use the passthrough reads instead, all of which refuse a non-resident
+> **Reading what the engine actually did.** llama-swap's own log is a ~100 KB ring buffer the
+> access log floods within minutes, and `logs local-llm` is that same stream — but
+> llama-server's stdout now **has** a debug surface: `GET /api/debug/llm/upstream-logs`
+> (`debug-connect.sh upstream-logs`) reads the history burst llama-swap replays on
+> `/logs/stream/{stream}` — the startup banner, per-request prompt-eval throughput,
+> context-checkpoint evictions, a failed load's reason. Caveat: at the default verbosity 3
+> (we pass no `-lv`) the model LOADER prints nothing — a load is a ~1.4 s silent gap with no
+> per-buffer memory breakdown; a load's memory is measured by the device delta instead. For
+> structured reads use the passthroughs below, all of which refuse a non-resident
 > model (a diagnostic must never trigger a load — that is what froze the host):
 >
 > | want | command |
@@ -1044,7 +1065,8 @@ Moved from v228 to **v250** on 2026-08-20 for two upstream fixes that both bite 
 
 **Verified before the bump rather than after:** the config this repo generates
 (`llama_swap_config.render` over the whole catalog) was parsed with v250's own
-`internal/config.LoadConfig` — 16 models, 2 groups, no error — and every route the app calls
+`internal/config.LoadConfig` — the full catalog of the day (16 models, 2 groups, at the
+2026-08-20 bump; the roster drifts — 15 models as of 2026-08-23), no error — and every route the app calls
 (`/running`, `/api/models/unload/{model}`, `/logs`, `/logs/stream/*`, `/upstream/{model}/…`)
 still exists at that tag. Do the same before the next bump; the gateway is the single process
 serving every model, so a config-schema change is an outage.
@@ -1194,12 +1216,12 @@ graph. The corrected model predicts 25.82 resident at that window against 26.02 
 where it silently does not apply to the CLIP graph, puts the quadratic branch back in play —
 `vision_attn_buffer_gb(flash_attention=False)` keeps it for exactly that case.
 
-> **The startup banner is NOT readable from any debug surface.** `warmup: flash attention is
-> enabled|disabled` never reaches `gateway-logs` or `logs local-llm` — both are llama-swap's
-> own HTTP access log, and llama-server's stdout/stderr is not interleaved into it at all.
-> This is the same "if a serving mode can't be observed, it can't be tuned" gap as
-> `speculative.types`, and it is why the question had to be answered by GTT deltas instead.
-> Capturing upstream process output into the gateway log is the fix.
+> **The startup banner is readable today via `GET /api/debug/llm/upstream-logs`.** It was not
+> when this was measured — `warmup: flash attention is enabled|disabled` never reaches
+> `gateway-logs` or `logs local-llm`, both llama-swap's own HTTP access log — which is why
+> the question had to be answered by GTT deltas at the time. The verbosity caveat stands (the
+> default `-lv` prints the banner and per-request lines, not a load's per-buffer memory
+> breakdown), but "did `-fa` apply?" is now one `upstream-logs` read, not a GTT experiment.
 
 Note we pass `--image-min-tokens` (2048 by default, per model), which is the **floor**. Nothing caps the ceiling, so
 4096 is the exposure. Pinning `--image-max-tokens 1024` would cut the buffer quadratically at
@@ -1339,7 +1361,9 @@ comfyui`) for the submitted graph.
 
 ## Expected performance
 ~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. Models co-reside up to the RAM
-budget: as many stay hot as fit under the ≥15%-free floor, and a load evicts the fewest
+budget: as many stay hot as fit under the ≥15%-free floor — judged by the reservation
+ledger's admission arithmetic, with `/proc/meminfo` as its measured term and fallback — and
+a load evicts the fewest
 others needed to make room (so a text↔vision switch only cold-loads if both don't fit).
 Tune the headroom from **Settings → LLM → On-box memory** (live) or with
 `LOCAL_LLM_FREE_RAM_FRACTION` (deploy default).
@@ -1417,15 +1441,20 @@ steps below are what the hardening does and how to verify:
    before it loads, and nothing is ever pinned beyond that floor. There is no keep-hot pin to
    over-commit: a manual **Load** (Settings → LLM → On-box models) evicts to the same budget —
    the **Stage** preview shows what it will evict first — and models you use stay warm via the
-   end-of-turn restore, not a held pin. **Cross-process serialization:** the `api` and the
-   `worker` each run their own `ResidencyCoordinator`, so to stop two processes co-loading
-   past the floor, the automatic evict+load path holds a **Postgres transaction-level
-   advisory lock** (`pg_box_lock`, `jbrain.llm.residency`) box-wide — only one process
-   evicts+loads at a time, and the loaded model's memory is committed before the lock
-   releases so the next process's plan sees it. It's best-effort: a DB hiccup degrades to
-   unlocked rather than failing a turn. A rare gap remains — a manual operator **Load**
-   (Settings → LLM) isn't under that lock — so earlyoom (steps 1–2) stays the catch-all
-   backstop for any residual overcommit.
+   end-of-turn restore, not a held pin. **The reservation ledger is the authority**
+   (`jbrain.llm.ledger`, since 2026-08-23): the eviction plan runs `admission.admit` over the
+   ledger's own pools and rows — the same arithmetic the load's charge applies — so the evict
+   verdict and the admission verdict cannot disagree; the older whole-box measured+predicted
+   planner survives only as the fallback for a failed ledger read. **Cross-process
+   serialization:** the `api` and the `worker` each run their own `ResidencyCoordinator`, so
+   to stop two processes co-loading past the floor, a **Postgres advisory box lock**
+   (`pg_box_lock`, `jbrain.llm.residency` / `ledger.charge`) covers the **decision and the
+   evictions only** — not the load itself. Every load, the manual operator **Load** included,
+   then **charges** the ledger: decide-and-insert in one transaction under that same lock
+   with a bounded `lock_timeout`, and the charge row is what protects the load once the lock
+   releases — the next process's plan sees the charged reservation. A DB hiccup at charge
+   time **refuses transiently** (the settings screen 409s, the worker defers) rather than
+   loading unguarded. earlyoom (steps 1–2) stays the OS-level backstop.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal
