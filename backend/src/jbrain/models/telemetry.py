@@ -202,3 +202,42 @@ class BoxEvent(Base):
     # Which process narrated it ("api" / "worker"), so a mystery load can be traced to
     # the half of the box that caused it.
     source: Mapped[str] = mapped_column(Text, default="")
+
+
+class ModelReservation(Base):
+    """One local-model INSTANCE's declared memory cost (migration 0170) — the ledger
+    admission is decided against, instead of against a live memory reading.
+
+    Charged before anything is spawned and deleted only when the process is confirmed
+    dead, so the transition windows a measurement cannot see are exactly what this
+    covers: a draining model still holds every byte, and a model three seconds into a
+    200 s load has committed almost none of what it will hold.
+
+    `host_gb` and `device_gb` are DECLARED, never measured, and immutable for the
+    instance's life — the arithmetic that admitted a model is the arithmetic that
+    protects it. Both come from `local_catalog.declared_gb`, which is the only place a
+    declaration is computed. A restart with a changed config is TWO rows, never one row
+    resized; see the migration for why. Owner-only RLS like the rest of this module."""
+
+    __tablename__ = "model_reservations"
+    __table_args__ = {"schema": "app"}
+
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    served_model: Mapped[str] = mapped_column(Text)
+    # planned | starting | resident | draining (jbrain.llm.admission.Phase). Text rather
+    # than a DB enum, like every other status column here: a new phase must not need a
+    # migration to be observable.
+    phase: Mapped[str] = mapped_column(Text, default="planned")
+    host_gb: Mapped[float] = mapped_column()
+    device_gb: Mapped[float] = mapped_column()
+    declared_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Stamped on every phase change, and read ONLY by the TTL sweep — which is why it is
+    # separate from `declared_at`. A 200 s load must not be swept at 30 s just because the
+    # row is old; what matters is how long it has sat in the phase it is in.
+    phase_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Which process charged it ("api" / "worker"), so a phantom row can be traced.
+    source: Mapped[str] = mapped_column(Text, default="")

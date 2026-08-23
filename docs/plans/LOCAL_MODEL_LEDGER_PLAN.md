@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2◐ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -266,7 +266,7 @@ down 85 GB — it is now 60 s, sized off the config-regen case that actually pro
 *Risk:* low individually; the batch is the point. *Test:* one regression test each, every one
 mutation-checked by reverting the fix and confirming the failure message.
 
-### L2 — The ledger ◻️
+### L2 — The ledger ◐
 
 Introduce the row, the phases, the two columns, and the `min(measured, capacity − Σ ledger)`
 admission test. Make the ledger the only thing any admission path consults, and make
@@ -279,8 +279,39 @@ processes with no row are foreign. Roll a reservation back explicitly on every f
 with a TTL as backstop — and **do not expire a reservation whose transition is still running**
 (a 90 s model load must not be swept at 30 s).
 
-*Risk:* high — this is the wave that changes behaviour. It cannot be split: the moment
-admission stops reading memory, every layer that still does is inconsistent with it.
+**Landed so far — the ledger exists and is proven against real Postgres; nothing consults it
+yet.** Split at the one seam that is safe to split at: the ledger is additive until an admission
+path reads it, so the arithmetic, the storage and the schema can each be verified on their own
+before any behaviour changes.
+
+- `llm/admission.py` — the arithmetic, with no I/O in it. `min(measured − reserve, capacity −
+  reserve − Σledger) ≥ declared`, per layer, both must pass; `INFEASIBLE` vs `DEFERRED` split
+  because a caller that retries the first retries forever; the phase-TTL rule and the
+  phantom/foreign reconciliation split. Sixteen tests, no database, no GPU.
+- `llm/ledger.py` — the rows, and `charge()`: **read the ledger, decide, and INSERT inside one
+  transaction holding the box lock**. That is the whole efficiency argument made real — the lock
+  that is held for 100-200 s today is held here for a SELECT and an INSERT.
+- Migration 0170 + `models.telemetry.ModelReservation`, owner-only RLS on the `box_events` /
+  `deploy_history` pattern (`app.is_owner()`, no domain predicate — this is the box's
+  bookkeeping about its own hardware, and both writers are the owner's machinery).
+- `local_catalog.declared_gb` — **the one place a declaration is computed**, returning both
+  columns. Its host figure is asserted equal to `footprint_gb` for EVERY catalog entry, which is
+  what keeps the ledger from becoming a ninth budget; the gap to the device column is exactly
+  the host-only buffers (context checkpoints, `--cache-ram`), and the device column carries the
+  vision projector at its RESIDENT size rather than the pre-flight's warmup cap.
+- `tests/unit/test_memory_reader_inventory.py` — the AST guard this wave asks for, landed at the
+  stage the code is at: it does not claim one reader, it pins the SET of readers, in both
+  directions (a new one fails; a stale allowlist entry fails too). A seventh budget now needs a
+  deliberate edit rather than a reviewer noticing.
+- `tests/integration/test_model_reservations_rls.py` — run against real Postgres, not just
+  written: the RLS isolation, a charge visible across two `ReservationLedger` instances standing
+  in for the api and the worker, and `DRAINING` keeping its full charge until discharge.
+
+**Still to do: the wiring.** Making residency and the gateway admit against the ledger instead
+of against a reading, and charging/advancing/discharging around the real load lifecycle.
+
+*Risk:* high — that is the part that changes behaviour, and it cannot be split further: the
+moment admission stops reading memory, every layer that still does is inconsistent with it.
 
 ### L3 — Retire the duplicate budgets ◻️
 

@@ -813,3 +813,73 @@ def test_every_saved_override_names_a_model_the_cost_model_knows() -> None:
     for model in catalog:
         assert local_catalog.get_by_served(model.served_model) is not None, model.id
     assert served, "catalog is empty"
+
+
+# --- declared_gb: the reservation ledger's two columns -----------------------
+
+
+@pytest.mark.parametrize("model", local_catalog.CATALOG, ids=lambda m: m.id)
+def test_the_declared_host_column_IS_the_resident_footprint(
+    model: local_catalog.LocalModel,
+) -> None:
+    """`declared_gb`'s host figure must equal `footprint_gb` to the centibyte, for every entry.
+
+    This is the invariant that keeps the ledger from becoming a ninth memory budget. The
+    eviction budget already sizes a resident model with `footprint_gb`; if the ledger charged a
+    different number for the same model, the two would disagree about a box they both act on —
+    which is precisely the shape of every failure this work exists to end. Asserted rather than
+    commented, and asserted over the WHOLE catalog rather than a sample, because a new entry
+    with an unusual shape (speculative, vision, hybrid) is exactly where a derivation drifts."""
+    window = model.context_window
+    host, _device = local_catalog.declared_gb(model, window)
+    assert host == local_catalog.footprint_gb(model, window)
+
+
+@pytest.mark.parametrize("model", local_catalog.CATALOG, ids=lambda m: m.id)
+def test_the_device_column_is_the_host_column_minus_what_never_reaches_the_gpu(
+    model: local_catalog.LocalModel,
+) -> None:
+    """Device is a SUBSET of host on this hardware, never a second pool to add on: the iGPU
+    draws GTT from system RAM. The gap is exactly the host-only buffers — the context
+    checkpoints (CONFIRMED on the box: raising the count from 2 to 16 left GTT unchanged) and
+    llama.cpp's `--cache-ram`. Charging those to the device column would refuse loads that are
+    safe; charging them to neither is how the host runs out while GTT looks comfortable."""
+    window = model.context_window
+    host, device = local_catalog.declared_gb(model, window)
+    host_only = (
+        model.checkpoint_gb
+        * local_catalog.ctx_checkpoints(model.checkpoint_gb)
+        * model.effective_slots(1)
+    ) + local_catalog.CACHE_RAM_GB
+    assert device <= host
+    assert host - device == pytest.approx(host_only, abs=0.011)
+
+
+def test_a_vision_model_declares_the_RESIDENT_buffer_not_the_warmup_one() -> None:
+    """A pre-flight and a reservation ask different questions, and here they get different
+    answers on purpose. `load_footprint_gb` budgets the projector at llama.cpp's capped 46x46
+    warmup, which is right for "what gets allocated in the next three minutes". A reservation
+    covers the instance's whole life, and `ggml_gallocr_reserve_n_impl` only ever GROWS the
+    allocation — a smaller later image releases nothing — so declaring the warmup figure would
+    under-reserve every vision model from its first real image onward."""
+    vision = next((m for m in local_catalog.CATALOG if m.mmproj_include), None)
+    assert vision is not None, "no vision entry in the catalog to exercise this"
+    window = vision.context_window
+    _host, device = local_catalog.declared_gb(vision, window)
+    assert device > local_catalog.load_footprint_gb(vision, window), (
+        "the declaration is no larger than the load pre-flight, so the resident vision buffer "
+        "is not being carried"
+    )
+
+
+def test_the_declaration_grows_with_the_served_window_and_the_slot_count() -> None:
+    """KV is linear in both, and a declaration that ignored either would be the 1.8x-light
+    pre-flight all over again — the abliterated 27B served at `-c 262144` against a catalog
+    default of 32768."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    small = local_catalog.declared_gb(model, 32768)
+    wide = local_catalog.declared_gb(model, 131072)
+    two_slots = local_catalog.declared_gb(model, 32768, slots=2)
+    assert wide[0] > small[0] and wide[1] > small[1]
+    assert two_slots[0] > small[0] and two_slots[1] > small[1]

@@ -47,7 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
-from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm import admission, gpu_guard, local_catalog
 from jbrain.llm.local_gateway import STATE_READY, LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
@@ -70,7 +70,7 @@ BoxTryLock = Callable[[], "contextlib.AbstractAsyncContextManager[bool]"]
 # store and is threaded in via `fraction_loader`.
 DEFAULT_FREE_RAM_FRACTION = 0.15
 
-_BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"
+_BOX_LOCK_KEY = admission.BOX_LOCK_KEY
 
 # How long a skipped restore waits before trying again. Long enough that whatever held the box
 # has finished a model load (measured at 100-200 s here), short enough that the box is back in
