@@ -1,6 +1,6 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-08-18
+> **Status:** Living · **Last verified:** 2026-08-23
 
 > **Applied (2026-08-18):** the Qwen3.8 KV estimate is **8.0**, superseding the 2.0 note below —
 > which was the last word on the number here while the code served 8.0, i.e. this doc had a reader
@@ -382,7 +382,6 @@ top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
 | qwen3.5-4b | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5 | Qwen3.5 card |
 | gpt-oss-120b | 1.0 | 1.0 | 0 | 0 | – | OpenAI (min_p 0 is critical) |
 | glm-4.5-air | 0.6 | 0.95 | 0 | 0 | – | Z.ai GLM-4.5 API default |
-| nemotron-3-super-120b | 1.0 | 0.95 | 0 | 0 | – | NVIDIA card (unified) |
 | nemotron-3.5-lightning-30b | 1.0 | 0.95 | 0 | 0 | – | NVIDIA card (unified) |
 | llama-4-scout-int4 | 0.6 | 0.9 | 0 | 0.01 | – | Meta config + Unsloth min_p |
 | llama-3.3-70b | 0.6 | 0.9 | 0 | 0 | – | Meta generation_config |
