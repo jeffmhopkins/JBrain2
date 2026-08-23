@@ -144,7 +144,6 @@ def test_every_recurrent_catalog_entry_is_served_without_cache_reuse(tmp_path: P
         "qwen3.8-27b",
         "qwen3.8-27b-q4",
         "qwen3.8-27b-abliterated",
-        "nemotron-3-super-120b",
         "nemotron-3.5-lightning-30b",
     }
     for model in recurrent:
@@ -156,13 +155,13 @@ def test_every_recurrent_catalog_entry_is_served_without_cache_reuse(tmp_path: P
 
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
     _lay_down(tmp_path)
-    (tmp_path / "nemotron-3-super-120b").mkdir()
-    (tmp_path / "nemotron-3-super-120b" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    (tmp_path / "nemotron-3.5-lightning-30b").mkdir()
+    (tmp_path / "nemotron-3.5-lightning-30b" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
     manifest = [
         *_manifest(),
         {
-            "id": "nemotron-3-super-120b",
-            "served_model": "nemotron-3-super-120b",
+            "id": "nemotron-3.5-lightning-30b",
+            "served_model": "nemotron-3.5-lightning-30b",
             "gguf_include": "*UD-Q4_K_XL*.gguf",
             "mmproj_include": None,
             "context_window": 32768,
@@ -182,10 +181,11 @@ def test_render_reads_reasoning_format_off_the_real_catalog_manifest(tmp_path: P
     # off the asdict(LocalModel) manifest, so feed the REAL catalog entry (not a
     # hand-built dict) through asdict → render. Renaming the dataclass field would break
     # production silently; this test would catch it where the literal-key tests can't.
-    thinking = local_catalog.get("nemotron-3-super-120b")
+    thinking = local_catalog.get("nemotron-3.5-lightning-30b")
     assert thinking is not None
     (tmp_path / thinking.id).mkdir()
-    (tmp_path / thinking.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    # The file must satisfy the model's own gguf_include (*Q8_0* for the Lightning 30B).
+    (tmp_path / thinking.id / "model-Q8_0.gguf").write_bytes(b"\0")
     text = llama_swap_config.render([asdict(thinking)], str(tmp_path))
     assert "--reasoning-format deepseek" in text
 
@@ -342,30 +342,30 @@ def test_resolve_weight_finds_shards_nested_in_a_quant_subdir(tmp_path: Path) ->
     # <id>/<quant>/. The resolver must find them recursively and return the path
     # RELATIVE to the model dir (so the gateway's -m /models/<id>/<rel> resolves), not
     # raise "download incomplete" as it did on the box for a large sharded model.
-    sub = tmp_path / "nemotron-3-super-120b" / "UD-Q4_K_XL"
+    sub = tmp_path / "nemotron-3.5-lightning-30b" / "UD-Q4_K_XL"
     sub.mkdir(parents=True)
     for i in (1, 2, 3):
         (sub / f"Nemotron-3-Super-UD-Q4_K_XL-0000{i}-of-00003.gguf").write_bytes(b"\0")
     # An hf .cache staging dir alongside must be ignored.
-    cache = tmp_path / "nemotron-3-super-120b" / ".cache" / "huggingface" / "download"
+    cache = tmp_path / "nemotron-3.5-lightning-30b" / ".cache" / "huggingface" / "download"
     cache.mkdir(parents=True)
     (cache / "Nemotron-3-Super-UD-Q4_K_XL-00001-of-00003.gguf").write_bytes(b"\0")
 
     rel = llama_swap_config.resolve_weight(
-        str(tmp_path), "nemotron-3-super-120b", "*UD-Q4_K_XL*.gguf"
+        str(tmp_path), "nemotron-3.5-lightning-30b", "*UD-Q4_K_XL*.gguf"
     )
     assert rel == "UD-Q4_K_XL/Nemotron-3-Super-UD-Q4_K_XL-00001-of-00003.gguf"
 
 
 def test_render_resolves_a_nested_quant_subdir_into_the_model_path(tmp_path: Path) -> None:
-    model = tmp_path / "nemotron-3-super-120b" / "UD-Q4_K_XL"
+    model = tmp_path / "nemotron-3.5-lightning-30b" / "UD-Q4_K_XL"
     model.mkdir(parents=True)
     (model / "Nemotron-3-Super-UD-Q4_K_XL-00001-of-00002.gguf").write_bytes(b"\0")
     (model / "Nemotron-3-Super-UD-Q4_K_XL-00002-of-00002.gguf").write_bytes(b"\0")
     manifest = [
         {
-            "id": "nemotron-3-super-120b",
-            "served_model": "nemotron-3-super-120b",
+            "id": "nemotron-3.5-lightning-30b",
+            "served_model": "nemotron-3.5-lightning-30b",
             "gguf_include": "*UD-Q4_K_XL*.gguf",
             "mmproj_include": None,
             "context_window": 32768,
@@ -374,7 +374,7 @@ def test_render_resolves_a_nested_quant_subdir_into_the_model_path(tmp_path: Pat
     ]
     text = llama_swap_config.render(manifest, str(tmp_path))
     assert (
-        "/models/nemotron-3-super-120b/UD-Q4_K_XL/Nemotron-3-Super-UD-Q4_K_XL-00001-of-00002.gguf"
+        "/models/nemotron-3.5-lightning-30b/UD-Q4_K_XL/Nemotron-3-Super-UD-Q4_K_XL-00001-of-00002.gguf"
         in text
     )
 

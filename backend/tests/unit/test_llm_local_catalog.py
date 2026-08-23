@@ -398,7 +398,6 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
         "qwen3.8-27b",
         "qwen3.8-27b-q4",
         "qwen3.8-27b-abliterated",
-        "nemotron-3-super-120b",
         "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
@@ -427,35 +426,6 @@ def test_nemotron_35_lightning_is_a_fast_hybrid_reasoner_alt_at_q8() -> None:
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
     assert m.native_context_window == 1048576 and m.max_context_window == 1048576
     assert m.kv_gb_per_128k == 3.0
-    # Alternate, not part of the default resident set the install prompt offers.
-    assert m.id not in local_catalog.recommended_ids()
-
-
-def test_nemotron_3_super_is_a_hybrid_reasoner_alt_high_tier_at_q4() -> None:
-    # NVIDIA's US-made 120B/12B agentic reasoner: an alternate high-tier MoE at
-    # Unsloth's UD-Q4_K_XL. A HYBRID reasoner (enable_thinking chat-template toggle)
-    # that emits <think>, so it pins --reasoning-format deepseek like the Qwen hybrids.
-    m = local_catalog.get("nemotron-3-super-120b")
-    assert m is not None
-    assert m.tiers == ("high",)
-    assert not m.supports_vision and m.mmproj_include is None
-    assert m.supports_tools
-    assert m.supports_reasoning
-    assert m.reasoning_format == "deepseek"
-    assert m.hybrid_thinking
-    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
-    # The 4-bit dynamic quant the manifest pulls, from NVIDIA's Unsloth GGUF repo.
-    assert m.quant == "UD-Q4_K_XL"
-    assert "UD-Q4_K_XL" in m.gguf_include
-    assert m.hf_repo == "unsloth/NVIDIA-Nemotron-3-Super-120B-A12B-GGUF"
-    assert m.spec == "local:nemotron-3-super-120b"
-    # Size is on-disk GiB (the catalog unit), summed from the real shards (78.0 GiB),
-    # NOT HuggingFace's 83.8 decimal-GB listing — an overshoot there caps the install
-    # progress bar near 93% and reads as a stall.
-    assert m.size_gb == 78.0
-    # Serves the conservative gateway default with its native 1M window as the ceiling.
-    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    assert m.native_context_window == 1048576
     # Alternate, not part of the default resident set the install prompt offers.
     assert m.id not in local_catalog.recommended_ids()
 
@@ -583,7 +553,7 @@ def test_the_checkpoint_term_is_zero_where_nobody_measured_it() -> None:
     for model_id in ("gpt-oss-120b", "qwen3-vl-30b", "llama-3.3-70b"):
         model = local_catalog.get(model_id)
         assert model is not None and model.checkpoint_gb == 0.0
-    for model_id in ("nemotron-3-super-120b", "nemotron-3.5-lightning-30b"):
+    for model_id in ("nemotron-3.5-lightning-30b",):
         model = local_catalog.get(model_id)
         assert model is not None and model.checkpoint_gb == 0.0
 

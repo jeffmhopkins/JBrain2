@@ -96,8 +96,8 @@ def test_hybrid_reasoner_picks_thinking_vs_non_thinking_by_effort() -> None:
 
 def test_unified_reasoner_ignores_effort() -> None:
     # Nemotron's card is unified (no split) — same values whether thinking is on or off.
-    a = model_sampling.default_sampling("local", "nemotron-3-super-120b", "none")
-    b = model_sampling.default_sampling("local", "nemotron-3-super-120b", "high")
+    a = model_sampling.default_sampling("local", "nemotron-3.5-lightning-30b", "none")
+    b = model_sampling.default_sampling("local", "nemotron-3.5-lightning-30b", "high")
     assert a == b == Sampling(temperature=1.0, top_p=0.95, top_k=0, min_p=0.0)
 
 
