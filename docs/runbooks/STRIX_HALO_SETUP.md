@@ -204,7 +204,9 @@ both resides and warms it.
 > fingerprinted over the model's rendered launch line + persona + tool schemas (any change
 > that could stale a slot moves the filename) and each save prunes its model's stale
 > fingerprints, so the cost is one ~2 GiB file per model under
-> `/models/.kvslots/<model>/`. The keeper restores before it primes (a cold prime becomes a
+> `/models/.kvslots/<model>/` — the one writable subtree in the local-llm service's
+> otherwise read-only weights mount (a nested rw bind in docker-compose; the weights
+> themselves stay untouchable by the inference process). The keeper restores before it primes (a cold prime becomes a
 > ~1 s cache hit instead of a ~60 s prefill), saves after, and probes every settled tick so
 > a single-slot clobber heals off-turn; the router restores inline before an agent turn
 > that would otherwise re-prefill. Saves and restores land in Vitals as
