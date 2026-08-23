@@ -93,7 +93,9 @@ class FakeLlmClient:
             }
         )
         if not self._turns:
-            return LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
+            # Input and output DIFFER on purpose: a caller that reads the wrong usage
+            # field off a turn cannot be caught by a fake where the two are equal.
+            return LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(7, 1))
         return self._turns[min(len(self.converse_calls) - 1, len(self._turns) - 1)]
 
     async def converse_stream(
@@ -122,7 +124,7 @@ class FakeLlmClient:
         turn = (
             self._turns[min(idx, len(self._turns) - 1)]
             if self._turns
-            else LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
+            else LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(7, 1))
         )
         # A reasoning turn streams its thinking trace ahead of the answer, mirroring
         # the local gateway's `reasoning_content` channel.

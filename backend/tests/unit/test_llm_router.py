@@ -14,6 +14,7 @@ from jbrain.llm import (
     LlmClient,
     LlmError,
     LlmRouter,
+    LlmTool,
     LlmTurn,
     LlmUsage,
     Sampling,
@@ -993,3 +994,92 @@ async def test_a_fast_local_turn_costs_no_probe(monkeypatch: pytest.MonkeyPatch)
     await _drain(router)
     await asyncio.sleep(0.3)
     assert probed == [], "the watch must not outlive the turn"
+
+
+class _RecordingKvStore:
+    """The router-facing surface of the disk layer, recording what reached it."""
+
+    def __init__(self, dispatched: list | None = None) -> None:
+        self.restores: list[tuple[str, str, int]] = []  # (served, system, tool_count)
+        self.noted: list[tuple[str, int]] = []
+        self.raise_on_restore = False
+        # Shared with the FakeLlmClient's call list, so ORDER is assertable: a restore
+        # that ran after dispatch would be pure waste — the prefill already happened.
+        self._dispatched = dispatched
+
+    async def restore_if_lost(self, served: str, system: str, tools) -> bool:
+        assert not self._dispatched, "restore must run BEFORE the turn is dispatched"
+        self.restores.append((served, system, len(list(tools))))
+        if self.raise_on_restore:
+            raise RuntimeError("disk went away")
+        return True
+
+    def note_agent_turn(self, served: str, input_tokens: int) -> None:
+        self.noted.append((served, input_tokens))
+
+
+async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> None:
+    """Between admission and dispatch is the one moment a lost prefix can still be restored
+    for ~2 s instead of the turn paying a ~60 s prefill — and afterwards the turn's own
+    prompt size is recorded, so the conversation's slot keeps reading as 'prefix present'."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore(dispatched=fake.converse_calls)
+    tools = [LlmTool(name="notes", description="d", input_schema={})]
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    await router.converse("agent.turn", system="the persona", messages=[], tools=tools)
+    # The store fingerprints (system, tools): the router must pass the turn's own, not
+    # placeholders — anything else makes the file-exists check miss forever, silently.
+    assert store.restores == [("gpt-oss-120b", "the persona", 1)]
+    # The noted size must be the INPUT tokens (the fake splits input=7/output=1 exactly
+    # so the wrong field cannot hide).
+    assert store.noted == [("gpt-oss-120b", 7)]
+
+
+async def test_background_tasks_and_cloud_routes_never_touch_the_disk_layer() -> None:
+    """Only the interactive task earns the extra /slots read: a background task restoring
+    the jerv prefix over its own working slot would be actively wrong, and a cloud model
+    has no slots at all."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    router = LlmRouter(
+        {"local": fake, "xai": fake},
+        {"note.extract": ("local", "gpt-oss-120b"), "agent.turn": ("xai", "grok-4.3")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    await router.converse("note.extract", system="s", messages=[])  # local, wrong task
+    await router.converse("agent.turn", system="s", messages=[])  # right task, cloud
+    assert store.restores == []
+    assert store.noted == []
+
+
+async def test_a_broken_disk_layer_never_fails_a_turn() -> None:
+    fake = FakeLlmClient()
+    store = _RecordingKvStore()
+    store.raise_on_restore = True
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    turn = await router.converse("agent.turn", system="s", messages=[])
+    assert turn is not None and len(fake.converse_calls) == 1
+
+
+async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
+    """converse_stream is the path a real jerv turn takes; the hook must not live only on
+    the non-streaming twin."""
+    fake = FakeLlmClient()
+    store = _RecordingKvStore(dispatched=fake.stream_calls)
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    async for _ in router.converse_stream("agent.turn", system="s", messages=[]):
+        pass
+    assert store.restores == [("gpt-oss-120b", "s", 0)]
+    assert store.noted == [("gpt-oss-120b", 7)]

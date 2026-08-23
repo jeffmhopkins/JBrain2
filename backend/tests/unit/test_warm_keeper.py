@@ -13,7 +13,7 @@ from typing import cast
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import LlmTool
+from jbrain.llm.types import LlmTool, LlmTurn, LlmUsage
 from jbrain.llm.warm_keeper import WarmKeeper
 
 _DEFAULT = object()  # "argument not given", distinct from an explicit None
@@ -88,7 +88,17 @@ class _FakeRouter:
         if self.fail:
             raise RuntimeError("gateway cold")
         self.converses.append({"task": task, "system": system, "tools": list(tools)})
-        return None  # the keeper discards the turn — it wants the prefill in cache
+        # The keeper wants the prefill in cache, but it READS the turn's usage now: the
+        # prime's input_tokens is what identifies the primed slot for the disk save.
+        # DISTINCTIVE on purpose (not the real prefix's 28757): a keeper that hardcoded
+        # the measured constant instead of reading the turn's own usage would still match
+        # a realistic fake — this value only ever arrives by being read off this turn.
+        return LlmTurn(
+            text="",
+            tool_calls=(),
+            stop_reason="end_turn",
+            usage=LlmUsage(input_tokens=12345, output_tokens=1),
+        )
 
 
 class _Registry:
@@ -372,3 +382,87 @@ async def test_a_failed_preload_still_reaches_the_prime_rather_than_short_circui
 # `gpt-oss-120b` (id == served name) a lookup by the wrong key passes the test anyway.
 _VL_ID = "qwen3-vl-30b"
 _VL_SERVED = "qwen3-vl-30b-a3b"
+
+
+async def _none_held() -> Collection[str]:
+    return ()
+
+
+class _FakeKvStore:
+    """Scripted disk layer, recording call order against the gateway's event list."""
+
+    def __init__(self, gateway: _FakeGateway) -> None:
+        self._gateway = gateway
+        self.restores: list[str] = []
+        self.saves: list[tuple[str, int]] = []
+        self.restore_result = False
+        self.raise_on_restore = False
+        self.raise_on_save = False
+
+    async def restore_if_lost(self, served: str, system: str, tools) -> bool:
+        self._gateway.events.append("kv_restore")
+        self.restores.append(served)
+        if self.raise_on_restore:
+            raise RuntimeError("disk went away")
+        return self.restore_result
+
+    async def save_after_prime(self, served: str, system: str, tools, prime_tokens: int) -> bool:
+        self._gateway.events.append("kv_save")
+        self.saves.append((served, prime_tokens))
+        if self.raise_on_save:
+            raise RuntimeError("disk went away")
+        return True
+
+
+def _kept_with_store(
+    served: str = "gpt-oss-120b", *, running: Collection[str] = ()
+) -> tuple[WarmKeeper, _FakeGateway, _FakeRouter, _FakeKvStore]:
+    gateway = _FakeGateway(running=running)
+    router = _FakeRouter(served, gateway)
+    store = _FakeKvStore(gateway)
+    keeper = WarmKeeper(
+        gateway=cast(LocalGatewayClient, gateway),
+        registry=cast(ToolRegistry, _Registry()),
+        liveness=None,
+        router=cast(LlmRouter, router),
+        hold_loader=_none_held,
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    return keeper, gateway, router, store
+
+
+async def test_a_cold_prime_restores_from_disk_first_then_saves_what_it_primed() -> None:
+    """The disk layer's whole contract with the keeper in one order: weights up, restore
+    (so the prime is a cache hit, not a 60 s prefill), prime, save keyed by the prime's
+    own token count. A save that ran before the prime would capture the wrong state —
+    that ordering IS v1's fatal bug, so the order is the assertion."""
+    keeper, gateway, router, store = _kept_with_store()
+    assert await keeper.reconcile_once() is True
+    assert gateway.events == ["load", "kv_restore", "prime", "kv_save"]
+    assert store.saves == [("gpt-oss-120b", 12345)], (
+        "the count must be the prime turn's own usage, not any constant"
+    )
+
+
+async def test_a_settled_tick_still_probes_for_a_lost_prefix() -> None:
+    """The memo cannot see a slot being overwritten by traffic; the store can. Once primed,
+    every tick still asks the store — a cheap /slots read — so a single-slot clobber is
+    healed off-turn instead of by the owner's next message."""
+    keeper, gateway, router, store = _kept_with_store(running=("gpt-oss-120b",))
+    assert await keeper.reconcile_once() is True  # primes and memoises
+    events_after_prime = list(gateway.events)
+    assert await keeper.reconcile_once() is True  # settled — but must still probe
+    assert gateway.events == [*events_after_prime, "kv_restore"]
+    assert len(router.converses) == 1, "the settled tick must not re-prime"
+
+
+async def test_a_broken_disk_layer_never_wedges_the_keeper() -> None:
+    """Best-effort means best-effort: a raising restore still lets the prime run, and a
+    raising save still lets the reconcile settle — the disk layer can only ever add speed,
+    never subtract availability."""
+    keeper, gateway, router, store = _kept_with_store()
+    store.raise_on_restore = True
+    store.raise_on_save = True
+    assert await keeper.reconcile_once() is True
+    assert "prime" in gateway.events
+    assert len(router.converses) == 1

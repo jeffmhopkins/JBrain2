@@ -22,6 +22,7 @@ import structlog
 
 from jbrain import box_events
 from jbrain.config import Settings
+from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import local_catalog, model_sampling, prefill
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
@@ -318,9 +319,15 @@ class LlmRouter:
         residency: LocalAdmitter | None = None,
         local_enabled: bool = True,
         slots_probe: prefill.SlotsReader | None = None,
+        kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
     ):
         self._clients = clients
         self._tasks = tasks
+        # The disk layer for the agent-turn prefix (jbrain.llm.kv_prefix). The router is
+        # where a turn is late enough to know its model and early enough to fix the cache:
+        # between admission and dispatch, a lost prefix is restored in ~2 s instead of the
+        # turn paying a ~60 s prefill. Optional; None keeps the prior behaviour.
+        self._kv_prefix = kv_prefix
         self._recorder = recorder
         # When local hosting is off, a stale stored `local:` override (saved while
         # it was on, then disabled) is ignored rather than routed at a dead
@@ -356,6 +363,35 @@ class LlmRouter:
         # through eating its prompt (jbrain.llm.prefill). Only the streamed path takes it, and
         # only on a local route; None everywhere else, where the watch starts no task.
         self._slots_probe = slots_probe
+
+    async def _ensure_agent_prefix(
+        self, task: str, provider: str, model: str, system: str, tools: Sequence[LlmTool]
+    ) -> None:
+        """Between admission and dispatch, put the agent-turn prefix back from disk if no
+        slot holds it — ~2 s against the ~60 s prefill the turn would otherwise pay. Only
+        the interactive task, only a local model, always best-effort: any failure leaves
+        the turn to prefill exactly as it would have without the store."""
+        if (
+            self._kv_prefix is None
+            or task != kv_prefix_mod.AGENT_TURN_TASK
+            or provider != local_catalog.LOCAL_PROVIDER
+        ):
+            return
+        try:
+            await self._kv_prefix.restore_if_lost(model, system, tools)
+        except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
+            log.warning("llm.kv_restore_failed", model=model, exc_info=True)
+
+    def _note_agent_turn(self, task: str, provider: str, model: str, input_tokens: int) -> None:
+        """Tell the store a real jerv turn's prompt size, so the slot that conversation
+        grew keeps reading as 'prefix present' (restoring over it would wipe cached
+        history to re-plant a prefix the conversation already extends)."""
+        if (
+            self._kv_prefix is not None
+            and task == kv_prefix_mod.AGENT_TURN_TASK
+            and provider == local_catalog.LOCAL_PROVIDER
+        ):
+            self._kv_prefix.note_agent_turn(model, input_tokens)
 
     async def _admit_local(self, provider: str, model: str) -> None:
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
@@ -695,6 +731,7 @@ class LlmRouter:
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._admit_local(provider, model)
+        await self._ensure_agent_prefix(task, provider, model, system, tools)
         start = time.perf_counter()
         turn = await client.converse(
             model=model,
@@ -706,6 +743,7 @@ class LlmRouter:
             sampling=resolved_sampling,
         )
         elapsed = time.perf_counter() - start
+        self._note_agent_turn(task, provider, model, turn.usage.input_tokens)
         await self._record(task, provider, model, turn.usage)
         log.info(
             "llm.converse",
@@ -753,6 +791,7 @@ class LlmRouter:
         # longest silence a local turn has. `watch` publishes how far in it is while the gap
         # runs, and stops the moment anything streams. The denominator is an estimate off the
         # prompt's own size, which `calibrate` below corrects from the turn's real usage.
+        await self._ensure_agent_prefix(task, provider, model, system, tools)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         prompt_chars = _prompt_chars(system, messages, tools)
         # The row is opened by the first published fraction, so a turn that answers off a
@@ -791,6 +830,7 @@ class LlmRouter:
             # calibration this box offers, and it arrives on every turn.
             if probe is not None:
                 prefill.calibrate(model, prompt_chars, final.usage.input_tokens)
+            self._note_agent_turn(task, provider, model, final.usage.input_tokens)
             await self._record(task, provider, model, final.usage)
             log.info(
                 "llm.converse_stream",
@@ -816,6 +856,7 @@ def build_router(
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     residency: LocalAdmitter,
     slots_probe: prefill.SlotsReader | None = None,
+    kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -867,4 +908,5 @@ def build_router(
         residency=residency,
         slots_probe=slots_probe,
         local_enabled=settings.local_llm_enabled,
+        kv_prefix=kv_prefix,
     )

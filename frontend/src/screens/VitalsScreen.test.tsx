@@ -569,6 +569,36 @@ describe("what the box was doing", () => {
     ).toBeInTheDocument();
   });
 
+  it("labels the prompt-cache disk save and restore in the owner's language", async () => {
+    // kv_prefix events explain latency the owner would otherwise puzzle over: a restore row
+    // is WHY a turn was fast after a boot; its detail carries the numbers.
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "kv_prefix_restored",
+        subject: "gpt-oss-120b",
+        detail: "28757-token jerv prefix restored from disk in 1840 ms",
+        status: "ok",
+        ended_ms: Date.now() - 5_000,
+      }),
+      event({
+        kind: "kv_prefix_saved",
+        subject: "gpt-oss-120b",
+        detail: "28757-token jerv prefix saved to disk",
+        status: "ok",
+        ended_ms: Date.now() - 9_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(
+      await screen.findByText("restored gpt-oss-120b's prompt cache from disk"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("saved gpt-oss-120b's prompt cache to disk")).toBeInTheDocument();
+    expect(
+      screen.getByText("28757-token jerv prefix restored from disk in 1840 ms"),
+    ).toBeInTheDocument();
+  });
+
   it("says when a background job was given up on because its model cannot fit", async () => {
     // The subject is the JOB KIND: a directly-enqueued job has no run step, so this row is
     // the only trace of the failure the owner has, and the detail is its payload.

@@ -1105,3 +1105,30 @@ async def test_a_model_absent_from_the_catalog_is_not_charged_at_all() -> None:
         pass
 
     assert touched is False
+
+
+async def test_slot_save_and_restore_speak_llama_servers_exact_dialect() -> None:
+    """The kv-prefix store's verification hangs off these two calls, so the wire shape is
+    the contract: POST through llama-swap's upstream passthrough, the action as a query
+    param, the filename in the JSON body — and a non-resident model refused before any of
+    it, because reaching the passthrough makes llama-swap LOAD outside residency."""
+    seen: list[tuple[str, str, bytes]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "gpt-oss-120b"}]})
+        seen.append((req.method, str(req.url), req.content))
+        if "action=save" in str(req.url):
+            return httpx.Response(200, json={"id_slot": 1, "n_saved": 28757})
+        return httpx.Response(200, json={"id_slot": 0, "n_restored": 28757})
+
+    gw = _client(handle)
+    saved = await gw.save_slot("gpt-oss-120b", 1, "abc.kvslot")
+    restored = await gw.restore_slot("gpt-oss-120b", 0, "abc.kvslot")
+    assert saved["n_saved"] == 28757 and restored["n_restored"] == 28757
+    assert seen[0][0] == "POST" and "/upstream/gpt-oss-120b/slots/1?action=save" in seen[0][1]
+    assert b'"filename"' in seen[0][2] and b"abc.kvslot" in seen[0][2]
+    assert "/upstream/gpt-oss-120b/slots/0?action=restore" in seen[1][1]
+
+    with pytest.raises(LocalGatewayError):
+        await gw.save_slot("not-resident-model", 0, "abc.kvslot")

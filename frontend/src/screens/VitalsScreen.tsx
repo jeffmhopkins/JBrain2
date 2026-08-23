@@ -397,6 +397,16 @@ function eventLabel(event: BoxEvent): string {
     // a refusal is an action taken, and it must not read softer than what it did.
     return `the memory ledger refused ${event.subject}`;
   }
+  if (event.kind === "kv_prefix_saved") {
+    // The jerv prompt cache written to disk after a prime — rare, and worth a row because
+    // it is the artifact every fast restore below draws on.
+    return `saved ${event.subject}'s prompt cache to disk`;
+  }
+  if (event.kind === "kv_prefix_restored") {
+    // The ~2 s that replaced a ~60 s prefill. The detail carries the token count and
+    // elapsed ms; the label says why the owner's turn was NOT slow.
+    return `restored ${event.subject}'s prompt cache from disk`;
+  }
   if (event.kind === "job_refused_no_room") {
     // A background job the box gave up on because the model it needs cannot fit. The subject
     // is the job kind, not a model: this row is the only trace the owner has of the job.
