@@ -52,6 +52,7 @@ from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysi
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
     ResidencyCoordinator,
@@ -358,6 +359,23 @@ async def _maintain_metrics_safely(maker: async_sessionmaker[AsyncSession], *, b
         log.warning("worker.metrics_maintain_error", error=repr(exc))
 
 
+async def _sweep_reservations_safely(ledger: ReservationLedger | None) -> None:
+    """Collect memory reservations abandoned by a process that died mid-transition.
+
+    A BACKSTOP, never the mechanism: every failure path releases its own charge, so anything
+    this collects is a bug report and `ledger.swept_abandoned` says so at warning. Without it a
+    charge with no process behind it shrinks the budget permanently and the box slowly refuses
+    everything. Rides the maintenance tick because that is where this file already prunes the
+    other tables that outlive their subjects, and it is fault-swallowed like the rest — a
+    missed sweep must never stop the job loop."""
+    if ledger is None:
+        return
+    try:
+        await ledger.sweep()
+    except Exception as exc:  # noqa: BLE001 — a missed sweep must not kill the worker
+        log.warning("worker.reservation_sweep_error", error=repr(exc))
+
+
 async def run_loop(
     maker: async_sessionmaker[AsyncSession],
     handlers: dict[str, Handler],
@@ -367,6 +385,7 @@ async def run_loop(
     preconditions: Mapping[str, Precondition] | None = None,
     supervisor_client: httpx.AsyncClient | None = None,
     supervisor_token: str = "",
+    reservations: ReservationLedger | None = None,
 ) -> None:
     backfilled = False
     last_heartbeat = 0.0
@@ -426,6 +445,7 @@ async def run_loop(
             last_sample = now
         if supervisor_client is not None and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS:
             await _maintain_metrics_safely(maker, boot=not metrics_booted)
+            await _sweep_reservations_safely(reservations)
             metrics_booted = True
             last_maintenance = now
         try:
@@ -523,11 +543,20 @@ async def run() -> None:
     # (jbrain.llm.gpu_guard): the worker drives its own model swaps over the same box, so
     # leaving it unguarded would leave the exact hole the api side just closed. Built above
     # rather than at its old spot further down because the guard needs it at load time.
+    worker_gpu_probe = gpu_guard.SupervisorGpuMemProbe(
+        lambda: supervisor_client, settings.supervisor_token
+    )
+    # ONE ledger for this process, shared by the gateway that charges and the loop that sweeps.
+    # Two instances would each keep their own record of what they charged, and the sweeper would
+    # be collecting rows the other one still believes it is holding.
+    worker_reservations = ReservationLedger(maker, source="worker", device_probe=worker_gpu_probe)
     llm_gateway = LocalGatewayClient(
         settings.local_llm_url,
-        gpu_probe=gpu_guard.SupervisorGpuMemProbe(
-            lambda: supervisor_client, settings.supervisor_token
-        ),
+        gpu_probe=worker_gpu_probe,
+        # The reservation ledger, IN SHADOW — see main.py. Named "worker" so a phantom row can
+        # be traced to the half of the box that left it, and so the two processes' charges are
+        # distinguishable in the one table they share.
+        reservations=worker_reservations,
         # Same overrides the coordinator below budgets with, so the guard reserves for the
         # window llama-swap will really serve rather than the catalog default.
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
@@ -587,10 +616,9 @@ async def run() -> None:
             # and while it waits it can hold the per-process load lock against a chat turn.
             box_try_lock=pg_box_try_lock(maker),
             # For the post-load measurement (predicted vs actual device cost). The guard itself
-            # lives on the gateway above, where no caller can route around it.
-            gpu_probe=gpu_guard.SupervisorGpuMemProbe(
-                lambda: supervisor_client, settings.supervisor_token
-            ),
+            # lives on the gateway above, where no caller can route around it. The SAME probe
+            # instance the gateway and the ledger use, not a third of its own.
+            gpu_probe=worker_gpu_probe,
             # No WarmKeeper in this process — the api owns priming — so there is no memo
             # to invalidate. Named rather than omitted: this is the last way the worker's
             # gate differs from the api's, and it should be visible at the wiring.
@@ -826,6 +854,21 @@ async def run() -> None:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same
         # live settings store the LLM router uses, so the operator can silence it
         # without a redeploy.
+        # RECONCILE ONCE, before the first job runs. Rows for models that are no longer on the
+        # box are charges nobody will ever release; left alone they shrink the budget for good
+        # and the box slowly refuses everything. Only SETTLED rows are swept — a PLANNED or
+        # STARTING row is what a load in progress looks like, and llama-swap owns the model
+        # processes, so this process restarting killed nothing. Best-effort: a reconciliation
+        # that cannot run must not stop the worker from working.
+        with contextlib.suppress(Exception):
+            resident = await llm_gateway.running()
+            phantoms, foreign = await worker_reservations.reconcile(resident)
+            if phantoms or foreign:
+                log.warning(
+                    "worker.reservations_reconciled",
+                    phantoms=len(phantoms),
+                    foreign=foreign,
+                )
         await run_loop(
             maker,
             handlers,
@@ -834,6 +877,7 @@ async def run() -> None:
             preconditions=preconditions,
             supervisor_client=supervisor_client,
             supervisor_token=settings.supervisor_token,
+            reservations=worker_reservations,
         )
     finally:
         if supervisor_client is not None:

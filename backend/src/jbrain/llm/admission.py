@@ -164,25 +164,43 @@ def admit(
     a caller that retries it will retry it forever. Everything else that does not fit is
     `DEFERRED`: the box could hold it once something leaves."""
     rows = list(rows)
+    # BOTH layers are evaluated before anything is returned, and INFEASIBLE beats DEFERRED.
+    # Returning the first failing layer would report "retry later" for a request that is
+    # infeasible on the OTHER one — and the caller then retries it forever, which is the exact
+    # cost this split exists to avoid. Unreachable on today's constants (the host reserve is
+    # the larger, so host binds first), and pinned anyway: the constants live in another module
+    # and nothing holds that relationship still.
+    refusals: list[Decision] = []
     for layer, pool in ((Layer.HOST, host), (Layer.DEVICE, device)):
         need = request.host_gb if layer is Layer.HOST else request.device_gb
         usable = pool.total_gb - pool.reserve_gb
         if need > usable:
-            return Decision(
-                Outcome.INFEASIBLE,
-                f"{request.served_model} needs {need:.1f} GB of {layer} memory and this box "
-                f"has {usable:.1f} GB to give ({pool.total_gb:.1f} total, {pool.reserve_gb:.1f} "
-                f"held in reserve) — it will not fit however long you wait.",
-                layer,
+            refusals.append(
+                Decision(
+                    Outcome.INFEASIBLE,
+                    f"{request.served_model} needs {need:.1f} GB of {layer} memory and this "
+                    f"box has {usable:.1f} GB to give ({pool.total_gb:.1f} total, "
+                    f"{pool.reserve_gb:.1f} held in reserve) — it will not fit however long "
+                    "you wait.",
+                    layer,
+                )
             )
+            continue
         available, how = _available_gb(pool, charged_gb(rows, layer))
         if need > available:
-            return Decision(
-                Outcome.DEFERRED,
-                f"{request.served_model} needs {need:.1f} GB of {layer} memory and there is "
-                f"{how}. Waiting for room rather than risking the box.",
-                layer,
+            refusals.append(
+                Decision(
+                    Outcome.DEFERRED,
+                    f"{request.served_model} needs {need:.1f} GB of {layer} memory and there "
+                    f"is {how}. Waiting for room rather than risking the box.",
+                    layer,
+                )
             )
+    for refusal in refusals:
+        if refusal.outcome is Outcome.INFEASIBLE:
+            return refusal
+    if refusals:
+        return refusals[0]
     return Decision(Outcome.ADMIT, f"{request.served_model} fits in both pools.", None)
 
 
@@ -191,12 +209,15 @@ def admit(
 # How long a reservation may sit in one phase before a sweep treats it as abandoned. A
 # BACKSTOP, not the mechanism: every failure path rolls its own charge back explicitly, so a
 # row that fires this is a bug report. The figures differ by phase because the phases do:
-# PLANNED is the gap between charging and spawning (moments), STARTING is a cold load of a
-# 69 GB model (MEASURED at 198 s on this box, so the ceiling is deliberately generous — a load
-# swept out from under itself would let a second one in beside it), and DRAINING is
-# llama-swap's 10 s graceful stop plus its escalation to a kill.
+# PLANNED is charged-but-not-spawned, and it is NOT "moments" as a first version of this said:
+# between the charge and the spawn sit the eviction of one or more models, a wait for a stop to
+# settle (bounded at 60 s), and possibly a llama-swap config regeneration. Two minutes was
+# thinner than one of those steps, and expiring a PLANNED row under a live load is the worst
+# case this table has — the load carries on and the ledger forgets it. STARTING is a cold load
+# of a 69 GB model (MEASURED at 198 s here, so the ceiling is deliberately generous for the
+# same reason). DRAINING is llama-swap's 10 s graceful stop plus its escalation to a kill.
 TTL = {
-    Phase.PLANNED: timedelta(minutes=2),
+    Phase.PLANNED: timedelta(minutes=10),
     Phase.STARTING: timedelta(minutes=15),
     Phase.DRAINING: timedelta(minutes=5),
 }
@@ -229,6 +250,10 @@ def reconcile_split(
     the arithmetic that protects the box, and a made-up number that is too small is how a gate
     admits a load it should have refused. It is reported instead, so the caller can say so out
     loud — and the `min()` against the live measurement is what covers it meanwhile."""
+    # `list(rows)`, because this reads it TWICE. Handed a generator, the second pass sees
+    # nothing, `charged` comes back empty, and every resident model is reported as foreign —
+    # a public function silently changing its answer with the caller's container type.
+    rows = list(rows)
     resident = set(resident)
     phantoms = [r.instance_id for r in rows if r.served_model not in resident]
     charged = {r.served_model for r in rows}

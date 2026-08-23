@@ -1248,12 +1248,15 @@ def declared_gb(
 
     THE SPLIT IS REAL EVEN THOUGH THE POOL IS ONE. On Strix Halo the iGPU draws GTT from system
     RAM, so every device byte is also a host byte — device is a SUBSET of host, never a second
-    pool to add on. What distinguishes them is what is host-ONLY: the context checkpoints
-    (`common_prompt_checkpoint` holds `std::vector<uint8_t>`, CONFIRMED on the box — raising the
-    count from 2 to 16 left GTT unchanged to the centibyte) and llama.cpp's `--cache-ram`
-    buffer. Those cost host RAM and add nothing to the GTT cap pressure that is this box's
-    documented hang mode, so charging them to the device column would refuse loads that are
-    safe, and charging them to neither is how the host ran out while GTT looked comfortable.
+    pool to add on. What distinguishes them is what is host-ONLY: today that is the context
+    checkpoints (`common_prompt_checkpoint` holds `std::vector<uint8_t>`, CONFIRMED on the box —
+    raising the count from 2 to 16 left GTT unchanged to the centibyte), plus `--cache-ram`,
+    which is carried in the sum but currently contributes NOTHING because `CACHE_RAM_GB` is 0.0
+    — it is here so that flipping the serving flag moves this number with it, not because it is
+    doing work today. Those cost host RAM and add nothing to the GTT cap pressure that is this
+    box's documented hang mode, so charging them to the device column would refuse loads that
+    are safe, and charging them to neither is how the host ran out while GTT looked
+    comfortable.
 
     The vision attention buffer is counted at its RESIDENT size, not the load-time warmup size
     `load_footprint_gb` uses. That difference is deliberate and points the other way from the

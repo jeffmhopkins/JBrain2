@@ -34,6 +34,13 @@ both writers are the owner's machinery. DELETE is granted because discharge is a
 absence of a row is what "this instance is dead" means here, and a tombstone phase would be
 one more state to get wrong.
 
+`is_full_owner()` RATHER THAN `is_owner()`, which is where this parts company with box_events.
+`is_owner()` keys on principal KIND, so an owner-NARROWED agent session — a tool job firewalled
+to one domain — satisfies it and would hold DELETE on this table. For telemetry that is a
+reasonable inherited default; for the table whose corruption is a host power cycle it is a
+decision, and the decision is that a narrowed session has no business editing the box's memory
+accounting. `app.is_full_owner()` (migration 0061) is owner identity that is not narrowed.
+
 Revision ID: 0170
 Revises: 0169
 Create Date: 2026-08-23
@@ -56,22 +63,32 @@ def upgrade() -> None:
             phase text NOT NULL DEFAULT 'planned',
             host_gb double precision NOT NULL,
             device_gb double precision NOT NULL,
+            -- The "double-counting is unrepresentable" claim, made a fact rather than an
+            -- assertion. On Strix Halo the iGPU draws GTT from system RAM, so every device
+            -- byte IS a host byte: device is a subset of host, never a second pool to add on.
+            -- Without this a future writer can charge a device figure larger than its host
+            -- figure, or a host figure that omits the device bytes — the exact miscount the
+            -- row shape is supposed to have designed away. The invariant belongs where no
+            -- caller can route around it.
+            CONSTRAINT model_reservations_device_within_host
+                CHECK (device_gb >= 0 AND host_gb >= device_gb),
             declared_at timestamptz NOT NULL DEFAULT now(),
             phase_at timestamptz NOT NULL DEFAULT now(),
             source text NOT NULL DEFAULT ''
         )
         """
     )
-    # The only read is "the whole ledger" — admission sums every live row, and there are at
-    # most a handful — so no index is warranted beyond the primary key. The one query that is
-    # not a full scan is the TTL sweep, which orders by `phase_at`.
-    op.execute("CREATE INDEX model_reservations_phase_at_idx ON app.model_reservations (phase_at)")
+    # NO SECONDARY INDEX. The only read is "the whole ledger" — admission sums every live row
+    # under the box lock, and there are at most a handful of them. A first version carried a
+    # `phase_at` index justified by a TTL sweep "which orders by phase_at"; the sweep does no
+    # such thing, and an index defended by a query that does not exist is a claim about the
+    # code that the next reader will believe.
     op.execute("ALTER TABLE app.model_reservations ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.model_reservations FORCE ROW LEVEL SECURITY")
     op.execute(
         """
         CREATE POLICY model_reservations_owner ON app.model_reservations
-        USING (app.is_owner()) WITH CHECK (app.is_owner())
+        USING (app.is_full_owner()) WITH CHECK (app.is_full_owner())
         """
     )
     # Charge (INSERT), advance a phase (UPDATE), discharge and sweep (DELETE), admit (SELECT)

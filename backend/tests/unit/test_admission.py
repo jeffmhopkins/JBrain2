@@ -227,8 +227,12 @@ def test_a_transitional_reservation_expires_only_after_its_own_ceiling() -> None
 
     assert not is_abandoned(Phase.STARTING, timedelta(seconds=198))
     assert is_abandoned(Phase.STARTING, timedelta(hours=1))
-    assert not is_abandoned(Phase.PLANNED, timedelta(seconds=30))
-    assert is_abandoned(Phase.PLANNED, timedelta(minutes=10))
+    # PLANNED is not "moments": between the charge and the spawn sit an eviction, a bounded
+    # 60 s wait for a stop to settle, and possibly a config regeneration. Expiring one under a
+    # live load is the worst case this table has — the load carries on and the ledger forgets
+    # it — so the ceiling must clear the slowest of those steps by a wide margin.
+    assert not is_abandoned(Phase.PLANNED, timedelta(seconds=90))
+    assert is_abandoned(Phase.PLANNED, timedelta(hours=1))
 
 
 def test_reconcile_drops_phantoms_and_only_REPORTS_what_it_did_not_admit() -> None:
@@ -250,3 +254,32 @@ def test_reconcile_drops_phantoms_and_only_REPORTS_what_it_did_not_admit() -> No
     phantoms, foreign = reconcile_split(rows, {"gpt-oss-120b", "comfyui-sdxl"})
     assert phantoms == ["ghost"]
     assert foreign == ["comfyui-sdxl"]
+
+
+def test_INFEASIBLE_on_either_layer_beats_DEFERRED_on_the_other() -> None:
+    """Both layers are evaluated before anything is returned, and the severer answer wins.
+
+    Returning the first failing layer would report "retry later" for a request that is
+    infeasible on the other one — and the caller then retries it forever, which is exactly the
+    cost the two-outcome split exists to avoid. Unreachable on today's constants; pinned anyway,
+    because those constants live in another module and nothing holds the relationship still."""
+    d = admit(
+        _res("lopsided", 40.0, 40.0),
+        [_res("resident", 90.0, 90.0)],  # host is merely FULL: deferred, and evaluated first
+        host=_pool(121.0),
+        device=_pool(30.0),  # device could never hold 40 GB on an empty box: infeasible
+    )
+    assert d.outcome is Outcome.INFEASIBLE, "the first failing layer answered for both"
+    assert d.layer is Layer.DEVICE
+
+
+def test_reconcile_split_gives_the_same_answer_for_a_generator() -> None:
+    """It reads `rows` twice. Handed a generator, the second pass sees nothing, `charged` comes
+    back empty, and EVERY resident model is reported as foreign — a public function silently
+    changing its answer with the caller's container type."""
+    from jbrain.llm.admission import reconcile_split
+
+    rows = [_res("gpt-oss-120b", 68.0, 68.0, instance="alive")]
+    as_list = reconcile_split(rows, {"gpt-oss-120b"})
+    as_generator = reconcile_split((r for r in rows), {"gpt-oss-120b"})
+    assert as_generator == as_list == ([], [])

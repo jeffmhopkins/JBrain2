@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2◐ L3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2b◻️ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -266,7 +266,7 @@ down 85 GB — it is now 60 s, sized off the config-regen case that actually pro
 *Risk:* low individually; the batch is the point. *Test:* one regression test each, every one
 mutation-checked by reverting the fix and confirming the failure message.
 
-### L2 — The ledger ◐
+### L2a — The ledger, in shadow ✅
 
 Introduce the row, the phases, the two columns, and the `min(measured, capacity − Σ ledger)`
 admission test. Make the ledger the only thing any admission path consults, and make
@@ -307,10 +307,67 @@ before any behaviour changes.
   written: the RLS isolation, a charge visible across two `ReservationLedger` instances standing
   in for the api and the worker, and `DRAINING` keeping its full charge until discharge.
 
-**Still to do: the wiring.** Making residency and the gateway admit against the ledger instead
-of against a reading, and charging/advancing/discharging around the real load lifecycle.
+**Wired, and deciding nothing.** `LocalGatewayClient` charges before a load, advances to
+STARTING then RESIDENT, releases on ANY failure including cancellation, marks DRAINING before an
+unload and discharges only on the confirmed 200 — the one moment llama-swap lets this codebase
+say the memory is back. Both processes construct one (`source="api"` / `"worker"`).
 
-*Risk:* high — that is the part that changes behaviour, and it cannot be split further: the
+**Shadow is the point of the split.** The ledger records what it WOULD have admitted and lets
+every load through. A ledger that has never charged a live load has no numbers to be judged on,
+and this repo has the precedent and the reason in `_note_not_ready`'s own words: "the fix removes
+the thing being measured, so shipping both together would only ever report zero." The
+disagreements go to `ledger.shadow_would_refuse`; L2b is `shadow=False`.
+
+#### L2a's own cold review — nine findings, all fixed
+
+A second independent reviewer, again barred from the branch, was pointed at the foundation. The
+severe ones composed into one story: **`reconcile()` could delete a live reservation, and
+nothing downstream could tell.**
+
+- **`reconcile()` swept rows that had not reached the box yet**, and the in-progress fix scoped
+  it by `source`, which is wrong for a deeper reason than the bug it was fixing: **llama-swap
+  owns the model processes**, so neither the api nor the worker restarting kills a model, and
+  "my process restarted, therefore my rows are dead" is false in both directions. PHASE is what
+  is conclusive: PLANNED and STARTING look exactly like a load in progress — 198 s of it, with
+  the model absent from `/running` — so only RESIDENT and DRAINING rows are sweepable.
+- **`advance()` and `discharge()` could not fail.** Zero-row updates were silent, which is what
+  made the above invisible: the load carries on, the model goes resident, and the ledger charges
+  nothing for it. `advance` now logs at error, and advancing to RESIDENT **re-charges at the
+  original declaration** — the box is holding it either way.
+- **`charge()`'s docstring promised what it does not control.** It claimed the wait is a SELECT
+  and an INSERT; `ensure_room` still holds the same advisory key across a whole evict-and-load
+  (L1 item 5, open by decision), so a charge can queue behind one. Corrected, plus a
+  `lock_timeout` so fifteen queued charges cannot become the api's whole connection pool.
+- **Two invariants moved from comment to constraint.** `CHECK (device_gb >= 0 AND host_gb >=
+  device_gb)` makes "double-counting is unrepresentable" a fact rather than an assertion; the
+  policy moved from `is_owner()` to **`is_full_owner()`**, so a domain-narrowed agent session
+  cannot read or write the box's memory accounting. Both proved against real Postgres.
+- An unknown `phase` string made the whole ledger **unreadable** (now falls back to RESIDENT —
+  full charge, no TTL, the only safe direction for a row this build cannot reason about);
+  `admit()` reported DEFERRED for a request INFEASIBLE on the other layer, so a caller would
+  retry it forever; `reconcile_split` gave a different answer for a generator; the PLANNED TTL
+  was 2 minutes against a gap containing a bounded 60 s stop-settle; an unmeasured pool degraded
+  the gate silently; and the reader-inventory guard **was false the day it landed** — it watched
+  two names and missed `read_page_cache_gb`, which five sites in the load path call.
+
+**One finding was NOT a defect and is recorded because it changes what this wave claims.** On
+this hardware the device layer's *ledger* arm can never bind: `declared_gb` makes device a subset
+of host, host capacity is 121 GB against a ~18 GB fraction reserve while device is ~124 GB
+against a 6 GB one, so `device_usable > host_usable` for every reachable state. The device layer
+binds only through its MEASUREMENT. That is conservative — the host arm is the real physical
+constraint and it is checked — but "both layers protect the GTT hang mode" would be an
+overstatement, and the two-layer shape earns its keep as future-proofing (a vLLM-style sleep
+moves bytes between the columns) rather than as a second live gate today.
+
+### L2b — Let it decide ◻️
+
+Flip `shadow=False`, and act on the two outcomes the arithmetic already separates: `DEFERRED`
+must defer a worker job rather than burn a retry, and `INFEASIBLE` must reach the owner as a 409
+that says the model will never fit. Do it after a stretch of real box traffic has been read back
+from `ledger.shadow_would_refuse` — if the ledger would have refused loads that in fact
+succeeded, the declaration is wrong and no amount of correct plumbing fixes that.
+
+*Risk:* high — this is the part that changes behaviour, and it cannot be split further: the
 moment admission stops reading memory, every layer that still does is inconsistent with it.
 
 ### L3 — Retire the duplicate budgets ◻️

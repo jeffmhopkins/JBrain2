@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import json
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Protocol
 
 import httpx
@@ -44,6 +44,8 @@ import structlog
 
 from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, prefill
+from jbrain.llm.admission import Phase
+from jbrain.llm.ledger import ReservationLedger
 
 log = structlog.get_logger()
 
@@ -142,6 +144,7 @@ class LocalGatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        reservations: ReservationLedger | None = None,
         config_regen: Callable[[], Awaitable[None]] | None = None,
         windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
@@ -158,6 +161,11 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # The reservation ledger (jbrain.llm.ledger), or None on a box without a database.
+        # IN SHADOW while it is being characterised: it charges and releases against the real
+        # load lifecycle and records what it WOULD have decided, and decides nothing. See
+        # `_reservation`.
+        self._reservations = reservations
         # What /running last reported, name -> state, and the non-ready subset we have
         # already narrated. Cached so a caller can ask `state_of` without a second round
         # trip; see `_note_not_ready`.
@@ -505,13 +513,24 @@ class LocalGatewayClient:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 30.0), transport=self._transport
             ) as client:
+                if self._reservations is not None:
+                    # Before the call, and it KEEPS THE FULL CHARGE. Discharging on the
+                    # shutdown intent is the one anti-pattern every prior-art scheduler names,
+                    # because the kernel has freed nothing at the moment the request is made.
+                    await self._reservations.draining(served_model)
                 resp = await client.post(f"{self._root}/api/models/unload/{served_model}")
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             await box_events.record(
                 box_events.MODEL_UNLOAD, served_model, status="failed", detail=str(exc)
             )
+            # The rows stay DRAINING and stay charged: a failed unload is a model that may
+            # well still be running, and the TTL sweep is what eventually decides otherwise.
             raise LocalGatewayError(str(exc)) from exc
+        if self._reservations is not None:
+            # CONFIRMED DEATH. This endpoint blocks until each targeted process has stopped, so
+            # a 200 is the one moment this codebase can honestly say the memory is back.
+            await self._reservations.discharge_model(served_model)
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
 
     async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
@@ -550,6 +569,13 @@ class LocalGatewayClient:
             survived = {n for n, st in states.items() if st != STATE_STOPPING}
             for served in sorted(before - survived - {loading}):
                 await box_events.record(box_events.MODEL_UNLOAD, served, detail=reason)
+                if self._reservations is not None:
+                    # THE ONE EVICTION NOBODY ELSE REPORTS. llama-swap's reload kills these
+                    # inside itself, so no `unload()` runs and nothing would ever release their
+                    # charges — they would sit RESIDENT until a process restart reconciled them,
+                    # shrinking the budget the whole time. This narration is already the only
+                    # place that knows they died; releasing here is the same fact, acted on.
+                    await self._reservations.discharge_model(served)
 
     async def props(self, served_model: str) -> dict[str, object]:
         """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
@@ -879,6 +905,44 @@ class LocalGatewayClient:
                     self._loading_now = None
                     self._loading.discard(served_model)
 
+    @contextlib.asynccontextmanager
+    async def _reservation(
+        self, served_model: str, model: local_catalog.LocalModel | None, window: int, slots: int
+    ) -> AsyncIterator[None]:
+        """Charge the ledger for the load about to run, and release it if the load fails.
+
+        The declaration is written down ONCE here and never recomputed for this instance —
+        the arithmetic that admitted a model is the arithmetic that protects it. `STARTING`
+        goes in before the load rather than after, because the phase describes what the process
+        is about to do and the TTL sweep needs to know a long load is legitimately in progress.
+
+        RELEASE ON ANY FAILURE, including cancellation: a charge with no process behind it
+        shrinks the budget permanently, and the box would slowly refuse everything. The TTL is
+        the backstop for a process that dies before it gets here, not the mechanism.
+
+        A no-op when no ledger is wired (a cloud-only box, tests, the CLI) or when the model is
+        not in the catalog, because a declaration is the one thing that cannot be guessed."""
+        ledger = self._reservations
+        if ledger is None or model is None:
+            yield
+            return
+        host_gb, device_gb = local_catalog.declared_gb(model, window, slots=slots)
+        charge = await ledger.charge(served_model, host_gb=host_gb, device_gb=device_gb)
+        if charge.instance_id is None:
+            # Only reachable once the ledger is authoritative; in shadow it always charges.
+            # `GpuBudgetError` on purpose rather than a new class: every caller of `load`
+            # already handles it — 409 on the settings screen, a defer in the worker, a
+            # suppression on the restore — so making the ledger speak the language the box
+            # already understands is what lets L2b be a one-line change rather than a sweep.
+            raise gpu_guard.GpuBudgetError(charge.decision.reason)
+        await ledger.advance(charge.instance_id, Phase.STARTING)
+        try:
+            yield
+        except BaseException:
+            await ledger.discharge(charge.instance_id)
+            raise
+        await ledger.advance(charge.instance_id, Phase.RESIDENT)
+
     async def _load_and_warm(
         self,
         served_model: str,
@@ -891,6 +955,7 @@ class LocalGatewayClient:
         load_timeout = max(self._timeout, 120.0)
         model = local_catalog.get_by_served(served_model)
         projected_gb = 0.0
+        window, slots = 0, 1
         if model:
             window, slots = await self._served_shape(model)
             projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
@@ -968,14 +1033,15 @@ class LocalGatewayClient:
             resident = settled
 
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
-            try:
-                await _do_load()
-            finally:
-                # `finally`, not the next line: a load that raises has still READ the
-                # weights, so its page-cache copy exists and nothing else will ever drop
-                # it. See the guarded branch below for the measurement that proved it.
-                self._drop_weights_cache(model)
-            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            async with self._reservation(served_model, model, window, slots):
+                try:
+                    await _do_load()
+                finally:
+                    # `finally`, not the next line: a load that raises has still READ the
+                    # weights, so its page-cache copy exists and nothing else will ever drop
+                    # it. See the guarded branch below for the measurement that proved it.
+                    self._drop_weights_cache(model)
+                await self._warm(served_model, system=warm_system, tools=warm_tools)
             return
 
         # ALREADY RESIDENT means there is nothing to admit, so the pre-flight must not run.
@@ -1029,13 +1095,17 @@ class LocalGatewayClient:
             await self._warm(served_model, system=warm_system, tools=warm_tools)
 
         try:
-            await gpu_guard.guarded_load(
-                _load_then_warm,
-                probe=self._gpu_probe,
-                projected_gb=projected_gb,
-                target=served_model,
-                abort=lambda: self.unload(served_model),
-            )
+            # The reservation wraps the WATCHDOG, not the other way round: an aborted load has
+            # its charge released by the same failure path as any other, and the abort's unload
+            # runs inside the charge rather than after it has gone.
+            async with self._reservation(served_model, model, window, slots):
+                await gpu_guard.guarded_load(
+                    _load_then_warm,
+                    probe=self._gpu_probe,
+                    projected_gb=projected_gb,
+                    target=served_model,
+                    abort=lambda: self.unload(served_model),
+                )
         except BaseException:
             # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
             # weight file — while a successful 16.8 GB load left it unchanged. The drop

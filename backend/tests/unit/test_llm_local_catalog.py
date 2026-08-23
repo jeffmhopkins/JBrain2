@@ -846,6 +846,9 @@ def test_the_device_column_is_the_host_column_minus_what_never_reaches_the_gpu(
     safe; charging them to neither is how the host runs out while GTT looks comfortable."""
     window = model.context_window
     host, device = local_catalog.declared_gb(model, window)
+    # `CACHE_RAM_GB` is 0.0 today, so that term proves nothing on its own — it is here so this
+    # assertion follows the serving flag if that changes, not as evidence that two buffers are
+    # being carried. The checkpoints are the term actually doing the work.
     host_only = (
         model.checkpoint_gb
         * local_catalog.ctx_checkpoints(model.checkpoint_gb)

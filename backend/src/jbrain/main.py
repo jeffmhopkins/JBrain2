@@ -146,6 +146,7 @@ from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
     ResidencyCoordinator,
@@ -415,6 +416,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.local_gateway = LocalGatewayClient(
             settings.local_llm_url,
             gpu_probe=gpu_probe,
+            # The reservation ledger (docs/plans/LOCAL_MODEL_LEDGER_PLAN.md), IN SHADOW: it
+            # charges and releases against every real load this process runs and records what
+            # it WOULD have admitted, and it refuses nothing. A ledger that has never charged a
+            # live load has no numbers to be judged on, and this repo has the precedent —
+            # `_note_not_ready` landed as measurement first for the same reason.
+            reservations=ReservationLedger(maker, source="api", device_probe=gpu_probe),
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
             # Re-stamp the gateway config HERE rather than on every settings edit: rewriting

@@ -8,10 +8,21 @@ itself 24% wrong about its own line numbers four commits later.
 
 This is the mechanism `docs/plans/LOCAL_MODEL_LEDGER_PLAN.md` L2 asks for, landed at the stage
 the code is actually at. It does NOT claim there is one reader; there are several, and L3 is
-what collapses them. What it claims is that the SET IS THIS ONE, so adding a seventh budget
-takes a deliberate edit to this file rather than a reviewer happening to notice — the failure
-mode `test_llm_load_guard_chokepoint.py` exists for, in its own words: "a reviewer noticing is
-what already failed three times."
+what collapses them.
+
+WHAT IT ACTUALLY CLAIMS, said precisely, because the first version of this file overstated it
+and was FALSE THE DAY IT LANDED — it watched two function names and missed
+`read_page_cache_gb`, which five sites in the load path call: this pins the set of modules that
+call the NAMED readers below. It is a tripwire, not a proof. A determined addition routes
+around it easily — `from ... import read_memory_gb as _mem`, `reader = read_memory_gb` then
+`reader()`, `getattr(probe, "sample")()`, or simply opening `/proc/meminfo` or fetching the
+supervisor's `/metrics` directly, none of which name anything below. The `supervisor/` tree,
+where those numbers originate, is outside this walk entirely.
+
+What it buys is that the ORDINARY way of adding a seventh budget — importing the reader
+everyone else imports and calling it — takes a deliberate edit to this file rather than a
+reviewer happening to notice. That is the failure mode `test_llm_load_guard_chokepoint.py`
+exists for, in its own words: "a reviewer noticing is what already failed three times."
 """
 
 from __future__ import annotations
@@ -30,15 +41,25 @@ _APPROVED: dict[str, set[str]] = {
     "llm/gpu_guard.py": {"read_memory_gb", "sample"},
     # The eviction budget (`_plan`), the device pre-flight's baseline, and the restore's census.
     "llm/residency.py": {"read_memory_gb", "sample"},
-    # The load's own device baseline, kept for the predicted-vs-measured comparison.
-    "llm/local_gateway.py": {"sample"},
+    # The load's own device baseline, kept for the predicted-vs-measured comparison, and the
+    # in-load page-cache sweeper (`_sweep_page_cache_during_load`), which reads the cache size
+    # to decide when to drop the weights it has already read.
+    "llm/local_gateway.py": {"sample", "read_page_cache_gb"},
+    # THE READER L3 IS AIMING AT. The ledger takes both readings in one place and hands them to
+    # one decision, which is what the other four entries here are eventually collapsing into.
+    # It is a reader rather than a receiver of readings on purpose: a caller that assembles the
+    # numbers is a caller that can assemble them differently.
+    "llm/ledger.py": {"read_memory_gb", "sample"},
     # DISPLAY ONLY — the settings screen's memory meter. It decides nothing, and it is in this
     # list rather than exempt from it because "it only displays" is how a reader stops being
     # only a display.
-    "api/llm_settings.py": {"read_memory_gb"},
+    "api/llm_settings.py": {"read_memory_gb", "read_page_cache_gb"},
 }
 
-_WATCHED = {"read_memory_gb", "sample"}
+# `read_page_cache_gb` is here because it was MISSED, and the miss was in the load path: the
+# in-load sweeper reads it to decide when to drop the weights cache, which makes it a reader
+# that decides something. Its absence is what made the docstring's claim false on arrival.
+_WATCHED = {"read_memory_gb", "read_page_cache_gb", "sample"}
 
 
 def _readings() -> dict[str, set[str]]:
