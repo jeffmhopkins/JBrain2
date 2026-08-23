@@ -810,6 +810,15 @@ def test_slot_save_path_is_rendered_for_attention_models_only(tmp_path: Path) ->
     text = llama_swap_config.render(manifest, str(tmp_path))
     assert f"--slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/gpt-oss-120b" in text
     assert f"/models/{llama_swap_config.KVSLOT_DIR}/qwen3.8-27b-q4" not in text
+    # The SPECULATIVE half of the guard, separately: today every speculative catalog entry
+    # happens to also be recurrent, so only an operator's --spec-type extra-arg can reach
+    # this branch — and an untested branch that only an operator can trigger is exactly the
+    # kind that rots. A drafting model's per-slot state includes the draft context, which
+    # no slot file captures.
+    spec = llama_swap_config.render(
+        _manifest(), str(tmp_path), extra_args={"gpt-oss-120b": ["--spec-type", "mtp"]}
+    )
+    assert f"/models/{llama_swap_config.KVSLOT_DIR}/gpt-oss-120b" not in spec
 
 
 def test_write_creates_the_kvslot_dirs_llama_server_will_not(tmp_path: Path) -> None:

@@ -90,11 +90,14 @@ class _FakeRouter:
         self.converses.append({"task": task, "system": system, "tools": list(tools)})
         # The keeper wants the prefill in cache, but it READS the turn's usage now: the
         # prime's input_tokens is what identifies the primed slot for the disk save.
+        # DISTINCTIVE on purpose (not the real prefix's 28757): a keeper that hardcoded
+        # the measured constant instead of reading the turn's own usage would still match
+        # a realistic fake — this value only ever arrives by being read off this turn.
         return LlmTurn(
             text="",
             tool_calls=(),
             stop_reason="stop",
-            usage=LlmUsage(input_tokens=28757, output_tokens=1),
+            usage=LlmUsage(input_tokens=12345, output_tokens=1),
         )
 
 
@@ -436,7 +439,9 @@ async def test_a_cold_prime_restores_from_disk_first_then_saves_what_it_primed()
     keeper, gateway, router, store = _kept_with_store()
     assert await keeper.reconcile_once() is True
     assert gateway.events == ["load", "kv_restore", "prime", "kv_save"]
-    assert store.saves == [("gpt-oss-120b", 28757)]
+    assert store.saves == [("gpt-oss-120b", 12345)], (
+        "the count must be the prime turn's own usage, not any constant"
+    )
 
 
 async def test_a_settled_tick_still_probes_for_a_lost_prefix() -> None:

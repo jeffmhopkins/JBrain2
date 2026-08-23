@@ -14,6 +14,7 @@ from jbrain.llm import (
     LlmClient,
     LlmError,
     LlmRouter,
+    LlmTool,
     LlmTurn,
     LlmUsage,
     Sampling,
@@ -998,13 +999,17 @@ async def test_a_fast_local_turn_costs_no_probe(monkeypatch: pytest.MonkeyPatch)
 class _RecordingKvStore:
     """The router-facing surface of the disk layer, recording what reached it."""
 
-    def __init__(self) -> None:
-        self.restores: list[str] = []
+    def __init__(self, dispatched: list | None = None) -> None:
+        self.restores: list[tuple[str, str, int]] = []  # (served, system, tool_count)
         self.noted: list[tuple[str, int]] = []
         self.raise_on_restore = False
+        # Shared with the FakeLlmClient's call list, so ORDER is assertable: a restore
+        # that ran after dispatch would be pure waste — the prefill already happened.
+        self._dispatched = dispatched
 
     async def restore_if_lost(self, served: str, system: str, tools) -> bool:
-        self.restores.append(served)
+        assert not self._dispatched, "restore must run BEFORE the turn is dispatched"
+        self.restores.append((served, system, len(list(tools))))
         if self.raise_on_restore:
             raise RuntimeError("disk went away")
         return True
@@ -1018,15 +1023,20 @@ async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> 
     for ~2 s instead of the turn paying a ~60 s prefill — and afterwards the turn's own
     prompt size is recorded, so the conversation's slot keeps reading as 'prefix present'."""
     fake = FakeLlmClient()
-    store = _RecordingKvStore()
+    store = _RecordingKvStore(dispatched=fake.converse_calls)
+    tools = [LlmTool(name="notes", description="d", input_schema={})]
     router = LlmRouter(
         {"local": fake},
         {"agent.turn": ("local", "gpt-oss-120b")},
         kv_prefix=store,  # type: ignore[arg-type]
     )
-    await router.converse("agent.turn", system="s", messages=[])
-    assert store.restores == ["gpt-oss-120b"]
-    assert len(store.noted) == 1 and store.noted[0][0] == "gpt-oss-120b"
+    await router.converse("agent.turn", system="the persona", messages=[], tools=tools)
+    # The store fingerprints (system, tools): the router must pass the turn's own, not
+    # placeholders — anything else makes the file-exists check miss forever, silently.
+    assert store.restores == [("gpt-oss-120b", "the persona", 1)]
+    # The noted size must be the INPUT tokens (the fake splits input=7/output=1 exactly
+    # so the wrong field cannot hide).
+    assert store.noted == [("gpt-oss-120b", 7)]
 
 
 async def test_background_tasks_and_cloud_routes_never_touch_the_disk_layer() -> None:
@@ -1063,7 +1073,7 @@ async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
     """converse_stream is the path a real jerv turn takes; the hook must not live only on
     the non-streaming twin."""
     fake = FakeLlmClient()
-    store = _RecordingKvStore()
+    store = _RecordingKvStore(dispatched=fake.stream_calls)
     router = LlmRouter(
         {"local": fake},
         {"agent.turn": ("local", "gpt-oss-120b")},
@@ -1071,5 +1081,5 @@ async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
     )
     async for _ in router.converse_stream("agent.turn", system="s", messages=[]):
         pass
-    assert store.restores == ["gpt-oss-120b"]
-    assert len(store.noted) == 1
+    assert store.restores == [("gpt-oss-120b", "s", 0)]
+    assert store.noted == [("gpt-oss-120b", 7)]

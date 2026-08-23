@@ -1,15 +1,21 @@
-"""The jerv prompt-cache disk layer: every rule here answers a way v1 actually failed.
+"""The jerv prompt-cache disk layer: every rule here answers a way a prior draft failed.
 
-v1's post-mortem (it saved background garbage, restored stubs silently, and was inert on
-the hybrids) is the module docstring of `jbrain.llm.kv_prefix`; these tests pin the
-verification rules that make v2 trustworthy where v1 was hopeful."""
+v1 (removed 2026-08-21) saved background garbage, restored stubs silently, and was inert
+on the hybrids. v2's first draft was then caught by its own adversarial review comparing
+two counters llama-server never makes equal — an idle slot's `n_prompt_tokens` is the
+whole cache, prompt plus generated tokens, and a restored-but-unused slot reports no size
+at all. The store's module docstring carries both post-mortems; these tests pin the rules
+that answer them: a threshold gate instead of an equality, a restored-unused memo, exact
+counts only where the max_tokens=1 prime makes them exact, poison files deleted on every
+failure, and the save directory read off the launch line the server actually runs."""
 
 from pathlib import Path
 
 import pytest
 
+from jbrain import box_events
 from jbrain.llm import llama_swap_config
-from jbrain.llm.kv_prefix import KvPrefixStore
+from jbrain.llm.kv_prefix import MIN_PREFIX_TOKENS, KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.types import LlmTool
 
@@ -17,22 +23,32 @@ PRIME = 28757  # the measured jerv prefix on gpt-oss-120b — a realistic count
 
 TOOLS = [LlmTool(name="notes", description="read notes", input_schema={"type": "object"})]
 
+# The launch line's --slot-save-path is keyed by CATALOG ID, which differs from the served
+# name for the VL models — the id≠served case is the one a gpt-oss-only fixture cannot see.
+SERVED = "qwen3-vl-30b-a3b"
+MODEL_ID = "qwen3-vl-30b"
+
 
 class FakeGateway:
-    """Slots + save/restore with scripted answers, recording every call."""
+    """Slots + save/restore with scripted answers, recording every call. `writes_to` makes
+    save_slot create the file the way the real llama-server does — the store never writes
+    slot files itself."""
 
-    def __init__(self) -> None:
+    def __init__(self, writes_to: Path | None = None) -> None:
         self.slot_state: list[dict[str, object]] = []
         self.save_response: dict[str, object] | Exception = {"n_saved": PRIME}
         self.restore_response: dict[str, object] | Exception = {"n_restored": PRIME}
         self.saved: list[tuple[str, int, str]] = []
         self.restored: list[tuple[str, int, str]] = []
+        self._writes_to = writes_to
 
     async def slots(self, served_model: str) -> list[dict[str, object]]:
         return self.slot_state
 
     async def save_slot(self, served: str, slot_id: int, filename: str) -> dict:
         self.saved.append((served, slot_id, filename))
+        if self._writes_to is not None:
+            (self._writes_to / filename).write_bytes(b"\0" * 64)
         if isinstance(self.save_response, Exception):
             raise self.save_response
         return dict(self.save_response)
@@ -44,91 +60,129 @@ class FakeGateway:
         return dict(self.restore_response)
 
 
-def _write_config(
-    root: Path, served: str = "gpt-oss-120b", cmd: str = "llama-server -c 131072"
-) -> None:
-    (root / "llama-swap.yaml").write_text(f"models:\n  {served}:\n    cmd: {cmd}\n")
+def _write_config(root: Path, *, window: int = 131072, save_path: str | None = "default") -> None:
+    """A rendered config the way the generator writes it: the save path keyed by MODEL_ID
+    while the model is addressed by its served name."""
+    if save_path == "default":
+        save_path = f"/models/{llama_swap_config.KVSLOT_DIR}/{MODEL_ID}"
+    flag = f" --slot-save-path {save_path}" if save_path else ""
+    (root / "llama-swap.yaml").write_text(
+        f"models:\n  {SERVED}:\n    cmd: llama-server -c {window}{flag}\n"
+    )
 
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     _write_config(tmp_path)
-    (tmp_path / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b").mkdir(parents=True)
+    (tmp_path / llama_swap_config.KVSLOT_DIR / MODEL_ID).mkdir(parents=True)
     return tmp_path
 
 
-def _store(root: Path) -> tuple[KvPrefixStore, FakeGateway]:
-    gw = FakeGateway()
+def _id_dir(root: Path) -> Path:
+    return root / llama_swap_config.KVSLOT_DIR / MODEL_ID
+
+
+def _store(root: Path, *, writing: bool = False) -> tuple[KvPrefixStore, FakeGateway]:
+    gw = FakeGateway(writes_to=_id_dir(root) if writing else None)
     return KvPrefixStore(gw, str(root)), gw  # type: ignore[arg-type]
 
 
-def _slot_files(root: Path, served: str = "gpt-oss-120b") -> list[str]:
-    folder = root / llama_swap_config.KVSLOT_DIR / served
+def _slot_files(root: Path) -> list[str]:
+    folder = _id_dir(root)
     return sorted(p.name for p in folder.iterdir()) if folder.exists() else []
 
 
-def _plant_file(root: Path, store: KvPrefixStore, served: str, system: str) -> Path:
+def _plant_file(root: Path, store: KvPrefixStore, system: str) -> Path:
     """The file a prior successful save would have left, at the CURRENT fingerprint."""
-    fp = store._current_fingerprint(served, system, TOOLS)
-    assert fp is not None
-    path = root / llama_swap_config.KVSLOT_DIR / served / f"{fp}.kvslot"
+    resolved = store._resolve(SERVED, system, TOOLS)
+    assert resolved is not None
+    fingerprint, save_dir = resolved
+    assert Path(save_dir) == _id_dir(root), "the store must look where the server saves"
+    path = Path(save_dir) / f"{fingerprint}.kvslot"
     path.write_bytes(b"\0" * 64)
     return path
+
+
+@pytest.fixture
+def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str | None]]:
+    """Spy on the owner-visible narration — the stated point of the feature. The store
+    must speak through the module CONSTANTS, or a backend typo silently unlabels the
+    rows the frontend tests assume."""
+    recorded: list[tuple[str, str, str | None]] = []
+
+    async def _spy(kind: str, subject: str, *, detail: str | None = None, **kw: object) -> None:
+        recorded.append((kind, subject, detail))
+
+    monkeypatch.setattr(box_events, "record", _spy)
+    return recorded
 
 
 # ---- save -------------------------------------------------------------------------------
 
 
-async def test_save_captures_only_the_slot_that_exactly_matches_the_prime(root: Path) -> None:
+async def test_save_captures_only_the_slot_that_exactly_matches_the_prime(
+    root: Path, events: list
+) -> None:
     """v1's fatal flaw inverted: identification is an exact integer match on the prime's own
-    token count, so 'whatever held the slot' can never be what gets saved."""
+    token count (exact ONLY because the max_tokens=1 prime leaves the cache at precisely
+    its prompt size), so 'whatever held the slot' can never be what gets saved."""
     store, gw = _store(root)
     gw.slot_state = [
         {"id": 0, "n_prompt_tokens": 512, "is_processing": False},  # background residue
+        {"id": 2, "n_prompt_tokens": PRIME, "is_processing": True},  # mid-request twin
         {"id": 1, "n_prompt_tokens": PRIME, "is_processing": False},  # the prime
     ]
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, PRIME) is True
-    assert [s[1] for s in gw.saved] == [1], "must save the matching slot, not slot 0"
-    assert len(_slot_files(root)) == 0  # llama-server writes the file, not the store
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert [s[1] for s in gw.saved] == [1], "must save the idle matching slot only"
+    assert events == [
+        (box_events.KV_PREFIX_SAVED, SERVED, f"{PRIME}-token jerv prefix saved to disk")
+    ]
 
 
-async def test_save_refuses_when_no_slot_matches_the_prime_count(root: Path) -> None:
-    """Zero matches means something replaced the prime between the converse returning and
-    the slots read — the exact race v1 lost by saving anyway."""
+async def test_save_refuses_when_no_idle_slot_matches_the_prime_count(root: Path) -> None:
+    """Zero idle matches means something replaced the prime between the converse returning
+    and the slots read — the exact race v1 lost by saving anyway. A BUSY slot at the right
+    count is mid-request, in-flux state: it does not count as a match either."""
     store, gw = _store(root)
-    gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, PRIME) is False
+    gw.slot_state = [
+        {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
+        {"id": 1, "n_prompt_tokens": PRIME, "is_processing": True},
+    ]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is False
     assert gw.saved == []
 
 
 async def test_save_disowns_a_file_whose_n_saved_disagrees(root: Path) -> None:
     """The server's own count is the second check: a mismatch means the slot moved under
     the save, and the file on disk is NOT the prime — it must not survive to be restored."""
-    store, gw = _store(root)
+    store, gw = _store(root, writing=True)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
     gw.save_response = {"n_saved": 412}
-    # a file the (bad) save would have produced, plus a stale one — both must go
-    folder = root / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b"
-    (folder / "deadbeef.kvslot").write_bytes(b"junk")
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, PRIME) is False
+    (_id_dir(root) / "deadbeef.kvslot").write_bytes(b"junk")
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is False
     assert _slot_files(root) == []
 
 
-async def test_save_prunes_stale_fingerprints_but_keeps_the_current_one(root: Path) -> None:
-    """The file itself is written SERVER-side (llama-server owns --slot-save-path); the
-    store's job after a verified save is to leave exactly that file standing."""
-
-    class _WritingGateway(FakeGateway):
-        async def save_slot(self, served: str, slot_id: int, filename: str) -> dict:
-            (root / llama_swap_config.KVSLOT_DIR / served / filename).write_bytes(b"\0" * 64)
-            return await super().save_slot(served, slot_id, filename)
-
-    gw = _WritingGateway()
-    store = KvPrefixStore(gw, str(root))  # type: ignore[arg-type]
+async def test_a_save_that_errors_deletes_its_own_partial_file(root: Path) -> None:
+    """A failed or timed-out save can leave a PARTIAL file at the trusted name; because an
+    existing file short-circuits every future save, leaving it would poison this
+    fingerprint until a config change happened to move it."""
+    store, gw = _store(root, writing=True)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
-    folder = root / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b"
-    (folder / "stalefingerprint00000000000000000.kvslot").write_bytes(b"old")
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, PRIME) is True
+    gw.save_response = LocalGatewayError("timed out mid-write")
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is False
+    assert _slot_files(root) == [], "the partial file must not survive"
+    # ...and with the poison gone, a healthy retry succeeds where it would have
+    # short-circuited against the junk.
+    gw.save_response = {"n_saved": PRIME}
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+
+
+async def test_save_prunes_stale_fingerprints_but_keeps_the_current_one(root: Path) -> None:
+    store, gw = _store(root, writing=True)
+    gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+    (_id_dir(root) / "stalefingerprint00000000000000000.kvslot").write_bytes(b"old")
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
     files = _slot_files(root)
     assert len(files) == 1 and not files[0].startswith("stale")
 
@@ -143,136 +197,214 @@ async def test_a_recurrent_or_unknown_model_is_never_saved(root: Path) -> None:
     assert gw.saved == []
 
 
+async def test_a_model_served_without_the_flag_has_no_disk_layer(root: Path) -> None:
+    """Eligibility follows the launch line itself: no --slot-save-path, no saves and no
+    restores — the guard cannot drift from the flag that makes either possible."""
+    _write_config(root, save_path=None)
+    store, gw = _store(root)
+    gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.saved == [] and gw.restored == []
+
+
 async def test_a_prime_below_the_floor_is_not_worth_a_file(root: Path) -> None:
     store, gw = _store(root)
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, 800) is False
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, 800) is False
     assert gw.saved == []
 
 
 async def test_an_existing_current_file_short_circuits_the_2_gig_write(root: Path) -> None:
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
-    assert await store.save_after_prime("gpt-oss-120b", "persona", TOOLS, PRIME) is True
+    _plant_file(root, store, "persona")
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
     assert gw.saved == []
 
 
 # ---- restore ----------------------------------------------------------------------------
 
 
-async def test_restore_puts_the_prefix_back_when_no_slot_holds_it(root: Path) -> None:
+async def test_restore_puts_the_prefix_back_when_nothing_prefix_sized_is_cached(
+    root: Path, events: list
+) -> None:
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
     gw.slot_state = [
         {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
-        {"id": 1, "n_prompt_tokens": 30112, "is_processing": False},  # foreign task residue
+        {"id": 1, "n_prompt_tokens": 9000, "is_processing": False},  # bigger foreign residue
     ]
     gw.restore_response = {"n_restored": PRIME}
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is True
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
     # restored into the emptier slot, never the busier one
     assert [r[1] for r in gw.restored] == [0]
+    assert events and events[0][0] == box_events.KV_PREFIX_RESTORED
+    assert f"{PRIME}-token jerv prefix restored from disk" in (events[0][2] or "")
 
 
-async def test_restore_leaves_a_live_conversation_alone(root: Path) -> None:
-    """A slot holding prefix+history reads as 'prefix present': restoring over it would
-    wipe cached history to re-plant a prefix the conversation already extends."""
+async def test_anything_prefix_sized_blocks_the_restore_whatever_it_is(root: Path) -> None:
+    """THE gate. An idle slot's n_prompt_tokens is the whole cache — prompt plus generated
+    tokens — so a conversation that grew from the prefix reads BIGGER than the prime, never
+    equal. Anything at or above prime size might be that conversation, and restoring over
+    it would wipe cached history to re-plant a prefix it already extends. A large foreign
+    prompt reads the same and is deliberately also left alone: that mistake costs one
+    un-accelerated prefill, the inverse mistake costs a conversation."""
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
-    store.note_agent_turn("gpt-oss-120b", 31650)  # a real turn's prompt size
-    gw.slot_state = [
-        {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
-        {"id": 1, "n_prompt_tokens": 31650, "is_processing": False},  # the conversation
-    ]
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    for cached in (PRIME, PRIME + 240, 33000):  # prime, conversation, big foreign prompt
+        gw.slot_state = [
+            {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
+            {"id": 1, "n_prompt_tokens": cached, "is_processing": False},
+        ]
+        assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, cached
     assert gw.restored == []
 
 
-async def test_restore_skips_when_the_prime_itself_is_still_cached(root: Path) -> None:
+async def test_before_any_prime_the_floor_protects_a_long_running_servers_cache(
+    root: Path,
+) -> None:
+    """An api restart beside a llama-server that kept a conversation cached: the fresh
+    process knows no prime size, so anything substantial (>= the floor) is untouchable
+    until the keeper's first prime establishes the real number."""
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
+    _plant_file(root, store, "persona")
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": MIN_PREFIX_TOKENS + 5000, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
+
+
+async def test_a_restored_slot_reports_nothing_so_the_memo_stops_the_loop(root: Path) -> None:
+    """A restored-but-unused slot has no task, hence NO n_prompt_tokens — invisible to the
+    gate. Without the memo, every keeper tick would re-stream the same 2 GiB until the
+    owner's first message; with it, one restore stands until a turn uses it."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.slot_state = [{"id": 0, "is_processing": False}]  # fresh slot: no size at all
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, "memo must hold"
+    assert len(gw.restored) == 1
+    # a real turn uses the restored slot; from here the slot reports its own size
+    store.note_agent_turn(SERVED, PRIME + 300)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True, (
+        "after use, a genuine later loss must be restorable again"
+    )
+
+
+async def test_save_then_restore_compose_through_the_public_api(root: Path) -> None:
+    """No private seeding: after a prime+save, the freshly primed slot must read as
+    'present' to the very next probe — a store that forgot to record its own prime would
+    re-restore over the state it just saved, once per process life."""
+    store, gw = _store(root, writing=True)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
-    store._prime_tokens["gpt-oss-120b"] = PRIME
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
 
 
-async def test_restore_rejects_a_stub_and_falls_back_to_the_prefill(root: Path) -> None:
+async def test_restore_rejects_a_stub_deletes_the_file_and_falls_back(root: Path) -> None:
     """v1 restored '400s and 2 KB files' and called it success. A restore below the floor
-    (or disagreeing with the known prime count) is rejected — the turn just prefills."""
+    (or disagreeing with the known prime count) is rejected AND the proven-bad file is
+    deleted, so the next prime's save can lay down a good one instead of being
+    short-circuited by the junk's existence."""
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
+    path = _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     gw.restore_response = {"n_restored": 312}
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert not path.exists(), "a proven-bad file must not survive to poison the fingerprint"
+    path2 = _plant_file(root, store, "persona")
     gw.restore_response = {"n_restored": PRIME - 1}
-    store._prime_tokens["gpt-oss-120b"] = PRIME
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert not path2.exists()
 
 
 async def test_a_boot_restore_adopts_the_restored_count_as_the_prime_size(root: Path) -> None:
-    """On a fresh process no prime has run, so the expected count is unknown — a floor-valid
-    restore is accepted and its count becomes the identity future reads key on."""
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
-    gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
+    _plant_file(root, store, "persona")
+    gw.slot_state = [{"id": 0, "is_processing": False}]
     gw.restore_response = {"n_restored": PRIME}
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is True
-    assert store._prime_tokens["gpt-oss-120b"] == PRIME
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert store._prime_tokens[SERVED] == PRIME
 
 
 async def test_restore_waits_for_an_idle_slot_rather_than_fighting_a_live_request(
     root: Path,
 ) -> None:
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": True}]
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
 
 
 async def test_no_file_for_the_current_fingerprint_means_no_restore(root: Path) -> None:
-    """A stale file (different fingerprint) must never be offered: a config change moved
-    the filename precisely so this lookup misses."""
     store, gw = _store(root)
-    folder = root / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b"
-    (folder / ("ff" * 16 + ".kvslot")).write_bytes(b"stale")
+    (_id_dir(root) / ("ff" * 16 + ".kvslot")).write_bytes(b"stale")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
 
 
 async def test_a_gateway_error_is_contained_not_raised(root: Path) -> None:
     store, gw = _store(root)
-    _plant_file(root, store, "gpt-oss-120b", "persona")
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     gw.restore_response = LocalGatewayError("gateway went away")
-    assert await store.restore_if_lost("gpt-oss-120b", "persona", TOOLS) is False
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     gw2 = FakeGateway()
     store2 = KvPrefixStore(gw2, str(root))  # type: ignore[arg-type]
     gw2.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
     gw2.save_response = LocalGatewayError("gateway went away")
-    # a DIFFERENT prefix, so the file planted above cannot short-circuit this save
-    assert await store2.save_after_prime("gpt-oss-120b", "persona-b", TOOLS, PRIME) is False
+    assert await store2.save_after_prime(SERVED, "persona-b", TOOLS, PRIME) is False
 
 
-# ---- fingerprint ------------------------------------------------------------------------
+# ---- identity ---------------------------------------------------------------------------
 
 
-def test_the_fingerprint_moves_with_launch_line_system_and_tools(tmp_path: Path) -> None:
+def test_the_store_looks_exactly_where_the_launch_line_says_the_server_saves(
+    root: Path,
+) -> None:
+    """The id-vs-served split, pinned from the direction that matters: the save dir is READ
+    OFF THE LAUNCH LINE (which the generator keys by catalog id) rather than re-derived
+    from the served name — so the store and the server cannot disagree about the
+    directory, and an operator's --slot-save-path override moves both together."""
+    store, _ = _store(root)
+    resolved = store._resolve(SERVED, "persona", TOOLS)
+    assert resolved is not None and Path(resolved[1]) == _id_dir(root)
+    _write_config(root, save_path="/models/.kvslots/elsewhere")
+    moved = store._resolve(SERVED, "persona", TOOLS)
+    assert moved is not None
+    assert Path(moved[1]) == root / ".kvslots" / "elsewhere"
+
+
+def test_the_fingerprint_moves_with_launch_line_system_and_tools(root: Path) -> None:
     """Anything that can invalidate a saved slot must move the filename: the launch line
-    (window/slots/extra args/build), the persona text, and the tool schema. Same inputs
-    must be stable across processes, or every boot orphans the previous boot's file."""
-    _write_config(tmp_path)
-    store, _ = _store(tmp_path)
-    base = store._current_fingerprint("gpt-oss-120b", "persona", TOOLS)
-    assert base is not None
-    assert store._current_fingerprint("gpt-oss-120b", "persona", TOOLS) == base
-    assert store._current_fingerprint("gpt-oss-120b", "persona v2", TOOLS) != base
+    (window/slots/extra args/build), the persona text, and the tool schema — and the same
+    inputs must be stable, or every boot orphans the previous boot's file."""
+    store, _ = _store(root)
+
+    def fp() -> str:
+        resolved = store._resolve(SERVED, "persona", TOOLS)
+        assert resolved is not None
+        return resolved[0]
+
+    base = fp()
+    assert fp() == base
+    r2 = store._resolve(SERVED, "persona v2", TOOLS)
+    assert r2 is not None and r2[0] != base
     other_tools = [LlmTool(name="notes", description="CHANGED", input_schema={"type": "object"})]
-    assert store._current_fingerprint("gpt-oss-120b", "persona", other_tools) != base
-    _write_config(tmp_path, cmd="llama-server -c 262144")
-    assert store._current_fingerprint("gpt-oss-120b", "persona", TOOLS) != base
+    r3 = store._resolve(SERVED, "persona", other_tools)
+    assert r3 is not None and r3[0] != base
+    _write_config(root, window=262144)
+    assert fp() != base
 
 
-def test_no_rendered_config_means_no_fingerprint_and_no_disk_activity(tmp_path: Path) -> None:
+def test_no_rendered_config_means_no_identity_and_no_disk_activity(tmp_path: Path) -> None:
     store, _ = _store(tmp_path)  # no llama-swap.yaml written
-    assert store._current_fingerprint("gpt-oss-120b", "persona", TOOLS) is None
+    assert store._resolve(SERVED, "persona", TOOLS) is None

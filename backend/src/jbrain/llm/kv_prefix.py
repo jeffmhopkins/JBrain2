@@ -26,6 +26,26 @@ post-mortem lives at `warm_keeper.py`'s prime step):
   - Its files could only be pruned by a deploy. Here each save prunes its model's stale
     fingerprints, so the cost is one ~2 GiB file per model, not a graveyard.
 
+WHAT "/slots" ACTUALLY REPORTS (verified against llama.cpp server source, 2026-08-23,
+by the adversarial review of this module's first draft): an idle slot's `n_prompt_tokens`
+is the slot's whole CACHE — prompt plus every generated token — so after a real turn it
+reads prompt+output-1, never the prompt size a caller recorded; and a slot that was
+restored into but never used reports no `n_prompt_tokens` at all. An exact-integer
+"prefix present" test is therefore structurally wrong on the restore side (it stays right
+on the SAVE side only because the keeper's prime generates exactly one token, whose stop
+token the server does not append — see `save_after_prime`). The restore gate below is a
+conservative threshold instead: any slot holding at least a prefix-sized cache is left
+alone, whatever it holds — mistaking a large foreign prompt for the prefix costs one
+un-accelerated prefill (the pre-feature behaviour), while the inverse mistake would wipe
+a live conversation to re-plant a prefix it already extends. A restore that has not yet
+been used reports nothing, so `_restored_unused` remembers it and stops the keeper's tick
+from streaming the same 2 GiB once a minute until the owner's first message.
+
+ACCEPTED LIMITATION: the fingerprint covers the launch line, persona and tools — not the
+GGUF bytes. Re-downloaded weights under an unchanged filename would restore KV computed
+from the old weights. Weights updates change the filename/quant in practice, and the
+failure mode is a stale-flavoured first answer, not corruption.
+
 The FINGERPRINT is the validity rule: sha256 over the model's rendered launch line (read
 back from llama-swap.yaml — the same source `served_shape_from_config` trusts, because it
 cannot disagree with what the server executes) plus the exact system text and tool schema
@@ -38,6 +58,7 @@ is the prefill that would have happened anyway.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -70,6 +91,23 @@ def _slot_int(slot: dict[str, object], key: str) -> int:
     return value if isinstance(value, int) else 0
 
 
+def _save_dir_from_line(launch_line: str, models_root: str) -> str | None:
+    """Where THIS launch line's llama-server saves slot files, translated to this
+    process's mount of the volume. Read from the line rather than re-derived from the
+    config generator's conventions, so the store looks wherever the server actually
+    writes — a catalog-id vs served-name mismatch, or an operator's --slot-save-path
+    override, cannot silently split the two. No flag → this model has no disk layer."""
+    tokens = launch_line.split()
+    try:
+        raw = tokens[tokens.index("--slot-save-path") + 1]
+    except (ValueError, IndexError):
+        return None
+    prefix = "/models/"
+    if not raw.startswith(prefix):
+        return None  # an override pointing outside the shared volume is unreachable from here
+    return os.path.join(models_root, raw[len(prefix) :].rstrip("/"))
+
+
 def _fingerprint(launch_line: str, system: str, tools: Sequence[LlmTool]) -> str:
     tool_blob = json.dumps(
         [{"name": t.name, "description": t.description, "schema": t.input_schema} for t in tools],
@@ -94,10 +132,11 @@ class KvPrefixStore:
         # The prime's exact token count per served model — the integer that identifies
         # the primed slot among /slots entries, and the expected restore size.
         self._prime_tokens: dict[str, int] = {}
-        # Recent agent-turn prompt sizes per model: a slot holding a live jerv
-        # CONVERSATION (prefix + history) must read as "prefix present", or a restore
-        # would wipe cached history to re-plant a prefix the conversation already extends.
-        self._turn_tokens: dict[str, list[int]] = {}
+        # Served models restored-but-not-yet-used: such a slot reports NO n_prompt_tokens
+        # (see module docstring), so without this memo every keeper tick would re-restore
+        # the same file until the first message. Cleared when a turn uses it or a fresh
+        # prime supersedes it.
+        self._restored_unused: set[str] = set()
         # One restore at a time: a keeper tick and an inbound turn discovering the same
         # loss must not both stream the file into different slots.
         self._lock = asyncio.Lock()
@@ -110,38 +149,25 @@ class KvPrefixStore:
             return None
         return model
 
-    def _file_for(self, served_model: str, fingerprint: str) -> str:
-        return os.path.join(
-            self._models_root,
-            llama_swap_config.KVSLOT_DIR,
-            served_model,
-            f"{fingerprint}{_SLOT_FILE_SUFFIX}",
-        )
-
-    def _current_fingerprint(
+    def _resolve(
         self, served_model: str, system: str, tools: Sequence[LlmTool]
-    ) -> str | None:
+    ) -> tuple[str, str] | None:
+        """(fingerprint, save-dir) for the CURRENT launch line, or None when the model is
+        not served, or is served without --slot-save-path (no disk layer). One read of the
+        rendered config feeds both, so they can never describe two different servers."""
         line = llama_swap_config.launch_line(self._models_root, served_model)
         if line is None:
             return None
-        return _fingerprint(line, system, tools)
+        save_dir = _save_dir_from_line(line, self._models_root)
+        if save_dir is None:
+            return None
+        return _fingerprint(line, system, tools), save_dir
 
     def note_agent_turn(self, served_model: str, input_tokens: int) -> None:
-        """Record a real jerv turn's prompt size, so the slot it grew is recognised as
-        holding the prefix. A short tail is enough — only sizes still plausibly cached
-        in some slot matter, and a re-prime resets the world anyway."""
-        if input_tokens <= 0:
-            return
-        sizes = self._turn_tokens.setdefault(served_model, [])
-        sizes.append(input_tokens)
-        del sizes[:-8]
-
-    def _known_sizes(self, served_model: str) -> set[int]:
-        known = set(self._turn_tokens.get(served_model, ()))
-        prime = self._prime_tokens.get(served_model)
-        if prime is not None:
-            known.add(prime)
-        return known
+        """A real jerv turn completed — whatever was restored has now been used, and the
+        slot it grew reports a prefix-sized cache on its own from here on."""
+        if input_tokens > 0:
+            self._restored_unused.discard(served_model)
 
     # ---- save -----------------------------------------------------------------------
 
@@ -158,10 +184,13 @@ class KvPrefixStore:
         if self._eligible(served_model) is None or prime_tokens < MIN_PREFIX_TOKENS:
             return False
         self._prime_tokens[served_model] = prime_tokens
-        fingerprint = self._current_fingerprint(served_model, system, tools)
-        if fingerprint is None:
+        # A fresh prime supersedes any restored-but-unused state.
+        self._restored_unused.discard(served_model)
+        resolved = await asyncio.to_thread(self._resolve, served_model, system, tools)
+        if resolved is None:
             return False
-        path = self._file_for(served_model, fingerprint)
+        fingerprint, save_dir = resolved
+        path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         if await asyncio.to_thread(os.path.exists, path):
             return True  # this exact prefix is already on disk — a save is a 2 GiB write
         try:
@@ -169,6 +198,11 @@ class KvPrefixStore:
         except LocalGatewayError as exc:
             log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
             return False
+        # EXACT match works here only because the prime generates exactly ONE token: the
+        # server appends every sampled token to the slot's cache EXCEPT the final stop
+        # token, so a max_tokens=1 prime leaves the cache at precisely its prompt size.
+        # A prime that ever generated more would never match — which fails SAFE (skip +
+        # log), but silently: if `slot_unidentified` becomes chronic, look here first.
         matches = [
             s
             for s in slots
@@ -192,7 +226,12 @@ class KvPrefixStore:
                 served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
             )
         except LocalGatewayError as exc:
+            # A failed or timed-out save can leave a PARTIAL file at the trusted name —
+            # and an existing file short-circuits every future save while restores keep
+            # reading junk. Remove whatever landed, or this fingerprint is poisoned until
+            # a config change happens to move it.
             log.info("kv_prefix.save_failed", model=served_model, error=str(exc))
+            await asyncio.to_thread(self._remove_quietly, path)
             return False
         n_saved = resp.get("n_saved")
         if n_saved != prime_tokens:
@@ -204,9 +243,9 @@ class KvPrefixStore:
                 expected=prime_tokens,
                 n_saved=n_saved,
             )
-            await asyncio.to_thread(self._prune, served_model, None)
+            await asyncio.to_thread(self._prune, save_dir, None)
             return False
-        await asyncio.to_thread(self._prune, served_model, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
+        await asyncio.to_thread(self._prune, save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         await box_events.record(
             box_events.KV_PREFIX_SAVED,
             served_model,
@@ -215,9 +254,13 @@ class KvPrefixStore:
         log.info("kv_prefix.saved", model=served_model, tokens=prime_tokens, slot=slot_id)
         return True
 
-    def _prune(self, served_model: str, keep: str | None) -> None:
+    def _remove_quietly(self, path: str) -> None:
+        """Runs in a thread — delete a file that is now known-bad, tolerating absence."""
+        with contextlib.suppress(OSError):
+            os.remove(path)
+
+    def _prune(self, folder: str, keep: str | None) -> None:
         """Runs in a thread (asyncio.to_thread) — plain blocking fs on purpose."""
-        folder = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR, served_model)
         try:
             for name in os.listdir(folder):
                 if name.endswith(_SLOT_FILE_SUFFIX) and name != keep:
@@ -230,16 +273,28 @@ class KvPrefixStore:
     async def restore_if_lost(
         self, served_model: str, system: str, tools: Sequence[LlmTool]
     ) -> bool:
-        """Put the prefix back if no slot currently holds it and a valid file exists.
-        Returns True only when a verified restore happened. Safe to call eagerly: when
-        the prefix (or a conversation grown from it) is live in any slot, this is one
-        /slots read and no writes."""
+        """Put the prefix back if nothing prefix-sized is cached anywhere and a valid file
+        exists. Returns True only when a verified restore happened.
+
+        THE GATE IS A THRESHOLD, NOT AN EQUALITY — see the module docstring for the /slots
+        semantics that force this. Any slot whose cache is at least prefix-sized is left
+        alone whatever it holds: a conversation that grew from the prefix, the prime
+        itself, or a large foreign prompt all read the same, and the worst cost of leaving
+        a foreign one alone is one un-accelerated prefill (the pre-feature behaviour). The
+        inverse mistake — restoring over a conversation because its exact size stopped
+        matching — is the harm this store must never cause. A slot restored into but not
+        yet used reports NO size at all, so `_restored_unused` stands in for it until a
+        turn or a fresh prime supersedes it."""
         if self._eligible(served_model) is None:
             return False
-        fingerprint = self._current_fingerprint(served_model, system, tools)
-        if fingerprint is None:
+        if served_model in self._restored_unused:
+            return False  # already restored; the slot reports nothing until a turn uses it
+        resolved = await asyncio.to_thread(self._resolve, served_model, system, tools)
+        if resolved is None:
             return False
-        if not await asyncio.to_thread(os.path.exists, self._file_for(served_model, fingerprint)):
+        fingerprint, save_dir = resolved
+        path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
+        if not await asyncio.to_thread(os.path.exists, path):
             return False
         async with self._lock:
             try:
@@ -247,10 +302,17 @@ class KvPrefixStore:
             except LocalGatewayError as exc:
                 log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
                 return False
-            known = self._known_sizes(served_model)
+            # The smallest cache that could BE the prefix: the prime's own size. A slot
+            # below it (a small task's residue) cannot contain the prefix and is fair to
+            # restore over; one at or above it might, and is not. Before any prime has run
+            # (a fresh process beside a long-running server) the floor stands in, so
+            # anything substantial — a conversation the server faithfully kept — stays
+            # untouchable until the keeper's first prime establishes the real number.
+            prime = self._prime_tokens.get(served_model)
+            threshold = prime if prime is not None else MIN_PREFIX_TOKENS
             occupied = [s for s in slots if isinstance(s, dict)]
-            if any(s.get("n_prompt_tokens") in known for s in occupied):
-                return False  # the prefix (or a conversation extending it) is already live
+            if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
+                return False  # something prefix-sized is cached — never restore over it
             idle = [s for s in occupied if not s.get("is_processing")]
             if not idle:
                 return False  # every slot busy — restoring now would fight a live request
@@ -283,11 +345,18 @@ class KvPrefixStore:
                     n_restored=n_restored,
                     expected=expected,
                 )
+                # The file is proven bad; leaving it means every future save is
+                # short-circuited by its existence and every restore repeats this. Remove
+                # it so the next prime's save can lay down a good one.
+                await asyncio.to_thread(self._remove_quietly, path)
                 return False
             if expected is None:
                 # First restore of this process life (a boot): adopt the restored count as
                 # the prime size so slot identification works before any prime has run.
                 self._prime_tokens[served_model] = n_restored
+            # The slot will report NO size until a request uses it — remember the restore,
+            # or every keeper tick re-streams the same 2 GiB until the first message.
+            self._restored_unused.add(served_model)
             await box_events.record(
                 box_events.KV_PREFIX_RESTORED,
                 served_model,

@@ -1107,7 +1107,6 @@ async def test_a_model_absent_from_the_catalog_is_not_charged_at_all() -> None:
     assert touched is False
 
 
-
 async def test_slot_save_and_restore_speak_llama_servers_exact_dialect() -> None:
     """The kv-prefix store's verification hangs off these two calls, so the wire shape is
     the contract: POST through llama-swap's upstream passthrough, the action as a query
