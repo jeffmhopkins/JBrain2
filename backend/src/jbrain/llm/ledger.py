@@ -4,10 +4,10 @@
 operation that has to be ATOMIC ACROSS PROCESSES — read the ledger, decide, and charge, with
 no window in between for the api and the worker to both decide there is room.
 
-That atomicity is the whole reason the ledger can be cheap. The cross-process box lock exists
-today and is held across a model's entire load — 100-200 s on a request path, against a
-15-connection pool with no `lock_timeout`. Here it is held for a SELECT and an INSERT:
-milliseconds. The load itself then runs unlocked, protected by a row rather than by a lock.
+That atomicity is the whole reason the ledger can be cheap. The cross-process box lock is
+held here for a SELECT and an INSERT: milliseconds. The load itself then runs unlocked,
+protected by a row rather than by a lock — and `residency` follows the same rule since
+2026-08-23, holding that key only across its eviction decision, never across a load.
 
 Reservations are DELETED at discharge rather than marked dead. The absence of a row is what
 "this instance is gone" means, and a tombstone phase would be one more state for a summation
@@ -49,9 +49,10 @@ log = structlog.get_logger()
 # `box_events` writes host telemetry under.
 _CTX = SessionContext(principal_id="box", principal_kind="owner")
 
-# How long a charge may wait for the box lock. Bounded because the same key is still held
-# across a whole evict-and-load by `residency.ensure_room` (see `charge`), and an unbounded
-# wait there would let fifteen queued charges consume the whole connection pool.
+# How long a charge may wait for the box lock. The other holder (`residency.ensure_room`)
+# now keeps the key only across the eviction decision and the unloads — seconds — so a
+# healthy wait is short; the bound is what stops fifteen queued charges consuming the whole
+# connection pool if a holder ever wedges again.
 CHARGE_LOCK_TIMEOUT_MS = 15_000
 
 
@@ -168,12 +169,13 @@ class ReservationLedger:
         useful to do if it cannot get the lock: skipping would mean loading without deciding,
         which is the unguarded load this exists to prevent.
 
-        WHAT IT WAITS BEHIND IS NOT THIS FUNCTION'S TO PROMISE, and an earlier version of this
-        docstring promised it anyway — "it waits for a SELECT and an INSERT rather than for
-        someone else's 200 s load". `residency.ensure_room`'s slow path still holds the SAME
-        advisory key across a whole evict-and-load, which the plan's L1 item 5 leaves open by
-        decision. So until that changes, a charge CAN queue behind a real load, and with a
-        15-connection pool fifteen queued charges would be the api's whole capacity.
+        WHAT IT WAITS BEHIND: `residency.ensure_room`'s evict decision, which holds the same
+        advisory key for seconds. It used to hold it across the whole evict-AND-LOAD, and the
+        very first authoritative charge on that path (2026-08-23) proved why it must not:
+        the load's own charge opens a SECOND pooled connection, queues behind its own
+        caller's lock, and times out — a self-deadlock that unloaded a model to make room
+        and then refused the load the room was for. The lock now covers decision+evictions
+        only and the load is protected by the charge row instead.
 
         Hence `lock_timeout`: the wait is bounded, and a timeout REFUSES — a transient
         `GpuBudgetError`, so the settings screen 409s and the worker defers instead of a raw
@@ -372,10 +374,22 @@ class ReservationLedger:
                 await session.delete(row)
             return len(rows)
 
+    async def pools(self) -> tuple[Pool, Pool]:
+        """The host and device pools exactly as `charge` will see them, for DRY-RUN planning.
+
+        Residency's eviction decision reads these (with `live()`) and runs the same
+        `admission.admit` arithmetic, so "whom must I evict" and "will the charge admit" are
+        one calculation instead of two budgets that can disagree — the disagreement that had
+        the measured+predicted planner evicting a model the pair of them actually fit
+        (2026-08-23). A dry run only: nothing here takes the box lock, and the charge still
+        re-reads everything atomically."""
+        return await self._pools()
+
     async def live(self) -> list[Reservation]:
-        """Every charged reservation. Used for narration and reconciliation; admission reads
-        its own copy inside the charging transaction, because a read outside that lock is
-        exactly the window the ledger exists to close."""
+        """Every charged reservation. Used for narration, reconciliation and residency's
+        dry-run eviction planning; admission reads its own copy inside the charging
+        transaction, because a read outside that lock is exactly the window the ledger exists
+        to close."""
         async with scoped_session(self._maker, _CTX) as session:
             return [
                 _to_reservation(r)

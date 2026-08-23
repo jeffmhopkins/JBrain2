@@ -202,8 +202,11 @@ both resides and warms it.
 > must agree or the file is deleted; a restore's `n_restored` is verified against the same
 > count and floor before it is trusted, falling back to the prefill otherwise. Files are
 > fingerprinted over the model's rendered launch line + persona + tool schemas (any change
-> that could stale a slot moves the filename) and each save prunes its model's stale
-> fingerprints, so the cost is one ~2 GiB file per model under
+> that could stale a slot moves the filename), and the store holds the whole tree to a
+> 25 GB budget by evicting least-recently-USED files (a restore refreshes its file's
+> clock) — so each config the owner flips between (interactive slot on/off, window) keeps
+> its own ~2 GiB file and flips restore in ~100 ms instead of re-paying a ~2 min prefill.
+> Files live under
 > `/models/.kvslots/<model>/` — the one writable subtree in the local-llm service's
 > otherwise read-only weights mount (a nested rw bind in docker-compose; the weights
 > themselves stay untouchable by the inference process). The keeper restores before it primes (a cold prime becomes a

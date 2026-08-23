@@ -9,12 +9,13 @@ that answer them: a threshold gate instead of an equality, a restored-unused mem
 counts only where the max_tokens=1 prime makes them exact, poison files deleted on every
 failure, and the save directory read off the launch line the server actually runs."""
 
+import os
 from pathlib import Path
 
 import pytest
 
 from jbrain import box_events
-from jbrain.llm import llama_swap_config
+from jbrain.llm import kv_prefix, llama_swap_config
 from jbrain.llm.kv_prefix import MIN_PREFIX_TOKENS, KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.types import LlmTool
@@ -154,13 +155,15 @@ async def test_save_refuses_when_no_idle_slot_matches_the_prime_count(root: Path
 
 async def test_save_disowns_a_file_whose_n_saved_disagrees(root: Path) -> None:
     """The server's own count is the second check: a mismatch means the slot moved under
-    the save, and the file on disk is NOT the prime — it must not survive to be restored."""
+    the save, and the file on disk is NOT the prime — it must not survive to be restored.
+    Only THAT file: another config's cache was verified under its own count, and deleting
+    it for this save's failure would re-charge a prefill the owner already paid."""
     store, gw = _store(root, writing=True)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
     gw.save_response = {"n_saved": 412}
     (_id_dir(root) / "deadbeef.kvslot").write_bytes(b"junk")
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is False
-    assert _slot_files(root) == []
+    assert _slot_files(root) == ["deadbeef.kvslot"], "only the bad write is disowned"
 
 
 async def test_a_save_that_errors_deletes_its_own_partial_file(root: Path) -> None:
@@ -178,13 +181,71 @@ async def test_a_save_that_errors_deletes_its_own_partial_file(root: Path) -> No
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
 
 
-async def test_save_prunes_stale_fingerprints_but_keeps_the_current_one(root: Path) -> None:
+async def test_both_slot_configs_keep_their_files_and_each_restores_its_own(
+    root: Path,
+) -> None:
+    """The owner flips the interactive slot (1↔2), which rewrites the launch line and moves
+    the fingerprint. Under the byte budget BOTH configs' caches persist — the flip that used
+    to delete the other side's file and re-charge a ~2 min prefill (observed live,
+    2026-08-23) now restores in ~100 ms from whichever file matches."""
     store, gw = _store(root, writing=True)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
-    (_id_dir(root) / "stalefingerprint00000000000000000.kvslot").write_bytes(b"old")
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
-    files = _slot_files(root)
-    assert len(files) == 1 and not files[0].startswith("stale")
+    _write_config(root, window=262144)  # the other slot config: a different launch line
+    store2, gw2 = _store(root, writing=True)
+    gw2.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store2.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert len(_slot_files(root)) == 2, "a config flip must not evict the other config"
+    # Flip back: the ORIGINAL config's store finds its own file and restores it.
+    _write_config(root)
+    store3, gw3 = _store(root)
+    gw3.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
+    assert await store3.restore_if_lost(SERVED, "persona", TOOLS) is True
+    restored_name = gw3.restored[0][2]
+    assert restored_name == gw.saved[0][2], "flipping back restores the matching file"
+
+
+async def test_the_budget_evicts_least_recently_used_across_all_models(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past MAX_STORE_BYTES the oldest-by-mtime files go first, store-wide (another model's
+    folder is the same budget), and the just-saved file survives whatever its clock says."""
+    other = root / llama_swap_config.KVSLOT_DIR / "other-model"
+    other.mkdir(parents=True)
+    oldest = other / ("aa" * 16 + ".kvslot")
+    oldest.write_bytes(b"\0" * 64)
+    os.utime(oldest, (1_000, 1_000))
+    middle = _id_dir(root) / ("bb" * 16 + ".kvslot")
+    middle.write_bytes(b"\0" * 64)
+    os.utime(middle, (2_000, 2_000))
+    newest = _id_dir(root) / ("cc" * 16 + ".kvslot")
+    newest.write_bytes(b"\0" * 64)
+    os.utime(newest, (3_000, 3_000))
+    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 192)  # 4 × 64-byte files > this
+    store, gw = _store(root, writing=True)
+    gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert not oldest.exists(), "least-recently-used goes first"
+    assert middle.exists() and newest.exists()
+    assert len(_slot_files(root)) == 3  # middle + newest + the fresh save
+    # Even a budget smaller than one file never eats the file just verified.
+    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 1)
+    saved_name = gw.saved[0][2]
+    (_id_dir(root) / saved_name).unlink()
+    gw.saved.clear()
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert _slot_files(root) == [saved_name], "the just-saved file always survives"
+
+
+async def test_a_restore_refreshes_its_files_lru_clock(root: Path) -> None:
+    """A restore IS a use: it bumps the file's mtime, so the caches that keep earning their
+    restores stay and the ones nothing touches age out of the budget first."""
+    store, gw = _store(root)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
+    path = _plant_file(root, store, "persona")
+    os.utime(path, (1_000, 1_000))
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert path.stat().st_mtime > 1_000, "a successful restore must touch its file"
 
 
 async def test_a_recurrent_or_unknown_model_is_never_saved(root: Path) -> None:

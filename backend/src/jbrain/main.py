@@ -414,17 +414,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # skip — which is precisely how the three freezes got past the coordinator's guard.
         # The window/slot loaders make the guard reserve for the window llama-swap will REALLY
         # serve (the operator's `-c` override), not the catalog default — KV is linear in it.
+        # The reservation ledger (docs/plans/LOCAL_MODEL_LEDGER_PLAN.md), AUTHORITATIVE: it
+        # charges every real load this process runs and refuses ones that don't fit. One
+        # instance, handed to BOTH the gateway (which charges through it) and the residency
+        # coordinator below (which plans evictions with its arithmetic) — two readers of one
+        # set of rows, never two budgets.
+        api_reservations = ReservationLedger(
+            maker, source="api", device_probe=gpu_probe, shadow=False
+        )
         app.state.local_gateway = LocalGatewayClient(
             settings.local_llm_url,
             gpu_probe=gpu_probe,
-            # The reservation ledger (docs/plans/LOCAL_MODEL_LEDGER_PLAN.md), IN SHADOW: it
-            # charges and releases against every real load this process runs and records what
-            # it WOULD have admitted, and it refuses nothing. A ledger that has never charged a
-            # live load has no numbers to be judged on, and this repo has the precedent —
-            # `_note_not_ready` landed as measurement first for the same reason.
-            reservations=ReservationLedger(
-                maker, source="api", device_probe=gpu_probe, shadow=False
-            ),
+            reservations=api_reservations,
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
             # Re-stamp the gateway config HERE rather than on every settings edit: rewriting
@@ -477,6 +478,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # load actually cost in device memory, logged beside what the catalog predicted,
                 # so those numbers get corrected from data rather than from the next freeze.
                 gpu_probe=gpu_probe,
+                # The SAME ledger instance the gateway charges through, so the eviction plan
+                # and the admission verdict come from one arithmetic (L3).
+                ledger=api_reservations,
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
