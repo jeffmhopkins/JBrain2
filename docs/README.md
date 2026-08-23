@@ -1,13 +1,13 @@
 # JBrain2 — Documentation map
 
-> **Status:** Living · **Last verified:** 2026-08-11
+> **Status:** Living · **Last verified:** 2026-08-23
 
 JBrain2 is a personal knowledge system: notes in → RAG indexing → an
 LLM-maintained wiki with notes as the sole sources of truth. This folder holds
 the binding design docs. Project-wide non-negotiables live in the root
 `CLAUDE.md`.
 
-## Where the project is (2026-08)
+## Where the project is
 
 **Phases 0–5 are shipped** — note capture,
 ingestion/search, the v3 note→graph analysis pipeline, the personal agent
@@ -33,7 +33,8 @@ Library** and revocable share links, the **Grokipedia** and public-records tools
 the external-video corpus, **Kokoro** read-aloud, **JPet** (v1–v3), the
 **location/family** stack, and **guided-intake** links. EMR/medical-record import
 and several agent-tooling refinements are the current in-progress lines. See
-`ROADMAP.md` for the authoritative per-feature status; the completed Phase-5 build
+`ROADMAP.md` for the authoritative per-feature status (and `plans/README.md` for
+wave-level detail on the active plans); the completed Phase-5 build
 record is `archive/PHASE5_COMPLETION_PLAN.md`.
 
 ## Documentation map
@@ -48,6 +49,7 @@ stays thin and doesn't drift against the folders it points at.
 | `plans/` | **Active** multi-wave build plans (`Scheduled` / `In progress` / `Parked`). | `plans/README.md` |
 | `proposed/` | **Icebox** — forward-looking specs, not on the roadmap. | `proposed/README.md` |
 | `archive/` | **History** — completed plans, a fulfilled contract, a rejected design, research. | `archive/README.md` |
+| `research/` | Live research **prose** feeding a not-yet-shipped plan. | — |
 | `mocks/` | Binding **HTML UI spec** (per `reference/DESIGN.md`). | — |
 
 **Start here:** `ROADMAP.md` (what's next) · `reference/ARCHITECTURE.md` (the

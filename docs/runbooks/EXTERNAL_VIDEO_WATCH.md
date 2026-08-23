@@ -1,6 +1,6 @@
 # Watching YouTube channels into the video corpus
 
-> **Status:** Living · **Last verified:** 2026-07-26 (check_channel v4: format tags + `full_descriptions`; "no new videos" now names the channel's last-analysed upload)
+> **Status:** Living · **Last verified:** 2026-08-23 (check_channel v4: format tags + `full_descriptions`; "no new videos" now names the channel's last-analysed upload; the corpus reads are the `external_video(action=…)` umbrella since #1030)
 
 How to set up automatic nightly ingestion of a YouTube channel's new videos into the
 external-source corpus, using a recurring **Jerv Task** (the shipped Tasks feature) — no
@@ -27,7 +27,9 @@ Three jerv tools make the corpus self-maintaining once a Task drives them:
 - **`analyze_stream`** (full mode) — analyses a video and, on completion, **writes it through**
   to the corpus (summary + timeline passages + embeddings). Reuses the analysis it produces,
   so there is no extra cost, and a repeat is a no-op (`ON CONFLICT`).
-- **`search_external_video`** — hybrid search over everything ingested, cited to the video + timestamp.
+- **`external_video(action=search)`** — hybrid search over everything ingested, cited to the video +
+  timestamp. The same umbrella tool also browses: `external_video(action=list)` enumerates the
+  library (exact total, newest-analysed first).
 
 A Task is just a saved jerv prompt on a schedule; the agent loop does discovery → analysis.
 
@@ -70,10 +72,10 @@ Notes:
 
 ## Verifying it works
 
-- Ad hoc first: in chat, ask jerv to analyse one video (full mode), then `search_external_video` for a
-  phrase from it — it should come back cited to the timestamp.
-- After a Task run: `search_external_video` finds the newly-ingested videos; the Tasks/Runs view shows
-  the run and surfaces any failed analysis.
+- Ad hoc first: in chat, ask jerv to analyse one video (full mode), then `external_video(action=search)`
+  for a phrase from it — it should come back cited to the timestamp.
+- After a Task run: `external_video(action=search)` finds the newly-ingested videos; the Tasks/Runs view
+  shows the run and surfaces any failed analysis.
 
 ## Cost & retention
 

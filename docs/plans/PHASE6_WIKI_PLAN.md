@@ -1,6 +1,6 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** A✅ B✅ C✅ D◻️ —
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** A✅ B✅ C✅ D◻️ —
 > the builder, `wiki_citations`/`wiki_links` graph coupling, and Talk all shipped
 > (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** the nightly build
 > schedules (`wiki_refresh` 03:30 + `wiki_prune` 03:45) were **re-enabled by migration
@@ -16,15 +16,17 @@
 > conflict**), linking (wiki→wiki + muted red-link fallback), the **`wiki_built` dirty
 > bit** as the delta mechanism, on-demand rebuild + source-exclusion, entity profile
 > images, subsections, and the four engine actions (§3b). All three GUI mock gates
-> (reader, Talk, landing — landing = search-first + rails) are **closed**. **Open:** only
-> the cross-stream **wiki↔graph contract** (`PHASE6_WIKI_GRAPH_CONTRACT.md`, §6 #4/#5) — the
-> audit expanded it to cover four firewall realities (entity-row RLS, derived-chunk
-> citability, mention-domain, purge). Most of Phase 6 is graph-coupled
-> and gated on the rebuild; the parallel-safe slice now is the article/section/revision/
-> index shell, editorial config, the `notes.wiki_built` bit, and the read-only UI on fixtures.
+> (reader, Talk, landing — landing = search-first + rails) are **closed**, and the
+> cross-stream wiki↔graph contract shipped 2026-07
+> (`docs/archive/PHASE6_WIKI_GRAPH_CONTRACT.md`).
 
 The LLM-maintained wiki: notes → facts → entities → **machine-written articles**, every
 claim citing a note, corrected only by out-arguing it with a correction note.
+
+> **As-built note (2026-08):** §§0–3b below are the pre-build spec, kept for the design
+> rationale; their future tense is historical. Waves A–C shipped (migrations 0045–0053,
+> `backend/src/jbrain/wiki/`), so the storage, builder, and contract described here exist in
+> code — only Wave D's residue (§7) is still open.
 
 ## 0. Framing: the graph-coupling line
 
@@ -39,7 +41,7 @@ changes the fact/entity **shape**, not just IDs. So the coupling runs deep:
   builder's sourcing + rewrite, and the firewall CHECKs that join to facts/entities.
 
 **Hard cross-stream dependency:** before the gated work starts, the rebuild stream must
-satisfy `PHASE6_WIKI_GRAPH_CONTRACT.md`. The independent audit found the firewall is **not**
+satisfy `docs/archive/PHASE6_WIKI_GRAPH_CONTRACT.md`. The independent audit found the firewall is **not**
 enforceable as first drafted, because three existing realities were under-weighted — so the
 contract now covers all of: (a) a stable citable unit + id + citability predicate +
 `domain_code`; (b) the **entity row is single-domain RLS** (so the cross-domain article
@@ -68,8 +70,8 @@ articles; and (f) the `wiki_built` dirty bit on entities.
 - **Review inbox / Proposals**: `wiki-restructure` kind exists (`0018_proposals.py`).
 - **Frontend**: React+Vite+TS PWA. Reuse `FactCitation` (`analysis/bits.tsx`), `MatchBadge`
   (`screens/SearchScreen.tsx`), the `EntityScreen` read-only paradigm, the shared `Sheet`
-  shell for the citation card + discuss flow. The **Wiki launcher tile is stubbed**
-  (`Launcher.tsx:53`, `phase:"P6"`).
+  shell for the citation card + discuss flow. The **Wiki launcher tile is live**
+  (`components/Launcher.tsx`), opening the landing + reader (`App.tsx`, `screens/wiki/`).
 
 ## 2. Storage (new tables) — cross-domain articles, type-guided single-domain sections
 
@@ -250,13 +252,13 @@ wiki-editorial tools (`explain_article`/`get_sources`, `file_correction`,
 reads are firewalled.
 
 **Correction-note path — owner-authored, elevated-weight, revision-anchored.** The existing
-`propose_correction` makes an *agent*-authored NORMAL-weight note — the wrong path. This
-needs an owner-authored note path + a revision-anchoring column. **Prerequisite:** the
-**elevated-weight extraction path does not exist in code today** (ARCHITECTURE.md and
-`notes.py` claim it; `proposaltools.py` is NORMAL; no "elevated" in the weight model) — so
-the correction loop's exit criterion ("out-argue the wiki") is blocked until it's built.
-**This is a named Wave-0 prerequisite** (not a floating bug): confirm/build the
-owner-correction elevated-weight path before the correction loop ships.
+`propose_correction` makes an *agent*-authored NORMAL-weight note — the wrong path. **Built
+(Wave A+):** the owner-authored correction path + revision anchoring shipped (migration
+0051; `analysis/arbiter.py` `plan_intent(correction=True)`): each SURFACE-ATTESTED fact in a
+correction note commits at full weight — skipping the confidence ceiling — and the executor
+force-supersedes the current head + pins; an INFERRED fact is NOT elevated, and safety
+review flags still force review. This is the correction loop's "out-argue the wiki" exit
+criterion, consumed by Wave B2b's Talk/correction machinery.
 
 ## 5. Read-only wiki UI — reader (mock gate ✅)
 
@@ -310,14 +312,13 @@ wiki becomes the *answer layer* the agent also retrieves first.
 8. Source depth — **B** (chunk-cited note-derived claims + grounding gate; entity graph
    wins on conflict).
 
-**Open — owner / cross-stream:**
-4. **Citation contract** (`PHASE6_WIKI_GRAPH_CONTRACT.md` §1-§4): the citable unit's frozen
-   shape + `fact_id` SET NULL + **derived-chunk citability for chunk-only claims** + entity
-   id stability for `wiki_links.to_entity_id`.
-5. **Dirty bit + entity visibility + purge** (contract §4-§6): `entities.wiki_built`
-   maintenance; the **entity row's single-domain RLS vs the cross-domain shell** (resolved
-   here by §2's article-row display identity — confirm with the rebuild team);
-   **mention-as-source domain**; **purge dirties + rebuilds** surviving articles.
+4. **Citation contract** — ✅ RESOLVED (contract shipped 2026-07,
+   `docs/archive/PHASE6_WIKI_GRAPH_CONTRACT.md` §1-§4; migration 0046 lands the
+   `wiki_citations`/`wiki_links` FKs + the Postgres firewall trigger).
+5. **Dirty bit + entity visibility + purge** — ✅ RESOLVED (contract §4-§6): the
+   `entities.wiki_built` bit ships in 0046 and is consumed by the builder + lint; the
+   entity-RLS-vs-shell question is settled by §2's article-row display identity. *Residue:*
+   **purge → rebuild wiring** is not yet in `analysis/purge.py` — folded into Wave D.
 9. **Landing mock gate** — ✅ RESOLVED: owner chose **A — search-first + rails**
    (`docs/mocks/wiki-landing-a-search-rails.html`): search + Recently-updated + Most-connected
    hubs + a Browse-by-type index with blurbs (taxonomy derived: type + centrality + recency).
@@ -328,19 +329,19 @@ wiki becomes the *answer layer* the agent also retrieves first.
     binding ARCHITECTURE wording.
 
 **Prerequisite with a build home (not a floating bug):** the owner-authored
-**elevated-weight correction** extraction path + note→revision anchoring does not exist in
-code; the correction loop depends on it. **Built in Wave A+** (graph-independent backend),
-consumed by Wave B2b.
+**elevated-weight correction** extraction path + note→revision anchoring — **shipped in
+Wave A+** (migration 0051; `arbiter.py` `plan_intent(correction=True)`), consumed by
+Wave B2b.
 
 ## 7. Waves (PROCESS.md: worktrees, per-task + per-wave adversarial review, one PR/wave)
 
-- **Wave 0 — gates (no code/PR):** the **landing mock gate** (#9); the cross-stream
+- **Wave 0 ✅ — gates (no code/PR):** the **landing mock gate** (#9); the cross-stream
   **contract** hand-off (#4/#5); the **ROADMAP + ARCHITECTURE edit** (move Loops 2–4 + the
   hygiene sweeps out of Phase 6 into named follow-ons — see Out-of-scope; and reconcile
   ARCHITECTURE.md §Wiki, which still asserts split/merge *thresholds*, review-inbox approval
   of the *article* restructure, and an elevated-weight path that doesn't exist — all
   superseded by this plan); confirm #10.
-- **Wave A — graph-independent spine (parallel-safe now):** `wiki_articles` (display
+- **Wave A ✅ — graph-independent spine:** `wiki_articles` (display
   identity incl. `image_sha`/`lead_summary`, `merged_into_id`/`status`) + `wiki_sections`
   (incl. `parent_section_id` + the domain-inheritance CHECK) + `wiki_revisions` (full body +
   `body_tsv` + section-EXISTS RLS) + `wiki_index` tables + RLS + isolation tests (against the
@@ -350,20 +351,20 @@ consumed by Wave B2b.
   independent). *(Entity-side, gated/small: `entities.image_sha` + entity-view upload — rides
   the entity layer; the `entities.wiki_built` bit + mention→entity dirtying are the rebuild
   team's, contract §5.)*
-- **Wave A+ — correction-note backend (the elevated-weight prerequisite):** **build** (not
+- **Wave A+ ✅ — correction-note backend (the elevated-weight prerequisite):** **build** (not
   just scope) the owner-authored, **elevated-weight** extraction path + the note→revision
   anchoring column. Graph-independent backend; B2b's correction loop strictly depends on it,
   so it gets its own build home here rather than falling through the B2 boundary.
-- **Wave B1 — read-only reader (after the reader mock ✅):** the Wikipedia-style reader on
+- **Wave B1 ✅ — read-only reader:** the Wikipedia-style reader on
   fixtures, the **tap citation card**, nested sections, lists/tables, the profile image, the
   **revision diff view**, wiki→wiki links, "what links here". Pure read-only; one PR.
-- **Wave B2a — landing + search UI (after the landing mock):** the wiki **landing**
+- **Wave B2a ✅ — landing + search UI:** the wiki **landing**
   (search-first + rails + index) on fixtures + the Search-UI wiki badge. Read-mostly UI; one PR.
-- **Wave B2b — Talk + correction machinery (scope-touching):** the **Talk board** (B) —
+- **Wave B2b ✅ — Talk + correction machinery (scope-touching):** the **Talk board** (B) —
   thread surface, agent wiki-editorial tools, thread↔article anchoring; the owner-authored
   correction-note path (consumes Wave A+) + revision anchoring; the owner-only Rebuild/Exclude
   affordances. Wave-level red-team for the agent's firewalled reads; its own PR.
-- **Wave C — builder brain (GATED on the contract):** the four actions (§3b) + their
+- **Wave C ✅ — builder brain (was gated on the contract):** the four actions (§3b) + their
   schedules + the wiki-build budget; `wiki_citations` (hard FK + Postgres firewall CHECK +
   isolation test) + `wiki_links`; dirty-bit consumption; index-match triage; cited rewrite +
   **grounding gate** + B's derived-chunk sourcing; source-exclusion filtering; entity-driven
@@ -373,6 +374,12 @@ consumed by Wave B2b.
   *chunk-only derived-chunk minting* — without it a ratcheted health/finance section has no
   citable chunk and renders empty, so the entire firewalled-domain wiki depends on it; it is
   a named exit gate for this wave, not a sub-bullet.
+- **Wave D ◻️ — hardening residue (open):** **grounding-gate tuning** (the verifier's
+  thresholds against real note corpora, not fixtures) and the **purge → rebuild wiring** —
+  `analysis/purge.py` still has zero wiki references, so a note-purge does not yet enqueue
+  `wiki_rebuild` for the surviving articles that cited it (§3b; folded here from §6 #5).
+  The nightly schedules themselves are live (re-enabled by migration 0121). Archive the
+  plan when D closes.
 
 **Out of scope (named follow-ons, each its own plan — the ROADMAP edit relocates these here):**
 the **not-yet-built hygiene sweeps** the ROADMAP lists under Phase 6 — **entity hygiene,

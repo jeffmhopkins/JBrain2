@@ -1,6 +1,6 @@
 # Wiki type guides (editorial config — Phase 6)
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Per-entity-type editorial guides the **builder** loads when (re)writing an article: the
 ordered **sections** (each with a default domain + an include-if rule), the **style**,
@@ -10,12 +10,14 @@ planned Phase-6 refinement, not yet built. **Only Person, Organization, and Plac
 dedicated guides today** — every other type (Project, Event, Concept, Drug,
 MedicalCondition, MedicalProcedure, Product, …) currently resolves to the **Generic**
 guide. The type-specific guides written up below for those other families are the intended
-spec (the notability gate, `PHASE6_WIKI_PLAN.md §6`), not yet wired.
+spec (the notability gate, `docs/plans/PHASE6_WIKI_PLAN.md` §6), not yet wired.
 
 Section `domain` is the firewall unit (single-domain per section). A section is **omitted**
 when it has no cited facts. `health`/`finance` sections are hidden from out-of-scope viewers
-(existence included). *(The `location` domain has no RLS scope until Phase 7, so no
-location-domain sections are seeded in v1 — see the Place guide.)*
+(existence included). *(Phase 7 landed 2026-07, so the `location` domain is now RLS-scoped
+(`docs/archive/PHASE7_LOCATION_PLAN.md`; migration 0061 enforces the scope) — but no
+location-domain section is seeded yet: adding Visits to the Place guide is a deferred
+guide change, no longer an RLS blocker — see the Place guide.)*
 
 ## Shared requirements (apply to every guide)
 
@@ -137,9 +139,9 @@ sections:
   - {name: Overview,    domain: general,  include_if: what the place is, geography}
   - {name: History,     domain: general,  include_if: history / significance}
   - {name: Associations, domain: general, include_if: who/what the owner connects to it}
-  # NOT seeded in v1: a Visits (domain: location) section. The `location` domain has no
-  # RLS scope or color until Phase 7 — seeding a location-domain section now would create a
-  # firewall unit whose isolation test can't be written. Add Visits when Phase 7 lands.
+  # STILL not seeded: a Visits (domain: location) section. Phase 7 shipped (the `location`
+  # domain is RLS-scoped since migration 0061), so the old blocker is gone — Visits is now
+  # a deferred guide addition (`typeguides.py`'s `_PLACE` carries no Visits section yet).
 style: "Descriptive."
 ```
 

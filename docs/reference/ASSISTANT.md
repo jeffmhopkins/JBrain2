@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-23
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -429,7 +429,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   flat tools after a tool-selection probe confirmed gpt-oss-120b fills `name`/`sources`
   reliably (incl. single-source narrowing). The
   **`portal_search`** tool (`portal_search(name, jurisdiction, kind)`, one `web`-gated tool
-  granted to jerv AND the web research personas — DYNAMIC_PORTAL_FETCH_PLAN.md) actually
+  granted to jerv AND the web research personas — docs/archive/DYNAMIC_PORTAL_FETCH_PLAN.md) actually
   QUERIES a dynamic STATE government search portal — the ones a plain `web_fetch` can only
   see the empty search FORM of — by issuing the portal's real result request through the
   shared SSRF-guarded `WebFetcher` and returning each hit with a STATIC, citable detail URL

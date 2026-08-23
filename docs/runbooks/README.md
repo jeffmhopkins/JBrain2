@@ -1,6 +1,6 @@
 # Runbooks — how to operate the box
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Operational runbooks: setup, access, and recovery procedures for a running
 JBrain2 box. `Living` docs (per `../DOC_LIFECYCLE.md`) — kept true as the ops

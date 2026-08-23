@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-08-11
+> **Status:** Living · **Last verified:** 2026-08-23
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Around
@@ -16,7 +16,7 @@ appointments), guided-intake share links, and Life360-style location tracking.
 One Docker Compose stack on an Ubuntu host. Reachable either directly on a
 public domain (Caddy fetches Let's Encrypt; needs inbound 80/443) or, for a
 home box on a dynamic IP / behind CGNAT, via an opt-in Cloudflare Tunnel that
-dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
+dials out (no static IP or port-forwarding) — see `../runbooks/CLOUDFLARE_TUNNEL.md`.
 
 | Container | Technology | Role |
 |---|---|---|
@@ -28,11 +28,11 @@ dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
 | `supervisor` | Minimal socket-mounted service | Host control: stack status/restart, log streaming, update orchestration (see Operations) |
 
 This is the core subset. Other always-on services (`searxng` + `reader` for the
-web tools, `wall` for the display, `tts-stt` for speech) run stock too, and an **opt-in
-fleet** lives behind compose profiles — the on-box model services (`local-llm`,
-`comfyui`), the coding sandbox (`jcode`), the
+web tools, `wall` for the display, `tts-stt` for speech, among others) run stock
+too, and an **opt-in fleet** lives behind compose profiles — the on-box model
+services (`local-llm`, `comfyui`), the coding sandbox (`jcode`), the
 family-location spine (`mqtt` + `mqtt-ingest`), and the tunnel (`cloudflared`).
-`SERVICES.md` is the full inventory.
+`SERVICES.md` is the full inventory; this table deliberately isn't.
 
 Attachments are content-addressed blobs (sha256) on a disk volume behind a
 storage abstraction, so S3/MinIO can replace the filesystem without touching
@@ -50,10 +50,9 @@ system stays operable by one person.
 ## Backend
 
 - **FastAPI + Pydantic** (async throughout), **SQLAlchemy 2 + Alembic**.
-- Job queue on Postgres (Procrastinate or equivalent SKIP-LOCKED pattern) with
-  a scheduler for nightly work.
-- Document parsing: PyMuPDF for PDFs, Pillow for images, `unstructured` as
-  fallback.
+- Job queue on Postgres (a custom `SELECT ... FOR UPDATE SKIP LOCKED` queue,
+  `jbrain/queue.py`) with a scheduler for nightly work.
+- Document parsing: PyMuPDF for PDFs, Pillow for images.
 - Config via pydantic-settings / env vars only.
 
 ### LLM adapter
@@ -131,7 +130,7 @@ note saved → event → extraction (attachments) → multi-granularity chunking
 
 ## Wiki
 
-> **Build plan: `docs/plans/PHASE6_WIKI_PLAN.md`** (+ `PHASE6_WIKI_GRAPH_CONTRACT.md`). Where this
+> **Build plan: `docs/plans/PHASE6_WIKI_PLAN.md`** (+ `docs/archive/PHASE6_WIKI_GRAPH_CONTRACT.md`). Where this
 > section differs, the plan governs: split/merge **thresholds** are vestigial under the
 > entity-driven model (the *article* restructure follows the owner-approved **entity**
 > merge/split — not a separate review-inbox approval); citations are FKs to **chunks**

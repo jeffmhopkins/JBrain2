@@ -1,14 +1,14 @@
 # jcode session isolation — per-session network namespace (and the path to a real sandbox)
 
-> **Status:** Parked (after the Wave P1 spike; P0 substrate reverted) · **Last verified:** 2026-07-03
+> **Status:** Parked (after the Wave P1 spike; P0 substrate reverted) · **Last verified:** 2026-08-23
 
-**Status: PARKED after the Wave P1 spike (owner decision). The minimal-privilege path
+Why parked (owner decision, after the Wave P1 spike): the minimal-privilege path
 can _create_ per-session namespaces but cannot give them usable _networking_ without
 either broad privilege (`CAP_SYS_ADMIN`) or hand-rolled rootless-container networking —
 not worth it for the payoff. The Wave P0 seccomp substrate was reverted so jcode carries
 no dead privilege widening. See "Wave P1 outcome" below; the design is kept for a future
 revisit. Concurrent-Vite ergonomics are covered by `--port $PORT` (the Preview empty-state
-hints it) + the single-session loopback fix (#647).**
+hints it) + the single-session loopback fix (#647).
 
 ## Wave P1 outcome — why this is parked
 
@@ -44,7 +44,7 @@ each session its **own** network namespace — its own `lo` — so every session
 the same port independently (each gets its own `5173`). That fixes the concurrent-Vite
 ergonomics (`docs/archive/JCODE_PREVIEW_HOST_PLAN.md` left this as a residual), and it's the
 first step of the larger goal: making the sandbox an actual sandbox, closing the
-**cross-session filesystem-read residual** documented in `proposed/JCODE_PLAN.md` (§
+**cross-session filesystem-read residual** documented in `docs/archive/JCODE_PLAN.md` (§
 "Cross-session reads are an accepted residual").
 
 ## The reframe: isolate the namespace, not the port
@@ -95,7 +95,7 @@ no host changes, no `CAP_SYS_ADMIN`, no container runtime.
    it is the decision to weigh. **No code lands until this is signed off.**
 2. **Scope — network-only, or a fuller sandbox?** Network ns alone solves the port
    ergonomics. Adding **mount + PID** namespaces (and a per-session root view) also
-   closes the cross-session filesystem-read residual (`proposed/JCODE_PLAN.md:164`) —
+   closes the cross-session filesystem-read residual (`docs/archive/JCODE_PLAN.md:166`) —
    the bigger isolation prize, but a bigger build. Phased so network-only can ship first.
 3. **Wrapper — `bubblewrap` vs in-process `os.unshare`.** bwrap (Flatpak's engine) is a
    battle-tested wrapper that handles `lo` bring-up, mount, and pid in one exec; the
@@ -135,7 +135,7 @@ control server (preview proxy) ───────────┘──> 127.0
 - **Non-negotiables unaffected.** This is process/network isolation inside the existing
   sandbox; it touches no data surface. All LLM calls still go through the adapter, all
   I/O through storage, all queries on an RLS session. jcode still has **no Docker
-  socket, no DB, no blob store, no knowledge base** (`proposed/JCODE_PLAN.md`).
+  socket, no DB, no blob store, no knowledge base** (`docs/archive/JCODE_PLAN.md`).
 - **Net effect: more isolation between sessions, a narrow widening jcode→kernel.** The
   seccomp allowlist is scoped to namespace syscalls; documented as a deliberate,
   owner-box, single-tenant tradeoff. With the mount-ns option (decision 2) the
@@ -181,7 +181,7 @@ Each wave: per-task + per-wave adversarial review (reviewer ≠ author), securit
 - **No host reconfiguration** — the spike confirmed the gate is per-container seccomp,
   not a host sysctl/AppArmor knob.
 - **No multi-tenant / per-session CPU-mem split** — aggregate cap stays as is
-  (`proposed/JCODE_PLAN.md`); this is network/filesystem/process isolation only.
+  (`docs/archive/JCODE_PLAN.md`); this is network/filesystem/process isolation only.
 - **No change to the model bridge, RLS, or any data surface.**
 
 ## On-box bring-up (the last mile)

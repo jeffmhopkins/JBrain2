@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -43,15 +43,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   substrate; net-new lesson/curriculum domain model + server-owned lesson-runtime
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
-  `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
-- `TOOL_CATALOG_PLAN.md` — a scalable tool surface for jerv's growing tool count:
-  separate DISCOVERY (an always-on compact menu — name + ≤12-word summary + family)
-  from INVOCATION-SCHEMA (a verbose use-guide loaded on demand via `tool_guide(name)`,
-  which also arms the tool's schema), plus a full-schema hot core for the common path
-  and umbrella dispatch tools for the source/action families. Revised after two
-  independent reviews: ship the cheap waves now (W0 trim + metadata, W1 umbrellas
-  19→4), and **gate** the catalog machinery (W2/W3) behind resolving the
-  mode-(a)/native-tool-calling contradiction and a pre-built selection-accuracy eval.
+  `../research/teacher-mode/` (`COMPONENT_CATALOG.md`) and the four mocks in
+  `../mocks/teacher-mode/`.
 - `DEEP_RESEARCH_MODULE_SPLIT_PLAN.md` — break the ~2,300-line `deep_research.py`
   orchestrator monolith into topic modules (`research_sources.py`, `research_directives.py`,
   `research_report_view.py`, `research_backstops.py`), leaving `DeepResearchService` in
@@ -62,10 +55,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
-`DEEP_RESEARCH_TOOL_PLAN.md`, `DEEPEST_RESEARCH_TOOL_PLAN.md`, and
+`DEEP_RESEARCH_TOOL_PLAN.md`, and
 `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.
-`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
-`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).
+`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (In progress — V1 landed).
+`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (In progress — W1✅ W2✅ W3◻️).
+`TOOL_CATALOG_PLAN.md` was promoted to `../plans/` (In progress — W1 umbrellas shipped).
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
-`DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
+`DEEPEST_RESEARCH_TOOL_PLAN.md` was promoted, shipped (R1–R8), and now lives in `../archive/`.
+`DYNAMIC_PORTAL_FETCH_PLAN.md` was promoted, shipped (P1–P3, 2026-08), and now lives in `../archive/`.
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_

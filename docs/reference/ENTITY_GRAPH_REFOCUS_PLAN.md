@@ -1,6 +1,6 @@
 # JBrain2 — Entity Graph Refocus Plan (spine, not encyclopedia)
 
-> **Status:** Living (reference) · **Last verified:** 2026-07-26 — the two-tier
+> **Status:** Living (reference) · **Last verified:** 2026-08-23 — the two-tier
 > predicate model this plan describes shipped (PR #718, 2026-07-02; see
 > `analysis/predicates.py`, `weight.py`, `pipeline.py`, `worker.py`). §6's
 > `relatedTo` deferral rationale corrected in place for Ingest V2 Lever A (the
@@ -361,7 +361,7 @@ branch). We follow that proven pattern, NOT a recursive CTE (correct but
 non-idiomatic; per-hop caps/paths are awkward; scale is personal-corpus small).
 
 **T3.1 — Pure BFS layer (S/M).** New `analysis/neighborhood.py`
-(graph_context's two-layer idiom; repo.py is 1678 lines — keep BFS out of it):
+(graph_context's two-layer idiom; repo.py is already large — keep BFS out of it):
 takes per-hop edge batches, returns entities `{id, name, kind, domain, hop,
 path}` + notes `{note_id, hop, connects}`. First-visit-wins dedup with a parent
 map (one connecting path per node: `Me —spouse→ Celine —co-mention(note X)→

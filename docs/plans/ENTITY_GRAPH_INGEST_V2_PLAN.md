@@ -1,9 +1,9 @@
 # JBrain2 — Ingest V2: Flip the Disposition Default (fewer cards, same safety)
 
-> **Status:** In progress · **Waves:** V0🔄 (largely done — §15) V1🔄 (T1.1–T1.5 landed — §17) V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-26 — §11 decisions ratified (Lever B: state/rel supersede, attributes stay review · sensitive net: inferred-only · Lever C: direct correction); promoted from `proposed/` to `plans/`; on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16). V1 deterministic enactor built: Lever A ceiling gate removed, Lever B state/rel silent supersede, I5 sensitive-inference net (unit + harness), trace Lever-A accuracy pass, safety-spine I1–I9 coverage audited (§17).
+> **Status:** In progress · **Waves:** V0✅ (spike — §15) V1✅ (wave PR #944 merged 2026-07-26 — §17) V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-08-23 — §11 decisions ratified (Lever B: state/rel supersede, attributes stay review · sensitive net: inferred-only · Lever C: direct correction); promoted from `proposed/` to `plans/`; on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16). V1 deterministic enactor built: Lever A ceiling gate removed, Lever B state/rel silent supersede, I5 sensitive-inference net (unit + harness), trace Lever-A accuracy pass, safety-spine I1–I9 coverage audited (§17).
 
 Committed to the roadmap (`docs/ROADMAP.md`). Waves defined; the V0 local-box judgment
-spike is largely complete (§15). This plan **corrects-in-place** (not supersedes) two Living docs when it
+spike is complete (§15) and the V1 wave PR is merged (§17). This plan **corrects-in-place** (not supersedes) two Living docs when it
 builds: `docs/reference/ANALYSIS.md` (the per-kind conflict policy and the
 correction-note doctrine change) and `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`
 (whose §6 rationale leans on the `INFERRED_CEILING` gate this plan removes). Both
@@ -525,7 +525,8 @@ tools, or multi-tier decomposition) or a **prompt/schema** problem?
 **Finding: overwhelmingly prompt/schema.** The raw 34.7% failure rate collapsed to a
 **genuine model-error rate of 8.3% (10/121)** once three noise sources were removed: scorer
 brittleness (12), a deliberately thin probe prompt lacking rules the **production**
-`integrate_note.prompt` v12 already carries (14), and researcher expectations *stricter than
+`integrate_note.prompt` already carries (14) *(v12 at the time of the battery; the prompt
+has since moved on — `integrate-v14` today)*, and researcher expectations *stricter than
 the plan's own invariants* (6 — e.g. expecting the model to self-escalate an *asserted*
 sensitive fact when I5 only escalates *inferred* ones). Crucially, the two genuine
 error clusters — inferred-sensitive escalation and same-name ambiguity — are the exact
@@ -807,5 +808,6 @@ a `review` row carries the actual driver (safety flags + I5). `test_trace` updat
 `test_inferred_fact_shows_the_stored_weight_arithmetic`, plus a new
 `test_committed_fact_reads_as_committed_not_a_threshold_pass` locking the framing.
 
-**V1 remaining before the single wave PR:** full backend suite + coverage gate (≥80%, security
-100%) in CI, and the per-wave security red-team (firewall/RLS/validity/identity floors).
+**V1 shipped:** the single wave PR merged 2026-07-26 (#944, `bf7c38b`) with the full backend
+suite + coverage gate (≥80%, security 100%) green in CI and the per-wave security red-team
+(firewall/RLS/validity/identity floors) done.

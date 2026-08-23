@@ -1,6 +1,6 @@
 # RapidOCR — deterministic CPU OCR: sidecar, cross-validation, jerv + sandbox tools
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4✅ R5◻️ (R1–R4 all shipped on-branch; CI covers the client/pipeline/tools/bridge with fakes + a localhost stub and real-Postgres for the store-both round trip. R5 = on-box sign-off against the live RapidOCR sidecar — image + PDF quality, idle load/unload timing — plus a decision on whether to build the `rapidocr` image in CI, deliberately left out for now to keep the image job light.)
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4✅ R5◻️ (R1–R4 all shipped on-branch; CI covers the client/pipeline/tools/bridge with fakes + a localhost stub and real-Postgres for the store-both round trip. R5 = on-box sign-off against the live RapidOCR sidecar — image + PDF quality, idle load/unload timing — plus a decision on whether to build the `rapidocr` image in CI, deliberately left out for now to keep the image job light.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the sidecar is reached only
 > through a pinned-URL client on the api (no model-supplied host); OCR text is written
@@ -123,7 +123,8 @@ service stays a dumb, stateless OCR box. The `api` is the sole caller (pinned
   no model swap. jerv steering (`ASSISTANT.md`) says which to reach for.
 - Registered in `readtools.build_registry` alongside the image handlers; degrades to a
   clear "OCR service unavailable" when `rapidocr` is off.
-- PDFs: images first; a PDF attachment (rasterize→OCR pages) is a small follow-on.
+- PDFs: **shipped** — a PDF attachment is rasterized and OCR'd page by page in the tool
+  (`backend/src/jbrain/agent/ocrtools.py`; steering in `docs/reference/ASSISTANT.md`).
 - **Tests**: returns text; missing attachment; service-off message; registry wiring.
 
 ### R4 — sandbox `ocr` shell tool (grok / claude)
@@ -151,7 +152,6 @@ it over `analyze_image`), `docs/reference/SERVICES.md` (the new `rapidocr` servi
 
 ## 6. Out of scope (named, not silently dropped)
 - Persisting the agreement score to a review surface (needs the R2 migration above).
-- PDF OCR in the jerv tool (R3 is image-first).
 - Non-English language packs (RapidOCR ships multilingual PP-OCR models; wiring a language
   selector is a follow-on).
 - Replacing the VLM `vision.caption` (description) path — untouched; only OCR is dual-engine.

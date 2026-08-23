@@ -1,11 +1,12 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
-**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
-(gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
-exception, the Layer-2 firewall guard, migrations 0115–0118, RLS isolation tests; see §12) are
-complete; waves W2–W5 in §10 open. Synthesized against the shipped graph (`app.entities`/`app.facts`,
+**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Waves
+W0–W3 are complete (W0 gates + fixtures; W1 storage bedrock — schema defs, the
+`fhir_status`/supersession exception, the Layer-2 firewall guard, migrations, RLS isolation tests —
+see §12; W2–W3 the parsers + import). W4 is partially landed (§12.9); W5 is gated on Phase 6 (the
+wiki engine). Synthesized against the shipped graph (`app.entities`/`app.facts`,
 migration `0006`), the projection pattern (`analysis/appointment_projection.py`), the attachment
 dispatcher and analysis pipeline (`docs/reference/ANALYSIS.md`), the predicate registry
 (`docs/reference/PREDICATE_CANONICALIZATION.md` + `schema/defs/**`, including the
@@ -555,7 +556,7 @@ the same way and **must open with the same kind-filter** — `func.lower(Entity.
 — so every non-EMR note ingested system-wide pays exactly one empty kind-filtered `SELECT`, not a
 pair of `lab_results`/`encounters` scans. This is a required part of the wiring, not an optimization.
 
-### 4.1 `app.lab_results` — migration **0115** (one row per *reading*)
+### 4.1 `app.lab_results` — migration **0115** (renumbered — see §12.1) (one row per *reading*)
 
 The projector groups the per-draw facts by `(entity_id, qualifier)` — i.e. by draw — assembling a
 row from the fan (`value`→`value_num`/`unit`, `referenceRange`→bounds, `interpretation`→flag,
@@ -632,7 +633,7 @@ distinct draws each get their own current row. The projector produces the docume
 `final` from `corrected`. `specimen_id NOT NULL DEFAULT ''` closes the NULL-distinctness hole so
 OCR-unreadable draws collide-or-not purely on `collected_at`, identical to the fact qualifier.
 
-### 4.2 `app.encounters` (+ two sidecars) — migration **0116**
+### 4.2 `app.encounters` (+ two sidecars) — migration **0116** (renumbered — see §12.1)
 
 ```sql
 CREATE TABLE app.encounters (
@@ -1103,7 +1104,8 @@ clinicians."
 
 ## 8. Migrations
 
-Type-def changes (§3.8) are YAML edits seeded by `sync_predicates`, **not** migrations.
+Type-def changes (§3.8) are YAML edits seeded by `sync_predicates`, **not** migrations. The
+numbers in this table are the planning snapshot (renumbered on the way in — see §12.1).
 
 | Migration | `down_revision` | Object | Notes |
 |---|---|---|---|
@@ -1439,7 +1441,7 @@ EMR migrations renumber **+1**:
 | `app.lab_results` projection | 0115 | **0116** |
 | `app.encounters` (+ sidecars) | 0116 | **0117** |
 | review_items `shape_mismatch` kind | 0117 | **0118** |
-| seed `emr_import` workflow | 0118 | **0119** |
+| seed `emr_import` workflow | 0118 | **0122** (landed later, as `0122_seed_emr_import_triggers`) |
 
 The `down_revision` chain and the seed-order dependency (review-kind before code; trigger seed in the
 same PR as the registered actions) are unchanged — only the numbers shift.
@@ -1785,6 +1787,7 @@ query surfaces the superseded + pending readings, hides the active one, and leak
 non-health session.
 
 Still open in W4: the health-scoped hybrid search over the pathology narrative (the `search` service
-is already RLS/health-scoped; the remaining work is corpus/quality tuning), the seeded import
-pipeline (0118), and the athena review-routing nuance above. Wave 5 (the condition wiki) stays
+is already RLS/health-scoped; the remaining work is corpus/quality tuning) and the athena
+review-routing nuance above. (The seeded import pipeline shipped — the two-stage trigger wiring
+above, migration `0122_seed_emr_import_triggers`.) Wave 5 (the condition wiki) stays
 blocked on Phase 6 (the wiki engine is not shipped).

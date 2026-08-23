@@ -1,6 +1,6 @@
 # Predicate canonicalization (embedding-assisted) + typed value shapes
 
-> **Status:** Superseded (kept in place — still cited by `README`) · **Superseded-by:** `ENTITY_GRAPH_REFOCUS_PLAN.md` · **Last verified:** 2026-07-03
+> **Status:** Superseded 2026-07 (kept in place — still cited by `README`) · **Superseded-by:** `ENTITY_GRAPH_REFOCUS_PLAN.md`
 
 Status: **largely superseded** by `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md` (the
 two-tier predicate model). The embed-band decision and the `new_predicate`
