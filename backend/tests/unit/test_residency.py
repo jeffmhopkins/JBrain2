@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from jbrain.llm import local_catalog
 from jbrain.llm.residency import (
     ResidencyCoordinator,
     ResidencyError,
@@ -15,7 +16,11 @@ from jbrain.llm.residency import (
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
-#   gpt-oss-120b        = 59.0 + 4.5*2          = 68.0  (kv_full_history: --swa-full)
+#   gpt-oss-120b        = 59.0 + 5.01*2         = 69.02 (kv_full_history: --swa-full)
+#     — the 5.01 was 4.5 until it was MEASURED on the box at four windows and found 11.4%
+#       light. Where a case below needs this figure, it asks the catalog rather than
+#       repeating it: a literal here is a number that goes stale the next time it is measured,
+#       silently, in a file whose whole subject is memory arithmetic.
 #   qwen3-vl-30b-a3b    = 32.0 + 6.0*32768/128k = 33.5
 #   qwen3-coder-next    = 49.6 + 5.0*262144/128k = 59.6
 #   qwen3.5-4b          =  4.3 + 1.2*32768/128k =  4.6
@@ -53,6 +58,14 @@ def _coord(
             box_try_lock=box_try_lock,  # type: ignore[arg-type]
         ),
     )
+
+
+def _model(model_id: str) -> local_catalog.LocalModel:
+    """A catalog entry, or a hard failure — never a None that turns into a silent zero in an
+    arithmetic assertion."""
+    model = local_catalog.get(model_id)
+    assert model is not None, f"{model_id} left the catalog; this test's premise is gone"
+    return model
 
 
 # --- ensure_room: evict the fewest to fit -----------------------------------
@@ -318,8 +331,8 @@ def test_note_evicted_is_a_noop_when_disabled() -> None:
 async def test_plan_load_reports_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (68.0) resident, used=90; loading the coder (59.6) would blow the 96 ceiling —
-    # the plan says evict gpt-oss, projects the landing point, and unloads NOTHING.
+    # gpt-oss resident, used=90; loading the coder (59.6) would blow the 96 ceiling — the plan
+    # says evict gpt-oss, projects the landing point, and unloads NOTHING.
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
     coord = _coord(gw, monkeypatch, total=128.0, used=90.0)
     plan = await coord.plan_load("qwen3-coder-next")
@@ -327,7 +340,20 @@ async def test_plan_load_reports_the_eviction_without_touching_the_box(
     assert plan.victims == ("gpt-oss-120b",)
     assert plan.fits is False and plan.over is False and plan.already_resident is False
     assert plan.resident_gb == 90.0
-    assert round(plan.projected_gb, 1) == round(90.0 - 68.0 + 59.6, 1)  # 81.6
+    # Both terms come from the catalog, not from literals. This assertion is about the
+    # projection ARITHMETIC — what leaves, what arrives — so pinning either model's size here
+    # would make a re-measurement look like a bug in `plan_load`.
+    #
+    # It also stops a coincidence from hiding an error, which is what happened here: the
+    # literals were 68.0 and 59.6 when the real figures were 68.55 and 60.15. BOTH were 0.55
+    # light — each had dropped the runtime-overhead term — and since one is subtracted and the
+    # other added, the two mistakes cancelled exactly. The assertion passed for years while
+    # neither of its numbers was right, and it only surfaced when a measurement moved one of
+    # them and broke the symmetry.
+    evicted = local_catalog.footprint_gb(_model("gpt-oss-120b"), 131072)
+    arriving = local_catalog.load_footprint_gb(_model("qwen3-coder-next"), 262144)
+    assert plan.target_gb == pytest.approx(arriving)
+    assert plan.projected_gb == pytest.approx(90.0 - evicted + arriving)
     assert plan.ceiling_gb == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 
