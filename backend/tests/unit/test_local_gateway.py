@@ -1195,3 +1195,61 @@ async def test_a_failing_before_warm_never_fails_the_load() -> None:
         return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
 
     await _client(handle).load("gpt-oss-120b", warm_system="P", before_warm=broken)
+
+
+async def test_after_warm_receives_the_warms_prompt_size() -> None:
+    """The save hook fires exactly once, after a warm that returned, with the usage the
+    server reported — the caller keys its slot-save verification on that number."""
+    received: list[int] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": ""}}],
+                    "usage": {"prompt_tokens": 37142, "completion_tokens": 1},
+                },
+            )
+        return httpx.Response(200, json={})
+
+    async def _save(tokens: int) -> None:
+        received.append(tokens)
+
+    await _client(handle).load("qwen3-vl-30b-a3b", after_warm=_save)
+    assert received == [37142]
+
+
+async def test_after_warm_is_skipped_when_the_warm_fails() -> None:
+    """A warm that never returned proves nothing about the slot — saving it would be the
+    v1 mistake (persisting whatever happened to be there)."""
+    received: list[int] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            return httpx.Response(500)
+        return httpx.Response(200, json={})
+
+    async def _save(tokens: int) -> None:
+        received.append(tokens)
+
+    await _client(handle).load("qwen3-vl-30b-a3b", after_warm=_save)
+    assert received == []
+
+
+async def test_a_failing_after_warm_never_fails_the_load() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": ""}}],
+                    "usage": {"prompt_tokens": 20000},
+                },
+            )
+        return httpx.Response(200, json={})
+
+    async def _save(tokens: int) -> None:
+        raise RuntimeError("disk full")
+
+    await _client(handle).load("qwen3-vl-30b-a3b", after_warm=_save)  # must not raise

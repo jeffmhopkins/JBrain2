@@ -850,6 +850,7 @@ class LocalGatewayClient:
         warm_tools: list[dict[str, object]] | None = None,
         warm_reasoning_effort: str | None = None,
         before_warm: Callable[[], Awaitable[object]] | None = None,
+        after_warm: Callable[[int], Awaitable[object]] | None = None,
     ) -> None:
         """Load `served_model` into memory AND warm it for inference. The health probe
         makes llama-swap load the model (request-driven; with --no-mmap the weights are
@@ -943,6 +944,7 @@ class LocalGatewayClient:
                             warm_tools=warm_tools,
                             warm_reasoning_effort=warm_reasoning_effort,
                             before_warm=before_warm,
+                            after_warm=after_warm,
                         )
                 finally:
                     self._loading_now = None
@@ -1000,6 +1002,7 @@ class LocalGatewayClient:
         warm_tools: list[dict[str, object]] | None = None,
         warm_reasoning_effort: str | None = None,
         before_warm: Callable[[], Awaitable[object]] | None = None,
+        after_warm: Callable[[int], Awaitable[object]] | None = None,
     ) -> None:
         """`load` minus its narration: the health probe that makes llama-swap read the
         weights, the device-memory guard around it, and the inference warm-up."""
@@ -1098,6 +1101,7 @@ class LocalGatewayClient:
                     tools=warm_tools,
                     reasoning_effort=warm_reasoning_effort,
                     before_warm=before_warm,
+                    after_warm=after_warm,
                 )
             return
 
@@ -1127,6 +1131,7 @@ class LocalGatewayClient:
                 tools=warm_tools,
                 reasoning_effort=warm_reasoning_effort,
                 before_warm=before_warm,
+                after_warm=after_warm,
             )
             return
 
@@ -1161,6 +1166,7 @@ class LocalGatewayClient:
                 tools=warm_tools,
                 reasoning_effort=warm_reasoning_effort,
                 before_warm=before_warm,
+                after_warm=after_warm,
             )
 
         try:
@@ -1216,6 +1222,7 @@ class LocalGatewayClient:
         tools: list[dict[str, object]] | None = None,
         reasoning_effort: str | None = None,
         before_warm: Callable[[], Awaitable[object]] | None = None,
+        after_warm: Callable[[int], Awaitable[object]] | None = None,
     ) -> None:
         """Exercise the inference path with one discarded token. Best-effort: the model is
         already loaded, so a warm-up failure is logged, not raised — it only means the
@@ -1277,6 +1284,7 @@ class LocalGatewayClient:
             # The rendered tool schemas are part of what gets prefilled, and on this box they
             # are the bulk of it — the primed prefix measured 27,787 tokens.
             prompt_chars += len(json.dumps(tools))
+        warm_prompt_tokens = 0
         try:
             async with (
                 prefill.watch(
@@ -1294,10 +1302,25 @@ class LocalGatewayClient:
                         f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
                     )
                     resp.raise_for_status()
+                    with contextlib.suppress(Exception):
+                        usage = resp.json().get("usage") or {}
+                        tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+                        if isinstance(tokens, int):
+                            warm_prompt_tokens = tokens
                 finally:
                     answered()
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
+        # A save hook runs LAST, only after a warm that actually returned: this is the one
+        # moment the slot provably holds exactly the primed prefix, so the caller can
+        # persist it to disk for the next load (a restored-then-hit warm reports the full
+        # prompt size too, and the save path dedupes by fingerprint — an LRU touch, not a
+        # rewrite). Best-effort like the restore hook.
+        if after_warm is not None and warm_prompt_tokens > 0:
+            try:
+                await after_warm(warm_prompt_tokens)
+            except Exception:  # noqa: BLE001 — a failed save just means the next load prefills
+                log.warning("local_gateway.after_warm_failed", model=served_model, exc_info=True)
         # Outside the `except`: a warm that FAILED still ends the load's wait, and leaving the
         # bar short on the way to a model that is nonetheless resident and serving would be a
         # worse lie than the failure it is reporting.

@@ -1613,3 +1613,45 @@ def test_a_device_refusal_on_the_load_button_is_a_409_not_a_500(
 
     assert resp.status_code == 409, f"a device refusal surfaced as {resp.status_code}"
     assert "safely available" in resp.text, "the refusal's own arithmetic was dropped"
+
+
+async def test_warm_identity_builds_matching_restore_and_save_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The load's two kv hooks must speak the same identity: what before_warm restores
+    under (system/tools/effort) is exactly what after_warm saves under — a drift here
+    writes files no restore can ever match. after_warm is the ONLY save moment a
+    non-agent model (picker-loaded qwen) gets."""
+    from jbrain.api import llm_settings as mod
+
+    calls: list[tuple[str, tuple]] = []
+
+    class _Store:
+        async def restore_if_lost(self, served, system, tools, *, reasoning_effort=None):
+            calls.append(("restore", (served, system, tuple(tools), reasoning_effort)))
+            return True
+
+        async def save_after_prime(self, served, system, tools, tokens, *, reasoning_effort=None):
+            calls.append(("save", (served, system, tuple(tools), reasoning_effort, tokens)))
+            return True
+
+    async def _inputs(registry, liveness, served):
+        return "PERSONA", [{"type": "function"}], frozenset()
+
+    monkeypatch.setattr(mod, "jerv_prime_inputs", _inputs)
+    monkeypatch.setattr(mod.llm_router, "warm_reasoning_effort", lambda task, served, stored: "low")
+    effort, before_warm, after_warm = await mod._warm_identity(
+        "qwen3.8-27b-q4",
+        settings_store=None,
+        kv_prefix=cast("mod.KvPrefixStore", _Store()),
+        registry=cast("mod.ToolRegistry", object()),
+        liveness=None,
+    )
+    assert effort == "low"
+    assert before_warm is not None and after_warm is not None
+    await before_warm()
+    await after_warm(37142)
+    r, s = calls[0][1], calls[1][1]
+    assert calls[0][0] == "restore" and calls[1][0] == "save"
+    assert s[:4] == (*r[:3], r[3])  # same served/system/tools/effort identity
+    assert s[4] == 37142
