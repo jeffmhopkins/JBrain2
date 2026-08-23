@@ -2,7 +2,7 @@
 """Build and cost a MODE-(b) tool prefill for jerv, and emit a ready-to-POST
 `/api/debug/tool-probe` body so the surface can be tested on the live box with no terminal.
 
-Mode (b) (`docs/proposed/TOOL_CATALOG_PLAN.md` §4) keeps every tool CALLABLE — its
+Mode (b) (`docs/plans/TOOL_CATALOG_PLAN.md` §4) keeps every tool CALLABLE — its
 `input_schema` stays in the turn's tool array — and defers only the verbose usage prose to
 an on-demand `tool_explain(name)`. That is the safe half of the catalog design: nothing is
 armed mid-turn, so there is no KV-prefix invalidation, no extra hop on the common path, and

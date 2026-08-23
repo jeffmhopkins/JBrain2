@@ -1,4 +1,4 @@
-"""The deepest-research background execution lane (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md,
+"""The deepest-research background execution lane (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md,
 R3).
 
 A deepest run is minutes-to-hours of work, so it cannot run inline on either sequential

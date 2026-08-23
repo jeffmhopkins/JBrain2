@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-18
+> **Status:** Living · **Last verified:** 2026-08-23
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -158,8 +158,13 @@ scripts/debug-connect.sh logs api --tail 200
 # The model engine's OWN stdout (slot acquired/released) — does a Stop free the GPU?
 # NOTE: this is a ~100 KB ring buffer that llama-swap's access log floods within minutes, and
 # llama-swap does not forward llama-server's stdout into it. Do NOT expect the startup banner
-# here — use `props` below for the serving facts.
+# here — that lives in `upstream-logs` below; use `props` below for the serving facts.
 scripts/debug-connect.sh gateway-logs --tail 200
+
+# llama-server's OWN stdout, which gateway-logs cannot show: startup banner, per-request
+# prompt-eval throughput, checkpoint evictions, a failed load's reason. Optional first arg
+# isolates one served model id (default: all models interleaved).
+scripts/debug-connect.sh upstream-logs --tail 400
 
 # How the engine is ACTUALLY serving a model, read from llama-server itself: the llama.cpp
 # build, the real n_ctx, and what `-np auto` resolved total_slots to. The read that tells a
@@ -208,8 +213,10 @@ from the previous model, and the reply looks perfectly normal.
 > like a success.
 >
 > **To stop the warm keeper reloading a big model while you work**, point
-> `agent.turn` at `qwen3.5-0.8b` — the keeper then keeps a ~1 GB model warm
-> instead. Pointing it at a cloud model does NOT work here: this box exposes only
+> `agent.turn` at `qwen3.5-0.8b` — the keeper then keeps the tiny model warm
+> instead (~0.9 GB of weights, but **3.83 GB resident** measured on the box
+> 2026-08-23 — runtime overhead dominates at this size — still nothing next to a
+> 60 GB reload). Pointing it at a cloud model does NOT work here: this box exposes only
 > local ids in `llm`, so any `provider:model` cloud spec is refused.
 
 ### A typical prompt-iteration loop

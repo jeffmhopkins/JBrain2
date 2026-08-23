@@ -1,6 +1,6 @@
 # Local-network access (sign in when the internet is down)
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
 The Cloudflare Tunnel (`docs/runbooks/CLOUDFLARE_TUNNEL.md`) is how you reach JBrain from
 *outside* your house. But it depends on the internet: a power blip that takes the
@@ -38,8 +38,10 @@ Local access is **on by default** at `https://jbrain.local`
   per-client config and no internet. avahi only auto-advertises the box's *system*
   hostname, so rather than rename the box, a small service publishes `jbrain.local`
   as a **CNAME alias** pointing at `<hostname>.local` (`deploy/avahi_alias.py`,
-  run by `deploy/jbrain-avahi-alias.service`). avahi tracks the box's IP across
-  DHCP changes. This host half is provisioned by `deploy/lan-setup.sh`.
+  run by the `jbrain-avahi-alias.service` systemd unit — a unit `deploy/lan-setup.sh`
+  **generates** into `/etc/systemd/system/`, not a file in the repo). avahi tracks
+  the box's IP across DHCP changes. This host half is provisioned by
+  `deploy/lan-setup.sh`.
 
 ```
 laptop ──HTTPS──> jbrain.local (Caddy, internal CA) ──> api    [all on the LAN]
@@ -93,6 +95,12 @@ docker compose -f /opt/jbrain2/docker-compose.yml cp \
 Import `jbrain-local-ca.crt` into each device's trust store (OS/browser "trusted
 root certificate authorities"). The key is stable across restarts, so this is a
 one-time step per device.
+
+> ⚠️ That `docker compose cp` is a **host-shell step** the owner cannot run
+> remotely (CLAUDE.md non-negotiable #10). Clicking through the warning needs no
+> terminal, so LAN access itself stays no-terminal — but removing the warning is
+> currently shell-primary, a gap to design out (e.g. the PWA offering the root
+> cert as a download).
 
 ## Notes
 

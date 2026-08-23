@@ -1,6 +1,6 @@
 # Deep Produce — one produce engine, two verbs
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W1✅ W2✅ W3◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W1✅ W2✅ W3◻️
 
 Generalize the `deep_research` pipeline into a single **produce engine** behind an
 abstraction layer, surfaced as two verbs:
@@ -25,7 +25,9 @@ W, produce an idealized treatment plan if the symptoms were to recur"* — is
 > output has no render path; the anti-hallucination critic silently no-ops on library-only
 > runs; and several framing claims ("ephemeral", "by construction", "access never
 > caller-supplied") overstated the shipped code. Each is addressed below and tagged
-> **[R]**.
+> **[R]**. (Line-number cites throughout are that review's snapshot and have since
+> drifted — e.g. `research()` and `DeepResearchRef` now sit lower in `deep_research.py`,
+> and jerv's `budget_multiplier` moved within `agents.py`; the file paths remain correct.)
 
 ## Why one engine, not a fork
 
@@ -214,10 +216,12 @@ narrow, owner-only case, recorded rather than silently overridden:
   citation / quantitative-provenance / attribution rules must not be forked per kind: keep
   **one** synth prompt where the provenance block is `output_kind`-invariant and only the
   artifact-shape section is templated. **And** decouple the critic's faithfulness pass from
-  `_can_open_sources`: today `verify = _can_open_sources(source_mode) and bool(sources)` and
-  `_can_open_sources` returns `source_mode != "library"` (`:137-143`), so a **library-only
-  run gets no citation/quantitative/attribution check at all** — exactly the seeded case.
-  The check must fire whenever there is anything (library reports or seed) to cite against.
+  `_can_open_sources`: at review time `verify = _can_open_sources(source_mode) and
+  bool(sources)` with `_can_open_sources` returning `source_mode != "library"`, so a
+  **library-only run got no citation/quantitative/attribution check at all** — exactly the
+  seeded case. **Resolved by the shipped W2:** `_critique(record=…)` carries a
+  record-verification clause that fires regardless of `_can_open_sources`, so the check now
+  fires whenever there is anything (library reports or seed) to cite against.
 - **Owner-wide, not health-firewalled, in v1 (D6 resolved) [R] — not "ephemeral."** The
   return persists via `record_exchange` into `agent_turns`, whose RLS is `USING(is_owner())`
   with **no** domain predicate (`0020:44-50`) — so a health-derived plan is durably readable
@@ -282,7 +286,8 @@ wave** that ever does template the system prompt:
 > record** (`_critique(record=…)`, a record-verification clause that fires regardless of
 > `_can_open_sources`). The seed read reuses the already-RLS-tested `lab_results` path and the
 > zero-`research_reports`-rows property is unit-covered via persist-suppression, so no new table
-> or RLS isolation test was required (CLAUDE.md #3). **W3 (recipe registry + owner UI) remains.**
+> or RLS isolation test was required (CLAUDE.md #3). **W3 remains** — narrowed to the owner UI,
+> since the recipe registry shipped via `REPORT_PRESET_PLAN.md` P1 (`research_presets.py`).
 
 **W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
 `deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,
@@ -297,7 +302,7 @@ W1 engine, not a dependency of it.
 |---|---|---|
 | **W1 — jerv `deep_produce` (standalone value)** ✅ *(shipped, PR #965)* | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate. Ship a **jerv-facing `deep_produce`** with ≥1 non-report `output_kind` (e.g. `plan`) end-to-end over web/library, external sink — reusing the shipped `deep_research_report` view (the artifact is a `.md` document; **no new GUI surface, no mock gate**). **No** curator/seed/health surface. B3 discipline applies here too: jerv's non-report output keeps the v10–v14 provenance block (invariant) with only the artifact-shape section templated. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post); a jerv non-report run produces the requested artifact and emits the *same* `deep_research_report` view, with the provenance block intact |
 | **W2** | curator `deep_produce`: seed-keyed SourcePlan (D5) — the three-way seeded/refuse/plain split; health seed + fail-closed grounding refusal; `_persist` external-write suppression (D6); web-fan suppression; budget decision; treatment-plan recipe; document the owner-wide `agent_turns` property. (Output still renders through the shipped report view — a seeded run simply shows no web-sources strip, as `library` mode already does.) | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run |
-| **W3** | Recipe registry (named `objective` + `output_kind` presets) and owner UI (recipe / date range / category). | Recipe round-trip; mock-gate |
+| **W3** | Owner UI (recipe / date range / category). The recipe-registry half shipped as `REPORT_PRESET_PLAN.md` P1 (`agent/research_presets.py` — named `.preset` files carrying `output_kind`, e.g. `daily_news.preset`), so W3 narrows to the UI surface over it. | Recipe round-trip; mock-gate |
 | **W4** *(systemic follow-up, not a v1 blocker — see D6)* | Domain-tag the agent transcript so health turns (all of them, not just `deep_produce`) are firewalled; optionally a revisitable health-scoped saved-artifact store under `domain_code='health'`. Promotes to a W2 prerequisite only if the owner requires cross-scope isolation of health output within their own sessions. | New/changed RLS + isolation test on `agent_turns`; artifact-store isolation test |
 
 ## Open decisions

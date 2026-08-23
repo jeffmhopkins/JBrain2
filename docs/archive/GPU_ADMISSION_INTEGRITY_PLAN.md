@@ -1,8 +1,10 @@
 # GPU Admission Integrity — every load the box makes goes past the guard
 
-> **Status:** Superseded · **Last verified:** 2026-08-21 · **Waves:** W0❌ W1❌ W2❌ W3❌ W4❌
+> **Status:** Superseded 2026-08 · no wave built (W0–W4 all rejected in review) · **Superseded-by:** `LOCAL_ONLY_BOX_PLAN.md` → `docs/reference/MODEL_ACCESS_INVENTORY.md`
 
-> **SUPERSEDED by `LOCAL_ONLY_BOX_PLAN.md`.** Four cold adversarial reviews found W0
+> **SUPERSEDED by `LOCAL_ONLY_BOX_PLAN.md`** *(that successor has since been deleted too —
+> `docs/reference/MODEL_ACCESS_INVENTORY.md` replaced it and preserves its facts)*.
+> Four cold adversarial reviews found W0
 > unbuildable (no per-model memory attribution exists on this box), W1 unsound (its keystone
 > category has no data source, and applying it at `local_gateway.py:762` reintroduces the
 > mid-load-baseline bug #1186 fixed), W4's premise unreachable, and W3 in contradiction with

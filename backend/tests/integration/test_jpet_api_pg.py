@@ -1,4 +1,4 @@
-"""The JPet HTTP surface end-to-end (docs/plans/JPET_PLAN.md W1) against real Postgres.
+"""The JPet HTTP surface end-to-end (docs/archive/JPET_PLAN.md W1) against real Postgres.
 
 Drives the actual FastAPI app: owner login, GET /api/pet (creates + returns the pet),
 and POST /api/pet/command (feed + move mutate and return the new state). Owner-gated:

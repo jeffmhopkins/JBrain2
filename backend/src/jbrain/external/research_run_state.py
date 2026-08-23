@@ -1,5 +1,5 @@
 """Durable checkpoint for a background deepest-research run (`app.research_run_state`,
-migration 0147; docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R5).
+migration 0147; docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R5).
 
 The run writes its committed state after each round (`checkpoint`), so a worker/box
 restart mid-run rehydrates and CONTINUES from the last committed round (`load`) rather

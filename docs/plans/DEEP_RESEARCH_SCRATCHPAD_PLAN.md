@@ -1,6 +1,6 @@
 # Deep-research scratchpad — a run-scoped findings ledger
 
-> **Status:** In progress · **Last verified:** 2026-08-09 · **Waves:** P1✅ P1.5✅ P2◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** P1✅ P1.5✅ P2◻️
 > (P1 = the in-memory ledger + the scope-model refactor of `deep_research._run`, shipped
 > with unit coverage and a byte-identical no-regression seam. **P1.5 = the behavioral change**:
 > the synthesizer is fed a per-finding claim→source binding so it cites the source a finding
@@ -9,7 +9,8 @@
 > synthesize step on a controlled scenario that reproduces the v12/v14 title-match failure —
 > with vs. without the binding — cited the provenance-correct source 9/9 claims WITH the binding
 > vs. 2/9 without (6/9 mis-attributed to a title-lure distractor). A clear improvement, no
-> regression; the prompt is now at v12 (§8). See §8 for the harness + full result.
+> regression; P1.5 bumped the prompt to v12 — the lineage has since run on to v16 (§8).
+> See §8 for the harness + full result.
 > P2 = the scope-model unlocks — feed the ANALYSIS entry into the critique, per-researcher
 > partitioning for a comparison run — deferred until a comparison/partitioned mode needs them.)
 
@@ -122,8 +123,7 @@ ad-hoc concatenations at three points.
   ledger entries.
 - **No behaviour change on the default path.** The composed feed a stage reads is byte-identical
   to feeding the raw children (guarded by a unit test); the citation registry, roster, and
-  report view are unchanged (the shipped `test_deep_research.py` suite — 113 tests — passes
-  untouched).
+  report view are unchanged (the shipped `test_deep_research.py` suite passes untouched).
 
 ## 6. Tests (`tests/unit/test_research_scratchpad.py`)
 
@@ -143,7 +143,11 @@ whole-pipeline no-regression proof.
 - **P2 — scope-model unlocks.** Feed the ANALYSIS entry into the critique (one scope change);
   per-researcher partitioning for a comparison run (tag each candidate's researcher so findings
   can't bleed). Both are one-line refinements on the P1 substrate — built only when a
-  comparison/partitioned mode needs them.
+  comparison/partitioned mode needs them. A comparison mode has since shipped
+  (`compare_candidates.preset`, the `reports` source mode), but it does not trigger P2:
+  its gather reads the owner's already-cited report library — each candidate was researched
+  in its own prior run — so there are no live sibling researchers whose findings could bleed.
+  P2 stays deferred until a mode runs candidates side-by-side in one fan.
 - **Separate track — number-invention.** The biggest remaining hallucination class
   (fabricated numbers/attribution by the local model) is orthogonal to the ledger; it stays on
   the prompt-discipline + mechanical-backstop lineage that shipped the v12/v14/v16 fixes (e.g.
@@ -173,7 +177,8 @@ against the source THAT finding actually reached.
   per-finding binding and making title-matching the FALLBACK (a finding with no binding line,
   or a claim that spans findings). Every existing must-cite / all-noise-escape / on-topic rule
   is unchanged. Only the synthesize path changed — the analyst/reflect feed (`_findings_block`)
-  and the critique are byte-stable. The prompt's `version` field is now **v12**, tracked by the
+  and the critique are byte-stable. P1.5 bumped the prompt's `version` field to **v12** (later
+  revisions have carried the lineage on — v16 as of 2026-08-23), tracked by the
   `test_deep_research.py` pin plus a "sources this finding drew on" phrase assertion.
 - **On-box validated (2026-08-09).** The delicate citation path was checked against the real
   `gpt-oss-120b` before relying on it, via the debug console's `/complete-async` (task

@@ -1,4 +1,4 @@
-"""JPet's talking brain (docs/proposed/JPET_V2_PLAN.md) — the pet.turn route, faked LLM.
+"""JPet's talking brain (docs/archive/JPET_V2_PLAN.md) — the pet.turn route, faked LLM.
 
 Proves the child's message + pet state become a `pet.turn` call, the structured reply
 (now `{speech, emotion, script}`) is parsed and the script is bounded, off-enum / null

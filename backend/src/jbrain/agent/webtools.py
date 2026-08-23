@@ -369,7 +369,7 @@ def build_web_handlers(
     store) so `read_artifact` can re-read/continue it later without a network re-fetch
     (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md); both absent disables that (and the
     read_artifact tool is not registered). `domain_skips`, if given, is the 24h
-    paywall/bot-wall skip list (docs/plans/DOMAIN_HEALTH_PLAN.md): web_fetch short-circuits
+    paywall/bot-wall skip list (docs/archive/DOMAIN_HEALTH_PLAN.md): web_fetch short-circuits
     a listed host without a network call and records a fresh persistent block, and web_search
     drops listed hosts from its results with a transparency note; None disables both.
     `feeds`, if given, backs the `news_feed` tool (curated per-category RSS/Atom pulls,

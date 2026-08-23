@@ -615,7 +615,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # in the row) so a follow-up turn re-reads/continues it via read_artifact instead of a
         # network re-fetch. Its own AgentSessionRepo (app.state.agent_sessions is built later).
         app.state.tool_artifacts = ToolArtifactRepo(maker, AgentSessionRepo(maker))
-        # The 24h paywall/bot-wall skip list (docs/plans/DOMAIN_HEALTH_PLAN.md): global SYSTEM
+        # The 24h paywall/bot-wall skip list (docs/archive/DOMAIN_HEALTH_PLAN.md): global SYSTEM
         # reference data (app.blocked_domains), so it needs only the sessionmaker — it reads and
         # records under SYSTEM_CTX. web_fetch short-circuits a listed host and records a fresh
         # persistent block; web_search drops listed hosts from its results.
@@ -837,7 +837,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.jcode_client = (
             JcodeClient(settings.jcode_url, settings.jcode_token) if settings.jcode_url else None
         )
-        # The job launcher (docs/plans/JLAUNCH_PLAN.md): the api proxies its control surface
+        # The job launcher (docs/archive/JLAUNCH_PLAN.md): the api proxies its control surface
         # and streams its artifact into the blob store at share time. None (empty url) =
         # fail-closed: the /jlaunch routes 404 and the launcher tile is hidden.
         app.state.jlaunch_client = (

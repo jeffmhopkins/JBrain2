@@ -50,14 +50,14 @@ WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 # wildcard can never absorb it (review B3).
 SPAWN_TOOL = "spawn_subagent"
 
-# The deep-research primitive (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md): jerv's one-call
+# The deep-research primitive (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md): jerv's one-call
 # bounded plan→gather→reflect→refill→synthesize→critique run over the web-sandboxed fan.
 # Like `spawn_subagent` it is `web`-gated and NEVER_DEFAULT, so curator's `tools=None`
 # wildcard can never absorb it; only jerv holds it, and a child never does (a child is a
 # leaf — the tool refuses at depth > 0).
 DEEP_RESEARCH_TOOL = "deep_research"
 
-# The two-tier decomposition primitive (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2): a
+# The two-tier decomposition primitive (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2): a
 # TASK-AGENT-only affordance that lets a depth-1 research_deep child split its assigned
 # sub-question into one bounded fan of depth-2 sub agents, ONCE. `web`-gated and
 # NEVER_DEFAULT like the other spawn primitives; the handler refuses at depth 0 (the
@@ -68,7 +68,7 @@ DEEP_RESEARCH_TOOL = "deep_research"
 # orchestrator's ceiling — which is the only path that ever spawns a research_deep agent.
 DECOMPOSE_TOOL = "decompose_research"
 
-# The no-holds background research primitive (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7):
+# The no-holds background research primitive (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R7):
 # jerv's enqueue-and-return kickoff for an autonomous, two-tier, minutes-to-hours run. Like
 # the other spawn primitives it is `web`-gated and NEVER_DEFAULT (only jerv holds it), and a
 # child never does (the handler refuses at depth > 0).
@@ -228,13 +228,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
         # The deep-research primitive — jerv orchestrates a bounded research run over the
-        # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
+        # same fan (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
         # The deep-produce verb — the same engine as deep_research, but jerv chooses the
         # artifact (plan/table/brief/…) via output_kind (DEEP_PRODUCE_PLAN.md, W1).
         DEEP_PRODUCE_TOOL,
         # The deepest-research primitive — jerv kicks off a no-holds background run and
-        # returns immediately (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
+        # returns immediately (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
         DEEPEST_RESEARCH_TOOL,
         # The deep-research report library (TOOL_CATALOG_PLAN.md): the read umbrella
         # `research_report(action=search|list|read)` — action=read returns a report's FULL text,
@@ -550,7 +550,7 @@ AGENTS: dict[str, AgentProfile] = {
     ),
     # The task-agent tier of a deepest-research run: `research` plus the one-shot
     # decomposition tool. Same sandbox and budget; the extra tool lets it spawn ONE fan
-    # of depth-2 sub agents (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    # of depth-2 sub agents (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
     "research_deep": _profile(
         "research_deep",
         "research_deep.prompt",

@@ -1,5 +1,5 @@
 """Periodic progress from a background deepest run back into the initiating chat
-(docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R6).
+(docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R6).
 
 A background run has no live `/chat` turn to stream `ToolProgressEvent`s into (that SSE
 broker dies with the turn), so this channel reuses the two already-proven **off-turn**

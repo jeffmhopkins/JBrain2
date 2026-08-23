@@ -2975,7 +2975,7 @@ function applyMockPetCommand(command: PetCommand): void {
   mockPet.mood = mockPet.asleep ? "sleepy" : "playful";
 }
 
-// ===== Research Library fixtures (docs/plans/RESEARCH_LIBRARY_PLAN.md) — a varied
+// ===== Research Library fixtures (docs/archive/RESEARCH_LIBRARY_PLAN.md) — a varied
 // spread (deep/comparative, revised, coverage-limited, truncated; captions/whisper) so
 // the browse surface, provenance chips, and detail render have real content. Mutable so a
 // mock DELETE actually drops the row. =====

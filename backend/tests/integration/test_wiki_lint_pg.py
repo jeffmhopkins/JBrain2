@@ -1,4 +1,4 @@
-"""The `wiki_lint` corpus-health sweep (Phase-6 follow-on, docs/plans/WIKI_LINT_PLAN.md) — Wave A,
+"""The `wiki_lint` corpus-health sweep (Phase-6 follow-on, docs/archive/WIKI_LINT_PLAN.md) — Wave A,
 deterministic slice — against real Postgres. No LLM; the builder writes with the StubRewriter and a
 faked embed client.
 
@@ -427,7 +427,7 @@ async def test_builder_never_writes_a_null_fact_id_citation(maker: async_session
         ).scalar()
     # The check-6 drop (dangling-[n] is self-healing via the fact trigger) rests on every citation
     # being fact-backed. If a chunk-only citation path is ever introduced this goes red and check 6
-    # is re-scoped (docs/plans/WIKI_LINT_PLAN.md §2 check 6).
+    # is re-scoped (docs/archive/WIKI_LINT_PLAN.md §2 check 6).
     assert nulls == 0
 
 

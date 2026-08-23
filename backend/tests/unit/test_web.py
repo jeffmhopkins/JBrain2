@@ -2739,7 +2739,7 @@ async def test_read_artifact_unknown_id_is_a_clean_message() -> None:
 
 
 # --- domain skip list (24h paywall/bot-wall skip) --------------------------
-# docs/plans/DOMAIN_HEALTH_PLAN.md: a persistent hard block records the DOMAIN for 24h;
+# docs/archive/DOMAIN_HEALTH_PLAN.md: a persistent hard block records the DOMAIN for 24h;
 # later searches drop it (reporting the count) and later fetches short-circuit. These run
 # as unit tests with a fake repo (no DB); the RLS/upsert are proven in the integration test.
 

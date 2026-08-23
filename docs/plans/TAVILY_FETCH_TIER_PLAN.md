@@ -1,6 +1,6 @@
 # Tavily Fetch Tier — a hosted recovery tier for walled web_fetch
 
-> **Status:** In progress · **Last verified:** 2026-08-12 · **Waves:** T1✅ T2✅ T3✅ T4◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** T1✅ T2✅ T3✅ T4◻️ (T4 — live validation + tuning — is the sole open wave; it gates archiving this plan)
 
 `web_fetch`'s hardest misses are pages behind a managed bot wall (Cloudflare
 Turnstile, DataDome), a metered paywall, or a JS shell our static extractor can't
@@ -38,7 +38,7 @@ infoboxes / instant answers / news+science categories Tavily's search does not
 
 ### The tier
 
-`WebFetcher._recover` (`backend/src/jbrain/web/fetch.py:763`) already walks a tuple
+`WebFetcher._recover` (`backend/src/jbrain/web/fetch.py`) already walks a tuple
 of tiers, each a no-op miss (`None`) when it can't help, holding a thin result while
 escalation continues. Tavily becomes one more entry:
 
@@ -50,7 +50,7 @@ escalation continues. Tavily becomes one more entry:
    windowed **exactly like the reader path** (`_window_and_find`), so pagination /
    `find` / `outline` all work.
 
-**`_fetch_via_tavily` (new)** mirrors `_fetch_via_reader` (`fetch.py:1073`): the
+**`_fetch_via_tavily` (new)** mirrors `_fetch_via_reader` (`fetch.py`): the
 endpoint is owner-pinned, never model-supplied; `guard_public_host` runs on the
 target first (an internal hostname is never handed to Tavily); it returns `None` when
 disabled/unconfigured, on any Tavily error, or when the extracted content is *itself*
@@ -70,7 +70,7 @@ fingerprint/JS-management the stealth browser structurally can't defeat, not a f
 so paying the full direct→reader→byparr escalation on *every* future fetch to it is
 pure waste. When the on-box stack fails but Tavily saves the fetch, the box records the
 domain and routes it **Tavily-first** thereafter — the *learned* form of the static
-`solver_first_domains` shortcut (`config.py:181`), which it supersedes for this purpose.
+`solver_first_domains` shortcut (`config.py`), which it supersedes for this purpose.
 
 This rides the existing **per-domain fetch-health store** — `app.blocked_domains`
 (migration 0163) via `DomainSkipRepo` (`web/domain_health.py`), which already records a
@@ -108,7 +108,7 @@ domain with a `reason` + a 24h lazy-TTL and is read to route fetches:
 The API key is a **secret set from the GUI**, and the on/off is a **manual toggle** —
 so both live in the `app.settings` store (migration 0012), read live per fetch, not
 in static env config. This follows the **Gmail-credentials pattern** exactly
-(`settings_store.py:101-107`, 403-427): a third-party secret stored via the Settings
+(`settings_store.py`): a third-party secret stored via the Settings
 panel, **taking precedence over a `JBRAIN_*` env fallback**, changeable with no
 restart.
 
@@ -124,12 +124,12 @@ restart.
   the three-tier behaviour is byte-unchanged until then.
 
 **Live read into the singleton fetcher.** `WebFetcher` is an app-lifetime singleton
-built from static config (`main.py:450`), but `tavily_enabled`/`tavily_api_key` are
+built from static config (`main.py`), but `tavily_enabled`/`tavily_api_key` are
 runtime DB settings. So the fetcher takes a **settings provider** — an injected
 `async () -> (enabled, api_key)` that reads the store live under the owner context —
 and `_fetch_via_tavily` consults it per fetch. This is the same "read `app.settings`
 live per call" seam the LLM router uses for `llm_task_overrides`
-(`settings_store.py:515`, `router._resolve_live`), so a toggle flip or a pasted key
+(`settings_store.py`, `router._resolve_live`), so a toggle flip or a pasted key
 takes effect on the **next fetch, no redeploy**.
 
 **Non-secret config stays in `config.py`** (pinned, never model-supplied):
@@ -141,7 +141,7 @@ un-walls harder at ~2× credits).
 
 `POST /api/debug/fetch` (`web.fetch` scope, from `CHALLENGE_SOLVER`) gains a
 `tier="tavily"` selector that forces **only** `_fetch_via_tavily` (mirroring
-`WebFetcher.solve()`'s byparr-isolation entry, `fetch.py:665`). The Settings panel's
+`WebFetcher.solve()`'s byparr-isolation entry, `fetch.py`). The Settings panel's
 **"Test key"** button calls it, so the owner verifies a freshly pasted key against a
 real walled URL **from the PWA, with no terminal** — closing the loop non-negotiable
 #10 demands.

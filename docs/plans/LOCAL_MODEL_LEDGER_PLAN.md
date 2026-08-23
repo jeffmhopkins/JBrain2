@@ -367,6 +367,7 @@ nothing downstream could tell.**
   and an INSERT; `ensure_room` still holds the same advisory key across a whole evict-and-load
   (L1 item 5, open by decision), so a charge can queue behind one. Corrected, plus a
   `lock_timeout` so fifteen queued charges cannot become the api's whole connection pool.
+  *(Since resolved — see L1 item 5: the lock no longer spans the load.)*
 - **Two invariants moved from comment to constraint.** `CHECK (device_gb >= 0 AND host_gb >=
   device_gb)` makes "double-counting is unrepresentable" a fact rather than an assertion; the
   policy moved from `is_owner()` to **`is_full_owner()`**, so a domain-narrowed agent session
@@ -487,13 +488,13 @@ and each was a real defect found in review:
 why `ledger.charge`'s refusal is raised as a `GpuBudgetError` rather than a new class: the box
 already speaks the language, which is what keeps this wave a flip rather than a sweep.
 
-So what is genuinely left is the flip plus **one decision the shadow build deferred to this
-wave — the charge's `lock_timeout`.** `ledger.charge` bounds its wait for the box lock because
-`residency.ensure_room`'s slow path still holds the same advisory key across a whole
-evict-and-load (L1 item 5, open by decision), and its docstring hands the decision here: "Once
-the ledger is authoritative a timeout must refuse, which is one more line in the same place, and
-by then item 5 should be closed." A timed-out charge decided against a census somebody else is
-changing, which is the one thing the lock was for.
+The one decision the shadow build deferred here — what a charge's bounded `lock_timeout` wait
+should do on expiry — was settled with the flip: **a timed-out charge REFUSES**, as a transient
+`GpuBudgetError` (409 on the settings screen, a defer for the worker), because a timed-out
+charge decided against a census somebody else is changing, which is the one thing the lock was
+for. And the long hold it used to time out against is gone: `ensure_room` no longer spans the
+evict-and-load — the advisory key covers the decision and the evictions only, the load runs
+outside it under the charge row's protection (L1 item 5, resolved in the opposite direction).
 
 *Risk:* high — this is the part that changes behaviour, and it cannot be split further: the
 moment admission stops reading memory, every layer that still does is inconsistent with it.

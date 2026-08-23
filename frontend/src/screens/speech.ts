@@ -1,4 +1,4 @@
-// Browser voice for JPet (docs/plans/JPET_PLAN.md W6) — Web Speech, isolated behind
+// Browser voice for JPet (docs/archive/JPET_PLAN.md W6) — Web Speech, isolated behind
 // this module so the screens stay testable (jsdom has neither API; tests vi.mock this,
 // like petScene/leafletMap). Everything is guarded: on a browser without the API the
 // functions no-op / report unavailable, never throw.

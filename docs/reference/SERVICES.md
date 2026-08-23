@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-08-12
+> **Status:** Living · **Last verified:** 2026-08-23
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -19,14 +19,16 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | Service | Tech | Role | Net |
 |---|---|---|---|
 | `proxy` | Caddy | TLS termination (Let's Encrypt direct, or plain HTTP behind the tunnel), serves the built PWA, routes `/api`, LAN HTTPS for `jbrain.local`, jcode-preview wildcard. Ports 80/443. | edge |
-| `api` | FastAPI (async) | The REST API, auth, CRUD, search, agent chat. The internet-facing surface — never mounts the Docker socket. | edge, internal, jcode, jlaunch |
+| `api` | FastAPI (async) | The REST API, auth, CRUD, search, agent chat. The internet-facing surface — never mounts the Docker socket. | edge, internal, jcode, jlaunch, render |
 | `worker` | same image as `api` | Postgres job-queue consumer: extraction, chunking, embedding, analysis, wiki builds, the scheduled sweeps. | internal |
 | `db` | TimescaleDB-HA (Postgres 17 + Timescale + PostGIS + pgvector) | The single stateful service — relational + vector + FTS + time-series + geo + job queue + workflow state. | internal |
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`bge-small-en-v1.5`, 384-dim, 1 GB cap). Model = env var; swap ⇒ re-embed job. | internal |
 | `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset) behind an internal token. Drives the Ops screen. | internal |
-| `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search` (general, + infoboxes/instant answers), `news_search` (news category, dated leads), and `science_search` (science category, paper leads). Only the KB-blind `jerv` reaches it. | internal |
+| `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search` (general, + infoboxes/instant answers), `news_search` (news category, dated leads), and `science_search` (science category, paper leads). Reached only by the KB-blind `jerv` and the jcode search bridge (the sandbox has no route here — the api brokers). | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
+| `byparr` | Byparr (stealth headless browser, FlareSolverr-compatible) | `web_fetch`'s challenge-solver leg (direct → reader → byparr → Tavily): solves bot-wall challenges and returns the solved HTML; a genuine miss falls through to Tavily. See `../plans/CHALLENGE_SOLVER_PLAN.md`. | internal |
 | `rapidocr` | RapidOCR (PP-OCR / ONNX, CPU) | Deterministic OCR: cross-validates the VLM `vision.ocr` extraction (stores a `tool="rapidocr"` row) and backs the direct `ocr` tools (jerv + the jcode sandbox, which reaches it via the api bridge). Default-on; the engine lazy-loads on first call and idle-unloads. See `../plans/RAPIDOCR_PLAN.md`. | internal |
+| `htmlrender` | headless-Chromium HTML→PNG renderer | Renders model-authored HTML (the canvas `html` op — flowcharts, tables, report cards) to pixels so the PWA never receives live model DOM; Chromium idle-unloads. Egress-free by network topology. See `../plans/AGENT_CANVAS_PLAN.md`. | render |
 | `jlaunch` | `jlaunch` control server | Self-serve launcher for long one-shot scientific computations (first spec: the Erdős–Straus census to 10¹²). Clones a code-defined repo read-only, runs it as a supervised job with a live terminal + start/stop/kill, collects the artifact, and mints a public `/results/{token}` share page. Three Erdős–Straus specs ship: the Python census (clones the repo) and **native Rust reruns to 10¹² and 10¹³** (`es-census`, built from `research/es-census` and baked into the image — no clone) whose windowed SPF factorization is complete to √a (fixing the Python path's non-minimal R above ~1.3×10¹¹) and which stream output in bounded memory so they scale past 10¹². Default-on; isolated `jlaunch` network, CPU/mem uncapped by design (meant to use the box for hours) — the Python run's worker pool is sized to RAM, not core count, so it doesn't OOM. See `../archive/JLAUNCH_PLAN.md`. | jlaunch |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
 | `tts-stt` | whisper.cpp + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; the Kokoro voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). Kokoro is the sole on-box engine; the browser's native voice is the only fallback. | internal |
@@ -52,9 +54,9 @@ runs TTS only, so a stock box still serves read-aloud.
 
 **One-shot (`tools` profile):** `migrate` (`alembic upgrade head`, the only container with DDL rights) · `wipe` (destructive first-install reset, double-guarded).
 
-**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs) · `jlaunch` (isolates the compute job — only `jlaunch` and `api` join it; the artifact crosses into the blob store via the api, so jlaunch needs no route to `db`/blobs).
+**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs) · `jlaunch` (isolates the compute job — only `jlaunch` and `api` join it; the artifact crosses into the blob store via the api, so jlaunch needs no route to `db`/blobs) · `render` (egress-free — `internal: true`, no gateway — so the model-authored HTML that `htmlrender` executes cannot reach off-box; only `htmlrender` and `api` join it).
 
-**Volumes:** `blobs` (content-addressed attachments) · `db_data` · `caddy_data`/`caddy_config` · `embed_models` · `tiles` (basemap cache) · `jcode_work` (per-session scratch checkouts, never backed up) · `jlaunch_work` (job checkout + scratch, kept until the owner deletes the run) / `jlaunch_artifacts` (both never backed up). Host binds: `./backups`, `./local-models`, `./comfyui-models`, `./whisper-models`.
+**Volumes:** `blobs` (content-addressed attachments) · `db_data` · `caddy_data`/`caddy_config` · `embed_models` · `tiles` (basemap cache) · `jcode_work` (per-session scratch checkouts, never backed up) · `jlaunch_work` (job checkout + scratch, kept until the owner deletes the run) / `jlaunch_artifacts` (both never backed up). Host binds: `./backups`, `./local-models`, `./comfyui-models`, `./whisper-models`, `./searxng` (SearXNG config), `./db-init` (Postgres init scripts), `./mosquitto/mosquitto.conf`, and the read-only source mounts `./src/deploy/wall` + `./src/deploy/tts-stt`.
 
 ## The on-box GPU / local-model side
 
@@ -171,6 +173,8 @@ Personas (`backend/src/jbrain/agent/agents.py`, each a `.prompt` sidecar); an
 | **archivist** | Gmail triage/organizer | `gmail_*` + an owner-only cross-session memory. **No KB**; present only when Gmail is configured. |
 | **intake** | Guided-intake interviewer, run by a **non-owner** | **No tools, no KB** — capture is the server's job. |
 | research / review / summarize | The closed sub-agents `jerv` can spawn | Web-only or no tools; always leaves. |
+| research_scout / research_fetch / research_deep | The deep-research gather tiers (scout searches only, fetch opens only, deep may decompose one sub-fan) | Web-only; always leaves. |
+| research_library / review_library · research_reports / review_reports | The corpus twins of research/review — video-library and stored-report reads instead of the web | Corpus reads only; always leaves. |
 
 Tools are `.tool` files (`backend/src/jbrain/agent/tools/`) with handlers in
 `*tools.py`, assembled by `toolregistry.py`. Groups: **knowledge read**
@@ -188,7 +192,15 @@ URL, live or on-demand, via yt-dlp + ffmpeg; a second SSRF-guarded outbound leg)
 (`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **planning**
 (`read_plan`/`write_plan` — an owner-approved, per-conversation plan jerv executes
 across turns; owner-initiated, owner-only approval, auto-continued between steps; see
-`../archive/JERV_PLANNING_TOOL_PLAN.md`) · **health
+`../archive/JERV_PLANNING_TOOL_PLAN.md`) · **deep research** (`deep_research` /
+`deepest_research` / `decompose_research` / `deep_produce` — the multi-agent
+fans) · **research reports** (`research_report` + show/remove — the stored
+report library) · **news / reference** (`news_search`, `science_search`,
+`news_feed`, `grokipedia`, `public_records`, `portal_search`) ·
+**canvas / draw** (`canvas` + `show_canvas`, the `render_chart` /
+`render_bars` / `render_html` pixel renders) · **external video**
+(`external_video` + show/remove, `check_channel`) · **ocr** (deterministic
+RapidOCR text extraction) · **health
 lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 
 ### Knowledge pipeline (`backend/src/jbrain/analysis/`)
@@ -252,7 +264,7 @@ transitions emit workflow events).
   (`scripts/debug-connect.sh`).
 - **Supervisor + Ops screen** — per-container health, restart, live log tails,
   and the update / export / import flows (a detached one-shot updater container
-  that survives the stack restarting beneath it). See `OPERATIONS.md` and the
+  that survives the stack restarting beneath it). See `../runbooks/OPERATIONS.md` and the
   `../runbooks/` set.
 
 Owner root of trust is the printed **owner key** (hash-stored, shown once);

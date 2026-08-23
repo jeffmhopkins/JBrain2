@@ -1,6 +1,6 @@
 """SQL JPet repository. Every query runs on an RLS-scoped session, so the domain
 firewall (and the owner-only rule) is Postgres', not this module's — the same pattern
-as lists/notes. v2 (docs/proposed/JPET_V2_PLAN.md) persists the pet's action *script*
+as lists/notes. v2 (docs/archive/JPET_V2_PLAN.md) persists the pet's action *script*
 and the room objects it targets/carries; the pet's play stays pure arithmetic, no LLM
 in the tick (still second seat)."""
 

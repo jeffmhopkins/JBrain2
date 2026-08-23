@@ -1,4 +1,4 @@
-"""The agent's generic charting tools (docs/plans/CHAT_CHARTS_PLAN.md W3).
+"""The agent's generic charting tools (docs/archive/CHAT_CHARTS_PLAN.md W3).
 
 Two producers of the data-only `chart` tool-view (DESIGN.md "chart & lab_chart
 tool-views"), the numeric twin of the health-only `lab_chart`:

@@ -1,6 +1,6 @@
 # JBrain2 — Doc Lifecycle
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Binding process for how a document is born, changes, and dies alongside the
 feature it describes. It exists because the `docs/` folder drifted into a
@@ -159,7 +159,9 @@ folder; an index that omits a sibling is itself stale, and the freshness check
 flags it. (It only checks under-listing — a README also cross-references other
 docs in prose, so a named-but-absent file can't be told from a legitimate
 mention; catch those at review. `research/`, `mocks/`, and `archive/research/`
-may have no index; if one exists, it's held to the same rule.)
+may have no index; if one exists, hold it to the same rule at review — the
+script checks only `proposed/`, `archive/`, `reference/`, `runbooks/`, and
+`plans/`.)
 
 ## Anti-rot rules — why we got stale, and the fix
 
@@ -169,7 +171,8 @@ Each rule targets a failure this cleanup actually found.
   tables," "head is 0044" rot the instant the next one lands. State them only
   under `Last verified` as a dated snapshot, or point at the source of truth
   (`backend/migrations/versions/`). *Never* assert a live counter as timeless
-  prose. This single pattern produced the most stale lines in the repo.
+  prose. This single pattern produced the most stale lines in the repo. The
+  script guards the root `CLAUDE.md` against it too, not just `docs/`.
 - **R2 — One status block, at the top.** A doc that self-reports its status in
   two places will eventually disagree with itself.
 - **R3 — Dates are `Last verified`, never identity.** A section titled
@@ -177,6 +180,9 @@ Each rule targets a failure this cleanup actually found.
   is honest forever — it says when, not that it's current now.
 - **R4 — Archive at merge, not "later."** The graveyard forms entirely from
   deferred archiving. Moving a `Shipped` plan is a merge step, not backlog.
+  One legitimate hold: a plan whose only open wave is an on-box **sign-off wave**
+  (the owner confirming the shipped code on the live box) stays `In progress` in
+  `plans/` until that confirmation lands — it is not an unarchived-✅ violation.
 - **R5 — One home per state (see table).** `Shipped` code left in `proposed/`
   (jcode) or `docs/` root (image-gen, location, subagents) is how readers lose
   the thread between "planned" and "done."
@@ -193,7 +199,10 @@ Rules without teeth rot too. Two mechanisms:
    - *(warn)* a non-archived doc missing a freshness header (R2/R3);
    - *(warn)* a `README.md` index that omits a file in its folder (homes);
    - *(warn)* a doc that links to a `docs/…md` path that doesn't exist (keeps the
-     doc corpus internally linked; code-comment references are out of scope);
+     doc corpus internally linked; code-comment references are out of scope; this
+     doc and `DOC_CLEANUP_PLAN.md` are meta-exempt — they quote rot patterns and
+     illustrative paths as teaching examples, so both the R1 prose check and this
+     dead-link check skip them);
    - *(warn)* an **active plan** (`Scheduled`/`In progress`) whose `Last verified`
      is older than 90 days. Living runbooks that stay true for years are exempt —
      the age warn is for work in flight, not stable reference.

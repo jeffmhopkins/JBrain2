@@ -462,7 +462,7 @@ class Settings(BaseSettings):
     # off the jcode profile the coder isn't resident and that endpoint fail-closes.
     jcode_gateway_token: str = ""
 
-    # OPT-IN job launcher (docs/plans/JLAUNCH_PLAN.md): a sidecar control server that runs
+    # OPT-IN job launcher (docs/archive/JLAUNCH_PLAN.md): a sidecar control server that runs
     # a registered long-running one-shot computation (the Erdos-Straus census is the first
     # spec) as a supervised job with a live terminal, start/stop/kill, and a public,
     # shareable results page + artifact. EMPTY `jlaunch_url` DISABLES the feature
@@ -473,7 +473,7 @@ class Settings(BaseSettings):
     jlaunch_enabled: bool = False
     jlaunch_token: str = ""
 
-    # JPet — the family wall pet (docs/plans/JPET_PLAN.md). The drives tick runs in
+    # JPet — the family wall pet (docs/archive/JPET_PLAN.md). The drives tick runs in
     # the web process on this cadence (brisker than the tasks tick so the pet feels
     # live); it's pure arithmetic, never the job queue, so the pet always takes
     # second seat. The pet lives in `jpet_domain` — the safe family domain the kids

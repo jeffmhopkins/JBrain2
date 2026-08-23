@@ -1,6 +1,6 @@
 # jcode grok Internet Access — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; final on-box sign-off that the CLIs read the workspace-root memory file is pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; the hook is shipped (`jcode/Dockerfile` installs `agents-md.sh`) — confirm on the next deploy that the CLIs read the workspace-root memory file. E1 = raw-egress toggle, deferred: the shared-container caveat in §6 has no live resolution path — the UI toggle ships disabled)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the search bridge runs
 > the same on-box SearXNG discipline jerv already uses (invariant #9 — no owner
@@ -28,13 +28,13 @@ The box **already runs SearXNG** (`deploy/docker-compose.yml` `searxng`, plus a
 
 ## 2. The constraint that shapes everything — the network
 
-The jcode sandbox sits on its **own `jcode` network** (`docker-compose.yml:544`),
-reachable peers by design: **only `local-llm` and `api`** (`:425-429`). SearXNG
-lives on the **`internal`** network (`:625`) and is **unreachable from the
+The jcode sandbox sits on its **own `jcode` network** (`docker-compose.yml`),
+reachable peers by design: **only `local-llm` and `api`**. SearXNG
+lives on the **`internal`** network and is **unreachable from the
 sandbox**. Widening the sandbox onto `internal` is rejected — it's the whole point
 of the isolation (no `db`, no notes, no blob store).
 
-**The `api` is the one process on both `jcode` and `internal`** (`:164`), and every
+**The `api` is the one process on both `jcode` and `internal`**, and every
 grok completion already flows through the api's residency proxy
 (`backend/src/jbrain/api/jcode_llm.py`). So **the api is the bridge**: the sandbox
 calls the api, the api calls SearXNG.
@@ -57,9 +57,9 @@ Two independent per-session capabilities, **plumbed exactly like `model`/`planne
 are today** — fixed at create so a mid-session settings change never re-points a
 live session:
 
-`CreateSessionBody` (`api/jcode.py:193`) → `JcodeApi.create_session(...)`
-(`jcode/client.py:80`) → `SessionManager.create(...)` → `Session` fields
-(`jcode/sessions.py:43`) → `terminal.py model_env()` → env into the login shell.
+`CreateSessionBody` (`api/jcode.py`) → `JcodeApi.create_session(...)`
+(`jcode/client.py`) → `SessionManager.create(...)` → `Session` fields
+(`jcode/sessions.py`) → `terminal.py model_env()` → env into the login shell.
 
 1. **SearXNG search** (`internet_search`) — exposes `web-search`/`web-fetch` to
    grok. Sandbox egress stays locked; only query text / target URLs leave,
@@ -82,7 +82,7 @@ defense-in-depth logging.
 - **S1 — api search bridge.** Add `POST /api/jcode/llm/v1/web_search` and
   `/web_fetch` beside the jcode proxy (`api/jcode_llm.py`), authed by the same
   bearer, reusing the already-constructed `SearxngClient(settings.searxng_url)`
-  (`main.py:372`) and `WebFetcher`. Return the same shaped hits/text jerv's
+  (`main.py`) and `WebFetcher`. Return the same shaped hits/text jerv's
   handlers build. Tests: fake transport, 200/empty/unavailable, auth reject.
 - **S2 — sandbox helpers + env.** `web-search`/`web-fetch` scripts curling the
   bridge (base URL from the same `GROK_MODELS_BASE_URL` root); `COPY` + `chmod`
@@ -106,14 +106,15 @@ defense-in-depth logging.
 ## 6. Wave E1 — raw egress, and the shared-container caveat
 
 Egress is a property of the **shared `jcode` container** (one HTTP(S)_PROXY /
-one network for all sessions — `docker-compose.yml:532-540`). So a *per-session*
+one network for all sessions — `docker-compose.yml`). So a *per-session*
 raw-internet toggle **cannot** be cleanly enforced by flipping a container-level
 env: all sessions share the container's outbound. Honest options:
 
 - **Container-per-session** (`docs/archive/JCODE_CONTAINER_PER_SESSION_PLAN.md`):
-  the clean home for per-session egress — each session gets its own container, so
-  its egress (direct NAT vs the allowlisting forward proxy) is its own. E1 likely
-  **depends on** that model.
+  would have been the clean home for per-session egress — each session in its own
+  container, so its egress is its own. But that plan was red-teamed **Rejected
+  (NOT VIABLE as scoped)**, so this option is dead and **E1 currently has no live
+  path**.
 - **Per-session authorizing forward proxy:** the allowlist proxy authorizes by
   session identity and opens the wider allowlist only for opted-in sids. More
   infra, needs on-box verification (the compose comments already flag cloudflared-
@@ -121,9 +122,10 @@ env: all sessions share the container's outbound. Honest options:
 
 **E1 is therefore specified but not built here.** The `internet_egress` flag is
 plumbed through the same seams as `internet_search` (so the UI + session shape are
-ready), but the actual egress relaxation lands with, or after, container-per-session
-and needs on-box sign-off. The UI checkbox should surface this (e.g. disabled with
-a "needs per-session containers" note) until then.
+ready), but with container-per-session rejected, the actual egress relaxation has
+no live path — it would need the per-session authorizing proxy (or a new viable
+isolation model) plus on-box sign-off. The UI checkbox should surface this (e.g.
+disabled with a "needs per-session isolation" note) until then.
 
 ## 7. Docs to reconcile on merge
 

@@ -1,6 +1,6 @@
 # Challenge Solver — get web_fetch past the bot walls
 
-> **Status:** In progress · **Last verified:** 2026-08-05 · **Waves:** S1✅ S2◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** S1✅ S2◻️
 
 Deep-research runs were quietly losing their most authoritative sources. A
 Cloudflare-class bot wall (`floridapolitics.com`, a candidate's own site) answers
@@ -17,8 +17,9 @@ browser/TLS fingerprint, which a stealth browser targets directly.
 
 ## Design — a third fetch tier, gated behind honest detection
 
-`web_fetch` becomes a three-tier escalation, each tier a no-op miss (`None`) when it
-can't help, so escalation is just "try the next one":
+`web_fetch` becomes a tiered escalation, each tier a no-op miss (`None`) when it
+can't help, so escalation is just "try the next one". The live ladder is **four**
+tiers:
 
 1. **direct** — a browser-headers httpx GET (unchanged).
 2. **reader** — the stock headless-Chromium renderer for a JS shell / soft bot-wall
@@ -26,6 +27,13 @@ can't help, so escalation is just "try the next one":
 3. **solver** — a stealth browser (Byparr, Camoufox-backed) behind a FlareSolverr-shape
    `POST /v1` API that clears the JS/managed challenge and returns the solved HTML,
    extracted exactly like a direct fetch.
+4. **tavily** — the hosted Tavily Extract tier, added after this plan
+   (`docs/plans/TAVILY_FETCH_TIER_PLAN.md`), which renders + un-walls on Tavily's
+   cloud when every on-box tier misses.
+
+Known hard-walled domains also take a **solver-first shortcut**
+(`solver_first_domains`, `backend/src/jbrain/config.py`) that skips the two
+doomed direct/reader legs.
 
 **Challenge detection (`_is_challenge_page`, `backend/src/jbrain/web/fetch.py`).** The
 load-bearing correctness fix, independent of the solver: content-based detection of a
@@ -69,16 +77,21 @@ with `logs api` to see which tier served via `web.solver_used` / `web.challenge_
   compose + dev-setup wiring, `byparr` in the stock stack); the `POST /api/debug/fetch`
   route + `web.fetch` scope + `debug-connect.sh fetch`. Full unit coverage (`test_web.py`,
   `test_debug_api.py`, `test_searxng_compose.py`), web fetch faked via `MockTransport`.
-- **S2 ◻️** — live validation after the PWA update brings `byparr` up (no console step):
-  confirm a known-walled URL (`floridapolitics.com`) now returns real content via
-  `web.solver_used`, confirm the byparr port (8191 assumed) against the running image,
-  tune `maxTimeout`/`mem_limit` against real solves, and decide whether to cache
-  `cf_clearance` per host to skip repeat solves.
+- **S2 ◻️ (rescoped — most items resolved by later shipped work)** — the original
+  scope has largely landed elsewhere: byparr solve outcomes are traced and the
+  solver timeouts tuned (`backend/src/jbrain/web/fetch.py`); the compose service
+  carries `shm_size: 2gb` (`deploy/docker-compose.yml`); and the `cf_clearance`
+  question was answered a different way — a solver miss now marks the domain
+  `solver_failed` for learned Tavily-first routing (migration
+  `0165_blocked_domains_solver_failed`, `backend/src/jbrain/web/domain_health.py`)
+  instead of caching cookies. **Remaining:** confirm a known-walled URL
+  (`floridapolitics.com`) returns real content via `web.solver_used`.
 
 ## Security posture and the honest ceiling
 
 The solver reuses the reader's trust model: owner-pinned base URL, SSRF-guarded public
-target, on `internal` with no owner data, reached only by jerv (no KB/owner context).
+target, on `internal` with no owner data, reached only by jerv and the jcode fetch
+bridge (`backend/src/jbrain/api/jcode_llm.py`) — both KB-blind.
 Detection is a **correctness** fix (stop citing junk); the solver is a **retrieval**
 upgrade. Neither defeats an interactive Turnstile/CAPTCHA — those sites stay blocked, and
 detection keeps them an honest block rather than a fake citation. Open-source solvers lag

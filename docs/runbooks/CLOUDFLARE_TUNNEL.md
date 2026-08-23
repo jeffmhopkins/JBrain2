@@ -1,6 +1,6 @@
 # Home-network access via Cloudflare Tunnel
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
 This is the recommended way to reach JBrain from outside your house when the box
 sits on a home network with a **dynamic IP** and possibly **CGNAT** (carrier-grade
@@ -79,6 +79,12 @@ then `sudo jbrain up` (the helper picks up the `tunnel` profile from
 env and never creates the `cloudflared` container or re-reads the changed
 `JBRAIN_SITE_ADDR`). Complete the Cloudflare dashboard steps above first.
 
+> ⚠️ This `.env` edit + `jbrain up` is a **host-shell step** the owner cannot run
+> remotely (CLAUDE.md non-negotiable #10) — as is `enable-jcode-preview` below.
+> Access-mode changes are first-time/host-migration work by nature, but the
+> terminal dependency is still a gap to design out, not a workflow to hand the
+> owner.
+
 ## Verify and troubleshoot
 
 - `jbrain status` should list **cloudflared** as running.
@@ -151,7 +157,8 @@ the one thing you do by hand is the Cloudflare wildcard:
    the stack so the change takes effect (a `.env` change isn't picked up by `restart`).
    Host-served preview is the only mode (the per-session cloudflared quick-tunnel was
    retired); a base host is all it needs. Turn on **debug access**
-   (`docs/runbooks/DEBUG_ACCESS.md`) first so the control server's verbose logs (`/debug/logs/jcode`)
+   (`docs/runbooks/DEBUG_ACCESS.md`) first so the control server's verbose logs
+   (`GET /api/debug/jcode/logs`)
    show `preview proxy → :port` per request. Start a dev server in a session on `$PORT`,
    open its `<slug>-preview.<host>` → the page loads and HMR live-reloads; open a second
    session to confirm concurrency.

@@ -2141,7 +2141,7 @@ def test_chat_prepends_the_current_datetime_as_data_framed_user_message(
 def test_chat_datetime_block_lands_after_history_for_cache_reuse(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
-    # docs/plans/LLM_PROMPT_CACHE_PLAN.md W1: the volatile date/time block sits AFTER the
+    # docs/archive/LLM_PROMPT_CACHE_PLAN.md W1: the volatile date/time block sits AFTER the
     # conversation history (just before the newest user turn), so [system + history] stays a
     # byte-stable, reusable KV prefix instead of being invalidated by the per-turn clock.
     login(client, repo)

@@ -350,7 +350,7 @@ export interface AgentSession {
   last_run_status?: string | null;
   /** jerv's plan state for this conversation (not_approved | approved | in_work),
    * or null when there is no plan — drives the composer-foot plan pill and the
-   * Chats-picker plan badge (docs/plans/JERV_PLANNING_TOOL_PLAN.md). */
+   * Chats-picker plan badge (docs/archive/JERV_PLANNING_TOOL_PLAN.md). */
   plan_status?: string | null;
   /** The last completed turn's context fill + the window it ran against, so the
    * composer's context-usage meter restores when this chat is reopened (null/absent

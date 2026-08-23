@@ -1,4 +1,4 @@
-"""Plan auto-continuation against real Postgres (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+"""Plan auto-continuation against real Postgres (docs/archive/JERV_PLANNING_TOOL_PLAN.md).
 
 Covers the continuation bookkeeping on `agent_session_plans`: scheduling + atomic
 claim, the guards that keep a claim from firing (awaiting-owner, not-in-work, over the

@@ -1,6 +1,6 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-05 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; v15 citation reliability — synth must-cite + question-aware source curator + entity-disambiguation queries; v16 registry culled by embedding rank + zero-citation re-synth backstop (the 501-source ballot failure); mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** D1✅ D2✅ D3✅ (mock-gate sign-off ◻️) (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; v15 citation reliability — synth must-cite + question-aware source curator + entity-disambiguation queries; v16 registry culled by embedding rank + zero-citation re-synth backstop (the 501-source ballot failure); mock-gate sign-off pending)
 
 **v16 revision (0 cited · 501 reached — the LLM curator couldn't prune a large noisy registry).**
 A citation-rich District-1 candidate report gathered 501 sources but cited NONE. The v15 LLM
@@ -9,8 +9,9 @@ source curator was structurally unable to help: its 800-token `drop` array could
 and its "refuse a drop of more than half" backstop kept the whole list — so the writer again faced
 a mostly-noise registry and took the all-off-topic escape. Fixed by replacing the LLM curator with
 a deterministic embedding rank (`_curate_sources`), adding a mechanical zero-citation re-synth
-backstop, and gating the synth escape behind an explicit on-topic count (`dr-synth-v9`). See the
-v16 seams in the changelog below.
+backstop, and gating the synth escape behind an explicit on-topic count (`dr-synth-v9` at the
+time; the synth prompt lineage has since run on to `dr-synth-v16`). See the v16 seams in the
+changelog below.
 
 **v15 revision (a citation-rich request came back UNCITED — the ballot-research failure).**
 Two identically-prompted political reports diverged: the Senate run cited 162 `[^n]` markers
@@ -43,7 +44,7 @@ noise). Fixed across three seams, each keeping the existing machinery:
   all-off-topic escape hatch on a list that wasn't). A deterministic guard on the exact symptom
   `citedSourceCount` reports, not a prose rule a local model can over-apply.
 - **Query disambiguation** (`deep_research_plan.prompt` dr-plan-v6 → v7; `research.prompt`
-  agent-research-v10 → v11) — a named subject (person/org/place, esp. a common/shared name) is
+  agent-research-v10 → v11, a lineage since carried on to `agent-research-v17`) — a named subject (person/org/place, esp. a common/shared name) is
   anchored with full name + role + jurisdiction + year, and namesake results (a dictionary word,
   a film, an unrelated company) are discarded rather than cited — cutting the noise at its source.
 
@@ -254,8 +255,9 @@ model never sees again). Mirrors the external-video corpus:
 - **Writer** — `external/research_corpus.persist_report`, called best-effort at the end of a
   run; a `ResearchReportEmbedder` fills the summary embedding off an `embed_research_report`
   job. A DB failure never fails the rendered report.
-- **jerv tools** — `list_/search_/read_/show_/remove_research_report`, the same corpus
-  pattern as the video tools (`read_` returns the FULL text — the follow-up-recall path;
+- **jerv tools** — `list_/search_/read_/show_/remove_research_report` (the list/search/read
+  trio since folded into the `research_report` umbrella tool, PR #1030; `show_`/`remove_`
+  stay standalone), the same corpus pattern as the video tools (`read_` returns the FULL text — the follow-up-recall path;
   `show_` rebuilds the `deep_research_report` view from stored data; `remove_` stages an
   owner-approved proposal → the `delete_research_report` executor op).
 - **View polish** — the `deep_research_report` card COLLAPSES the report body by default
@@ -329,15 +331,15 @@ Still deferred from Open decisions 2–3: the **tree wall-clock on flat fans** (
 ~28 min; flat fans still ignore `deadline`) and the analyst's own over-search (19 web calls
 to "resolve conflicts") — both tracked, not addressed here.
 
-**Implementation status.** v1 (all three waves) is **merged to `main` (PR #887)**. The v2
-orchestration above is on a follow-up branch: `agent/deep_research.py` rewritten (breadth-
-only complexity, the analyst stage, always-on reflect/refill/critique, phase events), the
-`deep_research_report` view + component gain `analyzed`, and the unit suites updated
-(`tests/unit/test_deep_research.py`, `registry.test.tsx`) — all green. **Still open before
+**Implementation status.** v1 (all three waves) is **merged to `main` (PR #887)**, and the
+v2 orchestration above is merged too: `agent/deep_research.py` carries the breadth-only
+complexity, the analyst stage, always-on reflect/refill/critique, and the phase events —
+through to the v16 embedding-rank curator (`_curate_sources`) — the `deep_research_report`
+view + component carry `analyzed`, and the unit suites cover it
+(`tests/unit/test_deep_research.py`, `registry.test.tsx`). The on-box budget/wall-clock
+tuning (Open decisions 2–3) landed across the v3/v5/v13 revisions. **Still open before
 "settled":** the D3 **mock-gate sign-off** on the non-happy states + a reference mock
-(DESIGN.md marks it pending), the **on-box budget/wall-clock tuning** (Open decisions 2–3;
-v2 runs more stages, so this matters more), and the formal per-wave PROCESS.md adversarial
-reviews.
+(DESIGN.md marks it pending) and the formal per-wave PROCESS.md adversarial reviews.
 
 A **dedicated `deep_research` tool** that turns a single research question into a
 structured, cited report by orchestrating jerv's existing web-sandboxed sub-agent
@@ -446,7 +448,7 @@ question, breadth ──▶ (0) CLASSIFY ── one cheap LLM call: rate complex
                           (empty ⇒ skip refill, go straight to synth)     │
                                                                          ▼
                       (4) REFILL  ── spawn_fan(research × gaps)  [ROUND 2, │  ⟵ skipped if
-                          FINAL — no third round, ever]                    │    simple
+                          FINAL in the standard lane]                      │    simple
                                                                          ▼
                       (5) SYNTHESIZE ── one LLM call: outline-driven ─────┐
                           report from ALL summaries, attribute-at-        │
@@ -509,7 +511,8 @@ on-box like the S2/F2 retunes were):
 
 - **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **50/3 (~16.7)** for every root
   (v3 took it 3.5 → 5.0; v5 → 10.0; then → 40/3; then → 50/3), so jerv's children pool is
-  **10.0M** (tree ~13.3M − the 25% root reserve; the 50/3 lands the pool exactly on 10.0M) —
+  **~15M** (tree ~20M − the 25% root reserve; v13's jerv `budget_multiplier` 4 → 6 in
+  `agents.py` lifted the base under the unchanged 50/3) —
   the simpler lever than a dedicated deep-research multiplier, and the
   reserve still covers the two large root calls (synthesis in 5, revision in 6). On top of
   the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.5M) so the
@@ -673,8 +676,10 @@ CI green before merge. GUI wave through the mock gate.
 - **Wave D2 — Complexity gate + reflect + refill round + critique/revise (backend;
   red-team gated). ✅ LANDED (this branch).** The step-0 **complexity classifier +
   narrow-only skip matrix** (folded into the plan call), the `deep_research_reflect`
-  `.prompt` + gap-eval call, the **one** bounded refill fan (`MAX_RESEARCH_ROUNDS = 2`
-  in `tree.py`), per-round admission via `run_research_fan` (a refused refill →
+  `.prompt` + gap-eval call, the **one** bounded refill fan (the standard lane's single
+  refill round; the round ceiling lives in `deep_research.py` as `DR_DEEPEST_MAX_ROUNDS`,
+  standard = 1 — the planned `MAX_RESEARCH_ROUNDS` in `tree.py` was never minted), per-round
+  admission via `run_research_fan` (a refused refill →
   coverage-limited, not a crash), and the `review`-fed critique (escaped
   `compose_feed_block`) + one revision pass. Every cap and the classifier's narrow-only
   clamp has a zero-model-cooperation test. **Deviation:** no tree-wide wall-clock
@@ -730,7 +735,9 @@ overlap D2 (different surface).
 
 - **KB-scoped deep research** (over the owner's notes/wiki/entities) — a curator-side
   capability with a full RLS sub-agent surface; a separate proposal, not this one.
-- **A third+ round / adaptive depth** — the "loop until covered" the lean litmus
-  refuses; revisit only if the fixed-2-round bound proves insufficient in practice.
+- **A third+ round / adaptive depth** — since shipped for the opt-in `deepest` lane as a
+  resource-terminated loop under a hard round ceiling (`DR_DEEPEST_MAX_ROUNDS`,
+  `deep_research.py`; see `docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md`). The standard
+  lane keeps the fixed 2-round bound.
 - **Saving a report as a note** — a report the owner wants to keep re-enters through the
   normal agent-authored-note door (#7), not a privileged write; a follow-on if wanted.

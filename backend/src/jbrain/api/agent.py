@@ -451,7 +451,7 @@ async def _tool_artifact_blocks(
 async def _plan_blocks(
     request: Request, owner_ctx: SessionContext, session: AgentSessionInfo
 ) -> list[LlmMessage]:
-    """The approved-plan re-injection (docs/plans/JERV_PLANNING_TOOL_PLAN.md): when THIS
+    """The approved-plan re-injection (docs/archive/JERV_PLANNING_TOOL_PLAN.md): when THIS
     jerv chat has an owner-APPROVED (or in-work) plan, re-inject its full text as a
     DATA-framed operating plan each turn — the single highest-leverage way to keep the
     agent on-plan (every mature plan-mode harness re-feeds the plan). A `not_approved`
@@ -814,7 +814,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             note_block = "\n\n".join(carried_notes)
             attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
     conversation = _conversation(body, images, attach_text)
-    # Cache-stable prompt layout (docs/plans/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
+    # Cache-stable prompt layout (docs/archive/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local
     # gateway's KV cache can reuse turn-over-turn; put the VOLATILE blocks (presence, "now")
     # right before the newest user message instead of at the head, so a per-turn change no

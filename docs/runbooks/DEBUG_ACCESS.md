@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-08-20
+> **Status:** Living · **Last verified:** 2026-08-23
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -120,16 +120,17 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   Also on the list for prefill work: **`-lv`** (llama-server verbosity — `-lv 4` is TRC, the only
   place `created context checkpoint` / `restored context checkpoint` / `forcing full prompt
   re-processing` appear, and without them a checkpoint sweep cannot tell a wrong count from
-  nothing ever being restored), **`--checkpoint-min-step`** (default 8192, so a ~24k prompt gets
-  only ~3 checkpoints by SPACING however high the count goes) and **`--cache-ram`** (default 8192
-  **`--cache-ram` costs HOST memory, and the default 8 GiB is now budgeted** as
-  `local_catalog.CACHE_RAM_GB` in every model's resident footprint. It was not, on the
-  reasoning that it "does not touch the GTT budget" — true of `gpu_guard`, and irrelevant to
-  `residency`, which is a host-RAM budget. Up to 8 GiB per resident model was therefore
-  invisible to the evictor, on the box whose failure mode is running out of exactly this. An
-  OVERRIDE is still unbudgeted (it rides `extra_server_args`, which the cost model does not
-  parse), which is why the flag is bounded to 0..32 GiB rather than left open — raise it and
-  the evictor under-counts that model by the difference.
+  nothing ever being restored) and **`--checkpoint-min-step`** (default 8192, so a ~24k prompt
+  gets only ~3 checkpoints by SPACING however high the count goes). And the KV-cache
+  quantisation flags, in both spellings (**`-ctk`/`-ctv`**, **`--cache-type-k`/
+  `--cache-type-v`**): the largest live lever on KV demand here (q8_0 halves an f16 cache),
+  allowlisted rather than simply switched on because the quality cost is empirical and untested
+  against this box's models.
+  **`--cache-ram` is deliberately NOT on the list.** The gateway serves `-cram 0` and
+  `local_catalog.CACHE_RAM_GB` is 0.0 to match — the flag and the budget term are one
+  decision — so an operator turning the cache back on from here would serve up to 32 GiB of
+  host RAM the residency budget believes does not exist, under-reserving on the one path this
+  box has hard-locked on (`llm_settings.EXTRA_ARG_FLAGS` has the full rationale).
   **`-fa 0` is refused (422) on a model carrying a vision projector.** Turning flash attention
   off swaps the CLIP attention workspace from the linear branch to the quadratic one — ~0.47 GB
   to ~16 GB — and `_vision_resident_gb` hardcodes the linear figure, so the residency budget
@@ -140,7 +141,9 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
   bounded to `0..32` server-side — 32 being llama.cpp's OWN default, so a sweep can reach it (an
   earlier 0..8 bound put the one value most worth trying out of reach). A checkpoint on a hybrid
-  is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and per slot.
+  is a full copy of the recurrent state — measured **275–284 MiB** each for the hybrid 27B, and
+  held in **host RAM**, not device memory (GTT unchanged going 2 → 16), though on unified
+  memory it still comes out of the one pool the budget counts — kept per slot.
   `footprint_gb` budgets it at the SERVED count (2), not at whatever you set here — so everything
   above that is unbudgeted on a box whose documented failure mode is an unrecoverable host hang.
 
@@ -193,11 +196,13 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   chat turn came next, evicting the model you had just primed. So check `GET …/local-models`
   before a run, and reload what the experiment displaced when you are done.
 
-> **A 200 from `restore` does not mean the prefill was skipped.** On a sliding-window model
-> (gpt-oss) llama-server can accept a restore and then discard it, logging `forcing full prompt
-> re-processing`. Always pair a restore with `POST …/prime` and compare `elapsed_ms` against a
-> known-cold prefill, and read `GET /api/debug/logs/local-llm`. The timing and the log are the
-> honest signals; the HTTP status is not.
+> **Historical (v1): there is no `restore` route any more.** The v1 disk KV-slot cache exposed
+> one; the v2 prompt cache is app-internal — the load-time warm restores the KV file itself
+> before priming, with no console route to drive it. The v1 lesson still generalises: a 200
+> from a restore-shaped call does not mean the prefill was skipped (llama-server could accept
+> a restore and then discard it, logging `forcing full prompt re-processing`), so measure with
+> `POST …/prime` `elapsed_ms` against a known-cold prefill and read the logs — timing and log
+> are the honest signals, the HTTP status is not.
 
 ## Auth model
 
@@ -223,19 +228,21 @@ Two gates protect the surface, both fail-closed:
 
 | Route | Purpose |
 |-------|---------|
-| `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `host.read`, `host.metrics`, `web.fetch`). |
+| `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `llm.gateway`, `host.read`, `host.metrics`, `web.fetch`). `llm.gateway` is the gateway surface — load/unload, the served `-c`/`-np`, launch flags via the allowlist, props/slots/metrics, prime. |
 | `GET /version` | The git revision the **running server** was built from — `git_sha`, `git_describe`, and `build_time`, baked into the image at build time (`deploy/update-inner.sh` → Dockerfile ARG/ENV), plus `started_at` (this process's boot time). Answers "is the merge I just made actually deployed?" without guessing; `started_at` behind `build_time` means the new image built but the container wasn't recreated. `"unknown"` on a plain local build. |
 | `GET /version/history` | The recorded **timeline of deployed versions**, newest first (`app.deploy_history` — the app appends one row on boot whenever its baked `git_sha` changes, so a plain restart adds nothing). Each row is `{git_sha, git_describe, build_time, deployed_at}`; the interval `[deployed_at, next row)` is when that build was live, so an *older* timestamped record (a research run, an ingest) can be tied to the build that produced it. Owner-only read. |
 | `POST /complete` | Run one `system` + `user_text` prompt through the **LLM adapter** (non-negotiable #1 — never a provider SDK) against whatever model is currently routed; returns the text/parsed JSON, token usage, and the **resolved provider:model**. Route by a known `task` (so the live per-task override applies) or a raw `strength` tier. Synchronous — fine for quick calls. |
 | `POST /complete-async` → `GET /jobs/{id}` | Same completion, but as a **background job**: submit returns a `job_id` at once; poll `/jobs/{id}` until `done`. For a slow model (a long, high-effort local extraction takes minutes) this avoids holding a request open past a proxy's timeout — e.g. the Cloudflare Tunnel's ~100s edge limit. In-memory + best-effort (a restart drops in-flight jobs). |
 | `POST /vision` | Run one vision task (`vision.ocr` / `vision.caption`) over an **on-box attachment** (by id) through the **LLM adapter**, optionally with a candidate `system` prompt — the image-layer twin of `/complete` for iterating the OCR/caption prompts against the real vision model. Image bytes load via the storage abstraction (non-negotiable #2); the attachment lookup runs in the same read-only owner context as `/sql`. Reuses the `llm.complete` scope (vision IS a completion). |
 | `POST /grounding` | Ask the routed vision model to **locate** something in an on-box attachment (`target`, in plain words) and report the boxes it returns. Exists because the coordinate base is a per-MODEL fact that nothing upstream documents for this checkpoint — the Qwen3-VL cookbook divides by 1000, the Qwen3-VL docs site describes a 0–1 range, and the Qwen3.8 model card says nothing — and guessing is unsafe: a wrong base yields a confident box around the *wrong thing*. So the response renders the **same reply under both bases** (`as_norm_1000` / `as_norm_1`, in original-image pixels): whichever set frames the object is the model's real convention, and that value gets pinned in `agent/grounding.py`. `inferred` is what the magnitude heuristic guessed, `pinned` what the table currently holds (`null` = unqualified model, which the canvas tools refuse to use). `width`/`height` are **EXIF-corrected** — the axes the model actually saw. `downscale: true` re-runs it through the ingest downscale to compare. Reuses the `llm.complete` scope. |
+| `POST /tool-probe` | Run one completion with a chosen set of the agent's **real registered tool schemas** (by name, plus optional raw schemas) attached — **no handler runs**. Probes whether a routed model emits well-formed tool calls against the live schemas; unknown tool names are a 400. Reuses the `llm.complete` scope. |
 | `POST /sql` | One **read-only** statement. Runs under an owner RLS context (full read) inside a `SET TRANSACTION READ ONLY` transaction, so it can read anything yet write nothing; a single-statement read-verb guard rejects obvious misuse with a clean 400. Rows capped + JSON-coerced. |
 | `POST /fetch` | Run a URL through jerv's **WebFetcher** — the same `direct → reader → solver → tavily` escalation the agent uses — and return the extracted page (title, one text window, total chars, link count), or a 400 carrying the recoverable fetch error. The one route that drives the live web-fetch path end to end, so bot-challenge detection and the recovery fallbacks can be verified against a real walled URL after a deploy. **`tier`** names the leg that actually served the page (`direct` = nothing had to be recovered; `reader`/`solver`/`tavily` = that tier saved it), so confirming an escalation is one call rather than a hunt through `GET /logs/api`. **`js_shell`** is true when NO tier could render a JavaScript app — an empty `text` with `js_shell: true` is an *unread* page, not an empty one (`GET /logs/api` still carries `web.js_shell_unrecovered` / `web.challenge_blocked` for the blow-by-blow). A `"tier": "tavily"` body field forces ONLY the hosted Tavily Extract tier — the same probe the Settings **Test key** button uses, so a freshly-entered key can be verified from a handed-over token. |
 | `POST /solve` | Run a URL through **ONLY the challenge solver** (byparr), skipping the direct+reader legs — so the stealth browser can be exercised in isolation against a walled URL (Reuters/WSJ/…) without a doomed direct fetch first. Same output shape as `/fetch`; a 400 distinguishes *solver unconfigured* from *byparr ran but still challenged / empty* (a real solve miss — pair with `GET /logs/byparr`). Shares the `web.fetch` scope. |
 | `POST /fetch` `tier=tavily` | Force **ONLY the hosted Tavily Extract tier** (`scripts/debug-connect.sh tavily <url>`). A 400 distinguishes *the tier unwired* (no `JBRAIN_TAVILY_URL`) from *disabled / keyless / a genuine miss* (bad key or Tavily error) — so after a deploy the owner can confirm the Tavily key works against a real walled URL with a handed-over token, no PWA needed. Shares the `web.fetch` scope. |
 | `GET /client-vitals` | What the **browser** last reported about the top-bar vitals stream: frames seen, opens, errors, reopen counts, `readyState`, `sinceLastFrameMs`, the number of samples the browser is holding, and `clockOffsetMs` (how far the box's clock sits from the browser's, as estimated from the frames — samples are placed on the graph with that difference taken out, so a large figure here is a fact about the clocks, not a fault). The one read that separates *the box never sent a frame* from *the browser never received one* — states that need different fixes and are indistinguishable from the box, because a connection the browser declines to open (its per-origin cap, say) leaves no server-side trace at all. `sinceLastFrameMs` is the number that matters: the route emits one a second, so anything above a few thousand means the meter is blind however healthy the socket claims to be. `{"reported": false}` means nobody has opened the vitals detail since this process started, **not** that the meter is broken. Populated by the PWA beaconing every 15s while that screen is open. |
 | `GET /logs/{service}` | Tail a container's logs, proxied to the supervisor (the single owner of docker access), mirroring the owner ops surface. |
+| `GET /jcode/logs` | All **code-mode** logs in one pull — the jcode control server and its model gateway, each tailed and labeled. A not-running service is noted, not fatal, so it works mid-bring-up. |
 | `GET /llm/gateway-logs` | Tail **llama-swap's** buffered log — swap decisions, health checks, and the slot lifecycle, where a slot is acquired on a request and **released** when its generation ends. The read that answers whether a Stop/disconnect halts decoding or the engine runs on. It does **not** carry llama.cpp's own output (that's the next row). 502 if the gateway is unreachable. |
 | `GET /llm/upstream-logs` | Tail **llama-server's** own stdout, which `gateway-logs` cannot show: the slot lifecycle, per-request prompt-eval throughput, context-checkpoint evictions, and a failed load's reason. Reads the history burst llama-swap replays on `/logs/stream/{stream}`; `stream` defaults to `upstream` (all models interleaved) or takes a served model id to isolate one. **It does not carry a load's per-buffer memory breakdown** — verified 2026-08-19: the model loader prints nothing at the default verbosity 3, so a load reads as a ~1.4 s silent gap here *and* in the `local-llm` container log. Use the `local_gateway.footprint_measured` event (the device delta) for a load's memory. An empty body means the engine has printed nothing since llama-swap started — usually no load since boot, not a fault. |
 | `POST /llm/drop-page-cache` | Reclaim the page-cache copy of on-box model weights (`?models=a,b` for specific catalog ids, omit for all). The box serves with `--no-mmap`, so every load leaves the weights resident **twice** — GTT plus the page cache the read filled — and unloading frees only the GTT copy. Since `host_metrics` counts page cache as **used**, that residue shrinks the admission budget for every later load: measured 2026-08-19, 29.19 GiB of stale `gpt-oss-120b` cache left host pages free at 86.2 GB and got `qwen3-coder-next-q8` (needs ~95.5) refused for want of 15.3 GB nothing was using. Safe while models are resident — `POSIX_FADV_DONTNEED` drops clean cache only, never the GTT copy being served from, and weights are read-only. A null `freed_gb` means `cachestat(2)` could not measure the drop (blocked by the container's seccomp profile on this box), **not** that nothing was freed. Previously this needed host shell (`deploy/update-inner.sh`'s global `drop_caches`), which the owner does not have. |
@@ -245,6 +252,7 @@ Two gates protect the surface, both fail-closed:
 | `GET /provision/status` | The last local-model **download** one-shot's state + log tail (the PWA "Download" action, `deploy/local-models-sync.sh`). The verbose per-model weight-pull output — resolved repo, include globs, and the hf failure reason (404 / auth / disk / network) — so the console can answer *why* a model download failed. |
 | `GET/PUT /llm` | Read or **switch** which model serves each task — live, no restart. Shares validation with the owner settings screen. |
 | `POST /llm/local-models/{id}/load\|unload` | Warm or evict a local model on the gateway. |
+| `GET /llm/local-models/{id}/slots` | llama-server's `/slots` for one **resident** model — per-slot state, and on a speculative build the `speculative` object that says whether drafting is actually running (which `/props`'s dead `speculative.types` field cannot answer). |
 | `POST /suspend-self` | **Pause** the presenting token (the console's Suspend button). Owner resumes it later from the PWA. |
 | `POST /revoke-self` | **Kill** the presenting token (the console's Revoke button). Permanent. |
 
@@ -323,6 +331,11 @@ assistant's network egress can reach that host; an isolated sandbox may not be
 able to, in which case the token is fine but the connection won't establish.
 
 ## Enabling it
+
+> ⚠️ This is a **first-time host step** — a `.env` edit plus `jbrain up` on the box's shell,
+> which the owner cannot run remotely (CLAUDE.md non-negotiable #10). The terminal dependency
+> here is a known gap to design out (a PWA-side enable would need its own authorization
+> story); until then, enabling needs someone at the host.
 
 Set in `/opt/jbrain2/.env`:
 

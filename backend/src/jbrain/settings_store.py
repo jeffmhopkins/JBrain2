@@ -295,7 +295,7 @@ WIKI_BUILD_KILL_SWITCH_KEY = "wiki_build_kill_switch"
 WIKI_BUILD_KILL_SWITCH_DEFAULT = False
 WIKI_BUILD_SPEND_PREFIX = "wiki_build_spend:"
 
-# The wiki_lint (Wave B) LLM verifier's SEPARATE token budget (docs/plans/WIKI_LINT_PLAN.md §4):
+# The wiki_lint (Wave B) LLM verifier's SEPARATE token budget (docs/archive/WIKI_LINT_PLAN.md §4):
 # a corpus-wide health audit must never starve the nightly wiki BUILD's budget, so it gets its own
 # key + per-day tally. Sized to the MAX_CANDIDATE_PAIRS=500 worst case (§4). Fail-closed like the
 # build gate.

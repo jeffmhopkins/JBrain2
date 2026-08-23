@@ -1,4 +1,4 @@
-"""The JPet ensure loop against real Postgres (docs/plans/JPET_V3_PLAN.md).
+"""The JPet ensure loop against real Postgres (docs/archive/JPET_V3_PLAN.md).
 
 Proves the server guarantees the pet exists — `jpet_tick` creates it once (idempotently,
 with the room seeded) and each tick just refreshes the `last_tick_at` heartbeat (v3 has no

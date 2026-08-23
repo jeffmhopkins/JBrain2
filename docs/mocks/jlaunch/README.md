@@ -4,7 +4,7 @@ Three interactive variants of the **job screen** the `Math` launcher tile opens 
 decision-critical surface: start/stop/kill, the live terminal, and the finished-run
 headline + public sharelink. Per `docs/reference/PROCESS.md`'s GUI gate, the owner picks
 one before the frontend is built; the chosen mock becomes the binding spec for
-`frontend/src/screens/JlaunchScreen.tsx` (see `docs/plans/JLAUNCH_PLAN.md`, W4).
+`frontend/src/screens/JlaunchScreen.tsx` (see `docs/archive/JLAUNCH_PLAN.md`, W4).
 
 All three share the design-system tokens and simulate a run (click **Start**): phases
 advance, the terminal streams, then the result + sharelink appear. Stop/Kill end it.

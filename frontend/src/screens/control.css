@@ -1,4 +1,4 @@
-/* JPet Control — the phone "remote" (docs/plans/JPET_PLAN.md W3). Mobile-first,
+/* JPet Control — the phone "remote" (docs/archive/JPET_PLAN.md W3). Mobile-first,
    in the pet's committed neon world (its own look, like the Wall). Full-screen. */
 .pctl {
   position: fixed;
@@ -165,7 +165,7 @@
   transition: width 0.4s ease, background 0.4s;
 }
 /* Big kid play-buttons — large (~2cm) targets, few, well-separated; a 3–4-year-old's
-   fine motor skills are still developing (docs/proposed/JPET_V2_PLAN.md). Fired on
+   fine motor skills are still developing (docs/archive/JPET_V2_PLAN.md). Fired on
    touch-down, so `touch-action: none` stops the tap from also scrolling/zooming. */
 .pctl-play {
   display: grid;

@@ -1,4 +1,4 @@
-"""JPet — the family wall pet (docs/archive/JPET_PLAN.md; v2: docs/proposed/JPET_V2_PLAN.md).
+"""JPet — the family wall pet (docs/archive/JPET_PLAN.md; v2: docs/archive/JPET_V2_PLAN.md).
 
 A server-authoritative play companion for young children: one `app.pet_state` row holds
 the positive happy-meters, mood, floor position, room objects, and the bounded action

@@ -1113,7 +1113,7 @@ export interface ListOut {
   items: ListItemOut[];
 }
 
-/** A jerv conversation plan (docs/plans/JERV_PLANNING_TOOL_PLAN.md). `status` is the
+/** A jerv conversation plan (docs/archive/JERV_PLANNING_TOOL_PLAN.md). `status` is the
  * flag enum the card colors (`not_approved | approved | in_work`); `approved` is the
  * ONE transition jerv can't make itself. The continuation fields drive the in-card
  * auto-resume countdown: `continuation_due_at` is when the next step auto-fires (null =
@@ -1269,7 +1269,7 @@ export interface RunStats {
 }
 
 /** The server-side filters the Runs surface drives (GET /api/runs). */
-// ===== The Research Library (docs/plans/RESEARCH_LIBRARY_PLAN.md; DESIGN.md "Research
+// ===== The Research Library (docs/archive/RESEARCH_LIBRARY_PLAN.md; DESIGN.md "Research
 // Library") — owner browse over jerv's persisted deep-research reports + analysed videos
 // (the external corpus). Reports key on their uuid; videos key on video_id. =====
 

@@ -1,4 +1,4 @@
-"""jerv's per-conversation planning tools (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+"""jerv's per-conversation planning tools (docs/archive/JERV_PLANNING_TOOL_PLAN.md).
 
 A `web`-class (direct-exec, jerv-only) pair over the owner-only `agent_session_plans`
 row keyed to THIS chat: jerv drafts a plan, the owner approves it, and jerv executes

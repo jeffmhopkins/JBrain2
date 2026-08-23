@@ -1,8 +1,8 @@
 # JBrain2 — Multi-wave execution process
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-23
 
-The **binding process** for building a phased plan (e.g. `WORKFLOW_ENGINE_PLAN.md`)
+The **binding process** for building a phased plan (e.g. `docs/archive/WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
 landed — and it binds human and AI contributors equally, on top of
 `docs/reference/DEVELOPMENT.md` (the standards) and the `CLAUDE.md` non-negotiables.
@@ -35,10 +35,13 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
 
 - **Per task (local):** `ruff` + `pyright` (or `biome`/`tsc` for frontend) + the
   task's unit tests, run before merging into the wave branch.
-- **Per wave (CI, at the PR):** the full suite — lint, typecheck, testcontainers
-  integration tests, coverage gates (80% / security-100%), `.prompt`/`.tool`
-  digest pins, `dev-setup.sh` currency, and `scripts/docs-freshness.sh` (the
-  `docs` job — enforces `docs/DOC_LIFECYCLE.md`). CI must be green before merge.
+- **Per wave (CI, at the PR):** lint + typecheck, the unit and testcontainers
+  integration suites (which carry the `.prompt`/`.tool` digest-pin tests), the
+  combined **80%** backend coverage gate, and `scripts/docs-freshness.sh` (the
+  `docs` job — enforces `docs/DOC_LIFECYCLE.md`). PR runs are path-filtered by
+  the `changes` job — untouched areas post green in seconds; pushes to `main`
+  run everything. Security-100% and `dev-setup.sh` currency are review-enforced
+  standards, not CI jobs. CI must be green before merge.
 
 ## Communication
 

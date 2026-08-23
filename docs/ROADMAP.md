@@ -1,11 +1,11 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-11
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
-## Status (2026-08)
+## Status
 
 **Phases 0–4 and the Phase 5 workflow engine are shipped.** Notes,
 ingestion/search, the v3 note→graph analysis pipeline (extract → Integrator →
@@ -167,15 +167,18 @@ definitions; failures are diagnosable from run logs alone.
 
 ## Phase 6 — Wiki — In progress (build plan: `docs/plans/PHASE6_WIKI_PLAN.md`)
 
-The LLM-maintained wiki, and **only** the wiki. Wiki index (article summaries +
-embeddings). Incremental nightly builder: delta facts → index match → triage
-(update/create/split/merge) → targeted rewrites with enforced citations →
-versioned revisions. Editorial config (style guide, citation requirements,
-per-type guides) as data. Split/merge approvals via the review inbox. Read-only
-wiki UI with citation cards. "Discuss this article" correction-note loop (Talk).
-A living, search-first landing; search extended to include articles. See the
-detailed build plan for the data model, the four engine actions, the writing-style
-spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
+The LLM-maintained wiki, and **only** the wiki. Waves A–C are shipped: wiki
+index (article summaries + embeddings) ✅; incremental nightly builder — delta
+facts → index match → triage (update/create/split/merge) → targeted rewrites
+with enforced citations → versioned revisions ✅; editorial config (style guide,
+citation requirements, per-type guides) as data ✅; split/merge approvals via
+the review inbox ✅; read-only wiki UI with citation cards ✅; "Discuss this
+article" correction-note loop (Talk) ✅; a living, search-first landing with
+search extended to include articles ✅. Remaining: Wave D — re-enable the
+nightly schedules, grounding-gate tuning, purge→rebuild. See the detailed build
+plan for the data model, the four engine actions, the writing-style spec, the
+firewall design, and the fulfilled cross-stream contract
+(`docs/archive/PHASE6_WIKI_GRAPH_CONTRACT.md`).
 
 **Exit:** a day of notes updates only the affected articles overnight, every
 claim cites a note, and corrections happen by out-arguing the wiki with a
@@ -271,7 +274,7 @@ waves shipped, no migration. A `--slot-save-path` disk cache was later built and
 single slot rather than the prefix. The in-RAM prompt cache went with it (`-cram 0`) to buy
 co-residency. The `-np`/`--parallel` second slot is operator-settable per model.
 
-**Scheduled:** Entity-graph ingest V2 (build plan: `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) —
+**In progress:** Entity-graph ingest V2 (build plan: `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) —
 cut the ingest review-inbox noise the owner hit without changing the pipeline structure: remove the
 inferred-ceiling review trap + the eight arbiter backstops (Lever A), default `state`/functional-
 `relationship` conflicts to non-destructive supersede-with-history by validity time while `attribute`
@@ -280,8 +283,8 @@ review-card correction write its pinned override directly instead of minting a p
 Re-run determinism stays deterministic recomputation (no cached verdict); the firewall/RLS/namesake
 spine is unchanged. §11 decisions ratified; on-box gpt-oss-120b validation showed the ingest-quality
 gap is prompt+schema, not architecture (agentic + multi-tier ingestion evaluated and rejected). The
-V0 local-box judgment spike is largely done; V1 (deterministic enactor + safety spine) through V5
-(cutover + Lever C + docs reconciliation) are open. Corrects-in-place `reference/ANALYSIS.md`
+V0 local-box judgment spike is largely done; V1 (deterministic enactor + safety spine, tasks
+T1.1–T1.5) landed (#944); V2 through V5 (cutover + Lever C + docs reconciliation) are open. Corrects-in-place `reference/ANALYSIS.md`
 (per-kind conflict policy) and `reference/ENTITY_GRAPH_REFOCUS_PLAN.md` (the `INFERRED_CEILING`
 rationale) when it builds.
 
@@ -289,8 +292,8 @@ rationale) when it builds.
 — any analysed YouTube video (ad hoc or scheduled) lands in an isolated, embedded, searchable corpus
 (`external_sources`/`external_source_chunks`), deliberately kept out of the knowledge graph/wiki since
 third-party content is not a source of truth. Built on the shipped `analyze_stream` + captions-first
-(#879). Waves A–B shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through,
-and the sandboxed-`jerv` `search_external_video` + `check_channel` tools); Wave C (a recurring Jerv Task for
+(#879). Waves W1–W2 shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through,
+and the sandboxed-`jerv` `search_external_video` + `check_channel` tools); W3 (a recurring Jerv Task for
 scheduling — no workflow-engine machinery) open.
 
 **In progress:** Deep research tool (build plan: `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`) — a
@@ -495,3 +498,66 @@ deferrals:** the browse filter is an instant client-side filter over the loaded 
 affordance; **"Open in jerv" seeds a fresh conversation** rather than deep-linking a report's
 originating `session_id` (not exposed by the fetch); and a **served-thumbnail route** for external-video
 frames, **bulk-delete/select mode**, and **re-run-analysis from the library** remain follow-ons.
+
+**In progress:** Local model ledger (build plan: `docs/plans/LOCAL_MODEL_LEDGER_PLAN.md`) — a
+reservation ledger for local-model memory (one row per model instance; charge at intent, discharge
+only at confirmed death). L0–L2b shipped — enforcement flipped on 2026-08-23 after a live roster
+sweep — L3 (retire the duplicate host-RAM reserves) open.
+
+**In progress:** Local model access (build plan: `docs/plans/LOCAL_MODEL_ACCESS_PLAN.md`) — one way
+in, one way out for local-model loading. W0 and W2 partially landed (the compile-error-if-half-wired
+admission coordinator; the unadmitted debug-console loads now admit); the access-point collapse,
+W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropic/xAI providers) open.
+
+**In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool
+surface for jerv's growing tool count: DISCOVERY (compact menu) split from INVOCATION-SCHEMA
+(on-demand `tool_guide`), umbrella dispatch tools for the source/action families. W1 (umbrellas —
+jerv's surface 48 → 37 with no measured selection regression) shipped; W0a/W0b (metadata +
+description trim) open; W2/W3 (the catalog machinery) gated behind a selection-accuracy eval.
+
+**In progress:** Agent canvas (build plan: `docs/plans/AGENT_CANVAS_PLAN.md`) — jerv marks up and
+cuts up images by tool call (`canvas`/`show_canvas`/`crop_regions`, YuNet faces, `render_html`).
+W0–W5 and W7 shipped; W6 (on-box validation) open.
+
+**In progress:** Candidate profile v2 (build plan: `docs/plans/CANDIDATE_PROFILE_V2_PLAN.md`) — a
+leaner `candidate_profile` twin for a side-by-side A/B, with a deterministic public-records
+pre-gather. C1 and C3 shipped; C2 (live on-box A/B + promotion decision) open.
+
+**In progress:** Daily news v2 (build plan: `docs/plans/DAILY_NEWS_V2_PLAN.md`) — a deterministic-
+gather → single-writer briefing engine beside the fan pipeline. V1 and V3 shipped — the engine won
+the live A/B and was promoted to be `daily_news` (the pipeline path retired for this preset); V2
+(the one measured triage/selection call) open.
+
+**In progress:** News feed (build plan: `docs/plans/NEWS_FEED_PLAN.md`) — the curated `news_feed`
+RSS/Atom source so briefing discovery stops depending on search engines that throttle a residential
+IP. Waves A–B shipped (the tool + full-body pre-pull injection into the reader path); Wave C
+(owner-editable feeds in PWA Settings + on-box cadence/threshold tuning) deferred, not scheduled.
+
+**In progress:** JS-app fetch (build plan: `docs/plans/JS_APP_FETCH_PLAN.md`) — stop `web_fetch`
+reading an un-rendered single-page app as a successful empty page: evidence-based `_looks_like_js_app`
+detection, widened escalation, and an honest tool message. J1 shipped; J2 (live on-box validation +
+threshold tuning) open.
+
+**In progress:** Challenge solver (build plan: `docs/plans/CHALLENGE_SOLVER_PLAN.md`) —
+challenge-interstitial detection plus the default-on Byparr stealth-browser fetch tier, with
+`POST /api/debug/fetch` to verify the live path. S1 shipped; S2 (live on-box validation + tuning) open.
+
+**In progress:** RapidOCR (build plan: `docs/plans/RAPIDOCR_PLAN.md`) — a deterministic CPU OCR
+sidecar cross-validating the VLM extraction, exposed as the verbatim `ocr` tool to jerv and the
+jcode sandbox. R0–R4 shipped; R5 (on-box sign-off against the live sidecar) open.
+
+**In progress:** jcode grok internet (build plan: `docs/plans/JCODE_GROK_INTERNET_PLAN.md`) —
+SearXNG-bridged `web-search`/`web-fetch` shell helpers for the sandbox CLIs plus the discovery
+hook. S1–S5 shipped (#971, #981); E1 (raw-egress toggle) deferred on the shared-container caveat.
+
+**In progress:** Report presets (build plan: `docs/plans/REPORT_PRESET_PLAN.md`) — P1 (checked-in
+`{{variable}}`-parameterized report presets; the `candidate_profile` preset) shipped; P2 (batch
+runs) and P3 (a compare-and-contrast preset from the library) open.
+
+**In progress:** Deep-research scratchpad (build plan: `docs/plans/DEEP_RESEARCH_SCRATCHPAD_PLAN.md`)
+— an in-memory, run-scoped findings ledger with an explicit visibility model for `deep_research`.
+P1 + P1.5 landed; P2 (scope-model unlocks) deferred until a comparison mode needs it.
+
+**Parked:** jcode session isolation (build plan: `docs/plans/JCODE_SESSION_ISOLATION_PLAN.md`) —
+per-session network namespace; parked after the P1 spike (the P0 substrate reverted), kept for a
+future revisit.

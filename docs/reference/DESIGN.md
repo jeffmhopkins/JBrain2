@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-21
+> **Status:** Living · **Last verified:** 2026-08-23
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1749,7 +1749,7 @@ coverage_limited, truncated, source_mode, web_sources:[{url, title}],
 children:[{label, persona, ok, summary, session_id}]}`. It renders a provenance strip (the
 `complexity` label, a source count, the round count, a **`source_mode`** badge for a
 library-scoped run (`library` → "video library", `library_first` → "library + web"; the
-default `web` shows none — DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md), and the `analyzed`
+default `web` shows none — docs/archive/DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md), and the `analyzed`
 "cross-checked" / `revised` / `coverage_limited` / `truncated` flags — closed
 enums/booleans the theme colors, never a model-sent color), the report body, and a
 collapsible sub-agent roster

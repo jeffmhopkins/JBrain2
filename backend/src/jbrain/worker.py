@@ -837,7 +837,7 @@ async def run() -> None:
             embedding_model=settings.embed_model,
             rewriter=LlmRewriter(router, settings=worker_settings_store, ctx=queue.SYSTEM_CTX),
         ),
-        # The wiki health sweep (Phase-6 follow-on, docs/plans/WIKI_LINT_PLAN.md) — deterministic
+        # The wiki health sweep (Phase-6 follow-on, docs/archive/WIKI_LINT_PLAN.md) — deterministic
         # checks (Wave A) + the LLM contradiction/stale-claim verifier (Wave B, metered against the
         # SEPARATE wiki-lint budget, router faked in CI). In-code only, not in the app.actions seed;
         # a migration seeds its schedule (disabled) + manual trigger. Standalone from the four

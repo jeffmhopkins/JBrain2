@@ -1,4 +1,4 @@
-"""The JPet broadcaster (docs/plans/JPET_PLAN.md W1) — in-process fan-out.
+"""The JPet broadcaster (docs/archive/JPET_PLAN.md W1) — in-process fan-out.
 
 Proves a published state reaches every subscriber, a slow subscriber drops its
 oldest snapshot instead of blocking, and unsubscribe removes it.

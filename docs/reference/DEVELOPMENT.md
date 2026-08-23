@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-08-19
+> **Status:** Living · **Last verified:** 2026-08-23
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -64,8 +64,10 @@ better than narrated code, and stale comments are worse than none.
 ### TypeScript
 - **Biome** for linting and formatting.
 - `strict: true`; no `any` without an inline justification comment.
-- API client types generated from the FastAPI OpenAPI schema — frontend and
-  backend cannot drift.
+- The API client is a single hand-written fetch wrapper
+  (`frontend/src/api/client.ts`) with hand-kept types; OpenAPI-generated types
+  are a future step, not yet in place — until then, a backend schema change must
+  update the client types in the same PR.
 
 ## Git workflow
 
@@ -135,10 +137,12 @@ and phase-aware (skips parts of the project that don't exist yet).
   smoke suite (login → create note → search finds it).
 
 ### Coverage gate
-- Backend: CI fails below **80% line coverage**.
+- Backend: CI fails below **80% combined line coverage** — the one mechanical
+  coverage gate.
 - **Security-critical paths require 100%**: RLS policies, auth, capability
-  tokens, device keys, domain scoping. Every new table ships with an RLS test
-  proving a scoped session cannot read other domains' rows.
+  tokens, device keys, domain scoping. This is a review-enforced standard, not
+  a separate CI gate. Every new table ships with an RLS test proving a scoped
+  session cannot read other domains' rows.
 
 ### Rules
 - **Tests land in the same PR as the code they cover.** A PR without tests

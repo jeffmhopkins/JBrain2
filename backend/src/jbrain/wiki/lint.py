@@ -1,4 +1,4 @@
-"""The `wiki_lint` engine action (docs/plans/WIKI_LINT_PLAN.md) — Wave A, deterministic slice.
+"""The `wiki_lint` engine action (docs/archive/WIKI_LINT_PLAN.md) — Wave A, deterministic slice.
 
 A periodic corpus-wide wiki HEALTH audit: the "third leg" alongside ingest
 (`wiki_refresh`/`wiki_rebuild`) and query (`search`/`agent`). The per-build grounding gate
@@ -63,7 +63,7 @@ log = structlog.get_logger()
 
 # ---- Wave B (LLM verifier) constants -----------------------------------------------------
 
-# The candidate-pair hard cap per run (docs/plans/WIKI_LINT_PLAN.md §4) — the worst-case the
+# The candidate-pair hard cap per run (docs/archive/WIKI_LINT_PLAN.md §4) — the worst-case the
 # wiki_lint budget is sized to. Deterministic ORDER BY (least,greatest) makes sampling stable.
 MAX_CANDIDATE_PAIRS = 500
 VERIFY_BATCH = 20  # candidate pairs per adapter call
@@ -154,7 +154,7 @@ def card_domain(d_a: str, d_b: str) -> str | None:
     the shared domain when equal; the restricted side when exactly one is `general`; and **None**
     (→ suppress, never a `review_items` row) when the two are DISTINCT restricted domains. A None
     result means a scoped reviewer of either restricted domain could see the other's content, so no
-    single-`domain_code` card can safely carry it (docs/plans/WIKI_LINT_PLAN.md §5)."""
+    single-`domain_code` card can safely carry it (docs/archive/WIKI_LINT_PLAN.md §5)."""
     if d_a == d_b:
         return d_a
     if d_a == "general":

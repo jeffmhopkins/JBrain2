@@ -1,5 +1,5 @@
 """The Grokipedia client + parser for the jerv agent
-(docs/plans/GROKIPEDIA_TOOL_PLAN.md). HTTP is faked via MockTransport — no live
+(docs/archive/GROKIPEDIA_TOOL_PLAN.md). HTTP is faked via MockTransport — no live
 network, like the SearXNG and web-fetch clients."""
 
 import httpx

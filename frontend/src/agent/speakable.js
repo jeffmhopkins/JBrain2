@@ -4,7 +4,7 @@
 // Authored as plain ESM — no framework, no deps — so it can ALSO be loaded verbatim by the
 // wall display's index.html (which has no build step); that adoption, and a byte-parity
 // guard between the two copies, land with the wall restructure in Wave 0 of
-// docs/plans/READ_ALOUD_LEGIBILITY.md. Until then the wall still uses its own mdToPlain.
+// docs/archive/READ_ALOUD_LEGIBILITY.md. Until then the wall still uses its own mdToPlain.
 //
 // piper is a plain-text neural voice: no SSML, no markup — pauses come only from
 // punctuation and sentence splitting. So every legibility win is a plain-text rewrite:

@@ -613,7 +613,7 @@ class SpawnService:
         """Handle a task agent's `decompose_research` call: spawn ONE bounded fan of
         depth-2 sub agents over the given sub-briefs and hand their cited findings back as
         escaped data (the feeding-waves envelope). The two-tier amplification controls
-        (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2) live here:
+        (docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md, R2) live here:
 
         - **depth-guarded** — refuses at depth 0 (the orchestrator plans its own fan) and
           past the run's `max_depth` (a sub agent is a leaf), so it is inert unless a

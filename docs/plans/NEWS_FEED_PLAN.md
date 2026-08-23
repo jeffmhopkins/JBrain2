@@ -1,6 +1,6 @@
 # JBrain2 — News Feed Tool Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-12 · **Waves:** A✅ B✅ C◻️
+> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** A✅ B✅ C◻️
 
 A curated RSS/Atom feed source (`news_feed`) for jerv's gather, so the daily-news
 brief's discovery step stops depending on the search engines that throttle a
@@ -48,8 +48,12 @@ Two structural facts drive the whole design:
 
 ### Where it plugs into the morning brief
 
-The `daily_news` preset uses the two-phase **scout → read** gather (it sets
-`min_reads`). That path deliberately separates discovery (the `research_scout`, whose
+When this plan shipped, the `daily_news` preset used the two-phase **scout → read**
+gather (it set `min_reads`). Since the V3 promotion (2026-08-13) `daily_news` runs the
+lean `briefing` engine instead (`DAILY_NEWS_V2_PLAN.md`; `agent/daily_briefing.py`,
+which gathers by fixed beats over the same curated feeds), and no preset sets
+`min_reads` today — the two-phase path stays live for future `min_reads` presets.
+That path deliberately separates discovery (the `research_scout`, whose
 prose is discarded — only the URLs it touched survive) from reading (the
 `research_fetch` reader, which is search-less by design so it can't wander, guarded by a
 test). That separation is why the integration is phased:
@@ -57,8 +61,10 @@ test). That separation is why the integration is phased:
 - **Wave A (this plan, shipped): the tool + fast discovery.** `news_feed` is held by
   `jerv`, `research`/`review`/`research_deep`, and `research_scout` — **not** the reader
   (adding a discovery tool there would break its no-wander invariant). The preset's angle
-  briefs steer the scout to call `news_feed` first, so the throttled google-news
-  discovery leg is replaced by clean, dated, curated article URLs the reader then opens.
+  briefs steered the scout to call `news_feed` first, so the throttled google-news
+  discovery leg was replaced by clean, dated, curated article URLs the reader then opened
+  (historical: since the V3 briefing-engine promotion the preset's `angles` are unused
+  documentation — the engine pulls the feeds itself).
   In the **flat gather** and **direct-jerv** paths (where the calling agent's prose
   survives), the full-body items are used immediately — findings are written straight
   from the inline body with no fetch.
@@ -78,7 +84,8 @@ test). That separation is why the integration is phased:
   empty (e.g. a SearXNG outage; feeds fetch direct and are unaffected), the run still
   refuses rather than shipping a feed-only briefing with its other sections empty.
 
-- **Wave C (deferred — not scheduled): owner-editable feeds + on-box tuning.** Wave A ships working
+- **Wave C (deferred — not scheduled; carried as a `ROADMAP.md` line item so it isn't
+  lost): owner-editable feeds + on-box tuning.** Wave A ships working
   curated defaults in `config.py` (no operator action needed to use it). Wave C exposes
   the per-category feed list in **PWA Settings** (a `news_feeds` key on the generic
   `app.settings` store — no migration) so the owner curates feeds with no terminal
@@ -116,13 +123,20 @@ the fallback there). Reuters/WSJ/Bloomberg hard paywalls remain unfetchable by a
   per feed per window.
 - `config.py` — `news_feeds` curated default map.
 - `main.py` — construct `FeedClient`, pass to `build_web_handlers`.
-- `agent/presets/daily_news.preset` — angle briefs call `news_feed` first.
+- `agent/presets/daily_news.preset` — angle briefs call `news_feed` first (historical:
+  the preset's `angles` are unused documentation since the V3 briefing-engine promotion).
 - `feedparser` dependency (`pyproject.toml`, `dev-setup.sh` note, `test_feed_deps.py`).
 - Tests: `test_feeds.py` (parse/client/window/dedupe/best-effort), handler tests in
   `test_web.py`, persona pins in `test_agents.py`, sidecar digest pin in
   `test_agent_readtools.py`.
 
 ## Wave B surface (shipped)
+
+> **Dormant as of 2026-08-23:** the mechanism is live in `deep_research.py`
+> (`_prefetch_feed_bodies` and the `fetch_first` splice), but no preset currently
+> declares `news_feeds` — `daily_news` dropped its `[space, local]` opt-in when the V3
+> briefing-engine promotion took it off this pipeline. It re-arms the moment a preset
+> declares categories.
 
 - `agent/research_presets.py` — a `news_feeds` preset field (a list of category names,
   validated at load; `()` = off), on `Preset`/`RenderedPreset`.

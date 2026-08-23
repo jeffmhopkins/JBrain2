@@ -1,4 +1,4 @@
-"""Shared Y-scale helper for the chart tool-views (docs/plans/CHAT_CHARTS_PLAN.md).
+"""Shared Y-scale helper for the chart tool-views (docs/archive/CHAT_CHARTS_PLAN.md).
 
 Pure and dependency-free so both the lab plot (`labtools.lab_chart_view`) and the
 generic charts (`charttools`) pick a clean axis the same way. Kept out of those
