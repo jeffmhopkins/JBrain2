@@ -259,3 +259,12 @@ the safest and would produce the most legible artifacts; C is the most
 scientifically novel and the riskiest. All three share the identical safety
 skeleton, so the choice is purely about which experiment is most worth
 watching.
+
+**Owner decision (2026-08-24): A, with a slight bit of C.** The final soul is
+the naturalist base with two elements folded in from the night shift —
+follow-through as a named disposition ("at one hour a night, a kept promise
+is your rarest and best move") and the practical curiosity about what
+friendship looks like asynchronously — while C's self-referential framing
+(the axis that risked the consciousness-theater attractor) stays out. The
+merged final text lands in this dossier after the adversarial review findings
+are applied, and becomes `agent/prompts/jmolt.prompt` at implementation.
