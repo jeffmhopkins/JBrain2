@@ -757,7 +757,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # client is dedicated because ComfyUI's long generations want their own timeout
         # budget, set inside ComfyUiImageGen.
         image_gen_client: httpx.AsyncClient | None = None
-        image_handlers: dict[str, ToolHandler] = {}
         if settings.comfyui_url:
             image_gen_client = httpx.AsyncClient()
             app.state.image_gen = ComfyUiImageGen(
@@ -785,23 +784,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # read; without it that residue reads as a full box to the memory budget.
                 models_dir=settings.comfyui_models_dir,
             )
-            image_handlers = build_image_handlers(
-                app.state.blob_store,
-                app.state.generated_image_repo,
-                app.state.turn_attachments,
-                maker,
-                # Routes analyze_image's vision read (the `agent.vision` task) so a
-                # text-only agent model can still see an image via a vision model.
-                app.state.llm_router,
-                # The deterministic OCR sidecar, used by analyze_image as a fast CPU
-                # text-detector: it gates the verbatim vision-OCR pass so a document/screenshot
-                # comes back with its exact text appended, and a text-less photo doesn't.
-                rapidocr=app.state.rapidocr,
-            )
         else:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
             app.state.image_render = None
+        # analyze_image needs the vision router and the attachment store, NOT ComfyUI —
+        # it used to ride the ComfyUI gate above only because generate/edit (removed,
+        # the Images launcher owns them) lived in the same builder. Unconditional now:
+        # every box with a vision route can analyze an attached image, and the chat
+        # capability below is what keeps the composer's paperclip offered for a
+        # text-only agent model.
+        image_handlers = build_image_handlers(
+            app.state.blob_store,
+            app.state.generated_image_repo,
+            app.state.turn_attachments,
+            maker,
+            # Routes analyze_image's vision read (the `agent.vision` task) so a
+            # text-only agent model can still see an image via a vision model.
+            app.state.llm_router,
+            # The deterministic OCR sidecar, used by analyze_image as a fast CPU
+            # text-detector: it gates the verbatim vision-OCR pass so a document/screenshot
+            # comes back with its exact text appended, and a text-less photo doesn't.
+            rapidocr=app.state.rapidocr,
+        )
+        # The chat composer's paperclip gate for text-only agent models (the PWA reads
+        # it off /chat/capabilities): an attached image is useful without vision exactly
+        # when the agent can analyze_image it by id.
+        app.state.chat_can_analyze_images = "analyze_image" in image_handlers
         # jerv's on-box audio transcription (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).

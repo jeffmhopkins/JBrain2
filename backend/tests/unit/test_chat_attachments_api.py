@@ -255,7 +255,7 @@ def test_capabilities_default_model_supports_vision(
     # grok-4.3's window (CONTEXT_WINDOWS) rides along so the meter can seed a fresh chat.
     assert resp.json() == {
         "supports_vision": True,
-        "can_edit_images": False,
+        "can_analyze_images": True,  # analyze_image is wired unconditionally at startup
         "context_window": 256_000,
     }
 
@@ -267,27 +267,30 @@ def test_capabilities_reflects_text_only_override(
     # A stored override to a text-only local model flips the flag off.
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
     # An off-catalog local model falls back to the conservative local default window.
+    # THE regression pin: a text-only agent model still reports analyze — the
+    # composer's paperclip justification that can_edit_images' hardcoded False
+    # silently killed (2026-08-24).
     assert c.get("/api/chat/capabilities").json() == {
         "supports_vision": False,
-        "can_edit_images": False,
+        "can_analyze_images": True,
         "context_window": 32_768,
     }
 
 
-def test_capabilities_never_offer_agent_side_editing_even_with_comfyui(
+def test_capabilities_report_analyze_from_the_wired_registry(
     client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
 ) -> None:
-    """can_edit_images stays False even with a ComfyUI configured — agent-side editing was
-    removed (the Images launcher owns ComfyUI); the field survives only as a client
-    contract the PWA still reads."""
+    """can_analyze_images mirrors whether the analyze_image handler was actually wired
+    at startup (app.state, set in main.py) — the paperclip's justification on a
+    text-only agent model. Its predecessor (can_edit_images) went hardcoded-False when
+    the agent-side edit tools were removed and silently took the research paperclip
+    with it; reporting the surviving capability is the regression's pin."""
     c, _, _, store = client
-    c.app.state.settings = c.app.state.settings.model_copy(  # type: ignore[attr-defined]
-        update={"comfyui_url": "http://localhost:8188"}
-    )
+    c.app.state.chat_can_analyze_images = False  # type: ignore[attr-defined]
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
     assert c.get("/api/chat/capabilities").json() == {
         "supports_vision": False,
-        "can_edit_images": False,
+        "can_analyze_images": False,
         "context_window": 32_768,
     }
 

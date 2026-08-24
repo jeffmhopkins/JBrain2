@@ -98,10 +98,11 @@ def build_image_handlers(
     *,
     rapidocr: TextDetector | None = None,
 ) -> dict[str, ToolHandler]:
-    """`analyze_image` only. Wired only when the on-box image stack is configured (a
-    localhost ComfyUI); the registry omits it otherwise (graceful degrade). `router` routes
-    the vision read (the `agent.vision` task) so a text-only agent model can still see an
-    image by delegating to a vision model.
+    """`analyze_image` only. Wired unconditionally — it needs the vision router and the
+    attachment store, not ComfyUI (it rode the ComfyUI gate only while generate/edit,
+    since removed, shared this builder). `router` routes the vision read (the
+    `agent.vision` task) so a text-only agent model can still see an image by
+    delegating to a vision model.
 
     `rapidocr` is the on-box deterministic OCR sidecar, used ONLY as a fast CPU
     text-DETECTOR: it runs concurrently with the vision description and gates the second,

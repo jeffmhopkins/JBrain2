@@ -3192,7 +3192,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
   // Chat composer capabilities: vision gate + the agent.turn window, so the context
   // meter can seed a fresh chat before the first turn reports live usage.
   if (path === "/api/chat/capabilities" && method === "GET") {
-    return json({ supports_vision: true, can_edit_images: false, context_window: 262144 });
+    return json({ supports_vision: true, can_analyze_images: true, context_window: 262144 });
   }
 
   // --- Code mode (jcode) ---

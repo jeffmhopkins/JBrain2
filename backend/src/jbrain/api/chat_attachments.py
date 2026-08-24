@@ -164,11 +164,14 @@ class ChatCapabilities(BaseModel):
     # Whether the model the agent.turn task resolves to can accept images — the PWA
     # gates the attach-image affordance on it. A model capability, not per-session.
     supports_vision: bool
-    # Whether the agent can edit an attached image. Hardcoded False since the agent-side
-    # edit tools were removed (2026-08 — the Images launcher owns ComfyUI); the field
-    # stays because the PWA reads it (the client contract), gating a chat-side edit
-    # affordance that no longer exists.
-    can_edit_images: bool
+    # Whether the agent can analyze an attached image by id (the analyze_image tool is
+    # wired) — the PWA's OTHER reason to offer the paperclip on a text-only agent
+    # model. This replaced `can_edit_images` when the agent-side edit tools were
+    # removed (2026-08 — the Images launcher owns ComfyUI): the edit flag went
+    # hardcoded-False and silently took the research paperclip with it, because the
+    # composer's fallback was gated on the dead flag rather than the capability that
+    # survived.
+    can_analyze_images: bool
     # The agent.turn model's total context window — the meter's denominator. Sent here
     # so the composer can show the (near-empty) meter in a fresh session, before the
     # first turn's usage event reports the live figure. A model capability, not
@@ -181,15 +184,18 @@ capabilities_router = APIRouter(prefix="/chat", dependencies=[Depends(owner_only
 
 @capabilities_router.get("/capabilities")
 async def chat_capabilities(
-    principal: PrincipalDep, settings: SettingsDep, store: SettingsStoreDep
+    request: Request, principal: PrincipalDep, settings: SettingsDep, store: SettingsStoreDep
 ) -> ChatCapabilities:
     """Whether the agent.turn model supports vision, after live per-task overrides —
-    so the chat composer offers image upload only when the model can read it."""
+    so the chat composer offers image upload only when the model can read it — and
+    whether analyze_image is wired, the paperclip's other justification."""
     overrides = await store.llm_task_overrides(ctx_for(principal))
     spec = (overrides.get("agent.turn") or {}).get("spec") or TASK_DEFAULTS["agent.turn"]
     return ChatCapabilities(
         supports_vision=supports_vision_for_spec(settings, spec),
-        # Agent-side image editing removed 2026-08 — the launcher owns ComfyUI.
-        can_edit_images=False,
+        # Set at startup from the tool registry's actual handler set (main.py) —
+        # reported rather than assumed, so a box whose analyze wiring ever regains a
+        # gate degrades the paperclip honestly instead of offering a dead attach.
+        can_analyze_images=bool(getattr(request.app.state, "chat_can_analyze_images", False)),
         context_window=context_window_for_spec(spec),
     )
