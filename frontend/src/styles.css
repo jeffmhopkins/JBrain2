@@ -23389,6 +23389,17 @@ button.task-band:active {
   overflow-y: auto;
 }
 
+/* The screen is a COLUMN FLEX CONTAINER of a definite height, so its sections are flex
+   items — and a flex item whose own overflow is not `visible` has an automatic minimum
+   size of zero. The list cards clip their corners with `overflow: hidden`, so once the
+   sections outgrew the viewport the browser SHRANK them to fit instead of letting the
+   page scroll: ten box events rendered as one and a half rows, and a "Running now 1"
+   heading sat above a card squashed to 20px with its only row invisible. Pinning every
+   section at its natural height is what makes this screen scroll at all. */
+.vitals-detail > * {
+  flex-shrink: 0;
+}
+
 .vitals-plot-card {
   padding: 14px 14px 10px;
 }
