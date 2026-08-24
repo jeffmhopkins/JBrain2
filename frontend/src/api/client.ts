@@ -562,6 +562,10 @@ export interface AppSettings {
    *  smoke-tests it by loading a model. ON by default. Surfaced because it lived only in
    *  the box's `.env`, which the owner has no terminal to reach. */
   local_llm_auto_update: boolean;
+  /** Whether an update rebuilds the local inference engine with the Fast-Qwen-loads patch
+   *  (patched llama-server → fast qwen MTP-hybrid disk restores). OFF by default. Surfaced
+   *  because it lived only in the box's `.env`, which the owner has no terminal to reach. */
+  local_llm_patch_restore_checkpoint: boolean;
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;

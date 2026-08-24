@@ -214,6 +214,18 @@ BRAIN_ANSWER_ROBOT_DEFAULT = False
 LOCAL_LLM_AUTO_UPDATE_KEY = "local_llm_auto_update"
 LOCAL_LLM_AUTO_UPDATE_DEFAULT = True
 
+# Whether an update rebuilds the model gateway with the PATCHED llama-server (a
+# checkpoint-restore fix that turns the qwen3.8 MTP-hybrid disk restore from a ~176 s
+# re-prefill into a ~12 s load). OFF by default: the patch compiles llama.cpp from source
+# (Dockerfile.local-llm's PATCH_RESTORE_CHECKPOINT build arg → a ~20-30 min rebuild), and a
+# bad build is caught by the same smoke-test + rollback that guards auto-update. It lived
+# only in `.env` (LOCAL_LLM_PATCH_RESTORE_CHECKPOINT), which the owner cannot reach — they
+# run this box remotely with no terminal (CLAUDE.md #10) — so activating a documented, ready
+# feature meant a host edit they have no path to. Stored here so the PWA owns it: the update
+# script reads it to set the build arg, and KvPrefixStore reads it to gate qwen eligibility.
+LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY = "local_llm_patch_restore_checkpoint"
+LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT = False
+
 
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
 # (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
@@ -667,6 +679,17 @@ class SqlSettingsStore:
         only an explicit `false` disables it (any non-false value reads as on)."""
         stored = await self.get(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, LOCAL_LLM_AUTO_UPDATE_DEFAULT)
         return stored is not False
+
+    async def local_llm_patch_restore_checkpoint(self, ctx: SessionContext) -> bool:
+        """Whether an update rebuilds the gateway with the patched llama-server (fast qwen
+        MTP-hybrid loads). Defaults OFF; only an explicit `true` enables it (any non-true
+        value reads as off)."""
+        stored = await self.get(
+            ctx,
+            LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
+            LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
+        )
+        return stored is True
 
     async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
         """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see

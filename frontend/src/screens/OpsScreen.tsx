@@ -258,6 +258,68 @@ function GatewayAutoUpdateToggle() {
   );
 }
 
+/** Whether an update rebuilds the local inference engine with the Fast-Qwen-loads patch
+ *  (the patched llama-server that turns a qwen MTP-hybrid disk restore from a ~176 s
+ *  re-prefill into a ~12 s load).
+ *
+ *  It lives next to the auto-update toggle and the Update button because that is what it
+ *  governs — the next Update runs the ~20-30 min rebuild — and it is a PWA switch at all
+ *  because activating the patch used to mean editing the box `.env`, which the owner has no
+ *  terminal to reach. A failed patched build rolls back and clears the setting on the box,
+ *  so the toggle reflects what actually happened after the next Update. */
+function GatewayPatchRestoreToggle() {
+  const [on, setOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await api.getSettings();
+        if (!cancelled) setOn(settings.local_llm_patch_restore_checkpoint);
+      } catch {
+        // Leave it unknown rather than guessing a state the owner might act on.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(): Promise<void> {
+    if (on === null) return;
+    const next = !on;
+    setOn(next); // optimistic
+    try {
+      await api.updateSettings({ local_llm_patch_restore_checkpoint: next });
+    } catch {
+      setOn(!next); // put it back: a toggle that lies about what the box will do is worse
+    }
+  }
+
+  return (
+    <div className="settings-switch-row ops-autoupdate">
+      <span className="settings-meta" style={{ margin: 0 }}>
+        Fast Qwen loads{" "}
+        <span className="muted">
+          — experimental engine rebuild: the next Update runs a ~20-30 minute rebuild; if it
+          fails, the box rolls back and turns this off
+        </span>
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-label="Fast Qwen loads (experimental engine rebuild)"
+        aria-checked={on ?? false}
+        className={`settings-switch${on ? " on" : ""}`}
+        disabled={on === null}
+        onClick={() => void toggle()}
+      >
+        <span className="knob" />
+      </button>
+    </div>
+  );
+}
+
 function UpdateControl() {
   const [phase, setPhase] = useState<UpdatePhase>({ step: "idle" });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -322,6 +384,7 @@ function UpdateControl() {
         </div>
       )}
       {phase.step === "idle" && <GatewayAutoUpdateToggle />}
+      {phase.step === "idle" && <GatewayPatchRestoreToggle />}
       {phase.step === "confirm" && (
         <div className="ops-update-bar">
           <span className="ops-update-dot" />

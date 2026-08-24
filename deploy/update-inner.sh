@@ -675,23 +675,56 @@ elif ! run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api 
   AUTO_UPDATE_ON=''
 fi
 
-if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
-  FLOATING="$(sed -n 's/^LOCAL_LLM_BASE_FLOATING=//p' .env | tail -n1)"
-  [ -n "$FLOATING" ] || FLOATING="docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv"
-  echo "[update] LOCAL_LLM_AUTO_UPDATE: rebuilding gateway on newest llama.cpp ($FLOATING)"
+# The Fast-Qwen-loads patch toggle (Settings), read through the api image like the flag
+# above. It compiles a patched llama-server (Dockerfile.local-llm's PATCH_RESTORE_CHECKPOINT
+# build arg, LLAMA_CPP_COMMIT from source) into the gateway image, which the qwen3.8
+# MTP-hybrid disk restore depends on. It is a SECOND reason to rebuild the gateway,
+# independent of tracking the newest llama.cpp: an owner who turns the patch on while
+# auto-update is OFF still expects the next Update to build it, so rebuild-needed is
+# auto-update OR patch. The exported var is what compose reads for the build arg
+# (${LOCAL_LLM_PATCH_RESTORE_CHECKPOINT:-0}); the export is authoritative (a shell env var
+# beats a `.env` line in compose), so the PWA setting — not a stray `.env` value — decides.
+PATCH_ON=''
+if run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli local-llm-patch-restore-checkpoint; then
+  PATCH_ON=1
+  export LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=1
+  echo "[update] Fast-Qwen-loads patch is ON (Settings) — building the patched llama-server"
+else
+  export LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=0
+fi
+
+if [ -n "$LOCAL_LLM_RUNNING" ] && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
+  # AUTO_UPDATE_ON tracks the newest llama.cpp (FLOATING base, --pull). With auto-update OFF
+  # but the patch ON we still rebuild — but on the PINNED base and with no --pull, because
+  # "auto-update off" means freeze the reproducible digest; only the patch build arg changes.
+  if [ -n "$AUTO_UPDATE_ON" ]; then
+    FLOATING="$(sed -n 's/^LOCAL_LLM_BASE_FLOATING=//p' .env | tail -n1)"
+    [ -n "$FLOATING" ] || FLOATING="docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv"
+    echo "[update] LOCAL_LLM_AUTO_UPDATE: rebuilding gateway on newest llama.cpp ($FLOATING)"
+  else
+    echo "[update] rebuilding gateway on the pinned base for the Fast-Qwen-loads patch"
+  fi
   # The image id BEFORE the rebuild. The smoke test exists to catch a bad UPSTREAM build,
   # so when the rebuild produces the identical image there is nothing new to vet — and the
   # test is not free: it loads a model into the iGPU, which is tens of GB of disk read and
   # minutes of the box's attention, on every routine update that changed nothing. Skipping
-  # the unchanged case is what stops a no-op update from pinning the GPU.
+  # the unchanged case is what stops a no-op update from pinning the GPU. (A patch toggle
+  # flips the build arg, so the image id changes and the smoke test correctly runs.)
   BEFORE_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
   # Everything from here until the unload can allocate tens of GB, so the api's keep-warm
   # prime must not be running alongside it.
   pause_api
-  # Bounded like every other one-off: this is an unconditional multi-GB registry pull on a
-  # rolling tag, and an update that hangs here hangs with the stack quiesced.
-  if run_bounded "$PULL_TIMEOUT_S" env LOCAL_LLM_BASE="$FLOATING" \
-      docker compose --profile local-llm build --pull local-llm \
+  # Bounded like every other one-off: this can be a multi-GB registry pull on a rolling tag,
+  # and an update that hangs here hangs with the stack quiesced. The build sub-shell branches
+  # on auto-update (floating + --pull) vs patch-only (pinned base), and both inherit the
+  # exported LOCAL_LLM_PATCH_RESTORE_CHECKPOINT for the build arg.
+  if { if [ -n "$AUTO_UPDATE_ON" ]; then
+         run_bounded "$PULL_TIMEOUT_S" env LOCAL_LLM_BASE="$FLOATING" \
+           docker compose --profile local-llm build --pull local-llm
+       else
+         run_bounded "$PULL_TIMEOUT_S" docker compose --profile local-llm build local-llm
+       fi; } \
       && docker compose --profile local-llm up -d local-llm; then
     AFTER_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
     if [ -n "$BEFORE_IMG" ] && [ "$BEFORE_IMG" = "$AFTER_IMG" ]; then
@@ -710,8 +743,21 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
     SMOKE_FAILED=1
   fi
   if [ -n "${SMOKE_FAILED:-}" ]; then
-    SMOKE_VERDICT="the newest llama.cpp did not pass its smoke test — the gateway was rolled back to its pinned base"
+    SMOKE_VERDICT="the gateway did not pass its smoke test — it was rolled back to its pinned base"
     echo "[update] WARNING: $SMOKE_VERDICT"
+    # A failed PATCHED build turns its OWN toggle back off: the patch is what dirtied the
+    # image (the patched llama-server could not load a model), so leaving the setting on would
+    # rebuild the same broken engine on every future Update and keep KvPrefixStore writing
+    # inert restores. Clearing it here — and dropping the build arg for the rollback rebuild
+    # below — puts the box back on the stock binary, off. The API GET then reflects OFF, so the
+    # PWA toggle shows what actually happened. Best-effort: a DB hiccup here must not abort the
+    # rollback (set -e is on), so the setter's failure is tolerated.
+    if [ -n "$PATCH_ON" ]; then
+      export LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=0
+      run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+        python -m jbrain.cli set-local-llm-patch-restore-checkpoint off \
+        || echo "[update] WARNING: could not clear the Fast-Qwen-loads patch setting"
+    fi
     # EMPTY IT FIRST. A smoke test fails at the tool probe with BOTH models loaded, and a
     # timeout leaves a load still running — so at this point the gateway can be holding
     # ~90 GB. `up -d` on a changed image force-recreates it, and with no stop_grace_period
@@ -720,7 +766,8 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
     # else, and it sat on the one branch nobody exercises.
     release_models
     # No LOCAL_LLM_BASE override and no --pull: rebuild against the reproducible pinned
-    # digest (compose default or the operator's .env value) from cached layers.
+    # digest (compose default or the operator's .env value) from cached layers. The patch
+    # build arg was cleared above when a patched build was the thing that failed.
     docker compose --profile local-llm build local-llm \
       && docker compose --profile local-llm up -d local-llm \
       || echo "[update] WARNING: gateway rollback rebuild failed — check 'jbrain logs local-llm'"
@@ -732,10 +779,11 @@ fi
 # stands either way: recreating a dozen containers on top of pinned unified memory is the
 # same collision the pre-build unload exists to prevent, arriving from the other end. The
 # gateway keeps running, holding nothing — it reloads on demand.
-# Gated on AUTO_UPDATE_ON as well: with auto-update off nothing above ever started the
-# gateway (it is still removed at this point), so this would spend a compose run on an
-# unreachable target and then log a reassuring line about memory it never freed.
-if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
+# Gated on the same rebuild-needed condition (auto-update OR patch): only those branches
+# start the gateway above (it is still removed otherwise), so without a start this would
+# spend a compose run on an unreachable target and log a reassuring line about memory it
+# never freed.
+if [ -n "$LOCAL_LLM_RUNNING" ] && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
   release_models
   echo "[update] gateway emptied before the recreate ($(mem_available_gb) GB available)"
 fi

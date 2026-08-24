@@ -490,7 +490,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
         # on each call so the settings screen takes effect without a restart.
-        app.state.kv_prefix = KvPrefixStore(app.state.local_gateway, settings.local_models_dir)
+        # Read the Fast-Qwen-loads patch setting ONCE here: it gates whether the qwen3.8
+        # MTP-hybrids are admitted to the kv-prefix disk layer, and its true source of truth is
+        # the running llama-server build, which only changes on the gateway rebuild that also
+        # recreates this container — so a startup read is re-taken exactly when it can change.
+        # Best-effort: a DB hiccup degrades to OFF (the conservative, stock-engine behaviour).
+        kv_patch_active = False
+        with suppress(Exception):
+            kv_patch_active = await settings_store.local_llm_patch_restore_checkpoint(SYSTEM_CTX)
+        app.state.kv_prefix = KvPrefixStore(
+            app.state.local_gateway, settings.local_models_dir, patch_active=kv_patch_active
+        )
         app.state.llm_router = build_router(
             settings,
             recorder=SqlUsageRecorder(maker),
