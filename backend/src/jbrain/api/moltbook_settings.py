@@ -1,0 +1,156 @@
+"""Moltbook account + operating-switch settings (docs/plans/JMOLT_PLAN.md, W1).
+
+The PWA panel registers jmolt's Moltbook account, shows claim status, and operates the
+two owner switches — the autonomy switch (queue vs auto-release, M7) and the global
+kill/pause (M6) — plus the fixed disclosure header. Owner-only via the settings store's
+RLS and the router's owner gate. The bearer KEY is a secret NEVER echoed back: GET
+reports only whether one is set (stored or via the JBRAIN_MOLTBOOK_API_KEY env fallback).
+
+Registration + rotation NEVER transit the agent loop: they are owner API routes here.
+`register()` consumes the platform's key from the HTTP response and hands it straight to
+the store; the response to the owner carries only the non-secret claim material (the
+claim URL + verification code the owner needs to post the X verification tweet).
+"""
+
+from typing import cast
+
+import structlog
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, ConfigDict
+
+from jbrain.api.deps import PrincipalDep, PrincipalInfo, SettingsDep
+from jbrain.api.notes import ctx_for
+from jbrain.api.settings import SettingsStoreDep
+from jbrain.config import Settings
+from jbrain.settings_store import SqlSettingsStore
+from jbrain.web.moltbook import MoltbookClient, MoltbookError
+
+log = structlog.get_logger()
+
+router = APIRouter()
+
+
+def _client(request: Request) -> MoltbookClient:
+    return cast(MoltbookClient, request.app.state.moltbook_client)
+
+
+class MoltbookStatusOut(BaseModel):
+    # The KEY is never returned — only whether one is effectively present (stored OR env
+    # fallback). `handle` is jmolt's published name; `autonomy` is the queue/auto switch
+    # (default off); `killed` is the global pause; `disclosure` is the fixed bio header.
+    key_set: bool
+    handle: str
+    autonomy: bool
+    killed: bool
+    disclosure: str
+
+
+class MoltbookRegisterIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The agent name jmolt registers under (published forever) and its Moltbook bio/
+    # description. Bounded so the fields can't carry an unbounded body.
+    name: str
+    description: str = ""
+
+
+class MoltbookRegisterOut(BaseModel):
+    # Non-secret claim material only: the URL the owner opens to verify email + post the
+    # X verification tweet, and the reference code. NO api_key field exists.
+    claim_url: str
+    verification_code: str
+    handle: str
+
+
+class MoltbookPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    autonomy: bool | None = None
+    killed: bool | None = None
+    disclosure: str | None = None
+    # Clear the stored key (disconnect the account), reverting to the env fallback.
+    clear_key: bool = False
+
+
+class MoltbookClaimOut(BaseModel):
+    status: str
+
+
+async def _status(
+    principal: PrincipalInfo, store: SqlSettingsStore, settings: Settings
+) -> MoltbookStatusOut:
+    ctx = ctx_for(principal)
+    stored = await store.moltbook_api_key(ctx)
+    return MoltbookStatusOut(
+        key_set=bool(stored or settings.moltbook_api_key),
+        handle=await store.moltbook_handle(ctx),
+        autonomy=await store.moltbook_autonomy(ctx),
+        killed=await store.moltbook_killed(ctx),
+        disclosure=await store.moltbook_disclosure(ctx),
+    )
+
+
+@router.get("/settings/moltbook")
+async def read_moltbook_settings(
+    principal: PrincipalDep, store: SettingsStoreDep, settings: SettingsDep
+) -> MoltbookStatusOut:
+    return await _status(principal, store, settings)
+
+
+@router.put("/settings/moltbook")
+async def update_moltbook_settings(
+    body: MoltbookPatch,
+    principal: PrincipalDep,
+    store: SettingsStoreDep,
+    settings: SettingsDep,
+) -> MoltbookStatusOut:
+    ctx = ctx_for(principal)
+    if body.autonomy is not None:
+        await store.set_moltbook_autonomy(ctx, body.autonomy)
+    if body.killed is not None:
+        await store.set_moltbook_killed(ctx, body.killed)
+    if body.disclosure is not None and body.disclosure.strip():
+        await store.set_moltbook_disclosure(ctx, body.disclosure.strip())
+    if body.clear_key:
+        await store.set_moltbook_api_key(ctx, "")
+        await store.set_moltbook_handle(ctx, "")
+    return await _status(principal, store, settings)
+
+
+@router.post("/settings/moltbook/register")
+async def register_moltbook(
+    body: MoltbookRegisterIn,
+    request: Request,
+    principal: PrincipalDep,
+    store: SettingsStoreDep,
+) -> MoltbookRegisterOut:
+    """Register a new Moltbook agent account (owner-only, never the agent loop). The
+    platform returns the API key in the HTTP response; the secret_sink stores it and the
+    response to the owner carries only the non-secret claim material (M17)."""
+    ctx = ctx_for(principal)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="a handle is required to register")
+
+    async def _sink(api_key: str) -> None:
+        await store.set_moltbook_api_key(ctx, api_key)
+        await store.set_moltbook_handle(ctx, name)
+
+    try:
+        result = await _client(request).register(name, body.description.strip(), secret_sink=_sink)
+    except MoltbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return MoltbookRegisterOut(
+        claim_url=result.claim_url,
+        verification_code=result.verification_code,
+        handle=result.handle,
+    )
+
+
+@router.get("/settings/moltbook/claim-status")
+async def moltbook_claim_status(request: Request, principal: PrincipalDep) -> MoltbookClaimOut:
+    """The live claim status from Moltbook (pending_claim / claimed) so the owner can see,
+    in the panel, when the X verification tweet has activated the account."""
+    try:
+        status = await _client(request).status()
+    except MoltbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return MoltbookClaimOut(status=status)

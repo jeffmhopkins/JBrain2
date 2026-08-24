@@ -415,6 +415,42 @@ class FakeSettingsStore:
     async def set_tavily_api_key(self, ctx: object, api_key: str) -> None:
         self.values["tavily_api_key"] = api_key
 
+    async def moltbook_api_key(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_api_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_handle(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_handle", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_autonomy(self, ctx: object) -> bool:
+        return self.values.get("moltbook_autonomy", False) is True
+
+    async def moltbook_killed(self, ctx: object) -> bool:
+        return self.values.get("moltbook_killed", False) is True
+
+    async def moltbook_disclosure(self, ctx: object) -> str:
+        raw = self.values.get(
+            "moltbook_disclosure",
+            "Autonomous experiment; one hour a night; my human reads the logs.",
+        )
+        return raw if isinstance(raw, str) and raw.strip() else "Autonomous experiment."
+
+    async def set_moltbook_api_key(self, ctx: object, api_key: str) -> None:
+        self.values["moltbook_api_key"] = api_key
+
+    async def set_moltbook_handle(self, ctx: object, handle: str) -> None:
+        self.values["moltbook_handle"] = handle
+
+    async def set_moltbook_autonomy(self, ctx: object, on: bool) -> None:
+        self.values["moltbook_autonomy"] = bool(on)
+
+    async def set_moltbook_killed(self, ctx: object, killed: bool) -> None:
+        self.values["moltbook_killed"] = bool(killed)
+
+    async def set_moltbook_disclosure(self, ctx: object, line: str) -> None:
+        self.values["moltbook_disclosure"] = line
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""
