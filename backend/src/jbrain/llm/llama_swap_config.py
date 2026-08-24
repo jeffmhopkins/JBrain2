@@ -401,15 +401,22 @@ def render(
         # KV in one slot while title/background traffic uses the other — neither can evict the
         # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
         cmd += ["-np", str(n_slots)]
-        # KV-slot save/restore target (jbrain.llm.kv_prefix) — attention models only. A
-        # recurrent model's slot cannot be restored (the path clears the context checkpoints
-        # that are its only prefix-reuse mechanism), and an EXTERNAL-draft speculative entry
-        # carries draft state no slot file captures — neither gets the flag, so a misdirected
-        # save fails loudly at the server instead of writing a file that can only restore
-        # garbage. `kv_slot_restorable` is a per-entry OVERRIDE for shapes reasoned through
-        # and verified live (local_catalog documents the hybrid+MTP argument — the qwen
-        # ~170 s per-load warm, 2026-08-23): those entries get the flag regardless.
-        if m.get("kv_slot_restorable") or (not m.get("recurrent") and not speculative):
+        # KV-slot save/restore target (jbrain.llm.kv_prefix). Attention models get the flag;
+        # a plain recurrent model's slot cannot be restored (the path clears the context
+        # checkpoints that are its only prefix-reuse mechanism), and an EXTERNAL-draft
+        # speculative entry carries draft state no slot file captures — neither gets the
+        # flag, so a misdirected save fails loudly at the server instead of writing a file
+        # that can only restore garbage. Two overrides: `kv_slot_restorable` (per-entry,
+        # shapes reasoned through and verified live), and recurrent+MTP self-drafting —
+        # the qwen3.8 hybrids whose restore the Fast-Qwen-loads patched engine makes
+        # reusable. The FLAG alone causes no saves (KvPrefixStore._eligible gates those on
+        # the owner's patch setting); without it the store's _resolve finds no save dir and
+        # silently declines, which is how the toggle shipped inert on 2026-08-24.
+        if (
+            m.get("kv_slot_restorable")
+            or (not m.get("recurrent") and not speculative)
+            or (m.get("recurrent") and _is_mtp_speculative(catalog_args + operator_args))
+        ):
             cmd += ["--slot-save-path", f"/models/{KVSLOT_DIR}/{model_id}"]
         # Prompt-prefix KV reuse — for an ATTENTION model only. On a recurrent/hybrid stack you
         # cannot KV-shift the state, and the partial-range `seq_rm` this path calls returns false
@@ -517,7 +524,14 @@ def write(
     # directory fails exactly once — on the first prime after a fresh volume, where
     # nobody is watching. Best-effort: a read-only mount (the smoketest's) just skips.
     for m in models:
-        if m.get("kv_slot_restorable") or not m.get("recurrent"):
+        static_args = tuple(str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ()))
+        if (
+            m.get("kv_slot_restorable")
+            or not m.get("recurrent")
+            or _is_mtp_speculative(
+                static_args + tuple((extra_args or {}).get(str(m.get("id")), ()))
+            )
+        ):
             with contextlib.suppress(OSError):
                 os.makedirs(os.path.join(root, KVSLOT_DIR, str(m.get("id"))), exist_ok=True)
     # Compare CONTENT, not mtime: the caller re-stamps on every settings PUT and the common
