@@ -301,8 +301,8 @@ function GatewayPatchRestoreToggle() {
       <span className="settings-meta" style={{ margin: 0 }}>
         Fast Qwen loads{" "}
         <span className="muted">
-          — experimental engine rebuild: the next Update runs a ~20-30 minute rebuild; if it
-          fails, the box rolls back and turns this off
+          — experimental engine rebuild: the next Update runs a ~20-30 minute rebuild; if it fails,
+          the box rolls back and turns this off
         </span>
       </span>
       <button
