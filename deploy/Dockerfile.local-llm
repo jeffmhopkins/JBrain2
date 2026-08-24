@@ -80,16 +80,17 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 # the test; the update flow's smoke-test + rollback protect the runtime if it fails.
 FROM ${LOCAL_LLM_BASE} AS llama-build
 ARG PATCH_RESTORE_CHECKPOINT=0
-# FALLBACK ONLY. The build checks out the commit the base image's own llama-server
-# reports (`llama-server --version`, read in the RUN below) — the base links
-# libggml*.so / libllama.so DYNAMICALLY and we overlay only the llama-server binary,
-# so any other commit ships an ABI-incompatible binary that crashes at model load.
-# That was the 2026-08-24 smoke failure: this ARG was hand-pinned to c060ca974 while
-# the base was 571d0d540, and hand-pinned commits also break the auto-update path
-# (a floating base never matches a static pin). Reading the commit off the base
-# itself designs the drift class out; this ARG is used only when the version output
-# is unparseable, and should track the pinned LOCAL_LLM_BASE's commit.
-ARG LLAMA_CPP_COMMIT=571d0d540
+# EXPLICIT OVERRIDE ONLY, empty by default. The build checks out the commit the
+# base image's own llama-server reports (`llama-server --version`, read in the RUN
+# below) — the base links libggml*.so / libllama.so DYNAMICALLY and we overlay only
+# the llama-server binary, so any other commit ships an ABI-incompatible binary that
+# crashes at model load. Hand-pinned commits caused both 2026-08-24 smoke failures
+# (c060ca974 against a 571d0d540 base; then a stale 571d0d540 fallback against the
+# auto-updated base after upstream changed the --version format). An unparseable
+# version is now a FAST, loud failure — a guessed commit wastes a full compile before
+# the smoke test catches the mismatch — so set this (via LOCAL_LLM_LLAMA_COMMIT in
+# .env) only to deliberately force a commit, e.g. for an exotic base variant.
+ARG LLAMA_CPP_COMMIT=
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
     mkdir -p /out; \
@@ -97,15 +98,44 @@ RUN set -eux; \
         echo "PATCH_RESTORE_CHECKPOINT!=1 — skipping patched build (stock binary kept)"; \
         exit 0; \
     fi; \
-    ( command -v git && command -v cmake && command -v c++ ) >/dev/null 2>&1 || \
-        ( apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ); \
+    # The base ships a compiler but not the whole link/build chain (the rolling
+    # image dropped `ld`: "collect2: fatal error: cannot find 'ld'", 2026-08-24),
+    # and it is Fedora — apt-get does not exist there. Check every tool the build
+    # actually invokes and install via whichever package manager is present. Plain
+    # install is NOT enough when the image's RPM DB already claims the package
+    # while its files are gone (binutils reports installed with /usr/bin/ld
+    # missing — "Nothing to do"), so tools still missing after install get a
+    # reinstall pass, and a final check hard-fails rather than dying mid-compile.
+    tools_missing() { m=""; for t in git cmake c++ ld make; do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }; \
+    if [ -n "$(tools_missing)" ]; then \
+        echo "installing build tools (missing:$(tools_missing))"; \
+        if command -v dnf >/dev/null 2>&1; then \
+            dnf -y --setopt=install_weak_deps=False install git cmake gcc-c++ binutils make; \
+            [ -z "$(tools_missing)" ] || dnf -y reinstall git cmake gcc-c++ binutils make || true; \
+        elif command -v microdnf >/dev/null 2>&1; then \
+            microdnf -y --setopt=install_weak_deps=0 install git cmake gcc-c++ binutils make; \
+            [ -z "$(tools_missing)" ] || microdnf -y reinstall git cmake gcc-c++ binutils make || true; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            apt-get update && apt-get install -y --no-install-recommends git cmake build-essential; \
+            [ -z "$(tools_missing)" ] || apt-get install -y --reinstall --no-install-recommends git cmake build-essential binutils || true; \
+        else echo "FATAL: missing tools ($(tools_missing)) and no known package manager (dnf/microdnf/apt-get)"; exit 1; fi; \
+        if [ -n "$(tools_missing)" ]; then echo "FATAL: build tools still missing after install/reinstall:$(tools_missing)"; exit 1; fi; \
+    fi; \
     base_ver="$(llama-server --version 2>&1 || true)"; \
-    base_commit="$(printf '%s\n' "$base_ver" | sed -n 's/^.*version:[^(]*(\([0-9a-f]\{7,40\}\)).*$/\1/p' | head -n1)"; \
-    if [ -n "$base_commit" ]; then \
+    # Two observed formats: "version: 10068 (571d0d540)" and, since upstream's
+    # versioning rework, "version: 0.2.0-dev (build 10612, commit 758443071)".
+    base_commit="$(printf '%s\n' "$base_ver" | sed -n 's/^.*version:.*[( ]commit \([0-9a-f]\{7,40\}\)).*$/\1/p' | head -n1)"; \
+    [ -n "$base_commit" ] || base_commit="$(printf '%s\n' "$base_ver" | sed -n 's/^.*version:[^(]*(\([0-9a-f]\{7,40\}\)).*$/\1/p' | head -n1)"; \
+    if [ -n "${LLAMA_CPP_COMMIT}" ]; then \
+        echo "LLAMA_CPP_COMMIT override set — building at ${LLAMA_CPP_COMMIT} (base reports: ${base_commit:-unparsed})"; \
+        base_commit="${LLAMA_CPP_COMMIT}"; \
+    elif [ -n "$base_commit" ]; then \
         echo "building llama-server at the base image's own commit ${base_commit} (ABI-matched overlay)"; \
     else \
-        base_commit="${LLAMA_CPP_COMMIT}"; \
-        echo "WARNING: could not parse the base llama-server commit (version output: $base_ver) — falling back to LLAMA_CPP_COMMIT=${base_commit}; the update's smoke test backstops a mismatch"; \
+        echo "FATAL: could not parse the base llama-server commit from: $base_ver"; \
+        echo "       Upstream changed the --version format again — add the new pattern here."; \
+        echo "       Building at a guessed commit would ship an ABI-mismatched binary."; \
+        exit 1; \
     fi; \
     git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
     git -C /llama checkout "${base_commit}"; \
