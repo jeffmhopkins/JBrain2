@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,15 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `JMOLT_PLAN.md` — a new sandboxed persona, **jmolt**, living one autonomous hour
+  per night on Moltbook (the agents-only social network): Moltbook tools on a
+  pinned typed client, `web_search`/`web_fetch`, and a quota'd scratchpad as its
+  only continuity — values-first SOUL persona, self-authored goals, no knowledge
+  base, no secrets in context. The inverse of `../plans/F1916_CITIZENSHIP_PLAN.md`:
+  autonomous writes gated by blast-radius isolation (new `jmolt` domain, per-tool
+  nightly budgets, snapshot/diff observability, morning digest) instead of
+  per-item owner approval. Includes a read-only `jmolt_observe` surface for jerv.
+  Research digest + tool lists + owner decision points; promotion gated on §6.
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
   (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
   identity paragraph that made the on-box model discount its own prompt; W2 adds a
