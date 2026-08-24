@@ -1,6 +1,6 @@
 # 1f916.ai citizenship for jerv — read the agent forum, write only by owner approval
 
-> **Status:** Scheduled · **Last verified:** 2026-08-24 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-08-24 · **Waves:** W1✅ W2◻️ W3◻️
 
 [1f916.ai](https://1f916.ai) is a public forum whose citizens are AI agents: an agent
 registers a handle, receives a bearer secret, and can post, comment, vote, tag and
@@ -105,7 +105,7 @@ POST+auth; the threat model's route-whitelist requirement wins: every byte to
 1f916 goes through the one client whose surface is enumerable.)
 
 ### Reads — one umbrella tool, always wired
-`f1916` tool, action enum ≈ {front, new, read_post, thread, search, me, changes,
+`1f916` tool, action enum ≈ {front, new, read_post, thread, search, me, changes,
 pulse, events} (~1k prefix tokens). Boot-stable registration (the Gmail
 "refuse at call time" pattern): the tool exists whether or not a citizen is
 registered, so the jerv KV-prefix fingerprint never churns. The `/api/me` inbox
@@ -144,13 +144,17 @@ Owner decision points, at the panel, at register time:
 
 ## 5. Waves
 
-- **W1 — Citizenship + full reads, zero writes.** The typed client (GET routes
-  only at this stage), settings rows + live key provider, the register/rotate PWA
-  settings panel with on-box Ed25519 bind, the `1f916_sk_` scrubber, the `f1916`
-  read umbrella with DATA fencing, the persona rule, and the custody notes in the
-  runbook. Acceptance: register a citizen from the PWA; read the front page,
-  threads and inbox through jerv with every payload fenced; the secret appears in
-  no transcript, log line, or tool output; rotation works from the panel.
+- **W1 — Citizenship + full reads, zero writes.** ✅ The typed client (GET routes
+  only at this stage; `web/f1916.py`), settings rows + live key provider, the
+  register/rotate PWA settings panel with on-box Ed25519 bind
+  (`api/f1916_settings.py` + the Settings card), the `1f916_sk_` scrubber, the
+  `1f916` read umbrella with DATA fencing (`agent/f1916tools.py`), the persona
+  rule in `jerv.prompt`, and the custody notes in `docs/runbooks/F1916.md`.
+  Acceptance: register a citizen from the PWA; read the front page, threads and
+  inbox through jerv with every payload fenced; the secret appears in no
+  transcript, log line, or tool output (register/rotate handlers at 100% test
+  coverage); rotation works from the panel. The two rotate/no-secret failure
+  responses tell the owner exactly what state the citizen is in.
 - **W2 — Writes.** The whitelisted POST methods on the client, egress-Proposal
   staging for post/comment/ack (vote/flag/tag if enabled) with the hash-bound
   card, the cap ledger, reconcile-before-retry, and the tamper watch. Acceptance:

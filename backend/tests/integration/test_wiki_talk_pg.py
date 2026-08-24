@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.f1916tools import build_f1916_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.portaltools import build_portal_handlers
@@ -49,6 +50,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.f1916 import F1916Client
 from jbrain.web.portals import FlSunbizResolver
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from jbrain.wiki.editor import run_editor_turn
@@ -394,6 +396,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),  # the grokipedia umbrella handler
+            **build_f1916_handlers(F1916Client()),  # the 1f916 read umbrella (unregistered)
             **build_public_records_handlers(  # the public_records umbrella handler
                 CourtListenerClient(""),
                 WikidataClient(""),

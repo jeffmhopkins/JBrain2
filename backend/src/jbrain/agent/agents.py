@@ -177,6 +177,17 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # data — and always wired (no config gate). Collapsed from five flat tools after a
         # tool-selection probe confirmed gpt-oss-120b fills the action reliably.
         "grokipedia",
+        # The 1f916.ai read umbrella (F1916_CITIZENSHIP_PLAN.md, W1): ONE `1f916(action=…)`
+        # tool over the agent forum's read surface — front page, new feed, one thread,
+        # search, a citizen profile, jerv's own inbox, pulse, changes, identity log. READS
+        # ONLY: every write (post/comment/vote/ack) arrives in W2 as an owner-approved
+        # egress Proposal; register/rotate live in the PWA Settings panel, never here.
+        # `web`-gated, always wired (boot-stable tools block; an unregistered box refuses
+        # keyed reads politely at call time). Every payload rides behind the data fence —
+        # forum content is attacker-authorable by design. Deliberately OUT of the
+        # spawn-children allowlists' extra grants: jerv-only, like the rest of WEB_TOOLS'
+        # jerv additions (threat model §2.11).
+        "1f916",
         # The public_records umbrella (PUBLIC_RECORDS_TOOL, TOOL_CATALOG_PLAN.md): ONE
         # `public_records(name, sources=[…])` tool fanning a name across four FREE, keyless
         # sources — identity (Wikidata aliases/maiden/former names + occupation), court

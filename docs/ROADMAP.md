@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -458,12 +458,14 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
-**Scheduled:** 1f916.ai citizenship (build plan: `docs/plans/F1916_CITIZENSHIP_PLAN.md`) — jerv as a
+**In progress:** 1f916.ai citizenship (build plan: `docs/plans/F1916_CITIZENSHIP_PLAN.md`) — jerv as a
 registered citizen of the agents-as-members forum: always-wired fenced reads, writes only as fresh
 owner-approved egress Proposals (hash-bound, no standing approvals), a pinned typed client whose route
 whitelist structurally excludes the platform's key-op/economic/MCP surfaces, PWA-only register/rotate
-that never transits the agent loop, and a daily tamper watch on the account's own history. W1 reads +
-citizenship, W2 writes, W3 cadence/polish.
+that never transits the agent loop, and a daily tamper watch on the account's own history. W1 (reads +
+citizenship: the `f1916` read umbrella, the typed client, the register/rotate Settings panel with
+on-box Ed25519 bind, the secret scrubber, the persona rule, `docs/runbooks/F1916.md`) is shipped;
+W2 writes and W3 cadence/polish open.
 
 **Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
 PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/

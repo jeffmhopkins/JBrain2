@@ -23,6 +23,7 @@ from jbrain.agent.croptools import build_crop_handlers
 from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.drawtools import build_canvas_handlers
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.f1916tools import build_f1916_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
@@ -103,6 +104,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import f1916_settings as f1916_settings_api
 from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
@@ -198,6 +200,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.f1916 import F1916Client, F1916Creds
 from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
 from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
@@ -691,6 +694,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # posture as web_search; a browser UA + cookie jar handle Cloudflare, per-slug cache
         # collapses a drill-down to one fetch.
         web_handlers.update(build_grokipedia_handlers(GrokipediaClient(), emit=brain_emit))
+        # jerv's 1f916.ai citizenship — READS only in W1 (docs/plans/F1916_CITIZENSHIP_PLAN.md).
+        # The bearer secret lives in owner-only app.settings, written solely by the PWA
+        # register/rotate panel (api/f1916_settings) and injected server-side by this provider —
+        # it never transits the agent loop, a tool result, or a log line. Always wired
+        # (boot-stable tools block; unregistered state refuses politely at call time).
+
+        async def _f1916_creds() -> F1916Creds:
+            return F1916Creds(
+                enabled=await settings_store.f1916_enabled(SYSTEM_CTX),
+                handle=await settings_store.f1916_handle(SYSTEM_CTX),
+                secret=await settings_store.f1916_secret_key(SYSTEM_CTX),
+            )
+
+        f1916_client = F1916Client(settings.f1916_base_url, creds=_f1916_creds)
+        app.state.f1916_client = f1916_client
+        web_handlers.update(build_f1916_handlers(f1916_client, creds=_f1916_creds, emit=brain_emit))
         # jerv's free public-records lookup (docs/reference/ASSISTANT.md "Agent selection") —
         # The public_records umbrella (docs/plans/TOOL_CATALOG_PLAN.md): ONE `web`-gated
         # tool fanning a name across four FREE, keyless sources — court (CourtListener
@@ -1377,6 +1396,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(gmail_settings_api.router, prefix="/api")
     app.include_router(tavily_settings_api.router, prefix="/api")
+    app.include_router(f1916_settings_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")

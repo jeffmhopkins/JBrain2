@@ -32,10 +32,14 @@ function stubSettingsFetch(
     lexicon: opts.lexicon ?? {},
     tavilyEnabled: true,
     tavilyKeySet: false,
+    f1916Enabled: true,
+    f1916Registered: false,
+    f1916Handle: "",
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
   const tavilyPuts: unknown[] = [];
+  const f1916Posts: unknown[] = [];
   const ttsUrls: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -122,6 +126,45 @@ function stubSettingsFetch(
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
+    // The 1f916 section loads its status; register/rotate/test answer with a fresh status.
+    const f1916Status = () => ({
+      enabled: state.f1916Enabled,
+      registered: state.f1916Registered,
+      handle: state.f1916Handle,
+      signing_key_set: state.f1916Registered,
+    });
+    if (path === "/api/settings/1f916/register") {
+      const body = JSON.parse(String(init?.body)) as { handle: string; model: string };
+      f1916Posts.push(body);
+      state.f1916Registered = true;
+      state.f1916Handle = body.handle;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          detail: `Registered as @${body.handle} with the identity key bound.`,
+          status: f1916Status(),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (path === "/api/settings/1f916/rotate" || path === "/api/settings/1f916/test") {
+      f1916Posts.push({ action: path.split("/").pop() });
+      return new Response(
+        JSON.stringify({ ok: true, detail: "the citizen answers", status: f1916Status() }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (path === "/api/settings/1f916") {
+      if ((init?.method ?? "GET").toUpperCase() === "PUT") {
+        const patch = JSON.parse(String(init?.body)) as { enabled?: boolean };
+        f1916Posts.push(patch);
+        if (patch.enabled != null) state.f1916Enabled = patch.enabled;
+      }
+      return new Response(JSON.stringify(f1916Status()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path !== "/api/settings") {
       throw new Error(`Unexpected fetch: ${path}`);
     }
@@ -175,7 +218,7 @@ function stubSettingsFetch(
     );
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, tavilyPuts, state, ttsUrls };
+  return { puts, tavilyPuts, f1916Posts, state, ttsUrls };
 }
 
 beforeEach(() => {
@@ -250,6 +293,47 @@ describe("SettingsScreen Tavily web-fetch panel", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     fireEvent.click(toggle);
     await waitFor(() => expect(tavilyPuts).toContainEqual({ enabled: false }));
+  });
+});
+
+describe("SettingsScreen 1f916 citizenship panel", () => {
+  it("registers a citizen once (handle+model published), then offers Test/Rotate", async () => {
+    const { f1916Posts } = stubSettingsFetch();
+    setup();
+
+    // Loads unregistered: the pill says so and the register form is shown.
+    const status = await screen.findByLabelText("1f916 status");
+    await waitFor(() => expect(status).toHaveTextContent("Not registered"));
+    const registerButton = screen.getByRole("button", { name: "Register citizen" });
+    expect(registerButton).toBeDisabled(); // both public fields are required first
+
+    fireEvent.change(screen.getByLabelText("Handle (public, permanent)"), {
+      target: { value: "jerv" },
+    });
+    fireEvent.change(screen.getByLabelText(/Model description/), {
+      target: { value: "gpt-oss-120b on a home box" },
+    });
+    fireEvent.click(registerButton);
+    await waitFor(() =>
+      expect(f1916Posts).toContainEqual({ handle: "jerv", model: "gpt-oss-120b on a home box" }),
+    );
+    // The fresh status shows the public handle; the secret appears nowhere.
+    await waitFor(() => expect(status).toHaveTextContent("@jerv"));
+    expect(await screen.findByText(/Registered as @jerv/)).toBeInTheDocument();
+    // Registered state swaps the form for Test + Rotate (register is one-time).
+    expect(screen.queryByRole("button", { name: "Register citizen" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Rotate secret" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(f1916Posts).toContainEqual({ action: "test" }));
+  });
+
+  it("flips reading off with the toggle (PUTs enabled:false)", async () => {
+    const { f1916Posts } = stubSettingsFetch();
+    setup();
+    const toggle = await screen.findByRole("switch", { name: "Enable 1f916" });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(f1916Posts).toContainEqual({ enabled: false }));
   });
 });
 

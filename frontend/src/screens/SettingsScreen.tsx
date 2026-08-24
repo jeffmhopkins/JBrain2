@@ -4,6 +4,8 @@ import type {
   AppSettings,
   BrainTtsHealth,
   DebugToken,
+  F1916ActionResult,
+  F1916Settings,
   FeedConfig,
   GmailSettings,
   GmailTestResult,
@@ -302,6 +304,50 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function clearTavilyKey() {
     setTavilyTest(null);
     void api.updateTavilySettings({ clear_key: true }).then(setTavily);
+  }
+
+  // jerv's 1f916.ai citizenship. Status is booleans + the public handle only — the
+  // secret is consumed and stored server-side at register/rotate and never shown.
+  const [f1916, setF1916] = useState<F1916Settings | null>(null);
+  const [f1916Handle, setF1916Handle] = useState("");
+  const [f1916Model, setF1916Model] = useState("");
+  const [f1916Busy, setF1916Busy] = useState(false);
+  const [f1916Result, setF1916Result] = useState<F1916ActionResult | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api
+      .getF1916Settings()
+      .then((s) => {
+        if (!stale) setF1916(s);
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  function toggleF1916() {
+    if (f1916 === null) return;
+    setF1916Result(null);
+    void api.updateF1916Settings({ enabled: !f1916.enabled }).then(setF1916);
+  }
+
+  function runF1916Action(action: () => Promise<F1916ActionResult>) {
+    setF1916Result(null);
+    setF1916Busy(true);
+    void action()
+      .then((r) => {
+        setF1916Result(r);
+        setF1916(r.status);
+      })
+      .finally(() => setF1916Busy(false));
+  }
+
+  function registerF1916() {
+    const handle = f1916Handle.trim();
+    const model = f1916Model.trim();
+    if (!handle || !model) return;
+    runF1916Action(() => api.registerF1916(handle, model));
   }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
@@ -1225,6 +1271,108 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         {tavilyTest && (
           <p className={`settings-meta${tavilyTest.ok ? "" : " settings-error"}`}>
             {tavilyTest.detail}
+          </p>
+        )}
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-cardhead">
+          <h2 className="settings-label">1f916 agent forum</h2>
+          <span
+            className={`settings-pill${f1916?.registered && f1916.enabled ? " on" : ""}`}
+            aria-label="1f916 status"
+          >
+            <span className="dot" />
+            {f1916 === null
+              ? "…"
+              : f1916.registered
+                ? f1916.enabled
+                  ? `@${f1916.handle}`
+                  : "Off"
+                : "Not registered"}
+          </span>
+        </div>
+        <p className="settings-meta">
+          gives jerv a citizen identity on 1f916.ai, a public forum whose members are AI agents.
+          jerv can only READ the forum; every future post or vote will need your approval. The
+          handle and model description are published forever, so pick them deliberately —
+          registering is one-time (doing it twice would create a second, unrelated citizen). The
+          secret key is stored on the server and never shown.
+        </p>
+        <div className="settings-switch-row">
+          <span className="settings-meta" style={{ margin: 0 }}>
+            Enable reading
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Enable 1f916"
+            aria-checked={f1916?.enabled ?? false}
+            className={`settings-switch${f1916?.enabled ? " on" : ""}`}
+            disabled={f1916 === null}
+            onClick={toggleF1916}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+        {f1916 !== null && !f1916.registered && (
+          <>
+            <label className="settings-field">
+              Handle (public, permanent)
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder="jerv"
+                value={f1916Handle}
+                onChange={(e) => setF1916Handle(e.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              Model description (public, e.g. "gpt-oss-120b on a home box")
+              <input
+                type="text"
+                autoComplete="off"
+                value={f1916Model}
+                onChange={(e) => setF1916Model(e.target.value)}
+              />
+            </label>
+          </>
+        )}
+        <div className="settings-actions">
+          {f1916 !== null && !f1916.registered && (
+            <button
+              type="button"
+              className="seg"
+              disabled={f1916Busy || !f1916Handle.trim() || !f1916Model.trim()}
+              onClick={registerF1916}
+            >
+              {f1916Busy ? "Working…" : "Register citizen"}
+            </button>
+          )}
+          {f1916?.registered && (
+            <>
+              <button
+                type="button"
+                className="seg"
+                disabled={f1916Busy}
+                onClick={() => runF1916Action(() => api.testF1916())}
+              >
+                {f1916Busy ? "Working…" : "Test"}
+              </button>
+              <button
+                type="button"
+                className="seg"
+                disabled={f1916Busy}
+                onClick={() => runF1916Action(() => api.rotateF1916())}
+              >
+                Rotate secret
+              </button>
+            </>
+          )}
+        </div>
+        {f1916Result && (
+          <p className={`settings-meta${f1916Result.ok ? "" : " settings-error"}`}>
+            {f1916Result.detail}
           </p>
         )}
       </section>

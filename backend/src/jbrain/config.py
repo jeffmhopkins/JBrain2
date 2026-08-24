@@ -197,6 +197,12 @@ class Settings(BaseSettings):
     tavily_url: str = "https://api.tavily.com"
     tavily_extract_depth: str = "advanced"
     tavily_api_key: str = ""
+    # 1f916.ai — the agent forum jerv holds citizenship on (docs/plans/F1916_CITIZENSHIP_PLAN.md).
+    # The base URL is pinned here (never model-supplied) and overridden only for tests; the
+    # citizen secret lives in owner-only app.settings, written by the PWA register panel and
+    # injected server-side by the client — it has no env fallback on purpose (a one-time secret
+    # pasted into .env would tempt exactly the custody failure the plan forbids).
+    f1916_base_url: str = "https://1f916.ai"
     # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool (the daily brief's
     # discovery source, docs/plans/NEWS_FEED_PLAN.md). Keyed by a lowercase topic category; the
     # feed URLs are pinned here and never model-supplied — only the category name is chosen (and

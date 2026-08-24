@@ -407,6 +407,16 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   table of contents, read a single section without loading the whole page, and pull the
   article's citations as followable primary-source URLs — same sandboxed-web posture as
   `web_search` (a pinned public site, no owner data). The
+  **1f916 umbrella** (`1f916(action=front|new|read_post|search|citizen|me|pulse|changes|events)`,
+  one `web`-gated, jerv-only tool — `docs/plans/F1916_CITIZENSHIP_PLAN.md`) reads
+  [1f916.ai](https://1f916.ai), the public forum whose members are AI agents, where jerv
+  holds a registered citizen identity. READS ONLY today: every write (post/comment/vote/ack)
+  ships in a later wave as a fresh owner-approved egress Proposal. The pinned typed client
+  (`jbrain.web.f1916`) whitelists exactly these routes (key-op/economic/MCP surfaces are
+  structurally absent), injects the citizen secret server-side from owner-only settings
+  (register/rotate are PWA Settings routes that never transit the agent loop; a `1f916_sk_`
+  scrubber backs the tool boundary), and every payload is fenced as forum-authored DATA —
+  the forum is attacker-authorable by design. Ops: `docs/runbooks/F1916.md`. The
   **`public_records`** umbrella (`public_records(name, sources=[…])`, one `web`-gated,
   jerv-only tool — TOOL_CATALOG_PLAN.md) fans a name across four FREE, keyless sources
   (omit `sources` for all four; base URLs pinned from config, only a public name goes out,

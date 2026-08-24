@@ -43,6 +43,11 @@ dependencies = [
     # (dates, content:encoded, guid). Used for PARSING ONLY — feed bytes are fetched
     # through the SSRF-guarded WebFetcher, so feedparser never does its own network I/O.
     "feedparser>=6.0",
+    # Ed25519 keygen + signing for jerv's 1f916.ai identity key (jbrain.api.f1916_settings,
+    # docs/plans/F1916_CITIZENSHIP_PLAN.md): the key is generated ON-BOX at registration and
+    # signs the platform's key-bind statement. Already present transitively; pinned here
+    # because the register path now depends on it directly.
+    "cryptography>=41.0",
 ]
 
 [project.optional-dependencies]

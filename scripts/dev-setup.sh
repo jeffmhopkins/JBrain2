@@ -63,9 +63,11 @@ ensure_uv() {
 # §6.1), guarded by tests/unit/test_emr_deps.py; and `yt-dlp` (the analyze_stream tool's
 # stream-URL → media-URL resolver, docs/archive/STREAM_ANALYSIS_PLAN.md), guarded by
 # tests/unit/test_stream_deps.py; and `feedparser` (RSS/Atom parsing for the news_feed
-# tool, docs/plans/NEWS_FEED_PLAN.md), guarded by tests/unit/test_feed_deps.py. All are
-# pure pip deps synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests
-# enforce CLAUDE.md rule #8.
+# tool, docs/plans/NEWS_FEED_PLAN.md), guarded by tests/unit/test_feed_deps.py; and
+# `cryptography` (Ed25519 keygen/signing for jerv's 1f916.ai identity key,
+# docs/plans/F1916_CITIZENSHIP_PLAN.md), exercised directly by
+# tests/unit/test_f1916_settings_api.py. All are pure pip deps synced here (yt-dlp reuses
+# the ffmpeg installed above); the smoke tests enforce CLAUDE.md rule #8.
 sync_python() { # sync_python <dir>
   local dir="$1" stamp="py-${1//\//-}"
   if [ ! -f "$dir/pyproject.toml" ]; then

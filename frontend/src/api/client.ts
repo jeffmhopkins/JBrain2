@@ -635,6 +635,24 @@ export interface TavilyTestResult {
   detail: string;
 }
 
+/** jerv's 1f916.ai citizenship (GET /api/settings/1f916). The citizen secret and the
+ * on-box signing key are stored server-side and NEVER returned — only whether they
+ * exist. `handle` is public (published on the forum). */
+export interface F1916Settings {
+  enabled: boolean;
+  registered: boolean;
+  handle: string;
+  signing_key_set: boolean;
+}
+
+/** Result of a register/rotate/test action on /api/settings/1f916/* — a human-readable
+ * outcome plus the fresh status. The secret never rides in `detail`. */
+export interface F1916ActionResult {
+  ok: boolean;
+  detail: string;
+  status: F1916Settings;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -2337,6 +2355,37 @@ export const api = {
       jsonInit("POST", url ? { url } : {}),
     );
     return (await response.json()) as TavilyTestResult;
+  },
+
+  // jerv's 1f916.ai citizenship. Register mints the citizen ONCE (the handle and model
+  // string are published forever); the server consumes and stores the one-time secret —
+  // no response ever carries it. Rotate kills the old secret; test proves the stored one.
+  async getF1916Settings(): Promise<F1916Settings> {
+    const response = await request("/api/settings/1f916");
+    return (await response.json()) as F1916Settings;
+  },
+
+  async updateF1916Settings(patch: { enabled?: boolean }): Promise<F1916Settings> {
+    const response = await request("/api/settings/1f916", jsonInit("PUT", patch));
+    return (await response.json()) as F1916Settings;
+  },
+
+  async registerF1916(handle: string, model: string): Promise<F1916ActionResult> {
+    const response = await request(
+      "/api/settings/1f916/register",
+      jsonInit("POST", { handle, model }),
+    );
+    return (await response.json()) as F1916ActionResult;
+  },
+
+  async rotateF1916(): Promise<F1916ActionResult> {
+    const response = await request("/api/settings/1f916/rotate", jsonInit("POST", {}));
+    return (await response.json()) as F1916ActionResult;
+  },
+
+  async testF1916(): Promise<F1916ActionResult> {
+    const response = await request("/api/settings/1f916/test", jsonInit("POST", {}));
+    return (await response.json()) as F1916ActionResult;
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning

@@ -415,6 +415,43 @@ class FakeSettingsStore:
     async def set_tavily_api_key(self, ctx: object, api_key: str) -> None:
         self.values["tavily_api_key"] = api_key
 
+    async def f1916_enabled(self, ctx: object) -> bool:
+        return self.values.get("f1916_enabled", True) is True
+
+    async def set_f1916_enabled(self, ctx: object, enabled: bool) -> None:
+        self.values["f1916_enabled"] = bool(enabled)
+
+    async def f1916_handle(self, ctx: object) -> str:
+        raw = self.values.get("f1916_handle", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def f1916_secret_key(self, ctx: object) -> str:
+        raw = self.values.get("f1916_secret_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def f1916_signing_key(self, ctx: object) -> str:
+        raw = self.values.get("f1916_signing_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_f1916_citizen(
+        self,
+        ctx: object,
+        *,
+        handle: str,
+        secret: str,
+        signing_key: str,
+        public_key: str,
+        registered_at: str,
+    ) -> None:
+        self.values["f1916_handle"] = handle
+        self.values["f1916_secret_key"] = secret
+        self.values["f1916_signing_key"] = signing_key
+        self.values["f1916_public_key"] = public_key
+        self.values["f1916_registered_at"] = registered_at
+
+    async def set_f1916_secret(self, ctx: object, secret: str) -> None:
+        self.values["f1916_secret_key"] = secret
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""

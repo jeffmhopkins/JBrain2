@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.f1916tools import build_f1916_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
@@ -54,6 +55,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.f1916 import F1916Client
 from jbrain.web.portals import FlSunbizResolver
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
@@ -787,6 +789,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),
+            **build_f1916_handlers(F1916Client()),
             **build_public_records_handlers(
                 CourtListenerClient(""),
                 WikidataClient(""),
@@ -834,6 +837,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The Grokipedia umbrella is `web`-classed (jerv-only): search/traverse xAI's
         # encyclopedia and pull citations via grokipedia(action=…), never the curator wildcard.
         "grokipedia",
+        # The 1f916 read umbrella is `web`-classed (jerv-only): read the agent forum via
+        # 1f916(action=…) — always wired, refuses politely when no citizen is registered.
+        "1f916",
         # The public_records umbrella is `web`-classed (jerv-only): free keyless records
         # lookups by name across court/identity/license/federal_register via
         # public_records(sources=…), never offered to the curator wildcard.
@@ -970,6 +976,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "grokipedia",
             2,
             "463d51aca67f498367696d05d51d26ebbde78d314e746ed80ff2650fbb9728aa",
+        ),
+        "1f916.tool": (
+            "1f916",
+            1,
+            "0063b252019ae3e907a4a852ee13901bbf65438d742c6f73995bb76755ef16c0",
         ),
         "read_note.tool": (
             "read_note",

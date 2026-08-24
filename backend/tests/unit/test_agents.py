@@ -107,6 +107,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "ocr",
             "read_artifact",
             "grokipedia",
+            "1f916",
             "public_records",
             "portal_search",
             "external_video",
@@ -419,8 +420,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v47",
-            "008aea105c0ae90c24bf2b0312c78bd186f85f8140656d48d6d44b70884f8971",
+            "agent-jerv-v48",
+            "48243631032c63507b6391cd2c4102537b3c0687ae7d462dd8a78add5d776572",
         ),
         "archivist": (
             "agent-archivist-v6",

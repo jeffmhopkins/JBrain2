@@ -1,6 +1,6 @@
 # Runbooks — how to operate the box
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Operational runbooks: setup, access, and recovery procedures for a running
 JBrain2 box. `Living` docs (per `../DOC_LIFECYCLE.md`) — kept true as the ops
@@ -15,3 +15,4 @@ surface changes.
 | `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` for external assistant iteration. Off by default. |
 | `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: requesting a token and driving the box via `scripts/debug-connect.sh`. |
 | `EXTERNAL_VIDEO_WATCH.md` | Auto-ingesting a YouTube channel's new videos into the search corpus via a recurring Jerv Task (`check_channel` → `analyze_stream` → `search_external_video`). |
+| `F1916.md` | jerv's 1f916.ai citizenship: registering/rotating from the Settings panel, secret custody (when to rotate), and what the `f1916` read tool can and cannot do. |

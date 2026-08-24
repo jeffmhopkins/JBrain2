@@ -136,6 +136,21 @@ TAVILY_ENABLED_KEY = "tavily_enabled"
 TAVILY_ENABLED_DEFAULT = True
 TAVILY_API_KEY_KEY = "tavily_api_key"
 
+# jerv's 1f916.ai citizenship (docs/plans/F1916_CITIZENSHIP_PLAN.md). The bearer secret and the
+# on-box Ed25519 signing key are written ONCE by the owner-only register/rotate API routes and
+# read back ONLY by the server-side client provider — no API response, tool output, or log line
+# ever carries them (the register handler consumes the platform's response itself). Custody note:
+# a debug-console full-read SQL token CAN select these rows (the Gmail-token precedent), so the
+# runbook says to rotate after any debug-token handover. The toggle defaults ON like Tavily —
+# inert until a citizen is registered, so there is no second step after registering.
+F1916_ENABLED_KEY = "f1916_enabled"
+F1916_ENABLED_DEFAULT = True
+F1916_HANDLE_KEY = "f1916_handle"
+F1916_SECRET_KEY_KEY = "f1916_secret_key"
+F1916_SIGNING_KEY_KEY = "f1916_signing_key"
+F1916_PUBLIC_KEY_KEY = "f1916_public_key"
+F1916_REGISTERED_AT_KEY = "f1916_registered_at"
+
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
 # the neural-brain page on :8800) as reach-out "tendrils" with the text streaming along
@@ -502,6 +517,56 @@ class SqlSettingsStore:
         fallback. The value is never echoed back on read (the API reports only whether one
         is set), like the Gmail client secret."""
         await self.upsert(ctx, TAVILY_API_KEY_KEY, api_key)
+
+    async def f1916_enabled(self, ctx: SessionContext) -> bool:
+        """Whether jerv's 1f916.ai reads are enabled. DEFAULTS ON (inert until a citizen is
+        registered); only an explicit non-true value disables them."""
+        return await self.get(ctx, F1916_ENABLED_KEY, F1916_ENABLED_DEFAULT) is True
+
+    async def set_f1916_enabled(self, ctx: SessionContext, enabled: bool) -> None:
+        await self.upsert(ctx, F1916_ENABLED_KEY, bool(enabled))
+
+    async def f1916_handle(self, ctx: SessionContext) -> str:
+        """The registered citizen handle, or "" when no citizen is registered. Public
+        information (published on the forum), safe to echo in status responses."""
+        raw = await self.get(ctx, F1916_HANDLE_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def f1916_secret_key(self, ctx: SessionContext) -> str:
+        """The citizen bearer secret, or "" when unset. Called ONLY by the server-side
+        client provider (main.py) and the owner-only register/rotate handlers — never by a
+        route that echoes it, never by a tool handler. A non-string store reads as unset."""
+        raw = await self.get(ctx, F1916_SECRET_KEY_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def f1916_signing_key(self, ctx: SessionContext) -> str:
+        """The on-box Ed25519 private key (base64url raw seed), or "" when unset. The
+        platform's only recovery-adjacent mechanism: it signs a public disavowal if the
+        bearer secret is ever stolen. Same custody rules as the secret."""
+        raw = await self.get(ctx, F1916_SIGNING_KEY_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_f1916_citizen(
+        self,
+        ctx: SessionContext,
+        *,
+        handle: str,
+        secret: str,
+        signing_key: str,
+        public_key: str,
+        registered_at: str,
+    ) -> None:
+        """Persist a freshly-registered citizen in one shot — the register handler calls this
+        with the platform's one-time secret before anything else touches the response."""
+        await self.upsert(ctx, F1916_HANDLE_KEY, handle)
+        await self.upsert(ctx, F1916_SECRET_KEY_KEY, secret)
+        await self.upsert(ctx, F1916_SIGNING_KEY_KEY, signing_key)
+        await self.upsert(ctx, F1916_PUBLIC_KEY_KEY, public_key)
+        await self.upsert(ctx, F1916_REGISTERED_AT_KEY, registered_at)
+
+    async def set_f1916_secret(self, ctx: SessionContext, secret: str) -> None:
+        """Replace the bearer secret after a rotation (identity and signing key unchanged)."""
+        await self.upsert(ctx, F1916_SECRET_KEY_KEY, secret)
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).
