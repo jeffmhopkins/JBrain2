@@ -143,6 +143,38 @@ def _fingerprint(
     return digest.hexdigest()[:32]
 
 
+def _identity_components(
+    launch_line: str, system: str, tools: Sequence[LlmTool], reasoning_effort: str | None
+) -> dict[str, str]:
+    """Short per-component digests of the SAME inputs `_fingerprint` hashes — purely
+    diagnostic, so a fingerprint miss can say WHICH input drifted (the 2026-08-24 canvas
+    case: one restore bought nothing and no log said why). Never used to derive the
+    filename — the fingerprint stays byte-compatible with files already on the box."""
+    tool_blob = json.dumps(
+        [{"name": t.name, "description": t.description, "schema": t.input_schema} for t in tools],
+        sort_keys=True,
+    )
+
+    def _short(part: str) -> str:
+        return hashlib.sha256(part.encode()).hexdigest()[:8]
+
+    return {
+        "launch": _short(launch_line),
+        "system": _short(system),
+        "tools": _short(tool_blob),
+        "effort": reasoning_effort or "",
+    }
+
+
+# Bounded wait for a busy slot before giving up on a restore. The observed miss
+# (2026-08-24): the hook fired while a ~22 s vision side-call was 0.5 s from releasing
+# the only slot, gave up silently, and the turn paid a 204 s full re-prefill. Waiting a
+# couple of seconds is cheap against that; a slot still busy afterwards (a long
+# generation) falls back to the old behaviour.
+RESTORE_BUSY_POLLS = 8
+RESTORE_BUSY_INTERVAL_S = 0.25
+
+
 class KvPrefixStore:
     """One per process, wired beside the gateway. `models_root` is THIS process's view of
     the models volume (`settings.local_models_dir`); llama-server's view (`/models/…`) is
@@ -163,6 +195,9 @@ class KvPrefixStore:
         # One restore at a time: a keeper tick and an inbound turn discovering the same
         # loss must not both stream the file into different slots.
         self._lock = asyncio.Lock()
+        # The identity components of the last fingerprint OBSERVED to have a file (a save,
+        # or a restore/resolve that found one) — what identity_drift diffs against.
+        self._last_identity: dict[str, dict[str, str]] = {}
 
     # ---- identity -------------------------------------------------------------------
 
@@ -188,8 +223,9 @@ class KvPrefixStore:
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
-    ) -> tuple[str, str] | None:
-        """(fingerprint, save-dir) for the CURRENT launch line, or None when the model is
+    ) -> tuple[str, str, dict[str, str]] | None:
+        """(fingerprint, save-dir, identity components) for the CURRENT launch line, or
+        None when the model is
         not served, or is served without --slot-save-path (no disk layer). One read of the
         rendered config feeds both, so they can never describe two different servers."""
         line = llama_swap_config.launch_line(self._models_root, served_model)
@@ -198,7 +234,11 @@ class KvPrefixStore:
         save_dir = _save_dir_from_line(line, self._models_root)
         if save_dir is None:
             return None
-        return _fingerprint(line, system, tools, reasoning_effort), save_dir
+        return (
+            _fingerprint(line, system, tools, reasoning_effort),
+            save_dir,
+            _identity_components(line, system, tools, reasoning_effort),
+        )
 
     def note_agent_turn(self, served_model: str, input_tokens: int) -> None:
         """A real jerv turn completed — whatever was restored has now been used, and the
@@ -230,7 +270,8 @@ class KvPrefixStore:
         )
         if resolved is None:
             return False
-        fingerprint, save_dir = resolved
+        fingerprint, save_dir, identity = resolved
+        self._last_identity[served_model] = identity
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         if await asyncio.to_thread(os.path.exists, path):
             # This exact prefix is already on disk — skip the 2 GiB write, but the prime
@@ -379,10 +420,24 @@ class KvPrefixStore:
         )
         if resolved is None:
             return False
-        fingerprint, save_dir = resolved
+        fingerprint, save_dir, identity = resolved
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         if not await asyncio.to_thread(os.path.exists, path):
+            # Say WHY there is no file for this identity: when a file was known under a
+            # different identity, name the component that moved — the 2026-08-24 canvas
+            # case (a 204 s unhealed re-prefill) had no way to tell a tool-set flap from
+            # a race. `effort` prints its value; the rest print short digests.
+            last = self._last_identity.get(served_model)
+            if last is not None and last != identity:
+                log.info(
+                    "kv_prefix.identity_drift",
+                    model=served_model,
+                    changed=sorted(k for k in identity if identity[k] != last.get(k)),
+                    now=identity,
+                    was=last,
+                )
             return False
+        self._last_identity[served_model] = identity
         async with self._lock:
             try:
                 slots = await self._gateway.slots(served_model)
@@ -408,7 +463,33 @@ class KvPrefixStore:
                 return False
             idle = [s for s in occupied if not s.get("is_processing")]
             if not idle:
-                return False  # every slot busy — restoring now would fight a live request
+                # Every slot busy. Don't give up silently — the observed miss (2026-08-24)
+                # was a side-call 0.5 s from releasing the only slot, and the turn that
+                # followed paid a 204 s full re-prefill. Wait briefly for a slot to free,
+                # re-checking the prefix-sized guard each poll (the request that frees the
+                # slot may leave a conversation there that must not be restored over).
+                for _ in range(RESTORE_BUSY_POLLS):
+                    await asyncio.sleep(RESTORE_BUSY_INTERVAL_S)
+                    try:
+                        slots = await self._gateway.slots(served_model)
+                    except LocalGatewayError as exc:
+                        log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
+                        return False
+                    occupied = [s for s in slots if isinstance(s, dict)]
+                    if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
+                        await asyncio.to_thread(self._touch, path)
+                        return False  # freed into something prefix-sized — leave it alone
+                    idle = [s for s in occupied if not s.get("is_processing")]
+                    if idle:
+                        log.info("kv_prefix.restore_waited_for_slot", model=served_model)
+                        break
+                else:
+                    log.info(
+                        "kv_prefix.restore_skipped_busy",
+                        model=served_model,
+                        slots=[_slot_int(s, "n_prompt_tokens") for s in occupied],
+                    )
+                    return False
             # Prefer an empty slot; else the one holding the smallest foreign prompt.
             target = min(idle, key=lambda s: _slot_int(s, "n_prompt_tokens"))
             slot_id = _slot_int(target, "id")
