@@ -266,7 +266,8 @@ both resides and warms it.
 > applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
 > flag unset the image is byte-for-byte the stock base — zero change. **The builder checks
 > out the commit the base image's own binary reports** (`llama-server --version`, read at
-> build time; the box's base is `b10068`/`571d0d540`): the base links
+> build time; the pinned base is `b10615`/`f280b2698`, the digest validated live
+> 2026-08-24 — smoke passed and the patched qwen reload measured ~14 s): the base links
 > `libggml*.so`/`libllama.so` dynamically and we overlay only the `llama-server` binary, so
 > any other commit ships an ABI-incompatible binary that crashes at model load. Both
 > 2026-08-24 smoke failures were hand-pinned commits: `c060ca974` against a `571d0d540` base
