@@ -806,3 +806,107 @@ describe("stream health", () => {
     await waitFor(() => expect(opsReportClientVitals).toHaveBeenCalled());
   });
 });
+
+describe("a list under load", () => {
+  beforeEach(() => {
+    history.samples = [];
+    opsTurns.mockReset().mockResolvedValue(roster([]));
+    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
+    opsVitalsEvents.mockReset().mockResolvedValue([]);
+    seedSpy.mockReset();
+  });
+
+  // Option J from the GUI gate: a section shows four rows and offers the rest, so the
+  // screen's length tracks what the owner asked for rather than how busy the box is. The
+  // report this came from had ten model loads standing between the graph and the roster.
+  it("caps the box-events list and hands over the rest on demand", async () => {
+    opsTurns.mockResolvedValue(roster([]));
+    opsVitalsEvents.mockResolvedValue(
+      Array.from({ length: 10 }, (_, i) =>
+        event({ subject: `model-${i}`, at_ms: Date.now() - i * 1000, ended_ms: Date.now() }),
+      ),
+    );
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    const more = await screen.findByRole("button", { name: /Show all 10/ });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("6 more")).toBeInTheDocument();
+    expect(screen.getByText("loaded model-3")).toBeInTheDocument();
+    expect(screen.queryByText("loaded model-4")).not.toBeInTheDocument();
+
+    fireEvent.click(more);
+
+    expect(await screen.findByText("loaded model-9")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Show fewer/ }));
+    expect(screen.queryByText("loaded model-4")).not.toBeInTheDocument();
+  });
+
+  it("leaves a list that fits alone", async () => {
+    opsTurns.mockResolvedValue(roster([]));
+    opsVitalsEvents.mockResolvedValue(
+      Array.from({ length: 4 }, (_, i) =>
+        event({ subject: `model-${i}`, at_ms: Date.now() - i * 1000, ended_ms: Date.now() }),
+      ),
+    );
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("loaded model-3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+  });
+
+  it("never hides a load that is still running behind the cap", async () => {
+    // The row the screen was opened for. It sorts first, so the cap can only ever take
+    // from the settled tail — this is the guard on that ordering.
+    opsTurns.mockResolvedValue(roster([]));
+    opsVitalsEvents.mockResolvedValue([
+      ...Array.from({ length: 9 }, (_, i) =>
+        event({ subject: `old-${i}`, at_ms: Date.now() - i * 1000, ended_ms: Date.now() }),
+      ),
+      event({ subject: "right-now", at_ms: Date.now() - 30_000, ended_ms: null }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText(/loading right-now/)).toBeInTheDocument();
+  });
+
+  it("caps the roster too, counting a fan's children as rows of their own", async () => {
+    opsTurns.mockResolvedValue(
+      roster(
+        Array.from({ length: 6 }, (_, i) =>
+          turn({ id: `run_${i}`, name: `turn ${i}`, ended_at: null }),
+        ),
+      ),
+    );
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("turn 3")).toBeInTheDocument();
+    expect(screen.queryByText("turn 4")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Show all 6/ }));
+    expect(screen.getByText("turn 5")).toBeInTheDocument();
+  });
+
+  it("keeps a parent and its fan together rather than cutting the fan in half", async () => {
+    // A group whose first parent brought a wide fan shows all of it: half a fan reads as a
+    // fan that lost children, not as a list that was trimmed.
+    opsTurns.mockResolvedValue(
+      roster([
+        turn({ id: "run_parent", name: "research", ended_at: null }),
+        ...Array.from({ length: 5 }, (_, i) =>
+          turn({
+            id: `kid_${i}`,
+            kind: "subagent",
+            name: `sweep ${i}`,
+            parent_run_id: "run_parent",
+            ended_at: null,
+          }),
+        ),
+      ]),
+    );
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("research")).toBeInTheDocument();
+    expect(screen.getByText("sweep 4")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+  });
+});

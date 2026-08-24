@@ -23381,12 +23381,30 @@ button.task-band:active {
    Binding mock: docs/mocks/vitals-detail/i-drilldown.html (option I). Two levels: the
    graph plus a roster of what is running, then a pushed page that is entirely one turn. */
 
+/* No padding at the top: a section heading sticks to the SCROLLPORT's edge, so any
+   padding above it is a band that rows scroll through in plain sight before they reach
+   the heading's background. The first card carries that spacing instead. */
 .vitals-detail {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 4px 16px 32px;
+  padding: 0 16px 32px;
   overflow-y: auto;
+}
+
+.vitals-detail > .card:first-child {
+  margin-top: 4px;
+}
+
+/* The screen is a COLUMN FLEX CONTAINER of a definite height, so its sections are flex
+   items — and a flex item whose own overflow is not `visible` has an automatic minimum
+   size of zero. The list cards clip their corners with `overflow: hidden`, so once the
+   sections outgrew the viewport the browser SHRANK them to fit instead of letting the
+   page scroll: ten box events rendered as one and a half rows, and a "Running now 1"
+   heading sat above a card squashed to 20px with its only row invisible. Pinning every
+   section at its natural height is what makes this screen scroll at all. */
+.vitals-detail > * {
+  flex-shrink: 0;
 }
 
 .vitals-plot-card {
@@ -23432,7 +23450,21 @@ button.task-band:active {
   line-height: 1.5;
 }
 
+/* Sticky, because a list may now be expanded to thirty rows and the heading is the only
+   thing saying which of the three lists you are reading.
+   The geometry is the fiddly part, and both halves of it are load-bearing. The negative
+   margins cancel the padding against the column's 14px gap, so a heading still occupies
+   exactly the space it did as a plain label. `top: -8px` then matches the top margin:
+   sticky pins the MARGIN box, so a heading offset at 0 would pin its border box 8px down
+   and leave a transparent strip at the scrollport's edge for rows to scroll through in
+   plain sight. The 14px bottom padding paints the gap below for the same reason. */
 .vitals-sec-head {
+  position: sticky;
+  top: -8px;
+  z-index: 2;
+  background: var(--bg);
+  padding: 8px 2px 14px;
+  margin: -8px 0 -14px;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -23440,7 +23472,6 @@ button.task-band:active {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: 0 2px;
 }
 
 .vitals-sec-head .count {
@@ -23472,6 +23503,31 @@ button.task-band:active {
 
 .vitals-roster > div:first-child > .vitals-row:first-child {
   border-top: none;
+}
+
+/* The row a capped list ends with. It sits in the list's own column of rows rather than
+   floating under the card, so the affordance is the list's bottom edge — and it keeps the
+   44px target that a text link under a card would have had to grow to anyway. */
+.vitals-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: var(--surface-2);
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  min-height: 44px;
+  padding: 0 14px;
+  text-align: left;
+}
+
+.vitals-more .hint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
 }
 
 /* A child is indented under the turn that spawned it, so a research fan reads as a

@@ -73,6 +73,16 @@ const HISTORY_SECONDS = 900;
 const RESEED_MS = 30_000;
 const RESEED_SECONDS = 120;
 
+/** How many rows a list shows before it offers the rest.
+ *
+ *  Chosen at the GUI gate — option J, `docs/mocks/vitals-scrolling/j-capped-lists.html`,
+ *  over K (a collapsing graph header) and L (segmented lists). Four is the most a section
+ *  can carry and still leave the next section's heading on screen, which is what keeps the
+ *  screen's length a function of what the owner asked for rather than of how busy the box
+ *  happens to be: at the 15-minute range a working box routinely posts thirty model loads
+ *  above a roster nobody can reach. */
+const ROW_CAP = 4;
+
 const KIND_LABEL: Record<string, string> = {
   agent: "agent",
   subagent: "sub-agent",
@@ -291,6 +301,7 @@ function StreamHealth() {
  *  Hidden entirely when there is nothing to report. A permanently empty card teaches the
  *  eye to skip the place the answer appears. */
 function BoxEvents({ events, range }: { events: BoxEvent[]; range: RangeKey }) {
+  const [open, setOpen] = useState(false);
   if (events.length === 0) return null;
   // Still-running first, then newest-first. A load in flight is the reading — it is what
   // the GPU is doing THIS second — while everything below it is history, and history reads
@@ -300,6 +311,9 @@ function BoxEvents({ events, range }: { events: BoxEvent[]; range: RangeKey }) {
     return live !== 0 ? live : b.at_ms - a.at_ms;
   });
   const live = ordered.filter((e) => e.ended_ms === null).length;
+  // The sort puts a load in flight first, so the cap can never hide the row the screen was
+  // opened for — what it hides is the tail of settled history.
+  const shown = open ? ordered : ordered.slice(0, ROW_CAP);
 
   return (
     <>
@@ -308,9 +322,17 @@ function BoxEvents({ events, range }: { events: BoxEvent[]; range: RangeKey }) {
         <span className={`count${live > 0 ? " live" : ""}`}>{events.length}</span>
       </div>
       <section className="card vitals-events">
-        {ordered.map((event) => (
+        {shown.map((event) => (
           <EventRow key={`${event.at_ms}-${event.kind}-${event.subject}`} event={event} />
         ))}
+        {ordered.length > ROW_CAP && (
+          <MoreRow
+            total={ordered.length}
+            hidden={ordered.length - shown.length}
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+          />
+        )}
       </section>
       <p className="vitals-note">The work behind the trace that no turn accounts for.</p>
     </>
@@ -508,10 +530,17 @@ function RosterGroup({
   all: LiveTurn[];
   onSelect: (id: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const ids = new Set(turns.map((t) => t.id));
   // A child whose parent is in this group is drawn nested under it. One whose parent
   // fell outside the window is promoted to a top-level row instead of vanishing.
   const parents = turns.filter((t) => t.parent_run_id === null || !ids.has(t.parent_run_id));
+  const fans = parents.map((parent) => ({
+    parent,
+    kids: all.filter((t) => t.parent_run_id === parent.id && ids.has(t.id)),
+  }));
+  const shown = open ? fans : capFans(fans);
+  const hidden = turns.length - shown.reduce((n, f) => n + 1 + f.kids.length, 0);
 
   return (
     <>
@@ -519,19 +548,65 @@ function RosterGroup({
         {heading} <span className="count">{turns.length}</span>
       </div>
       <section className="card vitals-roster">
-        {parents.map((parent) => {
-          const kids = all.filter((t) => t.parent_run_id === parent.id && ids.has(t.id));
-          return (
-            <div key={parent.id}>
-              <TurnRow turn={parent} childCount={kids.length} onSelect={onSelect} />
-              {kids.map((kid) => (
-                <TurnRow key={kid.id} turn={kid} childCount={0} isChild onSelect={onSelect} />
-              ))}
-            </div>
-          );
-        })}
+        {shown.map(({ parent, kids }) => (
+          <div key={parent.id}>
+            <TurnRow turn={parent} childCount={kids.length} onSelect={onSelect} />
+            {kids.map((kid) => (
+              <TurnRow key={kid.id} turn={kid} childCount={0} isChild onSelect={onSelect} />
+            ))}
+          </div>
+        ))}
+        {(hidden > 0 || open) && (
+          <MoreRow
+            total={turns.length}
+            hidden={hidden}
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+          />
+        )}
       </section>
     </>
+  );
+}
+
+/** The cap, applied to a roster rather than a flat list.
+ *
+ *  A parent is never split from the fan it spawned — half a research fan reads as a fan
+ *  that lost children, not as a list that was trimmed — so the cap counts ROWS and stops
+ *  at the fan that would cross it. One fan always survives, however wide: a group whose
+ *  first parent brought nine sub-agents shows all ten rather than showing nothing. */
+function capFans<T extends { kids: unknown[] }>(fans: T[]): T[] {
+  const out: T[] = [];
+  let rows = 0;
+  for (const fan of fans) {
+    if (out.length > 0 && rows + 1 + fan.kids.length > ROW_CAP) break;
+    out.push(fan);
+    rows += 1 + fan.kids.length;
+  }
+  return out;
+}
+
+/** The footer row a capped list carries.
+ *
+ *  A row in the same column of rows rather than a link under the card: the list's own
+ *  bottom edge is the affordance, and it keeps the ≥44px target the design system asks
+ *  for without adding a control that floats outside the thing it acts on. */
+function MoreRow({
+  total,
+  hidden,
+  open,
+  onToggle,
+}: {
+  total: number;
+  hidden: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button type="button" className="vitals-more" aria-expanded={open} onClick={onToggle}>
+      <span>{open ? "Show fewer" : `Show all ${total}`}</span>
+      <span className="hint">{open ? `first ${ROW_CAP}` : `${hidden} more`}</span>
+    </button>
   );
 }
 

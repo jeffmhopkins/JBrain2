@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -250,6 +250,28 @@ plus expandable detail — with **two levels**:
   it. A settled row shows its **total duration** rather than a ticking elapsed time, and
   a hollow dot rather than a filled one — on a 15-minute window most rows are finished,
   and a screen of solid dots reads as "all of this is running right now".
+- **Under load, every list is capped at four rows** (settled in a second three-way GUI
+  gate — chosen **J "capped lists"** over K "collapsing graph header" and L "segmented
+  lists"; binding mock `docs/mocks/vitals-scrolling/j-capped-lists.html`) [decided]. At
+  the 15-minute range a working box posts thirty model loads above a roster nobody can
+  reach, so each section — the box's own work, *Running now*, *Finished, last N* — shows
+  four rows and offers the rest on a **"Show all N" footer row** inside the list, with a
+  **"Show fewer"** to put it back. The cap counts ROWS but never splits a parent from the
+  fan it spawned, and one fan always survives however wide: half a research fan reads as a
+  fan that lost children, not as a list that was trimmed. The **ordering is what makes the
+  cap safe** — a load still in flight and a running turn sort first, so the cap can only
+  ever take from the settled tail. Section headings are **sticky**, since an expanded list
+  is the only place on the app where thirty rows can pass under one label. K was rejected
+  for leaving the scroll as long as it found it, L for putting the box's work and the turn
+  that provoked it behind different tabs.
+- **The screen's sections may not shrink** [decided]. `.vitals-detail` is a column flex
+  container of a definite height, so a section is a flex item — and a flex item whose own
+  overflow is not `visible` has an automatic minimum size of ZERO. Both list cards clip
+  their corners with `overflow: hidden`, so the screen answered a busy box by squashing
+  ten events into one and a half rows and a *Running now 1* card into 20px, and did not
+  scroll at all. Every section is pinned at its natural height (`flex-shrink: 0`), and
+  anything added here must be a real child of the scroller — a `display: contents` wrapper
+  hands its children up to the flex container and puts them out of that rule's reach.
 - **Level 2** is a pushed layer that is entirely one turn: what it is doing now, its
   children, **the call** (model, provider, reasoning effort, context window, tools,
   persona), **the run** (id, parent, started, trigger, session, domain, ran-as), the
