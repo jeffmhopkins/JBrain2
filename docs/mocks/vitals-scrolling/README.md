@@ -12,16 +12,16 @@ scroller: ten box events rendered as one and a half rows and the screen did not
 scroll at all). These three mocks are about what the screen should do once it
 *does* scroll.
 
-**Status: awaiting the owner's pick.** Whichever wins becomes the binding spec for
-`frontend/src/screens/VitalsScreen.tsx` and is recorded in
-`docs/reference/DESIGN.md` under "Vitals detail"; the rivals stay because that doc
-records *what was chosen over what*.
+**Chosen: `j-capped-lists.html`.** It is the binding spec for
+`frontend/src/screens/VitalsScreen.tsx`; the reasoning lives in
+`docs/reference/DESIGN.md` under "Vitals detail". The rivals are kept because that
+doc records *what was chosen over what*.
 
 | Mock | Variant | Shape | Outcome |
 |---|---|---|---|
-| `j-capped-lists.html` | Capped lists | Four rows per section, the rest behind "Show all N"; sticky headings | — |
-| `k-collapsing-header.html` | Collapsing header | Nothing hidden; the graph gives way to a sticky strip carrying the reading and the range pills | — |
-| `l-segmented-lists.html` | Segmented lists | Three counted segments, one list rendered at a time, opening on Running | — |
+| `j-capped-lists.html` | Capped lists | Four rows per section, the rest behind "Show all N"; sticky headings | **Chosen** |
+| `k-collapsing-header.html` | Collapsing header | Nothing hidden; the graph gives way to a sticky strip carrying the reading and the range pills | Rejected |
+| `l-segmented-lists.html` | Segmented lists | Three counted segments, one list rendered at a time, opening on Running | Rejected |
 
 Each file is standalone and interactive — open it directly, no build step. The
 control desk drives the **load** (quiet 2/1/3, busy 10/1/6, flood 34/4/26 — the
@@ -43,3 +43,13 @@ busy figures are the ones from the owner's report) and the theme.
   flight are what the owner tapped the chart to find; no treatment may put them
   behind more work than a settled row.
 - **≥44px targets** for anything new that is tappable, per `docs/reference/DESIGN.md`.
+
+## Settled alongside the pick
+
+- **The cap counts rows, not parents.** A fan is never split from the turn that spawned
+  it, and one fan always survives however wide — a group whose first parent brought nine
+  sub-agents shows all ten rather than nothing.
+- **Ordering is what makes the cap safe.** A load in flight and a running turn already
+  sort first, so four rows can only ever hide settled history.
+- **Sticky headings came with J, not as a separate decision.** An expanded list is the
+  only place in the app where thirty rows pass under one label.
