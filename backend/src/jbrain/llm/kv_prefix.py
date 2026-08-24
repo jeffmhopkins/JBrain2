@@ -22,7 +22,10 @@ post-mortem lives at `warm_keeper.py`'s prime step):
     a floor, and any shortfall falls back to the prefill the restore was replacing.
   - It was inert-by-construction on the recurrent hybrids (restore clears the context
     checkpoints that are their only prefix-reuse mechanism) — they are refused up front,
-    as are speculative entries, whose draft state no slot file captures.
+    as are external-draft speculative entries, whose draft state no slot file captures
+(MTP self-drafting entries are eligible: their draft derives from the target's own
+hidden states, and speculation verifies every draft — a restore can only cost brief
+draft acceptance, never correctness).
   - Its files could only be pruned by a deploy. Here the store holds itself to an
     owner-set byte budget (`MAX_STORE_BYTES`), evicting least-recently-USED files — a
     restore refreshes its file's clock — so every config the operator flips between
@@ -165,7 +168,17 @@ class KvPrefixStore:
 
     def _eligible(self, served_model: str) -> local_catalog.LocalModel | None:
         model = local_catalog.get_by_served(served_model)
-        if model is None or model.recurrent or model.is_speculative:
+        if model is None:
+            return None
+        # Blanket rule: plain attention, no speculation. `kv_slot_restorable` is the
+        # per-entry override for shapes reasoned through and verified live (the qwen
+        # hybrid+MTP argument lives on the catalog field). A restored hybrid slot has no
+        # context checkpoints, so its first mid-prefix divergence reprocesses from zero —
+        # today's cost, fail-soft; a byte-stable prefix (the load warm, #1198's anchors)
+        # never diverges mid-prefix.
+        if model.kv_slot_restorable:
+            return model
+        if model.recurrent or model.is_speculative:
             return None
         return model
 

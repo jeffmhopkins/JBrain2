@@ -316,6 +316,17 @@ class LocalModel:
     # recurrent memory and reaches GGML_ABORT, i.e. the server dies), and prefix reuse here is
     # mediated entirely by context checkpoints.
     recurrent: bool = False
+    # KV-slot save/restore opt-in for entries the blanket rules would exclude. The default
+    # rule (llama_swap_config + kv_prefix) admits plain attention models only; a HYBRID
+    # (recurrent) model was excluded because a restore leaves the slot with no context
+    # checkpoints — but llama.cpp's hybrid memory serializes BOTH halves of the state
+    # (llama_memory_hybrid::state_write covers mem_attn and mem_recr), so a byte-stable
+    # prefix (the load warm) restores soundly: the recurrent state lands exactly at the
+    # prefix end, and the first divergence merely reprocesses from zero (today's cost,
+    # fail-soft). MTP self-drafting is likewise safe: the draft derives from the target's
+    # hidden states and is always verified — a restore costs brief draft acceptance, never
+    # correctness. Set per entry once reasoned through; verified live per model.
+    kv_slot_restorable: bool = False
     # GiB per context checkpoint, per slot. Non-zero only for a HYBRID (recurrent) model,
     # where a checkpoint is a full copy of the recurrent state and is device-resident —
     # ~150 MiB for Qwen3.8 (llama.cpp #20145, #23371). Zero on an attention model, whose
@@ -380,6 +391,20 @@ class LocalModel:
         drift apart; `llama_swap_config._is_speculative` is the same test on the manifest
         dicts the config generator sees."""
         return "--spec-type" in self.extra_server_args
+
+    @property
+    def is_mtp_speculative(self) -> bool:
+        """Speculative via the model's own MTP head (`--spec-type draft-mtp`). Unlike an
+        external draft model, the MTP draft derives from the TARGET model's hidden states
+        — there is no separate draft KV a slot file would miss — and speculative decoding
+        verifies every draft against the target, so a KV restore can cost draft
+        acceptance for a few tokens but never correctness. This is what lets these
+        entries into the kv_prefix disk store while other speculative shapes stay out."""
+        args = list(self.extra_server_args)
+        try:
+            return args[args.index("--spec-type") + 1] == "draft-mtp"
+        except (ValueError, IndexError):
+            return False
 
     def effective_slots(self, requested: int) -> int:
         """The `-np` this model will ACTUALLY serve with, given a requested slot count.
@@ -677,6 +702,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
+        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
         checkpoint_gb=0.28,
     ),
     LocalModel(
@@ -747,6 +773,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
+        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
         checkpoint_gb=0.28,
     ),
     LocalModel(
@@ -829,6 +856,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
+        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
         checkpoint_gb=0.28,
     ),
     LocalModel(

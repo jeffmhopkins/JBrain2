@@ -1540,15 +1540,23 @@ async def _warm_identity(
     kv_prefix: "KvPrefixStore | None",
     registry: ToolRegistry | None,
     liveness: HiddenToolsProbe | None,
-) -> tuple[str | None, "Callable[[], Awaitable[object]] | None"]:
-    """(warm_reasoning_effort, before_warm) for a gateway load's priming warm-up.
+) -> tuple[
+    str | None,
+    "Callable[[], Awaitable[object]] | None",
+    "Callable[[int], Awaitable[object]] | None",
+]:
+    """(warm_reasoning_effort, before_warm, after_warm) for a gateway load's warm-up.
 
     The effort is part of the RENDERED prompt (the template writes it into the leading
     tokens), so the warm must carry exactly what a routed agent.turn would — else it primes
     a prefix no turn ever sends, at full prefill cost (observed live 2026-08-23). The
     before_warm hook restores the saved KV slot ahead of the warm, turning that prefill
     into a cache hit; on a single-slot server the order is what stops the warm from
-    clobbering the restored cache. Both halves are best-effort and None-tolerant."""
+    clobbering the restored cache. The after_warm hook saves the just-warmed slot to disk
+    — the load-time twin of the keeper's save-after-prime, and the only save moment a
+    NON-agent model (e.g. a picker-loaded qwen, whose ~170 s warm this repays exactly
+    once per fingerprint) ever gets; when the file already exists it is an LRU touch, not
+    a rewrite. All hooks are best-effort and None-tolerant."""
     stored: str | None = None
     if settings_store is not None:
         with contextlib.suppress(Exception):
@@ -1558,17 +1566,26 @@ async def _warm_identity(
             stored = entry.get("reasoning_effort")
     effort = llm_router.warm_reasoning_effort(kv_prefix_mod.AGENT_TURN_TASK, served_model, stored)
     before_warm: Callable[[], Awaitable[object]] | None = None
+    after_warm: Callable[[int], Awaitable[object]] | None = None
     if kv_prefix is not None and registry is not None:
         store = kv_prefix
+        reg = registry
 
         async def _restore() -> object:
-            p_system, p_tools, _hidden = await jerv_prime_inputs(registry, liveness, served_model)
+            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, liveness, served_model)
             return await store.restore_if_lost(
                 served_model, p_system, p_tools, reasoning_effort=effort
             )
 
+        async def _save(prompt_tokens: int) -> object:
+            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, liveness, served_model)
+            return await store.save_after_prime(
+                served_model, p_system, p_tools, prompt_tokens, reasoning_effort=effort
+            )
+
         before_warm = _restore
-    return effort, before_warm
+        after_warm = _save
+    return effort, before_warm, after_warm
 
 
 async def gateway_load(
@@ -1610,7 +1627,7 @@ async def gateway_load(
         # here — a prefix primed with a different tool block than the turn will send is
         # worse than no prime, since the reuse misses from the tools block onward.
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
-    effort, before_warm = await _warm_identity(
+    effort, before_warm, after_warm = await _warm_identity(
         model.served_model,
         settings_store=settings_store,
         kv_prefix=kv_prefix,
@@ -1625,6 +1642,7 @@ async def gateway_load(
                 warm_tools=warm_tools,
                 warm_reasoning_effort=effort,
                 before_warm=before_warm,
+                after_warm=after_warm,
             )
     except gpu_guard.GpuBudgetError as exc:
         # 409, not an uncaught 500. A device refusal is the same class of answer as the
@@ -2007,7 +2025,7 @@ async def gateway_prime(
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
-    effort, before_warm = await _warm_identity(
+    effort, before_warm, after_warm = await _warm_identity(
         model.served_model,
         settings_store=settings_store,
         kv_prefix=kv_prefix,
@@ -2022,6 +2040,7 @@ async def gateway_prime(
             warm_tools=warm_tools,
             warm_reasoning_effort=effort,
             before_warm=before_warm,
+            after_warm=after_warm,
         )
     except gpu_guard.GpuBudgetError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

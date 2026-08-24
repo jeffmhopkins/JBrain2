@@ -738,6 +738,8 @@ class FakeLocalGateway:
         self.props_payload = props_payload or {}
         self.unloaded: list[str] = []
         self.loaded: list[str] = []
+        # The prompt size the fake's warm "measured" — what after_warm receives.
+        self.warm_prompt_tokens: int = 28_000
         # The persona system prompt each load() was asked to prime the warm-up with
         # (None when unset), so a test can assert the manual Load primes the cache.
         self.warmed_system: list[str | None] = []
@@ -771,6 +773,7 @@ class FakeLocalGateway:
         warm_tools: list[dict[str, object]] | None = None,
         warm_reasoning_effort: str | None = None,
         before_warm=None,
+        after_warm=None,
     ) -> None:
         from jbrain.llm.local_gateway import LocalGatewayError
 
@@ -785,6 +788,10 @@ class FakeLocalGateway:
         self.warmed_system.append(warm_system)
         self.warmed_tools.append(warm_tools)
         self._running.add(served_model)
+        # And the save hook runs after a successful warm, with the warm's prompt size.
+        if after_warm is not None:
+            with contextlib.suppress(Exception):
+                await after_warm(self.warm_prompt_tokens)
 
     async def tail_logs(self) -> str:
         from jbrain.llm.local_gateway import LocalGatewayError

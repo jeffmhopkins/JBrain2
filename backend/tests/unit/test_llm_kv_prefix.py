@@ -249,13 +249,34 @@ async def test_a_restore_refreshes_its_files_lru_clock(root: Path) -> None:
 
 
 async def test_a_recurrent_or_unknown_model_is_never_saved(root: Path) -> None:
-    """The hybrids are inert by construction (restore clears their context checkpoints) and
-    an uncatalogued model has no eligibility story at all — both refuse up front."""
+    """A hybrid WITHOUT the catalog opt-in refuses (nemotron: unverified restore story)
+    and an uncatalogued model has no eligibility story at all — both refuse up front."""
     store, gw = _store(root)
     gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
-    assert await store.save_after_prime("qwen3.8-27b-q4", "persona", TOOLS, PRIME) is False
+    assert (
+        await store.save_after_prime("nemotron-3.5-lightning-30b", "persona", TOOLS, PRIME) is False
+    )
     assert await store.save_after_prime("no-such-model", "persona", TOOLS, PRIME) is False
     assert gw.saved == []
+
+
+async def test_a_kv_slot_restorable_hybrid_is_eligible(root: Path) -> None:
+    """The qwen3.8 twins opt in via the catalog (`kv_slot_restorable`): hybrid + MTP, but
+    llama.cpp serializes both memory halves and speculation verifies every draft — so the
+    disk layer works for them, repaying the ~170 s per-load warm (2026-08-23)."""
+    served = "qwen3.8-27b-q4"
+    (root / "llama-swap.yaml").write_text(
+        "models:\n  "
+        + served
+        + ":\n    cmd: llama-server -c 131072 --slot-save-path /models/"
+        + llama_swap_config.KVSLOT_DIR
+        + "/qwen3.8-27b-q4\n"
+    )
+    (root / llama_swap_config.KVSLOT_DIR / "qwen3.8-27b-q4").mkdir(parents=True, exist_ok=True)
+    store, gw = _store(root)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(served, "persona", TOOLS, PRIME) is True
+    assert len(gw.saved) == 1
 
 
 async def test_a_model_served_without_the_flag_has_no_disk_layer(root: Path) -> None:

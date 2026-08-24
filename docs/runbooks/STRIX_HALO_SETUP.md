@@ -206,7 +206,12 @@ both resides and warms it.
 > inert by construction — and on gpt-oss it wrote whatever held the single slot at save time
 > (measured **2,164 tokens** against a ~36k prefix, because the analysis tasks routed there
 > and evicted jerv between the prime and the save). v2 answers each: hybrids and speculative
-> entries are refused up front (`--slot-save-path` is only rendered for attention models);
+> entries are refused up front (`--slot-save-path` is only rendered for attention models —
+> EXCEPT entries with the catalog's `kv_slot_restorable` opt-in: the qwen3.8 twins are
+> hybrid+MTP, but llama.cpp serializes both memory halves of a hybrid slot and speculation
+> verifies every draft against the target, so their restore is sound; a restored hybrid
+> just has no context checkpoints, so a mid-prefix divergence reprocesses from zero — the
+> pre-cache cost, fail-soft);
 > a save happens ONLY when a slot's `n_prompt_tokens` exactly equals the prime's own
 > `usage.input_tokens`, read in the same breath as the prime, and the server's `n_saved`
 > must agree or the file is deleted; a restore's `n_restored` is verified against the same
@@ -225,7 +230,10 @@ both resides and warms it.
 > themselves stay untouchable by the inference process). The keeper restores before it primes (a cold prime becomes a
 > ~1 s cache hit instead of a ~60 s prefill), saves after, and probes every settled tick so
 > a single-slot clobber heals off-turn; the router restores inline before an agent turn
-> that would otherwise re-prefill; and the gateway's load-time warm restores first and
+> that would otherwise re-prefill; the load-time warm also SAVES the slot after it returns
+> (the only save moment a non-agent model gets — a picker-loaded qwen repays its measured
+> ~170 s warm prefill exactly once per fingerprint, dropping its load from ~179 s toward
+> ~12 s); and the gateway's load-time warm restores first and
 > renders the SAME prompt a routed turn sends (system + tools + the reasoning effort) —
 > until 2026-08-23 it omitted the effort, primed a "Reasoning: medium" variant no turn
 > ever used, and burned a full ~62 s prefill on every load while clobbering the freshly
