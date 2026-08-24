@@ -74,7 +74,7 @@ function fbDeps(): FullBrainDeps {
     })),
     getChatCapabilities: vi.fn(async () => ({
       supports_vision: true,
-      can_edit_images: false,
+      can_analyze_images: false,
       context_window: 262144,
     })),
   };
@@ -458,7 +458,7 @@ describe("HomeScreen mode scoping", () => {
       ...fbDeps(),
       getChatCapabilities: vi.fn(async () => ({
         supports_vision: false,
-        can_edit_images: false,
+        can_analyze_images: false,
         context_window: 262144,
       })),
     };
@@ -486,7 +486,7 @@ describe("HomeScreen mode scoping", () => {
       ...fbDeps(),
       getChatCapabilities: vi.fn(async () => ({
         supports_vision: true,
-        can_edit_images: false,
+        can_analyze_images: false,
         context_window: 262144,
       })),
     };
@@ -509,13 +509,15 @@ describe("HomeScreen mode scoping", () => {
   });
 
   it("keeps the Research paperclip when image tools exist even if the model can't see", async () => {
-    // jerv's mode: a blind agent model, but ComfyUI configured — attach stays offered
-    // because jerv can analyze_image / edit_image an attachment by id.
+    // jerv's mode: a blind agent model, but analyze_image is wired — attach stays
+    // offered because jerv can read an attachment by id (the look is delegated to a
+    // vision model). THE regression pin: can_edit_images' hardcoded False silently
+    // hid this paperclip when the edit tools moved to the Images launcher (2026-08-24).
     const deps = {
       ...fbDeps(),
       getChatCapabilities: vi.fn(async () => ({
         supports_vision: false,
-        can_edit_images: true,
+        can_analyze_images: true,
         context_window: 262144,
       })),
     };

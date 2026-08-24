@@ -146,7 +146,7 @@ export interface FullBrainDeps {
   uploadChatAttachment: (sessionId: string, file: File) => Promise<ChatAttachment>;
   getChatCapabilities: () => Promise<{
     supports_vision: boolean;
-    can_edit_images: boolean;
+    can_analyze_images: boolean;
     context_window: number;
   }>;
 }
@@ -302,10 +302,12 @@ export interface FullBrain {
    * default: never offer an attach the model would reject; the paperclip simply
    * appears once vision is confirmed). */
   supportsVision: boolean;
-  /** Whether the on-box image tools are configured. When true an attached image is
-   * useful to jerv even without vision (it can analyze_image / edit_image it by id),
-   * so the composer keeps offering attach in that mode. */
-  canEditImages: boolean;
+  /** Whether jerv can analyze an attached image by id (the analyze_image tool is
+   * wired — it delegates the look to a vision model). When true an attached image is
+   * useful even on a text-only agent model, so the composer keeps offering attach in
+   * research mode. Replaced canEditImages when the agent-side edit tools moved to the
+   * Images launcher — the dead flag's hardcoded False silently hid the paperclip. */
+  canAnalyzeImages: boolean;
   create: (body: SessionCreate) => Promise<AgentSession>;
   /** Re-clicking the active tab: start a new chat with that mode's default agent.
    * Reuses the open chat if it's already an empty one of that same agent, so a
@@ -384,7 +386,7 @@ export function useFullBrain(
   // model would 415. It only ever flips true, so the paperclip appears once
   // vision is confirmed and never flashes a broken state on first paint.
   const [supportsVision, setSupportsVision] = useState(false);
-  const [canEditImages, setCanEditImages] = useState(false);
+  const [canAnalyzeImages, setCanAnalyzeImages] = useState(false);
   // Per-conversation agent-model picks (the omnibox long-press sheet), keyed by
   // session id: the chosen local model rides every send of that chat and is dropped
   // for the rest. In-memory only — "this conversation only" for this app session; a
@@ -447,7 +449,7 @@ export function useFullBrain(
       .then((c) => {
         if (stale) return;
         setSupportsVision(c.supports_vision);
-        setCanEditImages(c.can_edit_images);
+        setCanAnalyzeImages(c.can_analyze_images);
         setWindowHint(c.context_window);
       })
       .catch(() => {});
@@ -1094,7 +1096,7 @@ export function useFullBrain(
     usage: displayUsage,
     stop,
     supportsVision,
-    canEditImages,
+    canAnalyzeImages,
     // Resolves true once the turn is under way (files uploaded, stream started),
     // false when an upload aborted the send — so the composer keeps its staged
     // files for a retry instead of clearing them.

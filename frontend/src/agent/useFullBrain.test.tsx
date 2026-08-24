@@ -47,7 +47,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     })),
     getChatCapabilities: vi.fn(async () => ({
       supports_vision: true,
-      can_edit_images: true,
+      can_analyze_images: true,
       context_window: 262144,
     })),
     cancelChatRun: vi.fn(async () => {}),

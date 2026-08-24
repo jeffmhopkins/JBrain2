@@ -3368,13 +3368,13 @@ export const api = {
   // attach affordance (hidden, with a hint, when vision is off).
   async getChatCapabilities(): Promise<{
     supports_vision: boolean;
-    can_edit_images: boolean;
+    can_analyze_images: boolean;
     context_window: number;
   }> {
     const response = await request("/api/chat/capabilities");
     return (await response.json()) as {
       supports_vision: boolean;
-      can_edit_images: boolean;
+      can_analyze_images: boolean;
       context_window: number;
     };
   },

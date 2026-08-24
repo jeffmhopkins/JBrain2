@@ -361,12 +361,12 @@ export function HomeScreen({
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation
         // mode offers it when the agent's model is vision-capable — OR, in jerv's
-        // research mode, when the on-box image tools are configured: jerv can then
-        // analyze_image / edit_image an attachment by id even without seeing it. The
-        // curator (fullbrain) has no image tools, so there it still needs vision;
-        // otherwise the paperclip is simply hidden.
+        // research mode, when analyze_image is wired: jerv can then read an attached
+        // image by id even without seeing it (the look is delegated to a vision
+        // model). The curator (fullbrain) has no image tools, so there it still needs
+        // vision; otherwise the paperclip is simply hidden.
         attachEnabled={
-          !conversational || fb.supportsVision || (seg.mode === "research" && fb.canEditImages)
+          !conversational || fb.supportsVision || (seg.mode === "research" && fb.canAnalyzeImages)
         }
         // Long-press a conversation tab → pick the model this chat runs on (that
         // conversation only). Only offered on a conversation surface; the chip in the
