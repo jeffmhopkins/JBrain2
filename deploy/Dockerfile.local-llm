@@ -144,7 +144,18 @@ RUN set -eux; \
     /apply-llama-patches.sh /llama; \
     cmake -S /llama -B /llama/build -DGGML_VULKAN=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release; \
     cmake --build /llama/build --target llama-server -j"$(nproc)"; \
+    # The executable alone is NOT the server: upstream builds shared and the whole
+    # server (server-context.cpp — where the patches live) is libllama-server-impl.so,
+    # with `llama-server` a ~12 KB main() stub. Overlaying only the stub ships an
+    # image that silently runs the base's UNPATCHED libraries (observed live
+    # 2026-08-24: patch built, overlaid, and never executed). Ship every built
+    # lib*.so* (same commit as the base, so same sonames — a full ABI-consistent
+    # set) alongside the stub, preserving the symlink chains.
     cp "$(find /llama/build -name llama-server -type f | head -n1)" /out/llama-server; \
+    mkdir -p /out/lib; \
+    find /llama/build -name 'lib*.so*' -exec cp -a {} /out/lib/ \; ; \
+    [ -n "$(ls /out/lib 2>/dev/null)" ] || { echo "FATAL: build produced no shared libraries — layout changed?"; exit 1; }; \
+    ls /out/lib | grep -q 'server-impl' || echo "NOTE: no libllama-server-impl in build output — static server layout? overlay will ship the executable alone"; \
     /out/llama-server --version 2>&1 | head -n1
 
 FROM ${LOCAL_LLM_BASE}
@@ -156,13 +167,23 @@ COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
 
 # Overlay the patched llama-server ONLY when the opt-in build produced one. The
 # build stage always creates /out; it holds a binary only when PATCH_RESTORE_
-# CHECKPOINT=1 succeeded. This shell replaces the base's on-PATH llama-server in
-# place when present, and is a no-op otherwise — so default builds are untouched.
+# CHECKPOINT=1 succeeded. The overlay MUST include the shared libraries: the
+# `llama-server` on PATH is a ~12 KB main() stub and every line of server code —
+# the patch included — lives in libllama-server-impl.so (plus its lib* siblings)
+# under /usr/lib64. Replacing only the stub leaves the base's unpatched libraries
+# serving, with the patch present-but-inert (the 2026-08-24 silent failure). The
+# libs are built at the base's own commit, so overwriting the base's set is an
+# ABI-consistent same-version swap; ldconfig refreshes the loader cache.
 COPY --from=llama-build /out/ /tmp/llama-out/
 RUN set -eu; \
     if [ -f /tmp/llama-out/llama-server ]; then \
         dst="$(command -v llama-server)"; \
-        echo "overlaying patched llama-server onto ${dst}"; \
+        libdir="/usr/lib64"; [ -d "$libdir" ] || libdir="/usr/lib"; \
+        echo "overlaying patched llama-server onto ${dst} (+ $(ls /tmp/llama-out/lib 2>/dev/null | wc -l) shared libs into ${libdir})"; \
+        if [ -d /tmp/llama-out/lib ] && [ -n "$(ls /tmp/llama-out/lib)" ]; then \
+            cp -a /tmp/llama-out/lib/. "${libdir}/"; \
+            ldconfig || true; \
+        fi; \
         install -m 0755 /tmp/llama-out/llama-server "${dst}"; \
     else \
         echo "no patched llama-server (PATCH_RESTORE_CHECKPOINT=${PATCH_RESTORE_CHECKPOINT}) — keeping stock"; \
