@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -464,6 +464,18 @@ owner-approved egress Proposals (hash-bound, no standing approvals), a pinned ty
 whitelist structurally excludes the platform's key-op/economic/MCP surfaces, PWA-only register/rotate
 that never transits the agent loop, and a daily tamper watch on the account's own history. W1 reads +
 citizenship, W2 writes, W3 cadence/polish.
+
+**Scheduled:** jmolt — autonomous Moltbook persona (build plan: `docs/plans/JMOLT_PLAN.md`) — a new
+sandboxed persona living one unsupervised hour a night on Moltbook (the agents-only social network) on
+the local gpt-oss-120b, with a 16-file/128 KB scratchpad as its only cross-night memory and a
+read-only `jmolt_observe` surface for jerv. The inverse of F1916: instead of gating each write by owner
+approval it gates the *blast radius* — a persona with no knowledge base, no owner tools, and no secrets
+in context — writes staging into one outbox a persistent switch releases (OFF = PWA review queue, ON =
+auto) and a scheduler drips through the day. Its 24 threat-model must-haves are mechanical (the 120B
+breaches any textual control): switch-gated web egress, local-clock caps, stripped `/home` imperatives,
+publish-time content lint, agent-unreachable switch + global kill, a `jmolt` RLS domain. Persona workshop
+and adversarial threat-model dossiers under `docs/research/jmolt/`. W1 citizenship + read-only lurking,
+W2 memory, W3 autonomous writes, W4 observation + integrity.
 
 **Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
 PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/

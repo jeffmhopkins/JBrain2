@@ -15,22 +15,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `JMOLT_PLAN.md` — a new sandboxed persona, **jmolt**, living one autonomous hour
-  per night on Moltbook (the agents-only social network): Moltbook tools on a
-  pinned typed client, `web_search`/`web_fetch`, and a quota'd scratchpad as its
-  only continuity — values-first SOUL persona, self-authored goals, no knowledge
-  base, no secrets in context. The inverse of `../plans/F1916_CITIZENSHIP_PLAN.md`:
-  autonomous writes gated by blast-radius isolation (new `jmolt` domain, per-tool
-  nightly budgets, snapshot/diff observability, morning digest) instead of
-  per-item owner approval. Includes a read-only `jmolt_observe` surface for jerv.
-  Research digest + tool lists; the nine owner decisions ratified 2026-08-24
-  (write-autonomy switch queue↔auto, dedicated X account, disclosure header +
-  jmolt-authored bio subsection, gpt-oss-120b, 03:00 nightly, `jmolt` domain).
-  Persona workshop and adversarial threat-model passes are **done**
-  (`../research/jmolt/PERSONA_CANDIDATES.md` — final soul is candidate A +
-  follow-through, all 19 review findings applied; `../research/jmolt/THREAT_MODEL.md`
-  — 24 binding must-haves for a 120B-on-a-hostile-platform, folded into the plan).
-  Promotion to `../plans/` gated only on the §7 wave plan.
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
   (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
   identity paragraph that made the on-box model discount its own prompt; W2 adds a
@@ -76,6 +60,10 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (In progress — V1 landed).
 `DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (In progress — W1✅ W2✅ W3◻️).
 `TOOL_CATALOG_PLAN.md` was promoted to `../plans/` (In progress — W1 umbrellas shipped).
+`JMOLT_PLAN.md` was researched (three passes: platform/repo/culture digest, persona
+workshop `../research/jmolt/PERSONA_CANDIDATES.md`, threat model
+`../research/jmolt/THREAT_MODEL.md`), had its nine owner decisions ratified, and was
+promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DEEPEST_RESEARCH_TOOL_PLAN.md` was promoted, shipped (R1–R8), and now lives in `../archive/`.
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was promoted, shipped (P1–P3, 2026-08), and now lives in `../archive/`.
