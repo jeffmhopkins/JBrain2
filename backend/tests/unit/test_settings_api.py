@@ -62,6 +62,7 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
 
@@ -82,6 +83,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
@@ -97,6 +99,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
 
@@ -112,6 +115,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
 
@@ -134,6 +138,7 @@ def test_put_settings_round_trips_the_timezone(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
@@ -348,6 +353,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "local_llm_patch_restore_checkpoint": False,
         "pronunciation_lexicon": {},
     }
 
@@ -368,3 +374,20 @@ def test_gateway_auto_update_defaults_on_and_can_be_turned_off(
     assert patched.status_code == 200
     assert patched.json()["local_llm_auto_update"] is False
     assert c.get("/api/settings").json()["local_llm_auto_update"] is False
+
+
+def test_gateway_patch_restore_defaults_off_and_can_be_turned_on(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The Fast-Qwen-loads patch (patched llama-server → fast qwen MTP-hybrid disk restores)
+    lived only in the box's `.env`, unreachable for a no-terminal owner (CLAUDE.md #10).
+    Default OFF, because the patch is a ~20-30 min from-source rebuild the owner opts into."""
+    c, _store = client
+
+    assert c.get("/api/settings").json()["local_llm_patch_restore_checkpoint"] is False
+
+    patched = c.put("/api/settings", json={"local_llm_patch_restore_checkpoint": True})
+
+    assert patched.status_code == 200
+    assert patched.json()["local_llm_patch_restore_checkpoint"] is True
+    assert c.get("/api/settings").json()["local_llm_patch_restore_checkpoint"] is True

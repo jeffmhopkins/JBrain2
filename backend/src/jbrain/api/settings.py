@@ -32,6 +32,8 @@ from jbrain.settings_store import (
     IMAGE_ANALYSIS_KEY,
     LOCAL_LLM_AUTO_UPDATE_DEFAULT,
     LOCAL_LLM_AUTO_UPDATE_KEY,
+    LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
+    LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
     OWNER_TIMEZONE_KEY,
     SqlSettingsStore,
     is_valid_timezone,
@@ -78,6 +80,10 @@ class SettingsOut(BaseModel):
     # it by loading a model. ON by default; surfaced here because it lived only in `.env`,
     # which the owner has no terminal to reach.
     local_llm_auto_update: bool = LOCAL_LLM_AUTO_UPDATE_DEFAULT
+    # Whether an update rebuilds the gateway with the patched llama-server (fast qwen
+    # MTP-hybrid loads). OFF by default; surfaced here because it lived only in `.env`,
+    # which the owner has no terminal to reach.
+    local_llm_patch_restore_checkpoint: bool = LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT
     # The owner's read-aloud respelling map {word: "say it like"} — applied as a whole-word text
     # substitution before a clip is rendered (jbrain.api.brain). Empty by default.
     pronunciation_lexicon: dict[str, str] = {}
@@ -106,6 +112,7 @@ class SettingsPatch(BaseModel):
     brain_answer_chorus: bool | None = None
     brain_answer_robot: bool | None = None
     local_llm_auto_update: bool | None = None
+    local_llm_patch_restore_checkpoint: bool | None = None
     # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
     # Field caps the raw payload so a client can't post an unbounded body.
     pronunciation_lexicon: Annotated[dict[str, str], Field(max_length=200)] | None = None
@@ -124,6 +131,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         brain_answer_chorus=await store.brain_answer_chorus(ctx),
         brain_answer_robot=await store.brain_answer_robot(ctx),
         local_llm_auto_update=await store.local_llm_auto_update(ctx),
+        local_llm_patch_restore_checkpoint=await store.local_llm_patch_restore_checkpoint(ctx),
         pronunciation_lexicon=await store.pronunciation_lexicon(ctx),
     )
 
@@ -185,6 +193,12 @@ async def update_settings(
             value_emit("answer_robot", body.brain_answer_robot)
     if body.local_llm_auto_update is not None:
         await store.upsert(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, body.local_llm_auto_update)
+    if body.local_llm_patch_restore_checkpoint is not None:
+        await store.upsert(
+            ctx,
+            LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
+            body.local_llm_patch_restore_checkpoint,
+        )
     if body.pronunciation_lexicon is not None:
         # Replace semantics; the store sanitizes + bounds it, so a junk entry is dropped rather
         # than stored (an empty map clears the lexicon).

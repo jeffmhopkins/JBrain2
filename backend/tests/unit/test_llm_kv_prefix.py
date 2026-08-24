@@ -290,6 +290,47 @@ async def test_the_kv_slot_restorable_flag_gates_eligibility(
     assert len(gw.saved) == 1
 
 
+async def test_the_patch_setting_gates_a_qwen_mtp_hybrid(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Fast-Qwen-loads patch setting (patch_active) is the RUNTIME gate that admits a
+    recurrent + MTP-self-drafting entry to the disk layer, replacing the reverted static
+    `kv_slot_restorable` flag. With the patch off the qwen MTP-hybrid is refused (stock
+    server re-prefills a restored hybrid); with it on the same entry is eligible. A plain
+    recurrent entry (no MTP) stays refused whatever the setting — the patch's soundness
+    argument rides on MTP self-drafting verifying every draft."""
+    import jbrain.llm.kv_prefix as mod
+
+    served = "qwen3-vl-30b-a3b"  # the fixture's served model (real catalog entry)
+    base = local_catalog.get_by_served(served)
+    assert base is not None
+    mtp_hybrid = replace(
+        base,
+        recurrent=True,
+        kv_slot_restorable=False,
+        extra_server_args=(*base.extra_server_args, "--spec-type", "draft-mtp"),
+    )
+    plain_hybrid = replace(base, recurrent=True, kv_slot_restorable=False)
+    monkeypatch.setattr(mod.local_catalog, "get_by_served", lambda m: mtp_hybrid)
+
+    gw = FakeGateway(writes_to=_id_dir(root))
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+
+    off = KvPrefixStore(gw, str(root), patch_active=False)  # type: ignore[arg-type]
+    assert await off.save_after_prime(served, "persona", TOOLS, PRIME) is False  # refused
+
+    on = KvPrefixStore(gw, str(root), patch_active=True)  # type: ignore[arg-type]
+    assert await on.save_after_prime(served, "persona", TOOLS, PRIME) is True  # admitted
+    assert len(gw.saved) == 1
+
+    # A plain recurrent hybrid (no MTP) is refused even with the patch on — MTP is required.
+    monkeypatch.setattr(mod.local_catalog, "get_by_served", lambda m: plain_hybrid)
+    gw2 = FakeGateway(writes_to=_id_dir(root))
+    gw2.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    on2 = KvPrefixStore(gw2, str(root), patch_active=True)  # type: ignore[arg-type]
+    assert await on2.save_after_prime(served, "persona", TOOLS, PRIME) is False
+
+
 async def test_a_model_served_without_the_flag_has_no_disk_layer(root: Path) -> None:
     """Eligibility follows the launch line itself: no --slot-save-path, no saves and no
     restores — the guard cannot drift from the flag that makes either possible."""

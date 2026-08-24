@@ -81,6 +81,31 @@ def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch)
     assert cli.main(["local-llm-smoketest"]) == 1
 
 
+def test_patch_restore_checkpoint_exit_code_follows_the_setting(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # The CLI maps the stored Fast-Qwen-loads patch flag to the exit code the update script
+    # reads: 0 when ON (build the patched engine), 1 when OFF (keep the stock binary).
+    patched_store.values["local_llm_patch_restore_checkpoint"] = True
+    assert cli.main(["local-llm-patch-restore-checkpoint"]) == 0
+    patched_store.values["local_llm_patch_restore_checkpoint"] = False
+    assert cli.main(["local-llm-patch-restore-checkpoint"]) == 1
+    # Absent (never set) reads as OFF -> exit 1, the conservative default.
+    del patched_store.values["local_llm_patch_restore_checkpoint"]
+    assert cli.main(["local-llm-patch-restore-checkpoint"]) == 1
+
+
+def test_set_patch_restore_checkpoint_persists_on_and_off(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # The rollback path calls this with `off` so a failed patched build turns its own toggle
+    # back off; `on` is here for symmetry with the setter contract.
+    assert cli.main(["set-local-llm-patch-restore-checkpoint", "on"]) == 0
+    assert patched_store.values["local_llm_patch_restore_checkpoint"] is True
+    assert cli.main(["set-local-llm-patch-restore-checkpoint", "off"]) == 0
+    assert patched_store.values["local_llm_patch_restore_checkpoint"] is False
+
+
 def test_local_remove_ids_prints_queue(patched_store: FakeSettingsStore, capsys: Any) -> None:
     patched_store.values["llm_local_remove_requested"] = ["gpt-oss-120b", "glm-4.5-air"]
     assert cli.main(["local-remove-ids"]) == 0

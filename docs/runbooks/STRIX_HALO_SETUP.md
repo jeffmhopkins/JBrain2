@@ -254,21 +254,30 @@ both resides and warms it.
 > ride a JBrain update — `llama-server` is the pinned community `kyuz0/amd-strix-halo-toolboxes`
 > binary, not a local build.
 >
-> **The patched-build path is committed, OPT-IN, default OFF.** `deploy/patches/` holds the
-> patch (anchored, applied by `deploy/apply-llama-patches.sh`), and `Dockerfile.local-llm`
-> has a builder stage that rebuilds llama-server from `LLAMA_CPP_COMMIT` (the commit the base
-> image's own binary reports — `b10603`/`c060ca974` at time of writing) with the patch
-> applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
-> flag unset the image is byte-for-byte the stock base — zero change. To activate: set
-> `LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=1` (and keep `LOCAL_LLM_LLAMA_COMMIT` in lockstep with
-> `LOCAL_LLM_BASE`) in the box `.env`, then Ops → Update — the update flow rebuilds
-> llama-server (~20-30 min under `PULL_TIMEOUT_S`), and its smoke test rolls back to the
-> stock base if the build or the binary fails. UNVALIDATED on gfx1151 as committed — the
-> first on-box build is the test; watch the update log and `llama-server --version` on the
-> gateway. Once the patched binary is verified, flip `kv_slot_restorable=True` back on the
-> qwen entries (`local_catalog.py`) and re-measure a qwen reload (expect ~12 s). Upstreaming
-> the patch to ggml-org/llama.cpp remains the long-term home (retires the local build on the
-> digest bump that carries it).
+> **The patched-build path is committed, OPT-IN, default OFF — activated from the PWA.**
+> `deploy/patches/` holds the patch (anchored, applied by `deploy/apply-llama-patches.sh`),
+> and `Dockerfile.local-llm` has a builder stage that rebuilds llama-server from
+> `LLAMA_CPP_COMMIT` (the commit the base image's own binary reports — `b10603`/`c060ca974`
+> at time of writing) with the patch applied, INSIDE the base image so it reuses the proven
+> gfx1151 Vulkan toolchain. With the flag unset the image is byte-for-byte the stock base —
+> zero change. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
+> owner runs this box with no terminal (CLAUDE.md #10), so the switch is a PWA setting
+> (`local_llm_patch_restore_checkpoint`), not an `.env` edit. The setting drives the build:
+> `update-inner.sh` reads it (`jbrain.cli local-llm-patch-restore-checkpoint`) and exports
+> `LOCAL_LLM_PATCH_RESTORE_CHECKPOINT` for the compose build arg, so the toggle alone
+> triggers the rebuild even when auto-update is off (rebuild-needed = auto-update OR patch).
+> The update flow rebuilds llama-server (~20-30 min under `PULL_TIMEOUT_S`), and its smoke
+> test rolls back to the stock base if the build or the binary fails — and on that failure
+> the script clears the toggle back off (`set-local-llm-patch-restore-checkpoint off`), so a
+> bad build turns its own switch off rather than rebuilding a broken engine on every future
+> Update. UNVALIDATED on gfx1151 as committed — the first on-box build is the test; watch the
+> update log and `llama-server --version` on the gateway. **The setting is also the qwen
+> eligibility gate:** `KvPrefixStore` reads it at api startup (`patch_active`) and admits the
+> qwen3.8 MTP-hybrids to the disk restore ONLY when it is on — no `kv_slot_restorable=True`
+> flip in `local_catalog.py` is needed (the static flag stays off; the setting is the gate).
+> Because the value is read once at startup, toggling it takes effect on the container
+> recreate the same Update already performs. Upstreaming the patch to ggml-org/llama.cpp
+> remains the long-term home (retires the local build on the digest bump that carries it).
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to
 > 8192 MiB, so every resident model silently reserved 8 GiB of host memory — and on Strix Halo

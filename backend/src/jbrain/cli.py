@@ -14,7 +14,11 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import get_settings
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
+from jbrain.settings_store import (
+    LLM_TASK_OVERRIDES_KEY,
+    LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
+    SqlSettingsStore,
+)
 
 
 def _print_key_block(key: str) -> None:
@@ -94,6 +98,40 @@ async def _print_auto_update() -> int:
         return 0 if await store.local_llm_auto_update(SYSTEM_CTX) else 1
     except Exception:  # noqa: BLE001
         return 0
+    finally:
+        await engine.dispose()
+
+
+async def _print_patch_restore_checkpoint() -> int:
+    """Exit 0 when the Fast-Qwen-loads patch (patched llama-server) is ON, 1 when off. An
+    exit code, not stdout, so the update script reads it with a plain `if` (mirrors
+    `_print_auto_update`).
+
+    Unreachable DB reads as OFF: this gates an opt-in rebuild that compiles llama.cpp from
+    source, and failing OPEN would trigger a ~20-30 min rebuild on any DB hiccup during an
+    update. Off is the conservative default (the stock binary keeps serving)."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        return 0 if await store.local_llm_patch_restore_checkpoint(SYSTEM_CTX) else 1
+    except Exception:  # noqa: BLE001
+        return 1
+    finally:
+        await engine.dispose()
+
+
+async def _set_patch_restore_checkpoint(on: bool) -> None:
+    """Persist the Fast-Qwen-loads patch setting. The update script calls this with `off`
+    when a patched build fails its smoke test, so a bad build turns its own toggle back off
+    (no stuck-on state that keeps rebuilding an engine that cannot serve). Owner-scoped like
+    the queue commands (settings RLS is is_owner())."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        await store.upsert(SYSTEM_CTX, LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY, on)
+        print(f"[local-llm] Fast-Qwen-loads patch set {'on' if on else 'off'}")
     finally:
         await engine.dispose()
 
@@ -265,6 +303,15 @@ def main(argv: list[str] | None = None) -> int:
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
     )
+    sub.add_parser(
+        "local-llm-patch-restore-checkpoint",
+        help="exit 0 if the Fast-Qwen-loads patched-engine rebuild is on, else 1",
+    )
+    p_set_patch = sub.add_parser(
+        "set-local-llm-patch-restore-checkpoint",
+        help="turn the Fast-Qwen-loads patch on/off (the update script clears it on a bad build)",
+    )
+    p_set_patch.add_argument("state", choices=["on", "off"])
     args = parser.parse_args(argv)
 
     if args.command in ("init", "reset-owner-key"):
@@ -291,6 +338,11 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_print_auto_update())
     if args.command == "local-llm-smoketest":
         return asyncio.run(_local_llm_smoketest())
+    if args.command == "local-llm-patch-restore-checkpoint":
+        return asyncio.run(_print_patch_restore_checkpoint())
+    if args.command == "set-local-llm-patch-restore-checkpoint":
+        asyncio.run(_set_patch_restore_checkpoint(args.state == "on"))
+        return 0
     return 1
 
 

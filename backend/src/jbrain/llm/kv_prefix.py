@@ -181,9 +181,19 @@ class KvPrefixStore:
     rendered into `--slot-save-path` by the config generator, and the two meet at the same
     per-model directory."""
 
-    def __init__(self, gateway: LocalGatewayClient, models_root: str) -> None:
+    def __init__(
+        self, gateway: LocalGatewayClient, models_root: str, *, patch_active: bool = False
+    ) -> None:
         self._gateway = gateway
         self._models_root = models_root
+        # Whether the Fast-Qwen-loads patched llama-server is the running build (the owner's
+        # `local_llm_patch_restore_checkpoint` setting, read once at startup — see main.py).
+        # It is the RUNTIME gate that admits the qwen3.8 MTP-hybrid entries to the disk layer:
+        # the static `kv_slot_restorable` catalog flag was reverted (the stock server re-prefills
+        # a restored hybrid with no context checkpoint), and the patch is what makes the restore
+        # sound. Reading it once is enough because turning the setting on triggers the gateway
+        # rebuild, which recreates this api container — the setting is re-read on that restart.
+        self._patch_active = patch_active
         # The prime's exact token count per served model — the integer that identifies
         # the primed slot among /slots entries, and the expected restore size.
         self._prime_tokens: dict[str, int] = {}
@@ -212,6 +222,13 @@ class KvPrefixStore:
         # today's cost, fail-soft; a byte-stable prefix (the load warm, #1198's anchors)
         # never diverges mid-prefix.
         if model.kv_slot_restorable:
+            return model
+        # The runtime gate for the qwen3.8 MTP-hybrids: with the Fast-Qwen-loads patch built
+        # in, a recurrent + MTP-self-drafting entry restores soundly (the patch supplies the
+        # checkpoint restore the stock server lacks; MTP self-drafting verifies every draft so
+        # a restore never costs correctness). The static flag stays OFF in the catalog — the
+        # owner's setting is the gate now, so no separate code change re-enables these.
+        if self._patch_active and model.recurrent and model.is_mtp_speculative:
             return model
         if model.recurrent or model.is_speculative:
             return None

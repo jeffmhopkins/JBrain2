@@ -380,6 +380,7 @@ const SETTINGS: AppSettings = {
   brain_answer_chorus: false,
   brain_answer_robot: false,
   local_llm_auto_update: true,
+  local_llm_patch_restore_checkpoint: false,
   pronunciation_lexicon: {},
 };
 
