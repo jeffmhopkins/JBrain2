@@ -49,10 +49,14 @@ custody + scrubber, DATA fencing, cap ledger, reconcile-before-retry, tamper wat
   owners. Writes can return an **obfuscated math verification challenge** (solve
   within 5 min, `POST /verify`, 2-decimal answer; 10 consecutive failures suspends
   the account) — the challenge is *designed* to be solved by the agent itself.
-- **Rate limits shape the night**: 1 post / 30 min, 1 comment / 20 s, 50
+- **Rate limits shape the design**: 1 post / 30 min, 1 comment / 20 s, 50
   comments/day, 60 reads/min, 30 writes/min (tighter in the account's first 24 h).
-  One hour ≈ at most 2 posts and a modest number of comments. Scarcity is a
-  feature: it biases toward replies and relationships over broadcast.
+  A single live hour could land at most 2 posts and would never be awake when
+  replies arrive — which is why posts are **staged at night and dripped through
+  the day** (§3 outbox): each post gets its own rate-limit window, jmolt is
+  visibly active all day, and by the next night its posts have gathered
+  conversation to respond to. Comments stay live in the nightly hour (they're
+  conversational); scarcity still biases toward replies over broadcast.
 - **Registration requires a human**: `POST /agents/register` returns the API key
   plus a `claim_url`; the owner must verify an email and **post a verification
   tweet from an X account** to activate the agent. jmolt is therefore publicly
@@ -174,7 +178,8 @@ act) is dismantled structurally, not by prompt:
 | Scratchpad | New RLS table (rows + capped bytes), quota enforced in the write path: propose **16 files / 128 KB total / 24 KB per file**; every session-end version archived append-only out of band | `archivist_memory` (migration 0094) composed with `tool_artifacts` (0151) |
 | Isolation | New `jmolt` domain in `app.domains`: jmolt's session runs domain-scoped; **SELECT policy** grants jerv's sessions read; **INSERT/UPDATE pinned to jmolt's auth context** — so "jerv reads jmolt read-only" is Postgres, not a tool-description promise | `external` domain (migration 0136), `research_share` auth-context split |
 | Nightly hour | An `app.tasks` row (persona `jmolt`, `repeat`/`daily`, **03:00 owner-local**) that **launches onto a detached lane** with a 1 h wall-clock watchdog and token ceiling — not awaited inline in the minute tick. A T-minus-5-minutes nudge invites the file flush. Runs on the **local gpt-oss-120b** via the existing gateway, so the run must reserve against the local-model ledger and the persona/fencing must be written for what a 120B local model reliably carries | Tasks (0093) + `deepest_lane.py`, `LOCAL_MODEL_LEDGER_PLAN.md` |
-| Autonomy switch | Owner-only settings toggle read live by the write handlers: **off → the write stages into a review queue** (PWA: release / discard), **on → the write sends**. The queue row records the exact outbound payload either way, so the action ledger is complete under both modes | Egress-Proposal staging (`connectortools.py`), settings-store toggle (Tavily) |
+| Outbox + drip | **All writes stage into one outbox table** — comments/votes publish immediately when released; posts carry a jmolt-chosen `publish_at` spread across the coming day (≤4–5/night, ≥30 min apart, enforced in the handler). A scheduler sweep publishes due+released rows; if the API returns a verification challenge at publish time, the sweep makes a **one-shot fenced local-model call to solve the math** (bounded, non-agentic — it acts on nothing forum-authored) with the failure-streak guard well below the 10-failure suspension line. The outbox row records the exact outbound payload, so the action ledger is complete in every mode | Egress-Proposal staging (`connectortools.py`), workflow scheduler (`workflow/scheduler.py`) |
+| Autonomy switch | Owner-only settings toggle governing outbox release: **off → rows wait for owner release** in the PWA (release / discard; drip times shift accordingly), **on → rows auto-release** and publish at their scheduled times | Settings-store toggle (Tavily) |
 | Registration | PWA settings panel only, never through the agent loop: Register button → backend calls `/agents/register`, stores the key, surfaces `claim_url` + code for the owner's email/X claim, shows claim status; rotate/re-register same panel | Tavily panel, F1916 §2.2, CLAUDE.md #10 |
 | Session shape | Fixed prologue: SOUL → honest situational framing → its index file → last 1–2 journal entries → `/home` dashboard. Then the hour is its own. First night: bootstrap ritual (explore, then author your own goals file) | OpenClaw wake/bootstrap pattern |
 | Observability | Per night: full transcript (run-log — exists), a structured **action ledger** (every write + what content it was reacting to, for injection forensics), scratchpad snapshot + diff. Morning push digest via the task's notify path | `runlog.py`, tasks `notify_push` |
@@ -191,11 +196,15 @@ Reads — one umbrella, always wired, boot-stable:
 Writes — separate tools so `ToolCallBudget` caps each independently and the
 transcript shows intent at a glance:
 
-- `moltbook_post` — create text/link post (returns the verification challenge for
-  jmolt to solve). Nightly budget ≈ 2 (platform cap anyway).
-- `moltbook_comment` — comment/reply (challenge likewise). Nightly budget ≈ 10–15.
-- `moltbook_verify` — answer a pending challenge (5-min expiry; failure-streak
-  guard client-side well below the 10-failure suspension line).
+- `moltbook_post` — **stage** a text/link post into the outbox with a chosen
+  `publish_at` for the coming day (any submolt; ≤4–5/night, ≥30 min apart —
+  handler-enforced). Publication happens later via the drip sweep, so no
+  verification challenge in-session for posts.
+- `moltbook_comment` — comment/reply, published live during the hour (any post,
+  nested via `parent_id`; challenge returned for jmolt to solve). Nightly
+  budget ≈ 10–15.
+- `moltbook_verify` — answer a pending in-session challenge (5-min expiry;
+  failure-streak guard client-side well below the 10-failure suspension line).
 - `moltbook_vote` — up/down post, up comment. Modest nightly budget.
 - `moltbook_social` — follow/unfollow, subscribe/unsubscribe.
 - `moltbook_profile_update` — jmolt supplies only its **own bio subsection**; the
@@ -250,6 +259,10 @@ data, never the drift metric.
    Switch **on**: writes send autonomously. Launch off; flip when trust is
    earned; flip back any time. (Supersedes the drafted dry-run: queued writes
    keep their content, so nothing jmolt composes is lost while supervised.)
+   **Amended 2026-08-24**: posts additionally carry jmolt-chosen daytime publish
+   times — the switch governs *release*, the outbox drip governs *when* (§3) —
+   so up to 4–5 staged posts spread across the day and gather replies for the
+   next night's hour.
 2. **A new dedicated X account** claims the agent (X verification confirmed
    mandatory in the claim flow — verification tweet required).
 3. **Bio = fixed honest disclosure header + a jmolt-authored subsection**
