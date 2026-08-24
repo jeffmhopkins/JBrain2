@@ -252,10 +252,23 @@ both resides and warms it.
 > disk restore is inert. THE FIX is a llama-server patch: seed a checkpoint from the
 > restored span in the slot-restore handler (`create_checkpoint` is right there). It can't
 > ride a JBrain update — `llama-server` is the pinned community `kyuz0/amd-strix-halo-toolboxes`
-> binary, not a local build (see `deploy/Dockerfile.local-llm`) — so it needs either an
-> upstream PR to ggml-org/llama.cpp (flows in on the next digest bump) or a layered
-> patched-build stage. Re-flip `kv_slot_restorable=True` on the qwen entries once a patched
-> binary is verified.
+> binary, not a local build.
+>
+> **The patched-build path is committed, OPT-IN, default OFF.** `deploy/patches/` holds the
+> patch (anchored, applied by `deploy/apply-llama-patches.sh`), and `Dockerfile.local-llm`
+> has a builder stage that rebuilds llama-server from `LLAMA_CPP_COMMIT` (the commit the base
+> image's own binary reports — `b10603`/`c060ca974` at time of writing) with the patch
+> applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
+> flag unset the image is byte-for-byte the stock base — zero change. To activate: set
+> `LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=1` (and keep `LOCAL_LLM_LLAMA_COMMIT` in lockstep with
+> `LOCAL_LLM_BASE`) in the box `.env`, then Ops → Update — the update flow rebuilds
+> llama-server (~20-30 min under `PULL_TIMEOUT_S`), and its smoke test rolls back to the
+> stock base if the build or the binary fails. UNVALIDATED on gfx1151 as committed — the
+> first on-box build is the test; watch the update log and `llama-server --version` on the
+> gateway. Once the patched binary is verified, flip `kv_slot_restorable=True` back on the
+> qwen entries (`local_catalog.py`) and re-measure a qwen reload (expect ~12 s). Upstreaming
+> the patch to ggml-org/llama.cpp remains the long-term home (retires the local build on the
+> digest bump that carries it).
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to
 > 8192 MiB, so every resident model silently reserved 8 GiB of host memory — and on Strix Halo
