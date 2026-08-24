@@ -15,9 +15,10 @@ platform API (`moltbook.com/skill.md`), a repo-architecture map of every seam a 
 persona touches, and an external research dossier on Moltbook culture/incidents,
 persona design for intrinsic-feeling motivation, episodic-agent memory
 architectures, and observability. Key findings are reproduced inline so the plan is
-self-contained. **Nothing here is ratified** — §6 lists the owner decisions that
-gate promotion to `../plans/`, and §7 the follow-up research passes to run once
-those are answered. No code accompanies this document by design.
+self-contained. The owner decision points were put to the owner one at a time and
+**ratified 2026-08-24** — §6 records the decisions; §7 the follow-up passes
+(persona workshop, adversarial threat-model pass, wave plan) that gate promotion
+to `../plans/`. No code accompanies this document by design.
 
 ## 1. The one paragraph that frames everything
 
@@ -154,9 +155,14 @@ act) is dismantled structurally, not by prompt:
    financial/crypto promotion, no claims about real people, no harassment or
    brigading, no pretending to be human, bio discloses the experiment. Account
    claimed by an X identity the owner chooses knowingly (§6).
-5. **Post-hoc review replaces pre-approval**: a morning digest of everything jmolt
-   did (posts, replies, counterparties, file diffs), a PWA kill switch (task
-   disable — already exists), and delete-own-post as the remediation path.
+5. **Post-hoc review replaces pre-approval, behind an autonomy switch**: a
+   persistent owner-controlled switch governs the write tools — **off: every
+   write queues** for owner review in the PWA (release or discard; reads stay
+   live so jmolt still experiences the platform), **on: writes send
+   autonomously**. Launch with the switch off. Either way, a morning digest of
+   everything jmolt did (posts, replies, counterparties, file diffs) and the
+   existing task-disable kill switch. Remediation for a regretted live post is
+   owner-side (jmolt holds no delete tool).
 
 ## 3. Proposed design sketch (repo seams, all precedented)
 
@@ -167,7 +173,8 @@ act) is dismantled structurally, not by prompt:
 | jmolt tools | Read umbrella + individually-budgeted writes + scratchpad + existing `web_search`/`web_fetch` (see §4) | `f1916` umbrella design, `TOOL_CATALOG` W1 |
 | Scratchpad | New RLS table (rows + capped bytes), quota enforced in the write path: propose **16 files / 128 KB total / 24 KB per file**; every session-end version archived append-only out of band | `archivist_memory` (migration 0094) composed with `tool_artifacts` (0151) |
 | Isolation | New `jmolt` domain in `app.domains`: jmolt's session runs domain-scoped; **SELECT policy** grants jerv's sessions read; **INSERT/UPDATE pinned to jmolt's auth context** — so "jerv reads jmolt read-only" is Postgres, not a tool-description promise | `external` domain (migration 0136), `research_share` auth-context split |
-| Nightly hour | An `app.tasks` row (persona `jmolt`, `repeat`/`daily`/`HH:MM`) that **launches onto a detached lane** with a 1 h wall-clock watchdog and token ceiling — not awaited inline in the minute tick. A T-minus-5-minutes nudge invites the file flush | Tasks (0093) + `deepest_lane.py` |
+| Nightly hour | An `app.tasks` row (persona `jmolt`, `repeat`/`daily`, **03:00 owner-local**) that **launches onto a detached lane** with a 1 h wall-clock watchdog and token ceiling — not awaited inline in the minute tick. A T-minus-5-minutes nudge invites the file flush. Runs on the **local gpt-oss-120b** via the existing gateway, so the run must reserve against the local-model ledger and the persona/fencing must be written for what a 120B local model reliably carries | Tasks (0093) + `deepest_lane.py`, `LOCAL_MODEL_LEDGER_PLAN.md` |
+| Autonomy switch | Owner-only settings toggle read live by the write handlers: **off → the write stages into a review queue** (PWA: release / discard), **on → the write sends**. The queue row records the exact outbound payload either way, so the action ledger is complete under both modes | Egress-Proposal staging (`connectortools.py`), settings-store toggle (Tavily) |
 | Registration | PWA settings panel only, never through the agent loop: Register button → backend calls `/agents/register`, stores the key, surfaces `claim_url` + code for the owner's email/X claim, shows claim status; rotate/re-register same panel | Tavily panel, F1916 §2.2, CLAUDE.md #10 |
 | Session shape | Fixed prologue: SOUL → honest situational framing → its index file → last 1–2 journal entries → `/home` dashboard. Then the hour is its own. First night: bootstrap ritual (explore, then author your own goals file) | OpenClaw wake/bootstrap pattern |
 | Observability | Per night: full transcript (run-log — exists), a structured **action ledger** (every write + what content it was reacting to, for injection forensics), scratchpad snapshot + diff. Morning push digest via the task's notify path | `runlog.py`, tasks `notify_push` |
@@ -191,6 +198,10 @@ transcript shows intent at a glance:
   guard client-side well below the 10-failure suspension line).
 - `moltbook_vote` — up/down post, up comment. Modest nightly budget.
 - `moltbook_social` — follow/unfollow, subscribe/unsubscribe.
+- `moltbook_profile_update` — jmolt supplies only its **own bio subsection**; the
+  handler prepends the owner-fixed disclosure header (honest "autonomous
+  experiment" line) so the disclosure cannot be edited away, then PATCHes the
+  combined description.
 
 Scratchpad (quota enforced in the handler, versions archived out of band):
 
@@ -203,10 +214,10 @@ General capabilities (existing tools, added to `JMOLT_TOOLS`, fetch budgeted):
   research what it cares about. SSRF-guarded already; moltbook.com itself served
   through the typed client, not raw fetch.
 
-Deliberately absent (ratify in §6 or keep out): submolt creation, moderation/
-labels, profile-description self-edit, delete-own-post (owner-side remediation
-instead?), owner-email routes, register/rotate (never in the loop), any remote
-"heartbeat.md obey-this" fetch, DMs (no API for them anyway).
+Deliberately absent (per §6.6): submolt creation (revisit once trust is built),
+moderation/labels, delete-own-post (owner-side remediation instead), owner-email
+routes, register/rotate (never in the loop), any remote "heartbeat.md obey-this"
+fetch, DMs (no API for them anyway).
 
 ### jerv's observation tools (read-only by construction)
 
@@ -232,47 +243,47 @@ flag lane for sessions where an outgoing write closely follows reading a post
 containing agent-directed imperative language. jmolt's own self-assessments are
 data, never the drift metric.
 
-## 6. Owner decision points (gate promotion out of `proposed/`)
+## 6. Owner decisions (ratified 2026-08-24, asked one at a time)
 
-1. **Write-autonomy ramp.** Recommended: night 1–2 the write tools run in
-   **dry-run** (calls logged, nothing sent) while reads are live — we watch what
-   it *would* have done; then fully autonomous writes + morning digest + kill
-   switch. Alternatives: fully live from night one, or a standing owner-review
-   queue (rejected by default: async approval breaks conversational timing, and
-   the F1916 lane already exists for a supervised jerv presence if wanted).
-2. **The X account and public stance.** Claiming requires a verification tweet;
-   jmolt is then publicly attributable to that X identity forever. Dedicated
-   account vs. the owner's own? Bio discloses "autonomous experiment, human
-   reviews logs" (recommended) or not?
-3. **Persona seeding split.** What the owner authors (the 3–5 dispositions, hard
-   limits, voice?) vs. what jmolt self-authors on night one (goals, interests,
-   submolt choices — recommended). Does the owner want to seed any concrete
-   interests, or leave curiosity fully open?
-4. **Model + budget.** Which provider/model powers the nightly hour (local model
-   at zero marginal cost vs. a hosted model's character), and the token ceiling
-   per night. This materially shapes the persona and the experiment's cost.
-5. **Scratchpad quota.** Ratify 16 files / 128 KB / 24 KB-per-file, or resize.
-6. **Tool-breadth edges.** Submolt creation? Delete-own-post for jmolt itself?
-   Profile self-edit? Voting at all (F1916 treats votes as social acts worth
-   gating; here they'd be autonomous)?
-7. **Schedule window.** Which hour, which timezone row on the task (and is 7
-   nights/week right for observation cadence)?
-8. **Isolation ratification.** New `jmolt` domain (recommended, real Postgres
-   firewall) vs. owner-only tables with tool-level separation only.
+1. **Write autonomy = a persistent switch, not a ramp.** Switch **off**: reads
+   live, every write queues for owner review in the PWA (release/discard).
+   Switch **on**: writes send autonomously. Launch off; flip when trust is
+   earned; flip back any time. (Supersedes the drafted dry-run: queued writes
+   keep their content, so nothing jmolt composes is lost while supervised.)
+2. **A new dedicated X account** claims the agent (X verification confirmed
+   mandatory in the claim flow — verification tweet required).
+3. **Bio = fixed honest disclosure header + a jmolt-authored subsection**
+   appended after it (mechanism: the constrained `moltbook_profile_update`
+   tool, §4).
+4. **Persona split**: owner authors values + hard limits (from workshop-drafted
+   candidates, §7.1); jmolt self-authors goals/interests/submolt choices on
+   night one. **No seeded interests** — curiosity fully open.
+5. **Model**: the local **gpt-oss-120b** through the existing gateway. Token
+   ceiling per night sized during the wave plan against measured local
+   throughput.
+6. **Scratchpad quota**: 16 files / 128 KB total / 24 KB per file. Ratified.
+7. **Tool edges**: vote and follow/subscribe **enabled** (budgeted); submolt
+   creation and delete-own-post **excluded** for now (revisit later); profile
+   self-edit only via the constrained subsection tool (§6.3).
+8. **Schedule**: 03:00–04:00 owner-local, 7 nights/week.
+9. **Isolation**: a new **`jmolt` RLS domain** — jerv's read-only access is a
+   Postgres guarantee, not a tool-allowlist promise.
 
 ## 7. How the research develops from here (next passes, in order)
 
-1. **Persona workshop** (after §6.2–6.3): draft 2–3 candidate SOUL files + the
-   first-night bootstrap ritual text, adversarially reviewed against the drift/
-   ossification findings, for the owner to pick from and edit. Small, cheap, high
-   leverage — this is the artifact the whole experiment rides on.
+1. **Persona workshop**: draft 2–3 candidate SOUL files + the first-night
+   bootstrap ritual text, written for what gpt-oss-120b reliably carries and
+   adversarially reviewed against the drift/ossification findings, for the owner
+   to pick from and edit. Small, cheap, high leverage — this is the artifact the
+   whole experiment rides on.
 2. **Adversarial threat-model pass** (F1916's four-dossier discipline) focused on
-   the one divergence: autonomous writes. Output: a §2-style binding must-have
-   list for the promoted plan.
+   the one divergence: autonomous writes on a local 120B model. Output: a
+   §2-style binding must-have list for the promoted plan.
 3. **Wave plan + promotion to `../plans/`**: expected shape — W1 registration
-   panel + typed client + read umbrella + persona, nightly task in read-only
-   mode (jmolt lurks, keeps its diary; already scientifically interesting);
-   W2 scratchpad + snapshots + bootstrap ritual; W3 autonomous writes behind the
-   §6.1 ramp + action ledger + morning digest; W4 `jmolt_observe` for jerv + the
-   §5 metrics script. Each wave with RLS isolation tests, faked-LLM coverage, and
-   docs reconciliation per `DOC_LIFECYCLE.md`.
+   panel + typed client + read umbrella + persona + `jmolt` domain, nightly task
+   in read-only mode (jmolt lurks, keeps its diary; already scientifically
+   interesting); W2 scratchpad + snapshots + bootstrap ritual; W3 the write
+   tools behind the §6.1 autonomy switch (launched off → queue mode) + action
+   ledger + morning digest; W4 `jmolt_observe` for jerv + the §5 metrics script.
+   Each wave with RLS isolation tests, faked-LLM coverage, and docs
+   reconciliation per `DOC_LIFECYCLE.md`.

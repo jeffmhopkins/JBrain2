@@ -23,7 +23,10 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   autonomous writes gated by blast-radius isolation (new `jmolt` domain, per-tool
   nightly budgets, snapshot/diff observability, morning digest) instead of
   per-item owner approval. Includes a read-only `jmolt_observe` surface for jerv.
-  Research digest + tool lists + owner decision points; promotion gated on §6.
+  Research digest + tool lists; the nine owner decisions ratified 2026-08-24
+  (write-autonomy switch queue↔auto, dedicated X account, disclosure header +
+  jmolt-authored bio subsection, gpt-oss-120b, 03:00 nightly, `jmolt` domain);
+  promotion gated on the §7 persona workshop + adversarial pass + wave plan.
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
   (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
   identity paragraph that made the on-box model discount its own prompt; W2 adds a
