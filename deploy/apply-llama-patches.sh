@@ -40,6 +40,11 @@ save = {
                     // (the restore-side block explains why; sidecar = <filepath>.ckpt)
                     {
                         const auto & cps = slot->prompt.checkpoints;
+                        // Unconditional, BEFORE the open: on the box this line's absence vs
+                        // presence is what tells a non-executing block apart from a failing
+                        // filesystem write — the first field diagnosis had neither signal.
+                        SLT_INF(*slot, "writing checkpoint sidecar (%zu checkpoint(s)) to %s\\n",
+                            cps.size(), (filepath + ".ckpt").c_str());
                         std::ofstream ck(filepath + ".ckpt", std::ios::binary | std::ios::trunc);
                         if (ck) {
                             const char ck_magic[4] = {'J','B','C','K'};
@@ -68,6 +73,11 @@ save = {
                             } else {
                                 SLT_INF(*slot, "saved %u context checkpoint(s) to sidecar\\n", ck_count);
                             }
+                        } else {
+                            // Never fail silently: the first on-box run of this patch was
+                            // undiagnosable for exactly this missing branch.
+                            SLT_WRN(*slot, "cannot open checkpoint sidecar for write (errno %d: %s)\\n",
+                                errno, strerror(errno));
                         }
                     }
                     // --- end JBrain patch ---''',
@@ -173,20 +183,17 @@ for ins in (save, restore):
     src = src.replace(anchor, anchor + ins["block"], 1)
     print(f"[llama-patch] applied {ins['name']} (anchor: {anchor!r})")
 
-# <fstream> and <list> ride in via the server's existing includes on the known
-# bases; verify rather than assume so a slimmed-down include set fails loudly here
-# instead of as a compile error mid-build.
-for header in ("#include <fstream>", "#include <list>"):
+# <fstream> must already be there (fail loudly if a slimmed include set drops it);
+# <list>, <cerrno> and <cstring> are inserted after it when absent — the blocks use
+# std::list, errno and strerror.
+if "#include <fstream>" not in src:
+    sys.stderr.write(f"[llama-patch] FATAL: #include <fstream> missing from {target} — patch needs it\n")
+    sys.exit(1)
+for header in ("#include <list>", "#include <cerrno>", "#include <cstring>"):
     if header in src:
         continue
-    if header == "#include <list>":
-        # std::list is used; the type also reaches this TU via server-common.h's
-        # checkpoint list member, but pull it in explicitly to be safe.
-        src = src.replace("#include <fstream>", "#include <fstream>\n#include <list>", 1)
-        print("[llama-patch] added #include <list>")
-    else:
-        sys.stderr.write(f"[llama-patch] FATAL: {header} missing from {target} — patch needs it\n")
-        sys.exit(1)
+    src = src.replace("#include <fstream>", f"#include <fstream>\n{header}", 1)
+    print(f"[llama-patch] added {header}")
 
 open(target, "w").write(src)
 print("[llama-patch] done")
