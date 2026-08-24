@@ -3,34 +3,63 @@ can REUSE a restored prompt instead of re-prefilling it.
 
 Applied as an anchored insertion (see deploy/apply-llama-patches.sh) rather
 than a line-numbered diff, so it survives minor llama.cpp drift around the
-restore handler. Pinned to the commit the box's base image ships
-(LLAMA_CPP_COMMIT in Dockerfile.local-llm, currently 571d0d540); re-verify the
-anchor on a base bump — the restore success path is worded differently across
-versions (a newer commit set it via `slot->prompt.tokens = std::move(restored);`).
+restore handler. Built at the commit the box's base image ships (read off the
+base's own `llama-server --version` at build time; Dockerfile.local-llm's
+LLAMA_CPP_COMMIT is only the fallback). The restore success path is worded
+differently across llama.cpp versions, so the apply script knows every wording
+as an alternative anchor and picks whichever the checked-out tree contains.
 
-Anchor line (must be unique in tools/server/server-context.cpp), immediately
-after the restored tokens are written into the slot on the success path:
-    slot->prompt.tokens.insert(tokens);
+Anchor lines (the LAST statement of the restore success path — whichever is
+present must be unique in tools/server/server-context.cpp):
+    slot->prompt.tokens.insert(tokens);            (base b10068 / 571d0d540)
+    slot->prompt.tokens = std::move(restored);     (b10603+ deserialize rework)
 
 Inserted immediately after it:
 
                         // --- JBrain patch: reuse-on-restore for SWA/hybrid/recurrent ---
-                        // A slot-restore rebuilds the memory state and sets
+                        // A slot-restore rebuilds the memory state and repopulates
                         // slot->prompt.tokens, but for a SWA/hybrid/recurrent model the
                         // completion-path prompt reuse is gated on a CONTEXT CHECKPOINT.
                         // With none registered the reuse hits do_reset and re-prefills the
                         // whole prompt. Seed one checkpoint spanning the restored prompt so
                         // the restore is actually reusable (harmless for pure-attention).
                         if (params_base.n_ctx_checkpoints > 0 && slot->prompt.tokens.size() > 0) {
-                            auto & cur = slot->prompt.checkpoints.emplace_back();
-                            cur.id_task = -1;  // not owned by a completion task
-                            cur.update_pos(0, 0, (llama_pos) slot->prompt.tokens.size() - 1);
-                            cur.update_tgt(ctx_tgt, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                            cur.update_dft(ctx_dft, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                            if (spec) {
+                            const auto ckpt_pos_min = llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot->id);
+                            const auto ckpt_pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot->id);
+                            if (ckpt_pos_min >= 0 && ckpt_pos_max >= ckpt_pos_min) {
+                                auto & cur = slot->prompt.checkpoints.emplace_back();
+                                cur.id_task = -1;  // not owned by a completion task
+                                cur.update_pos((int64_t) slot->prompt.tokens.size(), ckpt_pos_min, ckpt_pos_max);
+                                cur.update_tgt(ctx_tgt, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                                cur.update_dft(ctx_dft, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
                                 common_speculative_get_state(spec.get(), slot->id, cur.data_spec);
+                                SLT_TRC(*slot, "seeded restore checkpoint (n_tokens = %d, pos_min = %d, pos_max = %d)\n",
+                                    (int) slot->prompt.tokens.size(), (int) ckpt_pos_min, (int) ckpt_pos_max);
                             }
-                            SLT_TRC(slot, "seeded restore checkpoint (n_tokens = %d)\n",
-                                (int) slot->prompt.tokens.size());
                         }
                         // --- end JBrain patch ---
+
+Why each line is the way it is (all verified against 571d0d540 sources; a
+first draft got three of these wrong and would have failed to compile or,
+worse, compiled into a no-op):
+
+  - update_pos's FIRST argument is n_tokens — the token count the checkpoint's
+    KV data covers — not a prefix offset. The reuse path clamps
+    `n_past = min(size_up_to_pos(pos_next), it->n_tokens)`, so passing 0 here
+    seeds a checkpoint that "restores" to n_past = 0: a full re-prefill, i.e.
+    the patch would be inert. After a restore the whole prompt is in the KV,
+    so the count is slot->prompt.tokens.size().
+  - pos_min/pos_max are read from the model's own memory
+    (llama_memory_seq_pos_min/max), mirroring create_checkpoint's caller —
+    for SWA/hybrid memory the floor is not necessarily 0, and hardcoding
+    (0, N-1) overclaims what the checkpoint covers. pos_min < 0 means the
+    restore left no usable range: seed nothing.
+  - SLT_TRC takes the slot by VALUE-ish expansion — the macro expands
+    `(slot).id` — and `slot` here is a `server_slot *`, so it must be
+    `SLT_TRC(*slot, ...)` or the build fails.
+  - common_speculative_get_state null-checks its spec argument internally
+    (speculative.cpp), so no guard is needed, matching create_checkpoint.
+  - id_task = -1 because a restore runs as a slot-action task: there is no
+    owning completion task, and create_checkpoint's `slot.task->id` would
+    dereference null here — which is why the block mirrors that function
+    rather than calling it.

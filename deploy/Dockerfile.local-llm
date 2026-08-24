@@ -62,12 +62,14 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 # unset/0 this stage still builds but produces nothing the runtime copies, so the
 # image is byte-for-byte the stock base binary — zero risk to the working build.
 #
-# When set to 1, this rebuilds ONLY the llama-server target from llama.cpp pinned
-# to LLAMA_CPP_COMMIT (the commit the base image's own binary reports — keep it in
-# lockstep with LOCAL_LLM_BASE), with JBrain's patches applied by anchor
-# (deploy/apply-llama-patches.sh). It builds INSIDE the base image so it reuses the
-# base's proven gfx1151 Vulkan toolchain (glslc, headers, driver) — only generic
-# build tools are added — which keeps the result ABI-matched to the runtime.
+# When set to 1, this rebuilds ONLY the llama-server target from llama.cpp at the
+# commit the base image's OWN binary reports (`llama-server --version`, read at
+# build time — LLAMA_CPP_COMMIT is just the fallback for an unparseable version),
+# with JBrain's patches applied by anchor (deploy/apply-llama-patches.sh). It
+# builds INSIDE the base image so it reuses the base's proven gfx1151 Vulkan
+# toolchain (glslc, headers, driver) — only generic build tools are added — and
+# building at the base's own commit keeps the result ABI-matched to the base's
+# shared libs (libggml*/libllama), which the overlaid binary links dynamically.
 #
 # WHY it exists: the sole patch (0001) seeds a context checkpoint on slot-restore
 # so SWA/hybrid/recurrent models (qwen3.8) can REUSE a disk-restored prompt instead
@@ -78,12 +80,15 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 # the test; the update flow's smoke-test + rollback protect the runtime if it fails.
 FROM ${LOCAL_LLM_BASE} AS llama-build
 ARG PATCH_RESTORE_CHECKPOINT=0
-# MUST equal the commit the pinned base image's own llama-server was built from —
-# read it live off the box with `llama-server --version` (the sha in parens), NOT a
-# guess. The base links libggml*.so / libllama.so DYNAMICALLY and we overlay only the
-# llama-server binary, so a mismatched commit ships an ABI-incompatible binary that
-# crashes at model load (the 2026-08-24 smoke failure: pinned c060ca974 while the base
-# was 571d0d540). The RUN below hard-fails if this drifts from the base again.
+# FALLBACK ONLY. The build checks out the commit the base image's own llama-server
+# reports (`llama-server --version`, read in the RUN below) — the base links
+# libggml*.so / libllama.so DYNAMICALLY and we overlay only the llama-server binary,
+# so any other commit ships an ABI-incompatible binary that crashes at model load.
+# That was the 2026-08-24 smoke failure: this ARG was hand-pinned to c060ca974 while
+# the base was 571d0d540, and hand-pinned commits also break the auto-update path
+# (a floating base never matches a static pin). Reading the commit off the base
+# itself designs the drift class out; this ARG is used only when the version output
+# is unparseable, and should track the pinned LOCAL_LLM_BASE's commit.
 ARG LLAMA_CPP_COMMIT=571d0d540
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
@@ -96,19 +101,14 @@ RUN set -eux; \
         ( apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ); \
     base_ver="$(llama-server --version 2>&1 || true)"; \
     base_commit="$(printf '%s\n' "$base_ver" | sed -n 's/^.*version:[^(]*(\([0-9a-f]\{7,40\}\)).*$/\1/p' | head -n1)"; \
-    if [ -z "$base_commit" ]; then \
-        echo "WARNING: could not read the base llama-server commit (version output: $base_ver) — proceeding; the update's smoke test still backstops a bad build"; \
-    elif [ "$base_commit" != "${LLAMA_CPP_COMMIT}" ]; then \
-        echo "FATAL: base llama-server is commit ${base_commit} but LLAMA_CPP_COMMIT=${LLAMA_CPP_COMMIT}."; \
-        echo "       They must match: the base links libggml*.so/libllama.so dynamically and we overlay only"; \
-        echo "       the binary, so a mismatched commit crashes at model load. Set LLAMA_CPP_COMMIT=${base_commit}"; \
-        echo "       (and re-verify the patch anchor in deploy/apply-llama-patches.sh against that commit)."; \
-        exit 1; \
+    if [ -n "$base_commit" ]; then \
+        echo "building llama-server at the base image's own commit ${base_commit} (ABI-matched overlay)"; \
     else \
-        echo "base llama-server commit ${base_commit} matches LLAMA_CPP_COMMIT — ABI-compatible overlay"; \
+        base_commit="${LLAMA_CPP_COMMIT}"; \
+        echo "WARNING: could not parse the base llama-server commit (version output: $base_ver) — falling back to LLAMA_CPP_COMMIT=${base_commit}; the update's smoke test backstops a mismatch"; \
     fi; \
     git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
-    git -C /llama checkout "${LLAMA_CPP_COMMIT}"; \
+    git -C /llama checkout "${base_commit}"; \
     /apply-llama-patches.sh /llama; \
     cmake -S /llama -B /llama/build -DGGML_VULKAN=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release; \
     cmake --build /llama/build --target llama-server -j"$(nproc)"; \
