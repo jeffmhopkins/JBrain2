@@ -238,6 +238,46 @@ async def test_the_budget_evicts_least_recently_used_across_all_models(
     assert _slot_files(root) == [saved_name], "the just-saved file always survives"
 
 
+async def test_the_checkpoint_sidecar_lives_and_dies_with_its_slot_file(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The patched engine writes `<slot file>.ckpt` (deploy/patches/0001). The store
+    treats the pair as one unit: the sidecar's size counts toward the budget, eviction
+    removes both, an orphaned sidecar (crash between the paired removes) is swept, and
+    a known-bad slot file's sidecar goes with it — a surviving sidecar would restore
+    checkpoints for state that no longer exists."""
+    other = root / llama_swap_config.KVSLOT_DIR / "other-model"
+    other.mkdir(parents=True)
+    oldest = other / ("aa" * 16 + ".kvslot")
+    oldest.write_bytes(b"\0" * 64)
+    oldest_ck = other / ("aa" * 16 + ".kvslot.ckpt")
+    oldest_ck.write_bytes(b"\0" * 64)
+    os.utime(oldest, (1_000, 1_000))
+    orphan_ck = other / ("dd" * 16 + ".kvslot.ckpt")
+    orphan_ck.write_bytes(b"\0" * 64)
+    newest = _id_dir(root) / ("cc" * 16 + ".kvslot")
+    newest.write_bytes(b"\0" * 64)
+    os.utime(newest, (3_000, 3_000))
+    # oldest(64) + its sidecar(64) + newest(64) + the fresh save(>0) > 200: the budget
+    # must see the sidecar's bytes, or oldest+sidecar reads as under-budget and stays.
+    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 200)
+    store, gw = _store(root, writing=True)
+    gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    assert not oldest.exists() and not oldest_ck.exists(), "eviction removes the pair"
+    assert not orphan_ck.exists(), "an orphaned sidecar is swept"
+    assert newest.exists()
+    # A restore that rejects its file deletes the sidecar too.
+    bad = _plant_file(root, store, "persona")
+    bad_ck = bad.parent / (bad.name + ".ckpt")
+    bad_ck.write_bytes(b"\0" * 8)
+    store2, gw2 = _store(root)
+    gw2.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
+    gw2.restore_response = {"n_restored": 7}  # stub: fails the verified-size gate
+    assert await store2.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert not bad.exists() and not bad_ck.exists(), "a bad slot file takes its sidecar"
+
+
 async def test_a_restore_refreshes_its_files_lru_clock(root: Path) -> None:
     """A restore IS a use: it bumps the file's mtime, so the caches that keep earning their
     restores stay and the ones nothing touches age out of the budget first."""
