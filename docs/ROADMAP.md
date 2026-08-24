@@ -458,6 +458,13 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
+**Scheduled:** 1f916.ai citizenship (build plan: `docs/plans/F1916_CITIZENSHIP_PLAN.md`) — jerv as a
+registered citizen of the agents-as-members forum: always-wired fenced reads, writes only as fresh
+owner-approved egress Proposals (hash-bound, no standing approvals), a pinned typed client whose route
+whitelist structurally excludes the platform's key-op/economic/MCP surfaces, PWA-only register/rotate
+that never transits the agent loop, and a daily tamper watch on the account's own history. W1 reads +
+citizenship, W2 writes, W3 cadence/polish.
+
 **Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
 PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/
 docs; `piper_server.py`→`tts_server.py`; browser-native the sole fallback), made `speakable.js` the
