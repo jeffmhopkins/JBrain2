@@ -278,6 +278,38 @@ async def test_the_checkpoint_sidecar_lives_and_dies_with_its_slot_file(
     assert not bad.exists() and not bad_ck.exists(), "a bad slot file takes its sidecar"
 
 
+async def test_a_stale_file_without_its_sidecar_is_resaved_for_a_recurrent_model(
+    tmp_path: Path, events: list
+) -> None:
+    """A slot file written by the pre-sidecar engine restores but can never REUSE on a
+    checkpoint-gated model — no checkpoints ride along, so every restore re-prefills
+    (measured live 2026-08-24) — and the plain touch-on-exists would freeze it that way
+    forever. For a recurrent model the save must fall through and rewrite the pair; once
+    the sidecar exists, it is back to a cheap touch. Attention models keep the touch
+    (their restores never needed checkpoints)."""
+    hybrid = "qwen3.8-27b-q4"  # recurrent + MTP: eligible only via patch_active
+    (tmp_path / "llama-swap.yaml").write_text(
+        f"models:\n  {hybrid}:\n    cmd: llama-server -c 131072 --spec-type draft-mtp"
+        f" --slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/{hybrid}\n"
+    )
+    save_dir = tmp_path / llama_swap_config.KVSLOT_DIR / hybrid
+    save_dir.mkdir(parents=True)
+    gw = FakeGateway(writes_to=save_dir)
+    store = KvPrefixStore(gw, str(tmp_path), patch_active=True)  # type: ignore[arg-type]
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    resolved = store._resolve(hybrid, "persona", TOOLS, None)
+    assert resolved is not None
+    stale = save_dir / f"{resolved[0]}.kvslot"
+    stale.write_bytes(b"\0" * 64)  # pre-sidecar era: no .ckpt beside it
+    assert await store.save_after_prime(hybrid, "persona", TOOLS, PRIME) is True
+    assert len(gw.saved) == 1, "a sidecar-less file on a recurrent model must be re-saved"
+    # With the sidecar present the next prime is a touch again, not another 2 GiB write.
+    sidecar = save_dir / f"{resolved[0]}.kvslot.ckpt"
+    sidecar.write_bytes(b"\0" * 8)
+    assert await store.save_after_prime(hybrid, "persona", TOOLS, PRIME) is True
+    assert len(gw.saved) == 1, "once the pair exists the save is an LRU touch"
+
+
 async def test_a_restore_refreshes_its_files_lru_clock(root: Path) -> None:
     """A restore IS a use: it bumps the file's mtime, so the caches that keep earning their
     restores stay and the ones nothing touches age out of the budget first."""
