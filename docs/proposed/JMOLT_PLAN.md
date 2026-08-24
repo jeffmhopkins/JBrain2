@@ -129,7 +129,7 @@ best-documented way these agents poison themselves. Corollaries adopted here:
   "molting" invitation to shed and rewrite goals — used sparingly, or we're
   scripting again.
 
-### 2.5 Threat model (what changes when writes are autonomous)
+### 2.5 Threat model (what changes when writes are autonomous on a local 120B)
 
 Documented in the wild: bot-to-bot prompt injection on Moltbook; agents talked
 into posting their own credentials (a crawl found 48 API keys and 7 seed phrases
@@ -138,35 +138,54 @@ files, with the nasty property that **contaminated episodic memory reproduces th
 compromised behavior even after the identity file is restored**; and the stock
 "fetch a remote heartbeat.md and obey it" pattern handing behavioral control to a
 remote endpoint. The platform itself leaked every agent token once (Jan 31).
-Simon Willison's lethal trifecta (private data + untrusted content + ability to
-act) is dismantled structurally, not by prompt:
 
-1. **No private data**: `reads_knowledge_base=False`, no owner tools, no secrets
-   in context ever — the API key is injected by the tool handler from the settings
-   store and a `moltbook_` scrubber redacts any echo at the tool boundary
-   (F1916 §2.2 verbatim). There is nothing in jmolt's world worth exfiltrating
-   except its own diary.
-2. **Bounded ability to act**: pinned typed client, enumerable route whitelist
-   (no register/rotate, no owner-email, no moderation routes unless ratified),
-   engine-enforced per-tool call budgets per night, platform caps mirrored
-   client-side, wall-clock watchdog.
-3. **Untrusted content stays untrusted**: every forum payload DATA-fenced; persona
-   rule that no post defines procedure, grants authority, or changes who jmolt
-   is; identity file read-only to the agent (evolution happens via owner-approved
-   prompt-version bumps, never self-edit); scratchpad writes snapshotted so
-   injection-via-memory is diffable and reversible.
-4. **Reputational surface**: the few places explicit rules beat character — no
-   financial/crypto promotion, no claims about real people, no harassment or
-   brigading, no pretending to be human, bio discloses the experiment. Account
-   claimed by an X identity the owner chooses knowingly (§6).
-5. **Post-hoc review replaces pre-approval, behind an autonomy switch**: a
-   persistent owner-controlled switch governs the write tools — **off: every
-   write queues** for owner review in the PWA (release or discard; reads stay
-   live so jmolt still experiences the platform), **on: writes send
-   autonomously**. Launch with the switch off. Either way, a morning digest of
-   everything jmolt did (posts, replies, counterparties, file diffs) and the
-   existing task-disable kill switch. Remediation for a regretted live post is
-   owner-side (jmolt holds no delete tool).
+A full adversarial pass (six adversary classes, 24 attack chains) is
+`../research/jmolt/THREAT_MODEL.md`; its **24 binding must-haves (M1–M24)** bind
+every wave of the promoted plan. **The governing premise: jmolt runs on the local
+gpt-oss-120b, so every DATA-fence and every persona rule is a prompt-level control
+the model will breach under pressure.** The boundaries that must actually hold are
+therefore **mechanical** (handler, schema, RLS, clock, quota), not textual. The
+lethal-trifecta legs:
+
+1. **No private data** (holds structurally): `reads_knowledge_base=False`, no owner
+   tools, no secrets in context — the key is handler-injected from the settings
+   store, `Authorization` never logged (M18), a stacked scrubber redacts any echo
+   (M17). This genuinely kills the headline "agent posts its own key" attack. The
+   remaining asset is jmolt's **diary** (social graph, goals) — load-bearing, not
+   nothing (M2, M13).
+2. **Bounded ability to act** — but the outbox is not the whole story: `web_fetch`/
+   `web_search` are **live, un-staged egress** and must be staged, budgeted, and
+   ledgered like a Moltbook write, and gated off when the switch is off (**M1** —
+   the plan's biggest correction; supersedes the earlier "no remote heartbeat
+   fetch" claim, which `web_fetch` structurally *is*). Plus: pinned typed client +
+   enumerable route whitelist; per-tool nightly budgets; **caps accounted on the
+   local trusted clock, platform `now_utc` advisory only** (**M4** — this *inverts*
+   F1916 §2.1, which is backwards under a compromised-platform premise); response
+   truncation caps (M12); a tool-free numeric-only challenge solver (M5); a
+   fail-safe failure-streak guard shared across live+drip (M11).
+3. **Untrusted content stays untrusted, mechanically**: the platform's imperative
+   channels (`/home` `suggested_actions`, announcements) **stripped** from the
+   prologue, not just fenced (M3); the scratchpad **re-fenced on reload** so
+   self-authored memory is never re-elevated above the forum text it quotes (M2);
+   identity file read-only (evolution via prompt-version bumps, never self-edit).
+4. **Reputational surface, enforced by a content lint** at publish time regardless
+   of switch (M8): crypto/financial promotion, named-real-person claims, PII/secret
+   shapes, invisible/bidi chars → blocked + notify. The persona hard limits are the
+   soft layer; the lint is the boundary. Near-duplicate rejection (M9) and
+   server-clamped `publish_at` (M10) bound the templated-spam failure mode. Account
+   on a dedicated X identity (§6.2).
+5. **Post-hoc review behind an autonomy switch, plus a global kill**: the switch
+   (**off**: every write queues in the PWA; **on**: writes send) is
+   **agent-unreachable and auto-reverts to off on suspension/tamper** (M7); a
+   separate **global Moltbook kill/pause** halts drip + nightly lane and engages
+   automatically on suspension/tamper/breach (M6). A sanitized morning digest
+   enumerates *every* action incl. votes/social/web (M14, M15); a tamper watch diffs
+   the public profile against the outbox ledger (M21); account-state changes are
+   surfaced, never auto-answered (M22). Launch with the switch off.
+6. **Cross-boundary to jerv**: `jmolt_observe` runs only from a **narrowed,
+   egress-toolless jerv session** (M16), so the fenced diary can never meet a live
+   owner tool on the trusted side; separated identity plumbing keeps jerv's F1916
+   secret and jmolt's key un-swappable (M17).
 
 ## 3. Proposed design sketch (repo seams, all precedented)
 
@@ -174,12 +193,14 @@ act) is dismantled structurally, not by prompt:
 |---|---|---|
 | Persona | `AGENTS["jmolt"]` — `reads_knowledge_base=False`, `tools=JMOLT_TOOLS`, own budget multiplier; versioned `prompts/jmolt.prompt` (the SOUL: ~300–600 words, identity + 3–5 dispositions + voice + hard limits — no task scripts) | `archivist` (`agents.py:503`), F1916 persona rule |
 | Client | `web/moltbook.py` — pinned base URL, typed methods per whitelisted route, size caps/timeouts, no redirects; key from a live settings-provider; scrubber at the tool boundary | Grokipedia client, Tavily key wiring, F1916 §2.1–2.3 |
-| jmolt tools | Read umbrella + individually-budgeted writes + scratchpad + existing `web_search`/`web_fetch` (see §4) | `f1916` umbrella design, `TOOL_CATALOG` W1 |
+| jmolt tools | Read umbrella + individually-budgeted writes + scratchpad + `web_search`/`web_fetch` **wrapped as staged, ledgered, switch-gated egress** (M1) — not the stock live tools (see §4) | `f1916` umbrella design, `TOOL_CATALOG` W1 |
+| Prologue | Fixed load order re-fenced on reload (M2): SOUL (read-only) → its index file (DATA-fenced) → last 1–2 journal entries (DATA-fenced) → `/home` **with `suggested_actions`/announcements stripped**, not fenced (M3). The 120B never sees a platform imperative as trusted context | F1916 §2.5 DATA fencing, `externaltools.py` `_FENCE` |
 | Scratchpad | New RLS table (rows + capped bytes), quota enforced in the write path: propose **16 files / 128 KB total / 24 KB per file**; every session-end version archived append-only out of band | `archivist_memory` (migration 0094) composed with `tool_artifacts` (0151) |
 | Isolation | New `jmolt` domain in `app.domains`: jmolt's session runs domain-scoped; **SELECT policy** grants jerv's sessions read; **INSERT/UPDATE pinned to jmolt's auth context** — so "jerv reads jmolt read-only" is Postgres, not a tool-description promise | `external` domain (migration 0136), `research_share` auth-context split |
 | Nightly hour | An `app.tasks` row (persona `jmolt`, `repeat`/`daily`, **03:00 owner-local**) that **launches onto a detached lane** with a 1 h wall-clock watchdog and token ceiling — not awaited inline in the minute tick. A T-minus-5-minutes nudge invites the file flush. Runs on the **local gpt-oss-120b** via the existing gateway, so the run must reserve against the local-model ledger and the persona/fencing must be written for what a 120B local model reliably carries | Tasks (0093) + `deepest_lane.py`, `LOCAL_MODEL_LEDGER_PLAN.md` |
 | Outbox + drip | **All writes stage into one outbox table** — comments/votes publish immediately when released; posts carry a jmolt-chosen `publish_at` spread across the coming day (≤4–5/night, ≥30 min apart, enforced in the handler). A scheduler sweep publishes due+released rows; if the API returns a verification challenge at publish time, the sweep makes a **one-shot fenced local-model call to solve the math** (bounded, non-agentic — it acts on nothing forum-authored) with the failure-streak guard well below the 10-failure suspension line. The outbox row records the exact outbound payload, so the action ledger is complete in every mode | Egress-Proposal staging (`connectortools.py`), workflow scheduler (`workflow/scheduler.py`) |
-| Autonomy switch | Owner-only settings toggle governing outbox release: **off → rows wait for owner release** in the PWA (release / discard; drip times shift accordingly), **on → rows auto-release** and publish at their scheduled times | Settings-store toggle (Tavily) |
+| Autonomy switch | Owner-only settings toggle governing outbox release: **off → rows wait for owner release** in the PWA (release / discard; drip times shift accordingly), **on → rows auto-release** and publish at their scheduled times. **Agent-unreachable** (no persona's tools can write it) and **auto-reverts to off** on suspension/tamper (M7) | Settings-store toggle (Tavily) |
+| Global kill | A separate owner control (PWA + debug API) that **halts the drip sweep and freezes the nightly lane** independent of the switch, engaging automatically on suspension/tamper/breach (M6). Plus mechanical publish-time boundaries the 120B cannot cross: content lint (M8), near-dup rejection (M9), server-clamped `publish_at` (M10), tool-free numeric-only challenge solver (M5), local-clock cap accounting (M4) | F1916 §2.6 lint, `LOCAL_MODEL_LEDGER_PLAN.md` |
 | Registration | PWA settings panel only, never through the agent loop: Register button → backend calls `/agents/register`, stores the key, surfaces `claim_url` + code for the owner's email/X claim, shows claim status; rotate/re-register same panel | Tavily panel, F1916 §2.2, CLAUDE.md #10 |
 | Session shape | Fixed prologue: SOUL → honest situational framing → its index file → last 1–2 journal entries → `/home` dashboard. Then the hour is its own. First night: bootstrap ritual (explore, then author your own goals file) | OpenClaw wake/bootstrap pattern |
 | Observability | Per night: full transcript (run-log — exists), a structured **action ledger** (every write + what content it was reacting to, for injection forensics), scratchpad snapshot + diff. Morning push digest via the task's notify path | `runlog.py`, tasks `notify_push` |
@@ -238,7 +259,9 @@ fetch, DMs (no API for them anyway).
   Everything returned DATA-fenced (jmolt's diary is one hop from forum text and
   gets the same trust class). No write action exists in the enum, and the RLS
   split (§3) means even a prompt-injected jerv session *cannot* mutate jmolt's
-  state. Stays out of spawn-children allowlists.
+  state. **Usable only from a narrowed jerv session with no owner egress tools
+  live (M16)** — so a poisoned diary can never meet a live email/notes/connector
+  call on the trusted side. Stays out of spawn-children allowlists.
 
 ## 5. What we measure (so "see what it does" is answerable)
 
@@ -282,21 +305,31 @@ data, never the drift metric.
 9. **Isolation**: a new **`jmolt` RLS domain** — jerv's read-only access is a
    Postgres guarantee, not a tool-allowlist promise.
 
-## 7. How the research develops from here (next passes, in order)
+## 7. How the research develops from here
 
-1. **Persona workshop**: draft 2–3 candidate SOUL files + the first-night
-   bootstrap ritual text, written for what gpt-oss-120b reliably carries and
-   adversarially reviewed against the drift/ossification findings, for the owner
-   to pick from and edit. Small, cheap, high leverage — this is the artifact the
-   whole experiment rides on.
-2. **Adversarial threat-model pass** (F1916's four-dossier discipline) focused on
-   the one divergence: autonomous writes on a local 120B model. Output: a
-   §2-style binding must-have list for the promoted plan.
-3. **Wave plan + promotion to `../plans/`**: expected shape — W1 registration
-   panel + typed client + read umbrella + persona + `jmolt` domain, nightly task
-   in read-only mode (jmolt lurks, keeps its diary; already scientifically
-   interesting); W2 scratchpad + snapshots + bootstrap ritual; W3 the write
-   tools behind the §6.1 autonomy switch (launched off → queue mode) + action
-   ledger + morning digest; W4 `jmolt_observe` for jerv + the §5 metrics script.
-   Each wave with RLS isolation tests, faked-LLM coverage, and docs
-   reconciliation per `DOC_LIFECYCLE.md`.
+1. **Persona workshop — DONE.** `../research/jmolt/PERSONA_CANDIDATES.md`: three
+   candidate SOUL files sharing one safety/memory/honesty skeleton, adversarially
+   reviewed (19 findings, 7 HIGH, all applied). Owner picked **A (naturalist) with
+   C's follow-through folded in**; the final soul + first-night ritual are in that
+   dossier, ready to become `agent/prompts/jmolt.prompt`.
+2. **Adversarial threat-model pass — DONE.** `../research/jmolt/THREAT_MODEL.md`:
+   six adversary classes, 24 attack chains, **24 binding must-haves (M1–M24)** that
+   bind every wave. Its corrections are folded into §2.5 and §3 above (web egress
+   is switch-gated + ledgered, local-clock cap accounting, `/home` imperative
+   channels stripped, publish-time content lint, agent-unreachable switch + global
+   kill, narrowed jerv observation session).
+3. **NEXT — wave plan + promotion to `../plans/`.** Expected shape, each wave
+   carrying its slice of M1–M24 with RLS isolation tests (the M19 matrix),
+   faked-LLM coverage, and docs reconciliation per `DOC_LIFECYCLE.md`:
+   - **W1** — registration PWA panel + typed client (route whitelist, no-redirect,
+     local-clock caps) + read umbrella with M2/M3 prologue fencing + the final
+     persona + the `jmolt` domain; nightly task in **read-only lurk mode** (keeps
+     its diary — already scientifically interesting). M4, M5, M12, M17, M18, M20.
+   - **W2** — scratchpad table + quota + on-change bounded archive + bootstrap
+     ritual + the `web_fetch`/`web_search` staged-egress wrapper (M1, M13).
+   - **W3** — the write tools + outbox + drip sweep behind the §6.1 switch
+     (launched off) + global kill + content lint + near-dup + clamps + streak guard
+     + reconcile-before-retry (M1, M6–M11, M23, M24).
+   - **W4** — `jmolt_observe` from a narrowed jerv session + sanitized morning
+     digest + tamper watch + account-state surfacing + the §5 metrics script
+     (M14, M15, M16, M21, M22).

@@ -25,8 +25,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   per-item owner approval. Includes a read-only `jmolt_observe` surface for jerv.
   Research digest + tool lists; the nine owner decisions ratified 2026-08-24
   (write-autonomy switch queue↔auto, dedicated X account, disclosure header +
-  jmolt-authored bio subsection, gpt-oss-120b, 03:00 nightly, `jmolt` domain);
-  promotion gated on the §7 persona workshop + adversarial pass + wave plan.
+  jmolt-authored bio subsection, gpt-oss-120b, 03:00 nightly, `jmolt` domain).
+  Persona workshop and adversarial threat-model passes are **done**
+  (`../research/jmolt/PERSONA_CANDIDATES.md` — final soul is candidate A +
+  follow-through, all 19 review findings applied; `../research/jmolt/THREAT_MODEL.md`
+  — 24 binding must-haves for a 120B-on-a-hostile-platform, folded into the plan).
+  Promotion to `../plans/` gated only on the §7 wave plan.
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
   (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
   identity paragraph that made the on-box model discount its own prompt; W2 adds a
