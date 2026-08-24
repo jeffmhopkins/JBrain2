@@ -100,6 +100,12 @@ MAX_STORE_BYTES = 25 * 1024**3
 
 _SLOT_FILE_SUFFIX = ".kvslot"
 
+# The patched engine (deploy/patches/0001) writes the slot's context checkpoints to
+# `<slot file>.ckpt` on save and reloads them on restore — that sidecar is what makes a
+# restored SWA/hybrid/recurrent prompt REUSABLE. The store treats the pair as one unit:
+# prune/invalidate both together, and count the sidecar toward the disk budget.
+_SIDECAR_EXT = ".ckpt"
+
 
 def _slot_int(slot: dict[str, object], key: str) -> int:
     value = slot.get(key)
@@ -360,9 +366,15 @@ class KvPrefixStore:
         return True
 
     def _remove_quietly(self, path: str) -> None:
-        """Runs in a thread — delete a file that is now known-bad, tolerating absence."""
+        """Runs in a thread — delete a file that is now known-bad, tolerating absence.
+
+        The patched engine writes a checkpoint sidecar beside each slot file
+        (deploy/patches/0001); the pair lives and dies together — a bad slot file's
+        sidecar restores checkpoints for state that no longer exists."""
         with contextlib.suppress(OSError):
             os.remove(path)
+        with contextlib.suppress(OSError):
+            os.remove(path + _SIDECAR_EXT)
 
     def _touch(self, path: str) -> None:
         """Runs in a thread — bump the file's mtime, the LRU clock a restore refreshes."""
@@ -388,22 +400,37 @@ class KvPrefixStore:
         total = 0
         for folder, _dirs, names in os.walk(root):
             for name in names:
+                if name.endswith(_SLOT_FILE_SUFFIX + _SIDECAR_EXT):
+                    # A sidecar whose slot file is gone (a crash between the paired
+                    # removes) is unusable and otherwise invisible to this budget.
+                    if name[: -len(_SIDECAR_EXT)] not in names:
+                        with contextlib.suppress(OSError):
+                            os.remove(os.path.join(folder, name))
+                    continue
                 if not name.endswith(_SLOT_FILE_SUFFIX):
                     continue
                 path = os.path.join(folder, name)
                 # Per-file, so one entry vanishing between listdir and stat skips that
-                # entry rather than silently abandoning the whole prune round.
+                # entry rather than silently abandoning the whole prune round. The
+                # checkpoint sidecar is billed to its slot file and evicted with it —
+                # never on its own, or a pruned sidecar would silently turn its
+                # surviving slot file's restores back into full re-prefills.
                 with contextlib.suppress(OSError):
                     stat = os.stat(path)
-                    total += stat.st_size
+                    size = stat.st_size
+                    with contextlib.suppress(OSError):
+                        size += os.stat(path + _SIDECAR_EXT).st_size
+                    total += size
                     if os.path.abspath(path) != os.path.abspath(keep_path):
-                        entries.append((stat.st_mtime, stat.st_size, path))
+                        entries.append((stat.st_mtime, size, path))
         entries.sort()
         for _mtime, size, path in entries:
             if total <= MAX_STORE_BYTES:
                 break
             with contextlib.suppress(OSError):
                 os.remove(path)
+                with contextlib.suppress(OSError):
+                    os.remove(path + _SIDECAR_EXT)
                 total -= size
 
     # ---- restore --------------------------------------------------------------------

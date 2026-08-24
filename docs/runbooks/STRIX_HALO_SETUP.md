@@ -249,10 +249,16 @@ both resides and warms it.
 > checkpoint, so its restore reuses directly — reload **43 s** (weights + a 1-token warm),
 > turns restore in ~90 ms. In-session qwen reuse still works (checkpoints ARE created live
 > during a conversation — that is why `f_keep ≈ 0.99` turn-to-turn); only the cross-load
-> disk restore is inert. THE FIX is a llama-server patch: seed a checkpoint from the
-> restored span in the slot-restore handler (`create_checkpoint` is right there). It can't
-> ride a JBrain update — `llama-server` is the pinned community `kyuz0/amd-strix-halo-toolboxes`
-> binary, not a local build.
+> disk restore is inert. THE FIX is a llama-server patch that carries the **checkpoints
+> themselves across save/restore** in a sidecar file (`<slot file>.ckpt`): the save handler
+> writes the slot's live checkpoints, the restore handler reloads them, and the reuse path
+> then finds exactly what a live session had. (A first attempt SEEDED a checkpoint at
+> restore time instead; the engine's own trace showed it checked and rejected — the reuse
+> bound is strict `pos_min < pos_min_thold` and the restored state is after-N, so a seeded
+> tip checkpoint structurally can never qualify. Validated locally on a live hybrid
+> (LFM2-350M) before shipping: a 2820-token restored prompt re-processed 4 tokens.) It
+> can't ride a JBrain update — `llama-server` is the community
+> `kyuz0/amd-strix-halo-toolboxes` binary, not a local build.
 >
 > **The patched-build path is committed, OPT-IN, default OFF — activated from the PWA.**
 > `deploy/patches/` holds the patch (anchored, applied by `deploy/apply-llama-patches.sh`),

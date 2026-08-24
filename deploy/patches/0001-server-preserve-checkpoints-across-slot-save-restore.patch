@@ -1,0 +1,57 @@
+Preserve CONTEXT CHECKPOINTS across slot save/restore (sidecar file), so
+SWA/hybrid/recurrent models can REUSE a restored prompt instead of
+re-prefilling it.
+
+Why a restore-time checkpoint SEED cannot work (measured live 2026-08-24,
+then reproduced locally): after a restore the memory holds state-after-n.
+The prompt-reuse path must re-decode at least the final token
+(TAG_PROMPT_LOGITS), which requires checkpoint state-after-k for k < n, and
+the reuse bound is STRICT (`cur.pos_min < pos_min_thold || cur.pos_min == 0`)
+— a checkpoint seeded from the restored state carries
+pos_min == pos_max == n-1 and always fails it. The engine's own trace showed
+the seeded checkpoint being checked and rejected: "checking checkpoint with
+[2819, 2819] against 2819" → "forcing full prompt re-processing". Live
+sessions only reuse because they hold SEVERAL checkpoints and an OLDER one
+(state-after-k) passes.
+
+So the fix restores what a live session actually had: the SAVE handler writes
+the slot's context checkpoints to a sidecar (`<filepath>.ckpt` — magic JBCK,
+version 1, count, then per checkpoint n_tokens/pos_min/pos_max and the
+data_tgt/data_dft/data_spec buffers), and the RESTORE handler reloads them.
+Both directions are best-effort: a write failure warns and keeps the save
+valid; a missing or invalid sidecar just means the pre-patch behaviour
+(full re-prefill). The main slot file's format is untouched, so the files
+stay compatible with a stock server.
+
+Applied as two anchored insertions (see deploy/apply-llama-patches.sh) rather
+than a line-numbered diff, so they survive minor llama.cpp drift. Anchors:
+
+  save handler   (unique): res->is_save  = true;
+  restore handler (first present wins — the success path is worded
+  differently across versions):
+      slot->prompt.tokens = std::move(restored);   (b10603+ deserialize rework)
+      slot->prompt.tokens.insert(tokens);          (b10068 era token-vector path)
+
+The exact inserted blocks live in the apply script (single source of truth —
+an earlier revision duplicated them here and the copies drifted).
+
+VALIDATED end-to-end before shipping, at commit 758443071 (the box's rolling
+base at the time) with a real hybrid model (LFM2-350M, conv+attention — the
+same checkpoint-gated memory class as qwen3.8): prime 2820 tokens → slot save
+(sidecar: 2 checkpoints) → server restart → slot restore ("restored 2 context
+checkpoint(s) from sidecar") → identical prime re-processed prompt_n = 4
+tokens, with the engine logging "restored context checkpoint (pos_min = 2815,
+pos_max = 2815, n_tokens = 2816, n_past = 2816)". Without the patch the same
+cycle re-processed all 2820.
+
+App-side contract (jbrain.llm.kv_prefix): the sidecar lives and dies with its
+slot file — pruning or invalidating `<f>.kvslot` also removes `<f>.kvslot.ckpt`,
+and the sidecar's size counts toward the store budget.
+
+Correctness note for the reviewer: reloaded checkpoints carry data_dft and
+data_spec captured at save time. The relaunched server is the same model and
+launch line (the app fingerprints on both), so the draft/speculative state is
+structurally compatible; on the MTP-self-drafting qwen entries the draft
+derives from the target's own hidden states and speculative decoding verifies
+every draft, so a stale draft state can cost acceptance for a few tokens but
+never correctness.
