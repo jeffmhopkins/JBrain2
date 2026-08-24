@@ -187,7 +187,7 @@ async def test_hidden_tools_provider_removes_a_tool_from_the_offer() -> None:
 
 
 async def test_hidden_tools_probe_failure_degrades_to_hiding_nothing() -> None:
-    # Liveness is best-effort: a probe that raises must not break the turn or drop a tool.
+    # The provider is best-effort: one that raises must not break the turn or drop a tool.
     router, fake = router_with([LlmTurn("ok", (), "end_turn", LlmUsage(1, 1))])
 
     async def boom_provider() -> frozenset[str]:

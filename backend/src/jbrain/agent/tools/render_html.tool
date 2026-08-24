@@ -1,6 +1,6 @@
 ---
 name: render_html
-version: 1
+version: 2
 permission: web
 side_effecting: true
 cost_class: standard
@@ -61,8 +61,8 @@ the owner receives pixels — so the markup is yours to write freely.
 
 Not for data plots: a bar or line chart belongs in `render_bars` / `render_chart`, which draw a
 real interactive chart the owner can read values off. Not for photographs or artwork either, and
-not for marking up an image the owner sent you — if `generate_image` or `canvas` are in your tool
-list, those are the tools for those jobs.
+not for marking up an image the owner sent you — if `canvas` is in your tool list, that is the
+tool for that job.
 
 The card the owner sees carries the whole render, so do NOT read it back in prose — say in one
 sentence what it shows, and never paste a link or claim to be attaching a file. If you are not

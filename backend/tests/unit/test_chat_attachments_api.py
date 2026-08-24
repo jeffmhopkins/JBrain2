@@ -274,11 +274,12 @@ def test_capabilities_reflects_text_only_override(
     }
 
 
-def test_capabilities_reports_image_tools_when_comfyui_configured(
+def test_capabilities_never_offer_agent_side_editing_even_with_comfyui(
     client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
 ) -> None:
-    """With a ComfyUI configured, can_edit_images is true even on a text-only model — so
-    the composer keeps offering attach (jerv can analyze/edit an attachment by id)."""
+    """can_edit_images stays False even with a ComfyUI configured — agent-side editing was
+    removed (the Images launcher owns ComfyUI); the field survives only as a client
+    contract the PWA still reads."""
     c, _, _, store = client
     c.app.state.settings = c.app.state.settings.model_copy(  # type: ignore[attr-defined]
         update={"comfyui_url": "http://localhost:8188"}
@@ -286,7 +287,7 @@ def test_capabilities_reports_image_tools_when_comfyui_configured(
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
     assert c.get("/api/chat/capabilities").json() == {
         "supports_vision": False,
-        "can_edit_images": True,
+        "can_edit_images": False,
         "context_window": 32_768,
     }
 

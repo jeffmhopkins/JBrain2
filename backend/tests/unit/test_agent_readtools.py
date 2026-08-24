@@ -1088,13 +1088,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_chart.tool": (
             "render_chart",
-            3,
-            "a144b1435c41ab822a8dd29a4b5d1f85b4e85af9ac9e675f7bf05cb00eca1c20",
+            4,
+            "4fe620e5e3c24814cb5eb97058f8a8361d025cbe4946ebb542ff0319d36539ea",
         ),
         "render_bars.tool": (
             "render_bars",
-            5,
-            "efda7b96d4d16b7e34136752ae8e7f201b57cec008e1194b4f64f0ab7a485d08",
+            6,
+            "1af35a6141e6623e5688b92a7531efff9e01c8c7a282ed5802c88fd847352f84",
         ),
         "read_encounters.tool": (
             "read_encounters",
@@ -1235,16 +1235,6 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_artifact",
             1,
             "d8ac9d5aeb6dd3326d0a45e2824a9120466c0ec5a577176a56749f3aae7c925e",
-        ),
-        "generate_image.tool": (
-            "generate_image",
-            8,
-            "8926e8126e048334630a9b66371469324b86d5b2e6a7ba32d74588655adeb384",
-        ),
-        "edit_image.tool": (
-            "edit_image",
-            6,
-            "d5ae86c49b7fd81eabe15cb14447420288268f69300240ce306bfae056c3ba39",
         ),
         "analyze_image.tool": (
             "analyze_image",
@@ -1438,18 +1428,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_html.tool": (
             "render_html",
-            1,
-            "e1907956392d075818b21a3f795742f5fbd8b5260a94910f7fcfc32df2464b23",
+            2,
+            "6d4d88b64c84c2de3004843d5a624af78b2b18ccc6cb8fcbde4d7de159eba815",
         ),
         "canvas.tool": (
             "canvas",
-            2,
-            "1ce4623b8822f29c3215aa62c978a199cdd74988c4249e78fc1fca0d474add0a",
+            3,
+            "e44b3472666ea7e43f75d56e04098f932c2caeb973a2bc79941aea42f466384f",
         ),
         "crop_regions.tool": (
             "crop_regions",
-            1,
-            "3f159ee1ae9963ca0afe985ebd5f81685311137846973bc2116d0e4f60bcd64d",
+            2,
+            "456f97a9236b21a6a00262b650e5b023fc9727ba39dddd75a65bd4c7a9459239",
         ),
         "show_canvas.tool": (
             "show_canvas",

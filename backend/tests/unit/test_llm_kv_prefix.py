@@ -586,8 +586,8 @@ async def test_a_missing_file_names_the_identity_component_that_drifted(
     root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The instrumentation the 204 s mystery needed: a save under one tool set, a
-    restore attempted under another — the log must say `tools` moved, so a liveness
-    flap is distinguishable from a race at a glance. (structlog prints to stdout.)"""
+    restore attempted under another — the log must say `tools` moved, so a hidden-set
+    flip is distinguishable from a race at a glance. (structlog prints to stdout.)"""
     store, gw = _store(root)
     gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True

@@ -8,14 +8,12 @@ so every box lands wrong with no error anywhere.
 
 from __future__ import annotations
 
-from collections.abc import Collection
 from typing import Any, cast
 
 import pytest
 
 from jbrain.agent.readtools import (
     CANVAS_MODELS,
-    IMAGE_TOOL_NAMES,
     OPTIONAL_CANVAS_TOOLS,
     OPTIONAL_CROP_TOOLS,
     canvas_hidden_for_model,
@@ -25,7 +23,7 @@ from jbrain.agent.readtools import (
 
 # The crop tool grounds regions with the same vision path, so it rides the same gate.
 GATED = OPTIONAL_CANVAS_TOOLS | OPTIONAL_CROP_TOOLS
-JERV_LIKE = GATED | IMAGE_TOOL_NAMES | {"web_search"}
+JERV_LIKE = GATED | {"web_search", "analyze_image"}
 
 
 class _Router:
@@ -37,14 +35,6 @@ class _Router:
         if self._boom:
             raise RuntimeError("gateway unreachable")
         return "local", spec_override or self._model
-
-
-class _Liveness:
-    def __init__(self, hidden: Collection[str]):
-        self._hidden = hidden
-
-    async def hidden_tools(self) -> Collection[str]:
-        return self._hidden
 
 
 # --- the pure gate ----------------------------------------------------------
@@ -103,35 +93,16 @@ async def test_no_router_hides_it() -> None:
     assert await canvas_hidden_tools(None, None, JERV_LIKE) == GATED
 
 
-# --- composition with the ComfyUI liveness probe ----------------------------
+# --- composition into the per-turn provider ---------------------------------
 
 
 @pytest.mark.asyncio
-async def test_composes_liveness_and_canvas_hiding() -> None:
-    provider = compose_hidden_tools(_Liveness({"generate_image"}), JERV_LIKE, GATED)
-    assert provider is not None
-    assert set(await provider()) == {"generate_image"} | GATED
-
-
-@pytest.mark.asyncio
-async def test_canvas_hiding_alone_still_yields_a_provider() -> None:
-    # No liveness (or a persona without the image tools) must not drop the canvas gate.
-    provider = compose_hidden_tools(None, JERV_LIKE, GATED)
+async def test_canvas_hiding_yields_a_provider() -> None:
+    provider = compose_hidden_tools(GATED)
     assert provider is not None
     assert set(await provider()) == GATED
 
 
 def test_nothing_to_hide_returns_none() -> None:
     # Keeps the common path allocation-free and byte-identical to before this feature.
-    assert compose_hidden_tools(None, JERV_LIKE, frozenset()) is None
-
-
-@pytest.mark.asyncio
-async def test_liveness_is_not_probed_for_a_persona_without_image_tools() -> None:
-    class _Boom:
-        async def hidden_tools(self) -> Collection[str]:  # pragma: no cover - must not run
-            raise AssertionError("should not probe liveness for this persona")
-
-    provider = compose_hidden_tools(_Boom(), frozenset({"search"}), GATED)
-    assert provider is not None
-    assert set(await provider()) == GATED
+    assert compose_hidden_tools(frozenset()) is None

@@ -15,11 +15,11 @@ to what a real turn sends (a hand-built warm on a side path drifts and the reuse
 misses). That call also loads the model on demand through residency, so a single prime both
 resides and warms it. Two subtleties it handles:
 
-  - **Liveness flips.** The primed tool set depends on ComfyUI liveness (the image-gen tools
-    are hidden when it's down). A prime taken at boot while ComfyUI was still unreachable hides
-    those tools, but a real turn once ComfyUI is up shows them — a mismatch that defeats the
-    reuse. So the keeper keys its "already primed" state on (model, hidden-set) and RE-PRIMES
-    when the hidden set changes, self-correcting once liveness settles.
+  - **Hidden-set flips.** The primed tool set depends on the model-gated hidden set (the
+    canvas pair is withheld from an unqualified model). A prime taken with one hidden set
+    no longer matches a real turn once it changes — a mismatch that defeats the reuse. So
+    the keeper keys its "already primed" state on (model, hidden-set) and RE-PRIMES when
+    the hidden set changes.
   - **Resident ≠ primed.** If something else loaded the model cold first, "resident" doesn't
     mean the jerv prefix is in the cache. The keeper still primes a resident-but-unprimed model
     once; it no-ops only after it has primed the current (model, hidden) — so a real jerv turn's
@@ -36,7 +36,7 @@ from collections.abc import Awaitable, Callable, Collection
 
 import structlog
 
-from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs
+from jbrain.agent.priming import jerv_prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -57,7 +57,6 @@ class WarmKeeper:
         *,
         gateway: LocalGatewayClient,
         registry: ToolRegistry,
-        liveness: HiddenToolsProbe | None,
         router: LlmRouter,
         hold_loader: Callable[[], Awaitable[Collection[str]]],
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
@@ -67,7 +66,6 @@ class WarmKeeper:
     ):
         self._gateway = gateway
         self._registry = registry
-        self._liveness = liveness
         # The router owns routing precedence (env pin, DB override, local gate) AND residency
         # admission, so the keeper asks it which model agent.turn resolves to and primes THROUGH
         # it — a re-route moves the kept-hot model automatically and the prime path matches a turn.
@@ -89,10 +87,10 @@ class WarmKeeper:
         # (or after the model is found evicted). Re-prime when this no longer matches the desired.
         self._primed: tuple[str, frozenset[str]] | None = None
         # Two cadences: retry EAGERLY (interval_wait) while a target is wanted but not yet primed
-        # — the boot window where the gateway/ComfyUI are still coming up, so the prime lands
-        # seconds after they're reachable, not a full steady-interval later. Once primed (or
+        # — the boot window where the gateway is still coming up, so the prime lands
+        # seconds after it's reachable, not a full steady-interval later. Once primed (or
         # nothing to do), fall back to the slow steady poll (interval_ready) that only exists to
-        # catch a later gateway-only restart or a liveness flip.
+        # catch a later gateway-only restart or a hidden-set flip.
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
 
@@ -149,7 +147,7 @@ class WarmKeeper:
         # prefix WITHOUT tools a real turn sends, the reuse would miss from the tools block
         # onward, and the memo below would record that miss as success. The manual Load path
         # already passes it (api/llm_settings.gateway_load); this closes the gap.
-        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness, served)
+        system, tools, hidden = await jerv_prime_inputs(self._registry, served)
         # The effort the prime's turn will carry — part of the rendered prompt and so part
         # of the disk cache's identity (see kv_prefix._fingerprint). Resolved the same way
         # the prime's converse below resolves it; a resolution hiccup degrades to None,
@@ -255,7 +253,7 @@ class WarmKeeper:
 
     async def run(self) -> None:
         """The reconcile loop: settle, then sleep — short while still trying to reach a wanted
-        model (boot / gateway restart / liveness flip), long once primed. Runs until cancelled."""
+        model (boot / gateway restart / hidden-set flip), long once primed. Runs until cancelled."""
         while True:
             settled = True
             try:

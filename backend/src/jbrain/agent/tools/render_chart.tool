@@ -1,6 +1,6 @@
 ---
 name: render_chart
-version: 3
+version: 4
 permission: read
 params:
   type: object
@@ -62,8 +62,8 @@ least two points overall.
 
 When the x-axis is a set of **categories** rather than a time line (counts by tag, a ranking, a
 this-vs-that breakdown), reach for `render_bars` instead — a bar graph. Either way, when the owner
-says "plot / graph / chart / visualize this data", use one of these chart tools; do **not** use
-`generate_image` (that draws a picture, not a data plot).
+says "plot / graph / chart / visualize this data", use one of these chart tools (a data plot,
+not a picture).
 
 Use `render_chart` only for **general** figures you assembled yourself — a count you tallied, a
 public series you looked up, a projection. It renders exactly the numbers you pass, so those numbers

@@ -75,7 +75,7 @@ def test_teacher_is_a_tool_less_socratic_tutor() -> None:
 
 def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     """jerv may call the web tools, the dataless clock, the owner-approved
-    coarse-location read, the local image-gen tools, and the read-only host-metrics
+    coarse-location read, the local vision read, and the read-only host-metrics
     summary; it reads no knowledge base."""
     jerv = AGENTS["jerv"]
     assert (
@@ -91,8 +91,6 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "weather",
             "weather_history",
             "hurricane",
-            "generate_image",
-            "edit_image",
             "analyze_image",
             "transcribe",
             "analyze_video",
@@ -186,10 +184,11 @@ def test_curator_holds_deep_produce_via_extra_tools_only() -> None:
 
 
 def test_image_tools_are_jerv_only() -> None:
-    """The image-gen tools live in jerv's allowlist and nowhere else — curator (the
-    default knowledge agent, allow=None) never offers the opt-in `web` class, and the
-    tool-less teacher offers nothing."""
-    assert {"generate_image", "edit_image"} <= JERV_TOOLS
+    """The analyze_image vision read lives in jerv's allowlist and nowhere else — curator
+    (the default knowledge agent, allow=None) never offers the opt-in `web` class, and the
+    tool-less teacher offers nothing. The gen pair is gone: the launcher owns generation."""
+    assert "analyze_image" in JERV_TOOLS
+    assert {"generate_image", "edit_image"} & JERV_TOOLS == set()
     assert AGENTS["curator"].tools is None
     assert AGENTS["teacher"].tools == frozenset()
 
@@ -420,8 +419,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v46",
-            "6d8388d164948b511dfadc6f7d3faa3e00019534ad6060b01c50b1bce82462cc",
+            "agent-jerv-v47",
+            "008aea105c0ae90c24bf2b0312c78bd186f85f8140656d48d6d44b70884f8971",
         ),
         "archivist": (
             "agent-archivist-v6",

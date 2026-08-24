@@ -1,9 +1,10 @@
 """Turning a chat turn's pre-uploaded attachments into adapter-agnostic LLM content.
 
 Given the session's narrowed read context and the ordered attachment ids the turn
-referenced, this returns `(images, extra_text)`: vision images for the model plus a
-labeled text block to append to the user message. The caller rides them ONLY on the
-new turn (history stays text — past images are never re-sent).
+referenced, this returns an `AttachmentContent`: vision images for the model plus a
+labeled text block to append to the user message. An image rides the turn at its
+cache-stable ANCHOR position and stays in view for the carry window (see
+`anchored_image_content` / api.agent); PDF pages and text blocks live one turn.
 
 Binding decisions (owner): images go straight to vision; a PDF is BOTH rasterized
 per page (each page → a PNG LlmImage) AND has its text layer extracted; known-text
@@ -68,13 +69,12 @@ def _image_block(info: AttachmentInfo, data: bytes, *, can_see_images: bool) -> 
         note = (
             f'[attached image "{info.filename}" — its id is {info.id}. You can see this '
             "image directly here: describe and reason about it yourself, do NOT say you "
-            "can't see it. Use analyze_image ONLY to read its exact text (OCR), or "
-            "edit_image to change it.]"
+            "can't see it. Use analyze_image ONLY to read its exact text (OCR).]"
         )
     else:
         note = (
             f'[attached image "{info.filename}" — its id is {info.id}: pass it as '
-            "source_attachment_id to analyze_image to look at it or edit_image to change it]"
+            "source_attachment_id to analyze_image to look at it]"
         )
     return _Converted(images=[image], text_blocks=[note])
 

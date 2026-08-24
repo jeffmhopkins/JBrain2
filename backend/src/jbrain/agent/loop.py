@@ -545,9 +545,8 @@ class AgentLoop:
         self._recorder = recorder
         self._g = guardrails or Guardrails()
         self._task = task
-        # Runtime, per-turn tool exclusion: a backend outage hides the tools that need
-        # it (ComfyUI down → the image-gen tools). Awaited once per turn (the provider
-        # caches its probe), folded into every schemas_for / allowed_names call.
+        # Runtime, per-turn tool exclusion (the model-gated canvas pair today). Awaited
+        # once per turn, folded into every schemas_for / allowed_names call.
         self._hidden_tools_provider = hidden_tools_provider
         # A per-conversation model pick (the omnibox long-press sheet): a "provider:model"
         # spec every model call this loop makes runs on, outranking the task's resolved
@@ -556,14 +555,14 @@ class AgentLoop:
         self._model_override = model_override
 
     async def _hidden(self) -> Collection[str]:
-        """Tool names hidden this turn by a runtime backend outage (empty when no
-        provider is wired or every backend is healthy). Never raises — a probe
-        failure must not break a turn, so it degrades to hiding nothing."""
+        """Tool names hidden this turn by the runtime provider (empty when no provider
+        is wired). Never raises — a provider failure must not break a turn, so it
+        degrades to hiding nothing."""
         if self._hidden_tools_provider is None:
             return ()
         try:
             return await self._hidden_tools_provider()
-        except Exception:  # noqa: BLE001 — liveness is best-effort; a probe error hides nothing
+        except Exception:  # noqa: BLE001 — hiding is best-effort; a provider error hides nothing
             log.warning("agent.hidden_tools_probe_failed", exc_info=True)
             return ()
 

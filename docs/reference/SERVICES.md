@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -39,7 +39,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 |---|---|---|---|
 | `cloudflared` | `tunnel` | `install.sh` (dial-out tunnel mode) | Cloudflare Tunnel connector — public reachability with no static IP / port-forward, works behind CGNAT. See `../runbooks/CLOUDFLARE_TUNNEL.md`. |
 | `local-llm` | `local-llm` | `jbrain enable-local-models` | llama-swap fronting llama.cpp (Vulkan) — several GGUF models on one OpenAI-compatible endpoint, loaded/swapped on demand. |
-| `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the image tools. |
+| `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the Images launcher (`api/images_render.py`). |
 | `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: xAI's Grok Build (`grok`) CLI against on-box models. `grok`'s `/model` switches live between every installed tool-capable model (plan on the reasoner, execute on the coder) via the api's residency-aware jcode proxy (`api.jcode_llm`), which evicts-to-budget and serializes swaps so one model loads at a time — no unified-memory thrash. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |
@@ -185,7 +185,8 @@ graph/wiki writes** (`propose_correction`, `propose_merge`, `relate`,
 `where_is`, `location_history`, `nearby_now`, `save_place`, …) · **weather**
 (`weather` forecast + `weather_history` archive — full past-weather aggregates with
 on-box heat-index compute) **/ hurricane** ·
-**image** (`generate_image`/`edit_image`/`analyze_image`) ·
+**image** (`analyze_image` — a vision read; generation/editing lives in the
+Images launcher, `api/images_render.py`, not in an agent tool) ·
 **media** (`transcribe`, `analyze_video`, `analyze_stream` — the last reads a video
 URL, live or on-demand, via yt-dlp + ffmpeg; a second SSRF-guarded outbound leg) ·
 **Gmail** (`gmail_*`) · **web**

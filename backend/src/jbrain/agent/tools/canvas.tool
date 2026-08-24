@@ -1,6 +1,6 @@
 ---
 name: canvas
-version: 2
+version: 3
 permission: web
 cost_class: standard
 # NOTE: no JSON-Schema `enum` anywhere below, and an op is ONE FLAT object rather than a
@@ -25,7 +25,7 @@ params:
       description: Start a canvas ON TOP of an image the owner attached this chat (its id from the "[attached image ...]" line) — the way to box, circle, or label something in their photo or screenshot.
     on_image_id:
       type: string
-      description: Start a canvas on top of an image you made or grabbed earlier this chat (a generate_image / edit_image / grab_frame / fetch_image id).
+      description: Start a canvas on top of an image you made or grabbed earlier this chat (a grab_frame / fetch_image id).
     ops:
       type: array
       description: The marks to lay down, applied in order. Give the WHOLE figure in one call, not one op per call. Each op is a flat object; fields an op doesn't use are ignored.
@@ -123,6 +123,6 @@ right, then say in a sentence what you drew.
 
 **Not for data, not for pictures.** To plot numbers — a trend, a breakdown, a comparison —
 use `render_chart` (dates) or `render_bars` (categories); they draw a real interactive graph
-and this does not. To make a picture use `generate_image`, and to change what a photo *shows*
-use `edit_image` — this only lays marks on top. To read or measure an image rather than mark
+and this does not. This cannot make a picture or change what a photo *shows* — it only lays
+marks on top (the owner's Images app does generation/editing). To read or measure an image rather than mark
 it up, use `analyze_image` or `ocr`.

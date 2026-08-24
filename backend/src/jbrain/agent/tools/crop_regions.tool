@@ -1,6 +1,6 @@
 ---
 name: crop_regions
-version: 1
+version: 2
 permission: web
 side_effecting: true
 cost_class: standard
@@ -12,7 +12,7 @@ params:
       description: The image the owner attached this chat to cut regions out of (its id from the "[attached image ...]" line). Give this OR source_image_id.
     source_image_id:
       type: string
-      description: An image you made or grabbed earlier this chat (generate_image / edit_image / grab_frame / fetch_image id). Give this OR source_attachment_id.
+      description: An image you made or grabbed earlier this chat (grab_frame / fetch_image id). Give this OR source_attachment_id.
     target:
       type: string
       description: What to cut out, in plain words — "each face", "every product label", "the two dogs". One crop per distinct instance found. Give this OR boxes.

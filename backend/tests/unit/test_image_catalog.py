@@ -28,7 +28,7 @@ def test_every_model_references_a_real_workflow_template() -> None:
 
 def test_recommended_set_covers_both_tools_fast_and_quality() -> None:
     # A default provision downloads generate + edit and both 4-step Lightning siblings, so
-    # the `fast` and `quality` paths of generate_image AND edit_image all work after one run.
+    # the launcher's `fast` and `quality` generate AND edit paths all work after one run.
     assert catalog.recommended_ids() == (
         "qwen-image",
         "qwen-image-lightning",

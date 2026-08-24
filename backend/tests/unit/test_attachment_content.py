@@ -159,10 +159,11 @@ async def test_image_becomes_one_llm_image() -> None:
     assert images[0].media_type == "image/png"
     assert base64.b64decode(images[0].data) == b"\x89PNG-bytes"
     # The image's id is named in the text so the model can act on it by reference
-    # (edit or analyze) even when it can't see the bytes.
+    # (analyze) even when it can't see the bytes.
     assert aid in text
     assert "source_attachment_id" in text
-    assert "analyze_image" in text and "edit_image" in text
+    assert "analyze_image" in text
+    assert "edit_image" not in text  # the agent-side edit tool is gone (launcher owns it)
     assert "scan.png" in text
 
 
@@ -170,7 +171,7 @@ async def test_vision_capable_turn_tells_the_model_to_look_directly() -> None:
     # When the turn model can see the bytes (can_see_images=True), the note must steer it
     # to describe the image itself instead of priming a redundant analyze_image round-trip
     # (the self-contradiction: "I can't see images" while describing the image in the tool
-    # args). The id and OCR/edit escape hatches stay, but the "delegate to describe" pointer
+    # args). The id and OCR escape hatch stay, but the "delegate to describe" pointer
     # is gone.
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-img", b"\x89PNG-bytes")
@@ -188,8 +189,8 @@ async def test_vision_capable_turn_tells_the_model_to_look_directly() -> None:
     assert "see this image directly" in text
     # It is NOT told to route to analyze_image merely to look at / describe it…
     assert "to look at it" not in text
-    # …but OCR (exact text) and edit_image remain available by id.
-    assert "OCR" in text and "edit_image" in text
+    # …but OCR (exact text) remains available by id; the edit tool is gone.
+    assert "OCR" in text and "edit_image" not in text
 
 
 def _img_info(id_: str, sha: str, filename: str = "pic.png") -> AttachmentInfo:
