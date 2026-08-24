@@ -161,7 +161,7 @@ async def persist_chat_image(
 
 def chat_image_view(row: GeneratedImage) -> ViewPayload:
     """The `generated_image` card for a grabbed/fetched still — the same data slots the
-    gen tools' `generated_image_view` builds, so the still renders through the existing
+    launcher's generated-image rows carry, so the still renders through the existing
     component. Carries `provenance` so the card labels the origin ("grabbed from
     video"/"fetched from web") and drops the seed/model line. No URL (invariant #9): the
     component builds the `<img>` src from `image_id`."""
@@ -205,8 +205,8 @@ async def resolve_source(
     from the owner-only `generated_images` under an owner-scoped session; a chat
     attachment id is read under the session's attachment context (RLS hides a foreign id
     as a clean miss). A non-uuid id (a model guessing "latest") is a clean miss, never a
-    raw DB error. Hoisted here so the image-gen tools (edit_image/analyze_image) and the
-    vision-compare tool share one resolution path (invariant #3)."""
+    raw DB error. Hoisted here so analyze_image and the vision-compare tool share one
+    resolution path (invariant #3)."""
     if image_id:
         if not _is_uuid(image_id):
             return "No generated image with that id is in this chat."

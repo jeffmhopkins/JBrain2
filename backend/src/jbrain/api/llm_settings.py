@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
-from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs, jerv_prime_spec
+from jbrain.agent.priming import jerv_prime_inputs, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
@@ -143,14 +143,6 @@ def get_agent_registry(request: Request) -> ToolRegistry | None:
 
 AgentRegistryDep = Annotated["ToolRegistry | None", Depends(get_agent_registry)]
 
-
-def get_image_liveness(request: Request) -> HiddenToolsProbe | None:
-    """ComfyUI liveness, or None. Hides the image-gen tools from the prime when the
-    backend is down so the primed prefix matches a real turn's (which hides them too)."""
-    return cast("HiddenToolsProbe | None", getattr(request.app.state, "image_liveness", None))
-
-
-ImageLivenessDep = Annotated["HiddenToolsProbe | None", Depends(get_image_liveness)]
 
 # served_model (what the gateway reports/loads) ↔ catalog id (what the screen uses).
 _SERVED_TO_ID = {m.served_model: m.id for m in local_catalog.CATALOG}
@@ -1038,7 +1030,6 @@ async def load_local_model(
     gateway: LocalGatewayDep,
     residency: ResidencyDep,
     registry: AgentRegistryDep,
-    liveness: ImageLivenessDep,
     store: SettingsStoreDep,
 ) -> LoadedModelsOut:
     """Make the gateway load one model into memory (the settings screen's stage → Load).
@@ -1055,7 +1046,6 @@ async def load_local_model(
         gateway,
         residency=residency,
         registry=registry,
-        liveness=liveness,
         settings_store=store,
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
@@ -1539,7 +1529,6 @@ async def _warm_identity(
     settings_store: SqlSettingsStore | None,
     kv_prefix: "KvPrefixStore | None",
     registry: ToolRegistry | None,
-    liveness: HiddenToolsProbe | None,
 ) -> tuple[
     str | None,
     "Callable[[], Awaitable[object]] | None",
@@ -1572,13 +1561,13 @@ async def _warm_identity(
         reg = registry
 
         async def _restore() -> object:
-            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, liveness, served_model)
+            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, served_model)
             return await store.restore_if_lost(
                 served_model, p_system, p_tools, reasoning_effort=effort
             )
 
         async def _save(prompt_tokens: int) -> object:
-            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, liveness, served_model)
+            p_system, p_tools, _hidden = await jerv_prime_inputs(reg, served_model)
             return await store.save_after_prime(
                 served_model, p_system, p_tools, prompt_tokens, reasoning_effort=effort
             )
@@ -1595,7 +1584,6 @@ async def gateway_load(
     *,
     residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
-    liveness: HiddenToolsProbe | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
 ) -> LoadedModelsOut:
@@ -1626,13 +1614,12 @@ async def gateway_load(
         # Pass the model being loaded so the model-gated canvas pair is resolved exactly
         # here — a prefix primed with a different tool block than the turn will send is
         # worse than no prime, since the reuse misses from the tools block onward.
-        warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
+        warm_system, warm_tools = await jerv_prime_spec(registry, model.served_model)
     effort, before_warm, after_warm = await _warm_identity(
         model.served_model,
         settings_store=settings_store,
         kv_prefix=kv_prefix,
         registry=registry,
-        liveness=liveness,
     )
     try:
         with box_events.because("you loaded it"):
@@ -2008,7 +1995,6 @@ async def gateway_prime(
     *,
     residency: ResidencyCoordinator | None,
     registry: ToolRegistry | None = None,
-    liveness: HiddenToolsProbe | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
 ) -> dict[str, object]:
@@ -2024,13 +2010,12 @@ async def gateway_prime(
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:
-        warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
+        warm_system, warm_tools = await jerv_prime_spec(registry, model.served_model)
     effort, before_warm, after_warm = await _warm_identity(
         model.served_model,
         settings_store=settings_store,
         kv_prefix=kv_prefix,
         registry=registry,
-        liveness=liveness,
     )
     started = time.monotonic()
     try:

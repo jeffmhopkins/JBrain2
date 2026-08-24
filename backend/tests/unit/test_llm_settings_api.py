@@ -1635,7 +1635,7 @@ async def test_warm_identity_builds_matching_restore_and_save_hooks(
             calls.append(("save", (served, system, tuple(tools), reasoning_effort, tokens)))
             return True
 
-    async def _inputs(registry, liveness, served):
+    async def _inputs(registry, served):
         return "PERSONA", [{"type": "function"}], frozenset()
 
     monkeypatch.setattr(mod, "jerv_prime_inputs", _inputs)
@@ -1645,7 +1645,6 @@ async def test_warm_identity_builds_matching_restore_and_save_hooks(
         settings_store=None,
         kv_prefix=cast("mod.KvPrefixStore", _Store()),
         registry=cast("mod.ToolRegistry", object()),
-        liveness=None,
     )
     assert effort == "low"
     assert before_warm is not None and after_warm is not None

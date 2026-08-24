@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -467,15 +467,15 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   one call per year. When the on-box backends are configured, jerv also gets the
   `web`-gated, jerv-only
   **`transcribe`** (read an attached audio file via the local whisper gateway), the
-  image tools (`generate_image`/`edit_image`/`analyze_image`), and **`analyze_video`**
+  **`analyze_image`** vision read, and **`analyze_video`**
   (read an attached video by sampling frames + transcribing audio) — each resolves a
   chat attachment by id under the session scope, runs an on-box model, and is dropped
-  from the registry when its backend is unconfigured (graceful degrade). Configured but
-  **down** goes a step further for the image *generators*: a cached ComfyUI liveness probe
-  (`ImageGenLiveness`) hides `generate_image`/`edit_image` from a jerv turn when the server
-  is unreachable, so the model reaches for a chart tool rather than a dead generator;
-  `analyze_image` stays (it degrades to the on-box OCR pass, so it's still useful). The gate
-  is the registry's per-turn `hidden` set, computed once per turn from the throttled probe.
+  from the registry when its backend is unconfigured (graceful degrade). Image
+  **generation and editing are not agent tools**: the owner drives ComfyUI through the
+  Images launcher (`api/images_render.py` + `ImageRenderService`), and jerv's prompt
+  points an owner who asks for a picture at the Images app. (The former
+  `generate_image`/`edit_image` pair and the `ImageGenLiveness` hide-when-down probe were
+  removed 2026-08.)
   Its URL-sourced
   sibling **`analyze_stream`** reads a video **URL** — a live stream or an on-demand
   video — the same way, resolving it with yt-dlp and sampling frames (+ optional audio)
@@ -569,8 +569,8 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   same `supports_vision` gate that keeps an attachment's bytes inline for a vision-capable
   `agent.turn` model (including the omnibox's per-conversation pick) now also **words the
   attachment note**: when the model can see the bytes the note tells it to describe and reason
-  about the image itself and reserves `analyze_image` for OCR/verbatim text or a change
-  (`edit_image`); only a text-only turn (bytes dropped) gets the "pass the id to `analyze_image`
+  about the image itself and reserves `analyze_image` for OCR/verbatim text;
+  only a text-only turn (bytes dropped) gets the "pass the id to `analyze_image`
   to look at it" pointer. jerv's persona prompt defers to that per-turn note instead of a blanket
   "you can't see images." This kills the self-contradiction a vision model otherwise showed —
   claiming blindness while describing the image in the `analyze_image` args — and the redundant

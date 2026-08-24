@@ -85,19 +85,18 @@ DEEP_PRODUCE_TOOL = "deep_produce"
 
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
-# lookups, the local
-# image-generation tools, the local audio transcription, the local video analysis,
-# and the host-metrics read.
+# lookups, the local vision read, the local audio transcription, the local video
+# analysis, and the host-metrics read.
 # `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
 # allowlist could not otherwise reach); `current_location`, `weather`, `hurricane`,
-# `generate_image`/
-# `edit_image`/`analyze_image`, `transcribe`, `analyze_video`, and `analyze_stream`
+# `analyze_image`, `transcribe`, `analyze_video`, and `analyze_stream`
 # are `web`-gated jerv-only tools (`analyze_stream` reads a video URL — live or VOD —
 # via yt-dlp + ffmpeg, docs/archive/STREAM_ANALYSIS_PLAN.md; the SSRF-guarded second
 # outbound leg after web_fetch). `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
-# location firewall). The on-box tools (image/transcribe/video) drive the localhost
-# ComfyUI, docs/archive/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
+# location firewall). Image GENERATION/editing is NOT an agent tool: the owner drives
+# ComfyUI through the Images launcher (api/images_render.py); `analyze_image` is the
+# read-only vision sidecar that remains. `transcribe` drives the on-box whisper gateway,
 # docs/archive/WHISPER_TRANSCRIPTION_PLAN.md; `analyze_video` reads a video via frame
 # sampling + whisper, docs/archive/VIDEO_ANALYSIS_PLAN.md). The image/transcribe/video tools
 # are absent from the registry when their backend is unconfigured, so allowlisting
@@ -122,8 +121,6 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "weather",
         "weather_history",
         "hurricane",
-        "generate_image",
-        "edit_image",
         "analyze_image",
         "transcribe",
         "analyze_video",

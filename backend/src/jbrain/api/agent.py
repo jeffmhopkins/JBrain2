@@ -768,9 +768,6 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # budget" while they watch (JERV_PLANNING_TOOL_PLAN.md). This also sizes the spawn-tree
     # budget below (seeded from `max_cost_tokens`), so a supervised fan gets matching headroom.
     guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier, supervised=True)
-    # Hide the image-GEN tools when ComfyUI is down — but only for a persona that
-    # actually holds them (jerv), so a curator turn never probes a backend it can't use.
-    liveness = getattr(request.app.state, "image_liveness", None)
     # Hide the CANVAS pair unless this turn's resolved model is one whose grounding
     # coordinate base has actually been measured (readtools.CANVAS_MODELS). On a
     # text-only pick the model can neither aim at a photo nor check what it drew, and on
@@ -779,7 +776,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # the same per-turn provider so the tool array is computed once (loop.py builds it
     # before the step loop, so nothing can be armed mid-turn anyway).
     canvas_hidden = await canvas_hidden_tools(router, model_override, profile.tools or frozenset())
-    hidden_provider = compose_hidden_tools(liveness, profile.tools or frozenset(), canvas_hidden)
+    hidden_provider = compose_hidden_tools(canvas_hidden)
     loop = AgentLoop(
         router,
         get_agent_registry(request),
@@ -835,8 +832,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn
     # model can't see. The attachment's id still rides in attach_text, so the model
-    # can edit it (edit_image) or look at it (analyze_image) BY REFERENCE without the
-    # bytes; a vision-capable route keeps the images inline as before.
+    # can look at it (analyze_image) BY REFERENCE without the bytes; a vision-capable
+    # route keeps the images inline as before.
     images = content.images if can_see_images else []
     # An image attached THIS turn goes straight to its cache-stable home (the owner's
     # sloth conversation, 2026-08-23: the old shape paid the vision encode a second
@@ -1298,7 +1295,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # the compose-the-reply LLM call breaking after a tool already ran) cuts the
             # stream before `done`: if the model already streamed a partial answer OR ran
             # a tool, persist that partial turn so reopening the chat replays what the
-            # owner saw — and, crucially, so a side-effecting tool like generate_image
+            # owner saw — and, crucially, so a side-effecting tool like canvas
             # (which stored an image) is remembered, not silently retried on the next
             # turn. These awaits run INLINE (no asyncio.shield): a client disconnect no
             # longer cancels this task, so the only cancellation reaching here is a single

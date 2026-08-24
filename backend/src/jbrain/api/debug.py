@@ -1372,7 +1372,6 @@ async def load_model(
         # reaches when the box is already in trouble.
         residency=getattr(request.app.state, "residency", None),
         registry=getattr(request.app.state, "agent_registry", None),
-        liveness=getattr(request.app.state, "image_liveness", None),
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
@@ -1501,7 +1500,6 @@ async def prime_model(
         _gateway(request),
         residency=getattr(request.app.state, "residency", None),
         registry=getattr(request.app.state, "agent_registry", None),
-        liveness=getattr(request.app.state, "image_liveness", None),
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )

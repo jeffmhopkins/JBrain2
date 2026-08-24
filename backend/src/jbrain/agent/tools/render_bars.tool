@@ -1,6 +1,6 @@
 ---
 name: render_bars
-version: 5
+version: 6
 permission: read
 params:
   type: object
@@ -45,8 +45,8 @@ bar each; several series draw grouped (side-by-side) or, with `stacked: true`, s
 
 Use this for "plot / graph / chart this by Y", "how many X by Y", "compare X across Y", "which Y has
 the most X" — counts per month, notes by tag, visits by place, a this-vs-last comparison. When the
-owner says "plot / graph / chart / visualize this data", use this or `render_chart`, never
-`generate_image` (that draws a picture, not a data plot). Prefer `render_bars` over `render_chart`
+owner says "plot / graph / chart / visualize this data", use this or `render_chart` (a data
+plot, not a picture). Prefer `render_bars` over `render_chart`
 when the x-axis is a set of categories rather than a time line; for a value trending over dates (one
 or several lines) use `render_chart` — the time-series twin, which you hold alongside this one.
 

@@ -63,7 +63,7 @@ def _collect_source_ids(arguments: dict) -> list[tuple[str, str]]:
     """The requested images as ordered (image_id, attachment_id) pairs — exactly one of
     each pair non-empty. `image_ids` (generated/grabbed/fetched) first, then
     `attachment_ids` (chat attachments); non-string/blank entries dropped. A list, not
-    paired a/b fields — the grammar-safe shape edit_image already uses."""
+    paired a/b fields — the grammar-safe list shape the image tools share."""
     out: list[tuple[str, str]] = []
     for value in arguments.get("image_ids") or []:
         if isinstance(value, str) and value.strip():

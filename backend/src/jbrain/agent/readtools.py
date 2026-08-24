@@ -96,14 +96,11 @@ log = structlog.get_logger()
 TOOLS_DIR = Path(__file__).parent / "tools"
 _DEFAULT_LIMIT = 8
 
-# The side-effecting image-gen sidecars (each produces a stored image): the `web`-class,
-# expensive, jerv-only pair the on-box pipeline drives.
-IMAGE_TOOL_NAMES = frozenset({"generate_image", "edit_image"})
-# Every jerv-only image sidecar wired behind ComfyUI — the gen pair plus the read-only
-# `analyze_image` (a vision read, not an image producer). All optional: dropped from the
-# registry when no ComfyUI is configured (no handlers passed), so an unconfigured box
-# silently lacks the feature.
-OPTIONAL_IMAGE_TOOLS = IMAGE_TOOL_NAMES | frozenset({"analyze_image"})
+# jerv's read-only `analyze_image` vision sidecar (image GENERATION is not an agent
+# tool — the owner drives ComfyUI through the Images launcher, api/images_render.py).
+# Optional: dropped from the registry when no ComfyUI/vision wiring is configured (no
+# handlers passed), so an unconfigured box silently lacks the feature.
+OPTIONAL_IMAGE_TOOLS = frozenset({"analyze_image"})
 # jerv's on-box audio transcription sidecar, dropped from the registry when the
 # whisper gateway is unconfigured (graceful degrade, like the image tools).
 OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
@@ -177,25 +174,15 @@ async def canvas_hidden_tools(
 
 
 def compose_hidden_tools(
-    liveness: Any | None, profile_tools: frozenset[str], extra: frozenset[str]
+    extra: frozenset[str],
 ) -> "Callable[[], Awaitable[Collection[str]]] | None":
-    """One per-turn hidden-tools provider from the liveness probe plus a static set.
+    """One per-turn hidden-tools provider from a static hidden set (the model-gated
+    canvas pair today).
 
     The loop computes the tool array ONCE per turn, before the step loop, so everything
     that hides a tool has to be folded in here rather than armed later. Returns None when
     nothing is hidden, which keeps the common path allocation-free and byte-identical."""
-    probe = (
-        liveness.hidden_tools
-        if liveness is not None and profile_tools and (profile_tools & IMAGE_TOOL_NAMES)
-        else None
-    )
-    if probe is None:
-        return (lambda: _ready(extra)) if extra else None
-
-    async def _hidden() -> Collection[str]:
-        return frozenset(await probe()) | extra
-
-    return _hidden
+    return (lambda: _ready(extra)) if extra else None
 
 
 async def _ready(names: frozenset[str]) -> Collection[str]:
@@ -815,9 +802,9 @@ def build_registry(
     projection), propose_correction and propose_merge (which stage a Proposal,
     never write), and the egress connector tools (which stage an egress Proposal,
     never call out).
-    `image_handlers` is jerv's local image-gen tools, present only when a ComfyUI is
-    configured; when absent the `generate_image`/`edit_image` sidecars are dropped
-    (graceful degrade, docs/archive/IMAGE_GEN_PLAN.md).
+    `image_handlers` is jerv's local `analyze_image` vision read, present only when a
+    ComfyUI is configured; when absent the sidecar is dropped (graceful degrade,
+    docs/archive/IMAGE_GEN_PLAN.md).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     spawn_ref = SpawnRef()

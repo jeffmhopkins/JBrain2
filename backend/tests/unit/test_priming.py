@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import jerv_prime_spec
-from jbrain.agent.readtools import OPTIONAL_CANVAS_TOOLS, OPTIONAL_CROP_TOOLS
+from jbrain.agent.readtools import CANVAS_MODELS, OPTIONAL_CANVAS_TOOLS, OPTIONAL_CROP_TOOLS
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.openai_compat import openai_tools
 from jbrain.llm.types import LlmTool
@@ -37,17 +37,6 @@ class _RecordingRegistry:
         return self._tools
 
 
-class _Liveness:
-    def __init__(self, hidden: Collection[str], *, boom: bool = False):
-        self._hidden = hidden
-        self._boom = boom
-
-    async def hidden_tools(self) -> Collection[str]:
-        if self._boom:
-            raise RuntimeError("comfyui probe failed")
-        return self._hidden
-
-
 def test_openai_tools_serializes_to_the_openai_function_shape() -> None:
     tools = [
         LlmTool(name="web_search", description="Search the web.", input_schema={"type": "object"})
@@ -67,37 +56,30 @@ def test_openai_tools_serializes_to_the_openai_function_shape() -> None:
 async def test_jerv_prime_spec_uses_the_persona_and_a_real_turns_tool_query() -> None:
     tools = [LlmTool(name="web_search", description="d", input_schema={})]
     reg = _RecordingRegistry(tools)
-    system, primed = await jerv_prime_spec(cast(ToolRegistry, reg), None)
+    system, primed = await jerv_prime_spec(cast(ToolRegistry, reg))
 
     profile = AGENTS["jerv"]
     assert system == profile.prompt
     # Same query a real turn makes (api.agent): empty read scope, jerv's allowlist + extra
-    # grant. No liveness → the image tools are not hidden; the canvas pair still is,
-    # because it is model-gated and no served model was named for this prime.
+    # grant. The canvas pair is hidden, because it is model-gated and no served model was
+    # named for this prime.
     (scopes, allow, extra, hidden) = reg.calls[0]
     assert scopes == () and allow == profile.tools and extra == tuple(profile.extra_tools)
     assert set(hidden) == GATED
     assert primed == openai_tools(tools)
 
 
-async def test_jerv_prime_spec_hides_image_tools_when_comfyui_is_down() -> None:
-    # jerv holds the image-gen tools, so a down ComfyUI must hide them from the prime too —
-    # matching a real turn, which hides them (else the primed prefix stops being a prefix).
+async def test_jerv_prime_spec_shows_the_canvas_pair_on_a_qualified_model() -> None:
+    # A served model on the canvas allowlist hides nothing — the primed tool block matches
+    # the turn a real canvas-capable route would send.
     reg = _RecordingRegistry([])
-    jerv_tools = AGENTS["jerv"].tools
-    assert jerv_tools is not None
-    hidden = next(iter(jerv_tools - GATED))  # any non-canvas tool jerv holds
-    await jerv_prime_spec(cast(ToolRegistry, reg), _Liveness({hidden}))
-    # The canvas pair rides alongside: it is model-gated and no served model was named,
-    # so it is hidden here exactly as it would be on a turn routed to an unqualified model.
-    assert set(reg.calls[0][3]) == {hidden} | GATED
+    await jerv_prime_spec(cast(ToolRegistry, reg), next(iter(CANVAS_MODELS)))
+    assert set(reg.calls[0][3]) == set()
 
 
-async def test_jerv_prime_spec_is_best_effort_when_the_liveness_probe_fails() -> None:
-    # A probe error must not break the prime (or a load): it hides nothing and primes the
-    # persona + full tool set (a live ComfyUI is the steady state anyway).
+async def test_jerv_prime_spec_hides_the_canvas_pair_on_an_unqualified_model() -> None:
+    # An unqualified (or unknown) served model keeps the model-gated pair hidden, exactly
+    # as a turn routed to it would.
     reg = _RecordingRegistry([])
-    await jerv_prime_spec(cast(ToolRegistry, reg), _Liveness((), boom=True))
-    # Only the model-gated canvas pair is hidden (no served model named); the probe
-    # failure itself hides nothing.
+    await jerv_prime_spec(cast(ToolRegistry, reg), "gpt-oss-120b")
     assert set(reg.calls[0][3]) == GATED

@@ -645,12 +645,10 @@ def test_chat_records_a_tool_calls_text_offset(
     async def gen(arguments, ctx):  # type: ignore[no-untyped-def]
         return ToolOutput("generated")
 
-    client.app.state.agent_registry = registry_with_tool("generate_image", gen)  # type: ignore[attr-defined]
+    client.app.state.agent_registry = registry_with_tool("canvas", gen)  # type: ignore[attr-defined]
     client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
         [
-            LlmTurn(
-                "", (ToolCall("c1", "generate_image", {"prompt": "x"}),), "tool_use", LlmUsage(1, 1)
-            ),
+            LlmTurn("", (ToolCall("c1", "canvas", {"prompt": "x"}),), "tool_use", LlmUsage(1, 1)),
             LlmTurn("here it is", (), "end_turn", LlmUsage(1, 1)),
         ],
         stream_chunks=[["I'll make it"], ["here it is"]],
@@ -2234,7 +2232,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v46") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v47") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(

@@ -135,7 +135,6 @@ from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.htmlrender import HtmlRenderClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
-from jbrain.image_gen.liveness import ImageGenLiveness
 from jbrain.image_gen.render import ImageRenderService
 from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
@@ -737,13 +736,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         )
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
-        # Built before the registry: edit_image resolves a chat attachment's bytes
+        # Built before the registry: analyze_image resolves a chat attachment's bytes
         # through the same TurnAttachmentRepo, so it must exist first.
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.turn_attachments = TurnAttachmentRepo(maker, app.state.agent_sessions)
-        # jerv's local image generator (docs/archive/IMAGE_GEN_PLAN.md). Wired only when a
+        # The owner's local image stack (docs/archive/IMAGE_GEN_PLAN.md): the launcher's
+        # render service plus jerv's read-only analyze_image sidecar. Wired only when a
         # host-managed ComfyUI is configured; None otherwise, so an unconfigured box
-        # silently lacks the feature — the registry then drops the image sidecars. The
+        # silently lacks the feature — the registry then drops the sidecar. The
         # client is dedicated because ComfyUI's long generations want their own timeout
         # budget, set inside ComfyUiImageGen.
         image_gen_client: httpx.AsyncClient | None = None
@@ -756,14 +756,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # The management client (status/free) for the owner image-settings surface
             # — the sibling of app.state.local_gateway, wired on the same gate.
             app.state.comfyui_gateway = ComfyUiGatewayClient(settings.comfyui_url)
-            # Caches ComfyUI reachability so a jerv turn hides generate_image/edit_image
-            # when the server is configured but down (analyze_image stays — it degrades to
-            # OCR). The agent loop awaits its hidden_tools() each turn.
-            app.state.image_liveness = ImageGenLiveness(app.state.comfyui_gateway)
-            # The shared render core (Wave L2): the jerv handlers AND the direct owner API
-            # (api/images_render) drive this one path, so behavior never diverges. It owns the
-            # unified-memory time-share (free the LLM before / ComfyUI after a render), the
-            # blob put, and the RLS-scoped row insert.
+            # The render core (Wave L2): the direct owner API (api/images_render) drives this
+            # one path — image generation/editing lives in the Images launcher, not in an
+            # agent tool. It owns the unified-memory time-share (free the LLM before /
+            # ComfyUI after a render), the blob put, and the RLS-scoped row insert.
             app.state.image_render = ImageRenderService(
                 app.state.image_gen,
                 app.state.blob_store,
@@ -780,27 +776,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 models_dir=settings.comfyui_models_dir,
             )
             image_handlers = build_image_handlers(
-                app.state.image_gen,
                 app.state.blob_store,
                 app.state.generated_image_repo,
                 app.state.turn_attachments,
                 maker,
-                # The image render frees any resident local LLM first (unified-memory
-                # time-share); llama-swap reloads it on the loop's next call.
-                app.state.local_gateway,
-                # …and frees ComfyUI's resident diffusion model AFTER the render, so the
-                # ~39 GB it pins returns to the pool for the reply's LLM reload, a
-                # follow-up edit, or switching back to a large local model.
-                app.state.comfyui_gateway,
                 # Routes analyze_image's vision read (the `agent.vision` task) so a
                 # text-only agent model can still see an image via a vision model.
                 app.state.llm_router,
-                # The provisioned catalog ids gate the `speed: fast` path — a fast request
-                # for a model the operator never installed fails with a clear, actionable
-                # message rather than ComfyUI's opaque missing-checkpoint error.
-                settings.comfyui_models,
-                # The handlers are a thin adapter over the shared service.
-                render=app.state.image_render,
                 # The deterministic OCR sidecar, used by analyze_image as a fast CPU
                 # text-detector: it gates the verbatim vision-OCR pass so a document/screenshot
                 # comes back with its exact text appended, and a text-less photo doesn't.
@@ -810,7 +792,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
             app.state.image_render = None
-            app.state.image_liveness = None
         # jerv's on-box audio transcription (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
@@ -1194,7 +1175,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.warm_keeper = WarmKeeper(
             gateway=app.state.local_gateway,
             registry=app.state.agent_registry,
-            liveness=getattr(app.state, "image_liveness", None),
             router=app.state.llm_router,
             hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
             # The same operator switch the coordinator reads. The keeper is the OTHER auto-load

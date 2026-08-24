@@ -164,10 +164,10 @@ class ChatCapabilities(BaseModel):
     # Whether the model the agent.turn task resolves to can accept images — the PWA
     # gates the attach-image affordance on it. A model capability, not per-session.
     supports_vision: bool
-    # Whether the on-box image tools are configured (a ComfyUI is set). When true, an
-    # attached image is useful to jerv even if the agent model can't see it — jerv can
-    # analyze_image (read it via the vision model) or edit_image it BY id — so the PWA
-    # still offers attach in that mode rather than hiding it behind vision.
+    # Whether the agent can edit an attached image. Hardcoded False since the agent-side
+    # edit tools were removed (2026-08 — the Images launcher owns ComfyUI); the field
+    # stays because the PWA reads it (the client contract), gating a chat-side edit
+    # affordance that no longer exists.
     can_edit_images: bool
     # The agent.turn model's total context window — the meter's denominator. Sent here
     # so the composer can show the (near-empty) meter in a fresh session, before the
@@ -189,6 +189,7 @@ async def chat_capabilities(
     spec = (overrides.get("agent.turn") or {}).get("spec") or TASK_DEFAULTS["agent.turn"]
     return ChatCapabilities(
         supports_vision=supports_vision_for_spec(settings, spec),
-        can_edit_images=bool(settings.comfyui_url),
+        # Agent-side image editing removed 2026-08 — the launcher owns ComfyUI.
+        can_edit_images=False,
         context_window=context_window_for_spec(spec),
     )
