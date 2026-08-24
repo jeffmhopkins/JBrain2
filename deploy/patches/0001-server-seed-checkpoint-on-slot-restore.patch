@@ -1,0 +1,33 @@
+Seed a context checkpoint on slot-restore so SWA/hybrid/recurrent models
+can REUSE a restored prompt instead of re-prefilling it.
+
+Applied as an anchored insertion (see deploy/apply-llama-patches.sh) rather
+than a line-numbered diff, so it survives minor llama.cpp drift around the
+restore handler. Pinned to the commit the box's base image ships
+(LLAMA_CPP_COMMIT in Dockerfile.local-llm); re-verify on a base bump.
+
+Anchor line (must be unique in tools/server/server-context.cpp):
+    slot->prompt.tokens = std::move(restored);
+
+Inserted immediately after it:
+
+                        // --- JBrain patch: reuse-on-restore for SWA/hybrid/recurrent ---
+                        // A slot-restore rebuilds the memory state and sets
+                        // slot->prompt.tokens, but for a SWA/hybrid/recurrent model the
+                        // completion-path prompt reuse is gated on a CONTEXT CHECKPOINT.
+                        // With none registered the reuse hits do_reset and re-prefills the
+                        // whole prompt. Seed one checkpoint spanning the restored prompt so
+                        // the restore is actually reusable (harmless for pure-attention).
+                        if (params_base.n_ctx_checkpoints > 0 && slot->prompt.tokens.size() > 0) {
+                            auto & cur = slot->prompt.checkpoints.emplace_back();
+                            cur.id_task = -1;  // not owned by a completion task
+                            cur.update_pos(0, 0, (llama_pos) slot->prompt.tokens.size() - 1);
+                            cur.update_tgt(ctx_tgt, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                            cur.update_dft(ctx_dft, slot->id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                            if (spec) {
+                                common_speculative_get_state(spec.get(), slot->id, cur.data_spec);
+                            }
+                            SLT_TRC(slot, "seeded restore checkpoint (n_tokens = %d)\n",
+                                (int) slot->prompt.tokens.size());
+                        }
+                        // --- end JBrain patch ---

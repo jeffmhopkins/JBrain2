@@ -58,10 +58,64 @@ ENV GOTOOLCHAIN=auto
 ARG LLAMA_SWAP_VERSION=60226b63776efac11e15828abe0bb302ec259699
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
+# OPT-IN patched llama-server build. DEFAULT OFF: with PATCH_RESTORE_CHECKPOINT
+# unset/0 this stage still builds but produces nothing the runtime copies, so the
+# image is byte-for-byte the stock base binary — zero risk to the working build.
+#
+# When set to 1, this rebuilds ONLY the llama-server target from llama.cpp pinned
+# to LLAMA_CPP_COMMIT (the commit the base image's own binary reports — keep it in
+# lockstep with LOCAL_LLM_BASE), with JBrain's patches applied by anchor
+# (deploy/apply-llama-patches.sh). It builds INSIDE the base image so it reuses the
+# base's proven gfx1151 Vulkan toolchain (glslc, headers, driver) — only generic
+# build tools are added — which keeps the result ABI-matched to the runtime.
+#
+# WHY it exists: the sole patch (0001) seeds a context checkpoint on slot-restore
+# so SWA/hybrid/recurrent models (qwen3.8) can REUSE a disk-restored prompt instead
+# of re-prefilling it — the ~176 s → ~12 s qwen load fix. The stock base can't do
+# this; upstreaming is the long-term home, this is the local bridge.
+#
+# UNVALIDATED on gfx1151 as committed — the first on-box build with the flag on is
+# the test; the update flow's smoke-test + rollback protect the runtime if it fails.
+FROM ${LOCAL_LLM_BASE} AS llama-build
+ARG PATCH_RESTORE_CHECKPOINT=0
+ARG LLAMA_CPP_COMMIT=c060ca974
+COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
+RUN set -eux; \
+    mkdir -p /out; \
+    if [ "${PATCH_RESTORE_CHECKPOINT}" != "1" ]; then \
+        echo "PATCH_RESTORE_CHECKPOINT!=1 — skipping patched build (stock binary kept)"; \
+        exit 0; \
+    fi; \
+    ( command -v git && command -v cmake && command -v c++ ) >/dev/null 2>&1 || \
+        ( apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ); \
+    git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
+    git -C /llama checkout "${LLAMA_CPP_COMMIT}"; \
+    /apply-llama-patches.sh /llama; \
+    cmake -S /llama -B /llama/build -DGGML_VULKAN=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release; \
+    cmake --build /llama/build --target llama-server -j"$(nproc)"; \
+    cp "$(find /llama/build -name llama-server -type f | head -n1)" /out/llama-server; \
+    /out/llama-server --version 2>&1 | head -n1
+
 FROM ${LOCAL_LLM_BASE}
+ARG PATCH_RESTORE_CHECKPOINT=0
 
 # llama-swap is a static Go binary — drops in next to the image's llama-server
 # (which is on PATH; the generated config invokes it by name).
 COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
+
+# Overlay the patched llama-server ONLY when the opt-in build produced one. The
+# build stage always creates /out; it holds a binary only when PATCH_RESTORE_
+# CHECKPOINT=1 succeeded. This shell replaces the base's on-PATH llama-server in
+# place when present, and is a no-op otherwise — so default builds are untouched.
+COPY --from=llama-build /out/ /tmp/llama-out/
+RUN set -eu; \
+    if [ -f /tmp/llama-out/llama-server ]; then \
+        dst="$(command -v llama-server)"; \
+        echo "overlaying patched llama-server onto ${dst}"; \
+        install -m 0755 /tmp/llama-out/llama-server "${dst}"; \
+    else \
+        echo "no patched llama-server (PATCH_RESTORE_CHECKPOINT=${PATCH_RESTORE_CHECKPOINT}) — keeping stock"; \
+    fi; \
+    rm -rf /tmp/llama-out
 
 EXPOSE 8080

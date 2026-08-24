@@ -206,12 +206,9 @@ both resides and warms it.
 > inert by construction — and on gpt-oss it wrote whatever held the single slot at save time
 > (measured **2,164 tokens** against a ~36k prefix, because the analysis tasks routed there
 > and evicted jerv between the prime and the save). v2 answers each: hybrids and speculative
-> entries are refused up front (`--slot-save-path` is only rendered for attention models —
-> EXCEPT entries with the catalog's `kv_slot_restorable` opt-in: the qwen3.8 twins are
-> hybrid+MTP, but llama.cpp serializes both memory halves of a hybrid slot and speculation
-> verifies every draft against the target, so their restore is sound; a restored hybrid
-> just has no context checkpoints, so a mid-prefix divergence reprocesses from zero — the
-> pre-cache cost, fail-soft);
+> entries are refused up front (`--slot-save-path` is only rendered for attention models;
+> the catalog's `kv_slot_restorable` flag can override that per entry but **no shipped
+> model sets it** — see the box below);
 > a save happens ONLY when a slot's `n_prompt_tokens` exactly equals the prime's own
 > `usage.input_tokens`, read in the same breath as the prime, and the server's `n_saved`
 > must agree or the file is deleted; a restore's `n_restored` is verified against the same
@@ -231,14 +228,47 @@ both resides and warms it.
 > ~1 s cache hit instead of a ~60 s prefill), saves after, and probes every settled tick so
 > a single-slot clobber heals off-turn; the router restores inline before an agent turn
 > that would otherwise re-prefill; the load-time warm also SAVES the slot after it returns
-> (the only save moment a non-agent model gets — a picker-loaded qwen repays its measured
-> ~170 s warm prefill exactly once per fingerprint, dropping its load from ~179 s toward
-> ~12 s); and the gateway's load-time warm restores first and
+> (the only save moment a non-agent model gets); and the gateway's load-time warm restores first and
 > renders the SAME prompt a routed turn sends (system + tools + the reasoning effort) —
 > until 2026-08-23 it omitted the effort, primed a "Reasoning: medium" variant no turn
 > ever used, and burned a full ~62 s prefill on every load while clobbering the freshly
 > restored cache on a 1-slot server. Saves and restores land in Vitals as
 > `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
+>
+> **Restore does not reuse on a hybrid — the disk cache is gpt-oss-only in practice.**
+> The qwen3.8 twins were opted in on 2026-08-23 and reverted on 2026-08-24 after a live
+> A/B: a qwen reload took **176 s WITH the restore, identical to without**. The restore
+> itself is fine — `kv_prefix_restored` fires with the correct token count in ~130 ms —
+> but llama-server then re-prefills the whole prompt. Root cause (traced through
+> `tools/server/server-context.cpp`): the restore sets `slot.prompt.tokens`, so
+> `get_common_prefix` matches — but for a **SWA / hybrid / recurrent** model, reusing that
+> state is gated on a **context checkpoint** (`slot.prompt.checkpoints`), and a slot-restore
+> rebuilds the raw memory state WITHOUT registering one. The reuse path finds no checkpoint
+> and hits `do_reset` (server log: *"forcing full prompt re-processing … likely due to SWA
+> or hybrid/recurrent memory"*), so `n_past = 0`. gpt-oss (pure attention) needs no
+> checkpoint, so its restore reuses directly — reload **43 s** (weights + a 1-token warm),
+> turns restore in ~90 ms. In-session qwen reuse still works (checkpoints ARE created live
+> during a conversation — that is why `f_keep ≈ 0.99` turn-to-turn); only the cross-load
+> disk restore is inert. THE FIX is a llama-server patch: seed a checkpoint from the
+> restored span in the slot-restore handler (`create_checkpoint` is right there). It can't
+> ride a JBrain update — `llama-server` is the pinned community `kyuz0/amd-strix-halo-toolboxes`
+> binary, not a local build.
+>
+> **The patched-build path is committed, OPT-IN, default OFF.** `deploy/patches/` holds the
+> patch (anchored, applied by `deploy/apply-llama-patches.sh`), and `Dockerfile.local-llm`
+> has a builder stage that rebuilds llama-server from `LLAMA_CPP_COMMIT` (the commit the base
+> image's own binary reports — `b10603`/`c060ca974` at time of writing) with the patch
+> applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
+> flag unset the image is byte-for-byte the stock base — zero change. To activate: set
+> `LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=1` (and keep `LOCAL_LLM_LLAMA_COMMIT` in lockstep with
+> `LOCAL_LLM_BASE`) in the box `.env`, then Ops → Update — the update flow rebuilds
+> llama-server (~20-30 min under `PULL_TIMEOUT_S`), and its smoke test rolls back to the
+> stock base if the build or the binary fails. UNVALIDATED on gfx1151 as committed — the
+> first on-box build is the test; watch the update log and `llama-server --version` on the
+> gateway. Once the patched binary is verified, flip `kv_slot_restorable=True` back on the
+> qwen entries (`local_catalog.py`) and re-measure a qwen reload (expect ~12 s). Upstreaming
+> the patch to ggml-org/llama.cpp remains the long-term home (retires the local build on the
+> digest bump that carries it).
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to
 > 8192 MiB, so every resident model silently reserved 8 GiB of host memory — and on Strix Halo

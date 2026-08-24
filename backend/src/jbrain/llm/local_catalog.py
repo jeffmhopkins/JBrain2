@@ -702,7 +702,15 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
+        # kv_slot_restorable stays OFF: the disk restore LANDS for these hybrids (correct
+        # token count, ~130 ms) but llama-server re-prefills the whole prompt anyway —
+        # SWA/hybrid/recurrent prefix reuse is gated on a CONTEXT CHECKPOINT, and a
+        # slot-restore rebuilds the memory state without registering one, so the reuse
+        # path hits `do_reset` ("forcing full prompt re-processing … likely due to SWA or
+        # hybrid/recurrent memory", server-context.cpp). Measured live 2026-08-24: qwen
+        # reload 176 s WITH the restore, identical to without — a wasted ~2 GB write per
+        # load. Re-enable once llama-server seeds a checkpoint on restore (see
+        # docs/runbooks/STRIX_HALO_SETUP.md, "restore does not reuse on hybrids").
         checkpoint_gb=0.28,
     ),
     LocalModel(
@@ -773,7 +781,8 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
+        # kv_slot_restorable OFF — see the qwen3.8-27b-q4 entry: restore lands but the
+        # hybrid re-prefills without a context checkpoint (measured 2026-08-24).
         checkpoint_gb=0.28,
     ),
     LocalModel(
@@ -856,7 +865,8 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        kv_slot_restorable=True,  # hybrid+MTP, reasoned + verified live (2026-08-23)
+        # kv_slot_restorable OFF — see the qwen3.8-27b-q4 entry: restore lands but the
+        # hybrid re-prefills without a context checkpoint (measured 2026-08-24).
         checkpoint_gb=0.28,
     ),
     LocalModel(

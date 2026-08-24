@@ -10,12 +10,13 @@ counts only where the max_tokens=1 prime makes them exact, poison files deleted 
 failure, and the save directory read off the launch line the server actually runs."""
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from jbrain import box_events
-from jbrain.llm import kv_prefix, llama_swap_config
+from jbrain.llm import kv_prefix, llama_swap_config, local_catalog
 from jbrain.llm.kv_prefix import MIN_PREFIX_TOKENS, KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.types import LlmTool
@@ -260,22 +261,32 @@ async def test_a_recurrent_or_unknown_model_is_never_saved(root: Path) -> None:
     assert gw.saved == []
 
 
-async def test_a_kv_slot_restorable_hybrid_is_eligible(root: Path) -> None:
-    """The qwen3.8 twins opt in via the catalog (`kv_slot_restorable`): hybrid + MTP, but
-    llama.cpp serializes both memory halves and speculation verifies every draft — so the
-    disk layer works for them, repaying the ~170 s per-load warm (2026-08-23)."""
-    served = "qwen3.8-27b-q4"
-    (root / "llama-swap.yaml").write_text(
-        "models:\n  "
-        + served
-        + ":\n    cmd: llama-server -c 131072 --slot-save-path /models/"
-        + llama_swap_config.KVSLOT_DIR
-        + "/qwen3.8-27b-q4\n"
-    )
-    (root / llama_swap_config.KVSLOT_DIR / "qwen3.8-27b-q4").mkdir(parents=True, exist_ok=True)
+async def test_the_kv_slot_restorable_flag_gates_eligibility(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `kv_slot_restorable` catalog FLAG is what admits an otherwise-excluded model
+    (a hybrid/recurrent/speculative entry) to the disk layer — the mechanism, independent
+    of any live opt-in. NOTE: no shipped model sets it today — the qwen3.8 twins were
+    opted in on 2026-08-23 and reverted 2026-08-24 (the restore lands but the hybrid
+    re-prefills with no context checkpoint; re-enable gated on the llama-server patch).
+    This pins the flag's plumbing so re-enabling is a one-line flip."""
+    import jbrain.llm.kv_prefix as mod
+
+    served = "qwen3-vl-30b-a3b"  # the fixture's served model (real catalog entry)
+    base = local_catalog.get_by_served(served)
+    assert base is not None
+    # A recurrent+speculative variant that WITHOUT the flag would be refused, WITH it is
+    # eligible — the exact override the flag exists for.
+    hybrid_off = replace(base, recurrent=True, kv_slot_restorable=False)
+    hybrid_on = replace(base, recurrent=True, kv_slot_restorable=True)
+
+    monkeypatch.setattr(mod.local_catalog, "get_by_served", lambda m: hybrid_off)
     store, gw = _store(root)
     gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
-    assert await store.save_after_prime(served, "persona", TOOLS, PRIME) is True
+    assert await store.save_after_prime(served, "persona", TOOLS, PRIME) is False  # refused
+
+    monkeypatch.setattr(mod.local_catalog, "get_by_served", lambda m: hybrid_on)
+    assert await store.save_after_prime(served, "persona", TOOLS, PRIME) is True  # admitted
     assert len(gw.saved) == 1
 
 
