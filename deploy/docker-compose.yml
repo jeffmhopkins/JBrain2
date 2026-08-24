@@ -392,13 +392,14 @@ services:
         # reuse-on-restore checkpoint seed (qwen fast-load fix, deploy/patches/) at the
         # commit the base image's own llama-server reports — read at build time, so it
         # tracks LOCAL_LLM_BASE (pinned or auto-updated) with nothing to keep in lockstep.
-        # LLAMA_CPP_COMMIT is only the fallback when that version read fails; this compose
-        # default once silently overrode a corrected Dockerfile default (2026-08-24 smoke
-        # failure), which is why both now carry the same value and the same warning. First
-        # build on the box is the validation; the update flow's smoke-test rolls back on
-        # failure and turns the toggle back off.
+        # LLAMA_CPP_COMMIT is empty (= auto-detect) unless LOCAL_LLM_LLAMA_COMMIT is set
+        # in .env as a deliberate override for an exotic base variant. A value here once
+        # silently overrode a corrected Dockerfile default, and any static commit breaks
+        # against the auto-updated (floating) base — both 2026-08-24 smoke failures. An
+        # unparseable version now fails the build fast instead of guessing; the update
+        # flow's smoke-test rolls back on failure and turns the toggle back off.
         PATCH_RESTORE_CHECKPOINT: ${LOCAL_LLM_PATCH_RESTORE_CHECKPOINT:-0}
-        LLAMA_CPP_COMMIT: ${LOCAL_LLM_LLAMA_COMMIT:-571d0d540}
+        LLAMA_CPP_COMMIT: ${LOCAL_LLM_LLAMA_COMMIT:-}
     restart: unless-stopped
     # Read the config from the /models mount — no separate single-file bind mount
     # (a missing file would make Docker create a directory and wedge the gateway).

@@ -262,14 +262,22 @@ both resides and warms it.
 > out the commit the base image's own binary reports** (`llama-server --version`, read at
 > build time; the box's base is `b10068`/`571d0d540`): the base links
 > `libggml*.so`/`libllama.so` dynamically and we overlay only the `llama-server` binary, so
-> any other commit ships an ABI-incompatible binary that crashes at model load. That was the
-> 2026-08-24 smoke failure — a hand-pinned `LLAMA_CPP_COMMIT=c060ca974` against a `571d0d540`
-> base (the compose-side default overrode a later correction, too). Reading the commit off
-> the base itself designs that drift out and lets the patch coexist with auto-update's
-> floating base; `LLAMA_CPP_COMMIT` (Dockerfile + compose, same value) survives only as the
-> fallback for an unparseable version string. The patch is applied by anchor and the apply
+> any other commit ships an ABI-incompatible binary that crashes at model load. Both
+> 2026-08-24 smoke failures were hand-pinned commits: `c060ca974` against a `571d0d540` base
+> (with the compose-side default silently overriding a later correction), then a stale
+> fallback against the auto-updated base after upstream changed its `--version` format to
+> `version: 0.2.0-dev (build NNNN, commit sha)`. The builder parses both known formats; an
+> unparseable version FAILS the build fast (a guessed commit just wastes a compile before
+> the smoke test catches it), and `LLAMA_CPP_COMMIT` / `LOCAL_LLM_LLAMA_COMMIT` is empty by
+> default — set it only to deliberately force a commit for an exotic base variant. The
+> builder also repairs the base's own toolchain before compiling: the rolling image has
+> shipped with its RPM DB claiming binutils installed while `/usr/bin/ld` was missing
+> ("collect2: cannot find 'ld'"), so missing tools get a dnf install *and* a reinstall
+> pass, hard-failing up front if still absent. The patch is applied by anchor and the apply
 > script knows each historical wording of the restore path as an alternative anchor; if
-> upstream rewords it again the build fails loudly and the update flow rolls back. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
+> upstream rewords it again the build fails loudly and the update flow rolls back. The
+> whole stage was validated off-box by running it verbatim (same script, same rolling
+> image, x86_64) before it ever reached the box. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
 > owner runs this box with no terminal (CLAUDE.md #10), so the switch is a PWA setting
 > (`local_llm_patch_restore_checkpoint`), not an `.env` edit. The setting drives the build:
 > `update-inner.sh` reads it (`jbrain.cli local-llm-patch-restore-checkpoint`) and exports
