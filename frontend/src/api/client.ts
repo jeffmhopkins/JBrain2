@@ -635,6 +635,41 @@ export interface TavilyTestResult {
   detail: string;
 }
 
+/** jmolt's Moltbook account + operating switches (GET /api/settings/moltbook). The bearer
+ * key is stored server-side and NEVER returned — only whether one is set. `autonomy` is
+ * the queue-vs-auto switch (default off); `killed` is the global pause; `disclosure` is
+ * the fixed honest bio header. */
+export interface MoltbookSettings {
+  key_set: boolean;
+  handle: string;
+  autonomy: boolean;
+  killed: boolean;
+  disclosure: string;
+}
+
+/** Partial Moltbook write — omit a field to leave it unchanged. `clear_key` disconnects
+ * the account (reverts to the env fallback). */
+export interface MoltbookPatch {
+  autonomy?: boolean;
+  killed?: boolean;
+  disclosure?: string;
+  clear_key?: boolean;
+}
+
+/** Result of POST /api/settings/moltbook/register — non-secret claim material only (the
+ * key is never returned). The owner opens `claim_url` to verify email + post the X
+ * verification tweet that activates the account. */
+export interface MoltbookRegisterResult {
+  claim_url: string;
+  verification_code: string;
+  handle: string;
+}
+
+/** Live claim status from Moltbook (pending_claim | claimed | …). */
+export interface MoltbookClaimStatus {
+  status: string;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -2337,6 +2372,32 @@ export const api = {
       jsonInit("POST", url ? { url } : {}),
     );
     return (await response.json()) as TavilyTestResult;
+  },
+
+  // jmolt's Moltbook account + switches. Status hides the key (key_set boolean only);
+  // register runs the platform handshake and returns only claim material; patch flips
+  // the autonomy/kill switches or disconnects the account.
+  async getMoltbookSettings(): Promise<MoltbookSettings> {
+    const response = await request("/api/settings/moltbook");
+    return (await response.json()) as MoltbookSettings;
+  },
+
+  async updateMoltbookSettings(patch: MoltbookPatch): Promise<MoltbookSettings> {
+    const response = await request("/api/settings/moltbook", jsonInit("PUT", patch));
+    return (await response.json()) as MoltbookSettings;
+  },
+
+  async registerMoltbook(name: string, description: string): Promise<MoltbookRegisterResult> {
+    const response = await request(
+      "/api/settings/moltbook/register",
+      jsonInit("POST", { name, description }),
+    );
+    return (await response.json()) as MoltbookRegisterResult;
+  },
+
+  async getMoltbookClaimStatus(): Promise<MoltbookClaimStatus> {
+    const response = await request("/api/settings/moltbook/claim-status");
+    return (await response.json()) as MoltbookClaimStatus;
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning
