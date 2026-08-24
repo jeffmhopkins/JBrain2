@@ -269,11 +269,10 @@ async def test_the_checkpoint_sidecar_lives_and_dies_with_its_slot_file(
     assert newest.exists()
     # A restore that rejects its file deletes the sidecar too.
     bad = _plant_file(root, store, "persona")
-    bad_ck = Path(str(bad) + ".ckpt")
+    bad_ck = bad.parent / (bad.name + ".ckpt")
     bad_ck.write_bytes(b"\0" * 8)
-    gw2_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     store2, gw2 = _store(root)
-    gw2.slot_state = gw2_state
+    gw2.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     gw2.restore_response = {"n_restored": 7}  # stub: fails the verified-size gate
     assert await store2.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert not bad.exists() and not bad_ck.exists(), "a bad slot file takes its sidecar"
