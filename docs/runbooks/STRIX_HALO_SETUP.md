@@ -287,13 +287,17 @@ both resides and warms it.
 > test rolls back to the stock base if the build or the binary fails — and on that failure
 > the script clears the toggle back off (`set-local-llm-patch-restore-checkpoint off`), so a
 > bad build turns its own switch off rather than rebuilding a broken engine on every future
-> Update. UNVALIDATED on gfx1151 as committed — the first on-box build is the test; watch the
-> update log and `llama-server --version` on the gateway. **The setting is also the qwen
-> eligibility gate:** `KvPrefixStore` reads it at api startup (`patch_active`) and admits the
-> qwen3.8 MTP-hybrids to the disk restore ONLY when it is on — no `kv_slot_restorable=True`
-> flip in `local_catalog.py` is needed (the static flag stays off; the setting is the gate).
-> Because the value is read once at startup, toggling it takes effect on the container
-> recreate the same Update already performs. Upstreaming the patch to ggml-org/llama.cpp
+> Update. Built and smoke-tested on the box 2026-08-24 (engine `b10612-758443071`, at the
+> base's own commit). **The setting is also the qwen eligibility gate:** `KvPrefixStore`
+> reads it at api startup (`patch_active`) and admits the qwen3.8 MTP-hybrids to the disk
+> restore ONLY when it is on — no `kv_slot_restorable=True` flip in `local_catalog.py` is
+> needed (the static flag stays off; the setting is the gate). Because the value is read
+> once at startup, toggling it takes effect on the container recreate the same Update
+> already performs. The launch line's side of the plumbing is STATIC, not toggled:
+> `llama_swap_config` renders `--slot-save-path` for recurrent+MTP entries unconditionally
+> (the flag alone causes no saves — the store's gate does), because the store resolves its
+> save dir off the rendered launch line and, without the flag, silently declines — the gap
+> that made the toggle inert on its first working engine (2026-08-24). Upstreaming the patch to ggml-org/llama.cpp
 > remains the long-term home (retires the local build on the digest bump that carries it).
 >
 > **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to

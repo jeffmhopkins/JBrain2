@@ -821,6 +821,40 @@ def test_slot_save_path_is_rendered_for_attention_models_only(tmp_path: Path) ->
     assert f"/models/{llama_swap_config.KVSLOT_DIR}/gpt-oss-120b" not in spec
 
 
+def test_recurrent_mtp_entries_get_the_slot_save_path(tmp_path: Path) -> None:
+    """The qwen3.8 hybrids (recurrent + `--spec-type draft-mtp`) must be LAUNCHED with a
+    save path even though their catalog opt-in is off: whether a save/restore ever runs is
+    KvPrefixStore._eligible's call (the owner's Fast-Qwen-loads setting), but the store
+    resolves the save dir off the rendered launch line — without the flag it silently
+    declines, which is exactly how the toggle shipped inert on 2026-08-24. The flag alone
+    is harmless: no code saves to it unless the store decides to."""
+    _lay_down(tmp_path)
+    (tmp_path / "qwen3.8-27b-q4").mkdir()
+    (tmp_path / "qwen3.8-27b-q4" / "model-Q4_K_M.gguf").write_bytes(b"\0")
+    manifest = [
+        *_manifest(),
+        {
+            "id": "qwen3.8-27b-q4",
+            "served_model": "qwen3.8-27b-q4",
+            "gguf_include": "*Q4_K_M*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "recurrent": True,
+            "extra_server_args": ["--spec-type", "draft-mtp"],
+        },
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    assert f"--slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/qwen3.8-27b-q4" in text
+    # And the save dir is created alongside — llama-server won't create it itself.
+    llama_swap_config.write(str(tmp_path), manifest)
+    assert (tmp_path / llama_swap_config.KVSLOT_DIR / "qwen3.8-27b-q4").is_dir()
+    # A second slot drops speculation (the mutual-exclusion rule) — and with the MTP flags
+    # gone the entry is plain recurrent again, so the save path must vanish with them.
+    two_slots = llama_swap_config.render(manifest, str(tmp_path), slots={"qwen3.8-27b-q4": 2})
+    assert f"/models/{llama_swap_config.KVSLOT_DIR}/qwen3.8-27b-q4" not in two_slots
+
+
 def test_kv_slot_restorable_overrides_the_blanket_exclusions(tmp_path: Path) -> None:
     """The catalog opt-in (`kv_slot_restorable`, the qwen3.8 hybrid+MTP argument) wins
     over both blanket rules: the entry gets the flag AND its save dir, recurrent or not."""
