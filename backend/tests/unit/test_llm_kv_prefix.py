@@ -97,7 +97,7 @@ def _plant_file(root: Path, store: KvPrefixStore, system: str) -> Path:
     """The file a prior successful save would have left, at the CURRENT fingerprint."""
     resolved = store._resolve(SERVED, system, TOOLS, None)
     assert resolved is not None
-    fingerprint, save_dir = resolved
+    fingerprint, save_dir, _identity = resolved
     assert Path(save_dir) == _id_dir(root), "the store must look where the server saves"
     path = Path(save_dir) / f"{fingerprint}.kvslot"
     path.write_bytes(b"\0" * 64)
@@ -538,3 +538,63 @@ async def test_a_mid_conversation_loss_restores_the_prefix_not_the_conversation(
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
     assert [r[0] for r in gw.restored] == [SERVED]
+
+
+async def test_a_busy_slot_is_waited_out_then_restored(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-08-24 canvas miss: the hook fired while a ~22 s vision side-call was
+    0.5 s from releasing the ONLY slot, gave up silently, and the next step paid a
+    204 s full re-prefill. A bounded wait catches exactly that window."""
+    import jbrain.llm.kv_prefix as mod
+
+    monkeypatch.setattr(mod, "RESTORE_BUSY_INTERVAL_S", 0.0)
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.restore_response = {"n_restored": PRIME}
+    busy = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
+    freed = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": False}]
+    states = iter([busy, busy, freed, freed])
+    gw.slots = lambda served: _next_state(states)  # type: ignore[method-assign]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert len(gw.restored) == 1
+
+
+def _next_state(states):  # type: ignore[no-untyped-def]
+    async def _coro():  # type: ignore[no-untyped-def]
+        return next(states)
+
+    return _coro()
+
+
+async def test_a_slot_still_busy_after_the_wait_is_left_alone(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jbrain.llm.kv_prefix as mod
+
+    monkeypatch.setattr(mod, "RESTORE_BUSY_INTERVAL_S", 0.0)
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
+
+
+async def test_a_missing_file_names_the_identity_component_that_drifted(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The instrumentation the 204 s mystery needed: a save under one tool set, a
+    restore attempted under another — the log must say `tools` moved, so a liveness
+    flap is distinguishable from a race at a glance. (structlog prints to stdout.)"""
+    store, gw = _store(root)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    capsys.readouterr()
+    other_tools = [LlmTool(name="extra", description="a flapped-in tool", input_schema={})]
+    assert await store.restore_if_lost(SERVED, "persona", [*TOOLS, *other_tools]) is False
+    out = capsys.readouterr().out
+    drift = [ln for ln in out.splitlines() if "identity_drift" in ln]
+    assert drift and '"tools"' in drift[0].replace("'", '"')
+    assert '"changed": ["tools"]' in drift[0].replace("'", '"') or "['tools']" in drift[0]

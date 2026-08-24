@@ -11,6 +11,14 @@ generator, so removing it would lose a working capability.
 One cached bool with a short TTL keeps the per-turn cost at zero on the hot path
 (a probe fires at most once per `ttl_s`); the loop awaits `hidden_tools()` each
 turn and folds the result into the registry's per-turn visibility gate.
+
+Hiding is HYSTERETIC, not instantaneous: the tool array is rendered into the
+prompt's leading tokens (--jinja), so flipping it invalidates the whole KV prefix —
+a single flapped probe used to cost a full ~37k-token re-prefill (~170 s on qwen,
+observed 2026-08-24) to save one failed tool call. The tools now hide only after
+ComfyUI has been down CONTINUOUSLY for `hide_after_s`; inside that window the model
+keeps seeing them and a call simply fails with the tool's own clean error. A real
+outage still hides them within minutes.
 """
 
 from __future__ import annotations
@@ -50,20 +58,30 @@ class ImageGenLiveness:
         gateway: _Probe,
         *,
         ttl_s: float = 30.0,
+        hide_after_s: float = 600.0,
         clock: Callable[[], float] = time.monotonic,
     ):
         self._gateway = gateway
         self._ttl = ttl_s
+        self._hide_after = hide_after_s
         self._clock = clock
         self._reachable = True
         self._checked_at: float | None = None
+        # When the CURRENT unbroken run of failed probes began; None while reachable.
+        # Hiding keys off this, not off the latest probe — see the module docstring.
+        self._down_since: float | None = None
         self._lock = asyncio.Lock()
 
     async def hidden_tools(self) -> frozenset[str]:
         """The image-gen tool names to hide this turn — empty when ComfyUI is
-        reachable (or within the freshness window of a reachable probe)."""
+        reachable, and STILL empty through a short outage (the hysteresis window):
+        only a sustained outage reshapes the prompt's tool array."""
         await self._refresh()
-        return frozenset() if self._reachable else _HIDDEN_WHEN_DOWN
+        if self._down_since is None:
+            return frozenset()
+        if self._clock() - self._down_since < self._hide_after:
+            return frozenset()  # flap tolerance: keep the prompt (and its KV) stable
+        return _HIDDEN_WHEN_DOWN
 
     async def _refresh(self) -> None:
         if self._fresh():
@@ -74,8 +92,17 @@ class ImageGenLiveness:
             status = await self._gateway.status()
             self._reachable = bool(getattr(status, "reachable", False))
             self._checked_at = self._clock()
-            if not self._reachable:
-                log.info("image_liveness.comfyui_down", hidden=sorted(_HIDDEN_WHEN_DOWN))
+            if self._reachable:
+                if self._down_since is not None:
+                    log.info("image_liveness.comfyui_recovered")
+                self._down_since = None
+            elif self._down_since is None:
+                self._down_since = self._clock()
+                log.info(
+                    "image_liveness.comfyui_down",
+                    hidden_after_s=self._hide_after,
+                    hidden=sorted(_HIDDEN_WHEN_DOWN),
+                )
 
     def _fresh(self) -> bool:
         return self._checked_at is not None and self._clock() - self._checked_at < self._ttl
