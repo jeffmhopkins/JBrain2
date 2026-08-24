@@ -289,6 +289,13 @@ MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 # (now_block); the tool covers an explicit fresh / other-zone read.
 ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 
+# The jmolt persona's allowlist (docs/plans/JMOLT_PLAN.md). W1 is read-only lurking:
+# the `moltbook` read umbrella plus `current_time` to date its own observations honestly.
+# Later waves extend this frozenset in lockstep with the tools landing — W2 adds the
+# scratchpad + the staged web-egress wrapper, W3 adds the write tools. jmolt holds NO
+# knowledge-base, owner, or spawn tools; it is sandboxed to Moltbook + its own notes.
+JMOLT_TOOLS = frozenset({"moltbook", "current_time"})
+
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested
 # persona against this set BEFORE calling `agent_for` — which falls back to the
 # KB-capable curator on an unknown name — so a malformed or injected persona is
@@ -506,6 +513,17 @@ AGENTS: dict[str, AgentProfile] = {
         tools=ARCHIVIST_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=4,
+    ),
+    # jmolt — the autonomous nocturnal Moltbook persona (docs/plans/JMOLT_PLAN.md). KB-less
+    # and sandboxed; runs one hour a night on a detached lane, so it gets a wide
+    # budget_multiplier for the long many-tool ReAct chain (like jerv). Owner-selectable but
+    # never a knowledge agent, and NOT in SUBAGENT_PERSONAS — it is never spawnable as a child.
+    "jmolt": _profile(
+        "jmolt",
+        "jmolt.prompt",
+        tools=JMOLT_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=6,
     ),
     # The three web-sandboxed sub-agent personas jerv spawns (no KB, no location, no
     # memory; their turns are never episodically appended because reads_knowledge_base

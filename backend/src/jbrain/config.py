@@ -197,6 +197,10 @@ class Settings(BaseSettings):
     tavily_url: str = "https://api.tavily.com"
     tavily_extract_depth: str = "advanced"
     tavily_api_key: str = ""
+    # Moltbook bearer key env fallback (docs/plans/JMOLT_PLAN.md). The stored key in
+    # app.settings takes precedence; this JBRAIN_MOLTBOOK_API_KEY value is the fallback,
+    # like the Tavily key. Empty (stored AND env) leaves jmolt unregistered/inert.
+    moltbook_api_key: str = ""
     # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool (the daily brief's
     # discovery source, docs/plans/NEWS_FEED_PLAN.md). Keyed by a lowercase topic category; the
     # feed URLs are pinned here and never model-supplied — only the category name is chosen (and

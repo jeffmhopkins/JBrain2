@@ -216,6 +216,12 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
     }
 )
 
+# The jmolt persona's Moltbook read umbrella (`web`-class, opt-in). Always wired in
+# main.py (the client refuses at call time when unregistered), but marked optional so a
+# build_registry() call without moltbook_handlers (e.g. a unit test) drops the sidecar
+# rather than failing the sidecar↔handler pairing (docs/plans/JMOLT_PLAN.md).
+OPTIONAL_MOLTBOOK_TOOLS = frozenset({"moltbook"})
+
 
 class EntityReader(Protocol):
     """The slice of the analysis repo the read/entity tools need — the entity-page
@@ -791,6 +797,7 @@ def build_registry(
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
+    moltbook_handlers: dict[str, ToolHandler] | None = None,
     notify_bus: "NotifyBus | None" = None,
     push: "PushNotifier | None" = None,
     fcm_token_repo: "FcmTokenRepo | None" = None,
@@ -901,6 +908,9 @@ def build_registry(
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
+            # The jmolt persona's Moltbook read umbrella (`web`-gated, jmolt-only), built
+            # in main.py over the pinned client + live key provider (docs/plans/JMOLT_PLAN.md).
+            **(moltbook_handlers or {}),
             # The archivist's cross-session memory (`web`-gated, archivist-only) over
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
@@ -947,6 +957,7 @@ def build_registry(
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
+            | OPTIONAL_MOLTBOOK_TOOLS
         ),
     )
     # Wire the spawn service now that the registry exists (children run on it). It

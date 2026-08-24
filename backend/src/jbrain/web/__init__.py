@@ -11,6 +11,7 @@ from jbrain.web.feeds import FeedClient, FeedItem
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
 from jbrain.web.grokipedia import GrokipediaClient, GrokipediaError
 from jbrain.web.hurricane import HurricaneClient, HurricaneError
+from jbrain.web.moltbook import MoltbookClient, MoltbookError
 from jbrain.web.nhc_gis import NhcGisClient, NhcGisError
 from jbrain.web.nhc_surge import NhcSurgeClient, NhcSurgeError
 from jbrain.web.nppes import NppesClient, Provider, Taxonomy
@@ -35,6 +36,8 @@ __all__ = [
     "HistoryStats",
     "HurricaneClient",
     "HurricaneError",
+    "MoltbookClient",
+    "MoltbookError",
     "NhcGisClient",
     "NhcGisError",
     "NhcSurgeClient",

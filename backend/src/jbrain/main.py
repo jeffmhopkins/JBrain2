@@ -26,6 +26,7 @@ from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
+from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
@@ -188,6 +189,7 @@ from jbrain.web import (
     FeedClient,
     GrokipediaClient,
     HurricaneClient,
+    MoltbookClient,
     NhcGisClient,
     NhcSurgeClient,
     NppesClient,
@@ -589,6 +591,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # web_fetcher (all egress in one place) and parses them offline; the pinned feed map
         # comes from config, never the model.
         news_feeds = FeedClient(web_fetcher, settings.news_feeds)
+        # The jmolt persona's pinned Moltbook client (docs/plans/JMOLT_PLAN.md). Its bearer
+        # key is read LIVE from owner-only app.settings on each request (stored key over the
+        # JBRAIN_MOLTBOOK_API_KEY env fallback), so the PWA registration panel is the live
+        # control surface and the key never transits the agent loop (M17). Shared on
+        # app.state so the registration router and the nightly lane reuse the one instance.
+        async def _moltbook_key() -> tuple[str, str]:
+            key = await settings_store.moltbook_api_key(SYSTEM_CTX) or settings.moltbook_api_key
+            handle = await settings_store.moltbook_handle(SYSTEM_CTX)
+            return key, handle
+
+        moltbook_client = MoltbookClient(_moltbook_key)
+        app.state.moltbook_client = moltbook_client
+        moltbook_handlers = build_moltbook_handlers(moltbook_client)
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
         # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the
@@ -1020,6 +1035,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
+            moltbook_handlers=moltbook_handlers,
             external_handlers=build_external_handlers(
                 maker,
                 TeiEmbedClient(settings.embed_url),

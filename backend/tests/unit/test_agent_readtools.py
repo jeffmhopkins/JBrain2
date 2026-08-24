@@ -1216,6 +1216,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "97509b710035ac8af6ea5ac2f011767943a0a1af4c941c0a4fd10438a3f1234f",
         ),
+        "moltbook.tool": (
+            "moltbook",
+            1,
+            "09b73e217740472cc2efe2244fb563965c9dac04a3f6a1cefd1b7be282daae57",
+        ),
         "web_fetch.tool": (
             "web_fetch",
             12,
