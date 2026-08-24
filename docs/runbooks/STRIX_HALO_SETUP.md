@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -256,11 +256,20 @@ both resides and warms it.
 >
 > **The patched-build path is committed, OPT-IN, default OFF — activated from the PWA.**
 > `deploy/patches/` holds the patch (anchored, applied by `deploy/apply-llama-patches.sh`),
-> and `Dockerfile.local-llm` has a builder stage that rebuilds llama-server from
-> `LLAMA_CPP_COMMIT` (the commit the base image's own binary reports — `b10603`/`c060ca974`
-> at time of writing) with the patch applied, INSIDE the base image so it reuses the proven
-> gfx1151 Vulkan toolchain. With the flag unset the image is byte-for-byte the stock base —
-> zero change. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
+> and `Dockerfile.local-llm` has a builder stage that rebuilds llama-server with the patch
+> applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
+> flag unset the image is byte-for-byte the stock base — zero change. **The builder checks
+> out the commit the base image's own binary reports** (`llama-server --version`, read at
+> build time; the box's base is `b10068`/`571d0d540`): the base links
+> `libggml*.so`/`libllama.so` dynamically and we overlay only the `llama-server` binary, so
+> any other commit ships an ABI-incompatible binary that crashes at model load. That was the
+> 2026-08-24 smoke failure — a hand-pinned `LLAMA_CPP_COMMIT=c060ca974` against a `571d0d540`
+> base (the compose-side default overrode a later correction, too). Reading the commit off
+> the base itself designs that drift out and lets the patch coexist with auto-update's
+> floating base; `LLAMA_CPP_COMMIT` (Dockerfile + compose, same value) survives only as the
+> fallback for an unparseable version string. The patch is applied by anchor and the apply
+> script knows each historical wording of the restore path as an alternative anchor; if
+> upstream rewords it again the build fails loudly and the update flow rolls back. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
 > owner runs this box with no terminal (CLAUDE.md #10), so the switch is a PWA setting
 > (`local_llm_patch_restore_checkpoint`), not an `.env` edit. The setting drives the build:
 > `update-inner.sh` reads it (`jbrain.cli local-llm-patch-restore-checkpoint`) and exports
