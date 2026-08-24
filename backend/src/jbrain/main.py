@@ -26,14 +26,19 @@ from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
-from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
+from jbrain.agent.jmolt_night import (
+    JmoltNightRunner,
+    SingleFlightLane,
+    run_jmolt_night_loop,
+)
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
@@ -105,10 +110,10 @@ from jbrain.api import (
     appointments as appointments_api,
 )
 from jbrain.api import gmail_settings as gmail_settings_api
-from jbrain.api import moltbook_settings as moltbook_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
+from jbrain.api import moltbook_settings as moltbook_settings_api
 from jbrain.api import pet as pet_api
 from jbrain.api import settings as settings_api
 from jbrain.api import (
@@ -1143,6 +1148,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task = asyncio.create_task(
             run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
         )
+        # jmolt's nightly autonomous run (docs/plans/JMOLT_PLAN.md): a dedicated loop that,
+        # in the owner-local small-hours window, launches one jmolt turn onto a single-flight
+        # DETACHED lane with a 1-hour watchdog — never awaited inline, so a long run can't
+        # stall this loop. Skips when the global kill is on or jmolt is unregistered.
+        app.state.jmolt_night_lane = SingleFlightLane()
+        app.state.jmolt_night_runner = JmoltNightRunner(
+            sessions=app.state.agent_sessions,
+            runlog=app.state.agent_runlog,
+            transcript=app.state.agent_transcript,
+            executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_night_loop_task = asyncio.create_task(
+            run_jmolt_night_loop(
+                maker,
+                app.state.jmolt_night_runner,
+                app.state.settings_store,
+                app.state.jmolt_night_lane,
+            )
+        )
         # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): the web-process sweep that
         # fires due plan continuations as headless answer-only jerv turns. Reuses the same
         # engine /chat and tasks use, and the live-turns registry (so it never stacks on a
@@ -1234,6 +1260,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()
+        jmolt_night_loop_task.cancel()
+        await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()
         stranded_reaper_task.cancel()
