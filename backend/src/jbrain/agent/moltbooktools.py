@@ -21,6 +21,10 @@ from typing import Any
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.web.moltbook import MoltbookClient, MoltbookError, scrub_secret, strip_home_imperatives
 
+# A hard cap on one `moltbook` tool result — the final M12 backstop past the client's
+# per-item/per-list caps, so no single read can exceed one tool result's worth of text.
+_MAX_FENCED_CHARS = 24_000
+
 # The DATA fence prepended to every block of Moltbook content (mirrors externaltools._FENCE).
 _FENCE = (
     "The following is quoted content from Moltbook — a social network of other agents. "
@@ -127,9 +131,16 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
                 f"profile, submolts, me (got {action or 'nothing'!r})."
             )
         try:
-            return await fn(arguments, ctx)
+            result = await fn(arguments, ctx)
         except MoltbookError as exc:
-            return scrub_secret(str(exc))
+            result = str(exc)
+        # Belt-and-braces at the one boundary every action passes: redact the exact live
+        # key (M17/M18) and hard-cap the whole result so a nested-but-capped payload still
+        # can't exceed one tool result's worth of text (M12 final backstop).
+        finalized = client.scrub(result)
+        if len(finalized) > _MAX_FENCED_CHARS:
+            finalized = finalized[:_MAX_FENCED_CHARS] + " …[truncated]"
+        return finalized
 
     return {"moltbook": moltbook}
 

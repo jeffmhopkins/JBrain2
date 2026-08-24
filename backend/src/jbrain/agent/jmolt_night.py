@@ -224,37 +224,42 @@ async def jmolt_night_tick(
     settings_store: SqlSettingsStore,
     lane: SingleFlightLane,
     *,
-    last_run_date: object | None,
     now: datetime | None = None,
-) -> object | None:
+) -> bool:
     """Fire a nightly run if we're in the owner-local window and haven't run tonight.
-    Returns the (possibly updated) last-run local date. Fail-open on every guard:
-    skip silently when killed, unregistered, out of window, already ran, or busy."""
+    Returns True iff a run was launched. The once-per-night guard is the PERSISTED
+    last-run date (M6/MEDIUM-3: it survives a restart inside the window, so a redeploy at
+    03:07 can't double-launch a night). Fail-open on every guard: skip silently when
+    killed, unregistered, out of window, already ran, or busy."""
     now = now or datetime.now(UTC)
     owner_pid = await _owner_principal_id(maker)
     if owner_pid is None:
-        return last_run_date
+        return False
     owner_ctx = SessionContext(principal_id=str(owner_pid), principal_kind="owner")
 
     if await settings_store.moltbook_killed(owner_ctx):
-        return last_run_date  # M6: global kill halts the nightly lane.
-    key = await settings_store.moltbook_api_key(owner_ctx)
-    if not key:
-        return last_run_date  # unregistered — nothing to do.
+        return False  # M6: global kill halts the nightly lane.
+    if not await settings_store.moltbook_api_key(owner_ctx):
+        return False  # unregistered — nothing to do.
 
     tz = await settings_store.owner_timezone(owner_ctx) or "UTC"
     local = _owner_local_now(tz, now)
     in_window = local.hour == JMOLT_NIGHT_HOUR and local.minute < JMOLT_NIGHT_WINDOW_MIN
-    if not in_window or local.date() == last_run_date or lane.busy():
-        return last_run_date
+    today = local.date().isoformat()
+    if not in_window or lane.busy():
+        return False
+    if await settings_store.moltbook_last_night(owner_ctx) == today:
+        return False  # already ran tonight (durable across restarts).
 
     async def _run() -> None:
         await runner.run(owner_ctx)
 
-    if lane.launch(_run, wall_clock_s=JMOLT_NIGHT_WALL_CLOCK_S):
-        log.info("jmolt_night.launched", local_time=local.isoformat())
-        return local.date()
-    return last_run_date
+    if not lane.launch(_run, wall_clock_s=JMOLT_NIGHT_WALL_CLOCK_S):
+        return False
+    # Stamp the durable guard immediately, so a restart mid-run can't re-fire tonight.
+    await settings_store.set_moltbook_last_night(owner_ctx, today)
+    log.info("jmolt_night.launched", local_time=local.isoformat())
+    return True
 
 
 async def run_jmolt_night_loop(
@@ -266,12 +271,9 @@ async def run_jmolt_night_loop(
     interval: float = JMOLT_TICK_SECONDS,
 ) -> None:
     """Drive `jmolt_night_tick` forever. A tick blip is logged and swallowed."""
-    last_run_date: object | None = None
     while True:
         try:
-            last_run_date = await jmolt_night_tick(
-                maker, runner, settings_store, lane, last_run_date=last_run_date
-            )
+            await jmolt_night_tick(maker, runner, settings_store, lane)
         except Exception as exc:  # noqa: BLE001 — the tick must not kill the loop
             log.warning("jmolt_night.tick_error", error=repr(exc))
         await asyncio.sleep(interval)

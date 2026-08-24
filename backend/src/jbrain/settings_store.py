@@ -152,6 +152,7 @@ MOLTBOOK_KILL_KEY = "moltbook_kill"
 MOLTBOOK_KILL_DEFAULT = False
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
 MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
+MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
 
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
@@ -566,6 +567,16 @@ class SqlSettingsStore:
 
     async def set_moltbook_disclosure(self, ctx: SessionContext, line: str) -> None:
         await self.upsert(ctx, MOLTBOOK_DISCLOSURE_KEY, line)
+
+    async def moltbook_last_night(self, ctx: SessionContext) -> str:
+        """The owner-local date (ISO `YYYY-MM-DD`) of jmolt's most recent nightly run, or
+        "" if never. Persisted so the once-per-night guard survives a process restart
+        inside the fire window (a restart must not double-launch a night)."""
+        raw = await self.get(ctx, MOLTBOOK_LAST_NIGHT_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).

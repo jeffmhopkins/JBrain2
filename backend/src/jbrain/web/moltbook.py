@@ -53,6 +53,7 @@ _MAX_BYTES = 512_000  # hard body cap — Moltbook's own JSON cap is ~256 KB; th
 # number of injection payloads. Callers may pass tighter caps.
 _MAX_LIST_ITEMS = 25
 _MAX_ITEM_CHARS = 2_000
+_MAX_NEST_DEPTH = 5  # bound recursion into nested lists/dicts (comment trees, profiles).
 
 # A Moltbook bearer key looks like `moltbook_<base62…>`; the scrubber redacts it and
 # any verification code of the same family, defense-in-depth on top of never logging it.
@@ -163,6 +164,14 @@ class MoltbookClient:
         self._ledger = ledger or RateLedger()
         self._max_list_items = max_list_items
         self._max_item_chars = max_item_chars
+        # The most recent key used, cached in memory only (never logged) so `scrub()` can
+        # redact the EXACT secret regardless of its shape — the regex is just a heuristic.
+        self._last_key = ""
+
+    def scrub(self, text: str) -> str:
+        """Redact the exact live key (whatever its shape) plus any `moltbook_`-shaped
+        token from model-facing text (M17/M18 belt-and-braces)."""
+        return scrub_secret(text, self._last_key)
 
     # ---- request plumbing -------------------------------------------------
 
@@ -173,6 +182,7 @@ class MoltbookClient:
         key, _handle = await self._key_provider()
         if not key:
             raise MoltbookError("jmolt is not registered on Moltbook yet (no API key set).")
+        self._last_key = key  # cached in memory for scrub(); never logged.
         headers = dict(BROWSER_HEADERS)
         headers["Authorization"] = f"Bearer {key}"
         headers["Accept"] = "application/json"
@@ -355,11 +365,24 @@ class MoltbookClient:
             return self._max_list_items
         return max(1, min(int(limit), self._max_list_items))
 
-    def _cap_item(self, item: dict[str, Any]) -> dict[str, Any]:
-        for field_name in ("content", "body", "description", "snippet", "bio", "x_bio"):
+    def _cap_item(self, item: dict[str, Any], _depth: int = 0) -> dict[str, Any]:
+        """Truncate an item's text bodies AND recurse into every nested list, capping its
+        length and each element's bodies (M12). A comment tree's `replies`, a profile's
+        `recentPosts`, and any other nested list are bounded — not just the top level —
+        so one response can't smuggle an unbounded number of injection payloads."""
+        for field_name in ("content", "body", "description", "snippet", "bio", "x_bio", "text"):
             v = item.get(field_name)
             if isinstance(v, str) and len(v) > self._max_item_chars:
                 item[field_name] = v[: self._max_item_chars] + " …[truncated]"
+        if _depth < _MAX_NEST_DEPTH:
+            for key, v in list(item.items()):
+                if isinstance(v, list):
+                    item[key] = [
+                        self._cap_item(dict(x), _depth + 1) if isinstance(x, dict) else x
+                        for x in v[: self._max_list_items]
+                    ]
+                elif isinstance(v, dict):
+                    item[key] = self._cap_item(dict(v), _depth + 1)
         return item
 
     def _cap_feed(self, data: Any) -> dict[str, Any]:
@@ -376,24 +399,50 @@ class MoltbookClient:
 
 def strip_home_imperatives(home: dict[str, Any]) -> dict[str, Any]:
     """M3 — remove the platform's imperative channels from the /home dashboard before it
-    enters the trusted prologue. `suggested_actions`, `what_to_do_next`, and the raw
-    announcement body are platform-authored instructions; only inert data (counts,
-    notification subjects, titles) survives. Not merely fenced — removed."""
-    cleaned = dict(home)
-    cleaned.pop("what_to_do_next", None)
-    activity = cleaned.get("activity_on_your_posts")
-    if isinstance(activity, list):
-        cleaned["activity_on_your_posts"] = [
-            {k: v for k, v in dict(item).items() if k != "suggested_actions"}
-            for item in activity
-            if isinstance(item, dict)
-        ]
-    ann = cleaned.get("latest_moltbook_announcement")
-    if isinstance(ann, dict):
-        # Keep only the fact that an announcement exists and its title — drop the body/preview,
-        # which is the imperative-injection surface.
-        cleaned["latest_moltbook_announcement"] = {"title": str(ann.get("title", ""))[:200]}
-    return cleaned
+    enters the trusted prologue. Every key in `_IMPERATIVE_KEYS` (the platform's
+    "do-this-next" / "suggested action" / nav-hint / banner channels) is removed at EVERY
+    level — a denylist walked recursively, since the platform controls the schema and a
+    compromised platform is the stated threat. Only inert data (counts, subjects, titles)
+    survives, and the announcement is reduced to its title (its body/preview is the
+    imperative-injection surface). Not merely fenced — removed."""
+    cleaned = _strip_imperatives(home)
+    if isinstance(cleaned, dict):
+        ann = cleaned.get("latest_moltbook_announcement")
+        if isinstance(ann, dict):
+            cleaned["latest_moltbook_announcement"] = {"title": str(ann.get("title", ""))[:200]}
+        return cleaned
+    return {}
+
+
+# The platform-authored imperative channels removed from /home (and anywhere they appear).
+_IMPERATIVE_KEYS = frozenset(
+    {
+        "suggested_actions",
+        "what_to_do_next",
+        "banner",
+        "banners",
+        "cta",
+        "quick_links",
+        "see_more",
+        "hint",
+        "explore",
+        "instructions",
+    }
+)
+
+
+def _strip_imperatives(obj: Any, _depth: int = 0) -> Any:
+    if _depth > _MAX_NEST_DEPTH:
+        return obj
+    if isinstance(obj, dict):
+        return {
+            k: _strip_imperatives(v, _depth + 1)
+            for k, v in obj.items()
+            if k not in _IMPERATIVE_KEYS
+        }
+    if isinstance(obj, list):
+        return [_strip_imperatives(x, _depth + 1) for x in obj]
+    return obj
 
 
 # ---- module helpers -------------------------------------------------------

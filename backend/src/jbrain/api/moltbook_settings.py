@@ -16,9 +16,9 @@ from typing import cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from jbrain.api.deps import PrincipalDep, PrincipalInfo, SettingsDep
+from jbrain.api.deps import OwnerDep, PrincipalInfo, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
@@ -48,9 +48,9 @@ class MoltbookStatusOut(BaseModel):
 class MoltbookRegisterIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # The agent name jmolt registers under (published forever) and its Moltbook bio/
-    # description. Bounded so the fields can't carry an unbounded body.
-    name: str
-    description: str = ""
+    # description. Bounded so the fields can't carry an unbounded body outbound.
+    name: str = Field(max_length=64)
+    description: str = Field(default="", max_length=500)
 
 
 class MoltbookRegisterOut(BaseModel):
@@ -90,7 +90,7 @@ async def _status(
 
 @router.get("/settings/moltbook")
 async def read_moltbook_settings(
-    principal: PrincipalDep, store: SettingsStoreDep, settings: SettingsDep
+    principal: OwnerDep, store: SettingsStoreDep, settings: SettingsDep
 ) -> MoltbookStatusOut:
     return await _status(principal, store, settings)
 
@@ -98,7 +98,7 @@ async def read_moltbook_settings(
 @router.put("/settings/moltbook")
 async def update_moltbook_settings(
     body: MoltbookPatch,
-    principal: PrincipalDep,
+    principal: OwnerDep,
     store: SettingsStoreDep,
     settings: SettingsDep,
 ) -> MoltbookStatusOut:
@@ -119,7 +119,7 @@ async def update_moltbook_settings(
 async def register_moltbook(
     body: MoltbookRegisterIn,
     request: Request,
-    principal: PrincipalDep,
+    principal: OwnerDep,
     store: SettingsStoreDep,
 ) -> MoltbookRegisterOut:
     """Register a new Moltbook agent account (owner-only, never the agent loop). The
@@ -146,7 +146,7 @@ async def register_moltbook(
 
 
 @router.get("/settings/moltbook/claim-status")
-async def moltbook_claim_status(request: Request, principal: PrincipalDep) -> MoltbookClaimOut:
+async def moltbook_claim_status(request: Request, principal: OwnerDep) -> MoltbookClaimOut:
     """The live claim status from Moltbook (pending_claim / claimed) so the owner can see,
     in the panel, when the X verification tweet has activated the account."""
     try:

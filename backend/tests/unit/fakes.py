@@ -451,6 +451,13 @@ class FakeSettingsStore:
     async def set_moltbook_disclosure(self, ctx: object, line: str) -> None:
         self.values["moltbook_disclosure"] = line
 
+    async def moltbook_last_night(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_last_night", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_night(self, ctx: object, iso_date: str) -> None:
+        self.values["moltbook_last_night"] = iso_date
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""
