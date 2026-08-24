@@ -23,7 +23,7 @@ import sys
 target = sys.argv[1]
 src = open(target).read()
 
-anchor = "slot->prompt.tokens = std::move(restored);"
+anchor = "slot->prompt.tokens.insert(tokens);"
 block = '''
                         // --- JBrain patch: reuse-on-restore for SWA/hybrid/recurrent ---
                         // A slot-restore rebuilds the memory state and sets

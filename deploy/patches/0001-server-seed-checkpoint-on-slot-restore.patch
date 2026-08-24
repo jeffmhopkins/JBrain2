@@ -4,10 +4,13 @@ can REUSE a restored prompt instead of re-prefilling it.
 Applied as an anchored insertion (see deploy/apply-llama-patches.sh) rather
 than a line-numbered diff, so it survives minor llama.cpp drift around the
 restore handler. Pinned to the commit the box's base image ships
-(LLAMA_CPP_COMMIT in Dockerfile.local-llm); re-verify on a base bump.
+(LLAMA_CPP_COMMIT in Dockerfile.local-llm, currently 571d0d540); re-verify the
+anchor on a base bump — the restore success path is worded differently across
+versions (a newer commit set it via `slot->prompt.tokens = std::move(restored);`).
 
-Anchor line (must be unique in tools/server/server-context.cpp):
-    slot->prompt.tokens = std::move(restored);
+Anchor line (must be unique in tools/server/server-context.cpp), immediately
+after the restored tokens are written into the slot on the success path:
+    slot->prompt.tokens.insert(tokens);
 
 Inserted immediately after it:
 

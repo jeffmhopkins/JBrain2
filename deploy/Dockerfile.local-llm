@@ -78,7 +78,13 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 # the test; the update flow's smoke-test + rollback protect the runtime if it fails.
 FROM ${LOCAL_LLM_BASE} AS llama-build
 ARG PATCH_RESTORE_CHECKPOINT=0
-ARG LLAMA_CPP_COMMIT=c060ca974
+# MUST equal the commit the pinned base image's own llama-server was built from —
+# read it live off the box with `llama-server --version` (the sha in parens), NOT a
+# guess. The base links libggml*.so / libllama.so DYNAMICALLY and we overlay only the
+# llama-server binary, so a mismatched commit ships an ABI-incompatible binary that
+# crashes at model load (the 2026-08-24 smoke failure: pinned c060ca974 while the base
+# was 571d0d540). The RUN below hard-fails if this drifts from the base again.
+ARG LLAMA_CPP_COMMIT=571d0d540
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
     mkdir -p /out; \
@@ -88,6 +94,19 @@ RUN set -eux; \
     fi; \
     ( command -v git && command -v cmake && command -v c++ ) >/dev/null 2>&1 || \
         ( apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ); \
+    base_ver="$(llama-server --version 2>&1 || true)"; \
+    base_commit="$(printf '%s\n' "$base_ver" | sed -n 's/^.*version:[^(]*(\([0-9a-f]\{7,40\}\)).*$/\1/p' | head -n1)"; \
+    if [ -z "$base_commit" ]; then \
+        echo "WARNING: could not read the base llama-server commit (version output: $base_ver) — proceeding; the update's smoke test still backstops a bad build"; \
+    elif [ "$base_commit" != "${LLAMA_CPP_COMMIT}" ]; then \
+        echo "FATAL: base llama-server is commit ${base_commit} but LLAMA_CPP_COMMIT=${LLAMA_CPP_COMMIT}."; \
+        echo "       They must match: the base links libggml*.so/libllama.so dynamically and we overlay only"; \
+        echo "       the binary, so a mismatched commit crashes at model load. Set LLAMA_CPP_COMMIT=${base_commit}"; \
+        echo "       (and re-verify the patch anchor in deploy/apply-llama-patches.sh against that commit)."; \
+        exit 1; \
+    else \
+        echo "base llama-server commit ${base_commit} matches LLAMA_CPP_COMMIT — ABI-compatible overlay"; \
+    fi; \
     git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
     git -C /llama checkout "${LLAMA_CPP_COMMIT}"; \
     /apply-llama-patches.sh /llama; \

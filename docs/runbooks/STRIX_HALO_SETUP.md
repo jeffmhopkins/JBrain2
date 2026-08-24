@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -257,10 +257,16 @@ both resides and warms it.
 > **The patched-build path is committed, OPT-IN, default OFF — activated from the PWA.**
 > `deploy/patches/` holds the patch (anchored, applied by `deploy/apply-llama-patches.sh`),
 > and `Dockerfile.local-llm` has a builder stage that rebuilds llama-server from
-> `LLAMA_CPP_COMMIT` (the commit the base image's own binary reports — `b10603`/`c060ca974`
-> at time of writing) with the patch applied, INSIDE the base image so it reuses the proven
+> `LLAMA_CPP_COMMIT` with the patch applied, INSIDE the base image so it reuses the proven
 > gfx1151 Vulkan toolchain. With the flag unset the image is byte-for-byte the stock base —
-> zero change. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
+> zero change. **`LLAMA_CPP_COMMIT` MUST equal the commit the pinned base image's own
+> binary reports** — read it live with `llama-server --version` (the sha in parens; the box
+> was `b10068`/`571d0d540`). The base links `libggml*.so`/`libllama.so` dynamically and we
+> overlay only the `llama-server` binary, so a mismatched commit ships an ABI-incompatible
+> binary that crashes at model load. That was the 2026-08-24 smoke failure — the commit was
+> pinned to `c060ca974` (a different, newer llama.cpp) against a `571d0d540` base — so the
+> builder now hard-fails if the two ever drift again, and the patch anchor must be re-verified
+> against the base's commit on every bump (the restore success line differs across versions). **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
 > owner runs this box with no terminal (CLAUDE.md #10), so the switch is a PWA setting
 > (`local_llm_patch_restore_checkpoint`), not an `.env` edit. The setting drives the build:
 > `update-inner.sh` reads it (`jbrain.cli local-llm-patch-restore-checkpoint`) and exports
