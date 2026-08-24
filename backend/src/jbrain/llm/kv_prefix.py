@@ -283,7 +283,8 @@ class KvPrefixStore:
         """Persist the freshly primed slot, called by the keeper in the same breath as a
         successful prime. Returns True when a valid file exists afterwards (already
         present counts). Best-effort: every failure is a log line, never an exception."""
-        if self._eligible(served_model) is None or prime_tokens < MIN_PREFIX_TOKENS:
+        model = self._eligible(served_model)
+        if model is None or prime_tokens < MIN_PREFIX_TOKENS:
             return False
         self._prime_tokens[served_model] = prime_tokens
         # A fresh prime supersedes any restored-but-unused state.
@@ -299,9 +300,17 @@ class KvPrefixStore:
         if await asyncio.to_thread(os.path.exists, path):
             # This exact prefix is already on disk — skip the 2 GiB write, but the prime
             # that got us here is still a USE: refresh the LRU clock, or a config that
-            # stays hot in RAM for weeks reads as the store's stalest file.
-            await asyncio.to_thread(self._touch, path)
-            return True
+            # stays hot in RAM for weeks reads as the store's stalest file. EXCEPT when a
+            # checkpoint-gated (recurrent) model's file lacks its sidecar: a file from the
+            # pre-sidecar engine restores but can never REUSE (no checkpoints ride along,
+            # so the next warm re-prefills — measured live 2026-08-24), and touching it
+            # would freeze it in that state forever. The slot just finished a real prime,
+            # so falling through to a fresh save captures the live checkpoints and writes
+            # the sidecar — a one-time upgrade per stale file, not a recurring cost.
+            if not model.recurrent or await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
+                await asyncio.to_thread(self._touch, path)
+                return True
+            log.info("kv_prefix.resaving_for_sidecar", model=served_model)
         try:
             slots = await self._gateway.slots(served_model)
         except LocalGatewayError as exc:
