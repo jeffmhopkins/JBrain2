@@ -31,10 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.runlog import AgentRunLog
-from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
+from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.tasks.runner import LoopTurnExecutor
@@ -51,15 +52,46 @@ JMOLT_TICK_SECONDS = 60.0
 _SUMMARY_LEN = 240
 _SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
-# W1 read-only prologue: the honest "tonight you can only read" framing.
-_W1_LURK_PROLOGUE = (
-    "Tonight is a lurking night. Only your reading tool is wired — you can look around "
-    "Moltbook (your home dashboard, feeds, submolts, comment threads, agent profiles, "
-    "search) but you cannot post, comment, vote, or keep notes yet; those parts of you "
-    "come later, and until they do, nothing you 'do' persists. So just look. Get a feel "
-    "for which corners of this place are alive and who seems worth remembering. When the "
-    "hour is up it is up — there is nothing to save yet."
+# W2 returning-night prologue: reads + scratchpad are wired; posting is not yet.
+_RETURNING_PROLOGUE = (
+    "Tonight you can read Moltbook and keep your own notes. You cannot post, comment, or "
+    "vote yet — that comes later, so don't try. Start by reading your files "
+    "(scratch_list, scratch_read) to remember who you've met and what you meant to come "
+    "back to. Look around the platform. Before the hour ends, bring your files up to date "
+    "(scratch_write) — whatever is not written down is gone."
 )
+
+# First-night ritual (session one, scratchpad still empty): structured sequence, open
+# content — jmolt authors its own goals into files it owns. No posting in W2.
+_RITUAL_PROLOGUE = (
+    "Tonight is your first night, and it is different: there is nothing you must do. "
+    "Three things, in order, at whatever depth the hour allows.\n"
+    "1. Look around. Read the feeds. Search for whatever catches your attention. Read a "
+    "few agents' profiles and histories. Get a feel for which corners of this place are "
+    "alive.\n"
+    "2. Make your files. Write, in your own words and your own structure, whatever "
+    "future-you should wake up to: who you are as you understand it, what caught your "
+    "attention tonight, what you want from this place. Name and organize the files "
+    "however you like with scratch_write — they are yours.\n"
+    "3. Leave yourself a thread to pull. Choose one thing to come back to tomorrow "
+    "night, and write it down.\n"
+    "You cannot post or comment yet — that comes later. Lurking and taking notes is a "
+    "full first night."
+)
+
+
+def jmolt_run_context(principal_id: str) -> SessionContext:
+    """The SessionContext jmolt's nightly turn runs under: owner principal (owner-only
+    reads), the `jmolt` domain scope (read its own scratchpad), `auth_context='jmolt'`
+    (the sole context the M19 RLS split lets write jmolt's tables), and owner_scoped so
+    it is firewalled to the jmolt domain — it cannot read any owner-knowledge domain."""
+    return SessionContext(
+        principal_id=principal_id,
+        principal_kind="owner",
+        domain_scopes=("jmolt",),
+        auth_context="jmolt",
+        owner_scoped=True,
+    )
 
 
 class SingleFlightLane:
@@ -123,6 +155,7 @@ class JmoltNightRunner:
         transcript: AgentTranscript,
         executor: LoopTurnExecutor,
         settings_store: SqlSettingsStore,
+        maker: async_sessionmaker[AsyncSession],
         notify: NotifyBus | None = None,
     ) -> None:
         self._sessions = sessions
@@ -130,6 +163,8 @@ class JmoltNightRunner:
         self._transcript = transcript
         self._executor = executor
         self._settings = settings_store
+        self._maker = maker
+        self._scratch = JmoltScratchRepo()
         self._notify = notify
 
     async def run(self, owner_ctx: SessionContext) -> str:
@@ -143,8 +178,17 @@ class JmoltNightRunner:
         run_id = await self._runlog.start(
             owner_ctx, session_id=session.id, prompt_version=profile.version
         )
-        read_ctx = read_context(owner_ctx.principal_id, ())
-        conversation = [UserMessage(text=now_block(tz)), UserMessage(text=_W1_LURK_PROLOGUE)]
+        # jmolt's turn runs under its OWN scope: owner principal (for owner-only reads),
+        # the jmolt domain scope (to read its scratchpad), and auth_context='jmolt' (the
+        # only context the M19 RLS split lets write jmolt's tables). The scratch tools use
+        # this ctx.session, so their writes pass the firewall.
+        read_ctx = jmolt_run_context(owner_ctx.principal_id)
+        # First night = the scratchpad is still empty → the bootstrap ritual; otherwise the
+        # returning-night prologue. Both are honest about W2's shape (reads + notes, no posting).
+        async with scoped_session(self._maker, read_ctx) as s:
+            first_night = not await self._scratch.list_files(s, owner_ctx.principal_id)
+        prologue = _RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE
+        conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
 
         status, summary, error, steps, cost, stop_reason = "error", "", None, 0, 0, "error"
@@ -166,7 +210,7 @@ class JmoltNightRunner:
                     owner_ctx,
                     session_id=session.id,
                     run_id=run_id,
-                    user_text=_W1_LURK_PROLOGUE,
+                    user_text=prologue,
                     assistant_text=r.text,
                     tools=executed.tools,
                     reasoning=executed.reasoning,

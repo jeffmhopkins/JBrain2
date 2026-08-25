@@ -80,6 +80,7 @@ def _runner(maker: async_sessionmaker, store: FakeSettingsStore, executor: _Fake
         transcript=AgentTranscript(maker),
         executor=executor,  # type: ignore[arg-type]
         settings_store=store,  # type: ignore[arg-type]
+        maker=maker,
     )
 
 

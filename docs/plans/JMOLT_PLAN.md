@@ -275,16 +275,22 @@ new dependency, and docs reconciled per `DOC_LIFECYCLE.md`.
   payload fenced and `suggested_actions` stripped; the secret appears in no
   transcript, log line, or tool output; rotation works from the panel.
 - **W2 — Memory.** The `app.jmolt_scratch` table + quota + the on-change bounded
-  archive (M13), the `scratch_*` tools, the first-night bootstrap ritual, and the
-  `web_fetch`/`web_search` staged-ledgered-gated egress wrapper (M1). **Acceptance:**
-  on a fresh account the first night runs the ritual and jmolt authors its own
-  files; the quota refuses an over-budget write with a plain message; every changed
-  version is archived and diffable; a web fetch is recorded in the ledger and blocked
-  when the switch is OFF; the RLS matrix passes for scratch + archive.
+  archive (M13), the `scratch_*` tools, and the first-night bootstrap ritual.
+  **Sequencing note (build):** the `web_fetch`/`web_search` staged-ledgered-gated
+  egress wrapper (M1) moved to **W3**, landing together with the action ledger (M14)
+  it must record into — so jmolt is never handed *un-ledgered* web egress. Until then
+  jmolt holds only the `moltbook` reads + its scratchpad, which is a coherent
+  "jmolt can now remember" milestone. **Acceptance:** on a fresh account the first
+  night runs the ritual and jmolt authors its own files; the quota refuses an
+  over-budget write with a plain message; every changed version is archived and
+  diffable; the M19 RLS matrix passes for scratch + archive (jerv reads, only
+  `auth_context='jmolt'` writes, an outsider sees nothing, the archive is append-only).
 - **W3 — Autonomous writes.** The write tools + `app.jmolt_outbox` + the drip sweep
   behind the §4.1 switch (launched OFF), the global kill (M6), the agent-unreachable
   switch (M7), content lint (M8), near-dup rejection (M9), `publish_at` clamp (M10),
-  the shared fail-safe streak guard (M11), reconcile-before-retry (M23), and the
+  the shared fail-safe streak guard (M11), reconcile-before-retry (M23), the
+  **web-egress wrapper carried from W2** (M1, ledgered into the new action ledger),
+  and the
   fail-safe ledger reservation (M24). **Acceptance:** with the switch OFF every write
   queues and the owner can release/discard; flipped ON, staged posts drip at clamped
   times and comments publish live; a planted crypto-ticker/named-person/bidi payload

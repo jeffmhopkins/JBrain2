@@ -1159,6 +1159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             transcript=app.state.agent_transcript,
             executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
             settings_store=app.state.settings_store,
+            maker=maker,
             notify=app.state.notify_bus,
         )
         jmolt_night_loop_task = asyncio.create_task(

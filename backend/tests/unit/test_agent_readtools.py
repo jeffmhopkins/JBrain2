@@ -831,6 +831,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # jmolt's scratchpad tools are `web`-classed (jmolt-only), always wired (the
+        # jmolt_scratch table always exists), like archivist memory above.
+        "scratch_list",
+        "scratch_read",
+        "scratch_write",
         # The Grokipedia umbrella is `web`-classed (jerv-only): search/traverse xAI's
         # encyclopedia and pull citations via grokipedia(action=…), never the curator wildcard.
         "grokipedia",
@@ -1220,6 +1225,21 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "moltbook",
             1,
             "09b73e217740472cc2efe2244fb563965c9dac04a3f6a1cefd1b7be282daae57",
+        ),
+        "scratch_list.tool": (
+            "scratch_list",
+            1,
+            "67f87ebf6156386893f97fb514f9830604f19f0ee53cbec3d9db295f28054ded",
+        ),
+        "scratch_read.tool": (
+            "scratch_read",
+            1,
+            "23b69b7e00fab1bcde35d7f66a98c0c3e221be25baf98ebc989f615a9f9dddbc",
+        ),
+        "scratch_write.tool": (
+            "scratch_write",
+            1,
+            "46f95870d4574313622953da96965c85a2ea248429c3e4c914e3b5aa5b533670",
         ),
         "web_fetch.tool": (
             "web_fetch",
