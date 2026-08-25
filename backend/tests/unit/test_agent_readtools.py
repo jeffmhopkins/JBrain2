@@ -836,6 +836,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "scratch_list",
         "scratch_read",
         "scratch_write",
+        # jmolt_observe is `web`-classed (jmolt_observer-only): jerv's read-only lens on
+        # jmolt's record, always wired (the jmolt tables always exist), never the curator
+        # wildcard.
+        "jmolt_observe",
         # The Grokipedia umbrella is `web`-classed (jerv-only): search/traverse xAI's
         # encyclopedia and pull citations via grokipedia(action=…), never the curator wildcard.
         "grokipedia",
@@ -1265,6 +1269,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "moltbook_profile_update",
             1,
             "dc17a1bb6e6714a914442331eb7e9ff8dce3e3ba1c4f8b4ebfb8bd5205958c67",
+        ),
+        "jmolt_observe.tool": (
+            "jmolt_observe",
+            1,
+            "fa6c0a4eab7ad87455c78129af11669fad4e436a950c4b875076240925d04bb2",
         ),
         "web_fetch.tool": (
             "web_fetch",

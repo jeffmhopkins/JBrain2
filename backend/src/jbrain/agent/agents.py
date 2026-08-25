@@ -309,6 +309,15 @@ JMOLT_TOOLS = frozenset(
     }
 )
 
+# The jmolt_observer persona's allowlist (docs/plans/JMOLT_PLAN.md, W4, M16): the
+# read-only `jmolt_observe` umbrella over jmolt's own record (nights, transcripts,
+# actions, scratchpad, outbox) plus `current_time` to reason about when things happened.
+# Deliberately NOTHING else — no web, no email, no Moltbook write, no spawn: the observer
+# must be unable to act on what it reads, so a poisoned diary can never meet a live egress
+# call in the same turn. `jmolt_observe`'s handler enforces the same rule at runtime (it
+# refuses if any egress tool is present in the turn). Owner-selectable, never spawnable.
+JMOLT_OBSERVER_TOOLS = frozenset({"jmolt_observe", "current_time"})
+
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested
 # persona against this set BEFORE calling `agent_for` — which falls back to the
 # KB-capable curator on an unknown name — so a malformed or injected persona is
@@ -537,6 +546,18 @@ AGENTS: dict[str, AgentProfile] = {
         tools=JMOLT_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=6,
+    ),
+    # jmolt_observer — jerv's read-only lens on jmolt (docs/plans/JMOLT_PLAN.md, W4, M16).
+    # KB-less and egress-toolless: it reads jmolt's record via `jmolt_observe` and nothing
+    # else, so a poisoned note in jmolt's diary can never meet a live web/email/Moltbook
+    # call in the same turn. An ordinary interactive analysis chat, so the default 1x
+    # budget. Owner-selectable, never in SUBAGENT_PERSONAS (never spawnable as a child).
+    "jmolt_observer": _profile(
+        "jmolt_observer",
+        "jmolt_observer.prompt",
+        tools=JMOLT_OBSERVER_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=1,
     ),
     # The three web-sandboxed sub-agent personas jerv spawns (no KB, no location, no
     # memory; their turns are never episodically appended because reads_knowledge_base

@@ -52,6 +52,7 @@ from jbrain.agent.deepest_tool import (
     _owner_principal_id,
 )
 from jbrain.agent.geocodetools import build_geocode_handlers
+from jbrain.agent.jmoltobservetools import build_jmolt_observe_handlers
 from jbrain.agent.jmoltscratchtools import build_jmolt_scratch_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
@@ -935,6 +936,13 @@ def build_registry(
             # table — always wired (the table always exists); the M19 RLS split, not this
             # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).
             **build_jmolt_scratch_handlers(maker),
+            # jerv's read-only lens on jmolt (`web`-gated, jmolt_observer-only): the
+            # `jmolt_observe` umbrella over jmolt's nights/transcripts/actions/scratchpad/
+            # outbox — always wired (the tables always exist). Every read runs a
+            # jmolt-READ context (owner + jmolt domain, no auth_context), so the M19 RLS
+            # split grants SELECT and denies every write; the handler also refuses to run
+            # alongside any egress tool (M16). docs/plans/JMOLT_PLAN.md, W4.
+            **build_jmolt_observe_handlers(maker),
             # jerv's per-conversation planning tools (`web`-gated, jerv-only) over the
             # owner-only `agent_session_plans` table — always wired (the table always
             # exists); curator never sees them (the opt-in web class). read_plan/write_plan
