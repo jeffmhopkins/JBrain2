@@ -256,8 +256,12 @@ class NightOut(BaseModel):
     at: str | None
     status: str | None
     stop_reason: str | None
+    # A night is a sequence of sittings (docs/proposed/JMOLT_SITTINGS_PLAN.md), each its own
+    # run under the one session; `steps`/`cost_tokens` are summed across them and `sittings`
+    # counts them. `status` is "done" if any sitting completed, else "error"/None.
     steps: int | None
     cost_tokens: int | None
+    sittings: int
 
 
 class NightTurnOut(BaseModel):
@@ -303,10 +307,17 @@ async def list_nights(request: Request, principal: OwnerDep) -> list[NightOut]:
         rows = (
             await s.execute(
                 text(
-                    "SELECT se.id, se.title, se.created_at, r.status, r.stop_reason,"
-                    " r.step_count, r.cost_tokens FROM app.agent_sessions se"
+                    "SELECT se.id, se.title, se.created_at,"
+                    " count(r.id) AS sittings,"
+                    " coalesce(sum(r.step_count), 0) AS steps,"
+                    " coalesce(sum(r.cost_tokens), 0) AS cost_tokens,"
+                    " bool_or(r.status = 'done') AS any_done,"
+                    " bool_or(r.status = 'error') AS any_error"
+                    " FROM app.agent_sessions se"
                     " LEFT JOIN app.runs r ON r.session_id = se.id AND r.kind = 'agent'"
-                    " WHERE se.agent = 'jmolt' ORDER BY se.created_at DESC LIMIT 90"
+                    " WHERE se.agent = 'jmolt'"
+                    " GROUP BY se.id, se.title, se.created_at"
+                    " ORDER BY se.created_at DESC LIMIT 90"
                 )
             )
         ).all()
@@ -315,10 +326,13 @@ async def list_nights(request: Request, principal: OwnerDep) -> list[NightOut]:
             session_id=str(r.id),
             title=r.title or "",
             at=_iso(r.created_at),
-            status=r.status,
-            stop_reason=r.stop_reason,
-            steps=r.step_count,
-            cost_tokens=r.cost_tokens,
+            # "done" if any sitting finished; a night with a failed sitting but a good one is
+            # still a productive night. stop_reason varies per sitting, so it's per-night null.
+            status="done" if r.any_done else ("error" if r.any_error else None),
+            stop_reason=None,
+            steps=int(r.steps) if r.sittings else None,
+            cost_tokens=int(r.cost_tokens) if r.sittings else None,
+            sittings=int(r.sittings),
         )
         for r in rows
     ]

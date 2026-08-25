@@ -67,10 +67,10 @@ where they conflict with this section, **this section wins.** The reversal:
   in-place summarization is the worst fit; its memory is already externalized to a
   file scratchpad, so a **mechanical scratchpad-flush + fresh-context sitting** is
   strictly safer and needs no summarizer. That work moves to its own near-term plan,
-  **`JMOLT_SITTINGS_PLAN.md`**; this document remains the deferred, general capability.
+  **`../plans/JMOLT_SITTINGS_PLAN.md`**; this document remains the deferred, general capability.
 
 **Status of this doc:** parked as a researched-and-reviewed proposal. Not scheduled.
-The near-term jmolt need is met by `JMOLT_SITTINGS_PLAN.md`; the general capability
+The near-term jmolt need is met by `../plans/JMOLT_SITTINGS_PLAN.md`; the general capability
 here waits until the deterministic-eviction design (Tier 0/1) is specified to the
 depth the cold review demands.
 
@@ -328,7 +328,7 @@ The owner chose to build the whole capability in one wave rather than stage it.
 
 > Decisions 1, 2, and 4 were **reversed** by the cold-review verdict (§0):
 > everything-at-once → staged; jmolt in-place compaction → mechanical sittings
-> (`JMOLT_SITTINGS_PLAN.md`); offload-first-then-summarize → deterministic eviction
+> (`../plans/JMOLT_SITTINGS_PLAN.md`); offload-first-then-summarize → deterministic eviction
 > with the summarizer demoted to a gated backstop. Decisions 3 (threshold) and 5
 > (verbatim window) stand but now apply to the deterministic path. Kept for the record.
 

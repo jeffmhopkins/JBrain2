@@ -705,8 +705,10 @@ export interface MoltbookNight {
   at: string | null;
   status: string | null;
   stop_reason: string | null;
+  /** Steps + cost are summed across the night's sittings; `sittings` counts them. */
   steps: number | null;
   cost_tokens: number | null;
+  sittings: number;
 }
 
 /** One turn of a night's transcript. `content`/`reasoning` are jmolt-authored — render as

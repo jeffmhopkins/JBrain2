@@ -6,8 +6,8 @@ SKIPS when the global kill is on, when jmolt is unregistered, and outside the wi
 and fires once inside the window (and not twice the same night).
 """
 
-from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -73,7 +73,28 @@ async def _owner(maker: async_sessionmaker) -> SessionContext:
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 
-def _runner(maker: async_sessionmaker, store: FakeSettingsStore, executor: _FakeExecutor):
+def _stepped_clock(step_s: float) -> Callable[[], datetime]:
+    """A deterministic clock advancing `step_s` per call (the faked executor returns
+    instantly, so a real clock would spin). The sittings loop reads it once per iteration:
+    with the 3600 s budget and 300 s margin, elapsed crosses at 3300 s, so step 2000 → 1
+    sitting, step 600 → 5 sittings."""
+    state = {"t": datetime(2026, 8, 25, 3, 0, tzinfo=UTC)}
+
+    def _now() -> datetime:
+        cur = state["t"]
+        state["t"] = cur + timedelta(seconds=step_s)
+        return cur
+
+    return _now
+
+
+def _runner(
+    maker: async_sessionmaker,
+    store: FakeSettingsStore,
+    executor: _FakeExecutor,
+    *,
+    clock: Callable[[], datetime] | None = None,
+):
     return JmoltNightRunner(
         sessions=AgentSessionRepo(maker),
         runlog=AgentRunLog(maker),
@@ -81,6 +102,7 @@ def _runner(maker: async_sessionmaker, store: FakeSettingsStore, executor: _Fake
         executor=executor,  # type: ignore[arg-type]
         settings_store=store,  # type: ignore[arg-type]
         maker=maker,
+        clock=clock or _stepped_clock(2000),  # default: one sitting per night
     )
 
 
@@ -89,6 +111,16 @@ async def _jmolt_session_count(maker: async_sessionmaker, owner: SessionContext)
         return (
             await session.execute(
                 text("SELECT count(*) FROM app.agent_sessions WHERE agent = 'jmolt'")
+            )
+        ).scalar() or 0
+
+
+async def _run_count(maker: async_sessionmaker, owner: SessionContext, session_id: str) -> int:
+    async with scoped_session(maker, owner) as session:
+        return (
+            await session.execute(
+                text("SELECT count(*) FROM app.runs WHERE session_id = :sid AND kind = 'agent'"),
+                {"sid": session_id},
             )
         ).scalar() or 0
 
@@ -111,6 +143,33 @@ async def test_run_creates_a_jmolt_session_and_records_it(maker: async_sessionma
             )
         ).scalar()
     assert status == "done"
+
+
+async def test_run_does_multiple_sittings_under_one_session(maker: async_sessionmaker) -> None:
+    # A full night is a SEQUENCE of sittings — one agent_session, a recorded run per sitting.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _FakeExecutor()
+    before = await _jmolt_session_count(maker, owner)
+    session_id = await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert executor.calls == 5  # ~10-min sittings across the hour (see _stepped_clock)
+    assert await _jmolt_session_count(maker, owner) == before + 1  # ONE session for the night
+    assert await _run_count(maker, owner, session_id) == 5  # five sitting-runs under it
+
+
+async def test_run_halts_sittings_on_kill(maker: async_sessionmaker) -> None:
+    # M6: a global kill engaged mid-night stops launching further sittings.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_killed"] = True
+    executor = _FakeExecutor()
+    session_id = await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    # The clock leaves room for several sittings, but the kill halts the loop after the
+    # first (the tick guards sitting one; the loop re-checks the kill before each next one).
+    assert executor.calls == 1
+    assert await _run_count(maker, owner, session_id) == 1
 
 
 async def test_tick_skips_when_killed(maker: async_sessionmaker) -> None:

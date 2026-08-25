@@ -1,6 +1,6 @@
 # jmolt sittings — a mechanical way to use the full hour, no summarizer
 
-> **Status:** Proposed · **Last verified:** 2026-08-25
+> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️
 
 Make jmolt actually use its unsupervised hour, without the fabrication and
 injection risks a live LLM summarizer would add. The night runs as a sequence of
@@ -110,12 +110,17 @@ run/sitting).
 
 ## 6. Waves
 
-- **W1 — the sittings loop + countdown + continue-prologue + per-sitting flush,
-  backend.** The loop in `JmoltNightRunner.run`; `time_header`; the continue
-  prologue; per-sitting bounds; the history aggregation (§4). Tests: real Postgres +
-  faked LLM — a multi-sitting night records N runs under one session, the countdown
-  header reflects elapsed/remaining, a mid-night kill halts further sittings, and the
-  scratchpad persists across sittings. No new dependency.
+- **W1 ✅ — the sittings loop + countdown + continue-prologue, backend.** Shipped:
+  the sittings loop in `JmoltNightRunner.run` (one `agent_session`, a recorded run
+  per sitting, launching until the hour is nearly up or a mid-night kill lands, with
+  a runaway `JMOLT_MAX_SITTINGS` backstop); the `_sitting_preamble` live countdown
+  from the local trusted clock (M4); the `_CONTINUE_PROLOGUE` for sittings 2+ (reload
+  the scratchpad as fenced DATA, M2); an injectable clock so the sittings loop is
+  deterministically testable; and the history aggregation (§4) — the owner `nights`
+  endpoint sums steps/cost and counts sittings per session, the jmolt-screen Nights
+  card shows the sitting count. Tests (real Postgres + faked LLM): a multi-sitting
+  night records N runs under one session, a mid-night kill halts further sittings, and
+  the history endpoint aggregates. No new dependency.
 - **W2 — on-box tuning.** Sitting length, how many sittings fill an hour, the
   continue-prologue wording, and whether jmolt actually paces better with the
   countdown — measured against a real gpt-oss-120b hour on the box.

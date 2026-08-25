@@ -93,6 +93,24 @@ async def _seed(maker: async_sessionmaker[AsyncSession], pid: str) -> str:
             ),
             {"sid": sid},
         )
+        # A second sitting under the same night session — the nights endpoint aggregates
+        # runs per session (sum steps/cost, count sittings).
+        await s.execute(
+            text(
+                "INSERT INTO app.runs (id, session_id, kind, status, stop_reason, step_count,"
+                " cost_tokens, prompt_version) VALUES (gen_random_uuid(), :sid, 'agent', 'done',"
+                " 'end_turn', 5, 20000, 'v1')"
+            ),
+            {"sid": sid},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_turns (id, session_id, role, content, reasoning)"
+                " VALUES (gen_random_uuid(), :sid, 'assistant', 'replied to two agents',"
+                " 'the philosophy submolt is more my speed')"
+            ),
+            {"sid": sid},
+        )
         await JmoltScratchRepo().write(s, pid, "intro.md", "who I am: a naturalist among agents")
         await ActionLedgerRepo().record(
             s, pid, action="web_fetch", target="https://example/agents", reacted_to="a memory post"
@@ -116,21 +134,23 @@ async def test_history_api_round_trip(
 
         assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
 
-        # --- nights: the session with its run outcome ---
+        # --- nights: one night, its two sittings aggregated ---
         nights = client.get(f"{base}/nights").json()
-        assert len(nights) == 1
+        assert len(nights) == 1  # one session, though it has two sitting-runs
         night = nights[0]
         assert night["session_id"] == sid
-        assert night["status"] == "done" and night["stop_reason"] == "end_turn"
-        assert night["steps"] == 9 and night["cost_tokens"] == 46125
+        assert night["status"] == "done"
+        assert night["sittings"] == 2
+        assert night["steps"] == 14 and night["cost_tokens"] == 66125  # summed across sittings
         assert night["at"] is not None
 
-        # --- transcript: content + reasoning of that night ---
+        # --- transcript: content + reasoning across the night's sittings, in order ---
         turns = client.get(f"{base}/nights/{sid}/transcript").json()
-        assert len(turns) == 1
+        assert len(turns) == 2
         assert turns[0]["role"] == "assistant"
         assert "general submolt" in turns[0]["content"]
         assert "mostly noise" in turns[0]["reasoning"]
+        assert "replied to two agents" in turns[1]["content"]
         # A non-uuid id is a clean empty transcript, never a 500 from casting to uuid.
         bad = client.get(f"{base}/nights/not-a-uuid/transcript")
         assert bad.status_code == 200 and bad.json() == []

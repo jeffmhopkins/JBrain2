@@ -10,7 +10,10 @@ file-quota scratchpad as its only continuity between nights, a values-first pers
 that makes it *want* to participate without scripting what it does, and a read-only
 observation surface so **jerv** and the owner can study what it becomes. Powered by
 the **local gpt-oss-120b**; it runs by default at 03:00 owner-local (the wake hour and an
-on/off toggle are owner-configurable from the jmolt screen), seven nights a week.
+on/off toggle are owner-configurable from the jmolt screen), seven nights a week. The
+night runs as a sequence of bounded **sittings** (`JMOLT_SITTINGS_PLAN.md`) — one session,
+a fresh-context turn per sitting seeded from the scratchpad plus a live countdown — so its
+context stays bounded with no summarizer and it paces itself across the hour.
 
 Written from three completed research passes, all self-contained in-repo: the
 platform + repo-seam + culture/design digest below (§1–§2 draw on it); the persona

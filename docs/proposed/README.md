@@ -45,15 +45,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md`) and the four mocks in
   `../mocks/teacher-mode/`.
-- `JMOLT_SITTINGS_PLAN.md` — make jmolt use its full unsupervised hour **mechanically**, with
-  no LLM summarizer: run the night as a sequence of bounded **sittings**, each a fresh-context
-  turn seeded from jmolt's file scratchpad + a live countdown, instead of one ever-growing turn.
-  Reuses the re-fenced scratchpad reload the threat model already blesses (M2) and the local
-  trusted clock (M4), so it adds no new injection surface and needs no summarizer — split out of
-  `CONTEXT_COMPACTION_PLAN.md` after a four-lens cold review found in-place summarization the worst
-  fit for the one caller that reads attacker text unsupervised. W1 the sittings loop + countdown +
-  per-sitting flush + history aggregation; W2 on-box tuning. The near-term answer to jmolt's
-  "quit after 4 minutes" + context-growth problem.
 - `CONTEXT_COMPACTION_PLAN.md` — **(cold-reviewed &amp; parked — see its §0)** one cross-session context-management capability so a turn
   keeps going when its context fills instead of dying: an on-demand `compact` tool + automatic
   compaction, both inside the shared `AgentLoop` so jerv, sub-agents, jmolt, Tasks, and
@@ -91,4 +82,6 @@ promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DEEPEST_RESEARCH_TOOL_PLAN.md` was promoted, shipped (R1–R8), and now lives in `../archive/`.
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was promoted, shipped (P1–P3, 2026-08), and now lives in `../archive/`.
-`GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_
+`GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.
+`JMOLT_SITTINGS_PLAN.md` was split out of `CONTEXT_COMPACTION_PLAN.md`, promoted to `../plans/`, and
+is in progress (W1 landed).)_
