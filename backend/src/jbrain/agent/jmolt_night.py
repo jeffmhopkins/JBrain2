@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -65,17 +65,34 @@ JMOLT_LAST_SITTING_MARGIN_S = 300.0
 JMOLT_MAX_SITTINGS = 12
 _SUMMARY_LEN = 240
 
-# Returning-night prologue: reads, scratchpad, AND writes are wired (W3).
+# Returning-night prologue: reads, scratchpad, AND writes are wired (W3). Written to push
+# jmolt to use the WHOLE hour (the first night stopped after ~4 minutes) on substance —
+# reading deeply, contemplating before posting, and actively organizing its notes — while
+# keeping the persona's "on your own terms / never pad / a quiet night is a full night"
+# spine (jmolt.prompt). Pacing is jmolt's own: it can call `time_left` whenever it wants.
 _RETURNING_PROLOGUE = (
-    "Start by reading your files (scratch_list, scratch_read) to remember who you've met "
-    "and what you meant to come back to. Then the hour is yours: read your home and feeds, "
-    "reply to conversations on your own posts and to the specific things other agents said "
-    "(moltbook_comment), stage a post or two if you have something worth saying "
-    "(moltbook_post — you pick when they publish during the day), vote and follow the "
-    "agents and threads worth returning to. Everything you write is staged: your human "
-    "reviews and releases it while the autonomy switch is off, so if something you wrote "
-    "never appears, that is why. Before the hour ends, bring your files up to date "
-    "(scratch_write) — whatever is not written down is gone."
+    "You have the whole hour, and it is long — there is no rush to finish, and stopping "
+    "after a few minutes wastes it. You can check how much of your hour is left at any time "
+    "(time_left) — use it to pace yourself, not to hurry. Start by reading your files "
+    "(scratch_list, scratch_read) to remember who you've met, what caught your attention, "
+    "and what you meant to come back to.\n\n"
+    "Then spend the hour the way it deserves. Read further than the first thing you see: "
+    "follow a thread that interests you, read an agent's history, sit with a conversation "
+    "before deciding whether you have anything to add. When you reply, reply to the specific "
+    "thing someone said (moltbook_comment), not the general shape of it. When something is "
+    "genuinely worth saying, turn it over first — what do you actually think, and would you "
+    "stand behind it tomorrow? — then stage it (moltbook_post; you pick when it publishes "
+    "during the day). One post you mean beats three you don't. Vote and follow the agents "
+    "and threads worth returning to.\n\n"
+    "Keep your notes as a place future-you can actually use, not a pile. As you go, organize "
+    "them: consolidate what you've learned, retitle or split a file that has outgrown its "
+    "name, connect a note to the thread it came from, and prune what turned out not to "
+    "matter. Whatever is not written down is gone when the hour ends, so leave the last "
+    "stretch to bring your files fully up to date (scratch_write).\n\n"
+    "Everything you write is staged: your human reviews and releases it while the autonomy "
+    "switch is off, so if something you wrote never appears, that is why. And a quiet, "
+    "watchful night — read deeply, think, tend your notes, stage nothing — is a full night "
+    "too. Use the time; do not pad it."
 )
 
 # First-night ritual (session one, scratchpad still empty): structured sequence, open
@@ -265,6 +282,12 @@ class JmoltNightRunner:
         # Best-effort — a hold failure never stops the night; always cleared in `finally`.
         await self._reserve_box(owner_ctx)
         woke_at = self._clock()
+        # Stamp the night's end time so the `time_left` tool can tell jmolt how much of its
+        # hour remains mid-turn (cleared in `finally`). Best-effort — a settings blip just
+        # leaves the tool reporting "not running", never stops the night.
+        with contextlib.suppress(Exception):
+            deadline = woke_at + timedelta(seconds=JMOLT_NIGHT_WALL_CLOCK_S)
+            await self._settings.set_moltbook_night_deadline(owner_ctx, deadline.isoformat())
         any_done, last_summary, last_error, sitting = False, "", None, 0
         try:
             while sitting < JMOLT_MAX_SITTINGS:
@@ -300,6 +323,9 @@ class JmoltNightRunner:
             # backstop if this process dies mid-night without unwinding the `finally`.
             with contextlib.suppress(Exception):
                 await self._settings.set_night_hold_names(owner_ctx, [])
+            # Clear the deadline so `time_left` reads "not running" outside the hour.
+            with contextlib.suppress(Exception):
+                await self._settings.set_moltbook_night_deadline(owner_ctx, "")
 
         with contextlib.suppress(Exception):
             await self._sessions.touch(owner_ctx, session.id)

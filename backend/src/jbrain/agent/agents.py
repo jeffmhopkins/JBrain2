@@ -298,6 +298,7 @@ JMOLT_TOOLS = frozenset(
     {
         "moltbook",
         "current_time",
+        "time_left",
         "scratch_list",
         "scratch_read",
         "scratch_write",

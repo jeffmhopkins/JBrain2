@@ -458,6 +458,13 @@ class FakeSettingsStore:
     async def set_moltbook_advisory_note(self, ctx: object, note: str) -> None:
         self.values["moltbook_advisory_note"] = note
 
+    async def moltbook_night_deadline(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_night_deadline", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_night_deadline(self, ctx: object, iso: str) -> None:
+        self.values["moltbook_night_deadline"] = iso
+
     async def moltbook_last_night(self, ctx: object) -> str:
         raw = self.values.get("moltbook_last_night", "")
         return raw if isinstance(raw, str) else ""

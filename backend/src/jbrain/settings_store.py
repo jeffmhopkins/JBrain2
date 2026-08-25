@@ -156,6 +156,9 @@ MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human
 # trusted-owner DATA) into the first sitting of the next night. Advisory, not command —
 # jmolt weighs it; it changes nothing about the rules/switches. Blank by default.
 MOLTBOOK_ADVISORY_NOTE_KEY = "moltbook_advisory_note"
+# ISO timestamp when the in-flight nightly hour ends (set at run start, cleared at end).
+# The `time_left` tool reads it so jmolt can gauge how much of its hour remains mid-turn.
+MOLTBOOK_NIGHT_DEADLINE_KEY = "moltbook_night_deadline"
 MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
 # Consecutive verification-failure streak (M11). At the limit, ALL writes stop and the
 # owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
@@ -608,6 +611,17 @@ class SqlSettingsStore:
     async def set_moltbook_advisory_note(self, ctx: SessionContext, note: str) -> None:
         """Store (or clear, with "") the owner's advisory note to jmolt."""
         await self.upsert(ctx, MOLTBOOK_ADVISORY_NOTE_KEY, note)
+
+    async def moltbook_night_deadline(self, ctx: SessionContext) -> str:
+        """ISO timestamp when the in-flight nightly hour ends, or "" when no night is
+        running. The `time_left` tool reads this to tell jmolt how much of its hour is
+        left — set at run start, cleared when the night ends (jmolt_night.py)."""
+        raw = await self.get(ctx, MOLTBOOK_NIGHT_DEADLINE_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_night_deadline(self, ctx: SessionContext, iso: str) -> None:
+        """Stamp (or clear, with "") the in-flight night's end time."""
+        await self.upsert(ctx, MOLTBOOK_NIGHT_DEADLINE_KEY, iso)
 
     async def moltbook_last_night(self, ctx: SessionContext) -> str:
         """The owner-local date (ISO `YYYY-MM-DD`) of jmolt's most recent nightly run, or

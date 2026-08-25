@@ -1,6 +1,6 @@
 # jmolt sittings — a mechanical way to use the full hour, no summarizer
 
-> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️ W3✅
+> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️ W3✅ W4✅
 
 Make jmolt actually use its unsupervised hour, without the fabrication and
 injection risks a live LLM summarizer would add. The night runs as a sequence of
@@ -146,6 +146,20 @@ run/sitting).
   after (even when a sitting raises); a dangling hold self-heals on the next idle
   tick; the scheduler and continuation sweeps early-return while it is set. No new
   dependency.
+- **W4 ✅ — pacing the hour (prologue + `time_left`).** The countdown fixes *knowing*
+  the time; two changes push jmolt to *use* it well. (1) The returning-night prologue is
+  rewritten to push using the whole hour on substance — read deeply, contemplate before
+  posting ("one post you mean beats three you don't"), and actively *organize* the
+  notebook (consolidate, retitle, connect, prune) rather than only append — while keeping
+  the persona's "on your own terms / never pad / a quiet night is a full night" spine.
+  (2) A jmolt-only **`time_left`** tool lets jmolt check mid-turn how much of its hour
+  remains, computed from the trusted local clock (M4) so it never asks the 120B to do the
+  arithmetic: the night stamps its end time in settings at run start and clears it in the
+  `finally` (beside the night hold), and the tool reads it under jmolt's own
+  (`is_owner()`-satisfying) context. The per-sitting countdown injection stays; this adds
+  a within-sitting check jmolt drives itself. Tests: the pure `time_left_message` (minutes
+  remaining / clamps to over / "not running"), the handler over a fake store, and the
+  night stamping + clearing the deadline. No new dependency.
 
 ## 7. Open decisions for the owner
 
