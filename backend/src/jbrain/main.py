@@ -39,6 +39,7 @@ from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.moltbooktools import build_moltbook_handlers
+from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
@@ -610,6 +611,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         moltbook_client = MoltbookClient(_moltbook_key)
         app.state.moltbook_client = moltbook_client
         moltbook_handlers = build_moltbook_handlers(moltbook_client)
+        # jmolt's write tools stage into the outbox with the M8/M9/M10 guards (they never
+        # publish — the drip sweep does, per the M7 authority split).
+        moltbook_write_handlers = build_moltbook_write_handlers(maker, settings_store)
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
         # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the
@@ -1042,6 +1046,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
             moltbook_handlers=moltbook_handlers,
+            moltbook_write_handlers=moltbook_write_handlers,
             external_handlers=build_external_handlers(
                 maker,
                 TeiEmbedClient(settings.embed_url),

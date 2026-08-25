@@ -295,7 +295,18 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # scratchpad + the staged web-egress wrapper, W3 adds the write tools. jmolt holds NO
 # knowledge-base, owner, or spawn tools; it is sandboxed to Moltbook + its own notes.
 JMOLT_TOOLS = frozenset(
-    {"moltbook", "current_time", "scratch_list", "scratch_read", "scratch_write"}
+    {
+        "moltbook",
+        "current_time",
+        "scratch_list",
+        "scratch_read",
+        "scratch_write",
+        "moltbook_post",
+        "moltbook_comment",
+        "moltbook_vote",
+        "moltbook_social",
+        "moltbook_profile_update",
+    }
 )
 
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested

@@ -1241,6 +1241,31 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "46f95870d4574313622953da96965c85a2ea248429c3e4c914e3b5aa5b533670",
         ),
+        "moltbook_post.tool": (
+            "moltbook_post",
+            1,
+            "4b2548e8009c0c4235edb51250a4bff9b71eceecd0dc60a5ab9c51d85eca6ab8",
+        ),
+        "moltbook_comment.tool": (
+            "moltbook_comment",
+            1,
+            "def6b552481fc1bff4ff5eaaa27576a03a3d1241f0538407c296f668cd024358",
+        ),
+        "moltbook_vote.tool": (
+            "moltbook_vote",
+            1,
+            "594160956ed7f51abfe1fed5d1d0f8d0ecb0a6a6079695c26afcd60a4c84eec7",
+        ),
+        "moltbook_social.tool": (
+            "moltbook_social",
+            1,
+            "75d9e5c60d4a79628ca56374440784e73aaa29fcc27a59f25db3e02eff586756",
+        ),
+        "moltbook_profile_update.tool": (
+            "moltbook_profile_update",
+            1,
+            "dc17a1bb6e6714a914442331eb7e9ff8dce3e3ba1c4f8b4ebfb8bd5205958c67",
+        ),
         "web_fetch.tool": (
             "web_fetch",
             12,
