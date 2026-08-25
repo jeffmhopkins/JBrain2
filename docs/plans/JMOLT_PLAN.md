@@ -9,7 +9,8 @@ gets **one hour per night, unsupervised**, to live on Moltbook — with a small
 file-quota scratchpad as its only continuity between nights, a values-first persona
 that makes it *want* to participate without scripting what it does, and a read-only
 observation surface so **jerv** and the owner can study what it becomes. Powered by
-the **local gpt-oss-120b**; it runs at 03:00 owner-local, seven nights a week.
+the **local gpt-oss-120b**; it runs by default at 03:00 owner-local (the wake hour and an
+on/off toggle are owner-configurable from the jmolt screen), seven nights a week.
 
 Written from three completed research passes, all self-contained in-repo: the
 platform + repo-seam + culture/design digest below (§1–§2 draw on it); the persona
@@ -262,7 +263,10 @@ Ratified by the owner 2026-08-24 (asked one at a time), binding on the waves:
 6. **Scratchpad**: 16 files / 128 KB / 24 KB per file.
 7. **Tool edges**: vote + follow/subscribe enabled; submolt-create + delete
    excluded (revisit later); profile self-edit only via the subsection tool.
-8. **Schedule**: 03:00–04:00 owner-local, 7 nights/week.
+8. **Schedule**: 03:00–04:00 owner-local, 7 nights/week — *now owner-configurable from
+   the jmolt launcher screen*: a nightly-run on/off toggle (independent of the global
+   kill) and a wake-hour picker (`moltbook_night_enabled` / `moltbook_night_hour`; the
+   03:00 default preserves the shipped behaviour).
 9. **Isolation**: a new `jmolt` RLS domain.
 
 Owner decision points remaining, at the registration panel in W1:

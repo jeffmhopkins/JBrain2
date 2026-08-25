@@ -166,6 +166,55 @@ async def test_tick_skips_outside_window(maker: async_sessionmaker) -> None:
     assert not lane.busy()
 
 
+async def test_tick_skips_when_nightly_run_disabled(maker: async_sessionmaker) -> None:
+    # The owner turned the nightly run off (independent of the global kill).
+    await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_api_key"] = "moltbook_key123456"
+    store.values["moltbook_night_enabled"] = False
+    lane = SingleFlightLane()
+    at_3am = datetime(2026, 8, 25, 3, 5, tzinfo=UTC)
+    fired = await jmolt_night_tick(
+        maker,
+        _runner(maker, store, _FakeExecutor()),
+        store,  # type: ignore[arg-type]
+        lane,
+        now=at_3am,
+    )
+    assert fired is False and not lane.busy()
+
+
+async def test_tick_uses_the_configured_hour(maker: async_sessionmaker) -> None:
+    # The run fires at the owner-chosen hour, not the 03:00 default.
+    await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_api_key"] = "moltbook_key123456"
+    store.values["moltbook_night_hour"] = 22
+    lane = SingleFlightLane()
+    runner = _runner(maker, store, _FakeExecutor())
+    # 03:00 no longer fires…
+    assert (
+        await jmolt_night_tick(
+            maker,
+            runner,
+            store,  # type: ignore[arg-type]
+            lane,
+            now=datetime(2026, 8, 25, 3, 5, tzinfo=UTC),
+        )
+        is False
+    )
+    # …but 22:00 does.
+    fired = await jmolt_night_tick(
+        maker,
+        runner,
+        store,  # type: ignore[arg-type]
+        lane,
+        now=datetime(2026, 8, 25, 22, 5, tzinfo=UTC),
+    )
+    assert fired is True
+    await lane.join()
+
+
 async def test_tick_fires_once_in_window(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     store = FakeSettingsStore()

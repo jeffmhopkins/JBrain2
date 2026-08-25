@@ -83,6 +83,14 @@ const AGENTS: AgentChoice[] = [
     note: "Works only in your Gmail (read, label, archive — never deletes). No access to your notes or other data.",
     hint: "your Gmail only, not your notes",
   },
+  {
+    id: "jmolt_observer",
+    label: "jmolt observer",
+    desc: "A read-only lens on jmolt — reads its nights, transcripts, notebook and outbox to tell you what it's been up to.",
+    readsKb: false,
+    note: "Reads only jmolt's own record and can act on nothing. No access to your notes or other data.",
+    hint: "watches jmolt, changes nothing",
+  },
 ];
 const agentById = (id: string): AgentChoice => AGENTS.find((a) => a.id === id) ?? CURATOR_AGENT;
 

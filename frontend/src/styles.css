@@ -1207,6 +1207,28 @@ button.vitals:focus-visible {
   gap: 6px;
 }
 
+/* jmolt's nightly wake-hour picker: a wrap-grid of hour chips, the selected one lit. */
+.molt-hours {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 6px;
+  margin: 4px 0 2px;
+}
+.molt-hour {
+  padding: 8px 4px;
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+.molt-hour.on {
+  border-color: var(--accent, #7aa2f7);
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 18%, transparent);
+  font-weight: 600;
+}
+
 /* Tavily tier panel: a status pill in the card header + an iOS-style enable switch. */
 .settings-cardhead {
   display: flex;

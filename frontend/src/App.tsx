@@ -21,6 +21,7 @@ import { ImageScreen } from "./screens/ImageScreen";
 import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
 import { JlaunchScreen } from "./screens/JlaunchScreen";
+import { JmoltScreen } from "./screens/JmoltScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
@@ -72,6 +73,7 @@ type Card =
   | "petcontrol"
   | "jcode"
   | "jlaunch"
+  | "jmolt"
   | "vitals";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
@@ -96,6 +98,7 @@ const SCREEN_TITLES: Record<
   location: "Location",
   wiki: "Wiki",
   intake: "Intake Links",
+  jmolt: "jmolt",
 };
 
 const CARD_EXIT_MS = 150;
@@ -595,6 +598,8 @@ export function App() {
             {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
             {/* Owner-only location surface: Devices / Timeline / Map. */}
             {card === "location" && <LocationScreen />}
+            {/* jmolt's own screen: account, review queue, nightly schedule. */}
+            {card === "jmolt" && <JmoltScreen />}
           </div>
         )}
 

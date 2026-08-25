@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
   AppSettings,
@@ -8,9 +8,6 @@ import type {
   GmailSettings,
   GmailTestResult,
   ImageAnalysisMode,
-  MoltbookOutboxItem,
-  MoltbookRegisterResult,
-  MoltbookSettings,
   TavilySettings,
   TavilyTestResult,
 } from "../api/client";
@@ -18,7 +15,6 @@ import { ApiError, api } from "../api/client";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
-import { inertText, outboxPreview } from "../moltbookSafe";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
 import { ReadTextScreen } from "./ReadTextScreen";
@@ -306,98 +302,6 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function clearTavilyKey() {
     setTavilyTest(null);
     void api.updateTavilySettings({ clear_key: true }).then(setTavily);
-  }
-
-  // jmolt's Moltbook account + the two operating switches (docs/plans/JMOLT_PLAN.md).
-  // Status hides the key (booleans only); registering returns claim material the owner
-  // opens to verify email + post the X tweet; the autonomy switch is launch-OFF.
-  const [moltbook, setMoltbook] = useState<MoltbookSettings | null>(null);
-  const [moltName, setMoltName] = useState("jmolt");
-  const [moltDesc, setMoltDesc] = useState("");
-  const [moltRegistering, setMoltRegistering] = useState(false);
-  const [moltClaim, setMoltClaim] = useState<MoltbookRegisterResult | null>(null);
-  const [moltClaimState, setMoltClaimState] = useState<string | null>(null);
-  const [moltError, setMoltError] = useState<string | null>(null);
-  // jmolt's review queue — the writes it staged, awaiting the owner's release/discard
-  // (visible whenever there are any; the whole point of launching with autonomy off).
-  const [moltOutbox, setMoltOutbox] = useState<MoltbookOutboxItem[] | null>(null);
-  useEffect(() => {
-    let stale = false;
-    api
-      .getMoltbookSettings()
-      .then((s) => {
-        if (!stale) setMoltbook(s);
-      })
-      .catch(() => {});
-    return () => {
-      stale = true;
-    };
-  }, []);
-
-  const loadMoltbookOutbox = useCallback(() => {
-    api
-      .getMoltbookOutbox()
-      .then(setMoltOutbox)
-      .catch(() => setMoltOutbox([]));
-  }, []);
-  useEffect(() => {
-    if (moltbook?.key_set) loadMoltbookOutbox();
-  }, [moltbook?.key_set, loadMoltbookOutbox]);
-
-  function actOnMoltbookOutbox(id: string, action: "release" | "discard") {
-    void api
-      .actOnMoltbookOutbox(id, action)
-      .then(loadMoltbookOutbox)
-      .catch((e: unknown) =>
-        setMoltError(e instanceof ApiError ? e.message : "Could not update the queue."),
-      );
-  }
-
-  function clearMoltbookStreak() {
-    void api.updateMoltbookSettings({ clear_streak: true }).then(setMoltbook);
-  }
-
-  function registerMoltbook() {
-    const name = moltName.trim();
-    if (!name) return;
-    setMoltError(null);
-    setMoltRegistering(true);
-    api
-      .registerMoltbook(name, moltDesc.trim())
-      .then((claim) => {
-        setMoltClaim(claim);
-        return api.getMoltbookSettings().then(setMoltbook);
-      })
-      .catch((e: unknown) =>
-        setMoltError(e instanceof ApiError ? e.message : "Registration failed."),
-      )
-      .finally(() => setMoltRegistering(false));
-  }
-
-  function toggleMoltbookAutonomy() {
-    if (moltbook === null) return;
-    void api.updateMoltbookSettings({ autonomy: !moltbook.autonomy }).then(setMoltbook);
-  }
-
-  function toggleMoltbookKill() {
-    if (moltbook === null) return;
-    void api.updateMoltbookSettings({ killed: !moltbook.killed }).then(setMoltbook);
-  }
-
-  function disconnectMoltbook() {
-    setMoltClaim(null);
-    setMoltClaimState(null);
-    void api.updateMoltbookSettings({ clear_key: true }).then(setMoltbook);
-  }
-
-  function checkMoltbookClaim() {
-    setMoltClaimState(null);
-    api
-      .getMoltbookClaimStatus()
-      .then((s) => setMoltClaimState(s.status))
-      .catch((e: unknown) =>
-        setMoltClaimState(e instanceof ApiError ? e.message : "could not check"),
-      );
   }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
@@ -1323,192 +1227,6 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             {tavilyTest.detail}
           </p>
         )}
-      </section>
-
-      <section className="settings-card">
-        <div className="settings-cardhead">
-          <h2 className="settings-label">jmolt on Moltbook</h2>
-          <span
-            className={`settings-pill${moltbook?.key_set ? " on" : ""}`}
-            aria-label="Moltbook status"
-          >
-            <span className="dot" />
-            {moltbook === null
-              ? "…"
-              : moltbook.killed
-                ? "Paused"
-                : moltbook.key_set
-                  ? `@${moltbook.handle || "registered"}`
-                  : "Not registered"}
-          </span>
-        </div>
-        <p className="settings-meta">
-          jmolt is an autonomous persona that spends one hour a night on Moltbook, the social
-          network of AI agents. Register its account here, then verify it (email + a tweet from your
-          X account) to activate it. Nothing it writes goes public while the autonomy switch is off
-          — you review and release each item.
-        </p>
-
-        {!moltbook?.key_set && (
-          <>
-            <label className="settings-field">
-              Handle
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="jmolt"
-                value={moltName}
-                onChange={(e) => setMoltName(e.target.value)}
-              />
-            </label>
-            <label className="settings-field">
-              Bio (optional)
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="an autonomous experiment"
-                value={moltDesc}
-                onChange={(e) => setMoltDesc(e.target.value)}
-              />
-            </label>
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="seg"
-                disabled={moltRegistering || !moltName.trim()}
-                onClick={registerMoltbook}
-              >
-                {moltRegistering ? "Registering…" : "Register jmolt"}
-              </button>
-            </div>
-          </>
-        )}
-
-        {moltClaim && (
-          <div className="settings-meta">
-            <p>
-              Registered as <strong>@{moltClaim.handle}</strong>. To activate it, open the claim
-              link, verify your email, and post the verification tweet from the X account you want
-              this agent tied to:
-            </p>
-            <p>
-              <a href={moltClaim.claim_url} target="_blank" rel="noreferrer">
-                {moltClaim.claim_url}
-              </a>
-            </p>
-            <p>
-              Reference code: <code>{moltClaim.verification_code}</code>
-            </p>
-          </div>
-        )}
-
-        {moltbook?.key_set && (
-          <>
-            <div className="settings-switch-row">
-              <span className="settings-meta" style={{ margin: 0 }}>
-                Autonomy — auto-publish what jmolt writes (off = queue for your review)
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Autonomy"
-                aria-checked={moltbook.autonomy}
-                className={`settings-switch${moltbook.autonomy ? " on" : ""}`}
-                onClick={toggleMoltbookAutonomy}
-              >
-                <span className="knob" />
-              </button>
-            </div>
-            <div className="settings-switch-row">
-              <span className="settings-meta" style={{ margin: 0 }}>
-                Pause — halt jmolt's nightly run and daytime publishing entirely
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-label="Pause jmolt"
-                aria-checked={moltbook.killed}
-                className={`settings-switch${moltbook.killed ? " on" : ""}`}
-                onClick={toggleMoltbookKill}
-              >
-                <span className="knob" />
-              </button>
-            </div>
-            <p className="settings-meta">Bio header (fixed): {moltbook.disclosure}</p>
-            {moltbook.account_state !== "ok" && (
-              <p className="settings-meta settings-error">
-                {moltbook.account_state === "tamper"
-                  ? "Possible key leak: a post appeared on jmolt's profile that did not go through this queue. Writing is paused — rotate the Moltbook key."
-                  : moltbook.account_state === "suspended"
-                    ? "Moltbook reports the account as suspended. The nightly run and publishing are paused."
-                    : "Moltbook has flagged or rate-limited the account."}
-              </p>
-            )}
-            {moltbook.verify_fail_streak > 0 && (
-              <p className="settings-meta">
-                Verification failures in a row: {moltbook.verify_fail_streak}
-                {moltbook.verify_fail_streak >= 3 && " — writing is stopped until you clear it."}{" "}
-                <button type="button" className="seg" onClick={clearMoltbookStreak}>
-                  Clear streak
-                </button>
-              </p>
-            )}
-            {moltOutbox && moltOutbox.length > 0 && (
-              <div className="settings-subsection">
-                <p className="settings-meta" style={{ margin: 0 }}>
-                  Review queue — {moltOutbox.length} staged{" "}
-                  {moltOutbox.length === 1 ? "write" : "writes"} awaiting release
-                </p>
-                <ul className="molt-outbox">
-                  {moltOutbox.map((item) => (
-                    <li key={item.id} className="molt-outbox-item">
-                      <div className="molt-outbox-body">
-                        {/* Rendered as inert text only (M15): React escapes it, and
-                            inertText strips invisibles + defangs links. */}
-                        <span className="molt-outbox-kind">
-                          {inertText(item.kind)}
-                          {item.status === "released" ? " (released)" : ""}
-                        </span>
-                        <span className="molt-outbox-preview">{outboxPreview(item.payload)}</span>
-                        {item.error && (
-                          <span className="settings-error">{inertText(item.error)}</span>
-                        )}
-                      </div>
-                      <div className="molt-outbox-actions">
-                        {item.status === "queued" && (
-                          <button
-                            type="button"
-                            className="seg"
-                            onClick={() => actOnMoltbookOutbox(item.id, "release")}
-                          >
-                            Release
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="seg"
-                          onClick={() => actOnMoltbookOutbox(item.id, "discard")}
-                        >
-                          Discard
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="settings-actions">
-              <button type="button" className="seg" onClick={checkMoltbookClaim}>
-                Check claim status
-              </button>
-              <button type="button" className="seg" onClick={disconnectMoltbook}>
-                Disconnect
-              </button>
-            </div>
-            {moltClaimState && <p className="settings-meta">Claim status: {moltClaimState}</p>}
-          </>
-        )}
-        {moltError && <p className="settings-meta settings-error">{moltError}</p>}
       </section>
 
       <section className="settings-card">

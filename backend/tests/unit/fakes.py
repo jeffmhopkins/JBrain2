@@ -465,6 +465,22 @@ class FakeSettingsStore:
     async def set_moltbook_last_digest(self, ctx: object, iso_date: str) -> None:
         self.values["moltbook_last_digest"] = iso_date
 
+    async def moltbook_night_enabled(self, ctx: object) -> bool:
+        return self.values.get("moltbook_night_enabled", True) is True
+
+    async def set_moltbook_night_enabled(self, ctx: object, on: bool) -> None:
+        self.values["moltbook_night_enabled"] = bool(on)
+
+    async def moltbook_night_hour(self, ctx: object) -> int:
+        raw = self.values.get("moltbook_night_hour", 3)
+        try:
+            return max(0, min(23, int(str(raw))))
+        except (TypeError, ValueError):
+            return 3
+
+    async def set_moltbook_night_hour(self, ctx: object, hour: int) -> None:
+        self.values["moltbook_night_hour"] = max(0, min(23, int(hour)))
+
     async def moltbook_account_state(self, ctx: object) -> str:
         raw = self.values.get("moltbook_account_state", "ok")
         return raw if isinstance(raw, str) and raw.strip() else "ok"

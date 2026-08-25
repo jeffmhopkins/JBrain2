@@ -19,6 +19,7 @@ import {
   GraphIcon,
   ImageIcon,
   ListIcon,
+  MessageIcon,
   PinIcon,
   SearchIcon,
   SettingsIcon,
@@ -48,7 +49,8 @@ export type LauncherTarget =
   | "tasks"
   | "petcontrol"
   | "jcode"
-  | "jlaunch";
+  | "jlaunch"
+  | "jmolt";
 
 interface Tile {
   title: string;
@@ -99,6 +101,7 @@ const SECTIONS: Section[] = [
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
       { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },
+      { title: "jmolt", icon: <MessageIcon size={24} />, target: "jmolt" },
     ],
   },
 ];

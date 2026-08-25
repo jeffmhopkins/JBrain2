@@ -650,6 +650,10 @@ export interface MoltbookSettings {
   account_state: string;
   /** Consecutive verification-failure streak (M11); at the limit all writes stop. */
   verify_fail_streak: number;
+  /** Whether the nightly run fires, independent of the global pause. */
+  night_enabled: boolean;
+  /** The owner-local hour (0–23) the nightly run wakes. */
+  night_hour: number;
 }
 
 /** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`
@@ -673,6 +677,10 @@ export interface MoltbookPatch {
   disclosure?: string;
   clear_key?: boolean;
   clear_streak?: boolean;
+  /** Toggle the nightly run (independent of the pause). */
+  night_enabled?: boolean;
+  /** Owner-local hour (0–23) the nightly run wakes. */
+  night_hour?: number;
 }
 
 /** Result of POST /api/settings/moltbook/register — non-secret claim material only (the

@@ -85,7 +85,7 @@ export class AttachmentUploadError extends Error {
  * does no network work. */
 export type ConvMode = "research" | "fullbrain";
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
-  research: ["jerv", "teacher", "archivist"],
+  research: ["jerv", "teacher", "archivist", "jmolt_observer"],
   fullbrain: ["curator"],
 };
 /** The agent a re-click / empty-state start spins up for each tab. */
