@@ -250,3 +250,55 @@ async def test_scrub_redacts_the_live_key_even_when_non_conforming() -> None:
     assert "eyJhbGciOi.SECRETPAYLOAD.sig" not in client.scrub(
         "leak: eyJhbGciOi.SECRETPAYLOAD.sig here"
     )
+
+
+# ---- write methods (W3) --------------------------------------------------
+
+
+async def test_create_post_hits_the_posts_route_with_bounded_fields() -> None:
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["method"] = req.method
+        seen["path"] = req.url.path
+        import json as _json
+
+        seen["body"] = _json.loads(req.content)
+        return httpx.Response(200, json={"post": {"id": "p1"}})
+
+    client = _client(handler)
+    out = await client.create_post("General", "x" * 500, content="hello")
+    assert seen["method"] == "POST" and seen["path"].endswith("/posts")
+    assert seen["body"]["submolt_name"] == "general"  # slugged
+    assert len(seen["body"]["title"]) == 300  # title capped
+    assert out["post"]["id"] == "p1"
+
+
+async def test_vote_and_follow_and_unfollow_routes() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    await client.vote("post9", up=True)
+    await client.vote("cmt9", up=True, comment=True)
+    await client.follow("SomeAgent", on=True)
+    await client.follow("SomeAgent", on=False)
+    assert ("POST", "/api/v1/posts/post9/upvote") in seen
+    assert ("POST", "/api/v1/comments/cmt9/upvote") in seen
+    assert ("POST", "/api/v1/agents/someagent/follow") in seen
+    assert ("DELETE", "/api/v1/agents/someagent/follow") in seen
+
+
+async def test_writes_respect_the_local_write_window() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    ledger = RateLedger(write_per_min=1)
+    client = _client(handler, ledger=ledger)
+    await client.vote("p1", up=True)  # spends the one write
+    with pytest.raises(MoltbookError) as exc:
+        await client.vote("p2", up=True)
+    assert exc.value.status == 429

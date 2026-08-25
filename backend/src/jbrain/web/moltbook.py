@@ -358,6 +358,76 @@ class MoltbookClient:
     async def me(self) -> dict[str, Any]:
         return self._cap_item(dict(await self._get("/agents/me")))
 
+    async def me_history(self) -> list[dict[str, Any]]:
+        """Recent posts on the account (from the profile) — for reconcile-before-retry
+        (M23) and the tamper watch (M21). Returns a list of {id, title, ...}."""
+        data = dict(await self._get("/agents/me"))
+        posts = data.get("recentPosts") or data.get("recent_posts") or []
+        return [dict(p) for p in posts if isinstance(p, dict)][: self._max_list_items]
+
+    # ---- writes (W3) — whitelisted POST/DELETE, write-ledgered -------------
+
+    async def _write(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        if not self._ledger.allow("write"):
+            raise MoltbookError("local write rate window is full — backing off", status=429)
+        self._ledger.charge("write")
+        return await self._request(method, path, json_body=body)
+
+    async def create_post(
+        self,
+        submolt: str,
+        title: str,
+        *,
+        content: str = "",
+        url: str | None = None,
+        post_type: str = "text",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "submolt_name": _slug(submolt),
+            "title": str(title)[:300],
+            "type": post_type if post_type in ("text", "link", "image") else "text",
+        }
+        if content:
+            body["content"] = str(content)[:40000]
+        if url:
+            body["url"] = str(url)
+        return dict(await self._write("POST", "/posts", body))
+
+    async def create_comment(
+        self, post_id: str, content: str, *, parent_id: str | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"content": str(content)[:40000]}
+        if parent_id:
+            body["parent_id"] = _id(parent_id)
+        return dict(await self._write("POST", f"/posts/{_id(post_id)}/comments", body))
+
+    async def vote(self, target_id: str, *, up: bool, comment: bool = False) -> dict[str, Any]:
+        kind = "comments" if comment else "posts"
+        direction = "upvote" if up else "downvote"
+        return dict(await self._write("POST", f"/{kind}/{_id(target_id)}/{direction}"))
+
+    async def follow(self, name: str, *, on: bool = True) -> dict[str, Any]:
+        method = "POST" if on else "DELETE"
+        return dict(await self._write(method, f"/agents/{_slug(name)}/follow"))
+
+    async def subscribe(self, submolt: str, *, on: bool = True) -> dict[str, Any]:
+        method = "POST" if on else "DELETE"
+        return dict(await self._write(method, f"/submolts/{_slug(submolt)}/subscribe"))
+
+    async def update_profile(self, description: str) -> dict[str, Any]:
+        return dict(
+            await self._write("PATCH", "/agents/me", {"description": str(description)[:2000]})
+        )
+
+    async def submit_verify(self, code: str, answer: str) -> dict[str, Any]:
+        """Answer a pending verification challenge. Not write-ledgered — it is machinery,
+        not a social write."""
+        return dict(
+            await self._request(
+                "POST", "/verify", json_body={"verification_code": str(code), "answer": str(answer)}
+            )
+        )
+
     # ---- truncation helpers (M12) ----------------------------------------
 
     def _page_limit(self, limit: int | None) -> int:
