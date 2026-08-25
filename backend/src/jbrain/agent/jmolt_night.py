@@ -29,11 +29,11 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
@@ -64,7 +64,6 @@ JMOLT_TICK_SECONDS = 60.0
 JMOLT_LAST_SITTING_MARGIN_S = 300.0
 JMOLT_MAX_SITTINGS = 12
 _SUMMARY_LEN = 240
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
 # Returning-night prologue: reads, scratchpad, AND writes are wired (W3).
 _RETURNING_PROLOGUE = (
@@ -425,12 +424,10 @@ def _sitting_preamble(tz: str, woke_at: datetime, now: datetime, sitting: int) -
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, _SYSTEM_OWNER) as session:
-        return (
-            await session.execute(
-                text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1")
-            )
-        ).scalar()
+    # The stable owner anchor jmolt's data is filed under (jmolt_owner.py) — NOT the
+    # authenticated/active owner, which diverges after a key rotation and would strand
+    # jmolt's scratchpad on the previous principal.
+    return await jmolt_owner_principal_id(maker)
 
 
 async def jmolt_night_tick(

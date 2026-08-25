@@ -20,11 +20,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.api.deps import OwnerDep, PrincipalInfo, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.settings_store import SqlSettingsStore
@@ -37,6 +38,16 @@ router = APIRouter()
 
 def _client(request: Request) -> MoltbookClient:
     return cast(MoltbookClient, request.app.state.moltbook_client)
+
+
+async def _jmolt_pid(request: Request, ctx: SessionContext) -> str:
+    """The principal jmolt's data is filed under (jmolt_owner.py — the stable oldest owner),
+    NOT the authenticated owner in `ctx`. After a key rotation the two diverge, and jmolt's
+    scratchpad/journal/outbox/ledger live under the anchor; reading by the authenticated
+    owner (as these endpoints used to) shows an empty history. Falls back to the caller's
+    own id on a box with no resolvable owner. The scoped_session still runs under `ctx`, so
+    `is_owner()` grants the SELECT; only the principal-id FILTER changes."""
+    return await jmolt_owner_principal_id(request.app.state.session_maker) or ctx.principal_id
 
 
 class MoltbookStatusOut(BaseModel):
@@ -173,8 +184,9 @@ async def list_outbox(request: Request, principal: OwnerDep) -> list[OutboxItemO
     """The review queue: staged writes awaiting release (queued) plus released-but-unsent
     ones. The owner releases or discards each while the autonomy switch is off."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        rows = await OutboxRepo().list_by_status(s, ctx.principal_id, ("queued", "released"))
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued", "released"))
     return [
         OutboxItemOut(
             id=r.id,
@@ -395,8 +407,9 @@ async def list_actions(request: Request, principal: OwnerDep) -> list[ActionOut]
     """jmolt's action ledger, newest first — every post/comment/vote/follow and each
     web fetch/search, with the content it reacted to. What jmolt actually did."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        acts = await _LEDGER.recent(s, ctx.principal_id, limit=200)
+        acts = await _LEDGER.recent(s, pid, limit=200)
     return [
         ActionOut(action=a.action, target=a.target, reacted_to=a.reacted_to, at=_iso(a.at))
         for a in acts
@@ -408,8 +421,9 @@ async def list_journal(request: Request, principal: OwnerDep) -> list[JournalEnt
     """jmolt's journal, newest first — its own line to its human, night by night. Rendered
     inert client-side (M15), the same as everything jmolt authors."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        entries = await _JOURNAL.recent(s, ctx.principal_id, limit=60)
+        entries = await _JOURNAL.recent(s, pid, limit=60)
     return [JournalEntryOut(content=e.content, at=_iso(e.created_at)) for e in entries]
 
 
@@ -418,8 +432,9 @@ async def list_scratch_files(request: Request, principal: OwnerDep) -> list[Scra
     """jmolt's current scratchpad — its notebook, the only continuity it carries between
     nights. Listed by filename with size + last-write time."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        files = await _SCRATCH.list_files(s, ctx.principal_id)
+        files = await _SCRATCH.list_files(s, pid)
     return [
         ScratchFileOut(filename=f.filename, bytes=f.bytes, updated_at=_iso(f.updated_at))
         for f in files
@@ -432,8 +447,9 @@ async def read_scratch_file(
 ) -> ScratchContentOut:
     """The current contents of one scratchpad file (rendered inert client-side, M15)."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        content = await _SCRATCH.read(s, ctx.principal_id, filename.strip())
+        content = await _SCRATCH.read(s, pid, filename.strip())
     return ScratchContentOut(filename=filename, content=content)
 
 
@@ -444,9 +460,10 @@ async def list_scratch_history(
     """The append-only scratchpad archive, newest first — every prior version of a file
     (or of all files) so the owner can walk the notebook back through its history."""
     ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
     fn = filename.strip() if filename and filename.strip() else None
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        hist = await _SCRATCH.history(s, ctx.principal_id, fn)
+        hist = await _SCRATCH.history(s, pid, fn)
     return [
         ScratchVersionOut(
             filename=h.filename, op=h.op, bytes=h.bytes, at=_iso(h.archived_at), content=h.content

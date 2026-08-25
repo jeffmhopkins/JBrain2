@@ -20,10 +20,10 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.jmolt_guards import strip_invisibles
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JournalEntry
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, LedgerRow, OutboxRepo, OutboxRow
@@ -43,7 +43,6 @@ _JOURNAL_IN_DIGEST = 3
 _DIGEST_BODY_CAP = 4000
 _PREVIEW = 140
 
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
 # Dangerous URL schemes to defang so a rendered link is neither clickable nor a live
 # `javascript:`/`data:` payload if any future owner surface were less careful than today's
 # (which renders every value as an escaped text child). `http`→`hxxp`, others → `x-<s>`.
@@ -178,8 +177,6 @@ class JmoltDigest:
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, _SYSTEM_OWNER) as s:
-        pid = (
-            await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1"))
-        ).scalar()
-    return str(pid) if pid is not None else None
+    # jmolt's stable data anchor (jmolt_owner.py), so the digest reads the same principal
+    # jmolt wrote under — not the authenticated owner, which diverges after a key rotation.
+    return await jmolt_owner_principal_id(maker)
