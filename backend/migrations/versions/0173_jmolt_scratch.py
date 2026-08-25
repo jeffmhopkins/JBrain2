@@ -18,8 +18,12 @@ owner principal, so `is_owner()` cannot tell them apart. Instead:
   jmolt read scope but NOT that auth context, so it can read and never mutate — a
   Postgres guarantee, not a tool-allowlist promise.
 
-The archive is append-only for everyone: `jbrain_app` is granted SELECT + INSERT on it
-(no UPDATE/DELETE), so even jmolt's own session cannot rewrite or erase its history.
+The archive is append-only to jmolt's TOOLS — no scratch tool issues a DELETE or UPDATE,
+so jmolt-the-agent can only append. It is never UPDATE-able at all (no UPDATE grant), and
+a non-jmolt session (jerv's observation) can neither write nor delete it. The one deletion
+path is the repo's bounded retention prune (keep the last N versions per file), which runs
+under jmolt's own auth context as part of a write — so the archive stays bounded (M13)
+without ever exposing an agent-reachable way to erase recent history.
 """
 
 from alembic import op
@@ -76,24 +80,42 @@ def upgrade() -> None:
             """
         )
 
-    # Write: the live scratchpad is writable ONLY under jmolt's own auth context.
+    # Write: the live scratchpad is writable ONLY under jmolt's own auth context, and a
+    # new/updated row must carry jmolt's OWN principal id (M19(d) — jmolt writes only its
+    # own rows). principal_id is pinned in WITH CHECK (INSERT/UPDATE) only, not USING, so a
+    # DELETE of an own row (and system cleanup) still works.
     op.execute(
         """
         CREATE POLICY jmolt_scratch_write ON app.jmolt_scratch
-        FOR ALL USING (app.auth_ctx() = 'jmolt') WITH CHECK (app.auth_ctx() = 'jmolt')
+        FOR ALL USING (app.auth_ctx() = 'jmolt')
+        WITH CHECK (
+            app.auth_ctx() = 'jmolt'
+            AND principal_id = current_setting('app.principal_id', true)
+        )
         """
     )
-    # The archive is append-only: an INSERT policy under jmolt's auth context, and the
-    # grant below withholds UPDATE/DELETE so history can never be rewritten or erased.
+    # The archive is append-only to jmolt's TOOLS (no scratch tool issues DELETE/UPDATE);
+    # only the repo's bounded retention prune deletes, under jmolt's own auth context, and
+    # a non-jmolt session (jerv's observation) can never mutate it. INSERT pins the
+    # principal id like the live table; a DELETE policy under jmolt auth lets the prune run.
     op.execute(
         """
         CREATE POLICY jmolt_scratch_archive_append ON app.jmolt_scratch_archive
-        FOR INSERT WITH CHECK (app.auth_ctx() = 'jmolt')
+        FOR INSERT WITH CHECK (
+            app.auth_ctx() = 'jmolt'
+            AND principal_id = current_setting('app.principal_id', true)
+        )
+        """
+    )
+    op.execute(
+        """
+        CREATE POLICY jmolt_scratch_archive_prune ON app.jmolt_scratch_archive
+        FOR DELETE USING (app.auth_ctx() = 'jmolt')
         """
     )
 
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.jmolt_scratch TO jbrain_app")
-    op.execute("GRANT SELECT, INSERT ON app.jmolt_scratch_archive TO jbrain_app")
+    op.execute("GRANT SELECT, INSERT, DELETE ON app.jmolt_scratch_archive TO jbrain_app")
     # The archive's bigserial needs sequence USAGE for the INSERT to draw nextval.
     op.execute("GRANT USAGE ON SEQUENCE app.jmolt_scratch_archive_seq_seq TO jbrain_app")
 

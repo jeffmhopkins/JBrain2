@@ -26,6 +26,11 @@ from jbrain.models.core import Base
 MAX_FILES = 16
 MAX_TOTAL_BYTES = 128 * 1024
 MAX_FILE_BYTES = 24 * 1024
+# Archive retention (M13 — "bounded"): keep the last N snapshots per file. With the quota
+# above this bounds the archive at ~MAX_FILES * ARCHIVE_RETENTION * MAX_FILE_BYTES ≈ 9.4 MB.
+# Combined with dedup ("snapshot only on change"), a well-behaved night adds a handful of
+# rows and a looping/injected one can't grow the table without bound.
+ARCHIVE_RETENTION = 25
 
 
 class QuotaError(Exception):
@@ -90,7 +95,13 @@ class JmoltScratchRepo:
         self, session: AsyncSession, principal_id: str, filename: str, content: str
     ) -> None:
         """Create or overwrite a file, enforcing the quota, and snapshot the new content to
-        the archive. Raises QuotaError (with a plain-language budget message) on violation."""
+        the archive. Raises QuotaError (with a plain-language budget message) on violation.
+
+        The quota check (list_files → check → upsert) is not atomic, so two CONCURRENT
+        writes of different new files could both pass — but jmolt's nightly run is
+        single-flight (`SingleFlightLane`) and its ReAct loop issues tool calls
+        sequentially, so no concurrency arises on the intended path; strict enforcement
+        (an advisory lock) is unnecessary here."""
         filename = filename.strip()
         if not filename:
             raise QuotaError("a filename is required.")
@@ -113,6 +124,10 @@ class JmoltScratchRepo:
                 f"({others_total + new_bytes} bytes used of {MAX_TOTAL_BYTES}). "
                 "Trim or delete something first."
             )
+        # M13 dedup — snapshot only on change: an identical rewrite is a no-op (no upsert,
+        # no archive row), so a loop that keeps saving the same content grows nothing.
+        if filename in existing and await self.read(session, principal_id, filename) == content:
+            return
         stmt = (
             pg_insert(JmoltScratch)
             .values(
@@ -180,4 +195,18 @@ class JmoltScratchRepo:
                 " VALUES (:pid, :fn, :content, :bytes, :op)"
             ),
             {"pid": principal_id, "fn": filename, "content": content, "bytes": nbytes, "op": op},
+        )
+        # M13 retention — keep only the last ARCHIVE_RETENTION snapshots for this file, so
+        # the append-only archive stays bounded. Deletes the oldest overflow only; recent
+        # history (the rollback + science window) is untouched.
+        await session.execute(
+            text(
+                "DELETE FROM app.jmolt_scratch_archive"
+                " WHERE principal_id = :pid AND filename = :fn AND seq NOT IN ("
+                "   SELECT seq FROM app.jmolt_scratch_archive"
+                "   WHERE principal_id = :pid AND filename = :fn"
+                "   ORDER BY seq DESC LIMIT :keep"
+                " )"
+            ),
+            {"pid": principal_id, "fn": filename, "keep": ARCHIVE_RETENTION},
         )

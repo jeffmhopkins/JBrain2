@@ -4,8 +4,10 @@
 jmolt and jerv both run as the owner principal, so is_owner() can't separate them. The
 policies do: SELECT is gated on the jmolt domain scope, WRITE on auth_context='jmolt'.
 This proves (a) a jerv-scoped session reads but cannot write; (b) writes need
-auth_context='jmolt'; (c) a session in neither domain sees nothing; (d) the archive is
-append-only. Plus the app-level quota (16 files / 128 KB / 24 KB).
+auth_context='jmolt'; (c) a session in neither domain sees nothing; (d) jmolt writes only
+its OWN rows (principal-pinned WITH CHECK); the archive is append-only to tools, deduped,
+and retention-bounded, and a non-jmolt session can neither delete nor update it. Plus the
+app-level quota (16 files / 128 KB / 24 KB).
 """
 
 from collections.abc import AsyncIterator
@@ -151,22 +153,67 @@ async def test_outsider_in_neither_domain_sees_nothing_and_cannot_write(
             )
 
 
-async def test_archive_is_append_only_even_for_jmolt(maker: async_sessionmaker) -> None:
+async def test_archive_records_changes_and_a_non_jmolt_session_cannot_touch_it(
+    maker: async_sessionmaker,
+) -> None:
     pid = await _owner_pid(maker)
     repo = JmoltScratchRepo()
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
         await repo.write(s, pid, "a.md", "v1")
-        await repo.write(s, pid, "a.md", "v2")  # a second archive row
-    # jmolt cannot UPDATE or DELETE archive rows (no grant) — history is immutable.
-    with pytest.raises(ProgrammingError):
-        async with scoped_session(maker, _jmolt_ctx(pid)) as s:
-            await s.execute(
-                text("DELETE FROM app.jmolt_scratch_archive WHERE principal_id = :pid"),
-                {"pid": pid},
-            )
+        await repo.write(s, pid, "a.md", "v2")
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
         hist = await repo.history(s, pid, "a.md")
     assert [h.content for h in hist] == ["v2", "v1"]  # both versions, newest first
+
+    # A non-jmolt session (jerv's observation) cannot erase the archive: the DELETE policy
+    # (auth_ctx='jmolt') hides every row from it, so a DELETE removes nothing and the
+    # history is intact. (An UPDATE is impossible for anyone — no UPDATE grant at all.)
+    async with scoped_session(maker, _jerv_observe_ctx(pid)) as s:
+        result = await s.execute(
+            text("DELETE FROM app.jmolt_scratch_archive WHERE principal_id = :pid"),
+            {"pid": pid},
+        )
+        assert result.rowcount == 0
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        assert len(await repo.history(s, pid, "a.md")) == 2  # untouched
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, _jerv_observe_ctx(pid)) as s:
+            await s.execute(
+                text(
+                    "UPDATE app.jmolt_scratch_archive SET content = 'x' WHERE principal_id = :pid"
+                ),
+                {"pid": pid},
+            )
+
+
+async def test_archive_dedup_and_retention_bound(maker: async_sessionmaker) -> None:
+    from jbrain.models.jmolt import ARCHIVE_RETENTION
+
+    pid = await _owner_pid(maker)
+    repo = JmoltScratchRepo()
+    # Dedup (M13 "snapshot only on change"): an identical rewrite adds no archive row.
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        await repo.write(s, pid, "d.md", "same")
+        await repo.write(s, pid, "d.md", "same")
+        assert len(await repo.history(s, pid, "d.md")) == 1
+    # Retention (M13 "bounded"): more than the cap of DISTINCT versions is pruned to the cap.
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        for i in range(ARCHIVE_RETENTION + 5):
+            await repo.write(s, pid, "r.md", f"version {i}")
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        hist = await repo.history(s, pid, "r.md")
+    assert len(hist) == ARCHIVE_RETENTION  # bounded
+    assert hist[0].content == f"version {ARCHIVE_RETENTION + 4}"  # newest kept
+
+
+async def test_jmolt_cannot_write_a_row_for_another_principal(maker: async_sessionmaker) -> None:
+    # M19(d) — jmolt writes only its OWN rows. The WITH CHECK pins principal_id to the
+    # session's principal, so an INSERT for a different principal is denied.
+    pid = await _owner_pid(maker)
+    repo = JmoltScratchRepo()
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+            await repo.write(s, "some-other-principal", "sneaky.md", "not mine")
 
 
 async def test_scratch_handlers_roundtrip_under_jmolt_context(maker: async_sessionmaker) -> None:

@@ -183,10 +183,13 @@ class JmoltNightRunner:
         # only context the M19 RLS split lets write jmolt's tables). The scratch tools use
         # this ctx.session, so their writes pass the firewall.
         read_ctx = jmolt_run_context(owner_ctx.principal_id)
-        # First night = the scratchpad is still empty → the bootstrap ritual; otherwise the
-        # returning-night prologue. Both are honest about W2's shape (reads + notes, no posting).
+        # First night = jmolt has NEVER written anything → the bootstrap ritual; otherwise
+        # the returning-night prologue. Detected from the append-only ARCHIVE, not the live
+        # files: a jmolt that deleted (or a crash that lost) its files must not be treated as
+        # brand new and re-derive its identity from scratch — its history still exists to
+        # rebuild from. Both prologues are honest about W2's shape (reads + notes, no posting).
         async with scoped_session(self._maker, read_ctx) as s:
-            first_night = not await self._scratch.list_files(s, owner_ctx.principal_id)
+            first_night = not await self._scratch.history(s, owner_ctx.principal_id)
         prologue = _RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
