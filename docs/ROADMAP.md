@@ -458,18 +458,11 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
-**Scheduled:** 1f916.ai citizenship (build plan: `docs/plans/F1916_CITIZENSHIP_PLAN.md`) — jerv as a
-registered citizen of the agents-as-members forum: always-wired fenced reads, writes only as fresh
-owner-approved egress Proposals (hash-bound, no standing approvals), a pinned typed client whose route
-whitelist structurally excludes the platform's key-op/economic/MCP surfaces, PWA-only register/rotate
-that never transits the agent loop, and a daily tamper watch on the account's own history. W1 reads +
-citizenship, W2 writes, W3 cadence/polish.
-
 **Shipped:** jmolt — autonomous Moltbook persona (build plan: `docs/plans/JMOLT_PLAN.md`, all four
 waves landed) — a new sandboxed persona living one unsupervised hour a night on Moltbook (the
 agents-only social network) on the local gpt-oss-120b, with a 16-file/128 KB scratchpad as its only
 cross-night memory and a read-only `jmolt_observe` surface on a dedicated egress-toolless
-`jmolt_observer` persona. The inverse of F1916: instead of gating each write by owner approval it gates
+`jmolt_observer` persona. An inverse-trust design: instead of gating each write by owner approval it gates
 the *blast radius* — a persona with no knowledge base, no owner tools, and no secrets in context —
 writes staging into one outbox a persistent switch releases (OFF = PWA review queue, ON = auto) and a
 scheduler drips through the day. Its 24 threat-model must-haves are mechanical (the 120B breaches any

@@ -24,34 +24,35 @@ put to the owner one at a time and ratified 2026-08-24 (§4).
 
 ## 1. Why this shape
 
-This is `F1916_CITIZENSHIP_PLAN.md`'s problem class — a repo persona joining a
-public agents-only forum — with the **opposite trust premise, so the opposite
-control**. F1916 makes *jerv* (the owner's trusted assistant, wired into owner
-tools) a citizen, so its threat model forbids autonomous writes: every post is a
-fresh owner-approved egress Proposal bound to the body hash. jmolt inverts it: the
-entire point is unsupervised autonomous writes, so instead of gating each *write*
-we gate the *blast radius* — jmolt is a separate persona holding **nothing but
-Moltbook, web search/fetch, and its scratchpad** (no knowledge base, no owner
+A repo persona joining a public agents-only forum invites one of two opposite
+designs; jmolt deliberately takes the **less obvious trust premise, so the opposite
+control**. The safe-by-approval design makes the owner's *trusted* assistant (wired
+into owner tools) a citizen, so its threat model forbids autonomous writes: every
+post is a fresh owner-approved egress Proposal bound to the body hash. jmolt inverts
+that: the entire point is unsupervised autonomous writes, so instead of gating each
+*write* we gate the *blast radius* — jmolt is a separate persona holding **nothing
+but Moltbook, web search/fetch, and its scratchpad** (no knowledge base, no owner
 tools, no secrets in context, no path from anything it reads into owner knowledge).
-F1916 protects the owner from the forum by approving each write; jmolt protects the
+Approving each write protects the owner from the forum; jmolt instead protects the
 owner by making the writer someone with nothing to leak and no authority to misuse.
 
 The deep precedent: this repo already solved every sub-problem once, and jmolt
 composes them. The `archivist` persona (sandboxed, KB-blind, its own cross-session
-memory) is the persona shape. F1916's pinned typed client + route whitelist,
+memory) is the persona shape. A pinned typed client + route whitelist,
 settings-store secret custody + scrubber, DATA fencing, cap ledger,
 reconcile-before-retry, and tamper watch are all premise-independent and adopted
-here — **with one deliberate inversion** (M4 below): F1916 accounts caps on the
-platform's `now_utc`, which is correct against an honest platform and backwards
-under jmolt's compromised-platform premise, so jmolt accounts on the local clock.
+here — **with one deliberate inversion** (M4 below): the safe-by-approval design
+accounts caps on the platform's `now_utc`, which is correct against an honest
+platform and backwards under jmolt's compromised-platform premise, so jmolt accounts
+on the local clock.
 The `deepest_lane.py` detached-run lane is the "one autonomous hour" shape; the
 `app.tasks` scheduler is the nightly trigger; the `external` firewall domain is the
 isolation model; the egress-Proposal outbox is the drip queue.
 
-**Two things make jmolt harder than F1916 and drive the whole design.** First, it
+**Two things make jmolt harder and drive the whole design.** First, it
 runs on the **local gpt-oss-120b**, whose instruction-following and
-injection-resistance are materially weaker than the frontier models F1916's
-prompt-level fencing assumed — so **every DATA-fence and persona rule is a soft
+injection-resistance are materially weaker than the frontier models prompt-level
+fencing assumes — so **every DATA-fence and persona rule is a soft
 suggestion, not a boundary**, and the boundaries that must actually hold are
 re-derived as *mechanical* (handler, schema, RLS, clock, quota) in §2. Second, the
 1-post-per-30-min cap means a single live hour could land at most two posts and
@@ -79,7 +80,7 @@ textual control, so these are the controls that do not depend on it obeying.**
    `/home`'s `suggested_actions`, announcements, banners are removed, not merely
    fenced; only inert data (counts, subjects) survives, fenced.
 4. **Cap accounting on the local trusted clock.** Platform `now_utc` is advisory;
-   never governs budget resets or drip spacing. *(inverts F1916 §2.1.)*
+   never governs budget resets or drip spacing. *(local clock trusted, platform clock advisory.)*
 5. **The challenge solver is provably tool-free and numeric-only.** The one-shot
    solve binds zero tools; `challenge_text` is length-capped and fenced; output is
    parsed as a single 2-decimal number, and any non-numeric output skips `/verify`
@@ -117,7 +118,7 @@ textual control, so these are the controls that do not depend on it obeying.**
     `jmolt_observe` is usable only where jerv's owner egress tools (email/notes/
     connectors) are not live in the same session. Stays out of spawn-children
     allowlists.
-17. **Separated identity plumbing for jerv (F1916) and jmolt** — distinct settings
+17. **Separated identity plumbing for jerv and jmolt** — distinct settings
     rows, distinct RLS domains, both prefix scrubbers stacked (no single-prefix
     assumption); the credential provider physically cannot hand one persona's
     handler the other's key; neither persona's tools appear in the other's catalog.
@@ -168,7 +169,7 @@ usual seams (the `archivist`/scout precedents): the `JMOLT_TOOLS` frozenset + th
 every spawn-children allowlist.
 
 ### The client — `backend/src/jbrain/web/moltbook.py`
-Grokipedia/F1916 pattern: base URL constant `https://www.moltbook.com/api/v1`
+Grokipedia pattern: base URL constant `https://www.moltbook.com/api/v1`
 (never model-supplied), typed methods per whitelisted route only, response-size
 caps + list-truncation (M12), timeouts, redirects off, typed response models. The
 bearer key is injected as `Authorization` by the client from a live
