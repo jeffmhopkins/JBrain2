@@ -80,7 +80,9 @@ async def _publish_row(maker, pid: str, *, title: str, moltbook_id: str) -> None
             s, pid, kind="post", payload={"submolt_name": "general", "title": title, "content": "x"}
         )
     async with scoped_session(maker, _admin(pid)) as s:
-        await OutboxRepo().set_status(s, row_id, "published", moltbook_id=moltbook_id, published=True)
+        await OutboxRepo().set_status(
+            s, row_id, "published", moltbook_id=moltbook_id, published=True
+        )
 
 
 # ---- classify_account (pure) ---------------------------------------------
@@ -138,7 +140,8 @@ async def test_all_profile_posts_accounted_for_is_ok(maker: async_sessionmaker) 
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json={"recentPosts": [{"id": "p_known", "title": "tide pools"}], "status": "active"}
+            200,
+            json={"recentPosts": [{"id": "p_known", "title": "tide pools"}], "status": "active"},
         )
 
     state = await _watch(maker, store, handler).check()
@@ -150,7 +153,7 @@ async def test_all_profile_posts_accounted_for_is_ok(maker: async_sessionmaker) 
 
 
 async def test_suspension_auto_pauses_and_notifies_once(maker: async_sessionmaker) -> None:
-    pid = await _owner_pid(maker)
+    await _owner_pid(maker)
     store = FakeSettingsStore()
     store.values["moltbook_autonomy"] = True
 
@@ -168,7 +171,7 @@ async def test_suspension_auto_pauses_and_notifies_once(maker: async_sessionmake
 
 
 async def test_moderation_is_surfaced_but_not_auto_paused(maker: async_sessionmaker) -> None:
-    pid = await _owner_pid(maker)
+    await _owner_pid(maker)
     store = FakeSettingsStore()
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -180,7 +183,7 @@ async def test_moderation_is_surfaced_but_not_auto_paused(maker: async_sessionma
 
 
 async def test_platform_read_failure_leaves_state_untouched(maker: async_sessionmaker) -> None:
-    pid = await _owner_pid(maker)
+    await _owner_pid(maker)
     store = FakeSettingsStore()
     store.values["moltbook_account_state"] = "ok"
 

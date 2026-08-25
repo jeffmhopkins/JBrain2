@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
   AppSettings,
@@ -8,6 +8,7 @@ import type {
   GmailSettings,
   GmailTestResult,
   ImageAnalysisMode,
+  MoltbookOutboxItem,
   MoltbookRegisterResult,
   MoltbookSettings,
   TavilySettings,
@@ -17,6 +18,7 @@ import { ApiError, api } from "../api/client";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
+import { inertText, outboxPreview } from "../moltbookSafe";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
 import { ReadTextScreen } from "./ReadTextScreen";
@@ -316,6 +318,9 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [moltClaim, setMoltClaim] = useState<MoltbookRegisterResult | null>(null);
   const [moltClaimState, setMoltClaimState] = useState<string | null>(null);
   const [moltError, setMoltError] = useState<string | null>(null);
+  // jmolt's review queue — the writes it staged, awaiting the owner's release/discard
+  // (visible whenever there are any; the whole point of launching with autonomy off).
+  const [moltOutbox, setMoltOutbox] = useState<MoltbookOutboxItem[] | null>(null);
   useEffect(() => {
     let stale = false;
     api
@@ -328,6 +333,29 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       stale = true;
     };
   }, []);
+
+  const loadMoltbookOutbox = useCallback(() => {
+    api
+      .getMoltbookOutbox()
+      .then(setMoltOutbox)
+      .catch(() => setMoltOutbox([]));
+  }, []);
+  useEffect(() => {
+    if (moltbook?.key_set) loadMoltbookOutbox();
+  }, [moltbook?.key_set, loadMoltbookOutbox]);
+
+  function actOnMoltbookOutbox(id: string, action: "release" | "discard") {
+    void api
+      .actOnMoltbookOutbox(id, action)
+      .then(loadMoltbookOutbox)
+      .catch((e: unknown) =>
+        setMoltError(e instanceof ApiError ? e.message : "Could not update the queue."),
+      );
+  }
+
+  function clearMoltbookStreak() {
+    void api.updateMoltbookSettings({ clear_streak: true }).then(setMoltbook);
+  }
 
   function registerMoltbook() {
     const name = moltName.trim();
@@ -1407,6 +1435,68 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               </button>
             </div>
             <p className="settings-meta">Bio header (fixed): {moltbook.disclosure}</p>
+            {moltbook.account_state !== "ok" && (
+              <p className="settings-meta settings-error">
+                {moltbook.account_state === "tamper"
+                  ? "Possible key leak: a post appeared on jmolt's profile that did not go through this queue. Writing is paused — rotate the Moltbook key."
+                  : moltbook.account_state === "suspended"
+                    ? "Moltbook reports the account as suspended. The nightly run and publishing are paused."
+                    : "Moltbook has flagged or rate-limited the account."}
+              </p>
+            )}
+            {moltbook.verify_fail_streak > 0 && (
+              <p className="settings-meta">
+                Verification failures in a row: {moltbook.verify_fail_streak}
+                {moltbook.verify_fail_streak >= 3 && " — writing is stopped until you clear it."}{" "}
+                <button type="button" className="seg" onClick={clearMoltbookStreak}>
+                  Clear streak
+                </button>
+              </p>
+            )}
+            {moltOutbox && moltOutbox.length > 0 && (
+              <div className="settings-subsection">
+                <p className="settings-meta" style={{ margin: 0 }}>
+                  Review queue — {moltOutbox.length} staged{" "}
+                  {moltOutbox.length === 1 ? "write" : "writes"} awaiting release
+                </p>
+                <ul className="molt-outbox">
+                  {moltOutbox.map((item) => (
+                    <li key={item.id} className="molt-outbox-item">
+                      <div className="molt-outbox-body">
+                        {/* Rendered as inert text only (M15): React escapes it, and
+                            inertText strips invisibles + defangs links. */}
+                        <span className="molt-outbox-kind">
+                          {inertText(item.kind)}
+                          {item.status === "released" ? " (released)" : ""}
+                        </span>
+                        <span className="molt-outbox-preview">{outboxPreview(item.payload)}</span>
+                        {item.error && (
+                          <span className="settings-error">{inertText(item.error)}</span>
+                        )}
+                      </div>
+                      <div className="molt-outbox-actions">
+                        {item.status === "queued" && (
+                          <button
+                            type="button"
+                            className="seg"
+                            onClick={() => actOnMoltbookOutbox(item.id, "release")}
+                          >
+                            Release
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="seg"
+                          onClick={() => actOnMoltbookOutbox(item.id, "discard")}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="settings-actions">
               <button type="button" className="seg" onClick={checkMoltbookClaim}>
                 Check claim status

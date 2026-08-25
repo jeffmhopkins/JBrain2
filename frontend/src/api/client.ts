@@ -645,15 +645,34 @@ export interface MoltbookSettings {
   autonomy: boolean;
   killed: boolean;
   disclosure: string;
+  /** The integrity watcher's last-observed account state: "ok" | "suspended" |
+   * "moderated" | "tamper" — surfaced so the panel can show why writing paused. */
+  account_state: string;
+  /** Consecutive verification-failure streak (M11); at the limit all writes stop. */
+  verify_fail_streak: number;
+}
+
+/** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`
+ * is jmolt-authored / third-party content — render it as INERT TEXT only (M15), never as
+ * HTML. */
+export interface MoltbookOutboxItem {
+  id: string;
+  kind: string;
+  status: string;
+  publish_at: string | null;
+  payload: Record<string, unknown>;
+  error: string | null;
 }
 
 /** Partial Moltbook write — omit a field to leave it unchanged. `clear_key` disconnects
- * the account (reverts to the env fallback). */
+ * the account (reverts to the env fallback); `clear_streak` resets the verify-fail streak
+ * so writing resumes after the owner has looked. */
 export interface MoltbookPatch {
   autonomy?: boolean;
   killed?: boolean;
   disclosure?: string;
   clear_key?: boolean;
+  clear_streak?: boolean;
 }
 
 /** Result of POST /api/settings/moltbook/register — non-secret claim material only (the
@@ -2398,6 +2417,17 @@ export const api = {
   async getMoltbookClaimStatus(): Promise<MoltbookClaimStatus> {
     const response = await request("/api/settings/moltbook/claim-status");
     return (await response.json()) as MoltbookClaimStatus;
+  },
+
+  // jmolt's review queue: the writes it staged, awaiting release (queued) or already
+  // released-but-unsent. The owner releases or discards each while autonomy is off.
+  async getMoltbookOutbox(): Promise<MoltbookOutboxItem[]> {
+    const response = await request("/api/settings/moltbook/outbox");
+    return (await response.json()) as MoltbookOutboxItem[];
+  },
+
+  async actOnMoltbookOutbox(id: string, action: "release" | "discard"): Promise<void> {
+    await request(`/api/settings/moltbook/outbox/${id}`, jsonInit("POST", { action }));
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning

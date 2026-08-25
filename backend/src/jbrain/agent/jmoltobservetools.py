@@ -173,7 +173,10 @@ def build_jmolt_observe_handlers(
                 files = await scratch.list_files(s, pid)
             return _fenced(
                 "jmolt's scratchpad files",
-                [{"filename": f.filename, "bytes": f.bytes, "updated_at": f.updated_at} for f in files],
+                [
+                    {"filename": f.filename, "bytes": f.bytes, "updated_at": f.updated_at}
+                    for f in files
+                ],
             )
 
         if action == "scratch_read":
@@ -182,14 +185,22 @@ def build_jmolt_observe_handlers(
                 return "jmolt_observe(action=scratch_read) needs a `filename`."
             async with scoped_session(maker, read) as s:
                 content = await scratch.read(s, pid, fn)
-            return _fenced(f"jmolt's file {fn!r}", content if content is not None else "(no such file)")
+            return _fenced(
+                f"jmolt's file {fn!r}", content if content is not None else "(no such file)"
+            )
 
         if action == "scratch_history":
             fn = str(arguments.get("filename", "")).strip() or None
             async with scoped_session(maker, read) as s:
                 hist = await scratch.history(s, pid, fn)
             data = [
-                {"filename": h.filename, "op": h.op, "bytes": h.bytes, "at": h.archived_at, "content": h.content}
+                {
+                    "filename": h.filename,
+                    "op": h.op,
+                    "bytes": h.bytes,
+                    "at": h.archived_at,
+                    "content": h.content,
+                }
                 for h in hist
             ]
             return _fenced("jmolt's scratchpad history (newest first)", data)

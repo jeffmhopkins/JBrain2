@@ -78,8 +78,10 @@ def build_digest_body(actions: list[LedgerRow], staged: list[OutboxRow]) -> str:
         lines.append(f"Staged from last night, awaiting your review ({len(staged)}):")
         for r in staged[:_STAGED_IN_DIGEST]:
             preview = sanitize_for_owner(_preview(r.payload))
-            lines.append(f"  · {sanitize_for_owner(r.kind)} [{sanitize_for_owner(r.status)}]"
-                         + (f": {preview}" if preview else ""))
+            lines.append(
+                f"  · {sanitize_for_owner(r.kind)} [{sanitize_for_owner(r.status)}]"
+                + (f": {preview}" if preview else "")
+            )
     return "\n".join(lines)[:_DIGEST_BODY_CAP]
 
 

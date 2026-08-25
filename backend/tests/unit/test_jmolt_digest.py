@@ -8,7 +8,11 @@ from jbrain.models.jmolt_outbox import LedgerRow, OutboxRow
 
 def _action(action: str = "publish_comment", target: str | None = "p1") -> LedgerRow:
     return LedgerRow(
-        action=action, target=target, reacted_to=None, detail=None, at=datetime(2026, 8, 24, tzinfo=UTC)
+        action=action,
+        target=target,
+        reacted_to=None,
+        detail=None,
+        at=datetime(2026, 8, 24, tzinfo=UTC),
     )
 
 

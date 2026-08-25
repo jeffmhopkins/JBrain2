@@ -111,7 +111,9 @@ async def test_digest_skips_outside_the_window(maker: async_sessionmaker) -> Non
     await _seed(maker, pid)
     store = _registered_store()
     bus = _CaptureBus()
-    assert await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MIDDAY) is False
+    assert (
+        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MIDDAY) is False
+    )
     assert bus.sent == []
 
 
@@ -120,5 +122,7 @@ async def test_digest_skips_when_unregistered(maker: async_sessionmaker) -> None
     await _seed(maker, pid)
     store = FakeSettingsStore()  # no api key
     bus = _CaptureBus()
-    assert await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MORNING) is False
+    assert (
+        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MORNING) is False
+    )
     assert bus.sent == []
