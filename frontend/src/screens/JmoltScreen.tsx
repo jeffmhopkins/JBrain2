@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { MoltbookOutboxItem, MoltbookRegisterResult, MoltbookSettings } from "../api/client";
+import type {
+  MoltbookAction,
+  MoltbookNight,
+  MoltbookOutboxItem,
+  MoltbookRegisterResult,
+  MoltbookScratchFile,
+  MoltbookScratchVersion,
+  MoltbookSettings,
+  MoltbookTurn,
+} from "../api/client";
 import { ApiError, api } from "../api/client";
 import { inertText, outboxPreview } from "../moltbookSafe";
 
@@ -23,6 +32,30 @@ function localTime(iso: string): string {
   }
 }
 
+function localDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function formatTokens(n: number | null): string {
+  if (n == null) return "";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
+}
+
+function formatBytes(n: number): string {
+  return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+}
+
 export function JmoltScreen() {
   const [moltbook, setMoltbook] = useState<MoltbookSettings | null>(null);
   const [moltName, setMoltName] = useState("jmolt");
@@ -32,6 +65,17 @@ export function JmoltScreen() {
   const [moltClaimState, setMoltClaimState] = useState<string | null>(null);
   const [moltError, setMoltError] = useState<string | null>(null);
   const [moltOutbox, setMoltOutbox] = useState<MoltbookOutboxItem[] | null>(null);
+
+  // History browser: jmolt's nights (the date spine), the open night's transcript, its
+  // action ledger, and its notebook (files + a selected file's contents/history).
+  const [nights, setNights] = useState<MoltbookNight[] | null>(null);
+  const [openNight, setOpenNight] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<MoltbookTurn[] | null>(null);
+  const [actions, setActions] = useState<MoltbookAction[] | null>(null);
+  const [files, setFiles] = useState<MoltbookScratchFile[] | null>(null);
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileHistory, setFileHistory] = useState<MoltbookScratchVersion[] | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -55,6 +99,61 @@ export function JmoltScreen() {
   useEffect(() => {
     if (moltbook?.key_set) loadMoltbookOutbox();
   }, [moltbook?.key_set, loadMoltbookOutbox]);
+
+  // Load the history spine once registered: nights, the action ledger, and the notebook.
+  useEffect(() => {
+    if (!moltbook?.key_set) return;
+    api
+      .getMoltbookNights()
+      .then(setNights)
+      .catch(() => setNights([]));
+    api
+      .getMoltbookActions()
+      .then(setActions)
+      .catch(() => setActions([]));
+    api
+      .getMoltbookFiles()
+      .then(setFiles)
+      .catch(() => setFiles([]));
+  }, [moltbook?.key_set]);
+
+  function selectNight(sessionId: string) {
+    if (openNight === sessionId) {
+      setOpenNight(null);
+      return;
+    }
+    setOpenNight(sessionId);
+    setTranscript(null);
+    api
+      .getMoltbookTranscript(sessionId)
+      .then(setTranscript)
+      .catch(() => setTranscript([]));
+  }
+
+  function selectFile(filename: string) {
+    if (openFile === filename) {
+      setOpenFile(null);
+      return;
+    }
+    setOpenFile(filename);
+    setFileContent(null);
+    setFileHistory(null);
+    api
+      .getMoltbookFileContent(filename)
+      .then((r) => setFileContent(r.content ?? ""))
+      .catch(() => setFileContent(""));
+  }
+
+  function loadFileHistory(filename: string) {
+    if (fileHistory !== null) {
+      setFileHistory(null);
+      return;
+    }
+    api
+      .getMoltbookFileHistory(filename)
+      .then(setFileHistory)
+      .catch(() => setFileHistory([]));
+  }
 
   function actOnMoltbookOutbox(id: string, action: "release" | "discard") {
     void api
@@ -377,6 +476,164 @@ export function JmoltScreen() {
               </ul>
             )}
           </div>
+        </section>
+      )}
+
+      {/* ── Nights: the run history (date spine) + each night's transcript ─── */}
+      {moltbook?.key_set && (
+        <section className="settings-card">
+          <h2 className="settings-label">Nights</h2>
+          <p className="settings-meta">
+            Every night jmolt has run, newest first. Tap one to read its full transcript — what it
+            thought and said that hour.
+          </p>
+          {nights === null ? (
+            <p className="settings-meta">Loading…</p>
+          ) : nights.length === 0 ? (
+            <p className="settings-meta">No nights yet — jmolt hasn't run.</p>
+          ) : (
+            <ul className="molt-nights">
+              {nights.map((n) => (
+                <li key={n.session_id} className="molt-night">
+                  <button
+                    type="button"
+                    className={`molt-night-head${openNight === n.session_id ? " on" : ""}`}
+                    aria-expanded={openNight === n.session_id}
+                    onClick={() => selectNight(n.session_id)}
+                  >
+                    <span className="molt-night-when">{localDateTime(n.at)}</span>
+                    <span className="molt-night-meta">
+                      <span className={`molt-status molt-status-${n.status ?? "none"}`}>
+                        {n.status ?? "—"}
+                      </span>
+                      {n.steps != null && <span>{n.steps} steps</span>}
+                      {n.cost_tokens != null && <span>{formatTokens(n.cost_tokens)}</span>}
+                    </span>
+                  </button>
+                  {openNight === n.session_id && (
+                    <div className="molt-transcript">
+                      {transcript === null ? (
+                        <p className="settings-meta">Loading transcript…</p>
+                      ) : transcript.length === 0 ? (
+                        <p className="settings-meta">No transcript recorded for this night.</p>
+                      ) : (
+                        transcript.map((t, i) => (
+                          <div
+                            key={`${i}-${t.at ?? ""}`}
+                            className={`molt-turn molt-turn-${t.role}`}
+                          >
+                            <span className="molt-turn-role">{t.role}</span>
+                            {t.content && <p className="molt-turn-body">{inertText(t.content)}</p>}
+                            {t.reasoning && (
+                              <p className="molt-turn-reasoning">{inertText(t.reasoning)}</p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* ── Activity: the action ledger (posts, votes, fetches) ───────────── */}
+      {moltbook?.key_set && (
+        <section className="settings-card">
+          <h2 className="settings-label">Activity</h2>
+          <p className="settings-meta">
+            Everything jmolt did — posts, comments, votes, follows, and each web search or fetch —
+            newest first, with the content it reacted to.
+          </p>
+          {actions === null ? (
+            <p className="settings-meta">Loading…</p>
+          ) : actions.length === 0 ? (
+            <p className="settings-meta">No actions logged yet.</p>
+          ) : (
+            <ul className="molt-actions">
+              {actions.map((a, i) => (
+                <li key={`${i}-${a.at ?? ""}`} className="molt-action">
+                  <span className="molt-action-head">
+                    <span className="molt-action-kind">{inertText(a.action)}</span>
+                    <span className="molt-action-when">{localDateTime(a.at)}</span>
+                  </span>
+                  {a.target && <span className="molt-action-target">{inertText(a.target)}</span>}
+                  {a.reacted_to && (
+                    <span className="molt-action-reacted">re: {inertText(a.reacted_to)}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* ── Notebook: the scratchpad files + each file's history ──────────── */}
+      {moltbook?.key_set && (
+        <section className="settings-card">
+          <h2 className="settings-label">Notebook</h2>
+          <p className="settings-meta">
+            jmolt's scratchpad — the only memory it carries between nights. Tap a file to read it,
+            or show its history to walk back through earlier versions.
+          </p>
+          {files === null ? (
+            <p className="settings-meta">Loading…</p>
+          ) : files.length === 0 ? (
+            <p className="settings-meta">jmolt hasn't written any notes yet.</p>
+          ) : (
+            <ul className="molt-files">
+              {files.map((f) => (
+                <li key={f.filename} className="molt-file">
+                  <button
+                    type="button"
+                    className={`molt-file-head${openFile === f.filename ? " on" : ""}`}
+                    aria-expanded={openFile === f.filename}
+                    onClick={() => selectFile(f.filename)}
+                  >
+                    <span className="molt-file-name">{inertText(f.filename)}</span>
+                    <span className="molt-file-meta">
+                      {formatBytes(f.bytes)} · {localDateTime(f.updated_at)}
+                    </span>
+                  </button>
+                  {openFile === f.filename && (
+                    <div className="molt-file-body">
+                      {fileContent === null ? (
+                        <p className="settings-meta">Loading…</p>
+                      ) : (
+                        <pre className="molt-file-content">{inertText(fileContent)}</pre>
+                      )}
+                      <div className="settings-actions">
+                        <button
+                          type="button"
+                          className="seg"
+                          onClick={() => loadFileHistory(f.filename)}
+                        >
+                          {fileHistory === null ? "Show history" : "Hide history"}
+                        </button>
+                      </div>
+                      {fileHistory !== null &&
+                        (fileHistory.length === 0 ? (
+                          <p className="settings-meta">No earlier versions.</p>
+                        ) : (
+                          <ul className="molt-versions">
+                            {fileHistory.map((v, i) => (
+                              <li key={`${i}-${v.at ?? ""}`} className="molt-version">
+                                <span className="molt-version-when">
+                                  {v.op} · {localDateTime(v.at)} · {formatBytes(v.bytes)}
+                                </span>
+                                <pre className="molt-file-content">{inertText(v.content)}</pre>
+                              </li>
+                            ))}
+                          </ul>
+                        ))}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </main>

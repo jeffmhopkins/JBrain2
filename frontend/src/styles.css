@@ -1229,6 +1229,183 @@ button.vitals:focus-visible {
   font-weight: 600;
 }
 
+/* jmolt history browser: nights (+ transcript), the action ledger, and the notebook.
+   All lists share the hairline-card row look; expanded content sits in a fenced panel. */
+.molt-nights,
+.molt-files,
+.molt-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.molt-night,
+.molt-file {
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.molt-night-head,
+.molt-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.molt-night-head.on,
+.molt-file-head.on {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 10%, transparent);
+}
+.molt-night-when,
+.molt-file-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.molt-night-meta,
+.molt-file-meta {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.molt-status {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  opacity: 1;
+}
+.molt-status-done {
+  color: var(--good, #4caf7d);
+}
+.molt-status-error {
+  color: var(--bad, #e5678a);
+}
+.molt-status-running {
+  color: var(--accent, #7aa2f7);
+}
+
+/* One night's transcript: role-tagged turns, jmolt's reasoning shown muted below what it said. */
+.molt-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+}
+.molt-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.molt-turn-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+}
+.molt-turn-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.molt-turn-reasoning {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  opacity: 0.6;
+  border-left: 2px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  padding-left: 8px;
+}
+
+/* The action ledger: one row per logged action, with the reacted-to content muted. */
+.molt-action {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+}
+.molt-action-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.molt-action-kind {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.molt-action-when {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.molt-action-target {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+.molt-action-reacted {
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+/* A scratchpad file's contents + its archived versions. */
+.molt-file-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+}
+.molt-file-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+}
+.molt-versions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.molt-version {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  padding-left: 8px;
+}
+.molt-version-when {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Tavily tier panel: a status pill in the card header + an iOS-style enable switch. */
 .settings-cardhead {
   display: flex;
