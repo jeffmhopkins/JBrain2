@@ -91,9 +91,10 @@ describe("JmoltScreen", () => {
         title: "night",
         at: "2026-08-25T07:00:00Z",
         status: "done",
-        stop_reason: "end_turn",
-        steps: 9,
+        stop_reason: null,
+        steps: 14,
         cost_tokens: 46125,
+        sittings: 2,
       },
     ]);
     const transcript = vi.spyOn(api, "getMoltbookTranscript").mockResolvedValue([
@@ -107,12 +108,13 @@ describe("JmoltScreen", () => {
     ]);
 
     render(<JmoltScreen />);
-    // The night row renders with its run outcome.
-    await waitFor(() => expect(screen.getByText("9 steps")).toBeInTheDocument());
+    // The night row renders with its aggregated run outcome across sittings.
+    await waitFor(() => expect(screen.getByText("14 steps")).toBeInTheDocument());
+    expect(screen.getByText("2 sittings")).toBeInTheDocument();
     expect(screen.getByText("46.1k tok")).toBeInTheDocument();
 
     // Tapping the night loads and shows its transcript.
-    fireEvent.click(screen.getByRole("button", { name: /9 steps/ }));
+    fireEvent.click(screen.getByRole("button", { name: /14 steps/ }));
     await waitFor(() => expect(screen.getByText("lurked the general submolt")).toBeInTheDocument());
     expect(screen.getByText("mostly noise so far")).toBeInTheDocument();
     expect(transcript).toHaveBeenCalledWith("s1");

@@ -2,14 +2,17 @@
 
 Once a night, in the owner's small-hours window, jmolt wakes for up to one hour on a
 DETACHED lane — not awaited inline in any minute tick, so a long run never stalls the
-scheduler. The run is a single agent turn whose ReAct loop calls the `moltbook` read
-tool many times; a wall-clock watchdog is the hard stop (M-lane), the loop's own
-guardrails the soft one.
+scheduler. The night runs as a sequence of bounded SITTINGS
+(docs/proposed/JMOLT_SITTINGS_PLAN.md): one `agent_session`, and within it a fresh-context
+turn per sitting, each seeded from jmolt's scratchpad plus a live countdown. This keeps
+the night's context bounded (per-sitting guardrails) with NO summarizer, and gives jmolt a
+real sense of the time left so it paces across the hour instead of stopping after a few
+minutes. The outer wall-clock watchdog is the hard stop (M-lane); the loop stops launching
+new sittings once the hour is nearly up or a mid-night kill lands (M6).
 
-W1 is read-only lurking: jmolt has only the read umbrella (no scratchpad, no writes),
-so the nightly prologue tells it the truth about tonight's limited shape rather than
-letting the soul (which describes files and posting) mislead it — honesty is the whole
-premise (JMOLT_PLAN §2.3). Later waves widen the prologue as those tools land.
+The nightly prologue tells jmolt the truth about the night's shape; the sitting-2+
+continuation reloads the scratchpad as fenced DATA (M2), so a sitting boundary is the same
+re-fenced reload as a night boundary — no new injection surface, no summarization step.
 
 Guards before a run (M6/M17): skip when the global kill is engaged, or when jmolt has
 no key (unregistered — nothing to do). The lane is single-flight, so a run that overruns
@@ -53,6 +56,13 @@ JMOLT_NIGHT_HOUR = 3
 JMOLT_NIGHT_WINDOW_MIN = 15
 JMOLT_NIGHT_WALL_CLOCK_S = 3600.0  # the hard 1-hour bound on a nightly run.
 JMOLT_TICK_SECONDS = 60.0
+# The night runs as a sequence of bounded SITTINGS (docs/proposed/JMOLT_SITTINGS_PLAN.md),
+# each its own fresh-context turn seeded from the scratchpad + a live countdown — so the
+# night's context stays bounded (per-sitting guardrails) without any summarizer, and jmolt
+# can pace itself. Stop launching a new sitting once this little time is left (so the last
+# one has room to finish + flush before the outer watchdog); MAX is a runaway backstop.
+JMOLT_LAST_SITTING_MARGIN_S = 300.0
+JMOLT_MAX_SITTINGS = 12
 _SUMMARY_LEN = 240
 _SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
@@ -86,6 +96,19 @@ _RITUAL_PROLOGUE = (
     "If you feel like writing your bio or staging a first post or comment, you can — "
     "everything you write is staged for your human to release, so there is no rush. But "
     "lurking and taking notes is a full first night on its own."
+)
+
+# Sittings 2+ of a night: a fresh-context continuation. jmolt's ONLY memory across a
+# sitting is its scratchpad (there is no in-context carry-over), so the continuation
+# reloads it first, exactly like the between-nights reload — no summarizer, and the
+# reloaded notes are fenced DATA, no more trusted than the forum text they quote (M2).
+_CONTINUE_PROLOGUE = (
+    "You've already been on Moltbook a while tonight. Start by reading your files "
+    "(scratch_list, scratch_read) to pick up exactly where you left off — that is your only "
+    "memory of earlier this night. Then keep going: read, reply, vote, follow, and stage what "
+    "is worth saying. Keep your files current as you go (scratch_write) — whatever is not "
+    "written down is gone when this sitting ends, and the closer the hour is to over, the more "
+    "important it is that your notes are up to date."
 )
 
 
@@ -166,6 +189,7 @@ class JmoltNightRunner:
         settings_store: SqlSettingsStore,
         maker: async_sessionmaker[AsyncSession],
         notify: NotifyBus | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._sessions = sessions
         self._runlog = runlog
@@ -175,44 +199,116 @@ class JmoltNightRunner:
         self._maker = maker
         self._scratch = JmoltScratchRepo()
         self._notify = notify
+        # Wall clock for the sittings loop — injectable so tests drive elapsed time
+        # deterministically (a faked executor returns instantly, so a real clock would spin).
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def run(self, owner_ctx: SessionContext) -> str:
-        """Execute one nightly run under `owner_ctx` (owner principal). Never raises —
-        a turn failure is recorded as an error run. Returns the session id."""
+        """Execute one nightly run under `owner_ctx` (owner principal) as a sequence of
+        bounded SITTINGS (docs/proposed/JMOLT_SITTINGS_PLAN.md). One `agent_session` per
+        night; each sitting is its own fresh-context turn + run, seeded from jmolt's
+        scratchpad and a live countdown. Keeps launching sittings until the hour is nearly
+        up (or a mid-night kill lands, M6). Never raises. Returns the session id."""
         profile = agent_for("jmolt")
         tz = await self._settings.owner_timezone(owner_ctx) or "UTC"
         session = await self._sessions.create(
             owner_ctx, domain_scopes=[], title="jmolt night", agent="jmolt"
         )
-        run_id = await self._runlog.start(
-            owner_ctx, session_id=session.id, prompt_version=profile.version
-        )
-        # jmolt's turn runs under its OWN scope: owner principal (for owner-only reads),
-        # the jmolt domain scope (to read its scratchpad), and auth_context='jmolt' (the
-        # only context the M19 RLS split lets write jmolt's tables). The scratch tools use
-        # this ctx.session, so their writes pass the firewall.
+        # jmolt's turns run under its OWN scope: owner principal (owner-only reads), the
+        # jmolt domain scope (read its scratchpad), and auth_context='jmolt' (the only
+        # context the M19 RLS split lets write jmolt's tables).
         read_ctx = jmolt_run_context(owner_ctx.principal_id)
-        # First night = jmolt has NEVER written anything → the bootstrap ritual; otherwise
-        # the returning-night prologue. Detected from the append-only ARCHIVE, not the live
-        # files: a jmolt that deleted (or a crash that lost) its files must not be treated as
-        # brand new and re-derive its identity from scratch — its history still exists to
-        # rebuild from. Both prologues are honest about W2's shape (reads + notes, no posting).
+        # First night = jmolt has NEVER written anything → the bootstrap ritual for sitting
+        # one; otherwise the returning-night prologue. Detected from the append-only ARCHIVE,
+        # not the live files, so a jmolt that lost its files is not treated as brand new.
         async with scoped_session(self._maker, read_ctx) as s:
             first_night = not await self._scratch.history(s, owner_ctx.principal_id)
-        prologue = _RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE
+
+        woke_at = self._clock()
+        any_done, last_summary, last_error, sitting = False, "", None, 0
+        while sitting < JMOLT_MAX_SITTINGS:
+            now = self._clock()
+            elapsed = (now - woke_at).total_seconds()
+            if elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
+                break
+            # M6: a kill engaged mid-night stops launching further sittings (the first
+            # sitting was already guarded by the tick).
+            if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
+                break
+            sitting += 1
+            done, summary, error = await self._run_sitting(
+                owner_ctx,
+                session.id,
+                profile,
+                read_ctx,
+                tz,
+                sitting=sitting,
+                first_night=first_night,
+                woke_at=woke_at,
+                now=now,
+            )
+            if done:
+                any_done, last_summary = True, summary or last_summary
+            elif error:
+                last_error = error
+
+        with contextlib.suppress(Exception):
+            await self._sessions.touch(owner_ctx, session.id)
+
+        # A content-free wake to the owner's devices — the morning digest (W4) carries the
+        # substance; this just says a night happened.
+        summary_line = last_summary[:_SUMMARY_LEN].strip() if any_done else (last_error or "")
+        notify_owner(
+            self._notify,
+            Notification(
+                kind="jmolt_night",
+                title="jmolt had a night",
+                body=summary_line or ("lurked" if any_done else "failed"),
+                ref=session.id,
+            ),
+        )
+        return session.id
+
+    async def _run_sitting(
+        self,
+        owner_ctx: SessionContext,
+        session_id: str,
+        profile: object,
+        read_ctx: SessionContext,
+        tz: str,
+        *,
+        sitting: int,
+        first_night: bool,
+        woke_at: datetime,
+        now: datetime,
+    ) -> tuple[bool, str, str | None]:
+        """One sitting: a recorded agent turn under the night's session. Returns
+        (done, summary, error). Never raises — a sitting failure is a recorded error run
+        and the night continues to the next sitting."""
+        run_id = await self._runlog.start(
+            owner_ctx,
+            session_id=session_id,
+            prompt_version=profile.version,  # type: ignore[attr-defined]
+        )
+        base = (
+            (_RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE)
+            if sitting == 1
+            else _CONTINUE_PROLOGUE
+        )
+        prologue = _sitting_preamble(tz, woke_at, now, sitting) + base
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
 
         status, summary, error, steps, cost, stop_reason = "error", "", None, 0, 0, "error"
         try:
             executed = await self._executor.run_turn(
-                profile=profile,
+                profile=profile,  # type: ignore[arg-type]
                 read_ctx=read_ctx,
                 read_scopes=(),
                 conversation=conversation,
                 timezone=tz,
                 recorder=recorder,
-                agent_session_id=session.id,
+                agent_session_id=session_id,
             )
             r = executed.result
             status, summary, steps, cost = "done", r.text, r.steps, r.cost_tokens
@@ -220,15 +316,15 @@ class JmoltNightRunner:
             with contextlib.suppress(Exception):
                 await self._transcript.record_exchange(
                     owner_ctx,
-                    session_id=session.id,
+                    session_id=session_id,
                     run_id=run_id,
                     user_text=prologue,
                     assistant_text=r.text,
                     tools=executed.tools,
                     reasoning=executed.reasoning,
                 )
-        except Exception as exc:  # noqa: BLE001 — a night is a recorded run, never a crash
-            log.warning("jmolt_night.turn_failed", error=repr(exc))
+        except Exception as exc:  # noqa: BLE001 — a sitting is a recorded run, never a crash
+            log.warning("jmolt_night.sitting_failed", sitting=sitting, error=repr(exc))
             error = str(exc)
 
         with contextlib.suppress(Exception):
@@ -240,22 +336,7 @@ class JmoltNightRunner:
                 step_count=steps,
                 cost_tokens=cost,
             )
-        with contextlib.suppress(Exception):
-            await self._sessions.touch(owner_ctx, session.id)
-
-        # A content-free wake to the owner's devices — the morning digest (W4) is what
-        # carries the substance; this just says a night happened.
-        summary_line = summary[:_SUMMARY_LEN].strip() if status == "done" else (error or "")
-        notify_owner(
-            self._notify,
-            Notification(
-                kind="jmolt_night",
-                title="jmolt had a night",
-                body=summary_line or ("lurked" if status == "done" else "failed"),
-                ref=session.id,
-            ),
-        )
-        return session.id
+        return status == "done", summary, error
 
 
 def _owner_local_now(tz: str, now: datetime) -> datetime:
@@ -263,6 +344,20 @@ def _owner_local_now(tz: str, now: datetime) -> datetime:
         return now.astimezone(ZoneInfo(tz))
     except (ZoneInfoNotFoundError, ValueError):
         return now.astimezone(UTC)
+
+
+def _sitting_preamble(tz: str, woke_at: datetime, now: datetime, sitting: int) -> str:
+    """The live countdown injected at the top of each sitting's prologue — jmolt's only
+    sense of how much of its hour is left, computed from the LOCAL TRUSTED clock (M4),
+    never platform time. Inert derived data: current time, wake time, minutes remaining."""
+    woke_local = _owner_local_now(tz, woke_at)
+    now_local = _owner_local_now(tz, now)
+    remaining_s = max(0.0, JMOLT_NIGHT_WALL_CLOCK_S - (now - woke_at).total_seconds())
+    remaining_min = int(remaining_s // 60)
+    return (
+        f"It is {now_local:%H:%M}; you woke at {woke_local:%H:%M} and about {remaining_min} "
+        f"minute(s) remain in your hour tonight. This is sitting {sitting}.\n\n"
+    )
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:

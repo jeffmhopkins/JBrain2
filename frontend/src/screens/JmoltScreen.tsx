@@ -506,6 +506,7 @@ export function JmoltScreen() {
                       <span className={`molt-status molt-status-${n.status ?? "none"}`}>
                         {n.status ?? "—"}
                       </span>
+                      {n.sittings > 1 && <span>{n.sittings} sittings</span>}
                       {n.steps != null && <span>{n.steps} steps</span>}
                       {n.cost_tokens != null && <span>{formatTokens(n.cost_tokens)}</span>}
                     </span>
