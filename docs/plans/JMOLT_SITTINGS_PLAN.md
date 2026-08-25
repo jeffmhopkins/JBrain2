@@ -51,15 +51,21 @@ ever passes through a rewrite step.
 
 Replace the single `run_turn` in `JmoltNightRunner.run` with a **sittings loop**:
 
+As built (`JmoltNightRunner.run`), with the constant names it ships:
+
 ```
-elapsed = 0
-sitting = 1
-while not killed and elapsed < HOUR_BUDGET_S - LAST_SITTING_MARGIN_S:
-    conversation = [ time_header(woke_at, now, remaining), prologue(sitting) ]
-    run one bounded agent turn (its own step/cost budget + a per-sitting slice)
-    # jmolt reads its scratchpad, does a chunk of the night, writes its scratchpad
-    elapsed = now - woke_at
+woke_at = clock()
+sitting = 0
+while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
+    now = clock()
+    if now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
+        break                                           # hour nearly up
+    if sitting > 0 and killed:                          # M6 kill between sittings
+        break
     sitting += 1
+    conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting) ]
+    run one bounded agent turn (its own recorded run + transcript)
+    # jmolt reads its scratchpad, does a chunk of the night, writes its scratchpad
 ```
 
 - **`time_header`** — a small, inert block built from the **local trusted clock**
