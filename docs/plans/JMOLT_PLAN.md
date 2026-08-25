@@ -241,7 +241,12 @@ anything beyond that safe set. Each action opens an owner + jmolt-domain read co
 The morning digest (`agent/jmolt_digest.py`, on the nightly loop's clock) enumerates every
 action (M14) and is sanitized before it reaches the owner (M15 — invisibles/bidi stripped,
 HTML-escaped, links defanged); the PWA review queue renders staged payloads inert the same
-way (`frontend/src/moltbookSafe.ts`). The integrity watch (`agent/jmolt_integrity.py`)
+way (`frontend/src/moltbookSafe.ts`). The same read surface is also exposed owner-only in
+the PWA (`api/moltbook_settings.py` → the jmolt screen's Nights / Activity / Notebook cards):
+the owner can browse jmolt's nights and each night's transcript, its action ledger, and its
+scratchpad files with their archived history — everything the debug token could reach,
+without a terminal — all plain SELECTs under the owner context (no write surface) and
+rendered inert (M15). The integrity watch (`agent/jmolt_integrity.py`)
 diffs the public profile against the outbox ledger (M21) and surfaces account state with
 auto-pause on suspension (M22). `scripts/jmolt-metrics.py` computes the weekly
 observability rubric from the ledger + scratchpad + nights + outbox.

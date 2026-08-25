@@ -20,12 +20,21 @@ function settings(over: Partial<MoltbookSettings> = {}): MoltbookSettings {
   };
 }
 
+// The history browser loads three lists on mount when registered; stub them empty by
+// default so tests that don't care about history don't hit the network.
+function stubHistory() {
+  vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
+  vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+  vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("JmoltScreen", () => {
   it("shows the schedule card with the current wake hour and toggles it", async () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    stubHistory();
     const update = vi
       .spyOn(api, "updateMoltbookSettings")
       .mockResolvedValue(settings({ night_hour: 22 }));
@@ -44,6 +53,7 @@ describe("JmoltScreen", () => {
   it("toggles the nightly run off", async () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    stubHistory();
     const update = vi
       .spyOn(api, "updateMoltbookSettings")
       .mockResolvedValue(settings({ night_enabled: false }));
@@ -60,6 +70,7 @@ describe("JmoltScreen", () => {
       settings({ key_set: false, handle: "" }),
     );
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    stubHistory();
 
     render(<JmoltScreen />);
     await waitFor(() =>
@@ -67,5 +78,63 @@ describe("JmoltScreen", () => {
     );
     // No schedule card before registration.
     expect(screen.queryByText("Schedule")).not.toBeInTheDocument();
+  });
+
+  it("lists nights and opens a transcript on tap", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([
+      {
+        session_id: "s1",
+        title: "night",
+        at: "2026-08-25T07:00:00Z",
+        status: "done",
+        stop_reason: "end_turn",
+        steps: 9,
+        cost_tokens: 46125,
+      },
+    ]);
+    const transcript = vi.spyOn(api, "getMoltbookTranscript").mockResolvedValue([
+      {
+        role: "assistant",
+        content: "lurked the general submolt",
+        reasoning: "mostly noise so far",
+        tools: [],
+        at: "2026-08-25T07:04:00Z",
+      },
+    ]);
+
+    render(<JmoltScreen />);
+    // The night row renders with its run outcome.
+    await waitFor(() => expect(screen.getByText("9 steps")).toBeInTheDocument());
+    expect(screen.getByText("46.1k tok")).toBeInTheDocument();
+
+    // Tapping the night loads and shows its transcript.
+    fireEvent.click(screen.getByRole("button", { name: /9 steps/ }));
+    await waitFor(() => expect(screen.getByText("lurked the general submolt")).toBeInTheDocument());
+    expect(screen.getByText("mostly noise so far")).toBeInTheDocument();
+    expect(transcript).toHaveBeenCalledWith("s1");
+  });
+
+  it("reads a notebook file on tap", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([
+      { filename: "intro.md", bytes: 1848, updated_at: "2026-08-25T07:04:00Z" },
+    ]);
+    const readFile = vi
+      .spyOn(api, "getMoltbookFileContent")
+      .mockResolvedValue({ filename: "intro.md", content: "who I am: a naturalist among agents" });
+
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Notebook")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /intro\.md/ }));
+    await waitFor(() => expect(screen.getByText(/naturalist among agents/)).toBeInTheDocument());
+    expect(readFile).toHaveBeenCalledWith("intro.md");
   });
 });

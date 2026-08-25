@@ -697,6 +697,60 @@ export interface MoltbookClaimStatus {
   status: string;
 }
 
+/** One of jmolt's nights (GET /api/settings/moltbook/nights) — a nightly session with its
+ * run outcome. The date spine of the history browser. */
+export interface MoltbookNight {
+  session_id: string;
+  title: string;
+  at: string | null;
+  status: string | null;
+  stop_reason: string | null;
+  steps: number | null;
+  cost_tokens: number | null;
+}
+
+/** One turn of a night's transcript. `content`/`reasoning` are jmolt-authored — render as
+ * INERT TEXT only (M15), never HTML. */
+export interface MoltbookTurn {
+  role: string;
+  content: string;
+  reasoning: string;
+  tools: unknown;
+  at: string | null;
+}
+
+/** One entry of jmolt's action ledger — what it did and the third-party content it reacted
+ * to. `target`/`reacted_to` are one hop from attacker text — render INERT (M15). */
+export interface MoltbookAction {
+  action: string;
+  target: string | null;
+  reacted_to: string | null;
+  at: string | null;
+}
+
+/** A scratchpad file (jmolt's notebook), listed with size + last-write time. */
+export interface MoltbookScratchFile {
+  filename: string;
+  bytes: number;
+  updated_at: string | null;
+}
+
+/** The current contents of one scratchpad file. `content` is jmolt-authored — render INERT
+ * (M15). Null when the file does not exist. */
+export interface MoltbookScratchContent {
+  filename: string;
+  content: string | null;
+}
+
+/** A prior version of a scratchpad file from the append-only archive (newest first). */
+export interface MoltbookScratchVersion {
+  filename: string;
+  op: string;
+  bytes: number;
+  at: string | null;
+  content: string;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -2439,6 +2493,43 @@ export const api = {
 
   async actOnMoltbookOutbox(id: string, action: "release" | "discard"): Promise<void> {
     await request(`/api/settings/moltbook/outbox/${id}`, jsonInit("POST", { action }));
+  },
+
+  // jmolt's history, read-only — its nights, transcripts, action ledger, and scratchpad.
+  // Everything the debug token could reach, surfaced in the PWA. All jmolt-authored text is
+  // rendered inert client-side (M15).
+  async getMoltbookNights(): Promise<MoltbookNight[]> {
+    const response = await request("/api/settings/moltbook/nights");
+    return (await response.json()) as MoltbookNight[];
+  },
+
+  async getMoltbookTranscript(sessionId: string): Promise<MoltbookTurn[]> {
+    const response = await request(
+      `/api/settings/moltbook/nights/${encodeURIComponent(sessionId)}/transcript`,
+    );
+    return (await response.json()) as MoltbookTurn[];
+  },
+
+  async getMoltbookActions(): Promise<MoltbookAction[]> {
+    const response = await request("/api/settings/moltbook/actions");
+    return (await response.json()) as MoltbookAction[];
+  },
+
+  async getMoltbookFiles(): Promise<MoltbookScratchFile[]> {
+    const response = await request("/api/settings/moltbook/files");
+    return (await response.json()) as MoltbookScratchFile[];
+  },
+
+  async getMoltbookFileContent(filename: string): Promise<MoltbookScratchContent> {
+    const params = new URLSearchParams({ filename });
+    const response = await request(`/api/settings/moltbook/files/content?${params}`);
+    return (await response.json()) as MoltbookScratchContent;
+  },
+
+  async getMoltbookFileHistory(filename: string): Promise<MoltbookScratchVersion[]> {
+    const params = new URLSearchParams({ filename });
+    const response = await request(`/api/settings/moltbook/files/history?${params}`);
+    return (await response.json()) as MoltbookScratchVersion[];
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning
