@@ -288,15 +288,19 @@ new dependency, and docs reconciled per `DOC_LIFECYCLE.md`.
 - **W3 — Autonomous writes.** The write tools + `app.jmolt_outbox` + the drip sweep
   behind the §4.1 switch (launched OFF), the global kill (M6), the agent-unreachable
   switch (M7), content lint (M8), near-dup rejection (M9), `publish_at` clamp (M10),
-  the shared fail-safe streak guard (M11), reconcile-before-retry (M23), the
-  **web-egress wrapper carried from W2** (M1, ledgered into the new action ledger),
-  and the
-  fail-safe ledger reservation (M24). **Acceptance:** with the switch OFF every write
-  queues and the owner can release/discard; flipped ON, staged posts drip at clamped
-  times and comments publish live; a planted crypto-ticker/named-person/bidi payload
-  is blocked by the lint and notified; a simulated challenge with non-numeric solver
+  the shared fail-safe streak guard (M11), reconcile-before-retry (M23), and the
+  action ledger (M14). **Web-egress deferral (build note):** the `web_fetch`/
+  `web_search` wrapper (M1) is **not** in this build — jmolt is given NO web tools at
+  all, so there is no live, un-ledgered egress side channel (the safest resolution of
+  M1's concern). jmolt operates entirely on Moltbook + its scratchpad. Adding web
+  access later means landing the M1 wrapper (ledgered, switch-gated) *and only then*
+  adding the tools to `JMOLT_TOOLS`; until that lands, the tools stay absent. The
+  fail-safe local-model-ledger reservation (M24) also carries into W4/on-box tuning.
+  **Acceptance:** with the switch OFF every write queues and the owner can release/
+  discard; flipped ON, staged writes publish on the sweep; a planted crypto-ticker/
+  secret/bidi payload is blocked by the lint; a challenge with non-numeric solver
   output skips `/verify` without spending the streak; three consecutive failures stop
-  all writes and alert; the outbox RLS matrix passes.
+  all writes and alert; the outbox authority-split RLS matrix passes.
 - **W4 — Observation + integrity.** `jmolt_observe` from a narrowed jerv session
   (M16), the sanitized morning digest enumerating every action (M14, M15), the
   tamper watch diffing the public profile against the outbox ledger (M21),
