@@ -18,6 +18,62 @@ transcript) hit the same wall. Today an overflow just **kills the turn**
 research passes (loop seam, existing machinery, accurate accounting, strategy +
 firewall safety); their findings and file references are folded in below.
 
+## 0. Cold-review verdict (2026-08-25) — design reversed; do NOT build as first written
+
+Four cold, adversarial reviewers (mechanism, trigger/accounting, safety/fence,
+methods) independently concluded the **summarize-in-place** design in §2–§11 below
+should NOT be built as written. Sections §1–§9 remain useful research context, but
+where they conflict with this section, **this section wins.** The reversal:
+
+- **Summarization is the wrong default method here.** A fabrication-prone local
+  120B (documented, prompt-resistant — `../plans/DEEP_RESEARCH_SCRATCHPAD_PLAN.md`)
+  in every turn's hot path re-imports the exact failure this repo already engineers
+  around. The method becomes: **Tier 0 offload (verbatim, reuse `tool_artifacts`) +
+  Tier 1 deterministic, LLM-free structured eviction** (drop stale reasoning /
+  non-artifact tool bodies, keep a typed one-line record per round + the citation
+  side-channel + IDs/URLs verbatim + the last K rounds). Once you list what's
+  load-bearing, there is almost nothing left for a summarizer to add — so the
+  **LLM summarizer is demoted to a gated, off-by-default emergency backstop**,
+  entered only when deterministic eviction + narrowing the verbatim window still
+  can't clear headroom, and shipped only **after an on-box A/B** (the deep_research
+  P1.5 precedent).
+- **Safety: the fence approach in §8 does not hold.** The summary would be minted
+  as a `UserMessage` — jmolt's *trusted* channel — and the `untrusted_external_data`
+  tag §7/§8 reuse appears **zero times** in `jerv.prompt`/`jmolt.prompt`, so it
+  no-ops in exactly the sessions that read hostile text. Summarizing strips the
+  prose `_FENCE`; "keep it fenced" is a prompt-hope on a model whose threat model
+  declares fences non-binding. It reopens jmolt's M2/A3 memory-injection vector
+  **intra-night**. The "most-restrictive domain" stamp is uncomputable from today's
+  per-turn machinery, and the offload store stamps `general` (most-permissive), the
+  opposite of fail-closed. These are why the summarizer is gated, not merely tuned.
+- **Mechanism: no repeated-compaction story, no termination guarantee.** "Compact
+  once" (§5) contradicts a continuously growing turn; the plan defines no 2nd..Nth
+  compaction, no progress floor, and the summarizer reads the very near-overflow
+  context it's shrinking (it can overflow during compaction). The verbatim window
+  (§11.5) is an unbounded floor with no escape.
+- **Trigger: arithmetic OK, safety net broken.** The 80% trigger is sound for
+  steady in-turn growth (the exact prior-step numerator dominates), but
+  compact-and-retry on `LlmContextOverflowError` can **livelock** (overflow charges
+  no cost/step budget) and **silences the operator's only "raise the on-box window"
+  signal** (non-negotiable #10); overflow is **local-only and pre-200-only**, so the
+  default cloud route and mid-stream overflow reach no backstop at all. Cheap real
+  fixes: denominator = the live `/slots` `n_ctx` (not the saved window); pending-term
+  = exact char count × a conservative ratio; a hard retry cap that falls back to the
+  terminal `context_overflow` signal.
+- **Rollout: "everything at once" is a risk concentration.** Stage it: deterministic
+  eviction + offload first (no model on the hot path), the gated summarizer later
+  behind an on-box A/B, `/chat` cross-turn persistence as its own change.
+- **jmolt is split out.** For the one caller that reads attacker text unsupervised,
+  in-place summarization is the worst fit; its memory is already externalized to a
+  file scratchpad, so a **mechanical scratchpad-flush + fresh-context sitting** is
+  strictly safer and needs no summarizer. That work moves to its own near-term plan,
+  **`JMOLT_SITTINGS_PLAN.md`**; this document remains the deferred, general capability.
+
+**Status of this doc:** parked as a researched-and-reviewed proposal. Not scheduled.
+The near-term jmolt need is met by `JMOLT_SITTINGS_PLAN.md`; the general capability
+here waits until the deterministic-eviction design (Tier 0/1) is specified to the
+depth the cold review demands.
+
 ## 1. The core fact that shapes everything
 
 There is **no compaction, summarization, or history truncation anywhere in the
@@ -245,6 +301,9 @@ inventing a sample size, a "doubling", a wrong year (evidence in
 
 ## 10. Wave sketch (per the ratified decisions in §11)
 
+> **Superseded by §0.** The cold review reversed the single-wave scope; the staged
+> rollout in §0 replaces this sketch. Kept for the record.
+
 The owner chose to build the whole capability in one wave rather than stage it.
 
 - **W1 — the full capability, all sessions.** Auto-compaction (§2–§5) in
@@ -265,7 +324,13 @@ The owner chose to build the whole capability in one wave rather than stage it.
   shared loop; and the threshold, verbatim window, extractive prompt, and probe are
   tuned against real long jerv turns and a real jmolt hour.
 
-## 11. Decisions — ratified 2026-08-25
+## 11. Decisions — ratified 2026-08-25 (then reversed by the §0 cold review)
+
+> Decisions 1, 2, and 4 were **reversed** by the cold-review verdict (§0):
+> everything-at-once → staged; jmolt in-place compaction → mechanical sittings
+> (`JMOLT_SITTINGS_PLAN.md`); offload-first-then-summarize → deterministic eviction
+> with the summarizer demoted to a gated backstop. Decisions 3 (threshold) and 5
+> (verbatim window) stand but now apply to the deterministic path. Kept for the record.
 
 1. **Scope — everything at once.** Auto-compaction + the on-demand `compact` tool
    + `/chat` cross-turn persistence ship together across all sessions in W1,
