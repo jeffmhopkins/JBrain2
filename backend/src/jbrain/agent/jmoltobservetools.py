@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
@@ -79,11 +80,9 @@ def _fenced(label: str, payload: Any) -> str:
 
 
 async def _owner_pid(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, SessionContext(principal_kind="owner")) as s:
-        pid = (
-            await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1"))
-        ).scalar()
-    return str(pid) if pid is not None else None
+    # jmolt's stable data anchor (jmolt_owner.py) — jerv's observation reads jmolt's own
+    # tables, filed under this principal, so it must resolve the same one jmolt wrote under.
+    return await jmolt_owner_principal_id(maker)
 
 
 def build_jmolt_observe_handlers(

@@ -240,6 +240,21 @@ launcher). Each new table's policy splits: a SELECT policy grants jerv's session
 read; INSERT/UPDATE/DELETE pinned to `auth_context='jmolt'`. So "jerv reads jmolt
 read-only" is a Postgres guarantee, proven by the M19 matrix, not a tool promise.
 
+**The owner-principal anchor (`agent/jmolt_owner.py`).** jmolt's cross-night data
+(scratchpad, journal, outbox, action ledger) is a SINGLETON keyed by `principal_id`,
+but `app.principals` accumulates several `owner` rows over a box's life: an owner-key
+rotation REVOKES the old owner principal and mints a new active one. So every jmolt
+writer AND every reader of that data must resolve the *same* principal or it splits or
+vanishes from a view — the bug that showed jmolt's real notebook as empty in the PWA
+(the history endpoints filtered by the *authenticated* current owner while jmolt's night
+had written under the *oldest* one). The fix: `jmolt_owner_principal_id` resolves the
+**oldest** owner principal, deterministically (`ORDER BY created_at`), used by the night,
+digest, sweep, integrity, metrics, observation, and the PWA history endpoints alike. The
+oldest row never changes (principals are revoked, never deleted), so the anchor is stable
+for the life of the box and needs no re-homing on a rotation; auth is enforced by
+`auth_ctx='jmolt'` (writes) and `is_owner()` (reads), so a revoked anchor is a fine
+filing key, not a credential.
+
 ### The nightly hour — `app.tasks` row + detached lane
 An `app.tasks` row (persona `jmolt`, `repeat`/`daily`, 03:00 owner-local) launches
 onto a `deepest_lane.py`-style detached lane with a 1 h wall-clock watchdog + token

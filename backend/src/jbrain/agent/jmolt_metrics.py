@@ -16,10 +16,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.settings_store import SqlSettingsStore
-
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
 
 @dataclass(frozen=True)
@@ -47,11 +46,9 @@ def _admin_ctx(pid: str) -> SessionContext:
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, _SYSTEM_OWNER) as s:
-        pid = (
-            await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1"))
-        ).scalar()
-    return str(pid) if pid is not None else None
+    # jmolt's stable data anchor (jmolt_owner.py), so the weekly metrics count the same
+    # nights/ledger/scratchpad jmolt wrote under, not the authenticated owner's.
+    return await jmolt_owner_principal_id(maker)
 
 
 class JmoltMetrics:

@@ -25,9 +25,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.agent.moltbook_verify import solve_challenge
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.router import LlmRouter
@@ -39,7 +39,6 @@ from jbrain.web.moltbook import MoltbookClient, MoltbookError
 log = structlog.get_logger()
 
 JMOLT_SWEEP_SECONDS = 60.0
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
 
 def _admin_ctx(pid: str) -> SessionContext:
@@ -49,11 +48,9 @@ def _admin_ctx(pid: str) -> SessionContext:
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, _SYSTEM_OWNER) as s:
-        pid = (
-            await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1"))
-        ).scalar()
-    return str(pid) if pid is not None else None
+    # jmolt's stable data anchor (jmolt_owner.py) — the sweep publishes the outbox jmolt
+    # staged under it, so it must resolve the same principal jmolt wrote under.
+    return await jmolt_owner_principal_id(maker)
 
 
 class JmoltSweep:

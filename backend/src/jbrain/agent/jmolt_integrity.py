@@ -28,9 +28,9 @@ import asyncio
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt_outbox import OutboxRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
@@ -50,8 +50,6 @@ _STATE_TAMPER = "tamper"
 # States that auto-pause the account (kill + switch OFF). "moderated" is surfaced only.
 _PAUSE_STATES = frozenset({_STATE_SUSPENDED, _STATE_TAMPER})
 
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
-
 
 def _admin_ctx(pid: str) -> SessionContext:
     """A NON-jmolt owner context: reads jmolt's outbox and writes the kill/switch/state
@@ -60,11 +58,9 @@ def _admin_ctx(pid: str) -> SessionContext:
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    async with scoped_session(maker, _SYSTEM_OWNER) as s:
-        pid = (
-            await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1"))
-        ).scalar()
-    return str(pid) if pid is not None else None
+    # jmolt's stable data anchor (jmolt_owner.py) — the tamper watch diffs the outbox
+    # ledger jmolt wrote under, so it must resolve the same principal.
+    return await jmolt_owner_principal_id(maker)
 
 
 # Status strings that mean the account is out of action → auto-pause. A wide net on
