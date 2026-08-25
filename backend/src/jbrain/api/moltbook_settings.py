@@ -50,6 +50,10 @@ class MoltbookStatusOut(BaseModel):
     # verify-failure streak (M11) rides along so the owner sees how close to the stop it is.
     account_state: str
     verify_fail_streak: int
+    # The nightly-run schedule the owner controls: `night_enabled` toggles the run
+    # independently of the global pause; `night_hour` is the owner-local hour (0–23) it fires.
+    night_enabled: bool
+    night_hour: int
 
 
 class MoltbookRegisterIn(BaseModel):
@@ -77,6 +81,9 @@ class MoltbookPatch(BaseModel):
     clear_key: bool = False
     # Reset the verify-failure streak (M11) so writing resumes after the owner has looked.
     clear_streak: bool = False
+    # The nightly-run schedule: toggle the run and set its owner-local hour (0–23).
+    night_enabled: bool | None = None
+    night_hour: int | None = Field(default=None, ge=0, le=23)
 
 
 class OutboxItemOut(BaseModel):
@@ -110,6 +117,8 @@ async def _status(
         disclosure=await store.moltbook_disclosure(ctx),
         account_state=await store.moltbook_account_state(ctx),
         verify_fail_streak=await store.moltbook_verify_fail_streak(ctx),
+        night_enabled=await store.moltbook_night_enabled(ctx),
+        night_hour=await store.moltbook_night_hour(ctx),
     )
 
 
@@ -139,6 +148,10 @@ async def update_moltbook_settings(
         await store.set_moltbook_handle(ctx, "")
     if body.clear_streak:
         await store.set_moltbook_verify_fail_streak(ctx, 0)
+    if body.night_enabled is not None:
+        await store.set_moltbook_night_enabled(ctx, body.night_enabled)
+    if body.night_hour is not None:
+        await store.set_moltbook_night_hour(ctx, body.night_hour)
     return await _status(principal, store, settings)
 
 

@@ -295,12 +295,15 @@ async def jmolt_night_tick(
 
     if await settings_store.moltbook_killed(owner_ctx):
         return False  # M6: global kill halts the nightly lane.
+    if not await settings_store.moltbook_night_enabled(owner_ctx):
+        return False  # owner turned the nightly run off (drip + account stay live).
     if not await settings_store.moltbook_api_key(owner_ctx):
         return False  # unregistered — nothing to do.
 
     tz = await settings_store.owner_timezone(owner_ctx) or "UTC"
+    hour = await settings_store.moltbook_night_hour(owner_ctx)
     local = _owner_local_now(tz, now)
-    in_window = local.hour == JMOLT_NIGHT_HOUR and local.minute < JMOLT_NIGHT_WINDOW_MIN
+    in_window = local.hour == hour and local.minute < JMOLT_NIGHT_WINDOW_MIN
     today = local.date().isoformat()
     if not in_window or lane.busy():
         return False

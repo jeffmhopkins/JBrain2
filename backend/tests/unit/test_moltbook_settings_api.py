@@ -87,6 +87,20 @@ def test_starts_unregistered_switch_off(
     assert "experiment" in body["disclosure"]
     assert body["account_state"] == "ok"  # healthy until the integrity watch says otherwise
     assert body["verify_fail_streak"] == 0
+    assert body["night_enabled"] is True  # nightly run on by default
+    assert body["night_hour"] == 3  # 03:00 owner-local default
+
+
+def test_nightly_schedule_toggle_and_hour(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    body = test_client.put("/api/settings/moltbook", json={"night_enabled": False}).json()
+    assert body["night_enabled"] is False and store.values["moltbook_night_enabled"] is False
+    body = test_client.put("/api/settings/moltbook", json={"night_hour": 22}).json()
+    assert body["night_hour"] == 22 and store.values["moltbook_night_hour"] == 22
+    # An out-of-range hour is rejected by validation (0–23).
+    assert test_client.put("/api/settings/moltbook", json={"night_hour": 24}).status_code == 422
 
 
 def test_register_stores_key_and_returns_only_claim_material(

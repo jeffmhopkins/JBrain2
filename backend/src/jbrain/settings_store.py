@@ -168,6 +168,14 @@ MOLTBOOK_STATE_DEFAULT = "ok"
 # morning and survives a restart inside the window — the durable-dedup pattern the nightly
 # run uses for `moltbook_last_night`.
 MOLTBOOK_LAST_DIGEST_KEY = "moltbook_last_digest"
+# Owner control over the nightly hour (docs/plans/JMOLT_PLAN.md, W1 §8 was 03:00 fixed).
+# `enabled` toggles the nightly run independently of the global kill — OFF keeps the account
+# and daytime drip alive but stops jmolt from waking; `hour` is the owner-local hour (0–23)
+# the run fires. Defaults preserve the shipped behaviour (on, 03:00).
+MOLTBOOK_NIGHT_ENABLED_KEY = "moltbook_night_enabled"
+MOLTBOOK_NIGHT_ENABLED_DEFAULT = True
+MOLTBOOK_NIGHT_HOUR_KEY = "moltbook_night_hour"
+MOLTBOOK_NIGHT_HOUR_DEFAULT = 3
 
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
@@ -599,6 +607,26 @@ class SqlSettingsStore:
 
     async def set_moltbook_last_digest(self, ctx: SessionContext, iso_date: str) -> None:
         await self.upsert(ctx, MOLTBOOK_LAST_DIGEST_KEY, iso_date)
+
+    async def moltbook_night_enabled(self, ctx: SessionContext) -> bool:
+        """Whether the nightly run fires (owner control, independent of the global kill)."""
+        return (
+            await self.get(ctx, MOLTBOOK_NIGHT_ENABLED_KEY, MOLTBOOK_NIGHT_ENABLED_DEFAULT) is True
+        )
+
+    async def set_moltbook_night_enabled(self, ctx: SessionContext, on: bool) -> None:
+        await self.upsert(ctx, MOLTBOOK_NIGHT_ENABLED_KEY, bool(on))
+
+    async def moltbook_night_hour(self, ctx: SessionContext) -> int:
+        """The owner-local hour (0–23) the nightly run fires; clamped to a valid hour."""
+        raw = await self.get(ctx, MOLTBOOK_NIGHT_HOUR_KEY, MOLTBOOK_NIGHT_HOUR_DEFAULT)
+        try:
+            return max(0, min(23, int(raw)))
+        except (TypeError, ValueError):
+            return MOLTBOOK_NIGHT_HOUR_DEFAULT
+
+    async def set_moltbook_night_hour(self, ctx: SessionContext, hour: int) -> None:
+        await self.upsert(ctx, MOLTBOOK_NIGHT_HOUR_KEY, max(0, min(23, int(hour))))
 
     async def moltbook_account_state(self, ctx: SessionContext) -> str:
         """The last-observed account/integrity state (M21/M22) — "ok" until the watcher
