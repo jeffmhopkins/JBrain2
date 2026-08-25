@@ -324,7 +324,7 @@ async def run_jmolt_night_loop(
     settings_store: SqlSettingsStore,
     lane: SingleFlightLane,
     *,
-    digest: "JmoltDigest | None" = None,
+    digest: JmoltDigest | None = None,
     interval: float = JMOLT_TICK_SECONDS,
 ) -> None:
     """Drive `jmolt_night_tick` forever, plus the morning-digest tick (W4) on the same

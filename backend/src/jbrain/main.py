@@ -30,13 +30,13 @@ from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
+from jbrain.agent.jmolt_digest import JmoltDigest
+from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
 from jbrain.agent.jmolt_night import (
     JmoltNightRunner,
     SingleFlightLane,
     run_jmolt_night_loop,
 )
-from jbrain.agent.jmolt_digest import JmoltDigest
-from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
 from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
