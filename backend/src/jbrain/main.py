@@ -30,9 +30,19 @@ from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
+from jbrain.agent.jmolt_digest import JmoltDigest
+from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
+from jbrain.agent.jmolt_night import (
+    JmoltNightRunner,
+    SingleFlightLane,
+    run_jmolt_night_loop,
+)
+from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.moltbooktools import build_moltbook_handlers
+from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
@@ -107,6 +117,7 @@ from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
+from jbrain.api import moltbook_settings as moltbook_settings_api
 from jbrain.api import pet as pet_api
 from jbrain.api import settings as settings_api
 from jbrain.api import (
@@ -188,6 +199,7 @@ from jbrain.web import (
     FeedClient,
     GrokipediaClient,
     HurricaneClient,
+    MoltbookClient,
     NhcGisClient,
     NhcSurgeClient,
     NppesClient,
@@ -589,6 +601,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # web_fetcher (all egress in one place) and parses them offline; the pinned feed map
         # comes from config, never the model.
         news_feeds = FeedClient(web_fetcher, settings.news_feeds)
+
+        # The jmolt persona's pinned Moltbook client (docs/plans/JMOLT_PLAN.md). Its bearer
+        # key is read LIVE from owner-only app.settings on each request (stored key over the
+        # JBRAIN_MOLTBOOK_API_KEY env fallback), so the PWA registration panel is the live
+        # control surface and the key never transits the agent loop (M17). Shared on
+        # app.state so the registration router and the nightly lane reuse the one instance.
+        async def _moltbook_key() -> tuple[str, str]:
+            key = await settings_store.moltbook_api_key(SYSTEM_CTX) or settings.moltbook_api_key
+            handle = await settings_store.moltbook_handle(SYSTEM_CTX)
+            return key, handle
+
+        moltbook_client = MoltbookClient(_moltbook_key)
+        app.state.moltbook_client = moltbook_client
+        moltbook_handlers = build_moltbook_handlers(moltbook_client)
+        # jmolt's write tools stage into the outbox with the M8/M9/M10 guards (they never
+        # publish — the drip sweep does, per the M7 authority split).
+        moltbook_write_handlers = build_moltbook_write_handlers(maker, settings_store)
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
         # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the
@@ -1020,6 +1049,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
+            moltbook_handlers=moltbook_handlers,
+            moltbook_write_handlers=moltbook_write_handlers,
             external_handlers=build_external_handlers(
                 maker,
                 TeiEmbedClient(settings.embed_url),
@@ -1126,6 +1157,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task = asyncio.create_task(
             run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
         )
+        # jmolt's nightly autonomous run (docs/plans/JMOLT_PLAN.md): a dedicated loop that,
+        # in the owner-local small-hours window, launches one jmolt turn onto a single-flight
+        # DETACHED lane with a 1-hour watchdog — never awaited inline, so a long run can't
+        # stall this loop. Skips when the global kill is on or jmolt is unregistered.
+        app.state.jmolt_night_lane = SingleFlightLane()
+        app.state.jmolt_night_runner = JmoltNightRunner(
+            sessions=app.state.agent_sessions,
+            runlog=app.state.agent_runlog,
+            transcript=app.state.agent_transcript,
+            executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
+            settings_store=app.state.settings_store,
+            maker=maker,
+            notify=app.state.notify_bus,
+        )
+        # jmolt's sanitized morning digest (W4): enumerates every logged action (M14) and
+        # last night's staged writes, HTML-escaped/defanged/invisible-stripped before it
+        # reaches the owner (M15). Runs on the nightly loop's clock, once per owner morning.
+        app.state.jmolt_digest = JmoltDigest(
+            maker=maker,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_night_loop_task = asyncio.create_task(
+            run_jmolt_night_loop(
+                maker,
+                app.state.jmolt_night_runner,
+                app.state.settings_store,
+                app.state.jmolt_night_lane,
+                digest=app.state.jmolt_digest,
+            )
+        )
+        # jmolt's daytime drip sweep: releases (when the switch is on) and publishes staged
+        # writes through the day, solving verification challenges tool-free (M5), reconciling
+        # before retry (M23), and stopping on the global kill (M6) or the verify-failure
+        # streak (M11). Runs as a system loop; jmolt itself never publishes.
+        app.state.jmolt_sweep = JmoltSweep(
+            maker=maker,
+            client=moltbook_client,
+            router=app.state.llm_router,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_sweep_loop_task = asyncio.create_task(run_jmolt_sweep_loop(app.state.jmolt_sweep))
+        # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
+        # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
+        # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
+        # the switch (M7) on tamper/suspension, and never auto-answers a moderation event.
+        app.state.jmolt_integrity = JmoltIntegrity(
+            maker=maker,
+            client=moltbook_client,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_integrity_loop_task = asyncio.create_task(
+            run_jmolt_integrity_loop(app.state.jmolt_integrity)
+        )
         # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): the web-process sweep that
         # fires due plan continuations as headless answer-only jerv turns. Reuses the same
         # engine /chat and tasks use, and the live-turns registry (so it never stacks on a
@@ -1217,6 +1304,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()
+        jmolt_night_loop_task.cancel()
+        jmolt_sweep_loop_task.cancel()
+        jmolt_integrity_loop_task.cancel()
+        await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()
         stranded_reaper_task.cancel()
@@ -1377,6 +1468,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(gmail_settings_api.router, prefix="/api")
     app.include_router(tavily_settings_api.router, prefix="/api")
+    app.include_router(moltbook_settings_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")

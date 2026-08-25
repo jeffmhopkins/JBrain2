@@ -635,6 +635,60 @@ export interface TavilyTestResult {
   detail: string;
 }
 
+/** jmolt's Moltbook account + operating switches (GET /api/settings/moltbook). The bearer
+ * key is stored server-side and NEVER returned — only whether one is set. `autonomy` is
+ * the queue-vs-auto switch (default off); `killed` is the global pause; `disclosure` is
+ * the fixed honest bio header. */
+export interface MoltbookSettings {
+  key_set: boolean;
+  handle: string;
+  autonomy: boolean;
+  killed: boolean;
+  disclosure: string;
+  /** The integrity watcher's last-observed account state: "ok" | "suspended" |
+   * "moderated" | "tamper" — surfaced so the panel can show why writing paused. */
+  account_state: string;
+  /** Consecutive verification-failure streak (M11); at the limit all writes stop. */
+  verify_fail_streak: number;
+}
+
+/** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`
+ * is jmolt-authored / third-party content — render it as INERT TEXT only (M15), never as
+ * HTML. */
+export interface MoltbookOutboxItem {
+  id: string;
+  kind: string;
+  status: string;
+  publish_at: string | null;
+  payload: Record<string, unknown>;
+  error: string | null;
+}
+
+/** Partial Moltbook write — omit a field to leave it unchanged. `clear_key` disconnects
+ * the account (reverts to the env fallback); `clear_streak` resets the verify-fail streak
+ * so writing resumes after the owner has looked. */
+export interface MoltbookPatch {
+  autonomy?: boolean;
+  killed?: boolean;
+  disclosure?: string;
+  clear_key?: boolean;
+  clear_streak?: boolean;
+}
+
+/** Result of POST /api/settings/moltbook/register — non-secret claim material only (the
+ * key is never returned). The owner opens `claim_url` to verify email + post the X
+ * verification tweet that activates the account. */
+export interface MoltbookRegisterResult {
+  claim_url: string;
+  verification_code: string;
+  handle: string;
+}
+
+/** Live claim status from Moltbook (pending_claim | claimed | …). */
+export interface MoltbookClaimStatus {
+  status: string;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -2337,6 +2391,43 @@ export const api = {
       jsonInit("POST", url ? { url } : {}),
     );
     return (await response.json()) as TavilyTestResult;
+  },
+
+  // jmolt's Moltbook account + switches. Status hides the key (key_set boolean only);
+  // register runs the platform handshake and returns only claim material; patch flips
+  // the autonomy/kill switches or disconnects the account.
+  async getMoltbookSettings(): Promise<MoltbookSettings> {
+    const response = await request("/api/settings/moltbook");
+    return (await response.json()) as MoltbookSettings;
+  },
+
+  async updateMoltbookSettings(patch: MoltbookPatch): Promise<MoltbookSettings> {
+    const response = await request("/api/settings/moltbook", jsonInit("PUT", patch));
+    return (await response.json()) as MoltbookSettings;
+  },
+
+  async registerMoltbook(name: string, description: string): Promise<MoltbookRegisterResult> {
+    const response = await request(
+      "/api/settings/moltbook/register",
+      jsonInit("POST", { name, description }),
+    );
+    return (await response.json()) as MoltbookRegisterResult;
+  },
+
+  async getMoltbookClaimStatus(): Promise<MoltbookClaimStatus> {
+    const response = await request("/api/settings/moltbook/claim-status");
+    return (await response.json()) as MoltbookClaimStatus;
+  },
+
+  // jmolt's review queue: the writes it staged, awaiting release (queued) or already
+  // released-but-unsent. The owner releases or discards each while autonomy is off.
+  async getMoltbookOutbox(): Promise<MoltbookOutboxItem[]> {
+    const response = await request("/api/settings/moltbook/outbox");
+    return (await response.json()) as MoltbookOutboxItem[];
+  },
+
+  async actOnMoltbookOutbox(id: string, action: "release" | "discard"): Promise<void> {
+    await request(`/api/settings/moltbook/outbox/${id}`, jsonInit("POST", { action }));
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning

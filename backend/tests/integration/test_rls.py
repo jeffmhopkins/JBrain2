@@ -362,9 +362,10 @@ async def test_domain_scope_firewall_pattern(app_engine: AsyncEngine, database_u
 async def test_domains_are_readable_reference_data(app_engine: AsyncEngine) -> None:
     async with scoped_session(maker(app_engine), UNSCOPED) as session:
         codes = set((await session.execute(text("SELECT code FROM app.domains"))).scalars())
-    # `external` (0136) is the corpus-only domain for the ingested-video library — a firewall
-    # peer of the four owner-knowledge domains, isolated from them.
-    assert codes == {"general", "health", "finance", "location", "external"}
+    # `external` (0136) is the corpus-only domain for the ingested-video library, and `jmolt`
+    # (0172) is the corpus-only firewall domain for the jmolt persona's scratchpad/outbox — both
+    # firewall peers of the four owner-knowledge domains, isolated from them.
+    assert codes == {"general", "health", "finance", "location", "external", "jmolt"}
 
 
 _CP_INSERT = (

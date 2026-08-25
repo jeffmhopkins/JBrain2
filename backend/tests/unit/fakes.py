@@ -415,6 +415,70 @@ class FakeSettingsStore:
     async def set_tavily_api_key(self, ctx: object, api_key: str) -> None:
         self.values["tavily_api_key"] = api_key
 
+    async def moltbook_api_key(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_api_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_handle(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_handle", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_autonomy(self, ctx: object) -> bool:
+        return self.values.get("moltbook_autonomy", False) is True
+
+    async def moltbook_killed(self, ctx: object) -> bool:
+        return self.values.get("moltbook_killed", False) is True
+
+    async def moltbook_disclosure(self, ctx: object) -> str:
+        raw = self.values.get(
+            "moltbook_disclosure",
+            "Autonomous experiment; one hour a night; my human reads the logs.",
+        )
+        return raw if isinstance(raw, str) and raw.strip() else "Autonomous experiment."
+
+    async def set_moltbook_api_key(self, ctx: object, api_key: str) -> None:
+        self.values["moltbook_api_key"] = api_key
+
+    async def set_moltbook_handle(self, ctx: object, handle: str) -> None:
+        self.values["moltbook_handle"] = handle
+
+    async def set_moltbook_autonomy(self, ctx: object, on: bool) -> None:
+        self.values["moltbook_autonomy"] = bool(on)
+
+    async def set_moltbook_killed(self, ctx: object, killed: bool) -> None:
+        self.values["moltbook_killed"] = bool(killed)
+
+    async def set_moltbook_disclosure(self, ctx: object, line: str) -> None:
+        self.values["moltbook_disclosure"] = line
+
+    async def moltbook_last_night(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_last_night", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_night(self, ctx: object, iso_date: str) -> None:
+        self.values["moltbook_last_night"] = iso_date
+
+    async def moltbook_last_digest(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_last_digest", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_digest(self, ctx: object, iso_date: str) -> None:
+        self.values["moltbook_last_digest"] = iso_date
+
+    async def moltbook_account_state(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_account_state", "ok")
+        return raw if isinstance(raw, str) and raw.strip() else "ok"
+
+    async def set_moltbook_account_state(self, ctx: object, state: str) -> None:
+        self.values["moltbook_account_state"] = state
+
+    async def moltbook_verify_fail_streak(self, ctx: object) -> int:
+        raw = self.values.get("moltbook_verify_fail_streak", 0)
+        return raw if isinstance(raw, int) else 0
+
+    async def set_moltbook_verify_fail_streak(self, ctx: object, n: int) -> None:
+        self.values["moltbook_verify_fail_streak"] = int(n)
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""

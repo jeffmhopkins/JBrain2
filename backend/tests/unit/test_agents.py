@@ -30,7 +30,7 @@ from jbrain.agent.agents import (
 )
 
 
-def test_fifteen_agents_are_defined() -> None:
+def test_seventeen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -49,6 +49,8 @@ def test_fifteen_agents_are_defined() -> None:
                 "research_deep",
                 "research_scout",
                 "research_fetch",
+                "jmolt",
+                "jmolt_observer",
             }
         )
         == AGENT_NAMES
@@ -469,6 +471,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "research_fetch": (
             "agent-research-fetch-v2",
             "bf5c2bc5214c14940c4a6c9c2dce9f71e6b655dfb33034c64245ddd7bdeca396",
+        ),
+        "jmolt": (
+            "agent-jmolt-v1",
+            "df282cd885f8e4319cdb07e7ce61fd6254c772b4902063eca3e2ed4a5cd76633",
+        ),
+        "jmolt_observer": (
+            "agent-jmolt-observer-v1",
+            "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
     }
     assert set(pins) == AGENT_NAMES

@@ -52,6 +52,8 @@ from jbrain.agent.deepest_tool import (
     _owner_principal_id,
 )
 from jbrain.agent.geocodetools import build_geocode_handlers
+from jbrain.agent.jmoltobservetools import build_jmolt_observe_handlers
+from jbrain.agent.jmoltscratchtools import build_jmolt_scratch_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.locationtools import build_location_handlers
@@ -213,6 +215,23 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
         "gmail_count",
         "gmail_sender_breakdown",
         "gmail_bulk_label",
+    }
+)
+
+# The jmolt persona's Moltbook read umbrella (`web`-class, opt-in). Always wired in
+# main.py (the client refuses at call time when unregistered), but marked optional so a
+# build_registry() call without moltbook_handlers (e.g. a unit test) drops the sidecar
+# rather than failing the sidecar↔handler pairing (docs/plans/JMOLT_PLAN.md).
+OPTIONAL_MOLTBOOK_TOOLS = frozenset({"moltbook"})
+# jmolt's Moltbook WRITE tools (`web`-class, jmolt-only). Built in main.py over the outbox
+# + settings store; optional so a build_registry() call without them drops the sidecars.
+OPTIONAL_MOLTBOOK_WRITE_TOOLS = frozenset(
+    {
+        "moltbook_post",
+        "moltbook_comment",
+        "moltbook_vote",
+        "moltbook_social",
+        "moltbook_profile_update",
     }
 )
 
@@ -791,6 +810,8 @@ def build_registry(
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
+    moltbook_handlers: dict[str, ToolHandler] | None = None,
+    moltbook_write_handlers: dict[str, ToolHandler] | None = None,
     notify_bus: "NotifyBus | None" = None,
     push: "PushNotifier | None" = None,
     fcm_token_repo: "FcmTokenRepo | None" = None,
@@ -901,10 +922,27 @@ def build_registry(
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
+            # The jmolt persona's Moltbook read umbrella (`web`-gated, jmolt-only), built
+            # in main.py over the pinned client + live key provider (docs/plans/JMOLT_PLAN.md).
+            **(moltbook_handlers or {}),
+            # The jmolt persona's Moltbook WRITE tools (`web`-gated, jmolt-only): stage into
+            # the outbox with the M8/M9/M10 guards; built in main.py over the outbox + store.
+            **(moltbook_write_handlers or {}),
             # The archivist's cross-session memory (`web`-gated, archivist-only) over
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
+            # jmolt's scratchpad tools (`web`-gated, jmolt-only) over the `jmolt_scratch`
+            # table — always wired (the table always exists); the M19 RLS split, not this
+            # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).
+            **build_jmolt_scratch_handlers(maker),
+            # jerv's read-only lens on jmolt (`web`-gated, jmolt_observer-only): the
+            # `jmolt_observe` umbrella over jmolt's nights/transcripts/actions/scratchpad/
+            # outbox — always wired (the tables always exist). Every read runs a
+            # jmolt-READ context (owner + jmolt domain, no auth_context), so the M19 RLS
+            # split grants SELECT and denies every write; the handler also refuses to run
+            # alongside any egress tool (M16). docs/plans/JMOLT_PLAN.md, W4.
+            **build_jmolt_observe_handlers(maker),
             # jerv's per-conversation planning tools (`web`-gated, jerv-only) over the
             # owner-only `agent_session_plans` table — always wired (the table always
             # exists); curator never sees them (the opt-in web class). read_plan/write_plan
@@ -947,6 +985,8 @@ def build_registry(
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
+            | OPTIONAL_MOLTBOOK_TOOLS
+            | OPTIONAL_MOLTBOOK_WRITE_TOOLS
         ),
     )
     # Wire the spawn service now that the registry exists (children run on it). It

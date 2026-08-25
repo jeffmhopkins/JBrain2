@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-24
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -60,6 +60,10 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (In progress — V1 landed).
 `DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (In progress — W1✅ W2✅ W3◻️).
 `TOOL_CATALOG_PLAN.md` was promoted to `../plans/` (In progress — W1 umbrellas shipped).
+`JMOLT_PLAN.md` was researched (three passes: platform/repo/culture digest, persona
+workshop `../research/jmolt/PERSONA_CANDIDATES.md`, threat model
+`../research/jmolt/THREAT_MODEL.md`), had its nine owner decisions ratified, and was
+promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
 `DEEPEST_RESEARCH_TOOL_PLAN.md` was promoted, shipped (R1–R8), and now lives in `../archive/`.
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was promoted, shipped (P1–P3, 2026-08), and now lives in `../archive/`.

@@ -136,6 +136,39 @@ TAVILY_ENABLED_KEY = "tavily_enabled"
 TAVILY_ENABLED_DEFAULT = True
 TAVILY_API_KEY_KEY = "tavily_api_key"
 
+# Moltbook (docs/plans/JMOLT_PLAN.md) — the jmolt persona's account credential + operating
+# switches, all in owner-only `app.settings` so NO agent tool can read or write them (M7/M17):
+# the bearer key is injected into the pinned client from a live provider callable and never
+# echoed on read; the autonomy switch governs whether staged writes auto-release (default OFF
+# → owner review queue); the global kill halts the nightly lane + drip sweep independent of the
+# switch (default OFF → not killed); the disclosure header is the fixed honest bio line prepended
+# to jmolt's self-authored bio subsection. The stored key takes precedence over the
+# JBRAIN_MOLTBOOK_API_KEY env fallback (the Tavily/Gmail precedent).
+MOLTBOOK_API_KEY_KEY = "moltbook_api_key"
+MOLTBOOK_HANDLE_KEY = "moltbook_handle"
+MOLTBOOK_AUTONOMY_KEY = "moltbook_autonomy"
+MOLTBOOK_AUTONOMY_DEFAULT = False
+MOLTBOOK_KILL_KEY = "moltbook_kill"
+MOLTBOOK_KILL_DEFAULT = False
+MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
+MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
+MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
+# Consecutive verification-failure streak (M11). At the limit, ALL writes stop and the
+# owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
+MOLTBOOK_FAIL_STREAK_KEY = "moltbook_verify_fail_streak"
+MOLTBOOK_FAIL_STREAK_LIMIT = 3
+# The last-observed account/integrity state (M21/M22), surfaced to the owner and used to
+# dedup the integrity watcher's actions to state TRANSITIONS: "ok" (healthy), "suspended"
+# (platform suspension/ban — the lane + drip auto-pause), "moderated" (a moderation label
+# or hard rate-limit — surfaced, not auto-paused), "tamper" (a post on the public profile
+# absent from the outbox ledger ⇒ suspected key leak — kill engaged, rotation needed).
+MOLTBOOK_STATE_KEY = "moltbook_account_state"
+MOLTBOOK_STATE_DEFAULT = "ok"
+# The owner-local date of the last morning digest sent (M14), so the digest fires once a
+# morning and survives a restart inside the window — the durable-dedup pattern the nightly
+# run uses for `moltbook_last_night`.
+MOLTBOOK_LAST_DIGEST_KEY = "moltbook_last_digest"
+
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
 # the neural-brain page on :8800) as reach-out "tendrils" with the text streaming along
@@ -502,6 +535,86 @@ class SqlSettingsStore:
         fallback. The value is never echoed back on read (the API reports only whether one
         is set), like the Gmail client secret."""
         await self.upsert(ctx, TAVILY_API_KEY_KEY, api_key)
+
+    async def moltbook_api_key(self, ctx: SessionContext) -> str:
+        """The stored Moltbook bearer key, or "" when unset — the caller falls back to the
+        JBRAIN_MOLTBOOK_API_KEY env value when this is blank. Never echoed back on read (the
+        API reports only whether one is set). A non-string store reads as unset."""
+        raw = await self.get(ctx, MOLTBOOK_API_KEY_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_handle(self, ctx: SessionContext) -> str:
+        """jmolt's published Moltbook handle (the agent name it registered under)."""
+        raw = await self.get(ctx, MOLTBOOK_HANDLE_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def moltbook_autonomy(self, ctx: SessionContext) -> bool:
+        """Whether staged writes auto-release (the autonomy switch). DEFAULTS OFF — every
+        write queues for owner review until the owner deliberately turns this on. M7: this
+        is owner-only and no agent tool can flip it."""
+        return await self.get(ctx, MOLTBOOK_AUTONOMY_KEY, MOLTBOOK_AUTONOMY_DEFAULT) is True
+
+    async def moltbook_killed(self, ctx: SessionContext) -> bool:
+        """Whether the global Moltbook kill/pause is engaged (halts the nightly lane + drip
+        sweep independent of the autonomy switch). DEFAULTS OFF. M6: auto-engaged on
+        suspension/tamper, and owner-operable from the PWA + debug API."""
+        return await self.get(ctx, MOLTBOOK_KILL_KEY, MOLTBOOK_KILL_DEFAULT) is True
+
+    async def moltbook_disclosure(self, ctx: SessionContext) -> str:
+        """The fixed honest disclosure line prepended to jmolt's self-authored bio (M-bio)."""
+        raw = await self.get(ctx, MOLTBOOK_DISCLOSURE_KEY, MOLTBOOK_DISCLOSURE_DEFAULT)
+        return raw if isinstance(raw, str) and raw.strip() else MOLTBOOK_DISCLOSURE_DEFAULT
+
+    async def set_moltbook_api_key(self, ctx: SessionContext, api_key: str) -> None:
+        """Store (or clear, with "") jmolt's Moltbook bearer key. Never echoed back."""
+        await self.upsert(ctx, MOLTBOOK_API_KEY_KEY, api_key)
+
+    async def set_moltbook_handle(self, ctx: SessionContext, handle: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_HANDLE_KEY, handle)
+
+    async def set_moltbook_autonomy(self, ctx: SessionContext, on: bool) -> None:
+        """Flip the autonomy switch. Owner-only; auto-reverted to OFF on suspension/tamper."""
+        await self.upsert(ctx, MOLTBOOK_AUTONOMY_KEY, bool(on))
+
+    async def set_moltbook_killed(self, ctx: SessionContext, killed: bool) -> None:
+        """Engage/release the global Moltbook kill/pause."""
+        await self.upsert(ctx, MOLTBOOK_KILL_KEY, bool(killed))
+
+    async def set_moltbook_disclosure(self, ctx: SessionContext, line: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_DISCLOSURE_KEY, line)
+
+    async def moltbook_last_night(self, ctx: SessionContext) -> str:
+        """The owner-local date (ISO `YYYY-MM-DD`) of jmolt's most recent nightly run, or
+        "" if never. Persisted so the once-per-night guard survives a process restart
+        inside the fire window (a restart must not double-launch a night)."""
+        raw = await self.get(ctx, MOLTBOOK_LAST_NIGHT_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
+
+    async def moltbook_last_digest(self, ctx: SessionContext) -> str:
+        raw = await self.get(ctx, MOLTBOOK_LAST_DIGEST_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_digest(self, ctx: SessionContext, iso_date: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_LAST_DIGEST_KEY, iso_date)
+
+    async def moltbook_account_state(self, ctx: SessionContext) -> str:
+        """The last-observed account/integrity state (M21/M22) — "ok" until the watcher
+        records otherwise."""
+        raw = await self.get(ctx, MOLTBOOK_STATE_KEY, MOLTBOOK_STATE_DEFAULT)
+        return raw if isinstance(raw, str) and raw.strip() else MOLTBOOK_STATE_DEFAULT
+
+    async def set_moltbook_account_state(self, ctx: SessionContext, state: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_STATE_KEY, state)
+
+    async def moltbook_verify_fail_streak(self, ctx: SessionContext) -> int:
+        raw = await self.get(ctx, MOLTBOOK_FAIL_STREAK_KEY, 0)
+        return raw if isinstance(raw, int) else 0
+
+    async def set_moltbook_verify_fail_streak(self, ctx: SessionContext, n: int) -> None:
+        await self.upsert(ctx, MOLTBOOK_FAIL_STREAK_KEY, int(n))
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).
