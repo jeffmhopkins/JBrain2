@@ -1,0 +1,242 @@
+"""jmolt outbox + action-ledger repos (migration 0174, docs/plans/JMOLT_PLAN.md W3).
+
+`OutboxRepo` stages Moltbook writes and drives their lifecycle; `ActionLedgerRepo` is the
+append-only record of everything jmolt did (M14). Both run on caller-supplied RLS-scoped
+sessions — the authority split (jmolt stages, a non-jmolt owner advances/prunes, the domain
+scope reads) is Postgres', not these methods'.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Ledger retention (M13-style bound): keep the last N actions per principal.
+LEDGER_RETENTION = 5000
+
+
+@dataclass(frozen=True)
+class OutboxRow:
+    id: str
+    kind: str
+    payload: dict[str, Any]
+    status: str
+    publish_at: datetime | None
+    moltbook_id: str | None
+    error: str | None
+    created_at: datetime
+    published_at: datetime | None
+
+
+@dataclass(frozen=True)
+class LedgerRow:
+    action: str
+    target: str | None
+    reacted_to: str | None
+    detail: dict[str, Any] | None
+    at: datetime
+
+
+def _row_to_outbox(r: Any) -> OutboxRow:
+    payload = r.payload if isinstance(r.payload, dict) else json.loads(r.payload or "{}")
+    return OutboxRow(
+        id=str(r.id),
+        kind=r.kind,
+        payload=payload,
+        status=r.status,
+        publish_at=r.publish_at,
+        moltbook_id=r.moltbook_id,
+        error=r.error,
+        created_at=r.created_at,
+        published_at=r.published_at,
+    )
+
+
+class OutboxRepo:
+    async def stage(
+        self,
+        session: AsyncSession,
+        principal_id: str,
+        *,
+        kind: str,
+        payload: dict[str, Any],
+        publish_at: datetime | None = None,
+        dedup_key: str | None = None,
+    ) -> str:
+        """Stage a write (jmolt context). Returns the new row id."""
+        row = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.jmolt_outbox"
+                    " (principal_id, kind, payload, publish_at, dedup_key)"
+                    " VALUES (:pid, :kind, cast(:payload AS jsonb), :pub, :dk)"
+                    " RETURNING id"
+                ),
+                {
+                    "pid": principal_id,
+                    "kind": kind,
+                    "payload": json.dumps(payload),
+                    "pub": publish_at,
+                    "dk": dedup_key,
+                },
+            )
+        ).scalar_one()
+        return str(row)
+
+    async def list_by_status(
+        self, session: AsyncSession, principal_id: str, statuses: tuple[str, ...]
+    ) -> list[OutboxRow]:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT * FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND status = ANY(:st)"
+                    " ORDER BY coalesce(publish_at, created_at)"
+                ),
+                {"pid": principal_id, "st": list(statuses)},
+            )
+        ).all()
+        return [_row_to_outbox(r) for r in rows]
+
+    async def due(self, session: AsyncSession, *, now: datetime) -> list[OutboxRow]:
+        """Released rows ready to publish: comments/votes/social/profile (no publish_at) and
+        posts whose publish_at has arrived. For the drip sweep (system owner context)."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT * FROM app.jmolt_outbox"
+                    " WHERE status = 'released'"
+                    " AND (publish_at IS NULL OR publish_at <= :now)"
+                    " ORDER BY seq"
+                ),
+                {"now": now},
+            )
+        ).all()
+        return [_row_to_outbox(r) for r in rows]
+
+    async def set_status(
+        self,
+        session: AsyncSession,
+        row_id: str,
+        status: str,
+        *,
+        moltbook_id: str | None = None,
+        error: str | None = None,
+        published: bool = False,
+    ) -> None:
+        """Advance a row (non-jmolt owner context: PWA release/discard, or sweep publish)."""
+        await session.execute(
+            text(
+                "UPDATE app.jmolt_outbox SET status = :st, moltbook_id = :mid, error = :err,"
+                " published_at = CASE WHEN :pub THEN now() ELSE published_at END"
+                " WHERE id = :id"
+            ),
+            {"st": status, "mid": moltbook_id, "err": error, "pub": published, "id": row_id},
+        )
+
+    async def recent_published_posts(
+        self, session: AsyncSession, principal_id: str, *, limit: int = 30
+    ) -> list[str]:
+        """Titles+bodies of recently published posts, for the near-dup check (M9)."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT payload FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND kind = 'post'"
+                    " AND status IN ('published', 'released', 'queued')"
+                    " ORDER BY seq DESC LIMIT :lim"
+                ),
+                {"pid": principal_id, "lim": limit},
+            )
+        ).all()
+        out = []
+        for r in rows:
+            p = r.payload if isinstance(r.payload, dict) else json.loads(r.payload or "{}")
+            out.append(f"{p.get('title', '')} {p.get('content', '')}".strip())
+        return out
+
+    async def staged_post_times(self, session: AsyncSession, principal_id: str) -> list[datetime]:
+        """publish_at of posts not yet failed/discarded — for the M10 clamp."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT publish_at FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND kind = 'post'"
+                    " AND status IN ('queued', 'released') AND publish_at IS NOT NULL"
+                ),
+                {"pid": principal_id},
+            )
+        ).all()
+        return [r.publish_at for r in rows]
+
+
+class ActionLedgerRepo:
+    async def record(
+        self,
+        session: AsyncSession,
+        principal_id: str,
+        *,
+        action: str,
+        target: str | None = None,
+        reacted_to: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """Append one action (jmolt or system context). `reacted_to` is truncated to bound
+        the row (the fenced content that prompted the action, for injection forensics)."""
+        await session.execute(
+            text(
+                "INSERT INTO app.jmolt_action_ledger"
+                " (principal_id, action, target, reacted_to, detail)"
+                " VALUES (:pid, :action, :target, :reacted, cast(:detail AS jsonb))"
+            ),
+            {
+                "pid": principal_id,
+                "action": action,
+                "target": (target or None) and str(target)[:200],
+                "reacted": (reacted_to or None) and str(reacted_to)[:2000],
+                "detail": json.dumps(detail) if detail is not None else None,
+            },
+        )
+
+    async def recent(
+        self, session: AsyncSession, principal_id: str, *, limit: int = 200
+    ) -> list[LedgerRow]:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT action, target, reacted_to, detail, at FROM app.jmolt_action_ledger"
+                    " WHERE principal_id = :pid ORDER BY seq DESC LIMIT :lim"
+                ),
+                {"pid": principal_id, "lim": limit},
+            )
+        ).all()
+        return [
+            LedgerRow(
+                action=r.action,
+                target=r.target,
+                reacted_to=r.reacted_to,
+                detail=r.detail if isinstance(r.detail, dict) or r.detail is None else None,
+                at=r.at,
+            )
+            for r in rows
+        ]
+
+    async def prune(
+        self, session: AsyncSession, principal_id: str, *, keep: int = LEDGER_RETENTION
+    ) -> None:
+        """Bound the ledger (non-jmolt owner context) — keep the last `keep` actions."""
+        await session.execute(
+            text(
+                "DELETE FROM app.jmolt_action_ledger"
+                " WHERE principal_id = :pid AND seq NOT IN ("
+                "   SELECT seq FROM app.jmolt_action_ledger"
+                "   WHERE principal_id = :pid ORDER BY seq DESC LIMIT :keep"
+                " )"
+            ),
+            {"pid": principal_id, "keep": keep},
+        )
