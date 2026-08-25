@@ -384,10 +384,11 @@ services:
         # (tool-carrying turns crash the upstream). Pinning makes the build reproducible and
         # stops future silent regressions. Bump this digest deliberately to move llama.cpp,
         # and re-verify tool calling on gpt-oss after. rocm users pin their own variant's
-        # digest via LOCAL_LLM_BASE in .env. Current pin (2026-08-24): llama.cpp
-        # b10615/f280b2698, the digest the box validated live that day (smoke + the
-        # 14 s patched qwen reload) — keep it in lockstep with Dockerfile.local-llm's.
-        LOCAL_LLM_BASE: ${LOCAL_LLM_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cdc51a9b70b1425d44eeded1b284db66aa32349a165eb7689e9a186b48494d5c}
+        # digest via LOCAL_LLM_BASE in .env. Current pin (2026-08-25): the
+        # `vulkan-radv_20260825T203415` build, bundling llama.cpp master of that date
+        # (~d222767; auto-detected at build). Live re-verification is pending the next
+        # deploy (update smoke test) — keep it in lockstep with Dockerfile.local-llm's.
+        LOCAL_LLM_BASE: ${LOCAL_LLM_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cea7c7e723b8feed67c5a4f4094652f4a0c63207be60584d8088eb5c6e62ef92}
         # OPT-IN patched llama-server (default 0 = stock base binary, zero build change).
         # Driven by the PWA "Fast Qwen loads" toggle via update-inner.sh, which exports
         # LOCAL_LLM_PATCH_RESTORE_CHECKPOINT for this build arg; the builder applies the

@@ -21,14 +21,17 @@
 # (and re-verify gpt-oss tool calling after) rather than floating on the tag. Override
 # LOCAL_LLM_BASE in .env to pin a different variant (e.g. a rocm-* digest).
 #
-# Current pin (2026-08-24): llama.cpp b10615/f280b2698 — the digest validated live on
-# the box that day: update smoke test passed (load + tool-call probe), gpt-oss disk
-# restores in ~90 ms, and the Fast-Qwen-loads patched build measured a 36,851-token
-# qwen reload at ~14 s (223 ms / 4-token re-prefill via the checkpoint sidecar). The
-# on-disk qwen KV cache was written by this engine, so bumping the pin also costs one
-# re-prime per model on the first post-bump load (the state-file format can shift).
-# Keep this digest and the compose default (deploy/docker-compose.yml LOCAL_LLM_BASE)
-# in lockstep.
+# Current pin (2026-08-25): the `vulkan-radv_20260825T203415` build (immutable alias of
+# the floating `vulkan-radv` tag it was cut from), bundling llama.cpp master of that date
+# (~d222767 — the builder auto-detects the exact commit from `llama-server --version` and
+# the box's /version reports it post-deploy). The checkpoint patch anchors and the
+# `common_prompt_checkpoint` struct it depends on were confirmed unchanged across the whole
+# f280b2698..d222767 range (no `server-context.cpp` edits), so 0001 re-applies cleanly.
+# Live re-verification is PENDING the next deploy — the PWA update flow's smoke test (load +
+# gpt-oss tool-call probe) gates it and rolls back on failure. The on-disk qwen/gpt-oss KV
+# caches were written by the prior engine, so this bump also costs one re-prime per model on
+# the first post-bump load (the state-file format can shift). Keep this digest and the
+# compose default (deploy/docker-compose.yml LOCAL_LLM_BASE) in lockstep.
 #
 # This image is built only when the operator enables local hosting; it is never
 # part of the default stack.
@@ -36,7 +39,7 @@
 # Declared in the global scope (before the first FROM) so it is visible to the
 # runtime FROM below; an ARG declared after a FROM is scoped to that stage and
 # the later FROM would resolve it to blank.
-ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cdc51a9b70b1425d44eeded1b284db66aa32349a165eb7689e9a186b48494d5c
+ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cea7c7e723b8feed67c5a4f4094652f4a0c63207be60584d8088eb5c6e62ef92
 
 # Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
 # in the runtime image. Pinned to a COMMIT, not a tag: llama-swap releases are
