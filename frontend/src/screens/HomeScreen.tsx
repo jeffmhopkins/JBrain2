@@ -372,7 +372,13 @@ export function HomeScreen({
         // conversation only). Only offered on a conversation surface; the chip in the
         // foot shows the active pick.
         onLongPressTab={conversational ? () => setModelSheet(true) : undefined}
-        modelLabel={conversational ? (fb.modelOverride?.label ?? null) : null}
+        // The chip names the pick and, when chosen, how hard it thinks.
+        modelLabel={
+          conversational && fb.modelOverride
+            ? fb.modelOverride.label +
+              (fb.modelOverride.effort ? ` · ${fb.modelOverride.effort}` : "")
+            : null
+        }
         // The plan pill shows the LIVE derived plan state (incl. "complete"); tapping it
         // opens the plan popover. A draft shows inline in the chat, so the pill is null then.
         planStatus={pillStatus}

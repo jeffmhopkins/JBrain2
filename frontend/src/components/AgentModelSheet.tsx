@@ -1,12 +1,14 @@
 // The agent-model sheet (long-press a conversation tab in the omnibox): pick the
 // model this conversation's agent runs on, for THIS conversation only. Lists the
 // on-box models currently loaded (the quick, no-cold-load picks) plus an
-// "Automatic" row that clears back to the resolved default. The choice rides every
-// turn of the open chat (useFullBrain's per-session override) and clears on reload —
-// it never changes the global task routing in Settings.
+// "Automatic" row that clears back to the resolved default, and — for reasoning
+// models — how hard the pick thinks (its per-conversation reasoning level). The
+// choice rides every turn of the open chat (useFullBrain's per-session override)
+// and clears on reload — it never changes the global task routing in Settings.
 
 import { useEffect, useState } from "react";
 import type { ModelPick } from "../agent/useFullBrain";
+import type { ReasoningEffort } from "../api/client";
 import { api } from "../api/client";
 import { Sheet } from "./Sheet";
 
@@ -23,11 +25,25 @@ interface Row {
   label: string;
   /** False for the current pick when it's no longer resident (unloaded since chosen). */
   loaded: boolean;
+  /** Honors a reasoning level — only these rows carry the armed level onto the pick. */
+  reasons: boolean;
 }
+
+const EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
+const EFFORT_LABEL: Record<ReasoningEffort, string> = {
+  none: "None",
+  low: "Low",
+  medium: "Med",
+  high: "High",
+};
 
 export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheetProps) {
   // null = still loading; [] = loaded but nothing resident.
   const [rows, setRows] = useState<Row[] | null>(null);
+  // The armed reasoning level (null = the model's own default). Seeded from the
+  // current pick; a row tap carries it onto the pick, and a chip tap re-applies it
+  // live when a reasoning pick is already active — so either order works in one visit.
+  const [effort, setEffort] = useState<ReasoningEffort | null>(selected?.effort ?? null);
 
   useEffect(() => {
     let stale = false;
@@ -38,7 +54,12 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
         setRows(
           s.local_models
             .filter((m) => m.loaded)
-            .map((m) => ({ id: m.id, label: m.label, loaded: true })),
+            .map((m) => ({
+              id: m.id,
+              label: m.label,
+              loaded: true,
+              reasons: m.supports_reasoning,
+            })),
         );
       })
       .catch(() => {
@@ -50,16 +71,37 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
   }, []);
 
   // Keep the current pick visible even if it's no longer resident (unloaded since it
-  // was chosen), so the owner still sees — and can clear — the active choice.
+  // was chosen), so the owner still sees — and can clear — the active choice. Its
+  // catalog capability is gone with the row, so a carried level is the evidence it
+  // reasons (keeps the control alive for the pick it's already applied to).
   const list: Row[] = rows ?? [];
   const withSelected =
     selected && !list.some((r) => r.id === selected.id)
-      ? [...list, { id: selected.id, label: selected.label, loaded: false }]
+      ? [
+          ...list,
+          { id: selected.id, label: selected.label, loaded: false, reasons: !!selected.effort },
+        ]
       : list;
+  const selectedRow = selected ? withSelected.find((r) => r.id === selected.id) : undefined;
+  // The level control earns its place only when it can ever apply.
+  const showEfforts = withSelected.some((r) => r.reasons);
 
   function pick(next: ModelPick | null) {
     onChoose(next);
     onClose();
+  }
+
+  function pickRow(row: Row) {
+    pick({ id: row.id, label: row.label, ...(row.reasons && effort ? { effort } : {}) });
+  }
+
+  // Chips arm the level without closing (so model-then-level and level-then-model both
+  // land in one visit); with a reasoning pick already active the change applies live.
+  function armEffort(next: ReasoningEffort | null) {
+    setEffort(next);
+    if (selected && selectedRow?.reasons) {
+      onChoose({ id: selected.id, label: selected.label, ...(next ? { effort: next } : {}) });
+    }
   }
 
   return (
@@ -90,7 +132,7 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
               type="button"
               aria-pressed={on}
               className={`domain-row${on ? " domain-row-on" : ""}`}
-              onClick={() => pick({ id: row.id, label: row.label })}
+              onClick={() => pickRow(row)}
             >
               <span className="model-row-name">{row.label}</span>
               <span className="model-row-meta">{row.loaded ? "loaded" : "not loaded"}</span>
@@ -103,6 +145,36 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
           );
         })}
       </div>
+      {showEfforts && (
+        <>
+          <p className="model-sheet-subhead">Reasoning</p>
+          <fieldset className="seg-row model-effort-row" aria-label="Reasoning level">
+            <button
+              type="button"
+              className={`seg${effort === null ? " seg-on" : ""}`}
+              aria-pressed={effort === null}
+              onClick={() => armEffort(null)}
+            >
+              Auto
+            </button>
+            {EFFORTS.map((e) => (
+              <button
+                key={e}
+                type="button"
+                className={`seg${effort === e ? " seg-on" : ""}`}
+                aria-pressed={effort === e}
+                onClick={() => armEffort(e)}
+              >
+                {EFFORT_LABEL[e]}
+              </button>
+            ))}
+          </fieldset>
+          <p className="model-sheet-note model-effort-note">
+            How hard a reasoning model thinks for this conversation. Rides the model pick; models
+            without a reasoning control ignore it.
+          </p>
+        </>
+      )}
       {rows !== null && withSelected.length === 0 && (
         <p className="model-sheet-empty">
           No models loaded. Load one from Settings to run this conversation on it.

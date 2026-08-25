@@ -383,6 +383,67 @@ def test_chat_ignores_an_unknown_model_pick(
     assert usage["context_window"] == 256_000  # fell back to the default grok route
 
 
+def test_chat_carries_the_picks_reasoning_level(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # The sheet's reasoning-level pick rides beside the model pick: the loop's model
+    # call carries it, overriding agent.turn's stored effort (None — medium bucket).
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    local = FakeLlmClient(
+        turns=[LlmTurn("local hi", (), "end_turn", LlmUsage(5, 2))], stream_chunks=[["local hi"]]
+    )
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": FakeLlmClient(), "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=True,
+    )
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "hi",
+            "model": "gpt-oss-120b",
+            "reasoning_effort": "high",
+        },
+    )
+    assert resp.status_code == 200
+    assert local.stream_calls[0]["model"] == "gpt-oss-120b"
+    assert local.stream_calls[0]["reasoning_effort"] == "high"
+
+
+def test_chat_drops_an_unknown_reasoning_level(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # Same tolerance as the model pick: a stale/garbage level is dropped (not 422'd),
+    # so the turn runs on the route's own effort rather than breaking.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    local = FakeLlmClient(
+        turns=[LlmTurn("local hi", (), "end_turn", LlmUsage(5, 2))], stream_chunks=[["local hi"]]
+    )
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": FakeLlmClient(), "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=True,
+    )
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "hi",
+            "model": "gpt-oss-120b",
+            "reasoning_effort": "turbo",
+        },
+    )
+    assert resp.status_code == 200
+    assert local.stream_calls[0]["reasoning_effort"] is None
+
+
 def test_chat_streams_llm_text_to_the_wall_display_when_enabled(
     client: TestClient,
     repo: FakeAuthRepo,

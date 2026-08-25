@@ -4486,6 +4486,24 @@ button.small {
   font-size: 0.85rem;
 }
 
+/* The pick's reasoning-level control (shown only when a reasoning model is offerable). */
+.model-sheet-subhead {
+  margin: 16px 0 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.model-effort-row {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.model-effort-note {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
 /* ===== Note view layer ===== */
 
 .subscreen-note {

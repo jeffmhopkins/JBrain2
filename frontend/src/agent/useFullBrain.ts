@@ -4,7 +4,7 @@
 // the composer live apart from the conversation it feeds.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { type ReasoningEffort, api } from "../api/client";
 import { freshCoords } from "../location";
 import { isForeground } from "../visibility";
 import { endTurnRate, recordStreamedText } from "./tokenMeter";
@@ -29,10 +29,12 @@ import type {
 export type Panel = "none" | "sessions" | "proposals";
 
 /** A per-conversation agent-model pick (the omnibox long-press sheet): the local
- * catalog `id` the turn runs on plus its `label` for the composer indicator. */
+ * catalog `id` the turn runs on plus its `label` for the composer indicator, and —
+ * for a reasoning model — the chosen level (`effort`; absent = the model's default). */
 export interface ModelPick {
   id: string;
   label: string;
+  effort?: ReasoningEffort;
 }
 
 // A shared empty transcript so the active chat's `messages` keeps a stable reference
@@ -705,8 +707,10 @@ export function useFullBrain(
       ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
-      // The owner's per-conversation model pick rides every turn of this chat.
+      // The owner's per-conversation model pick rides every turn of this chat —
+      // its reasoning level (when chosen) alongside it.
       ...(pick ? { model: pick.id } : {}),
+      ...(pick?.effort ? { reasoning_effort: pick.effort } : {}),
       // A Proposal enact outcome the owner produced inline — framed server-side as a
       // data report so the assistant follows up (not owner prose).
       ...(opts?.proposalOutcome ? { proposal_outcome: true } : {}),

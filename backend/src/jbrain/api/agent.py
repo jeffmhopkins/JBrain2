@@ -68,6 +68,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
 from jbrain.llm.errors import LlmContextOverflowError
+from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.models.plan import PlanRepo
@@ -156,6 +157,11 @@ class ChatRequest(BaseModel):
     # is ignored (the turn runs on the default) rather than 422'd, so a stale pick from
     # a client can never break a conversation.
     model: str | None = None
+    # The pick's reasoning level (the same sheet): how hard this turn's model thinks
+    # ("none"/"low"/"medium"/"high"), overriding the task's stored effort. Same
+    # tolerance as `model`: an unknown value is dropped rather than 422'd, and the
+    # router gates it on the resolved model so a non-reasoning route never receives it.
+    reasoning_effort: str | None = None
     # The turn carries a Proposal ENACT OUTCOME the owner just produced inline, not owner
     # prose (INLINE_APPROVALS_PLAN §3.1). When set, `message` is the server-authored
     # outcome summary and is framed as a DATA report on the conversation channel (the
@@ -589,6 +595,13 @@ def _model_override_spec(model_id: str | None) -> str | None:
     return entry.spec if entry is not None else None
 
 
+def _effort_override(effort: str | None) -> str | None:
+    """Validate the pick's reasoning level to one the routing layer understands, or
+    None to leave the turn on the task's stored effort. Same posture as the model
+    pick above: an unknown value is dropped, never routed or 422'd."""
+    return effort if effort in REASONING_EFFORTS else None
+
+
 def _model_message(body: ChatRequest) -> str:
     """The model-facing user turn. A calendar handoff appends the appointment id
     as an explicit instruction so the agent reads that exact appointment rather
@@ -756,7 +769,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # AND the loop's model calls run on it, so the effort, window, and vision gate all
     # reflect the picked model — not the default route.
     model_override = _model_override_spec(body.model)
-    effort = await router.effective_reasoning_effort("agent.turn", spec_override=model_override)
+    # The pick's reasoning level rides beside it: it steers every model call this turn
+    # makes AND the resolved `effort` below, so the tool budget and the vitals stamp
+    # both reflect how hard the model was actually asked to think. The router gates it
+    # on the resolved model, so a non-reasoning route never carries the param.
+    effort_override = _effort_override(body.reasoning_effort)
+    effort = await router.effective_reasoning_effort(
+        "agent.turn", spec_override=model_override, effort_override=effort_override
+    )
     # The resolved model's total context window — the denominator for the PWA's live
     # context-usage meter (a local model's is the gateway's `-c`, mainly what this
     # serves). Resolved once here and passed to the loop, which stamps it on each
@@ -783,6 +803,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         recorder=tally,
         guardrails=guardrails,
         model_override=model_override,
+        effort_override=effort_override,
         hidden_tools_provider=hidden_provider,
     )
     read_ctx = read_context(principal.id, read_scopes)

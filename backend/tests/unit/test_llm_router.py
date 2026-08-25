@@ -568,6 +568,19 @@ async def test_effective_reasoning_effort_reports_the_live_effort() -> None:
     assert await off.effective_reasoning_effort("note.extract") is None
 
 
+async def test_effective_reasoning_effort_honors_a_per_turn_override() -> None:
+    # The pick's reasoning level (the omnibox sheet) wins over the stored effort, under
+    # the same capability gate as converse: a non-reasoning route still reports None.
+    xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
+    on = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
+    assert await on.effective_reasoning_effort("note.extract", effort_override="low") == "low"
+    off = _override_router(
+        {"xai": xai, "anthropic": anthropic},
+        {"note.extract": {"spec": "anthropic:claude-x"}},
+    )
+    assert await off.effective_reasoning_effort("note.extract", effort_override="low") is None
+
+
 async def test_effective_spec_follows_a_live_override_unlike_spec() -> None:
     # Provenance regression: `spec()` sees only static config, so it reported the
     # default route (and stamped the wrong model) even after the operator re-routed a

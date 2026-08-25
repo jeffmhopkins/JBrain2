@@ -315,6 +315,11 @@ def test_local_models_offered_only_when_hosting_enabled() -> None:
     assert providers["qwen3-vl-30b"]["supports_vision"] is True
     assert providers["gpt-oss-120b"]["supports_vision"] is False
     assert providers["qwen3-vl-30b"]["supports_reasoning"] is False
+    # The drawer rows carry the same flag, so the agent-model sheet can gate its
+    # per-conversation reasoning-level control per model.
+    models = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert models["gpt-oss-120b"]["supports_reasoning"] is True
+    assert models["qwen3-vl-30b"]["supports_reasoning"] is False
 
 
 def test_cloud_provider_hidden_without_its_api_key() -> None:

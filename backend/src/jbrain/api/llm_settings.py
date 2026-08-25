@@ -201,6 +201,10 @@ class LocalModelInfo(BaseModel):
     loaded: bool
     supports_vision: bool
     supports_tools: bool
+    # Honors a reasoning level (gpt-oss harmony effort / GLM thinking / a Qwen hybrid
+    # toggle) — the agent-model sheet shows its per-conversation effort control only
+    # for these, mirroring the provider-level flag on ProviderInfo.
+    supports_reasoning: bool
     tiers: list[str]
     quant: str
     # Catalog's nominal download estimate — always present, drives the un-provisioned
@@ -611,6 +615,7 @@ def _local_model_info(
         loaded=loaded,
         supports_vision=m.supports_vision,
         supports_tools=m.supports_tools,
+        supports_reasoning=m.supports_reasoning,
         tiers=list(m.tiers),
         quant=m.quant,
         size_gb=m.size_gb,
