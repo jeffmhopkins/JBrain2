@@ -33,17 +33,25 @@ const EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const EFFORT_LABEL: Record<ReasoningEffort, string> = {
   none: "None",
   low: "Low",
-  medium: "Med",
+  medium: "Medium",
   high: "High",
 };
+// What a reasoning model runs at when the route carries no effort at all — the
+// model's own built-in default (the router's medium-bucket contract for agent.turn).
+const FALLBACK_DEFAULT: ReasoningEffort = "medium";
 
 export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheetProps) {
   // null = still loading; [] = loaded but nothing resident.
   const [rows, setRows] = useState<Row[] | null>(null);
-  // The armed reasoning level (null = the model's own default). Seeded from the
-  // current pick; a row tap carries it onto the pick, and a chip tap re-applies it
-  // live when a reasoning pick is already active — so either order works in one visit.
+  // The armed reasoning level (null = the route's default, shown as the
+  // "(default)"-marked pill). Seeded from the current pick; a row tap carries it onto
+  // the pick, and a pill tap re-applies it live when a reasoning pick is already
+  // active — so either order works in one visit.
   const [effort, setEffort] = useState<ReasoningEffort | null>(selected?.effort ?? null);
+  // The level a turn runs at with no override — agent.turn's effective effort from
+  // Settings (the stored effort rides onto a picked model too), marked "(default)"
+  // on its pill so the owner sees what "leave it alone" means.
+  const [defaultLevel, setDefaultLevel] = useState<ReasoningEffort>(FALLBACK_DEFAULT);
 
   useEffect(() => {
     let stale = false;
@@ -61,6 +69,8 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
               reasons: m.supports_reasoning,
             })),
         );
+        const turn = s.tasks?.find((t) => t.id === "agent.turn");
+        setDefaultLevel(turn?.reasoning_effort ?? FALLBACK_DEFAULT);
       })
       .catch(() => {
         if (!stale) setRows([]);
@@ -95,9 +105,12 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
     pick({ id: row.id, label: row.label, ...(row.reasons && effort ? { effort } : {}) });
   }
 
-  // Chips arm the level without closing (so model-then-level and level-then-model both
+  // Pills arm the level without closing (so model-then-level and level-then-model both
   // land in one visit); with a reasoning pick already active the change applies live.
-  function armEffort(next: ReasoningEffort | null) {
+  // Tapping the "(default)"-marked pill arms null — no override on the wire, so the
+  // route's own effort keeps applying (and keeps tracking Settings).
+  function armEffort(level: ReasoningEffort) {
+    const next = level === defaultLevel ? null : level;
     setEffort(next);
     if (selected && selectedRow?.reasons) {
       onChoose({ id: selected.id, label: selected.label, ...(next ? { effort: next } : {}) });
@@ -148,27 +161,23 @@ export function AgentModelSheet({ selected, onChoose, onClose }: AgentModelSheet
       {showEfforts && (
         <>
           <p className="model-sheet-subhead">Reasoning</p>
-          <fieldset className="seg-row model-effort-row" aria-label="Reasoning level">
-            <button
-              type="button"
-              className={`seg${effort === null ? " seg-on" : ""}`}
-              aria-pressed={effort === null}
-              onClick={() => armEffort(null)}
-            >
-              Auto
-            </button>
-            {EFFORTS.map((e) => (
-              <button
-                key={e}
-                type="button"
-                className={`seg${effort === e ? " seg-on" : ""}`}
-                aria-pressed={effort === e}
-                onClick={() => armEffort(e)}
-              >
-                {EFFORT_LABEL[e]}
-              </button>
-            ))}
-          </fieldset>
+          <div className="seg-row model-effort-row" aria-label="Reasoning level">
+            {EFFORTS.map((e) => {
+              const on = (effort ?? defaultLevel) === e;
+              return (
+                <button
+                  key={e}
+                  type="button"
+                  className={`seg${on ? " seg-on" : ""}`}
+                  aria-pressed={on}
+                  onClick={() => armEffort(e)}
+                >
+                  <span>{EFFORT_LABEL[e]}</span>
+                  {e === defaultLevel && <span className="model-effort-default">(default)</span>}
+                </button>
+              );
+            })}
+          </div>
           <p className="model-sheet-note model-effort-note">
             How hard a reasoning model thinks for this conversation. Rides the model pick; models
             without a reasoning control ignore it.
