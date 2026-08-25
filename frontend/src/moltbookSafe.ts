@@ -27,14 +27,22 @@ const INVISIBLE = new RegExp(
   "gu",
 );
 
-const SCHEME = /\bhttps?:\/\//gi;
+// Dangerous URL/script schemes, defanged to match the server sanitizer
+// (jbrain.agent.jmolt_digest._SCHEME): http(s) → hxxp(s), others → x-<scheme>.
+const SCHEME = /\b(https?|javascript|data|vbscript|file|mailto):/gi;
+
+function defangScheme(_match: string, scheme: string): string {
+  const s = scheme.toLowerCase();
+  return s === "http" || s === "https" ? `${s.replace("http", "hxxp")}:` : `x-${s}:`;
+}
 
 /** Make jmolt-authored / third-party text safe to render inline: strip invisible and
- * bidirectional characters, and defang URL schemes (http → hxxp). Returns plain text; the
- * caller must render it as a text child (never dangerouslySetInnerHTML). */
+ * bidirectional characters, and defang URL/script schemes so a link is neither clickable
+ * nor a live payload. Returns plain text; the caller must render it as a text child
+ * (never dangerouslySetInnerHTML). */
 export function inertText(value: unknown): string {
   const s = value == null ? "" : String(value);
-  return s.replace(INVISIBLE, "").replace(SCHEME, (m) => m.toLowerCase().replace("http", "hxxp"));
+  return s.replace(INVISIBLE, "").replace(SCHEME, defangScheme);
 }
 
 /** A short human label for a staged outbox item's payload — its title or the head of its

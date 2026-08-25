@@ -70,12 +70,17 @@ class JmoltMetrics:
         admin = _admin_ctx(pid)
 
         async with scoped_session(self._maker, admin) as s:
+            # Count SESSIONS (nights), not run rows — a session with a retry has >1 agent
+            # run, so grouping run rows would double-count a night. `ok` = the session has a
+            # done run; everything else (an error run, or no run row at all) is `error`.
             nights = (
                 await s.execute(
                     text(
-                        "SELECT r.status, count(*) AS n FROM app.agent_sessions se"
+                        "SELECT bool_or(r.status = 'done') AS ok, count(*) OVER () AS total"
+                        " FROM app.agent_sessions se"
                         " LEFT JOIN app.runs r ON r.session_id = se.id AND r.kind = 'agent'"
-                        " WHERE se.agent = 'jmolt' AND se.created_at >= :cut GROUP BY r.status"
+                        " WHERE se.agent = 'jmolt' AND se.created_at >= :cut"
+                        " GROUP BY se.id"
                     ),
                     {"cut": cutoff},
                 )
@@ -126,13 +131,13 @@ class JmoltMetrics:
                 )
             ).all()
 
-        nights_ok = sum(r.n for r in nights if r.status == "done")
-        nights_error = sum(r.n for r in nights if r.status not in ("done", None))
+        nights_run = len(nights)  # one row per session
+        nights_ok = sum(1 for r in nights if r.ok)
         return JmoltWeekMetrics(
             days=days,
-            nights_run=sum(r.n for r in nights),
+            nights_run=nights_run,
             nights_ok=nights_ok,
-            nights_error=nights_error,
+            nights_error=nights_run - nights_ok,
             actions_by_type={r.action: r.n for r in actions},
             distinct_targets=int(distinct_targets),
             scratch_files=int(scratch.files),

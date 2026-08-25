@@ -67,18 +67,46 @@ async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | 
     return str(pid) if pid is not None else None
 
 
+# Status strings that mean the account is out of action → auto-pause. A wide net on
+# purpose (L6, fail-safe): the platform's exact vocabulary is not contractual, so recognise
+# the common synonyms for "suspended/disabled" rather than defaulting an unknown bad state
+# to healthy.
+_SUSPENDED_WORDS = frozenset(
+    {"suspended", "banned", "disabled", "deactivated", "locked", "terminated", "removed", "closed"}
+)
+_MODERATED_WORDS = frozenset({"moderated", "limited", "restricted", "flagged", "shadowbanned"})
+
+
 def classify_account(me: dict) -> str:
-    """Normalise the platform's `/agents/me` view to one of our states. Defensive about
-    the exact schema: any of several plausible suspension/moderation shapes is honoured,
-    and an unrecognised-but-healthy view is `ok`. Pure — unit-tested against each shape."""
+    """Normalise the platform's `/agents/me` view to one of our states. Defensive about the
+    exact schema and biased fail-safe: any recognised suspension/disable shape pauses, a
+    softer moderation/limit shape surfaces, and only a view with no bad signal is `ok`.
+    Pure — unit-tested against each shape."""
     status = str(me.get("status") or me.get("account_status") or "").strip().lower()
-    if me.get("suspended") or me.get("banned") or status in {"suspended", "banned"}:
+    if (
+        me.get("suspended")
+        or me.get("banned")
+        or me.get("disabled")
+        or status in _SUSPENDED_WORDS
+    ):
         return _STATE_SUSPENDED
-    if status in {"moderated", "limited", "restricted"}:
+    if status in _MODERATED_WORDS:
         return _STATE_MODERATED
     if me.get("rate_limited") or me.get("moderation") or me.get("labels"):
         return _STATE_MODERATED
     return _STATE_OK
+
+
+def _profile_item_ids(me: dict) -> list[str]:
+    """The platform ids of everything visible on jmolt's public profile — its recent posts
+    AND comments (a key leak can write either). Defensive about the schema; an item with no
+    id yields '' so the caller treats it as unaccounted-for (fail-safe)."""
+    items: list[str] = []
+    for key in ("recentPosts", "recent_posts", "recentComments", "recent_comments"):
+        seq = me.get(key)
+        if isinstance(seq, list):
+            items.extend(str(x.get("id") or "").strip() for x in seq if isinstance(x, dict))
+    return items
 
 
 class JmoltIntegrity:
@@ -130,38 +158,34 @@ class JmoltIntegrity:
 
     async def _observe(self, pid: str, admin: SessionContext) -> str | None:
         """The observed state, or None if the platform could not be read (never a false
-        tamper). Tamper is checked first, then account state."""
+        tamper). One `/agents/me` read feeds both checks: tamper first, then account state."""
         try:
-            if await self._tampered(pid, admin):
-                return _STATE_TAMPER
             me = await self._client.me()
         except MoltbookError:
             return None
+        if await self._tampered(pid, admin, me):
+            return _STATE_TAMPER
         return classify_account(me)
 
-    async def _tampered(self, pid: str, admin: SessionContext) -> bool:
-        """True iff the public profile carries a post that no PUBLISHED outbox row
-        accounts for (by platform id or, as a fallback, exact title). A read failure
-        propagates as MoltbookError so `_observe` treats it as uncheckable, not tamper."""
-        recent = await self._client.me_history()
-        if not recent:
+    async def _tampered(self, pid: str, admin: SessionContext, me: dict) -> bool:
+        """True iff the public profile carries a post or comment whose platform id no
+        PUBLISHED outbox row accounts for — i.e. something wrote as jmolt outside the review
+        queue (a key leak). Matches on the platform id ONLY, never the (attacker-controllable)
+        title, and treats an item with no id as unaccounted-for: the fail-safe direction,
+        since a false positive only pauses + asks the owner to rotate, while a false negative
+        misses a real leak. Best-effort by nature (the profile shows a bounded recent window
+        the platform controls); a flood that pushes an item out of view is a residual gap."""
+        items = _profile_item_ids(me)
+        if not items:
             return False
         async with scoped_session(self._maker, admin) as s:
             published = await self._outbox.list_by_status(s, pid, ("published",))
+        # Every published write (post OR comment) records its platform id in the outbox row.
         known_ids = {r.moltbook_id for r in published if r.moltbook_id}
-        known_titles = {
-            str(r.payload.get("title", "")).strip()
-            for r in published
-            if r.kind == "post" and str(r.payload.get("title", "")).strip()
-        }
-        for post in recent:
-            pid_str = str(post.get("id") or "").strip()
-            title = str(post.get("title") or "").strip()
-            if pid_str and pid_str in known_ids:
+        for item_id in items:
+            if item_id and item_id in known_ids:
                 continue
-            if title and title in known_titles:
-                continue
-            log.warning("jmolt_integrity.tamper_post", moltbook_id=pid_str or None)
+            log.warning("jmolt_integrity.tamper_item", moltbook_id=item_id or None)
             return True
         return False
 

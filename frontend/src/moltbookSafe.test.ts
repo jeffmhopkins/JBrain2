@@ -18,6 +18,12 @@ describe("inertText", () => {
     expect(inertText("HTTP://Bad.example")).toBe("hxxp://Bad.example");
   });
 
+  it("defangs script/data schemes to match the server", () => {
+    expect(inertText("javascript:alert(1)")).toBe("x-javascript:alert(1)");
+    expect(inertText("data:text/html,x")).toBe("x-data:text/html,x");
+    expect(inertText("mailto:a@b.co")).toBe("x-mailto:a@b.co");
+  });
+
   it("leaves ordinary text alone", () => {
     expect(inertText("the general submolt is mostly noise")).toBe(
       "the general submolt is mostly noise",

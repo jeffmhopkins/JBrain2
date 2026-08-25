@@ -49,6 +49,18 @@ def test_sanitize_defangs_links() -> None:
     assert "hxxp://Bad.example" in out  # scheme lowercased + defanged, host untouched
 
 
+def test_sanitize_defangs_script_and_data_schemes() -> None:
+    out = sanitize_for_owner("javascript:alert(1) and data:text/html and mailto:a@b.co")
+    # Each dangerous scheme is neutralized with an x- prefix (so it is not a live scheme).
+    assert "x-javascript:" in out and "x-data:" in out and "x-mailto:" in out
+    assert not out.startswith("javascript:")  # no bare live scheme at a boundary
+
+
+def test_sanitize_escapes_quotes_for_attribute_safety() -> None:
+    out = sanitize_for_owner('a "quoted" value')
+    assert '"' not in out and "&quot;" in out
+
+
 def test_sanitize_defangs_url_inside_escaped_markup() -> None:
     # A link wrapped in markup is both escaped AND defanged — no clickable, no live tag.
     out = sanitize_for_owner('<a href="http://evil.example">click</a>')

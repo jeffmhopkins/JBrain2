@@ -1,21 +1,26 @@
 """jmolt_observe against real Postgres (docs/plans/JMOLT_PLAN.md, W4, M16).
 
 jerv's read-only lens on jmolt. This proves the umbrella (a) reads jmolt's nights,
-transcript, actions, scratchpad, and outbox and fences every return; (b) runs its reads
-under a jmolt-READ context (owner + jmolt domain, NO auth_context='jmolt'), so the M19
-RLS split grants SELECT and there is no write action to reach at all; and (c) refuses to
-run in a turn that also holds an egress tool (M16), so a poisoned diary can never meet a
-live web/email/Moltbook call in the same turn.
+transcript, actions, scratchpad, and outbox and fences every return; (b) reads jmolt's
+OWN tables under a NON-owner jmolt-scoped context, so the M19(a) split makes the
+read-only guarantee MECHANICAL — SELECT is granted by the scope, but every write is
+denied by RLS (is_owner() false, auth_ctx() not 'jmolt'); and (c) refuses to run in a
+turn that also holds an egress tool (M16), so a poisoned diary can never meet a live
+web/email/Moltbook call in the same turn.
 """
 
 from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.jmoltobservetools import build_jmolt_observe_handlers
+from jbrain.agent.jmoltobservetools import (
+    _jmolt_data_read_ctx,
+    build_jmolt_observe_handlers,
+)
 from jbrain.agent.loop import ToolContext
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -157,3 +162,40 @@ async def test_observe_unknown_action_is_a_plain_message(maker: async_sessionmak
     observe = build_jmolt_observe_handlers(maker)["jmolt_observe"]
     out = await observe({"action": "delete_everything"}, _observe_ctx())
     assert "needs action=" in out
+
+
+async def test_observe_data_context_can_read_but_rls_denies_every_write(
+    maker: async_sessionmaker,
+) -> None:
+    # M19(a): the context the observe umbrella uses for jmolt's OWN tables grants SELECT
+    # (the scope) but is denied every INSERT/UPDATE/DELETE by RLS — is_owner() is false and
+    # auth_ctx() is not 'jmolt', so the read-only guarantee is mechanical, not a convention.
+    pid = await _owner_pid(maker)
+    await _seed(maker, pid)
+    read = _jmolt_data_read_ctx(pid)
+
+    # SELECT works (the scope grants it).
+    async with scoped_session(maker, read) as s:
+        assert (await s.execute(text("SELECT count(*) FROM app.jmolt_scratch"))).scalar() >= 1
+
+    # An INSERT is refused outright (the WITH CHECK on the scratch write policy fails).
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, read) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.jmolt_scratch (principal_id, filename, content, bytes)"
+                    " VALUES (:pid, 'x', 'y', 1)"
+                ),
+                {"pid": pid},
+            )
+    # An UPDATE/DELETE modifies ZERO rows — the outbox-advance / ledger-prune policies
+    # (is_owner() AND auth_ctx()<>'jmolt') exclude every row from this non-owner context,
+    # so the observer can neither release nor purge anything.
+    async with scoped_session(maker, read) as s:
+        upd = await s.execute(text("UPDATE app.jmolt_outbox SET status = 'published'"))
+        assert upd.rowcount == 0
+        dele = await s.execute(text("DELETE FROM app.jmolt_action_ledger"))
+        assert dele.rowcount == 0
+    # The rows are untouched (a jmolt-context read still sees the seeded outbox row).
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        assert len(await OutboxRepo().list_by_status(s, pid, ("queued",))) == 1

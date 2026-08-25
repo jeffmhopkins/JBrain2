@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
@@ -42,16 +42,27 @@ _DIGEST_BODY_CAP = 4000
 _PREVIEW = 140
 
 _SYSTEM_OWNER = SessionContext(principal_kind="owner")
-_SCHEME = re.compile(r"\bhttps?://", re.I)
+# Dangerous URL schemes to defang so a rendered link is neither clickable nor a live
+# `javascript:`/`data:` payload if any future owner surface were less careful than today's
+# (which renders every value as an escaped text child). `http`→`hxxp`, others → `x-<s>`.
+_SCHEME = re.compile(r"\b(https?|javascript|data|vbscript|file|mailto):", re.I)
+
+
+def _defang(m: re.Match[str]) -> str:
+    scheme = m.group(1).lower()
+    if scheme in ("http", "https"):
+        return scheme.replace("http", "hxxp") + ":"
+    return "x-" + scheme + ":"
 
 
 def sanitize_for_owner(value: str) -> str:
     """M15 — make third-party/diary text safe to render to the owner: strip invisible and
-    bidi/zero-width characters, HTML-escape, and defang URL schemes so a link is not
-    clickable. Pure; unit-tested."""
+    bidi/zero-width characters, defang URL/script schemes so a link is neither clickable nor
+    a live payload, then HTML-escape (quotes included, so it is safe inside an attribute
+    too). Pure; unit-tested."""
     cleaned = strip_invisibles(str(value))
-    defanged = _SCHEME.sub(lambda m: m.group(0).lower().replace("http", "hxxp"), cleaned)
-    return html.escape(defanged, quote=False)
+    defanged = _SCHEME.sub(_defang, cleaned)
+    return html.escape(defanged, quote=True)
 
 
 def _preview(payload: dict) -> str:
@@ -128,7 +139,7 @@ class JmoltDigest:
         if await self._settings.moltbook_last_digest(admin) == today:
             return False  # already sent this morning (durable across restarts).
 
-        body = await self.build(pid, admin)
+        body = await self.build(pid, admin, now=now)
         await self._settings.set_moltbook_last_digest(admin, today)
         notify_owner(
             self._notify,
@@ -137,11 +148,16 @@ class JmoltDigest:
         log.info("jmolt_digest.sent", local_time=local.isoformat())
         return True
 
-    async def build(self, pid: str, admin: SessionContext) -> str:
-        """Assemble the sanitized digest body from the ledger + the staged outbox."""
+    async def build(self, pid: str, admin: SessionContext, *, now: datetime | None = None) -> str:
+        """Assemble the sanitized digest body from the ledger + the staged outbox. Only the
+        last day's actions are enumerated so the digest's "last day" label is truthful — an
+        idle stretch reports nothing published rather than replaying stale ledger rows."""
+        now = now or datetime.now(UTC)
+        cutoff = now - timedelta(days=1)
         async with scoped_session(self._maker, admin) as s:
-            actions = await self._ledger.recent(s, pid, limit=_ACTIONS_IN_DIGEST)
+            recent = await self._ledger.recent(s, pid, limit=_ACTIONS_IN_DIGEST)
             staged = await self._outbox.list_by_status(s, pid, ("queued", "released"))
+        actions = [a for a in recent if a.at is None or a.at >= cutoff]
         return build_digest_body(actions, staged)
 
 

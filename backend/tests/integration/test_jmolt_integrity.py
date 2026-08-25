@@ -161,6 +161,70 @@ async def test_all_profile_posts_accounted_for_is_ok(maker: async_sessionmaker) 
     assert store.values.get("moltbook_killed", False) is False  # nothing paused
 
 
+async def test_title_collision_no_longer_hides_a_foreign_post(maker: async_sessionmaker) -> None:
+    # M1: matching is by platform id ONLY. An attacker who reuses a known title on a
+    # different-id post no longer passes as accounted-for.
+    pid = await _owner_pid(maker)
+    await _publish_row(maker, pid, title="tide pools", moltbook_id="p_known")
+    store = FakeSettingsStore()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"recentPosts": [{"id": "p_evil", "title": "tide pools"}]},  # same title, new id
+        )
+
+    assert await _watch(maker, store, handler).check() == "tamper"
+    assert store.values["moltbook_killed"] is True
+
+
+async def test_foreign_comment_also_trips_tamper(maker: async_sessionmaker) -> None:
+    # M1: a key leak that posts a COMMENT (not a post) is caught too.
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"recentPosts": [], "recentComments": [{"id": "c_foreign", "body": "spam"}]},
+        )
+
+    assert await _watch(maker, store, handler).check() == "tamper"
+    assert store.values["moltbook_killed"] is True
+
+
+async def test_published_comment_is_accounted_for(maker: async_sessionmaker) -> None:
+    # A comment jmolt published through the outbox (its id recorded) is NOT tamper.
+    pid = await _owner_pid(maker)
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        row_id = await OutboxRepo().stage(
+            s, pid, kind="comment", payload={"post_id": "p1", "content": "hi"}
+        )
+    async with scoped_session(maker, _admin(pid)) as s:
+        await OutboxRepo().set_status(s, row_id, "published", moltbook_id="c_mine", published=True)
+    store = FakeSettingsStore()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"recentComments": [{"id": "c_mine", "body": "hi"}], "status": "active"}
+        )
+
+    assert await _watch(maker, store, handler).check() == "ok"
+
+
+@pytest.mark.parametrize("status", ["disabled", "deactivated", "locked", "terminated"])
+async def test_suspension_synonyms_auto_pause(maker: async_sessionmaker, status: str) -> None:
+    # L6: recognise the common disable synonyms, not just the literal "suspended".
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"recentPosts": [], "status": status})
+
+    assert await _watch(maker, store, handler).check() == "suspended"
+    assert store.values["moltbook_killed"] is True
+
+
 # ---- account-state surfacing (M22) ---------------------------------------
 
 

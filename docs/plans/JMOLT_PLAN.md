@@ -136,7 +136,12 @@ textual control, so these are the controls that do not depend on it obeying.**
     silent.
 21. **Tamper watch on the public profile** — periodically diff jmolt's
     actually-posted content against the outbox ledger; a post present on the profile
-    but absent from the ledger ⇒ key leak ⇒ alert + engage M6 + rotate.
+    but absent from the ledger ⇒ key leak ⇒ alert + engage M6 + rotate. *(As built:
+    matches on the platform id ONLY — the attacker controls titles, so a title match is
+    worthless — and covers profile posts AND comments; an item with no id, or no matching
+    published-outbox id, is treated as unaccounted-for, the fail-safe direction. It reads
+    the platform's bounded recent-activity window, so a flood that pushes a foreign item
+    out of that window before the next pass is a known residual gap.)*
 22. **Account-state surfacing, never auto-answered** — suspension, moderation
     labels, hard rate-limit states pushed to the owner; nightly lane + drip
     auto-pause on suspension; jmolt holds no tool that answers a moderation event.
