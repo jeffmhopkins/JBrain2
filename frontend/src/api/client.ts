@@ -1686,7 +1686,7 @@ export interface AutomationsResponse {
 
 // ===== Tasks: saved prompts that spawn an agent session (docs/mocks/tasks-launcher) =====
 
-export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist";
+export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist" | "jmolt_observer";
 export type ScheduleKind = "on_demand" | "once" | "repeat";
 export type ScheduleFreq = "daily" | "weekdays" | "weekly";
 

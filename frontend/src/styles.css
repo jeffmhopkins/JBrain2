@@ -19113,6 +19113,10 @@ button.task-band:active {
   background: var(--green-tint);
   color: var(--green);
 }
+.task-ag.jmolt_observer {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
 
 /* ---- grouping (Direction B): chip filter row, group headers, move + reorder ---- */
 .task-chiprow {
@@ -19520,6 +19524,10 @@ button.task-band:active {
 .ted-agent.archivist .ted-av {
   background: var(--green-tint);
   color: var(--green);
+}
+.ted-agent.jmolt_observer .ted-av {
+  background: var(--rose-tint);
+  color: var(--rose);
 }
 .ted-am {
   flex: 1;
