@@ -81,7 +81,7 @@ async def test_jmolt_stages_but_cannot_release(maker: async_sessionmaker) -> Non
         res = await s.execute(
             text("UPDATE app.jmolt_outbox SET status = 'released' WHERE id = :id"), {"id": row_id}
         )
-        assert res.rowcount == 0
+        assert res.rowcount == 0  # type: ignore[attr-defined]
     async with scoped_session(maker, _jmolt(pid)) as s:
         rows = await outbox.list_by_status(s, pid, ("queued",))
     assert len(rows) == 1 and rows[0].status == "queued"  # still queued
@@ -137,7 +137,7 @@ async def test_ledger_append_and_prune_authority(maker: async_sessionmaker) -> N
         res = await s.execute(
             text("DELETE FROM app.jmolt_action_ledger WHERE principal_id = :pid"), {"pid": pid}
         )
-        assert res.rowcount == 0
+        assert res.rowcount == 0  # type: ignore[attr-defined]
     # The system (non-jmolt owner) can prune.
     async with scoped_session(maker, _owner_admin(pid)) as s:
         await ledger.prune(s, pid, keep=1)

@@ -88,7 +88,7 @@ def _sweep(maker, store: FakeSettingsStore, handler, *, solver_reply: str = "15.
         maker=maker,
         client=client,
         router=_FakeRouter(solver_reply),  # type: ignore[arg-type]
-        settings_store=store,
+        settings_store=store,  # type: ignore[arg-type]
     )
 
 
@@ -199,7 +199,7 @@ async def test_streak_stops_writes_after_repeated_verify_failures(
         async with scoped_session(maker, _admin(pid)) as s:
             await OutboxRepo().set_status(s, rid, "released")
         await sweep.tick()
-    assert store.values["moltbook_verify_fail_streak"] >= MOLTBOOK_FAIL_STREAK_LIMIT
+    assert int(store.values["moltbook_verify_fail_streak"]) >= MOLTBOOK_FAIL_STREAK_LIMIT  # type: ignore[call-overload]
 
     # Now the guard stops all writes, even a fresh released row.
     rid = await _stage_comment(maker, pid)

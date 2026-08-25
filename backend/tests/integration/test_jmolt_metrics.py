@@ -84,7 +84,7 @@ async def test_metrics_count_actions_scratch_and_outbox(maker: async_sessionmake
         )
 
     store = FakeSettingsStore()
-    m = await JmoltMetrics(maker=maker, settings_store=store).compute(days=7)
+    m = await JmoltMetrics(maker=maker, settings_store=store).compute(days=7)  # type: ignore[arg-type]
 
     assert m.nights_run == 1
     assert m.actions_by_type == {"publish_comment": 2, "publish_vote": 1}
@@ -101,6 +101,6 @@ async def test_metrics_count_actions_scratch_and_outbox(maker: async_sessionmake
 
 async def test_metrics_empty_when_nothing_happened(maker: async_sessionmaker) -> None:
     await _owner_pid(maker)
-    m = await JmoltMetrics(maker=maker, settings_store=FakeSettingsStore()).compute(days=7)
+    m = await JmoltMetrics(maker=maker, settings_store=FakeSettingsStore()).compute(days=7)  # type: ignore[arg-type]
     assert m.nights_run == 0 and m.actions_total == 0 and m.scratch_files == 0
     assert m.outbox_by_status == {}

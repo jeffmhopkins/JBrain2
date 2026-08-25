@@ -173,7 +173,7 @@ async def test_archive_records_changes_and_a_non_jmolt_session_cannot_touch_it(
             text("DELETE FROM app.jmolt_scratch_archive WHERE principal_id = :pid"),
             {"pid": pid},
         )
-        assert result.rowcount == 0
+        assert result.rowcount == 0  # type: ignore[attr-defined]
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
         assert len(await repo.history(s, pid, "a.md")) == 2  # untouched
     with pytest.raises(ProgrammingError):

@@ -83,7 +83,7 @@ def _watch(
     maker, store: FakeSettingsStore, handler, notify: NotifyBus | None = None
 ) -> JmoltIntegrity:
     client = MoltbookClient(_key, transport=httpx.MockTransport(handler))
-    return JmoltIntegrity(maker=maker, client=client, settings_store=store, notify=notify)
+    return JmoltIntegrity(maker=maker, client=client, settings_store=store, notify=notify)  # type: ignore[arg-type]
 
 
 async def _publish_row(maker, pid: str, *, title: str, moltbook_id: str) -> None:

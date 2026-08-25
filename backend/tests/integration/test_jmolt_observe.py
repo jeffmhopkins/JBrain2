@@ -176,7 +176,8 @@ async def test_observe_data_context_can_read_but_rls_denies_every_write(
 
     # SELECT works (the scope grants it).
     async with scoped_session(maker, read) as s:
-        assert (await s.execute(text("SELECT count(*) FROM app.jmolt_scratch"))).scalar() >= 1
+        count = (await s.execute(text("SELECT count(*) FROM app.jmolt_scratch"))).scalar()
+        assert (count or 0) >= 1
 
     # An INSERT is refused outright (the WITH CHECK on the scratch write policy fails).
     with pytest.raises(ProgrammingError):
@@ -193,9 +194,9 @@ async def test_observe_data_context_can_read_but_rls_denies_every_write(
     # so the observer can neither release nor purge anything.
     async with scoped_session(maker, read) as s:
         upd = await s.execute(text("UPDATE app.jmolt_outbox SET status = 'published'"))
-        assert upd.rowcount == 0
+        assert upd.rowcount == 0  # type: ignore[attr-defined]
         dele = await s.execute(text("DELETE FROM app.jmolt_action_ledger"))
-        assert dele.rowcount == 0
+        assert dele.rowcount == 0  # type: ignore[attr-defined]
     # The rows are untouched (a jmolt-context read still sees the seeded outbox row).
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
         assert len(await OutboxRepo().list_by_status(s, pid, ("queued",))) == 1

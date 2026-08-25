@@ -122,7 +122,11 @@ async def test_tick_skips_when_killed(maker: async_sessionmaker) -> None:
     at_3am = datetime(2026, 8, 25, 3, 5, tzinfo=UTC)
     before = await _jmolt_session_count(maker, owner)
     fired = await jmolt_night_tick(
-        maker, _runner(maker, store, _FakeExecutor()), store, lane, now=at_3am
+        maker,
+        _runner(maker, store, _FakeExecutor()),
+        store,  # type: ignore[arg-type]
+        lane,
+        now=at_3am,
     )
     assert fired is False
     assert not lane.busy()
@@ -135,7 +139,11 @@ async def test_tick_skips_when_unregistered(maker: async_sessionmaker) -> None:
     lane = SingleFlightLane()
     at_3am = datetime(2026, 8, 25, 3, 5, tzinfo=UTC)
     fired = await jmolt_night_tick(
-        maker, _runner(maker, store, _FakeExecutor()), store, lane, now=at_3am
+        maker,
+        _runner(maker, store, _FakeExecutor()),
+        store,  # type: ignore[arg-type]
+        lane,
+        now=at_3am,
     )
     assert not lane.busy()
     assert fired is False  # window open but no key → no run
@@ -148,7 +156,11 @@ async def test_tick_skips_outside_window(maker: async_sessionmaker) -> None:
     lane = SingleFlightLane()
     at_2pm = datetime(2026, 8, 25, 14, 0, tzinfo=UTC)
     fired = await jmolt_night_tick(
-        maker, _runner(maker, store, _FakeExecutor()), store, lane, now=at_2pm
+        maker,
+        _runner(maker, store, _FakeExecutor()),
+        store,  # type: ignore[arg-type]
+        lane,
+        now=at_2pm,
     )
     assert fired is False
     assert not lane.busy()
@@ -165,7 +177,7 @@ async def test_tick_fires_once_in_window(maker: async_sessionmaker) -> None:
     at_3am = datetime(2026, 8, 25, 3, 5, tzinfo=UTC)
     before = await _jmolt_session_count(maker, owner)
 
-    fired = await jmolt_night_tick(maker, runner, store, lane, now=at_3am)
+    fired = await jmolt_night_tick(maker, runner, store, lane, now=at_3am)  # type: ignore[arg-type]
     assert fired is True
     await lane.join()  # let the launched run settle
     assert executor.calls == 1
@@ -175,7 +187,7 @@ async def test_tick_fires_once_in_window(maker: async_sessionmaker) -> None:
     # a process restart inside the window): the durable last-night date is the guard.
     fresh_lane = SingleFlightLane()
     at_307am = datetime(2026, 8, 25, 3, 7, tzinfo=UTC)
-    again = await jmolt_night_tick(maker, runner, store, fresh_lane, now=at_307am)
+    again = await jmolt_night_tick(maker, runner, store, fresh_lane, now=at_307am)  # type: ignore[arg-type]
     await fresh_lane.join()
     assert again is False
     assert executor.calls == 1

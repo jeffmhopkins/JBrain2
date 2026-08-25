@@ -92,7 +92,7 @@ async def test_digest_fires_once_in_the_morning_and_enumerates(maker: async_sess
     await _seed(maker, pid)
     store = _registered_store()
     bus = _CaptureBus()
-    digest = JmoltDigest(maker=maker, settings_store=store, notify=bus)
+    digest = JmoltDigest(maker=maker, settings_store=store, notify=bus)  # type: ignore[arg-type]
 
     assert await digest.tick(now=_MORNING) is True
     assert len(bus.sent) == 1
@@ -112,7 +112,7 @@ async def test_digest_skips_outside_the_window(maker: async_sessionmaker) -> Non
     store = _registered_store()
     bus = _CaptureBus()
     assert (
-        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MIDDAY) is False
+        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MIDDAY) is False  # type: ignore[arg-type]
     )
     assert bus.sent == []
 
@@ -123,6 +123,6 @@ async def test_digest_skips_when_unregistered(maker: async_sessionmaker) -> None
     store = FakeSettingsStore()  # no api key
     bus = _CaptureBus()
     assert (
-        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MORNING) is False
+        await JmoltDigest(maker=maker, settings_store=store, notify=bus).tick(now=_MORNING) is False  # type: ignore[arg-type]
     )
     assert bus.sent == []
