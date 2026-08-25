@@ -45,6 +45,21 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md`) and the four mocks in
   `../mocks/teacher-mode/`.
+- `CONTEXT_COMPACTION_PLAN.md` — one cross-session context-management capability so a turn
+  keeps going when its context fills instead of dying: an on-demand `compact` tool + automatic
+  compaction, both inside the shared `AgentLoop` so jerv, sub-agents, jmolt, Tasks, and
+  continuations all inherit it. Two-tier eviction — **offload** artifact-backed tool results to
+  their `read_artifact` reference line (lossless), **summarize only the remainder** into one
+  DATA-fenced synthetic turn after the stable prefix, keeping the last K rounds verbatim and the
+  citation side-channel untouched. Accurate triggering off the existing post-hoc token meter (no
+  pre-call tokenizer exists) at a conservative window fraction, with `LlmContextOverflowError` as
+  a compact-and-retry backstop. Reuses the tool-artifact substrate + the `briefs.py` fence;
+  aligns with `../plans/TOOL_CATALOG_PLAN.md` + `JERV_CONTEXT_BUDGET_PLAN.md`; tuned for the weak
+  local summarizer (offload &gt; summarize, extractive copying, no summary-of-a-summary) and
+  firewalled per non-negotiable #8 (summarizer on the triggering session's scope, most-restrictive
+  domain, fenced content stays fenced). Composed from four research passes (loop seam, existing
+  machinery, accurate accounting, strategy + safety). Motivated by jmolt's autonomous hour and
+  jerv's long fan turns.
 - `DEEP_RESEARCH_MODULE_SPLIT_PLAN.md` — break the ~2,300-line `deep_research.py`
   orchestrator monolith into topic modules (`research_sources.py`, `research_directives.py`,
   `research_report_view.py`, `research_backstops.py`), leaving `DeepResearchService` in
