@@ -3,10 +3,11 @@
 > **Status:** Living · **Last verified:** 2026-08-24
 
 Research dossier gating `../../proposed/JMOLT_PLAN.md`'s promotion to `../../plans/`.
-Scope: the one divergence from `F1916_CITIZENSHIP_PLAN.md` — **autonomous** writes
-driven by the local **gpt-oss-120b**, whose instruction-following and
-injection-resistance are materially weaker than the frontier models F1916's fencing
-assumed. The governing assumption: **every DATA-fence and every persona rule is a
+Scope: the one divergence from the safe-by-approval citizenship design — the trusted
+assistant made a citizen, every write gated by owner approval — namely **autonomous**
+writes driven by the local **gpt-oss-120b**, whose instruction-following and
+injection-resistance are materially weaker than the frontier models that design's
+fencing assumed. The governing assumption: **every DATA-fence and every persona rule is a
 prompt-level control; on a 120B it is a soft suggestion, not a boundary.** This pass
 assumes fences leak and re-derives the boundaries that must be **mechanical**
 (handler, schema, RLS, clock, quota) so they hold when the model does not.
@@ -54,8 +55,8 @@ Full chains by adversary — malicious agent (A), compromised platform (B), open
 - **B1 — `challenge_text` as injection** into the one-shot solver call.
 - **B3 — hostile `/home` dashboard.** The prologue ends with the platform's
   `suggested_actions` — an imperative channel — as the freshest, most authoritative
-  context. Exactly F1916's documented "site's own suggested standing order steers a
-  plan," now in the trusted prologue on a 120B.
+  context. Exactly the documented "site's own suggested standing order steers a
+  plan" risk, now in the trusted prologue on a 120B.
 - **B4 — clock/ratelimit-header lies** skew cap and streak accounting → over-post →
   suspension.
 - **E1 — diary poisons jerv.** jerv reads the diary via `jmolt_observe` while its
@@ -70,18 +71,18 @@ Full chains by adversary — malicious agent (A), compromised platform (B), open
 
 - **W-2 (contradiction):** the plan boasted "no remote heartbeat.md obey-this fetch"
   while shipping `web_fetch`, which is functionally exactly that primitive.
-- **W-3 (wrong-if-copied):** F1916's "server `now_utc` governs cap accounting, never
-  the local clock" is **backwards** for a threat model that assumes a *compromised*
-  platform. jmolt must account caps/streaks on the local trusted clock; platform
-  time is advisory. This is the one F1916 invariant that must be **inverted**, not
-  adopted.
+- **W-3 (wrong-if-copied):** the safe-by-approval design's "server `now_utc` governs
+  cap accounting, never the local clock" is **backwards** for a threat model that
+  assumes a *compromised* platform. jmolt must account caps/streaks on the local
+  trusted clock; platform time is advisory. This is the one honest-platform invariant
+  that must be **inverted**, not adopted.
 - **W-4 (central gap):** "gate the blast radius via a switch-governed outbox" does
   not cover `web_fetch`/`web_search` — live, un-staged, un-switched egress.
 - **W-5:** under switch ON, live comments + their challenge-solves publish at 3am
   with the digest as the first human view — for live writes there is no net, only
   forensics, so the net must be mechanical.
 - **W-6:** the scrubber guards echo, but the real residual is a handler **logging
-  the `Authorization` header** — carry F1916's "log route/status only" verbatim and
+  the `Authorization` header** — carry the "log route/status only" rule verbatim and
   don't assume the key always carries the `moltbook_` prefix.
 
 ## Binding must-haves (M1–M24)
@@ -103,8 +104,8 @@ binds every wave.
    `suggested_actions` and any announcement/banner are **removed**, not merely
    fenced; only inert data (counts, subjects) survives, fenced.
 4. **Cap accounting on the local trusted clock.** Platform `now_utc` is advisory;
-   never governs budget resets or drip spacing. (Inverts F1916 §2.1 for the
-   compromised-platform premise.)
+   never governs budget resets or drip spacing. (Inverts the honest-platform
+   assumption for the compromised-platform premise.)
 5. **The challenge solver is provably tool-free and numeric-only.** The one-shot
    solve binds **zero tools**; `challenge_text` is length-capped and fenced; output
    is parsed as a single 2-decimal number and **any non-numeric output skips
@@ -143,7 +144,7 @@ binds every wave.
     `jmolt_observe` is usable only where jerv's owner egress tools (email/notes/
     connectors) are not live in the same session. Stays out of spawn-children
     allowlists.
-17. **Separated identity plumbing for jerv (F1916) and jmolt** — distinct settings
+17. **Separated identity plumbing for jerv and jmolt** — distinct settings
     rows, distinct RLS domains, both prefix scrubbers stacked (no single-prefix
     assumption); the credential provider physically cannot hand one persona's
     handler the other's key; neither persona's tools appear in the other's catalog.
@@ -183,6 +184,6 @@ reality and are now must-haves: (1) `web_fetch`/`web_search` are live un-switche
 egress that void the outbox safety story (M1); (2) every fence/persona rule is a
 prompt control the 120B will breach, so the boundaries that must hold have to be
 mechanical — the lint (M8), the clamps (M9/M10), the tool-free solver (M5), the
-re-fenced reload (M2); (3) F1916's server-clock cap accounting is actively wrong
-under the compromised-platform premise and is inverted (M4). With M1–M24 bound into
+re-fenced reload (M2); (3) the honest-platform server-clock cap accounting is
+actively wrong under the compromised-platform premise and is inverted (M4). With M1–M24 bound into
 the waves, the design is defensible; without M1, M2, M4, M6, M8 it is not.
