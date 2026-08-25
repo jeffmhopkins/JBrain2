@@ -40,18 +40,24 @@ _SECRET_PATTERNS = (
     re.compile(r"\b[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b"),  # JWT
     re.compile(r"\b(?:xprv|xpub)[A-Za-z0-9]{50,}\b"),  # HD wallet key
 )
-# Invisible / bidi / zero-width characters — an obfuscation and homograph vector.
-# Soft hyphen, zero-width spaces/joiners, LRM/RLM, bidi embeddings/overrides/isolates,
-# word joiner, invisible-math operators, and the BOM. Built from explicit codepoints.
-_BIDI_ZW_CHARS = (
-    "­"  # soft hyphen
-    "​‌‍‎‏"  # ZWSP, ZWNJ, ZWJ, LRM, RLM
-    "‪‫‬‭‮"  # bidi embeddings / overrides
-    "⁠⁡⁢⁣⁤"  # word joiner, invisible math operators
-    "⁦⁧⁨⁩"  # bidi isolates
-    "﻿"  # BOM / zero-width no-break space
+# Invisible / bidi / zero-width / steganographic characters — an obfuscation, homograph,
+# and ASCII-smuggling vector. Built from explicit codepoint RANGES so the big blocks (the
+# Unicode Tag chars used to smuggle hidden ASCII, and the variation-selector supplement
+# used for emoji steganography) are covered without literal invisible characters in source.
+_INVISIBLE_RANGES = (
+    (0x00AD, 0x00AD),  # soft hyphen
+    (0x180E, 0x180E),  # Mongolian vowel separator
+    (0x200B, 0x200F),  # ZWSP, ZWNJ, ZWJ, LRM, RLM
+    (0x202A, 0x202E),  # bidi embeddings / overrides
+    (0x2060, 0x2064),  # word joiner, invisible math operators
+    (0x2066, 0x2069),  # bidi isolates
+    (0xFE00, 0xFE0F),  # variation selectors
+    (0xFEFF, 0xFEFF),  # BOM / zero-width no-break space
+    (0xFFF9, 0xFFFB),  # interlinear annotation controls
+    (0xE0000, 0xE007F),  # Unicode Tag characters (ASCII smuggling)
+    (0xE0100, 0xE01EF),  # variation selectors supplement (emoji steganography)
 )
-_BIDI_ZW = re.compile(f"[{_BIDI_ZW_CHARS}]")
+_BIDI_ZW = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in _INVISIBLE_RANGES) + "]")
 
 
 @dataclass(frozen=True)
@@ -151,8 +157,15 @@ def clamp_publish_at(
     candidate = requested if (requested and requested.tzinfo) else floor
     if candidate < floor:
         candidate = floor
-    # Never spill past the local day; if the floor already crosses midnight, pin to 23:59.
+    # Never spill past the local day. If the required floor (min gap after the last post)
+    # already crosses midnight, there is no room for another spaced post today — refuse
+    # rather than stack posts onto the same 23:59 minute (which would break the ≥gap rule
+    # and the drip spacing).
     end_of_day = datetime.combine(now_local.date(), time(23, 59), tzinfo=now_local.tzinfo)
+    if floor > end_of_day:
+        raise TooManyPostsError(
+            "no room left in the day for another post the required gap after the last one."
+        )
     if candidate > end_of_day:
-        candidate = min(floor, end_of_day) if floor <= end_of_day else end_of_day
+        candidate = floor  # a too-late request falls back to the earliest allowed slot
     return candidate

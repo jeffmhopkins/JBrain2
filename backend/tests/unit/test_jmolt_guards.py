@@ -51,6 +51,13 @@ def test_lint_blocks_zero_width_and_bidi() -> None:
     assert not lint_content(f"a{chr(0xFEFF)}b").ok
 
 
+def test_lint_blocks_tag_chars_and_variation_selectors() -> None:
+    # Unicode Tag characters (ASCII smuggling) and variation selectors (steganography).
+    assert not lint_content(f"clean{chr(0xE0041)}text").ok  # Tag 'A'
+    assert not lint_content(f"emoji{chr(0xFE0F)}here").ok  # variation selector
+    assert not lint_content(f"x{chr(0xE0100)}y").ok  # variation selector supplement
+
+
 # ---- M9 near-duplicate ---------------------------------------------------
 
 
@@ -102,8 +109,13 @@ def test_clamp_rejects_when_night_is_full() -> None:
         clamp_publish_at(_t(20, 0), existing, now)
 
 
-def test_clamp_pins_within_the_local_day() -> None:
+def test_clamp_refuses_when_gap_would_cross_midnight() -> None:
     now = _t(3, 0)
-    out = clamp_publish_at(_t(23, 0), [_t(23, 50)], now)  # gap would spill past midnight
-    assert out.date() == now.date()
-    assert out <= datetime(2026, 8, 25, 23, 59, tzinfo=UTC)
+    with pytest.raises(TooManyPostsError):  # 23:50 + 30 min crosses the day → no room
+        clamp_publish_at(_t(23, 0), [_t(23, 50)], now)
+
+
+def test_clamp_too_late_request_falls_back_to_floor() -> None:
+    now = _t(3, 0)
+    out = clamp_publish_at(_t(23, 58), [_t(9, 0)], now)  # requested near midnight, room exists
+    assert out.date() == now.date() and out >= _t(9, 30)

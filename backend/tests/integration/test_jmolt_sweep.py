@@ -35,8 +35,11 @@ class _Result:
 
 
 class _FakeRouter:
+    def __init__(self, reply: str = "15.00") -> None:
+        self.reply = reply
+
     async def complete(self, task: str, *, system: str, user_text: str, max_tokens: int) -> _Result:
-        return _Result(text="15.00")
+        return _Result(text=self.reply)
 
 
 @pytest.fixture
@@ -79,9 +82,14 @@ async def _key() -> tuple[str, str]:
     return "moltbook_key123456", "jmolt"
 
 
-def _sweep(maker, store: FakeSettingsStore, handler) -> JmoltSweep:
+def _sweep(maker, store: FakeSettingsStore, handler, *, solver_reply: str = "15.00") -> JmoltSweep:
     client = MoltbookClient(_key, transport=httpx.MockTransport(handler))
-    return JmoltSweep(maker=maker, client=client, router=_FakeRouter(), settings_store=store)  # type: ignore[arg-type]
+    return JmoltSweep(
+        maker=maker,
+        client=client,
+        router=_FakeRouter(solver_reply),  # type: ignore[arg-type]
+        settings_store=store,
+    )
 
 
 async def _stage_comment(maker, pid: str) -> str:
@@ -198,3 +206,31 @@ async def test_streak_stops_writes_after_repeated_verify_failures(
     async with scoped_session(maker, _admin(pid)) as s:
         await OutboxRepo().set_status(s, rid, "released")
     assert await sweep.tick() == 0
+
+
+async def test_unsolvable_challenge_skips_verify_without_spending_the_streak(
+    maker: async_sessionmaker,
+) -> None:
+    # M5: a non-numeric solve is a SKIP, not a submission — the row fails but the streak
+    # must NOT advance (else an attacker's unsolvable-challenge flood self-DoSes writes).
+    pid = await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        # The write always returns a challenge; /verify would only be hit on a numeric solve.
+        assert not req.url.path.endswith("/verify"), "must not submit /verify on a skip"
+        return httpx.Response(
+            200,
+            json={
+                "comment": {"id": "c1"},
+                "verification": {"verification_code": "v1", "challenge_text": "unsolvable"},
+            },
+        )
+
+    sweep = _sweep(maker, store, handler, solver_reply="I cannot solve this")
+    for _ in range(4):
+        rid = await _stage_comment(maker, pid)
+        async with scoped_session(maker, _admin(pid)) as s:
+            await OutboxRepo().set_status(s, rid, "released")
+        await sweep.tick()
+    assert store.values.get("moltbook_verify_fail_streak", 0) == 0  # never spent

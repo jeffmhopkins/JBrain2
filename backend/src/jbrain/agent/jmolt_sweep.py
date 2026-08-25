@@ -103,6 +103,18 @@ class JmoltSweep:
         return published
 
     async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> bool:
+        # Reconcile-before-publish for posts (M23, strengthened): a crash between a landed
+        # write and its DB commit would otherwise re-publish this row on restart with no
+        # error to trigger reconcile. Check the account first; if the post is already there,
+        # mark it published instead of double-posting.
+        if row.kind == "post":
+            existing_id = await self._already_posted(row)
+            if existing_id is not None:
+                async with scoped_session(self._maker, admin) as s:
+                    await self._outbox.set_status(
+                        s, row.id, "published", moltbook_id=existing_id, published=True
+                    )
+                return True
         try:
             result = await self._do_write(row)
         except MoltbookError as exc:
@@ -141,19 +153,41 @@ class JmoltSweep:
     ) -> bool:
         answer = await solve_challenge(self._router, str(ver.get("challenge_text", "")))
         if answer is None:
-            await self._bump_streak_and_fail(pid, admin, row, "could not solve the verification")
+            # M5: a non-numeric solve is a SKIP, not a submission — mark failed but DON'T
+            # spend the streak (else an attacker's flood of unsolvable challenges could
+            # self-DoS all writes without a single real verify rejection).
+            await self._fail(admin, row, "could not solve the verification — skipped /verify")
             return False
         try:
             vr = await self._client.submit_verify(str(ver.get("verification_code")), answer)
         except MoltbookError as exc:
-            await self._bump_streak_and_fail(pid, admin, row, str(exc))
+            # A transient submit error is not a rejection — fail the row, don't spend the streak.
+            await self._fail(admin, row, self._client.scrub(str(exc)))
             return False
         if not (isinstance(vr, dict) and vr.get("success")):
+            # A real platform rejection — this is what the streak counts (M11).
             await self._bump_streak_and_fail(pid, admin, row, "verification rejected")
             return False
         # Success — reset the streak.
         await self._settings.set_moltbook_verify_fail_streak(admin, 0)
         return True
+
+    async def _fail(self, admin: SessionContext, row: OutboxRow, reason: str) -> None:
+        async with scoped_session(self._maker, admin) as s:
+            await self._outbox.set_status(s, row.id, "failed", error=reason[:500])
+
+    async def _already_posted(self, row: OutboxRow) -> str | None:
+        """The platform id of a post already on the account matching this row's title, or
+        None. Best-effort — a lookup failure returns None so publishing proceeds."""
+        title = str(row.payload.get("title", "")).strip()
+        if not title:
+            return None
+        try:
+            recent = await self._client.me_history()
+        except MoltbookError:
+            return None
+        match = next((h for h in recent if str(h.get("title", "")).strip() == title), None)
+        return str(match.get("id") or "") if match is not None else None
 
     async def _do_write(self, row: OutboxRow) -> Any:
         p = row.payload
