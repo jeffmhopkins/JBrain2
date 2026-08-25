@@ -601,6 +601,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # web_fetcher (all egress in one place) and parses them offline; the pinned feed map
         # comes from config, never the model.
         news_feeds = FeedClient(web_fetcher, settings.news_feeds)
+
         # The jmolt persona's pinned Moltbook client (docs/plans/JMOLT_PLAN.md). Its bearer
         # key is read LIVE from owner-only app.settings on each request (stored key over the
         # JBRAIN_MOLTBOOK_API_KEY env fallback), so the PWA registration panel is the live

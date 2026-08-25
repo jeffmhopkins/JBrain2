@@ -83,12 +83,7 @@ def classify_account(me: dict) -> str:
     softer moderation/limit shape surfaces, and only a view with no bad signal is `ok`.
     Pure — unit-tested against each shape."""
     status = str(me.get("status") or me.get("account_status") or "").strip().lower()
-    if (
-        me.get("suspended")
-        or me.get("banned")
-        or me.get("disabled")
-        or status in _SUSPENDED_WORDS
-    ):
+    if me.get("suspended") or me.get("banned") or me.get("disabled") or status in _SUSPENDED_WORDS:
         return _STATE_SUSPENDED
     if status in _MODERATED_WORDS:
         return _STATE_MODERATED
