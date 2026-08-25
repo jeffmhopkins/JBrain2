@@ -4486,7 +4486,9 @@ button.small {
   font-size: 0.85rem;
 }
 
-/* The pick's reasoning-level control (shown only when a reasoning model is offerable). */
+/* The pick's reasoning-level control (shown only when a reasoning model is offerable):
+   a radio-style .seg-row pill like the chat picker's Today/Older/Archived segments,
+   with the route's default level marked "(default)" under its label. */
 .model-sheet-subhead {
   margin: 16px 0 8px;
   font-size: 0.85rem;
@@ -4494,9 +4496,24 @@ button.small {
 }
 
 .model-effort-row {
-  margin: 0;
-  padding: 0;
-  border: none;
+  /* The selected segment's tint — .seg-on paints var(--mode-tint), which has no
+     value inside a sheet, so bind it to the accent the sheet already speaks. */
+  --mode: var(--accent);
+  --mode-tint: var(--accent-tint);
+}
+
+.model-effort-row .seg {
+  /* Stack the level over its "(default)" marker; rows without the marker stretch
+     to the same height, so the pill stays level. */
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.6em 0;
+}
+
+.model-effort-default {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
 }
 
 .model-effort-note {

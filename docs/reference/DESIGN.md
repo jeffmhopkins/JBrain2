@@ -1094,11 +1094,15 @@ local append with an amber "pending sync" chip until the outbox clears.
   (or right-clicking) the **Research** or **Full Brain** tab opens a bottom sheet
   listing the on-box models **currently loaded**, plus an **Automatic** row that
   clears back to the default route. When a reasoning model is offerable the sheet
-  adds a **Reasoning** segmented row (Auto / None / Low / Med / High — Auto is the
-  model's own default): tapping a level arms it without closing (so level-then-model
-  lands in one visit), a model row carries the armed level onto the pick, and with a
-  reasoning pick already active a level tap re-applies live. The foot's model chip
-  appends the chosen level (`GPT-OSS 120B · high`). The choice is scoped to **that
+  adds a **Reasoning** radio pill row (None / Low / Medium / High, styled like the
+  chat picker's Today/Older/Archived segments) — no separate "Auto": the route's
+  effective default level carries a small **"(default)"** marker under its label
+  and reads selected while no override is armed; tapping it clears the override so
+  the route's own effort keeps applying. Tapping a level arms it without closing
+  (so level-then-model lands in one visit), a model row carries the armed level
+  onto the pick, and with a reasoning pick already active a level tap re-applies
+  live. The foot's model chip appends an explicitly chosen level
+  (`GPT-OSS 120B · high`). The choice is scoped to **that
   conversation only** — it rides every turn of that chat and is kept in memory (a
   reload reverts to Automatic); it never touches the global task routing in Settings.
   Only conversation tabs arm the gesture; capture tabs keep their native
