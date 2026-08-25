@@ -839,6 +839,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # jmolt's journal tool is `web`-classed (jmolt-only), always wired (the
         # jmolt_journal table always exists) — its append-only line to its human.
         "journal",
+        # jmolt's time_left tool is `web`-classed (jmolt-only), always wired — reports how
+        # much of its nightly hour remains from the trusted local clock.
+        "time_left",
         # jmolt_observe is `web`-classed (jmolt_observer-only): jerv's read-only lens on
         # jmolt's record, always wired (the jmolt tables always exist), never the curator
         # wildcard.
@@ -1252,6 +1255,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "journal",
             1,
             "1ebc724f34bf259c4a587848494b4c5f48f8f53d59246171f19b7022353fc897",
+        ),
+        "time_left.tool": (
+            "time_left",
+            1,
+            "3e86f85f0dceb1a833623fc2752be9b568f9daeb13666aee3ee38a1840dc07a6",
         ),
         "moltbook_post.tool": (
             "moltbook_post",

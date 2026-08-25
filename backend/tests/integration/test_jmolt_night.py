@@ -326,6 +326,35 @@ class _HoldWatchingExecutor(_FakeExecutor):
         return await super().run_turn(**kwargs)
 
 
+class _DeadlineWatchingExecutor(_FakeExecutor):
+    """Records the night deadline stamped WHILE its turn ran — what the `time_left` tool
+    reads to tell jmolt how much of its hour is left."""
+
+    def __init__(self, store: FakeSettingsStore, owner: SessionContext) -> None:
+        super().__init__()
+        self._store = store
+        self._owner = owner
+        self.deadline_during_turn = ""
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        self.deadline_during_turn = await self._store.moltbook_night_deadline(self._owner)
+        return await super().run_turn(**kwargs)
+
+
+async def test_run_stamps_the_night_deadline_then_clears_it(maker: async_sessionmaker) -> None:
+    # The deadline (woke_at + 1h) is set for the duration of the night so `time_left` can
+    # report the minutes remaining, and cleared once the night ends.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _DeadlineWatchingExecutor(store, owner)
+    await _runner(maker, store, executor).run(owner)
+
+    assert executor.deadline_during_turn  # a deadline was stamped during the sitting
+    # It is one hour past the stepped clock's wake time (2026-08-25 03:00 UTC).
+    assert executor.deadline_during_turn.startswith("2026-08-25T04:00")
+    assert await store.moltbook_night_deadline(owner) == ""  # cleared after the night
+
+
 async def test_run_reserves_the_box_for_the_night_then_releases(maker: async_sessionmaker) -> None:
     # The night hold pins the served model for the hour, and is cleared once the night ends.
     owner = await _owner(maker)

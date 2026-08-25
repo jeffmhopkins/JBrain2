@@ -55,6 +55,7 @@ from jbrain.agent.geocodetools import build_geocode_handlers
 from jbrain.agent.jmoltjournaltools import build_jmolt_journal_handlers
 from jbrain.agent.jmoltobservetools import build_jmolt_observe_handlers
 from jbrain.agent.jmoltscratchtools import build_jmolt_scratch_handlers
+from jbrain.agent.jmolttimetools import build_jmolt_time_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.locationtools import build_location_handlers
@@ -941,6 +942,9 @@ def build_registry(
             # — jmolt's append-only line to its human, surfaced in the digest + PWA. Always
             # wired; the M19 RLS split is the firewall (docs/plans/JMOLT_PLAN.md).
             **build_jmolt_journal_handlers(maker),
+            # jmolt's `time_left` tool (`web`-gated, jmolt-only): reports how much of its
+            # nightly hour remains, computed from the trusted local clock — always wired.
+            **build_jmolt_time_handlers(maker),
             # jerv's read-only lens on jmolt (`web`-gated, jmolt_observer-only): the
             # `jmolt_observe` umbrella over jmolt's nights/transcripts/actions/scratchpad/
             # outbox — always wired (the tables always exist). Every read runs a
