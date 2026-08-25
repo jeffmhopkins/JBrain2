@@ -22,6 +22,8 @@ from jbrain.api.deps import OwnerDep, PrincipalInfo, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
+from jbrain.db.session import scoped_session
+from jbrain.models.jmolt_outbox import OutboxRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.web.moltbook import MoltbookClient, MoltbookError
 
@@ -68,6 +70,22 @@ class MoltbookPatch(BaseModel):
     disclosure: str | None = None
     # Clear the stored key (disconnect the account), reverting to the env fallback.
     clear_key: bool = False
+    # Reset the verify-failure streak (M11) so writing resumes after the owner has looked.
+    clear_streak: bool = False
+
+
+class OutboxItemOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    publish_at: str | None
+    payload: dict
+    error: str | None
+
+
+class OutboxActionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str  # 'release' | 'discard'
 
 
 class MoltbookClaimOut(BaseModel):
@@ -112,7 +130,42 @@ async def update_moltbook_settings(
     if body.clear_key:
         await store.set_moltbook_api_key(ctx, "")
         await store.set_moltbook_handle(ctx, "")
+    if body.clear_streak:
+        await store.set_moltbook_verify_fail_streak(ctx, 0)
     return await _status(principal, store, settings)
+
+
+@router.get("/settings/moltbook/outbox")
+async def list_outbox(request: Request, principal: OwnerDep) -> list[OutboxItemOut]:
+    """The review queue: staged writes awaiting release (queued) plus released-but-unsent
+    ones. The owner releases or discards each while the autonomy switch is off."""
+    ctx = ctx_for(principal)
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        rows = await OutboxRepo().list_by_status(s, ctx.principal_id, ("queued", "released"))
+    return [
+        OutboxItemOut(
+            id=r.id,
+            kind=r.kind,
+            status=r.status,
+            publish_at=r.publish_at.isoformat() if r.publish_at else None,
+            payload=r.payload,
+            error=r.error,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/settings/moltbook/outbox/{row_id}")
+async def act_on_outbox(
+    row_id: str, body: OutboxActionIn, request: Request, principal: OwnerDep
+) -> dict:
+    ctx = ctx_for(principal)
+    status = "released" if body.action == "release" else "discarded"
+    if body.action not in ("release", "discard"):
+        raise HTTPException(status_code=422, detail="action must be release or discard")
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        await OutboxRepo().set_status(s, row_id, status)
+    return {"status": status}
 
 
 @router.post("/settings/moltbook/register")

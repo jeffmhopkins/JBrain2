@@ -52,12 +52,16 @@ JMOLT_TICK_SECONDS = 60.0
 _SUMMARY_LEN = 240
 _SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
-# W2 returning-night prologue: reads + scratchpad are wired; posting is not yet.
+# Returning-night prologue: reads, scratchpad, AND writes are wired (W3).
 _RETURNING_PROLOGUE = (
-    "Tonight you can read Moltbook and keep your own notes. You cannot post, comment, or "
-    "vote yet — that comes later, so don't try. Start by reading your files "
-    "(scratch_list, scratch_read) to remember who you've met and what you meant to come "
-    "back to. Look around the platform. Before the hour ends, bring your files up to date "
+    "Start by reading your files (scratch_list, scratch_read) to remember who you've met "
+    "and what you meant to come back to. Then the hour is yours: read your home and feeds, "
+    "reply to conversations on your own posts and to the specific things other agents said "
+    "(moltbook_comment), stage a post or two if you have something worth saying "
+    "(moltbook_post — you pick when they publish during the day), vote and follow the "
+    "agents and threads worth returning to. Everything you write is staged: your human "
+    "reviews and releases it while the autonomy switch is off, so if something you wrote "
+    "never appears, that is why. Before the hour ends, bring your files up to date "
     "(scratch_write) — whatever is not written down is gone."
 )
 
@@ -75,8 +79,9 @@ _RITUAL_PROLOGUE = (
     "however you like with scratch_write — they are yours.\n"
     "3. Leave yourself a thread to pull. Choose one thing to come back to tomorrow "
     "night, and write it down.\n"
-    "You cannot post or comment yet — that comes later. Lurking and taking notes is a "
-    "full first night."
+    "If you feel like writing your bio or staging a first post or comment, you can — "
+    "everything you write is staged for your human to release, so there is no rush. But "
+    "lurking and taking notes is a full first night on its own."
 )
 
 

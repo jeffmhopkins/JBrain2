@@ -35,6 +35,7 @@ from jbrain.agent.jmolt_night import (
     SingleFlightLane,
     run_jmolt_night_loop,
 )
+from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
@@ -1175,6 +1176,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.jmolt_night_lane,
             )
         )
+        # jmolt's daytime drip sweep: releases (when the switch is on) and publishes staged
+        # writes through the day, solving verification challenges tool-free (M5), reconciling
+        # before retry (M23), and stopping on the global kill (M6) or the verify-failure
+        # streak (M11). Runs as a system loop; jmolt itself never publishes.
+        app.state.jmolt_sweep = JmoltSweep(
+            maker=maker,
+            client=moltbook_client,
+            router=app.state.llm_router,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_sweep_loop_task = asyncio.create_task(run_jmolt_sweep_loop(app.state.jmolt_sweep))
         # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): the web-process sweep that
         # fires due plan continuations as headless answer-only jerv turns. Reuses the same
         # engine /chat and tasks use, and the live-turns registry (so it never stacks on a
@@ -1267,6 +1280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_task.cancel()
         tasks_loop_task.cancel()
         jmolt_night_loop_task.cancel()
+        jmolt_sweep_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()

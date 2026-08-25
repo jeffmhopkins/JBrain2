@@ -458,6 +458,13 @@ class FakeSettingsStore:
     async def set_moltbook_last_night(self, ctx: object, iso_date: str) -> None:
         self.values["moltbook_last_night"] = iso_date
 
+    async def moltbook_verify_fail_streak(self, ctx: object) -> int:
+        raw = self.values.get("moltbook_verify_fail_streak", 0)
+        return raw if isinstance(raw, int) else 0
+
+    async def set_moltbook_verify_fail_streak(self, ctx: object, n: int) -> None:
+        self.values["moltbook_verify_fail_streak"] = int(n)
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""

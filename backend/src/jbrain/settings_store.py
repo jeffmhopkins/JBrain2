@@ -153,6 +153,10 @@ MOLTBOOK_KILL_DEFAULT = False
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
 MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
 MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
+# Consecutive verification-failure streak (M11). At the limit, ALL writes stop and the
+# owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
+MOLTBOOK_FAIL_STREAK_KEY = "moltbook_verify_fail_streak"
+MOLTBOOK_FAIL_STREAK_LIMIT = 3
 
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
@@ -577,6 +581,13 @@ class SqlSettingsStore:
 
     async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
         await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
+
+    async def moltbook_verify_fail_streak(self, ctx: SessionContext) -> int:
+        raw = await self.get(ctx, MOLTBOOK_FAIL_STREAK_KEY, 0)
+        return raw if isinstance(raw, int) else 0
+
+    async def set_moltbook_verify_fail_streak(self, ctx: SessionContext, n: int) -> None:
+        await self.upsert(ctx, MOLTBOOK_FAIL_STREAK_KEY, int(n))
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).
