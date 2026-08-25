@@ -235,6 +235,18 @@ both resides and warms it.
 > restored cache on a 1-slot server. Saves and restores land in Vitals as
 > `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
 >
+> **The harmony `Current date` is moved to the prompt tail (chat-template override).**
+> gpt-oss's stock harmony template renders a live `Current date: <today>` into the prompt's
+> LEADING tokens — invisible to the fingerprint above, because llama-server injects it, not
+> us. A restored or warm ~29k-token prefix saved on one day therefore stopped matching the
+> next day's rendered prompt at that token, and the whole prefix re-prefilled (~60 s) while
+> reporting a clean restore. Fixed at the template layer: the local-llm image ships a vendored
+> copy of the harmony template (`deploy/chat-templates/gpt-oss-120b.jinja`, byte-for-byte
+> upstream's with only the date line moved) and serves gpt-oss with `--chat-template-file`
+> pointing at it, so the date lands at the TAIL of the persona+tools prefix. A date rollover
+> now re-prefills only the date itself; the prefix stays reusable across days. Re-diff the
+> vendored template against upstream on every llama.cpp repin — see `deploy/chat-templates/`.
+>
 > **Restore does not reuse on a hybrid — the disk cache is gpt-oss-only in practice.**
 > The qwen3.8 twins were opted in on 2026-08-23 and reverted on 2026-08-24 after a live
 > A/B: a qwen reload took **176 s WITH the restore, identical to without**. The restore

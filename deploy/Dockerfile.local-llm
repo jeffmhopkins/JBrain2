@@ -177,6 +177,14 @@ ARG PATCH_RESTORE_CHECKPOINT=0
 # (which is on PATH; the generated config invokes it by name).
 COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
 
+# Vendored chat-template override(s), shipped UNCONDITIONALLY (independent of the opt-in
+# patched llama-server build). gpt-oss's stock harmony template renders a live `Current date`
+# into the prompt HEAD, which broke daily prompt-cache reuse of the ~29k-token persona+tools
+# prefix; this copy moves that date to the prompt TAIL (deploy/chat-templates/README.md).
+# jbrain.llm.llama_swap_config points --chat-template-file here for any model whose catalog
+# `chat_template_file` is set — the path must match CHAT_TEMPLATE_DIR there.
+COPY deploy/chat-templates/gpt-oss-120b.jinja /opt/jbrain/chat-templates/gpt-oss-120b.jinja
+
 # Overlay the patched llama-server ONLY when the opt-in build produced one. The
 # build stage always creates /out; it holds a binary only when PATCH_RESTORE_
 # CHECKPOINT=1 succeeded. The overlay MUST include the shared libraries: the

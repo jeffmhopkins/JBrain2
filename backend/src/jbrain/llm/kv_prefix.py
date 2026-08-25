@@ -61,6 +61,15 @@ the prime sent. Any change that could make a saved state stale — window, slots
 args, a new build's flags, a persona or tool edit — moves the filename, and files nobody
 uses again age out of the byte budget. Everything here is best-effort: the worst case of
 any failure is the prefill that would have happened anyway.
+
+It deliberately does NOT cover server-injected, per-render content. gpt-oss's harmony
+template renders a live `Current date` that this store cannot see (llama-server injects it,
+not us) — a daily-changing token that, at the prompt HEAD, re-prefilled the whole restored
+prefix every day while reporting a clean restore. That is fixed at the TEMPLATE layer, not
+here: a vendored `--chat-template-file` (deploy/chat-templates/gpt-oss-120b.jinja) moves the
+date to the prompt TAIL, so a restored prefix stays reusable across days and only the date
+re-prefills. Folding the date into this fingerprint instead would just orphan the file every
+midnight — so keep it out.
 """
 
 from __future__ import annotations

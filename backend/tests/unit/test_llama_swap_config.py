@@ -215,6 +215,42 @@ def test_render_appends_extra_server_args_from_the_manifest(tmp_path: Path) -> N
     assert "--spec-type" not in plain
 
 
+def test_render_emits_chat_template_file_only_when_the_manifest_sets_it(tmp_path: Path) -> None:
+    # A vendored chat-template override reaches the command as --chat-template-file under the
+    # image's CHAT_TEMPLATE_DIR; a model without the field keeps the GGUF's own template.
+    (tmp_path / "tmpl-model").mkdir()
+    (tmp_path / "tmpl-model" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    manifest = [
+        {
+            "id": "tmpl-model",
+            "served_model": "tmpl-model",
+            "gguf_include": "*UD-Q4_K_XL*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "chat_template_file": "gpt-oss-120b.jinja",
+        }
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    assert f"--chat-template-file {llama_swap_config.CHAT_TEMPLATE_DIR}/gpt-oss-120b.jinja" in text
+    _lay_down(tmp_path)
+    plain = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert "--chat-template-file" not in plain
+
+
+def test_gpt_oss_is_served_with_the_vendored_chat_template(tmp_path: Path) -> None:
+    # End-to-end field-name contract (like the reasoning-format test): the renderer reads
+    # `chat_template_file` off asdict(LocalModel), so feed the REAL gpt-oss entry. This moves
+    # the harmony `Current date` off the prompt head — renaming the field would silently
+    # restore the daily re-prefill in production; this catches it.
+    gpt_oss = local_catalog.get("gpt-oss-120b")
+    assert gpt_oss is not None and gpt_oss.chat_template_file == "gpt-oss-120b.jinja"
+    (tmp_path / gpt_oss.id).mkdir()
+    (tmp_path / gpt_oss.id / "model-mxfp4.gguf").write_bytes(b"\0")
+    text = llama_swap_config.render([asdict(gpt_oss)], str(tmp_path))
+    assert f"--chat-template-file {llama_swap_config.CHAT_TEMPLATE_DIR}/gpt-oss-120b.jinja" in text
+
+
 def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536})
