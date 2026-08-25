@@ -766,6 +766,9 @@ export interface LocalModelInfo {
   loaded: boolean;
   supports_vision: boolean;
   supports_tools: boolean;
+  /** Honors a reasoning level — the agent-model sheet shows its per-conversation
+   * effort control only for these (mirrors the provider-level flag). */
+  supports_reasoning: boolean;
   tiers: string[];
   quant: string;
   /** Catalog's nominal download estimate — used for models not installed here. */

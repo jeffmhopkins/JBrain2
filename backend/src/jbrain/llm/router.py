@@ -596,15 +596,24 @@ class LlmRouter:
         return True
 
     async def effective_reasoning_effort(
-        self, task: str, strength: str | None = None, spec_override: str | None = None
+        self,
+        task: str,
+        strength: str | None = None,
+        spec_override: str | None = None,
+        effort_override: str | None = None,
     ) -> str | None:
         """The reasoning effort a `task` will actually run with after live overrides —
         None when the resolved model isn't reasoning-capable. Lets a caller (e.g. the
         agent loop) size its budget to how hard the model is set to think.
         `spec_override` (the per-conversation pick) re-gates the effort on the
         overridden model, so a turn steered onto a non-reasoning local model reports
-        None rather than the resolved route's effort."""
-        return (await self._resolve_live(task, strength, spec_override))[2]
+        None rather than the resolved route's effort. `effort_override` (the pick's
+        reasoning level) wins over the stored effort under the same capability gate —
+        matching what `converse`/`converse_stream` will actually send."""
+        provider, model, effort = await self._resolve_live(task, strength, spec_override)
+        if effort_override is not None and _reasoning_capable(provider, model):
+            return effort_override
+        return effort
 
     def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         """The (provider, model) a task resolves to from STATIC config alone — env

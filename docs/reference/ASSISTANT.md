@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-08-25
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -199,7 +199,13 @@ model** from the omnibox (long-press a conversation tab → pick a loaded model;
 DESIGN.md). The pick rides `/chat` as a `model` field (a **local catalog id**,
 validated server-side — an unknown id is ignored, never routed), and the endpoint
 threads it as a per-turn `spec_override` through the router so the effort, context
-window, and vision gate all reflect the chosen model. It is **turn-local**: scoped
+window, and vision gate all reflect the chosen model. The sheet also offers the
+pick's **reasoning level** for a reasoning-capable model (rides `/chat` as
+`reasoning_effort`, same tolerance: an unknown value is dropped): it overrides the
+task's stored effort as a per-turn `effort_override` on every model call the loop
+makes, still capability-gated in the router so a non-reasoning route never receives
+the param — and it re-sizes the turn's tool budget and the vitals call stamp to the
+effort actually sent. It is **turn-local**: scoped
 to that conversation, never persisted on the session, and it does **not** change the
 global task routing in Settings. A sub-agent the turn spawns still runs on its own
 configured model — the override is the top-level loop's only. The conversation's

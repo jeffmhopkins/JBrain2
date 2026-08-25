@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-08-25
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1093,10 +1093,16 @@ local append with an amber "pending sync" chip until the outbox clears.
 - **Per-conversation model pick** (long-press a conversation tab): long-pressing
   (or right-clicking) the **Research** or **Full Brain** tab opens a bottom sheet
   listing the on-box models **currently loaded**, plus an **Automatic** row that
-  clears back to the default route. The choice is scoped to **that conversation
-  only** — it rides every turn of that chat and is kept in memory (a reload reverts
-  to Automatic); it never touches the global task routing in Settings. Only
-  conversation tabs arm the gesture; capture tabs keep their native tap/right-click.
+  clears back to the default route. When a reasoning model is offerable the sheet
+  adds a **Reasoning** segmented row (Auto / None / Low / Med / High — Auto is the
+  model's own default): tapping a level arms it without closing (so level-then-model
+  lands in one visit), a model row carries the armed level onto the pick, and with a
+  reasoning pick already active a level tap re-applies live. The foot's model chip
+  appends the chosen level (`GPT-OSS 120B · high`). The choice is scoped to **that
+  conversation only** — it rides every turn of that chat and is kept in memory (a
+  reload reverts to Automatic); it never touches the global task routing in Settings.
+  Only conversation tabs arm the gesture; capture tabs keep their native
+  tap/right-click.
 - **Read-aloud (per turn)**: when the owner has enabled read-aloud (the
   `brain_read_aloud` setting), each settled answer carries a **three-state** play
   control just left of its copy button. Tapping it speaks that one turn and the glyph

@@ -538,6 +538,7 @@ class AgentLoop:
         guardrails: Guardrails | None = None,
         task: str = "agent.turn",
         model_override: str | None = None,
+        effort_override: str | None = None,
         hidden_tools_provider: Callable[[], Awaitable[Collection[str]]] | None = None,
     ):
         self._router = router
@@ -553,6 +554,12 @@ class AgentLoop:
         # route. None = the resolved default. Scoped to THIS loop (the /chat turn), so a
         # sub-agent the turn spawns still runs on its own configured model.
         self._model_override = model_override
+        # The pick's reasoning level (the same sheet): every model call this loop makes
+        # carries it, outranking the task's stored effort. The router still gates it on
+        # the resolved model, so a non-reasoning route never receives the param. An
+        # explicit per-call `reasoning_effort` (the sub-agent spawner's contract) wins
+        # over this loop-wide default.
+        self._effort_override = effort_override
 
     async def _hidden(self) -> Collection[str]:
         """Tool names hidden this turn by the runtime provider (empty when no provider
@@ -613,6 +620,10 @@ class AgentLoop:
         callback as it arrives — the sub-agent spawner uses this to surface a child's
         live tokens — while still returning the closing turn so the loop is identical.
 
+        `reasoning_effort` None falls back to the loop-wide `_effort_override` (the
+        per-conversation pick), so an explicit per-call effort (the spawner's
+        "no chosen effort → the child model's default" contract) still wins.
+
         `hide_tool_round_text` mirrors the root turn's reclassification (`run_stream`):
         on the local route a tool-call round's `content` is the model's leaked thinking,
         not a preamble — so buffer this round's text and, once its stop_reason is known,
@@ -621,6 +632,7 @@ class AgentLoop:
         like the coder — whose narration arrives on `content`, never a `reasoning_content`
         channel — would show its inter-tool thinking as the child's answer, not as its
         thinking (the gap that made the coder's thinking never reach the fan's trace)."""
+        effort = reasoning_effort if reasoning_effort is not None else self._effort_override
         if on_text is None and on_reasoning is None:
             return await self._router.converse(
                 self._task,
@@ -629,7 +641,7 @@ class AgentLoop:
                 tools=tools,  # type: ignore[arg-type]
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
-                effort_override=reasoning_effort,
+                effort_override=effort,
                 spec_override=self._model_override,
             )
         turn: LlmTurn | None = None
@@ -644,7 +656,7 @@ class AgentLoop:
             tools=tools,  # type: ignore[arg-type]
             max_tokens=TURN_MAX_TOKENS,
             strength=SYSTEM_STRENGTH,
-            effort_override=reasoning_effort,
+            effort_override=effort,
             spec_override=self._model_override,
         ):
             if isinstance(part, TextChunk):
@@ -1057,6 +1069,7 @@ class AgentLoop:
                 tools=tools,
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
+                effort_override=self._effort_override,
                 spec_override=self._model_override,
             ):
                 if isinstance(part, TextChunk):
@@ -1466,6 +1479,7 @@ class AgentLoop:
                 tools=tools,
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
+                effort_override=self._effort_override,
                 spec_override=self._model_override,
             )
             spent = turn.usage.input_tokens + turn.usage.output_tokens

@@ -13,6 +13,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     loaded: false,
     supports_vision: false,
     supports_tools: true,
+    supports_reasoning: false,
     tiers: [],
     quant: "Q8_0",
     size_gb: 0,

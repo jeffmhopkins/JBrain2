@@ -443,16 +443,25 @@ describe("useFullBrain — per-conversation model override", () => {
     });
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]?.model).toBeUndefined();
+    expect(bodies[0]?.reasoning_effort).toBeUndefined();
     expect(result.current.modelOverride).toBeNull();
 
-    // Pick a model → it shows on the override and rides the next turn.
-    act(() => result.current.setModelOverride({ id: "gpt-oss-120b", label: "GPT-OSS 120B" }));
+    // Pick a model (with a reasoning level) → it shows on the override and rides the
+    // next turn, level and all.
+    act(() =>
+      result.current.setModelOverride({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        effort: "high",
+      }),
+    );
     expect(result.current.modelOverride?.id).toBe("gpt-oss-120b");
     await act(async () => {
       await result.current.send("again");
     });
     await waitFor(() => expect(bodies).toHaveLength(2));
     expect(bodies[1]?.model).toBe("gpt-oss-120b");
+    expect(bodies[1]?.reasoning_effort).toBe("high");
 
     // Clear → back to the default route.
     act(() => result.current.setModelOverride(null));

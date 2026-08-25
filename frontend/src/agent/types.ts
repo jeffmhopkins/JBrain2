@@ -408,6 +408,11 @@ export interface ChatRequest {
    * Turn-local — never persisted on the session; the backend validates it against the
    * catalog and ignores an unknown id (the turn runs on the default). */
   model?: string;
+  /** The pick's reasoning level: how hard this turn's model thinks, overriding the
+   * task's stored effort. Same tolerance as `model` — the backend drops an unknown
+   * value and never sends it to a non-reasoning model. (Inline union rather than
+   * client.ts's ReasoningEffort: client.ts imports this module.) */
+  reasoning_effort?: "none" | "low" | "medium" | "high";
   /** This turn carries a Proposal ENACT OUTCOME the owner just produced inline (not
    * owner prose): `message` is the server-authored summary, framed as a data report so
    * the assistant acknowledges and continues without re-staging declined items. */
