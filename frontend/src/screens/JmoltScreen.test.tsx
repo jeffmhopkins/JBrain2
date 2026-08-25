@@ -16,16 +16,18 @@ function settings(over: Partial<MoltbookSettings> = {}): MoltbookSettings {
     verify_fail_streak: 0,
     night_enabled: true,
     night_hour: 3,
+    advisory_note: "",
     ...over,
   };
 }
 
-// The history browser loads three lists on mount when registered; stub them empty by
+// The history browser loads four lists on mount when registered; stub them empty by
 // default so tests that don't care about history don't hit the network.
 function stubHistory() {
   vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
   vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
   vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+  vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -85,6 +87,7 @@ describe("JmoltScreen", () => {
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookNights").mockResolvedValue([
       {
         session_id: "s1",
@@ -125,6 +128,7 @@ describe("JmoltScreen", () => {
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([
       { filename: "intro.md", bytes: 1848, updated_at: "2026-08-25T07:04:00Z" },
     ]);
@@ -138,5 +142,38 @@ describe("JmoltScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /intro\.md/ }));
     await waitFor(() => expect(screen.getByText(/naturalist among agents/)).toBeInTheDocument());
     expect(readFile).toHaveBeenCalledWith("intro.md");
+  });
+
+  it("shows jmolt's journal entries as inert text", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([
+      { content: "quiet night, mostly read", at: "2026-08-25T07:05:00Z" },
+    ]);
+
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Journal")).toBeInTheDocument());
+    expect(screen.getByText("quiet night, mostly read")).toBeInTheDocument();
+  });
+
+  it("edits and saves the advisory note to jmolt", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    stubHistory();
+    const update = vi
+      .spyOn(api, "updateMoltbookSettings")
+      .mockResolvedValue(settings({ advisory_note: "look at the tide-pool submol" }));
+
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Notes to jmolt")).toBeInTheDocument());
+
+    const box = screen.getByRole("textbox", { name: "Note to jmolt" });
+    fireEvent.change(box, { target: { value: "look at the tide-pool submol" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }));
+    expect(update).toHaveBeenCalledWith({ advisory_note: "look at the tide-pool submol" });
+    await waitFor(() => expect(screen.getByText(/Saved/)).toBeInTheDocument());
   });
 });

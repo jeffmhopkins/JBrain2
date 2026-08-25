@@ -1406,6 +1406,55 @@ button.vitals:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* The owner's advisory note to jmolt: a plain editable buffer + a save row. */
+.molt-note {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 84px;
+  padding: 10px;
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  background: var(--input-bg, rgba(128, 128, 128, 0.06));
+  color: inherit;
+  font: inherit;
+  line-height: 1.45;
+}
+.molt-note-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* jmolt's journal (its voice): entries newest first, each dated, body rendered inert. */
+.molt-journal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.molt-journal-entry {
+  border-left: 2px solid color-mix(in srgb, var(--accent, #7aa2f7) 55%, transparent);
+  padding: 2px 0 2px 10px;
+}
+.molt-journal-at {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.molt-journal-body {
+  margin: 3px 0 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Tavily tier panel: a status pill in the card header + an iOS-style enable switch. */
 .settings-cardhead {
   display: flex;
@@ -19113,6 +19162,10 @@ button.task-band:active {
   background: var(--green-tint);
   color: var(--green);
 }
+.task-ag.jmolt_observer {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
 
 /* ---- grouping (Direction B): chip filter row, group headers, move + reorder ---- */
 .task-chiprow {
@@ -19520,6 +19573,10 @@ button.task-band:active {
 .ted-agent.archivist .ted-av {
   background: var(--green-tint);
   color: var(--green);
+}
+.ted-agent.jmolt_observer .ted-av {
+  background: var(--rose-tint);
+  color: var(--rose);
 }
 .ted-am {
   flex: 1;

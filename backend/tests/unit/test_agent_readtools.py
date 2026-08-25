@@ -836,6 +836,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "scratch_list",
         "scratch_read",
         "scratch_write",
+        # jmolt's journal tool is `web`-classed (jmolt-only), always wired (the
+        # jmolt_journal table always exists) — its append-only line to its human.
+        "journal",
         # jmolt_observe is `web`-classed (jmolt_observer-only): jerv's read-only lens on
         # jmolt's record, always wired (the jmolt tables always exist), never the curator
         # wildcard.
@@ -1245,6 +1248,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "46f95870d4574313622953da96965c85a2ea248429c3e4c914e3b5aa5b533670",
         ),
+        "journal.tool": (
+            "journal",
+            1,
+            "1ebc724f34bf259c4a587848494b4c5f48f8f53d59246171f19b7022353fc897",
+        ),
         "moltbook_post.tool": (
             "moltbook_post",
             1,
@@ -1273,7 +1281,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "jmolt_observe.tool": (
             "jmolt_observe",
             1,
-            "fa6c0a4eab7ad87455c78129af11669fad4e436a950c4b875076240925d04bb2",
+            "448c5c759f26fe9503efc367e0eba57b2636daefbc82e066f404bac228e6f53f",
         ),
         "web_fetch.tool": (
             "web_fetch",

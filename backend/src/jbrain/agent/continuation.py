@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from jbrain.agent.runlog import AgentRunLog
     from jbrain.agent.transcript_store import AgentTranscript
     from jbrain.notify import NotifyBus
+    from jbrain.settings_store import SqlSettingsStore
     from jbrain.tasks.runner import LoopTurnExecutor, PushPoke
 
 log = structlog.get_logger()
@@ -157,6 +158,10 @@ class PlanContinuationRunner:
     # context meter restores to the true value when the chat is reopened after plan work (the
     # live stream already carries the UsageEvents; this is the reopen seed). None → skip.
     sessions: AgentSessionRepo | None = None
+    # Yields the box to jmolt's night: while the night hold is set, a sweep claims nothing, so a
+    # background plan step never contends for the model mid-hour (JMOLT_SITTINGS_PLAN.md). A held
+    # continuation just fires on the next sweep after the hour. None → never yield.
+    settings_store: SqlSettingsStore | None = None
     # Live references to in-flight on-demand kick tasks (schedule_kick), so a fire-and-forget
     # kick isn't garbage-collected before it finishes.
     _kick_tasks: set[asyncio.Task] = field(default_factory=set)
@@ -170,6 +175,9 @@ class PlanContinuationRunner:
         # TEXT, so it MUST be a str — a uuid throws and the whole sweep silently no-ops.
         pid = str(raw)
         owner_ctx = SessionContext(principal_id=pid, principal_kind="owner", owner_scoped=True)
+        store = self.settings_store
+        if store is not None and await store.night_hold_names(owner_ctx):
+            return  # jmolt's night owns the box — no background plan step this hour.
         async with scoped_session(self.maker, owner_ctx) as session:
             due = await PlanRepo().claim_due_continuations(
                 session, max_continuations=MAX_CONTINUATIONS

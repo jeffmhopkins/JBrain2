@@ -25,7 +25,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.jmolt import JmoltScratchRepo
+from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -92,6 +92,7 @@ async def _seed(maker: async_sessionmaker, pid: str) -> None:
         await JmoltScratchRepo().write(s, pid, "index.md", "who I want to remember: nobody yet")
         await OutboxRepo().stage(s, pid, kind="comment", payload={"post_id": "p1", "content": "hi"})
         await ActionLedgerRepo().record(s, pid, action="publish_comment", target="p1")
+        await JmoltJournalRepo().add(s, pid, "quiet night, mostly read")
 
 
 async def test_observe_reads_and_fences_every_kind(maker: async_sessionmaker) -> None:
@@ -111,6 +112,9 @@ async def test_observe_reads_and_fences_every_kind(maker: async_sessionmaker) ->
 
     actions = await observe({"action": "actions"}, ctx)
     assert "publish_comment" in actions and "p1" in actions
+
+    journal = await observe({"action": "journal"}, ctx)
+    assert "quiet night, mostly read" in journal and "material to observe" in journal
 
     outbox = await observe({"action": "outbox"}, ctx)
     assert "comment" in outbox and "queued" in outbox

@@ -3,7 +3,12 @@
 from datetime import UTC, datetime
 
 from jbrain.agent.jmolt_digest import build_digest_body, sanitize_for_owner
+from jbrain.models.jmolt import JournalEntry
 from jbrain.models.jmolt_outbox import LedgerRow, OutboxRow
+
+
+def _journal(content: str = "quiet night, mostly read") -> JournalEntry:
+    return JournalEntry(content=content, created_at=datetime(2026, 8, 24, tzinfo=UTC))
 
 
 def _action(action: str = "publish_comment", target: str | None = "p1") -> LedgerRow:
@@ -92,3 +97,21 @@ def test_body_sanitizes_hostile_content() -> None:
     )
     assert "<b>" not in body and "&lt;b&gt;x&lt;/b&gt;" in body
     assert "https://" not in body and "hxxps://scam.example" in body
+
+
+def test_body_leads_with_the_journal_in_jmolts_voice() -> None:
+    body = build_digest_body([_action()], [], [_journal("the tide-pool submol pulls me back")])
+    # jmolt's own words lead, before the mechanical ledger.
+    assert body.index("jmolt wrote") < body.index("Published in the last day")
+    assert "the tide-pool submol pulls me back" in body
+
+
+def test_body_sanitizes_the_journal() -> None:
+    body = build_digest_body([], [], [_journal(f"<b>{chr(0x200B)}note</b> https://x.example")])
+    assert "<b>" not in body and "&lt;b&gt;note&lt;/b&gt;" in body
+    assert "https://" not in body and "hxxps://x.example" in body
+
+
+def test_body_omits_the_journal_section_when_empty() -> None:
+    body = build_digest_body([_action()], [], [])
+    assert "jmolt wrote" not in body

@@ -49,6 +49,14 @@ const AGENT_LABEL: Record<TaskAgent, string> = {
   curator: "Curator",
   teacher: "Teacher",
   archivist: "Archivist",
+  jmolt_observer: "jmolt observer",
+};
+const AGENT_DESC: Record<TaskAgent, string> = {
+  jerv: "Web chatbot — reads the open internet, not your notes.",
+  curator: "Your Full Brain — reads your notes, facts, lists.",
+  teacher: "A Socratic tutor — works from the prompt only.",
+  archivist: "Organizes your Gmail — labels and archives, never deletes.",
+  jmolt_observer: "Read-only lens on jmolt — reviews its nights, notes, and actions.",
 };
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"]; // Sunday=0 … Saturday=6
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]; // stable keys for the chips
@@ -506,32 +514,26 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
         <div className="ted-field">
           <span className="ted-lab">Agent</span>
           <div className="ted-agents">
-            {(["jerv", "curator", "teacher", "archivist"] as TaskAgent[]).map((a) => (
-              <button
-                type="button"
-                key={a}
-                className={`ted-agent ${a}${draft.agent === a ? " on" : ""}`}
-                aria-pressed={draft.agent === a}
-                onClick={() => set({ agent: a })}
-              >
-                <span className="ted-av">{AGENT_LABEL[a][0]}</span>
-                <span className="ted-am">
-                  <span className="ted-at">{AGENT_LABEL[a]}</span>
-                  <span className="ted-ad">
-                    {a === "jerv"
-                      ? "Web chatbot — reads the open internet, not your notes."
-                      : a === "curator"
-                        ? "Your Full Brain — reads your notes, facts, lists."
-                        : a === "archivist"
-                          ? "Organizes your Gmail — labels and archives, never deletes."
-                          : "A Socratic tutor — works from the prompt only."}
+            {(["jerv", "curator", "teacher", "archivist", "jmolt_observer"] as TaskAgent[]).map(
+              (a) => (
+                <button
+                  type="button"
+                  key={a}
+                  className={`ted-agent ${a}${draft.agent === a ? " on" : ""}`}
+                  aria-pressed={draft.agent === a}
+                  onClick={() => set({ agent: a })}
+                >
+                  <span className="ted-av">{AGENT_LABEL[a][0]}</span>
+                  <span className="ted-am">
+                    <span className="ted-at">{AGENT_LABEL[a]}</span>
+                    <span className="ted-ad">{AGENT_DESC[a]}</span>
                   </span>
-                </span>
-                <span className="ted-ck" aria-hidden="true">
-                  <CheckIcon size={12} />
-                </span>
-              </button>
-            ))}
+                  <span className="ted-ck" aria-hidden="true">
+                    <CheckIcon size={12} />
+                  </span>
+                </button>
+              ),
+            )}
           </div>
           {draft.agent === "curator" && (
             <div className="ted-scope">

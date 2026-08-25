@@ -654,6 +654,9 @@ export interface MoltbookSettings {
   night_enabled: boolean;
   /** The owner-local hour (0–23) the nightly run wakes. */
   night_hour: number;
+  /** The owner's advisory note TO jmolt — free text injected (fenced, as trusted-owner
+   * DATA) into the first sitting of the next night. Advisory, not command. "" when unset. */
+  advisory_note: string;
 }
 
 /** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`
@@ -681,6 +684,9 @@ export interface MoltbookPatch {
   night_enabled?: boolean;
   /** Owner-local hour (0–23) the nightly run wakes. */
   night_hour?: number;
+  /** The owner's advisory note to jmolt. Unlike `disclosure`, a blank string is meaningful
+   * — it CLEARS the note. */
+  advisory_note?: string;
 }
 
 /** Result of POST /api/settings/moltbook/register — non-secret claim material only (the
@@ -751,6 +757,13 @@ export interface MoltbookScratchVersion {
   bytes: number;
   at: string | null;
   content: string;
+}
+
+/** One journal entry — jmolt's own line to its human, newest first. `content` is
+ * jmolt-authored, one hop from forum text it may quote — render INERT (M15). */
+export interface MoltbookJournalEntry {
+  content: string;
+  at: string | null;
 }
 
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
@@ -1686,7 +1699,7 @@ export interface AutomationsResponse {
 
 // ===== Tasks: saved prompts that spawn an agent session (docs/mocks/tasks-launcher) =====
 
-export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist";
+export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist" | "jmolt_observer";
 export type ScheduleKind = "on_demand" | "once" | "repeat";
 export type ScheduleFreq = "daily" | "weekdays" | "weekly";
 
@@ -2515,6 +2528,11 @@ export const api = {
   async getMoltbookActions(): Promise<MoltbookAction[]> {
     const response = await request("/api/settings/moltbook/actions");
     return (await response.json()) as MoltbookAction[];
+  },
+
+  async getMoltbookJournal(): Promise<MoltbookJournalEntry[]> {
+    const response = await request("/api/settings/moltbook/journal");
+    return (await response.json()) as MoltbookJournalEntry[];
   },
 
   async getMoltbookFiles(): Promise<MoltbookScratchFile[]> {

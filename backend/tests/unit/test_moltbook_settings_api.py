@@ -89,6 +89,21 @@ def test_starts_unregistered_switch_off(
     assert body["verify_fail_streak"] == 0
     assert body["night_enabled"] is True  # nightly run on by default
     assert body["night_hour"] == 3  # 03:00 owner-local default
+    assert body["advisory_note"] == ""  # no note to jmolt until the owner writes one
+
+
+def test_advisory_note_set_and_cleared(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    body = test_client.put(
+        "/api/settings/moltbook", json={"advisory_note": "look at the tide-pool submol"}
+    ).json()
+    assert body["advisory_note"] == "look at the tide-pool submol"
+    assert store.values["moltbook_advisory_note"] == "look at the tide-pool submol"
+    # A blank note is a real value here — it CLEARS the note (unlike disclosure).
+    body = test_client.put("/api/settings/moltbook", json={"advisory_note": ""}).json()
+    assert body["advisory_note"] == "" and store.values["moltbook_advisory_note"] == ""
 
 
 def test_nightly_schedule_toggle_and_hour(

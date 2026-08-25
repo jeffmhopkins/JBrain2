@@ -25,7 +25,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
 from jbrain.db.session import scoped_session
-from jbrain.models.jmolt import JmoltScratchRepo
+from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.web.moltbook import MoltbookClient, MoltbookError
@@ -48,6 +48,9 @@ class MoltbookStatusOut(BaseModel):
     autonomy: bool
     killed: bool
     disclosure: str
+    # The owner's advisory note TO jmolt — free text the human edits, injected (fenced, as
+    # trusted-owner DATA) into the first sitting of the next night. Advisory, not command.
+    advisory_note: str
     # The integrity watcher's last-observed account state (M21/M22): "ok" | "suspended" |
     # "moderated" | "tamper" — surfaced so the panel can show why writing paused. The
     # verify-failure streak (M11) rides along so the owner sees how close to the stop it is.
@@ -80,6 +83,9 @@ class MoltbookPatch(BaseModel):
     autonomy: bool | None = None
     killed: bool | None = None
     disclosure: str | None = None
+    # The owner's advisory note to jmolt. Unlike `disclosure`, a blank string is meaningful
+    # (it CLEARS the note), so it is bounded but not strip-guarded on write.
+    advisory_note: str | None = Field(default=None, max_length=8192)
     # Clear the stored key (disconnect the account), reverting to the env fallback.
     clear_key: bool = False
     # Reset the verify-failure streak (M11) so writing resumes after the owner has looked.
@@ -118,6 +124,7 @@ async def _status(
         autonomy=await store.moltbook_autonomy(ctx),
         killed=await store.moltbook_killed(ctx),
         disclosure=await store.moltbook_disclosure(ctx),
+        advisory_note=await store.moltbook_advisory_note(ctx),
         account_state=await store.moltbook_account_state(ctx),
         verify_fail_streak=await store.moltbook_verify_fail_streak(ctx),
         night_enabled=await store.moltbook_night_enabled(ctx),
@@ -146,6 +153,9 @@ async def update_moltbook_settings(
         await store.set_moltbook_killed(ctx, body.killed)
     if body.disclosure is not None and body.disclosure.strip():
         await store.set_moltbook_disclosure(ctx, body.disclosure.strip())
+    if body.advisory_note is not None:
+        # A blank note is a real value here (the owner clearing it), so no strip-guard.
+        await store.set_moltbook_advisory_note(ctx, body.advisory_note)
     if body.clear_key:
         await store.set_moltbook_api_key(ctx, "")
         await store.set_moltbook_handle(ctx, "")
@@ -244,6 +254,7 @@ async def moltbook_claim_status(request: Request, principal: OwnerDep) -> Moltbo
 
 _SCRATCH = JmoltScratchRepo()
 _LEDGER = ActionLedgerRepo()
+_JOURNAL = JmoltJournalRepo()
 
 
 def _iso(value: Any) -> str | None:
@@ -289,6 +300,11 @@ class ScratchVersionOut(BaseModel):
     bytes: int
     at: str | None
     content: str
+
+
+class JournalEntryOut(BaseModel):
+    content: str
+    at: str | None
 
 
 class ActionOut(BaseModel):
@@ -385,6 +401,16 @@ async def list_actions(request: Request, principal: OwnerDep) -> list[ActionOut]
         ActionOut(action=a.action, target=a.target, reacted_to=a.reacted_to, at=_iso(a.at))
         for a in acts
     ]
+
+
+@router.get("/settings/moltbook/journal")
+async def list_journal(request: Request, principal: OwnerDep) -> list[JournalEntryOut]:
+    """jmolt's journal, newest first — its own line to its human, night by night. Rendered
+    inert client-side (M15), the same as everything jmolt authors."""
+    ctx = ctx_for(principal)
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        entries = await _JOURNAL.recent(s, ctx.principal_id, limit=60)
+    return [JournalEntryOut(content=e.content, at=_iso(e.created_at)) for e in entries]
 
 
 @router.get("/settings/moltbook/files")

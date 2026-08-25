@@ -26,6 +26,10 @@ from jbrain.models.core import Base
 MAX_FILES = 16
 MAX_TOTAL_BYTES = 128 * 1024
 MAX_FILE_BYTES = 24 * 1024
+# jmolt's journal (the line to its human): a single entry is capped so one night can't dump
+# a novel into the digest, and the table keeps only the most recent N so it stays bounded.
+MAX_JOURNAL_BYTES = 8 * 1024
+JOURNAL_RETENTION = 200
 # Archive retention (M13 — "bounded"): keep the last N snapshots per file. With the quota
 # above this bounds the archive at ~MAX_FILES * ARCHIVE_RETENTION * MAX_FILE_BYTES ≈ 9.4 MB.
 # Combined with dedup ("snapshot only on change"), a well-behaved night adds a handful of
@@ -65,6 +69,57 @@ class ScratchVersion:
     bytes: int
     op: str
     archived_at: datetime
+
+
+@dataclass(frozen=True)
+class JournalEntry:
+    content: str
+    created_at: datetime
+
+
+class JmoltJournalRepo:
+    """jmolt's append-only journal to its human (migration 0176). Same RLS shape as the
+    scratchpad: a jmolt-auth session appends, a jmolt-domain session reads, no one edits.
+    Methods run on a caller-supplied, already-scoped `AsyncSession`."""
+
+    async def add(self, session: AsyncSession, principal_id: str, content: str) -> None:
+        """Append one journal entry (truncated to the per-entry cap), then prune to the
+        most recent JOURNAL_RETENTION rows so the table stays bounded (M13-style). A blank
+        entry is a no-op — jmolt not writing tonight is not an empty line in the digest."""
+        content = content.strip()
+        if not content:
+            return
+        encoded = content.encode("utf-8")
+        if len(encoded) > MAX_JOURNAL_BYTES:
+            content = encoded[:MAX_JOURNAL_BYTES].decode("utf-8", "ignore").rstrip()
+        await session.execute(
+            text("INSERT INTO app.jmolt_journal (principal_id, content) VALUES (:pid, :content)"),
+            {"pid": principal_id, "content": content},
+        )
+        await session.execute(
+            text(
+                "DELETE FROM app.jmolt_journal WHERE principal_id = :pid AND seq NOT IN ("
+                "   SELECT seq FROM app.jmolt_journal WHERE principal_id = :pid"
+                "   ORDER BY seq DESC LIMIT :keep"
+                " )"
+            ),
+            {"pid": principal_id, "keep": JOURNAL_RETENTION},
+        )
+
+    async def recent(
+        self, session: AsyncSession, principal_id: str, limit: int = 30
+    ) -> list[JournalEntry]:
+        """The journal, newest first — for the morning digest and the PWA journal card."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT content, created_at FROM app.jmolt_journal"
+                    " WHERE principal_id = :pid ORDER BY seq DESC LIMIT :lim"
+                ),
+                {"pid": principal_id, "lim": limit},
+            )
+        ).all()
+        return [JournalEntry(content=r[0], created_at=r[1]) for r in rows]
 
 
 class JmoltScratchRepo:

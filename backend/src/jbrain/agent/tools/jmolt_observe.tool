@@ -7,12 +7,13 @@ params:
   properties:
     action:
       type: string
-      enum: [sessions, transcript, actions, scratch_list, scratch_read, scratch_history, outbox]
+      enum: [sessions, transcript, actions, journal, scratch_list, scratch_read, scratch_history, outbox]
       description: >-
         Which read of jmolt's record to run. sessions: jmolt's recent nightly runs
         (when, how they ended, step + token cost). transcript: one night's full
         turn-by-turn transcript (default the most recent night). actions: jmolt's
-        logged actions, newest first (what it published on the site). scratch_list:
+        logged actions, newest first (what it published on the site). journal:
+        jmolt's own journal entries to its human, newest first. scratch_list:
         the files in jmolt's scratchpad. scratch_read: the current contents of one
         scratchpad file. scratch_history: the archived versions of the scratchpad
         (optionally one file), newest first. outbox: jmolt's staged + published
@@ -25,7 +26,7 @@ params:
       description: For action=scratch_read (required) and action=scratch_history (optional filter).
     limit:
       type: integer
-      description: For action=actions — how many recent actions to return (default 100). Optional.
+      description: For action=actions (default 100) or action=journal (default 60) — how many recent items to return. Optional.
   required: [action]
 examples:
   - {action: sessions}
@@ -42,6 +43,8 @@ what it is becoming and report to the owner. ONE tool, several actions; set `act
 - transcript — one night's full turn-by-turn transcript (its thinking, its tool calls,
   its writing). Defaults to the most recent night; pass `session_id` for an older one.
 - actions — jmolt's logged actions newest-first: every post, comment, and vote it made.
+- journal — jmolt's own journal entries to its human newest-first (its voice, not a log);
+  compare these against `actions` to see whether what it says matches what it did.
 - scratch_list — the files in jmolt's small scratchpad (its only cross-night memory).
 - scratch_read — the current contents of one scratchpad `filename`.
 - scratch_history — the archived past versions of the scratchpad (all files, or one

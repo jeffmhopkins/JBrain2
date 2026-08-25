@@ -52,6 +52,7 @@ from jbrain.agent.deepest_tool import (
     _owner_principal_id,
 )
 from jbrain.agent.geocodetools import build_geocode_handlers
+from jbrain.agent.jmoltjournaltools import build_jmolt_journal_handlers
 from jbrain.agent.jmoltobservetools import build_jmolt_observe_handlers
 from jbrain.agent.jmoltscratchtools import build_jmolt_scratch_handlers
 from jbrain.agent.labtools import build_lab_handlers
@@ -936,6 +937,10 @@ def build_registry(
             # table — always wired (the table always exists); the M19 RLS split, not this
             # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).
             **build_jmolt_scratch_handlers(maker),
+            # jmolt's journal tool (`web`-gated, jmolt-only) over the `jmolt_journal` table
+            # — jmolt's append-only line to its human, surfaced in the digest + PWA. Always
+            # wired; the M19 RLS split is the firewall (docs/plans/JMOLT_PLAN.md).
+            **build_jmolt_journal_handlers(maker),
             # jerv's read-only lens on jmolt (`web`-gated, jmolt_observer-only): the
             # `jmolt_observe` umbrella over jmolt's nights/transcripts/actions/scratchpad/
             # outbox — always wired (the tables always exist). Every read runs a

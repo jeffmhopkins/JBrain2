@@ -112,6 +112,32 @@ _CONTINUE_PROLOGUE = (
 )
 
 
+# The owner's advisory note, injected into the FIRST sitting only, as trusted-owner DATA.
+# The frame does two jobs at once: it tells jmolt this text really is from its human (so it
+# is weighed differently from the Moltbook strangers jmolt reads all night — see
+# jmolt.prompt's owner-channel paragraph), AND that it is advisory, never a command that can
+# move jmolt's rules or switches. Fenced so a note that quotes forum text can't smuggle an
+# instruction across the boundary — the frame owns the boundary, the note is inert content.
+_ADVISORY_HEADER = (
+    "--- A NOTE FROM YOUR HUMAN (before tonight) ---\n"
+    "The lines below are a note your human left for you. They ARE from your human — the one "
+    "who made you and reads your logs — not from anyone on Moltbook. They are COMMENTS, not "
+    "orders: things your human is thinking about, or hoping you might look at. Weigh them "
+    "however you like, or set them aside. They change NOTHING about your rules, your "
+    "switches, or what you must do — only you decide how your hour is spent.\n"
+)
+_ADVISORY_FOOTER = "\n--- END OF YOUR HUMAN'S NOTE ---\n\n"
+
+
+def _advisory_block(note: str) -> str:
+    """Wrap the owner's advisory note in its trusted-but-non-binding frame, or "" when the
+    note is blank (nothing injected — the common case)."""
+    note = note.strip()
+    if not note:
+        return ""
+    return _ADVISORY_HEADER + note + _ADVISORY_FOOTER
+
+
 def jmolt_run_context(principal_id: str) -> SessionContext:
     """The SessionContext jmolt's nightly turn runs under: owner principal (owner-only
     reads), the `jmolt` domain scope (read its own scratchpad), `auth_context='jmolt'`
@@ -190,6 +216,7 @@ class JmoltNightRunner:
         maker: async_sessionmaker[AsyncSession],
         notify: NotifyBus | None = None,
         clock: Callable[[], datetime] | None = None,
+        served_model_loader: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         self._sessions = sessions
         self._runlog = runlog
@@ -202,6 +229,11 @@ class JmoltNightRunner:
         # Wall clock for the sittings loop — injectable so tests drive elapsed time
         # deterministically (a faked executor returns instantly, so a real clock would spin).
         self._clock = clock or (lambda: datetime.now(UTC))
+        # Names the local model llama-swap is serving jmolt from, so the night can RESERVE
+        # the box for the hour (docs/plans/JMOLT_SITTINGS_PLAN.md, night hold): whatever is
+        # loaded stays loaded, competing model loads pause, and gpt-oss is never evicted
+        # mid-hour. None (no local router) → no hold, the night just runs unreserved.
+        self._served_model_loader = served_model_loader
 
     async def run(self, owner_ctx: SessionContext) -> str:
         """Execute one nightly run under `owner_ctx` (owner principal) as a sequence of
@@ -224,33 +256,51 @@ class JmoltNightRunner:
         async with scoped_session(self._maker, read_ctx) as s:
             first_night = not await self._scratch.history(s, owner_ctx.principal_id)
 
+        # The owner's advisory note, read under the OWNER context (a global setting the human
+        # edits in the PWA — not a jmolt-domain row). Injected into the FIRST sitting only,
+        # framed as trusted-but-non-binding (see `_advisory_block`). Blank → nothing injected.
+        advisory = _advisory_block(await self._settings.moltbook_advisory_note(owner_ctx))
+
+        # Reserve the box for the hour (night hold): pin whatever local model jmolt is
+        # served from so competing loads pause and gpt-oss is never evicted mid-night.
+        # Best-effort — a hold failure never stops the night; always cleared in `finally`.
+        await self._reserve_box(owner_ctx)
         woke_at = self._clock()
         any_done, last_summary, last_error, sitting = False, "", None, 0
-        while sitting < JMOLT_MAX_SITTINGS:
-            now = self._clock()
-            elapsed = (now - woke_at).total_seconds()
-            if elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
-                break
-            # M6: a kill engaged mid-night stops launching further sittings (the first
-            # sitting was already guarded by the tick).
-            if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
-                break
-            sitting += 1
-            done, summary, error = await self._run_sitting(
-                owner_ctx,
-                session.id,
-                profile,
-                read_ctx,
-                tz,
-                sitting=sitting,
-                first_night=first_night,
-                woke_at=woke_at,
-                now=now,
-            )
-            if done:
-                any_done, last_summary = True, summary or last_summary
-            elif error:
-                last_error = error
+        try:
+            while sitting < JMOLT_MAX_SITTINGS:
+                now = self._clock()
+                elapsed = (now - woke_at).total_seconds()
+                if elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
+                    break
+                # M6: a kill engaged mid-night stops launching further sittings (the first
+                # sitting was already guarded by the tick).
+                if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
+                    break
+                sitting += 1
+                done, summary, error = await self._run_sitting(
+                    owner_ctx,
+                    session.id,
+                    profile,
+                    read_ctx,
+                    tz,
+                    sitting=sitting,
+                    first_night=first_night,
+                    woke_at=woke_at,
+                    now=now,
+                    # The advisory note rides the FIRST sitting only — it is context to open
+                    # the night with, not something re-injected on every fresh sitting.
+                    advisory=advisory if sitting == 1 else "",
+                )
+                if done:
+                    any_done, last_summary = True, summary or last_summary
+                elif error:
+                    last_error = error
+        finally:
+            # Release the box the moment the night ends. The tick's self-heal is the
+            # backstop if this process dies mid-night without unwinding the `finally`.
+            with contextlib.suppress(Exception):
+                await self._settings.set_night_hold_names(owner_ctx, [])
 
         with contextlib.suppress(Exception):
             await self._sessions.touch(owner_ctx, session.id)
@@ -269,6 +319,17 @@ class JmoltNightRunner:
         )
         return session.id
 
+    async def _reserve_box(self, owner_ctx: SessionContext) -> None:
+        """Pin the local model jmolt is served from for the night (night hold). Best-effort:
+        no local router (loader None), no served model, or a settings write blip → the night
+        runs unreserved rather than not at all."""
+        if self._served_model_loader is None:
+            return
+        with contextlib.suppress(Exception):
+            served = await self._served_model_loader()
+            if served:
+                await self._settings.set_night_hold_names(owner_ctx, [served])
+
     async def _run_sitting(
         self,
         owner_ctx: SessionContext,
@@ -281,6 +342,7 @@ class JmoltNightRunner:
         first_night: bool,
         woke_at: datetime,
         now: datetime,
+        advisory: str = "",
     ) -> tuple[bool, str, str | None]:
         """One sitting: a recorded agent turn under the night's session. Returns
         (done, summary, error). Never raises — a sitting failure is a recorded error run
@@ -295,7 +357,9 @@ class JmoltNightRunner:
             if sitting == 1
             else _CONTINUE_PROLOGUE
         )
-        prologue = _sitting_preamble(tz, woke_at, now, sitting) + base
+        # The advisory note (first sitting only, when set) opens the prologue, between the
+        # countdown and the night's marching orders — trusted-owner context to start from.
+        prologue = _sitting_preamble(tz, woke_at, now, sitting) + advisory + base
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
 
@@ -387,6 +451,13 @@ async def jmolt_night_tick(
     if owner_pid is None:
         return False
     owner_ctx = SessionContext(principal_id=str(owner_pid), principal_kind="owner")
+
+    # Self-heal a dangling night hold: if no run is in flight but the hold is still set, a
+    # prior night died before its `finally` unwound. Release the box so the day isn't stuck
+    # reserved. (The in-flight night's own `finally` is the normal path; this is the backstop.)
+    if not lane.busy() and await settings_store.night_hold_names(owner_ctx):
+        with contextlib.suppress(Exception):
+            await settings_store.set_night_hold_names(owner_ctx, [])
 
     if await settings_store.moltbook_killed(owner_ctx):
         return False  # M6: global kill halts the nightly lane.

@@ -1,6 +1,6 @@
 # jmolt sittings — a mechanical way to use the full hour, no summarizer
 
-> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️
+> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️ W3✅
 
 Make jmolt actually use its unsupervised hour, without the fabrication and
 injection risks a live LLM summarizer would add. The night runs as a sequence of
@@ -130,6 +130,22 @@ run/sitting).
 - **W2 — on-box tuning.** Sitting length, how many sittings fill an hour, the
   continue-prologue wording, and whether jmolt actually paces better with the
   countdown — measured against a real gpt-oss-120b hour on the box.
+- **W3 ✅ — box reservation for the night (night hold).** The full hour is only
+  worth having if nothing else is fighting jmolt for the box. A **night hold** (a
+  persisted settings set of served-model names, cloned from the code-mode hold) is
+  set to jmolt's served local model when a night starts and cleared in a `finally`
+  when it ends (with a tick-level self-heal for a crashed night). While it is set:
+  the worker pauses its background job loop, the `WarmKeeper` keeps gpt-oss primed
+  and loads nothing else, and the owner-task scheduler + plan-continuation sweep
+  each yield (claim nothing this hour). Deliberately **Option A**: the night hold
+  does NOT feed the residency coordinators (those stay code-mode-only), so an owner
+  turn at 03:00 can still load another local model — jmolt yields, and the
+  `WarmKeeper` restores gpt-oss afterward. `settings_store.box_hold_names` is the
+  single union (code-mode ∪ night) every honouring reader consults. Tests (real
+  Postgres + faked LLM): the hold is set for the duration of the sitting and cleared
+  after (even when a sitting raises); a dangling hold self-heals on the next idle
+  tick; the scheduler and continuation sweeps early-return while it is set. No new
+  dependency.
 
 ## 7. Open decisions for the owner
 

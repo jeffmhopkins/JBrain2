@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.settings_store import SqlSettingsStore
 from jbrain.tasks.repo import TaskRepo
 from jbrain.tasks.runner import TaskRunner
 
@@ -44,16 +45,24 @@ async def tasks_tick(
     repo: TaskRepo,
     runner: TaskRunner,
     *,
+    settings_store: SqlSettingsStore | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     """Claim and run every task due at `now`. Returns the ids of the runs started —
     used by tests; the loop ignores it. Never raises for a single task's failure (the
-    runner records it as an error run)."""
+    runner records it as an error run).
+
+    Yields the box to jmolt's night: while the night hold is set, no owner task is claimed
+    (a task claim advances `next_run_at`, so an un-run tick simply defers due tasks a minute
+    — they fire once the hour is over). This keeps competing model loads off the box so
+    jmolt has the full hour (docs/plans/JMOLT_SITTINGS_PLAN.md, night hold)."""
     now = now or datetime.now(UTC)
     owner_pid = await _owner_principal_id(maker)
     if owner_pid is None:
         return []
     owner_ctx = SessionContext(principal_id=str(owner_pid), principal_kind="owner")
+    if settings_store is not None and await settings_store.night_hold_names(owner_ctx):
+        return []  # jmolt's night owns the box — defer owner tasks until the hour is over.
     due = await repo.claim_due(owner_ctx, now=now)
     started: list[str] = []
     for task in due:
@@ -69,13 +78,14 @@ async def run_tasks_loop(
     repo: TaskRepo,
     runner: TaskRunner,
     *,
+    settings_store: SqlSettingsStore | None = None,
     interval: float = TICK_INTERVAL_SECONDS,
 ) -> None:
     """Drive `tasks_tick` forever on `interval`. A tick blip is logged and swallowed
     so a transient DB/LLM hiccup never kills the loop (mirrors the worker's tolerance)."""
     while True:
         try:
-            await tasks_tick(maker, repo, runner)
+            await tasks_tick(maker, repo, runner, settings_store=settings_store)
         except Exception as exc:  # noqa: BLE001 — the tick must not kill the loop
             log.warning("tasks.tick_error", error=repr(exc))
         await asyncio.sleep(interval)

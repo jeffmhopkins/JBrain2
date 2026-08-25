@@ -452,7 +452,9 @@ async def run_loop(
         held = False
         if settings is not None:
             with contextlib.suppress(Exception):
-                held = bool(await settings.code_mode_hold_names(queue.SYSTEM_CTX))
+                # Either box reservation — jcode power-on OR a jmolt night in flight — pauses the
+                # background loop so nothing loads a competing local model into the shared box.
+                held = bool(await settings.box_hold_names(queue.SYSTEM_CTX))
         # Run the scheduler tick on its own cadence: claim due schedules and
         # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
         # (a single indexed due-query) and rides the same loop as the job claim,
