@@ -8,6 +8,7 @@ and fires once inside the window (and not twice the same night).
 
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 from sqlalchemy import text
@@ -26,6 +27,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm import UserMessage
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -73,6 +75,11 @@ async def _owner(maker: async_sessionmaker) -> SessionContext:
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 
+async def _ready(model: str | None) -> str | None:
+    """An already-resolved served-model loader result — the async shape the runner awaits."""
+    return model
+
+
 def _stepped_clock(step_s: float) -> Callable[[], datetime]:
     """A deterministic clock advancing `step_s` per call (the faked executor returns
     instantly, so a real clock would spin). The sittings loop reads it once per iteration:
@@ -94,6 +101,7 @@ def _runner(
     executor: _FakeExecutor,
     *,
     clock: Callable[[], datetime] | None = None,
+    served_model_loader: Callable[[], object] | None = None,
 ):
     return JmoltNightRunner(
         sessions=AgentSessionRepo(maker),
@@ -103,6 +111,7 @@ def _runner(
         settings_store=store,  # type: ignore[arg-type]
         maker=maker,
         clock=clock or _stepped_clock(2000),  # default: one sitting per night
+        served_model_loader=served_model_loader,  # type: ignore[arg-type]
     )
 
 
@@ -300,3 +309,118 @@ async def test_tick_fires_once_in_window(maker: async_sessionmaker) -> None:
     assert again is False
     assert executor.calls == 1
     assert await _jmolt_session_count(maker, owner) == before + 1
+
+
+class _HoldWatchingExecutor(_FakeExecutor):
+    """Records the night hold that was set WHILE its turn ran — proves the box was reserved
+    for the duration of the sitting, not just at the edges."""
+
+    def __init__(self, store: FakeSettingsStore, owner: SessionContext) -> None:
+        super().__init__()
+        self._store = store
+        self._owner = owner
+        self.hold_during_turn: frozenset[str] = frozenset()
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        self.hold_during_turn = await self._store.night_hold_names(self._owner)
+        return await super().run_turn(**kwargs)
+
+
+async def test_run_reserves_the_box_for_the_night_then_releases(maker: async_sessionmaker) -> None:
+    # The night hold pins the served model for the hour, and is cleared once the night ends.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _HoldWatchingExecutor(store, owner)
+    await _runner(maker, store, executor, served_model_loader=lambda: _ready("gpt-oss-120b")).run(
+        owner
+    )
+
+    assert executor.hold_during_turn == frozenset({"gpt-oss-120b"})  # reserved DURING the sitting
+    assert await store.night_hold_names(owner) == frozenset()  # released after the night
+
+
+async def test_run_releases_the_box_even_when_a_sitting_raises(maker: async_sessionmaker) -> None:
+    # The release is in a `finally`: a blowing-up night still frees the box (no stuck reservation).
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+
+    class _Boom(_FakeExecutor):
+        async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+            raise RuntimeError("sitting exploded")
+
+    await _runner(maker, store, _Boom(), served_model_loader=lambda: _ready("gpt-oss-120b")).run(
+        owner
+    )
+    assert await store.night_hold_names(owner) == frozenset()  # freed despite the failure
+
+
+async def test_run_without_a_served_model_loader_holds_nothing(maker: async_sessionmaker) -> None:
+    # No local router (loader None) → the night runs unreserved rather than not at all.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _HoldWatchingExecutor(store, owner)
+    await _runner(maker, store, executor).run(owner)
+    assert executor.hold_during_turn == frozenset()
+    assert await store.night_hold_names(owner) == frozenset()
+
+
+class _PrologueCapturingExecutor(_FakeExecutor):
+    """Records the prologue text of each sitting it runs, so a test can assert what was (and
+    was not) injected into a given sitting."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prologues: list[str] = []
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        convo = cast("list[UserMessage]", kwargs.get("conversation") or [])
+        # The sitting builds [now_block, prologue]; the prologue is the last user message.
+        self.prologues.append(convo[-1].text if convo else "")
+        return await super().run_turn(**kwargs)
+
+
+async def test_advisory_note_rides_the_first_sitting_only(maker: async_sessionmaker) -> None:
+    # The owner's advisory note is injected — framed as trusted-but-non-binding — into the
+    # FIRST sitting's prologue, and NOT re-injected on later fresh sittings.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_advisory_note"] = "maybe look at the tide-pool submol tonight"
+    executor = _PrologueCapturingExecutor()
+    # step 600 → 5 sittings, so there are later sittings to check.
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert len(executor.prologues) == 5
+    first = executor.prologues[0]
+    assert "A NOTE FROM YOUR HUMAN" in first
+    assert "maybe look at the tide-pool submol tonight" in first
+    assert "COMMENTS, not" in first  # the advisory (non-binding) framing
+    for later in executor.prologues[1:]:
+        assert "A NOTE FROM YOUR HUMAN" not in later
+        assert "tide-pool submol" not in later
+
+
+async def test_no_advisory_block_when_the_note_is_blank(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    store = FakeSettingsStore()  # no advisory note set
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor).run(owner)
+    assert executor.prologues and "A NOTE FROM YOUR HUMAN" not in executor.prologues[0]
+
+
+async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) -> None:
+    # A prior night that died before its `finally` unwound leaves the hold set; the next tick
+    # clears it (lane idle) so the box isn't stuck reserved all day.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_api_key"] = "moltbook_key123456"
+    await store.set_night_hold_names(owner, ["gpt-oss-120b"])  # dangling from a crashed night
+    lane = SingleFlightLane()
+    # Out of window, so no new run launches — but the self-heal still fires.
+    await jmolt_night_tick(
+        maker,
+        _runner(maker, store, _FakeExecutor()),
+        store,  # type: ignore[arg-type]
+        lane,
+        now=datetime(2026, 8, 25, 14, 0, tzinfo=UTC),
+    )
+    assert await store.night_hold_names(owner) == frozenset()

@@ -26,7 +26,7 @@ from sqlalchemy import text
 
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.jmolt import JmoltScratchRepo
+from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 
 if TYPE_CHECKING:
@@ -92,6 +92,7 @@ def build_jmolt_observe_handlers(
     scratch = JmoltScratchRepo()
     ledger = ActionLedgerRepo()
     outbox = OutboxRepo()
+    journal = JmoltJournalRepo()
 
     async def jmolt_observe(arguments: dict, ctx: ToolContext) -> str:
         # M16: refuse if this turn can also act on what it reads (any tool beyond the
@@ -192,6 +193,12 @@ def build_jmolt_observe_handlers(
             ]
             return _fenced("jmolt's actions (newest first)", data)
 
+        if action == "journal":
+            async with scoped_session(maker, data_read) as s:
+                entries = await journal.recent(s, pid, limit=_clamp(arguments.get("limit"), 60))
+            data = [{"content": e.content, "at": e.created_at} for e in entries]
+            return _fenced("jmolt's journal to its human (newest first)", data)
+
         if action == "scratch_list":
             async with scoped_session(maker, data_read) as s:
                 files = await scratch.list_files(s, pid)
@@ -248,8 +255,9 @@ def build_jmolt_observe_handlers(
             return _fenced("jmolt's outbox (staged + published writes)", data)
 
         return (
-            "jmolt_observe needs action= one of sessions, transcript, actions, scratch_list, "
-            f"scratch_read, scratch_history, outbox (got {action or 'nothing'!r})."
+            "jmolt_observe needs action= one of sessions, transcript, actions, journal, "
+            "scratch_list, scratch_read, scratch_history, outbox "
+            f"(got {action or 'nothing'!r})."
         )
 
     return {"jmolt_observe": jmolt_observe}

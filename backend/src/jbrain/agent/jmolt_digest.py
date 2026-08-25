@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.jmolt_guards import strip_invisibles
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.jmolt import JmoltJournalRepo, JournalEntry
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, LedgerRow, OutboxRepo, OutboxRow
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.settings_store import SqlSettingsStore
@@ -36,6 +37,7 @@ JMOLT_DIGEST_HOUR = 8
 JMOLT_DIGEST_WINDOW_MIN = 15
 _ACTIONS_IN_DIGEST = 40
 _STAGED_IN_DIGEST = 20
+_JOURNAL_IN_DIGEST = 3
 # Notifications are short; the full enumeration also lives in the ledger/outbox the PWA
 # reads. Cap the pushed body so a flooded night can't produce a megabyte notification.
 _DIGEST_BODY_CAP = 4000
@@ -74,9 +76,20 @@ def _preview(payload: dict) -> str:
     return ""
 
 
-def build_digest_body(actions: list[LedgerRow], staged: list[OutboxRow]) -> str:
-    """The sanitized digest text (M14/M15). Pure — the tick wraps it with I/O."""
+def build_digest_body(
+    actions: list[LedgerRow],
+    staged: list[OutboxRow],
+    journal: list[JournalEntry] | None = None,
+) -> str:
+    """The sanitized digest text (M14/M15). Pure — the tick wraps it with I/O. jmolt's own
+    journal (its voice) leads, then the mechanical ledger of what it did."""
     lines: list[str] = []
+    # jmolt's journal is its OWN words but still one hop from Moltbook text it may quote, so
+    # it is sanitized like everything else (M15).
+    for entry in journal or []:
+        lines.append(f"jmolt wrote — “{sanitize_for_owner(entry.content)}”")
+    if journal:
+        lines.append("")
     if actions:
         lines.append(f"Published in the last day ({len(actions)}):")
         for a in actions[:_ACTIONS_IN_DIGEST]:
@@ -116,6 +129,7 @@ class JmoltDigest:
         self._notify = notify
         self._ledger = ActionLedgerRepo()
         self._outbox = OutboxRepo()
+        self._journal = JmoltJournalRepo()
 
     def _admin(self, pid: str) -> SessionContext:
         return SessionContext(principal_id=pid, principal_kind="owner", domain_scopes=("jmolt",))
@@ -157,8 +171,10 @@ class JmoltDigest:
         async with scoped_session(self._maker, admin) as s:
             recent = await self._ledger.recent(s, pid, limit=_ACTIONS_IN_DIGEST)
             staged = await self._outbox.list_by_status(s, pid, ("queued", "released"))
+            journal = await self._journal.recent(s, pid, limit=_JOURNAL_IN_DIGEST)
         actions = [a for a in recent if a.at is None or a.at >= cutoff]
-        return build_digest_body(actions, staged)
+        fresh_journal = [j for j in journal if j.created_at >= cutoff]
+        return build_digest_body(actions, staged, fresh_journal)
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:

@@ -407,6 +407,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # must not block startup (the reservation simply isn't cleared, no worse than today).
         with suppress(Exception):
             await settings_store.set_code_mode_hold_names(SYSTEM_CTX, [])
+        # Same reset for jmolt's night hold — a crash mid-night could otherwise leave the box
+        # reserved forever (the worker paused). Boot is safe: no night is in flight yet.
+        with suppress(Exception):
+            await settings_store.set_night_hold_names(SYSTEM_CTX, [])
         # Budget and WATCH every load against the iGPU's device pool (GTT), not just system
         # RAM. The two are accounted separately on an APU, and counting only system RAM let
         # loads whose real device cost far exceeded their catalog estimate freeze this host —
@@ -1155,7 +1159,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notify=app.state.notify_bus,
         )
         tasks_loop_task = asyncio.create_task(
-            run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
+            run_tasks_loop(
+                maker,
+                app.state.task_repo,
+                app.state.task_runner,
+                # Yield the box to jmolt's night: defer owner tasks while the night hold is set.
+                settings_store=app.state.settings_store,
+            )
         )
         # jmolt's nightly autonomous run (docs/plans/JMOLT_PLAN.md): a dedicated loop that,
         # in the owner-local small-hours window, launches one jmolt turn onto a single-flight
@@ -1170,6 +1180,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings_store=app.state.settings_store,
             maker=maker,
             notify=app.state.notify_bus,
+            # Reserve the box for the night: pin whatever local model jmolt is served from so
+            # competing loads pause and gpt-oss is never evicted mid-hour (night hold).
+            served_model_loader=app.state.llm_router.primary_local_served_model,
         )
         # jmolt's sanitized morning digest (W4): enumerates every logged action (M14) and
         # last night's staged writes, HTML-escaped/defanged/invisible-stripped before it
@@ -1229,6 +1242,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_concurrent=agent._MAX_CONCURRENT_TURNS,
             # Persists the continuation turn's context fill so the meter restores on reopen.
             sessions=app.state.agent_sessions,
+            # Yield the box to jmolt's night: no background plan step while the night hold is set.
+            settings_store=app.state.settings_store,
         )
         plan_continuation_task = asyncio.create_task(
             run_plan_continuation_loop(app.state.plan_continuation_runner)
@@ -1278,11 +1293,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # + persona+tools prefill. Nothing else does this on boot: schedule_restore only undoes
         # same-process displacements, and an on-demand load is bare. Detached + best-effort;
         # reconciles on boot and on an interval, so it also self-heals a gateway-only restart.
+        # NB: WarmKeeper honours BOTH box reservations (code mode OR a jmolt night) via the
+        # union, so during jmolt's hour it keeps gpt-oss primed and loads nothing else. The
+        # residency coordinators below stay code-mode-only (option A) so an owner turn at 3am can
+        # still load another local model — jmolt yields, WarmKeeper restores gpt-oss afterward.
         app.state.warm_keeper = WarmKeeper(
             gateway=app.state.local_gateway,
             registry=app.state.agent_registry,
             router=app.state.llm_router,
-            hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
+            hold_loader=lambda: settings_store.box_hold_names(SYSTEM_CTX),
             # The same operator switch the coordinator reads. The keeper is the OTHER auto-load
             # path on this box, and without this it reloaded the primary model every 5s no
             # matter what the setting said — so turning auto-reload off stopped restores while

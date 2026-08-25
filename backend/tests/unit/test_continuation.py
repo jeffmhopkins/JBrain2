@@ -5,6 +5,8 @@ no DB, no LLM."""
 
 import time
 
+import pytest
+
 from jbrain.agent.continuation import (
     _NO_CONTINUE_STOPS,
     TURN_STARTING_TTL_S,
@@ -65,6 +67,39 @@ def test_global_cap_blocks_when_full() -> None:
     # A done turn doesn't count toward the cap.
     done = {k: _Marker(f"s{i}", done=True) for i, k in enumerate("abcd")}
     assert not _runner(done, {}, max_concurrent=4)._at_global_cap()
+
+
+class _NightHoldStore:
+    """Minimal settings stub: the night hold is on, so a sweep must yield the box."""
+
+    def __init__(self, held: bool) -> None:
+        self._held = held
+
+    async def night_hold_names(self, ctx: object) -> frozenset[str]:
+        return frozenset({"gpt-oss-120b"}) if self._held else frozenset()
+
+
+async def test_tick_yields_the_box_during_a_jmolt_night() -> None:
+    # While the night hold is set, tick() returns before ANY DB work — maker=None would
+    # raise the instant scoped_session touched it, so reaching the claim proves a leak.
+    r = _runner({}, {})
+    r.owner_principal_id = lambda: _pid("owner-1")  # type: ignore[assignment]
+    r.settings_store = _NightHoldStore(held=True)  # type: ignore[assignment]
+    await r.tick()  # no exception → it short-circuited before scoped_session(maker=None)
+
+
+async def test_tick_proceeds_when_no_night_hold() -> None:
+    # Guard the guard: with the hold clear, tick() DOES fall through to the DB (maker=None),
+    # so it must raise — proving the early-return is gated on the hold, not always on.
+    r = _runner({}, {})
+    r.owner_principal_id = lambda: _pid("owner-1")  # type: ignore[assignment]
+    r.settings_store = _NightHoldStore(held=False)  # type: ignore[assignment]
+    with pytest.raises(Exception):  # noqa: B017, PT011 — any DB access on maker=None
+        await r.tick()
+
+
+async def _pid(pid: str) -> str:
+    return pid
 
 
 def test_persistent_failure_and_deferred_stops_do_not_continue() -> None:

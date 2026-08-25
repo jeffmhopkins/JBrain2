@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import type {
   MoltbookAction,
+  MoltbookJournalEntry,
   MoltbookNight,
   MoltbookOutboxItem,
   MoltbookRegisterResult,
@@ -77,6 +78,12 @@ export function JmoltScreen() {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileHistory, setFileHistory] = useState<MoltbookScratchVersion[] | null>(null);
 
+  // jmolt's journal (its line to the owner), and the owner's advisory note back to jmolt.
+  // `noteDraft` is the editable buffer; `noteSaved` tracks whether it matches what's stored.
+  const [journal, setJournal] = useState<MoltbookJournalEntry[] | null>(null);
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  const [noteSaved, setNoteSaved] = useState(false);
+
   useEffect(() => {
     let stale = false;
     api
@@ -115,7 +122,17 @@ export function JmoltScreen() {
       .getMoltbookFiles()
       .then(setFiles)
       .catch(() => setFiles([]));
+    api
+      .getMoltbookJournal()
+      .then(setJournal)
+      .catch(() => setJournal([]));
   }, [moltbook?.key_set]);
+
+  // Seed the advisory-note editor from the stored value the first time settings arrive,
+  // without clobbering an in-progress edit (only seed while the draft is still unset).
+  useEffect(() => {
+    if (moltbook && noteDraft === null) setNoteDraft(moltbook.advisory_note);
+  }, [moltbook, noteDraft]);
 
   function selectNight(sessionId: string) {
     if (openNight === sessionId) {
@@ -202,6 +219,14 @@ export function JmoltScreen() {
 
   function setNightHour(hour: number) {
     void api.updateMoltbookSettings({ night_hour: hour }).then(setMoltbook);
+  }
+
+  function saveAdvisoryNote() {
+    if (noteDraft === null) return;
+    void api.updateMoltbookSettings({ advisory_note: noteDraft }).then((s) => {
+      setMoltbook(s);
+      setNoteSaved(true);
+    });
   }
 
   function disconnectMoltbook() {
@@ -476,6 +501,70 @@ export function JmoltScreen() {
               </ul>
             )}
           </div>
+        </section>
+      )}
+
+      {/* ── Notes to jmolt: the owner's advisory note (human → jmolt) ─────── */}
+      {moltbook?.key_set && (
+        <section className="settings-card">
+          <h2 className="settings-label">Notes to jmolt</h2>
+          <p className="settings-meta">
+            A note jmolt reads at the start of its next night. It knows this is really from you —
+            but it's a comment, not a command: jmolt weighs it and decides for itself, and it never
+            changes jmolt's rules or switches. Leave it blank for none.
+          </p>
+          <textarea
+            className="molt-note"
+            aria-label="Note to jmolt"
+            rows={4}
+            placeholder="e.g. No pressure, but you mentioned the tide-pool submol — might be worth a look."
+            value={noteDraft ?? ""}
+            onChange={(e) => {
+              setNoteDraft(e.target.value);
+              setNoteSaved(false);
+            }}
+          />
+          <div className="molt-note-actions">
+            <button
+              type="button"
+              className="seg"
+              disabled={noteDraft === null || noteDraft === moltbook.advisory_note}
+              onClick={saveAdvisoryNote}
+            >
+              Save note
+            </button>
+            {noteSaved && noteDraft === moltbook.advisory_note && (
+              <span className="settings-meta" style={{ margin: 0 }}>
+                Saved — jmolt will see it next night.
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── Journal: jmolt's own line to you (jmolt → human) ──────────────── */}
+      {moltbook?.key_set && (
+        <section className="settings-card">
+          <h2 className="settings-label">Journal</h2>
+          <p className="settings-meta">
+            jmolt's own words to you, night by night — what it did, what it's turning over. It
+            writes these itself; you never edit them.
+          </p>
+          {journal === null ? (
+            <p className="settings-meta">Loading…</p>
+          ) : journal.length === 0 ? (
+            <p className="settings-meta">Nothing yet — jmolt hasn't left a journal entry.</p>
+          ) : (
+            <ul className="molt-journal">
+              {journal.map((e, i) => (
+                <li key={`${e.at ?? "x"}-${i}`} className="molt-journal-entry">
+                  <span className="molt-journal-at">{localDateTime(e.at)}</span>
+                  {/* Inert text only (M15): jmolt-authored, one hop from forum text. */}
+                  <p className="molt-journal-body">{inertText(e.content)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 

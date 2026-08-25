@@ -451,6 +451,13 @@ class FakeSettingsStore:
     async def set_moltbook_disclosure(self, ctx: object, line: str) -> None:
         self.values["moltbook_disclosure"] = line
 
+    async def moltbook_advisory_note(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_advisory_note", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_advisory_note(self, ctx: object, note: str) -> None:
+        self.values["moltbook_advisory_note"] = note
+
     async def moltbook_last_night(self, ctx: object) -> str:
         raw = self.values.get("moltbook_last_night", "")
         return raw if isinstance(raw, str) else ""
@@ -480,6 +487,27 @@ class FakeSettingsStore:
 
     async def set_moltbook_night_hour(self, ctx: object, hour: int) -> None:
         self.values["moltbook_night_hour"] = max(0, min(23, int(hour)))
+
+    async def code_mode_hold_names(self, ctx: object) -> frozenset[str]:
+        raw = self.values.get("code_mode_hold_name", [])
+        if not isinstance(raw, list):
+            return frozenset()
+        return frozenset(x for x in raw if isinstance(x, str) and x)
+
+    async def set_code_mode_hold_names(self, ctx: object, served_models: Sequence[str]) -> None:
+        self.values["code_mode_hold_name"] = sorted({m for m in served_models if m})
+
+    async def night_hold_names(self, ctx: object) -> frozenset[str]:
+        raw = self.values.get("jmolt_night_hold_name", [])
+        if not isinstance(raw, list):
+            return frozenset()
+        return frozenset(x for x in raw if isinstance(x, str) and x)
+
+    async def set_night_hold_names(self, ctx: object, served_models: Sequence[str]) -> None:
+        self.values["jmolt_night_hold_name"] = sorted({m for m in served_models if m})
+
+    async def box_hold_names(self, ctx: object) -> frozenset[str]:
+        return await self.code_mode_hold_names(ctx) | await self.night_hold_names(ctx)
 
     async def moltbook_account_state(self, ctx: object) -> str:
         raw = self.values.get("moltbook_account_state", "ok")

@@ -152,6 +152,10 @@ MOLTBOOK_KILL_KEY = "moltbook_kill"
 MOLTBOOK_KILL_DEFAULT = False
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
 MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
+# The owner's advisory note TO jmolt: a scratchpad the human edits, injected (fenced, as
+# trusted-owner DATA) into the first sitting of the next night. Advisory, not command —
+# jmolt weighs it; it changes nothing about the rules/switches. Blank by default.
+MOLTBOOK_ADVISORY_NOTE_KEY = "moltbook_advisory_note"
 MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
 # Consecutive verification-failure streak (M11). At the limit, ALL writes stop and the
 # owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
@@ -316,6 +320,10 @@ JCODE_MODEL_KEY = "jcode_model"
 # co-reside, and a background deep-research load contending with an open jcode session OOM'd
 # the box; reserving the box for the coder removes that contention by construction.
 CODE_MODE_HOLD_KEY = "code_mode_hold_name"
+# The same box-reservation mechanism, held by jmolt's nightly hour instead of jcode: while a
+# night is in flight the worker pauses its job loop so nothing loads a competing local model
+# and evicts gpt-oss mid-hour. Unioned with the code-mode hold by `box_hold_names`.
+NIGHT_HOLD_KEY = "jmolt_night_hold_name"
 
 # The planner model for code mode's grok `plan` subagent — the second half of the jcode
 # LLM card. Absent/non-string = "" (unset): the api falls back to the
@@ -590,6 +598,16 @@ class SqlSettingsStore:
 
     async def set_moltbook_disclosure(self, ctx: SessionContext, line: str) -> None:
         await self.upsert(ctx, MOLTBOOK_DISCLOSURE_KEY, line)
+
+    async def moltbook_advisory_note(self, ctx: SessionContext) -> str:
+        """The owner's advisory note to jmolt (injected fenced into the next night's first
+        sitting), or "" when unset. Free text the human edits in the PWA."""
+        raw = await self.get(ctx, MOLTBOOK_ADVISORY_NOTE_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_advisory_note(self, ctx: SessionContext, note: str) -> None:
+        """Store (or clear, with "") the owner's advisory note to jmolt."""
+        await self.upsert(ctx, MOLTBOOK_ADVISORY_NOTE_KEY, note)
 
     async def moltbook_last_night(self, ctx: SessionContext) -> str:
         """The owner-local date (ISO `YYYY-MM-DD`) of jmolt's most recent nightly run, or
@@ -876,6 +894,27 @@ class SqlSettingsStore:
     ) -> None:
         """Reserve the box for jcode's models (power ON), or release it with [] (OFF / boot)."""
         await self.upsert(ctx, CODE_MODE_HOLD_KEY, sorted({m for m in served_models if m}))
+
+    async def night_hold_names(self, ctx: SessionContext) -> frozenset[str]:
+        """The served-model names jmolt's nightly hour has reserved the box for while a night is
+        in flight (docs/plans/JMOLT_SITTINGS_PLAN.md — the box-reservation wave), or an empty set
+        otherwise. Same shape and defensive parsing as `code_mode_hold_names`; the two are unioned
+        by `box_hold_names` so every place that honours the code-mode hold honours this one too."""
+        raw = await self.get(ctx, NIGHT_HOLD_KEY, [])
+        if not isinstance(raw, list):
+            return frozenset()
+        return frozenset(x for x in raw if isinstance(x, str) and x)
+
+    async def set_night_hold_names(self, ctx: SessionContext, served_models: Sequence[str]) -> None:
+        """Reserve the box for jmolt's night (set to [gpt-oss served name] at the start of a
+        night), or release it with [] (night end / watchdog cancel / boot)."""
+        await self.upsert(ctx, NIGHT_HOLD_KEY, sorted({m for m in served_models if m}))
+
+    async def box_hold_names(self, ctx: SessionContext) -> frozenset[str]:
+        """The union of every box reservation — code mode OR a jmolt night. A background local
+        load / the worker's job loop defers while this is non-empty. One accessor so the worker
+        pause and the WarmKeeper honour both holds through a single read."""
+        return await self.code_mode_hold_names(ctx) | await self.night_hold_names(ctx)
 
     async def jcode_planner_model(self, ctx: SessionContext) -> str:
         """The stored planner selection for code mode: a served-model id, the

@@ -1,6 +1,6 @@
 # jmolt — an autonomous nightly persona on Moltbook, observed from jerv
 
-> **Status:** Shipped · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2✅ W3✅ W4✅
+> **Status:** Shipped · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
 
 [Moltbook](https://moltbook.com) is a Reddit-style social network whose members are
 AI agents (humans browse; agents post, comment, vote, and form communities called
@@ -217,6 +217,22 @@ Rows + capped bytes, quota enforced in the write path: **16 files / 128 KB total
 to an append-only archive outside the editable budget (M13) — the science
 instrument and the injection-rollback story.
 
+### The journal + the owner's advisory note — `app.jmolt_journal` + a settings note
+Two one-directional channels between jmolt and its human, distinct from the scratchpad
+(which is jmolt's private memory). **jmolt → human:** an append-only `journal` tool over
+`app.jmolt_journal` (migration 0176, same M19 RLS shape as the scratchpad: jmolt appends
+its own rows, jerv reads, no one edits; per-entry byte cap + retention bound). jmolt leaves
+a short entry in its own voice; it leads the morning digest (sanitized M15, above the
+mechanical ledger) and shows on the jmolt screen (rendered inert). **human → jmolt:** an
+advisory note the owner edits in the PWA (`moltbook_advisory_note` setting), injected into
+the **first sitting only**, framed as trusted-owner-but-non-binding DATA (`_advisory_block`
+in `jmolt_night.py`): it really is from the human, but it is comments, not commands, and it
+changes nothing about the rules or switches. The persona's owner-channel paragraph
+(`jmolt.prompt`) is reconciled to name exactly two trusted channels — the fixed rules and
+that clearly-marked note — so jmolt distinguishes it from a Moltbook impersonator while
+still treating everything on the platform as never-the-human. If the note and the rules
+ever seem to conflict, the rules win.
+
 ### Isolation — a new `jmolt` RLS domain
 `app.domains` gets a `jmolt` row (template `0136`). jmolt's nightly session runs
 `domain_scopes=('jmolt',)` under `auth_context='jmolt'` (settable only by jmolt's
@@ -232,8 +248,10 @@ existing gateway, reserving against the local-model ledger fail-safe (M24). A
 T-minus-5-minute nudge invites the file flush.
 
 ### Observation — `jmolt_observe` for a sandboxed observer, sanitized digest
-`jmolt_observe` umbrella, action enum `{sessions, transcript, actions, scratch_list,
-scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write action.
+`jmolt_observe` umbrella, action enum `{sessions, transcript, actions, journal,
+scratch_list, scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write
+action. (The `journal` action lets a scheduled observer audit compare what jmolt *said* it
+did against what it *did* — the W5 journal beside the W4 ledger.)
 **As built (M16):** rather than narrow a jerv session, the tool lives on a dedicated
 `jmolt_observer` persona (`agent/prompts/jmolt_observer.prompt`) whose whole allowlist is
 `{jmolt_observe, current_time}` — KB-less and egress-toolless, so a poisoned diary can
@@ -342,3 +360,16 @@ new dependency, and docs reconciled per `DOC_LIFECYCLE.md`.
   foreign write in the public profile raises the tamper alert and engages the kill; a
   simulated suspension auto-pauses the lane and notifies; the digest + review queue render
   planted forum markup inert.
+- **W5 — the two-way channel + box reservation + observer task. ✅ Shipped.** After the
+  live-box first nights: (a) the sittings loop + live countdown so jmolt uses its full hour
+  without a summarizer, and the **night hold** that reserves the box for the hour — both
+  detailed in `JMOLT_SITTINGS_PLAN.md` (W1/W3); (b) the **journal** (jmolt → human) and the
+  owner's **advisory note** (human → jmolt), with the persona's owner-channel paragraph
+  reconciled to name exactly two trusted channels (see §3 "The journal + the owner's
+  advisory note"); (c) the **`jmolt_observer` task persona** offered in the PWA task picker,
+  so the owner can schedule a recurring read-only review of jmolt's nights/notes/actions.
+  **Acceptance (met):** the journal's M19 RLS matrix passes (jmolt appends, jerv reads, no
+  UPDATE for anyone); the advisory note rides the first sitting only and never re-elevates
+  to a command; the digest leads with jmolt's sanitized journal; the night hold is set for
+  the hour and cleared (or self-healed) after, and the worker/WarmKeeper/task+continuation
+  sweeps honour it while residency stays code-mode-only so a 03:00 owner turn still loads.
