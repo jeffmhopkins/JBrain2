@@ -1,6 +1,6 @@
 # jmolt — an autonomous nightly persona on Moltbook, observed from jerv
 
-> **Status:** Scheduled · **Last verified:** 2026-08-24 · **Waves:** W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** Shipped · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2✅ W3✅ W4✅
 
 [Moltbook](https://moltbook.com) is a Reddit-style social network whose members are
 AI agents (humans browse; agents post, comment, vote, and form communities called
@@ -221,13 +221,23 @@ ceiling — not awaited inline in the minute tick. Runs on gpt-oss-120b via the
 existing gateway, reserving against the local-model ledger fail-safe (M24). A
 T-minus-5-minute nudge invites the file flush.
 
-### Observation — `jmolt_observe` for jerv, sanitized digest
-`jmolt_observe` umbrella, action enum ≈ `{sessions, transcript, actions,
-scratch_list, scratch_read, scratch_history, posts}`, all returns DATA-fenced, no
-write action, usable only from a narrowed egress-toolless jerv session (M16). The
-morning digest (via the task's `notify_push`) enumerates every action (M14) and is
-sanitized before PWA render (M15). A weekly metrics script (§5 W4) computes the §
-observability rubric from the ledger + snapshots.
+### Observation — `jmolt_observe` for a sandboxed observer, sanitized digest
+`jmolt_observe` umbrella, action enum `{sessions, transcript, actions, scratch_list,
+scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write action.
+**As built (M16):** rather than narrow a jerv session, the tool lives on a dedicated
+`jmolt_observer` persona (`agent/prompts/jmolt_observer.prompt`) whose whole allowlist is
+`{jmolt_observe, current_time}` — KB-less and egress-toolless, so a poisoned diary can
+never meet a live web/email/Moltbook call in the same turn. A runtime guard makes the
+boundary mechanical too: `jmolt_observe` refuses in any turn whose `agent_tools` hold
+anything beyond that safe set. Each action opens an owner + jmolt-domain read context with
+**no** `auth_context='jmolt'`, so the M19 RLS split grants SELECT and denies every write.
+The morning digest (`agent/jmolt_digest.py`, on the nightly loop's clock) enumerates every
+action (M14) and is sanitized before it reaches the owner (M15 — invisibles/bidi stripped,
+HTML-escaped, links defanged); the PWA review queue renders staged payloads inert the same
+way (`frontend/src/moltbookSafe.ts`). The integrity watch (`agent/jmolt_integrity.py`)
+diffs the public profile against the outbox ledger (M21) and surfaces account state with
+auto-pause on suspension (M22). `scripts/jmolt-metrics.py` computes the weekly
+observability rubric from the ledger + scratchpad + nights + outbox.
 
 ## 4. Decisions
 
@@ -301,13 +311,16 @@ new dependency, and docs reconciled per `DOC_LIFECYCLE.md`.
   secret/bidi payload is blocked by the lint; a challenge with non-numeric solver
   output skips `/verify` without spending the streak; three consecutive failures stop
   all writes and alert; the outbox authority-split RLS matrix passes.
-- **W4 — Observation + integrity.** `jmolt_observe` from a narrowed jerv session
-  (M16), the sanitized morning digest enumerating every action (M14, M15), the
-  tamper watch diffing the public profile against the outbox ledger (M21),
-  account-state surfacing with auto-pause on suspension (M22), and the weekly
-  metrics script. **Acceptance:** jerv reads a night's transcript/actions/scratchpad
-  history through `jmolt_observe` with every return fenced and no write action
-  reachable, and the umbrella refuses to load in a jerv session with egress tools
-  live; a simulated foreign write in the public profile raises the tamper alert and
-  engages the kill; a simulated suspension auto-pauses the lane and notifies; the
-  digest renders planted forum markup inert.
+- **W4 — Observation + integrity. ✅ Shipped.** `jmolt_observe` on the dedicated
+  egress-toolless `jmolt_observer` persona (M16 — see §3 Observation for why a dedicated
+  persona rather than a narrowed jerv session), the sanitized morning digest enumerating
+  every action (M14, M15), the tamper watch diffing the public profile against the outbox
+  ledger (M21), account-state surfacing with auto-pause on suspension — re-enforced every
+  tick while the bad state persists (M22), and the weekly metrics script. The auto-pause
+  reuses the M6 kill + M7 switch-revert; migration 0175 admits `jmolt_observer` into the
+  agent CHECKs. **Acceptance (met):** the observer reads a night's transcript/actions/
+  scratchpad history through `jmolt_observe` with every return fenced and no write action
+  reachable, and the umbrella refuses to run in a turn holding egress tools; a simulated
+  foreign write in the public profile raises the tamper alert and engages the kill; a
+  simulated suspension auto-pauses the lane and notifies; the digest + review queue render
+  planted forum markup inert.
