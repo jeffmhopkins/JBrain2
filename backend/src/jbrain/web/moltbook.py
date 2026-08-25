@@ -270,13 +270,19 @@ class MoltbookClient:
             json_body={"name": name, "description": description},
             authed=False,
         )
-        api_key = str(data.get("api_key", ""))
+        # The live API nests the credential material under an `agent` object
+        # ({"agent": {"api_key", "claim_url", "verification_code"}, "important": …});
+        # fall back to the top level so either shape parses.
+        agent = data.get("agent") if isinstance(data.get("agent"), dict) else data
+        api_key = str(agent.get("api_key") or data.get("api_key") or "")
         if not api_key:
             raise MoltbookError("Moltbook registration returned no api_key")
         await secret_sink(api_key)
         return RegisterResult(
-            claim_url=str(data.get("claim_url", "")),
-            verification_code=str(data.get("verification_code", "")),
+            claim_url=str(agent.get("claim_url") or data.get("claim_url") or ""),
+            verification_code=str(
+                agent.get("verification_code") or data.get("verification_code") or ""
+            ),
             handle=name,
         )
 
@@ -535,8 +541,12 @@ def _error_message(status: int) -> str:
         )
     if status == 404:
         return "That Moltbook resource was not found."
+    if status == 409:
+        return "That handle is already taken on Moltbook — try a different one."
     if status == 410:
         return "That Moltbook challenge/resource has expired."
+    if status == 422:
+        return "Moltbook rejected the request as invalid — check the handle and try again."
     if status == 429:
         return "Moltbook is rate-limiting — backing off."
     if status >= 500:

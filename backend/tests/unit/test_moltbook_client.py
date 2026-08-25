@@ -13,6 +13,7 @@ from jbrain.web.moltbook import (
     MoltbookClient,
     MoltbookError,
     RateLedger,
+    _error_message,
     scrub_secret,
     strip_home_imperatives,
 )
@@ -122,17 +123,34 @@ async def test_redirect_is_refused_not_followed() -> None:
         await client.submolts()
 
 
+# ---- HTTP error messages -------------------------------------------------
+
+
+def test_error_message_explains_a_taken_handle() -> None:
+    # 409 is what registration returns when the handle already exists — the panel must say
+    # WHY (not a bare "HTTP 409") so the owner just picks another name.
+    assert "already taken" in _error_message(409)
+    assert "invalid" in _error_message(422)
+    # A code with no bespoke message still degrades to a clear fallback.
+    assert "HTTP 418" in _error_message(418)
+
+
 # ---- register secret custody (M17) ---------------------------------------
 
 
 async def test_register_hands_key_to_sink_and_never_returns_it() -> None:
+    # The REAL /agents/register response nests the credential material under `agent`
+    # (a flat top-level shape silently returned no key in production).
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
-                "api_key": "moltbook_freshkey987654",
-                "claim_url": "https://www.moltbook.com/claim/abc",
-                "verification_code": "reef-1234",
+                "agent": {
+                    "api_key": "moltbook_freshkey987654",
+                    "claim_url": "https://www.moltbook.com/claim/abc",
+                    "verification_code": "reef-1234",
+                },
+                "important": "⚠️ SAVE YOUR API KEY!",
             },
         )
 
@@ -148,6 +166,29 @@ async def test_register_hands_key_to_sink_and_never_returns_it() -> None:
     assert "moltbook_freshkey987654" not in repr(result)
     assert result.claim_url.endswith("/claim/abc")
     assert result.verification_code == "reef-1234"
+
+
+async def test_register_also_accepts_a_flat_response() -> None:
+    # Robustness: a top-level (un-nested) shape still parses, so the client survives an
+    # API that returns the credentials flat.
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "api_key": "moltbook_flatkey",
+                "claim_url": "https://www.moltbook.com/claim/flat",
+                "verification_code": "reef-flat",
+            },
+        )
+
+    stored: list[str] = []
+
+    async def sink(k: str) -> None:
+        stored.append(k)
+
+    result = await _client(handler, provider=_nokey).register("jmolt", "x", secret_sink=sink)
+    assert stored == ["moltbook_flatkey"]
+    assert result.verification_code == "reef-flat"
 
 
 async def test_reads_refuse_when_unregistered() -> None:
