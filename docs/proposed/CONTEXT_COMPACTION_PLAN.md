@@ -243,40 +243,50 @@ inventing a sample size, a "doubling", a wrong year (evidence in
    answer's claims stop grounding against the (preserved) corpus, compaction
    dropped something.
 
-## 10. Wave sketch (for when this is scheduled)
+## 10. Wave sketch (per the ratified decisions in §11)
 
-- **W1 — auto-compaction, backend-only, offload-first.** The trigger (§4) + the
-  two-tier routine (§2) in `run`/`run_stream`/`_produce_buffered`, window
-  resolved in-loop, citation side-channel preserved, fenced summaries, the
-  firewall checklist. Re-wire `LlmContextOverflowError` to compact-and-retry.
-  Real-Postgres + faked-LLM tests, including an RLS/fence test that a compacted
-  summary of health/attacker content stays scoped/fenced. jmolt is the first
-  beneficiary (fully covered; no client contract needed).
-- **W2 — the on-demand `compact` tool** (§6) on jerv + jmolt + sub-agents, with
-  the `ToolContext` plumbing.
-- **W3 — `/chat` cross-turn persistence** (surface a compacted turn back to the
-  PWA so its savings survive into the next turn) and **`deep_research`'s own
-  synthesis calls** (either its own pass or a refactor onto the shared loop).
-- **W4 — tuning on the box:** threshold %, verbatim-window K, the extractive
-  prompt, the probe — measured against real long jerv turns and a real jmolt
-  hour.
+The owner chose to build the whole capability in one wave rather than stage it.
 
-## 11. Open decisions for the owner
+- **W1 — the full capability, all sessions.** Auto-compaction (§2–§5) in
+  `run` / `run_stream` / `_produce_buffered`, window resolved in-loop; the
+  on-demand `compact(keep?, focus?)` tool (§6) with its `ToolContext` plumbing;
+  and `/chat` cross-turn persistence — surface a compacted turn back to the PWA so
+  its savings survive into the next turn (the one caller with a client-owned
+  history, per §3). Two-tier eviction, offload-first with **conditional**
+  summarization (§2, §11.4). `LlmContextOverflowError` re-wired to
+  compact-and-retry. Full firewall/fence checklist (§8) and citation-side-channel
+  preservation (§5). jmolt additionally gets its **live time-countdown** injected
+  each step — compaction bounds its context, the clock makes it *use* the hour
+  (§11.2). Real-Postgres + faked-LLM tests, including an RLS/fence test that a
+  compacted summary of health/attacker content stays scoped and fenced.
+- **W2 — the two known bypasses + on-box tuning.** `deep_research`'s own top-level
+  synthesis/analysis/critique calls (which bypass `AgentLoop` and self-manage via
+  `_fit_findings_to_window`) get their own compaction pass or a refactor onto the
+  shared loop; and the threshold, verbatim window, extractive prompt, and probe are
+  tuned against real long jerv turns and a real jmolt hour.
 
-1. **Trigger threshold** — ~75–80% of window (my recommendation), vs Claude
-   Code's ~83.5%. Lower is safer on a weak summarizer; higher wastes less.
-2. **Offload vs. summarize default** — I propose *always offload what's pageable,
-   summarize only the rest*. Confirm that's the intended bias.
-3. **Verbatim window K** — how many recent ReAct rounds stay untouched (start at
-   the last 1–2 exchanges?).
-4. **Scope of W1** — backend-only (jmolt + Tasks + sub-agents) first, deferring
-   the `/chat` cross-turn persistence and the on-demand tool to W2/W3? Keeps the
-   first change off the interactive critical path.
-5. **jmolt's night** — does the sittings idea (bounded sittings that reload the
-   scratchpad + carry a live countdown) still matter once auto-compaction lets a
-   single turn run the full hour, or does compaction alone suffice? (Compaction
-   solves context; a live countdown is still the only thing that solves *pacing*
-   — they're complementary, but the sittings redesign may become unnecessary.)
+## 11. Decisions — ratified 2026-08-25
+
+1. **Scope — everything at once.** Auto-compaction + the on-demand `compact` tool
+   + `/chat` cross-turn persistence ship together across all sessions in W1,
+   rather than staging backend-only first.
+2. **jmolt's night — compaction + a clock.** The bounded-sittings redesign is
+   **dropped**: one night stays one turn, compaction keeps its context bounded, and
+   a live "woke at X, ~N min left" countdown injected each step makes jmolt pace
+   itself across the hour. Compaction solves *context*; the countdown solves
+   *pacing* — both in scope, sittings not needed.
+3. **Trigger threshold — ~80% of the window, tunable.** A config knob defaulting
+   to 80%, calibrated on the box against real turns.
+4. **Eviction — offload first, then summarize (conditionally).** Always evict
+   artifact-backed tool bodies to their `read_artifact` reference line (lossless);
+   run the local summarizer on the remainder **only if** offloading alone did not
+   clear the threshold — so a typical big-fetch overflow summarizes nothing, and the
+   weak model is a last resort under the §9 guards. (Owner was uncertain; recorded
+   as the recommended offload-first bias — revisit toward offload-only if on-box
+   summaries prove unreliable.)
+5. **Verbatim window — the last 3–4 ReAct rounds** stay untouched, favouring
+   reasoning-continuity over per-compaction reclaim; tunable alongside the
+   threshold.
 
 ## 12. Non-negotiable reconciliation (when promoted)
 
