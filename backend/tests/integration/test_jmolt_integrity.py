@@ -19,6 +19,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt_outbox import OutboxRepo
+from jbrain.notify import Notification, NotifyBus
 from jbrain.web.moltbook import MoltbookClient
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -69,9 +70,20 @@ async def _key() -> tuple[str, str]:
     return "moltbook_key123456", "jmolt"
 
 
-def _watch(maker, store: FakeSettingsStore, handler) -> JmoltIntegrity:
+class _CaptureBus(NotifyBus):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[Notification] = []
+
+    def publish(self, note: Notification) -> None:
+        self.sent.append(note)
+
+
+def _watch(
+    maker, store: FakeSettingsStore, handler, notify: NotifyBus | None = None
+) -> JmoltIntegrity:
     client = MoltbookClient(_key, transport=httpx.MockTransport(handler))
-    return JmoltIntegrity(maker=maker, client=client, settings_store=store)
+    return JmoltIntegrity(maker=maker, client=client, settings_store=store, notify=notify)
 
 
 async def _publish_row(maker, pid: str, *, title: str, moltbook_id: str) -> None:
@@ -152,22 +164,29 @@ async def test_all_profile_posts_accounted_for_is_ok(maker: async_sessionmaker) 
 # ---- account-state surfacing (M22) ---------------------------------------
 
 
-async def test_suspension_auto_pauses_and_notifies_once(maker: async_sessionmaker) -> None:
+async def test_suspension_auto_pauses_and_reenforces_but_notifies_once(
+    maker: async_sessionmaker,
+) -> None:
     await _owner_pid(maker)
     store = FakeSettingsStore()
     store.values["moltbook_autonomy"] = True
+    bus = _CaptureBus()
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"recentPosts": [], "status": "suspended"})
 
-    watch = _watch(maker, store, handler)
+    watch = _watch(maker, store, handler, notify=bus)
     assert await watch.check() == "suspended"
     assert store.values["moltbook_killed"] is True  # lane + drip paused (M6)
     assert store.values["moltbook_autonomy"] is False  # switch reverted (M7)
-    # Deduped: a second identical tick makes no further change (still suspended).
-    store.values["moltbook_killed"] = False  # pretend the owner cleared it
+    assert len(bus.sent) == 1  # notified on the transition
+    # Security-critical: if the owner clears the kill while STILL suspended, the next tick
+    # RE-engages it (a compromised/suspended account must not stay writable) — but does not
+    # re-notify (dedup on the transition).
+    store.values["moltbook_killed"] = False
     assert await watch.check() == "suspended"
-    assert store.values["moltbook_killed"] is False  # no re-engage on the SAME state
+    assert store.values["moltbook_killed"] is True  # re-engaged
+    assert len(bus.sent) == 1  # still just the one notification
 
 
 async def test_moderation_is_surfaced_but_not_auto_paused(maker: async_sessionmaker) -> None:

@@ -112,13 +112,19 @@ class JmoltIntegrity:
             return await self._settings.moltbook_account_state(admin)
 
         previous = await self._settings.moltbook_account_state(admin)
-        if state == previous:
-            return state  # dedup: act only on the transition.
-
-        await self._settings.set_moltbook_account_state(admin, state)
+        # Enforce the pause on EVERY tick while a bad state persists (idempotent), not only
+        # on the transition: a suspended or tampered (key-leaked) account must not become
+        # writable again just because the owner cleared the kill to investigate — only a
+        # recovery to a healthy state lifts the auto-pause. This is the security-critical
+        # half; the notification below is deduped to the transition so it never spams.
         if state in _PAUSE_STATES:
             await self._settings.set_moltbook_killed(admin, True)  # M6
             await self._settings.set_moltbook_autonomy(admin, False)  # M7 auto-revert
+
+        if state == previous:
+            return state  # steady state — pause already re-enforced above; don't re-notify.
+
+        await self._settings.set_moltbook_account_state(admin, state)
         self._notify_transition(state, previous)
         return state
 
