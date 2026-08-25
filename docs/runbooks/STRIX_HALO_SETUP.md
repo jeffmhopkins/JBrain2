@@ -235,6 +235,18 @@ both resides and warms it.
 > restored cache on a 1-slot server. Saves and restores land in Vitals as
 > `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
 >
+> **The harmony `Current date` is moved to the prompt tail (chat-template override).**
+> gpt-oss's stock harmony template renders a live `Current date: <today>` into the prompt's
+> LEADING tokens — invisible to the fingerprint above, because llama-server injects it, not
+> us. A restored or warm ~29k-token prefix saved on one day therefore stopped matching the
+> next day's rendered prompt at that token, and the whole prefix re-prefilled (~60 s) while
+> reporting a clean restore. Fixed at the template layer: the local-llm image ships a vendored
+> copy of the harmony template (`deploy/chat-templates/gpt-oss-120b.jinja`, byte-for-byte
+> upstream's with only the date line moved) and serves gpt-oss with `--chat-template-file`
+> pointing at it, so the date lands at the TAIL of the persona+tools prefix. A date rollover
+> now re-prefills only the date itself; the prefix stays reusable across days. Re-diff the
+> vendored template against upstream on every llama.cpp repin — see `deploy/chat-templates/`.
+>
 > **Restore does not reuse on a hybrid — the disk cache is gpt-oss-only in practice.**
 > The qwen3.8 twins were opted in on 2026-08-23 and reverted on 2026-08-24 after a live
 > A/B: a qwen reload took **176 s WITH the restore, identical to without**. The restore
@@ -266,8 +278,9 @@ both resides and warms it.
 > applied, INSIDE the base image so it reuses the proven gfx1151 Vulkan toolchain. With the
 > flag unset the image is byte-for-byte the stock base — zero change. **The builder checks
 > out the commit the base image's own binary reports** (`llama-server --version`, read at
-> build time; the pinned base is `b10615`/`f280b2698`, the digest validated live
-> 2026-08-24 — smoke passed and the patched qwen reload measured ~14 s): the base links
+> build time; the pinned base is the `vulkan-radv_20260825T203415` build bundling
+> llama.cpp master of 2026-08-25 (~`d222767`, auto-detected — live re-verification pending
+> the next deploy's update smoke test): the base links
 > `libggml*.so`/`libllama.so` dynamically and we overlay only the `llama-server` binary, so
 > any other commit ships an ABI-incompatible binary that crashes at model load. Both
 > 2026-08-24 smoke failures were hand-pinned commits: `c060ca974` against a `571d0d540` base

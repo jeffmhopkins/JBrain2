@@ -118,6 +118,11 @@ def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[s
 # subdirectory per model, so `kv_prefix`'s pruning can never reach past its own model.
 KVSLOT_DIR = ".kvslots"
 
+# Where the local-llm image ships vendored chat-template overrides (Dockerfile.local-llm
+# COPY target). A catalog `chat_template_file` basename is resolved against this to the
+# `--chat-template-file` path llama-server reads; the two MUST agree.
+CHAT_TEMPLATE_DIR = "/opt/jbrain/chat-templates"
+
 # Flags an operator flag SUPERSEDES rather than duplicates. `--load-mode` is llama.cpp's
 # replacement for the deprecated `--mmap`/`--no-mmap`/`--mlock` family, and it warns when both
 # appear ("only the last flag on the command line will take effect"). Resting on argv order is
@@ -440,6 +445,14 @@ def render(
         # succeeds and is then thrown away (see LocalModel.kv_full_history).
         if m.get("kv_full_history"):
             cmd.append("--swa-full")
+        # Override the GGUF's embedded chat template with a vendored one when the catalog asks
+        # (deploy/chat-templates/). Composes with --jinja above: llama-server renders THIS
+        # template and still detects the tool-call format from its `<|channel|>` markers. Used
+        # to move gpt-oss's harmony `Current date` off the prompt head so a daily rollover
+        # stops re-prefilling the whole persona+tools prefix.
+        chat_template = str(m.get("chat_template_file") or "")
+        if chat_template:
+            cmd += ["--chat-template-file", f"{CHAT_TEMPLATE_DIR}/{chat_template}"]
         # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
         # self-speculative-decoding config), appended verbatim after the shared flags.
         # Emitted from the field so exactly one occurrence reaches the command line, whether

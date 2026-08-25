@@ -368,6 +368,14 @@ class LocalModel:
     # keeps full history instead of a 128-token window. Leave False for a dense model, where
     # it buys nothing and costs nothing (llama.cpp warns and ignores it).
     kv_full_history: bool = False
+    # Override the GGUF's embedded chat template with a vendored one (basename under the image's
+    # CHAT_TEMPLATE_DIR — see deploy/chat-templates/ and llama_swap_config). Set ONLY when the
+    # stock template hurts serving: gpt-oss's harmony template renders a live `Current date`
+    # into the prompt HEAD, which broke daily prompt-cache reuse of the whole persona+tools
+    # prefix; the vendored copy moves that date to the prompt TAIL. Empty = use the GGUF's own
+    # template (the default for every other model). The vendored file is a byte-for-byte copy
+    # of upstream's template with only that one line moved, so tool-call parsing is unchanged.
+    chat_template_file: str = ""
     # The vendor's RECOMMENDED sampling for this model (docs/reference/MODEL_PROMPTING.md).
     # The router applies it to every call so the model runs at its card's values instead of
     # llama.cpp's engine defaults (temp 0.8 / top_p 0.95 / top_k 40 / min_p 0.1 — which match
@@ -592,6 +600,9 @@ CATALOG: tuple[LocalModel, ...] = (
         # The interactive persona lives here, so it is the one model whose cold prefill the
         # owner actually waits on — and the only one where a KV-slot restore pays for itself.
         kv_full_history=True,
+        # Move the harmony template's live `Current date` off the prompt head so the daily
+        # rollover stops re-prefilling the whole persona+tools prefix (deploy/chat-templates/).
+        chat_template_file="gpt-oss-120b.jinja",
     ),
     LocalModel(
         id="nemotron-3.5-lightning-30b",
