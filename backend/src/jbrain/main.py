@@ -35,6 +35,7 @@ from jbrain.agent.jmolt_night import (
     SingleFlightLane,
     run_jmolt_night_loop,
 )
+from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
 from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
@@ -1188,6 +1189,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notify=app.state.notify_bus,
         )
         jmolt_sweep_loop_task = asyncio.create_task(run_jmolt_sweep_loop(app.state.jmolt_sweep))
+        # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
+        # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
+        # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
+        # the switch (M7) on tamper/suspension, and never auto-answers a moderation event.
+        app.state.jmolt_integrity = JmoltIntegrity(
+            maker=maker,
+            client=moltbook_client,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
+        jmolt_integrity_loop_task = asyncio.create_task(
+            run_jmolt_integrity_loop(app.state.jmolt_integrity)
+        )
         # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): the web-process sweep that
         # fires due plan continuations as headless answer-only jerv turns. Reuses the same
         # engine /chat and tasks use, and the live-turns registry (so it never stacks on a
@@ -1281,6 +1295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task.cancel()
         jmolt_night_loop_task.cancel()
         jmolt_sweep_loop_task.cancel()
+        jmolt_integrity_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()

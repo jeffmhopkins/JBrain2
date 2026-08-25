@@ -157,6 +157,13 @@ MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
 # owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
 MOLTBOOK_FAIL_STREAK_KEY = "moltbook_verify_fail_streak"
 MOLTBOOK_FAIL_STREAK_LIMIT = 3
+# The last-observed account/integrity state (M21/M22), surfaced to the owner and used to
+# dedup the integrity watcher's actions to state TRANSITIONS: "ok" (healthy), "suspended"
+# (platform suspension/ban — the lane + drip auto-pause), "moderated" (a moderation label
+# or hard rate-limit — surfaced, not auto-paused), "tamper" (a post on the public profile
+# absent from the outbox ledger ⇒ suspected key leak — kill engaged, rotation needed).
+MOLTBOOK_STATE_KEY = "moltbook_account_state"
+MOLTBOOK_STATE_DEFAULT = "ok"
 
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
@@ -581,6 +588,15 @@ class SqlSettingsStore:
 
     async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
         await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
+
+    async def moltbook_account_state(self, ctx: SessionContext) -> str:
+        """The last-observed account/integrity state (M21/M22) — "ok" until the watcher
+        records otherwise."""
+        raw = await self.get(ctx, MOLTBOOK_STATE_KEY, MOLTBOOK_STATE_DEFAULT)
+        return raw if isinstance(raw, str) and raw.strip() else MOLTBOOK_STATE_DEFAULT
+
+    async def set_moltbook_account_state(self, ctx: SessionContext, state: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_STATE_KEY, state)
 
     async def moltbook_verify_fail_streak(self, ctx: SessionContext) -> int:
         raw = await self.get(ctx, MOLTBOOK_FAIL_STREAK_KEY, 0)

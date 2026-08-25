@@ -85,6 +85,8 @@ def test_starts_unregistered_switch_off(
     assert body["autonomy"] is False  # launch OFF (M7)
     assert body["killed"] is False
     assert "experiment" in body["disclosure"]
+    assert body["account_state"] == "ok"  # healthy until the integrity watch says otherwise
+    assert body["verify_fail_streak"] == 0
 
 
 def test_register_stores_key_and_returns_only_claim_material(

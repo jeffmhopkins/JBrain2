@@ -45,6 +45,11 @@ class MoltbookStatusOut(BaseModel):
     autonomy: bool
     killed: bool
     disclosure: str
+    # The integrity watcher's last-observed account state (M21/M22): "ok" | "suspended" |
+    # "moderated" | "tamper" — surfaced so the panel can show why writing paused. The
+    # verify-failure streak (M11) rides along so the owner sees how close to the stop it is.
+    account_state: str
+    verify_fail_streak: int
 
 
 class MoltbookRegisterIn(BaseModel):
@@ -103,6 +108,8 @@ async def _status(
         autonomy=await store.moltbook_autonomy(ctx),
         killed=await store.moltbook_killed(ctx),
         disclosure=await store.moltbook_disclosure(ctx),
+        account_state=await store.moltbook_account_state(ctx),
+        verify_fail_streak=await store.moltbook_verify_fail_streak(ctx),
     )
 
 
