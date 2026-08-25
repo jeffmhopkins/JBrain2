@@ -35,6 +35,7 @@ from jbrain.agent.jmolt_night import (
     SingleFlightLane,
     run_jmolt_night_loop,
 )
+from jbrain.agent.jmolt_digest import JmoltDigest
 from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
 from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
@@ -1169,12 +1170,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             maker=maker,
             notify=app.state.notify_bus,
         )
+        # jmolt's sanitized morning digest (W4): enumerates every logged action (M14) and
+        # last night's staged writes, HTML-escaped/defanged/invisible-stripped before it
+        # reaches the owner (M15). Runs on the nightly loop's clock, once per owner morning.
+        app.state.jmolt_digest = JmoltDigest(
+            maker=maker,
+            settings_store=app.state.settings_store,
+            notify=app.state.notify_bus,
+        )
         jmolt_night_loop_task = asyncio.create_task(
             run_jmolt_night_loop(
                 maker,
                 app.state.jmolt_night_runner,
                 app.state.settings_store,
                 app.state.jmolt_night_lane,
+                digest=app.state.jmolt_digest,
             )
         )
         # jmolt's daytime drip sweep: releases (when the switch is on) and publishes staged

@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
@@ -39,6 +40,9 @@ from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.tasks.runner import LoopTurnExecutor
+
+if TYPE_CHECKING:
+    from jbrain.agent.jmolt_digest import JmoltDigest
 
 log = structlog.get_logger()
 
@@ -320,12 +324,16 @@ async def run_jmolt_night_loop(
     settings_store: SqlSettingsStore,
     lane: SingleFlightLane,
     *,
+    digest: "JmoltDigest | None" = None,
     interval: float = JMOLT_TICK_SECONDS,
 ) -> None:
-    """Drive `jmolt_night_tick` forever. A tick blip is logged and swallowed."""
+    """Drive `jmolt_night_tick` forever, plus the morning-digest tick (W4) on the same
+    clock. A tick blip is logged and swallowed."""
     while True:
         try:
             await jmolt_night_tick(maker, runner, settings_store, lane)
+            if digest is not None:
+                await digest.tick()
         except Exception as exc:  # noqa: BLE001 — the tick must not kill the loop
             log.warning("jmolt_night.tick_error", error=repr(exc))
         await asyncio.sleep(interval)

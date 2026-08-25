@@ -60,6 +60,13 @@ _INVISIBLE_RANGES = (
 _BIDI_ZW = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in _INVISIBLE_RANGES) + "]")
 
 
+def strip_invisibles(text: str) -> str:
+    """Remove invisible / bidi / zero-width / steganographic characters. Shared by the
+    outbound lint (M8, which BLOCKS on them) and the owner-facing sanitizer (M15, which
+    STRIPS them before rendering jmolt's diary/forum text to the owner)."""
+    return _BIDI_ZW.sub("", text)
+
+
 @dataclass(frozen=True)
 class LintResult:
     ok: bool

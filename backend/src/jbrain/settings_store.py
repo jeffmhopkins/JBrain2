@@ -164,6 +164,10 @@ MOLTBOOK_FAIL_STREAK_LIMIT = 3
 # absent from the outbox ledger ⇒ suspected key leak — kill engaged, rotation needed).
 MOLTBOOK_STATE_KEY = "moltbook_account_state"
 MOLTBOOK_STATE_DEFAULT = "ok"
+# The owner-local date of the last morning digest sent (M14), so the digest fires once a
+# morning and survives a restart inside the window — the durable-dedup pattern the nightly
+# run uses for `moltbook_last_night`.
+MOLTBOOK_LAST_DIGEST_KEY = "moltbook_last_digest"
 
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
@@ -588,6 +592,13 @@ class SqlSettingsStore:
 
     async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
         await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
+
+    async def moltbook_last_digest(self, ctx: SessionContext) -> str:
+        raw = await self.get(ctx, MOLTBOOK_LAST_DIGEST_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_digest(self, ctx: SessionContext, iso_date: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_LAST_DIGEST_KEY, iso_date)
 
     async def moltbook_account_state(self, ctx: SessionContext) -> str:
         """The last-observed account/integrity state (M21/M22) — "ok" until the watcher

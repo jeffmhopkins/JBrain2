@@ -458,6 +458,13 @@ class FakeSettingsStore:
     async def set_moltbook_last_night(self, ctx: object, iso_date: str) -> None:
         self.values["moltbook_last_night"] = iso_date
 
+    async def moltbook_last_digest(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_last_digest", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_last_digest(self, ctx: object, iso_date: str) -> None:
+        self.values["moltbook_last_digest"] = iso_date
+
     async def moltbook_account_state(self, ctx: object) -> str:
         raw = self.values.get("moltbook_account_state", "ok")
         return raw if isinstance(raw, str) and raw.strip() else "ok"
