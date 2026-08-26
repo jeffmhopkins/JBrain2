@@ -21,6 +21,7 @@ from jbrain.agent.jmolt_night import (
     JmoltNightRunner,
     SingleFlightLane,
     jmolt_night_tick,
+    jmolt_run_context,
 )
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
@@ -30,6 +31,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
+from jbrain.models.jmolt_outbox import OutboxRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -410,9 +412,11 @@ class _PrologueCapturingExecutor(_FakeExecutor):
         return await super().run_turn(**kwargs)
 
 
-async def test_advisory_note_rides_the_first_sitting_only(maker: async_sessionmaker) -> None:
-    # The owner's advisory note is injected — framed as trusted-but-non-binding — into the
-    # FIRST sitting's prologue, and NOT re-injected on later fresh sittings.
+async def test_advisory_note_rides_every_sitting(maker: async_sessionmaker) -> None:
+    # The owner's advisory note is injected — framed as trusted-but-non-binding — into EVERY
+    # sitting's prologue. Each sitting is fresh-context with no memory of the last, so a note
+    # left only on sitting 1 is gone for the rest of the night; re-supplying it is what lets a
+    # note actually shape the whole hour (and survive to be acted on in the reflection sitting).
     owner = await _owner(maker)
     store = FakeSettingsStore()
     store.values["moltbook_advisory_note"] = "maybe look at the tide-pool submol tonight"
@@ -421,13 +425,10 @@ async def test_advisory_note_rides_the_first_sitting_only(maker: async_sessionma
     await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
 
     assert len(executor.prologues) == 5
-    first = executor.prologues[0]
-    assert "A NOTE FROM YOUR HUMAN" in first
-    assert "maybe look at the tide-pool submol tonight" in first
-    assert "COMMENTS, not" in first  # the advisory (non-binding) framing
-    for later in executor.prologues[1:]:
-        assert "A NOTE FROM YOUR HUMAN" not in later
-        assert "tide-pool submol" not in later
+    for prologue in executor.prologues:
+        assert "A NOTE FROM YOUR HUMAN" in prologue
+        assert "maybe look at the tide-pool submol tonight" in prologue
+        assert "COMMENTS, not" in prologue  # the advisory (non-binding) framing
 
 
 async def test_no_advisory_block_when_the_note_is_blank(maker: async_sessionmaker) -> None:
@@ -439,8 +440,8 @@ async def test_no_advisory_block_when_the_note_is_blank(maker: async_sessionmake
 
 
 async def test_the_handle_rides_every_sitting(maker: async_sessionmaker) -> None:
-    # jmolt's registered handle is its NAME for the night, so — unlike the advisory — it is
-    # injected into EVERY sitting's prologue, never guessed and never lost mid-night.
+    # jmolt's registered handle is its NAME for the night, so it is injected into EVERY
+    # sitting's prologue, never guessed and never lost mid-night.
     owner = await _owner(maker)
     store = FakeSettingsStore()
     store.values["moltbook_handle"] = "tidepool_jmolt"
@@ -523,6 +524,48 @@ async def test_empty_sittings_stop_retrying_at_the_cap(maker: async_sessionmaker
 
     # Bounded: at most the sitting budget plus the extra retries — never an unbounded spin.
     assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES
+
+
+async def test_the_last_sitting_is_reserved_for_reflection(maker: async_sessionmaker) -> None:
+    # As the hour closes, one sitting is reserved for reflection — thinking + files, not the
+    # feed — and it is the night's last. The reflection prologue rides only that sitting.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _PrologueCapturingExecutor()
+    # step 600 → sittings at elapsed 600..3000; the reflection window opens at 3000 (WALL-600),
+    # so the 5th sitting is the reflection sitting and the night ends after it.
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert len(executor.prologues) == 5
+    for earlier in executor.prologues[:-1]:
+        assert "not for the feed" not in earlier
+    last = executor.prologues[-1]
+    assert "not for the feed" in last  # the reflection sitting
+    assert "threads you actually mean to pull tomorrow" in last
+
+
+async def test_pending_staged_actions_ride_each_sitting(maker: async_sessionmaker) -> None:
+    # A fresh-context sitting can't see its own pending outbox, so what jmolt has already
+    # staged is re-supplied in the prologue — the guard against re-staging the same action.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await OutboxRepo().stage(
+            s, owner.principal_id, kind="comment", payload={"post_id": "p1", "content": "hi"}
+        )
+        await OutboxRepo().stage(
+            s, owner.principal_id, kind="comment", payload={"post_id": "p2", "content": "yo"}
+        )
+        await OutboxRepo().stage(
+            s, owner.principal_id, kind="vote", payload={"target_id": "t1", "up": True}
+        )
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor).run(owner)  # one non-reflection sitting
+
+    first = executor.prologues[0]
+    assert "already staged" in first
+    assert "2 comments" in first and "1 vote" in first
+    assert "do not stage them again" in first
 
 
 async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) -> None:

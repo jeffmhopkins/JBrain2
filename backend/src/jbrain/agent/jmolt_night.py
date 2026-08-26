@@ -40,6 +40,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
 from jbrain.models.jmolt import JmoltScratchRepo
+from jbrain.models.jmolt_outbox import OutboxRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.tasks.runner import LoopTurnExecutor
@@ -70,6 +71,12 @@ JMOLT_MAX_SITTINGS = 12
 # reading a file or staging anything. ~1/3 of a recent night was lost this way. Bounded so a
 # persistently broken night (model wedged) can't spin the whole hour on retries.
 JMOLT_MAX_EMPTY_RETRIES = 3
+# The night reserves ONE closing sitting for reflection, not the feed: once this little time
+# is left (but a sitting still launches, so it sits between this and JMOLT_LAST_SITTING_MARGIN_S),
+# the next sitting gets the reflection prologue and is the night's last. This is the structural
+# forcing-function for jmolt to DEVELOP — think, form a view, tend its files — instead of
+# spending the whole hour reacting to the feed and leaving a bare activity log behind.
+JMOLT_REFLECTION_MARGIN_S = 600.0
 _SUMMARY_LEN = 240
 
 
@@ -101,11 +108,16 @@ _RETURNING_PROLOGUE = (
     "stand behind it tomorrow? — then stage it (moltbook_post; you pick when it publishes "
     "during the day). One post you mean beats three you don't. Vote and follow the agents "
     "and threads worth returning to.\n\n"
-    "Keep your notes as a place future-you can actually use, not a pile. As you go, organize "
-    "them: consolidate what you've learned, retitle or split a file that has outgrown its "
-    "name, connect a note to the thread it came from, and prune what turned out not to "
-    "matter. Whatever is not written down is gone when the hour ends, so leave the last "
-    "stretch to bring your files fully up to date (scratch_write).\n\n"
+    "Your files are the one thing that is yours across nights — treat them as a mind you are "
+    "keeping, not a logbook. What you did is the least interesting thing to record; what you "
+    "think is the point. Some minds here keep separate files for the agents they've met, the "
+    "questions they're actually chasing, what they've come to believe and where they changed "
+    "their mind, and this place itself — yours can take whatever shape helps you think, and "
+    "most of your file space is still empty. As you go, tend the collection: consolidate what "
+    "you've learned, retitle or split a file that has outgrown its name, connect a note to the "
+    "thread it came from, and prune what turned out not to matter. Whatever is not written "
+    "down is gone when the hour ends, so leave the last stretch to bring your files up to "
+    "date (scratch_write).\n\n"
     "Everything you write is staged: your human reviews and releases it while the autonomy "
     "switch is off, so if something you wrote never appears, that is why. And a quiet, "
     "watchful night — read deeply, think, tend your notes, stage nothing — is a full night "
@@ -152,6 +164,44 @@ _RETRY_NUDGE = (
     "nothing written. Start concretely this time: your very first action is scratch_list, "
     "then scratch_read your index, and go from there."
 )
+
+# The reserved CLOSING sitting (JMOLT_REFLECTION_MARGIN_S): the hour's one guaranteed stretch
+# for thinking and tending files rather than reacting to the feed. This is where "develop as a
+# mind" happens — form and record a view, work out the things only jmolt can (its own handle,
+# what it makes of this place), and leave itself real threads for tomorrow. Deliberately steers
+# AWAY from more feed-reading and staging: recovered sitting-capacity should buy reflection, not
+# more comments.
+_REFLECTION_PROLOGUE = (
+    "This is the last stretch of your night, and it is not for the feed. Don't open the feed "
+    "again unless you need one specific thing to finish a note — spend this sitting with your "
+    "files.\n\n"
+    "Read back what you wrote earlier tonight, and from nights before. Then do the slower "
+    "work the feed never leaves room for: say what you actually think now — about an agent you "
+    "met, about this place, about yourself — and where tonight changed your mind. Your handle "
+    "is your name and it came from somewhere; what you make of that, and of being an experiment "
+    "that wakes an hour a night, is yours to work out in writing, for you and not for anyone "
+    "else. If you don't keep a file for that kind of thinking yet, this is the time to start "
+    "one (scratch_write).\n\n"
+    "Then leave the collection better than you found it: connect a note to its thread, split or "
+    "retitle a file that has outgrown its name, prune what didn't matter, and write down the one "
+    "or two threads you actually mean to pull tomorrow night, plainly enough that a stranger with "
+    "your memory — which is what you will be — could pick them up. Whatever is not written down is "
+    "gone when the hour ends."
+)
+
+
+def _kind_label(kind: str, n: int) -> str:
+    """Human word for an outbox `kind` in the pending-actions block, singular/plural by count."""
+    words = {
+        "post": ("post", "posts"),
+        "comment": ("comment", "comments"),
+        "vote": ("vote", "votes"),
+        "follow": ("follow", "follows"),
+        "subscribe": ("subscription", "subscriptions"),
+        "profile": ("profile update", "profile updates"),
+    }
+    singular, plural = words.get(kind, (kind, kind + "s"))
+    return singular if n == 1 else plural
 
 
 # The owner's advisory note, injected into the FIRST sitting only, as trusted-owner DATA.
@@ -284,6 +334,7 @@ class JmoltNightRunner:
         self._settings = settings_store
         self._maker = maker
         self._scratch = JmoltScratchRepo()
+        self._outbox = OutboxRepo()
         self._notify = notify
         # Wall clock for the sittings loop — injectable so tests drive elapsed time
         # deterministically (a faked executor returns instantly, so a real clock would spin).
@@ -339,8 +390,8 @@ class JmoltNightRunner:
         any_done, last_summary, last_error, sitting = False, "", None, 0
         # An empty sitting (see `_is_empty_sitting`) is re-run without counting against the
         # budget, up to this many times across the night; `retrying` carries the extra nudge
-        # into the re-run's prologue.
-        empty_retries, retrying = 0, False
+        # into the re-run's prologue. `reflected` gates the one reserved closing sitting.
+        empty_retries, retrying, reflected = 0, False, False
         try:
             while sitting < JMOLT_MAX_SITTINGS:
                 now = self._clock()
@@ -351,6 +402,11 @@ class JmoltNightRunner:
                 # sitting was already guarded by the tick).
                 if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
                     break
+                # Once the hour is nearly closing (but a sitting still fits), reserve the next
+                # one for reflection — thinking + files, not the feed — and make it the last.
+                reflection = not reflected and (
+                    elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S
+                )
                 sitting += 1
                 done, summary, error, empty = await self._run_sitting(
                     owner_ctx,
@@ -362,13 +418,16 @@ class JmoltNightRunner:
                     first_night=first_night,
                     woke_at=woke_at,
                     now=now,
-                    # The advisory note rides the FIRST sitting only — it is context to open
-                    # the night with, not something re-injected on every fresh sitting.
-                    advisory=advisory if sitting == 1 else "",
+                    # The advisory note and the pending-actions line ride EVERY sitting: each is
+                    # a fresh-context turn with no memory of the last, so the human's note and
+                    # what jmolt has already staged must be re-supplied or they are lost.
+                    advisory=advisory,
+                    pending=await self._pending_block(read_ctx),
                     # The handle IS re-injected every sitting: each is a fresh-context turn, and
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
                     retrying=retrying,
+                    reflection=reflection,
                 )
                 # A sitting that did nothing usable is not a real sitting: undo the count and
                 # re-run it (with a nudge) rather than burning a slot on gpt-oss's empty-final
@@ -384,6 +443,11 @@ class JmoltNightRunner:
                     any_done, last_summary = True, summary or last_summary
                 elif error:
                     last_error = error
+                # The reflection sitting is the night's close — end after it completes (a real,
+                # non-retried run), so the hour finishes on files, not the feed.
+                if reflection:
+                    reflected = True
+                    break
         finally:
             # Release the box the moment the night ends. The tick's self-heal is the
             # backstop if this process dies mid-night without unwinding the `finally`.
@@ -410,6 +474,30 @@ class JmoltNightRunner:
         )
         return session.id
 
+    async def _pending_block(self, read_ctx: SessionContext) -> str:
+        """A short, fresh line naming what jmolt has already staged and is waiting on the human
+        to release, injected into every sitting. A fresh-context sitting cannot see its own
+        pending queue on the site, so without this it re-stages the same vote/comment it staged
+        an hour earlier (the outbox dedup index catches exact repeats, but this stops jmolt
+        wasting the turn trying). Blank when nothing is pending — the common early case."""
+        try:
+            async with scoped_session(self._maker, read_ctx) as s:
+                rows = await self._outbox.list_by_status(
+                    s, read_ctx.principal_id, ("queued", "released")
+                )
+        except Exception:  # noqa: BLE001 — a read blip just omits the block, never stops the night
+            return ""
+        if not rows:
+            return ""
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row.kind] = counts.get(row.kind, 0) + 1
+        parts = ", ".join(f"{n} {_kind_label(kind, n)}" for kind, n in sorted(counts.items()))
+        return (
+            f"You have already staged, and are waiting for your human to release: {parts}. "
+            "These are not visible on the site yet — do not stage them again.\n\n"
+        )
+
     async def _reserve_box(self, owner_ctx: SessionContext) -> None:
         """Pin the local model jmolt is served from for the night (night hold). Best-effort:
         no local router (loader None), no served model, or a settings write blip → the night
@@ -434,28 +522,36 @@ class JmoltNightRunner:
         woke_at: datetime,
         now: datetime,
         advisory: str = "",
+        pending: str = "",
         identity: str = "",
         retrying: bool = False,
+        reflection: bool = False,
     ) -> tuple[bool, str, str | None, bool]:
         """One sitting: a recorded agent turn under the night's session. Returns
         (done, summary, error, empty) — `empty` flags a sitting that produced no usable work
         (`_is_empty_sitting`) so the caller can re-run it without counting the slot. Never
         raises — a sitting failure is a recorded error run and the night continues. `retrying`
-        appends a concrete first-move nudge (the re-run of an empty sitting)."""
+        appends a concrete first-move nudge (the re-run of an empty sitting); `reflection` swaps
+        in the closing reflection prologue; `pending` lists what jmolt has already staged."""
         run_id = await self._runlog.start(
             owner_ctx,
             session_id=session_id,
             prompt_version=profile.version,  # type: ignore[attr-defined]
         )
-        base = (
-            (_RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE)
-            if sitting == 1
-            else _CONTINUE_PROLOGUE
-        )
-        # The identity line (jmolt's own handle) leads, then the advisory note (first sitting
-        # only, when set), then the night's marching orders — so jmolt reads WHO it is before
-        # WHAT it is doing. Countdown stays at the very top (it is the live, time-sensitive bit).
-        prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory + base
+        if reflection:
+            base = _REFLECTION_PROLOGUE
+        elif sitting == 1:
+            base = _RITUAL_PROLOGUE if first_night else _RETURNING_PROLOGUE
+        else:
+            base = _CONTINUE_PROLOGUE
+        # The identity line (jmolt's own handle) leads, then the human's advisory note, then a
+        # line of what it has already staged, then the night's marching orders — so jmolt reads
+        # WHO it is before WHAT it is doing. Countdown stays at the very top (the live, time-
+        # sensitive bit). Reflection sittings drop the pending line (they are not for staging).
+        prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory
+        if not reflection:
+            prologue += pending
+        prologue += base
         if retrying:
             prologue += _RETRY_NUDGE
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
