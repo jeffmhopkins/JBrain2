@@ -230,9 +230,27 @@ async def test_qwen38_hybrid_sends_no_level_when_thinking_is_off() -> None:
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
-async def test_harmony_local_reasoner_sends_effort_verbatim() -> None:
-    # gpt-oss understands the effort levels (incl. "none") directly — no template kwarg.
+async def test_harmony_local_reasoner_sends_a_level_verbatim() -> None:
+    # gpt-oss reads the effort level directly from the harmony template — no template kwarg.
+    captured, client = _capturing_client()
+    await client.complete(model="gpt-oss-120b", system="s", user_text="u", reasoning_effort="high")
+    assert captured["payload"]["reasoning_effort"] == "high"
+    assert "chat_template_kwargs" not in captured["payload"]
+
+
+async def test_gpt_oss_maps_none_to_low_because_harmony_has_no_off() -> None:
+    # gpt-oss's harmony template has no true "none": llama.cpp turns "none" into
+    # enable_thinking=false + an erased effort, which the template defaults to MEDIUM — so a
+    # bare "none" would silently run medium. Sending "low" (its floor) makes the pick real.
     captured, client = _capturing_client()
     await client.complete(model="gpt-oss-120b", system="s", user_text="u", reasoning_effort="none")
-    assert captured["payload"]["reasoning_effort"] == "none"
+    assert captured["payload"]["reasoning_effort"] == "low"
     assert "chat_template_kwargs" not in captured["payload"]
+
+
+async def test_glm_keeps_its_genuine_none() -> None:
+    # GLM (no `no_reasoning_off`) has a real off switch its own template honors, so "none"
+    # rides verbatim rather than being floored to "low".
+    captured, client = _capturing_client()
+    await client.complete(model="glm-4.5-air", system="s", user_text="u", reasoning_effort="none")
+    assert captured["payload"]["reasoning_effort"] == "none"

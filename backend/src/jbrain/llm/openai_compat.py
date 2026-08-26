@@ -77,7 +77,11 @@ def apply_local_reasoning(payload: dict[str, Any], reasoning_effort: str | None)
       - A NEWER hybrid (Qwen3.8 onward) also reads a mapped `reasoning_effort` level from
         the same chat-template kwargs bag (its own default is `xhigh`, which burns
         thousands of reasoning tokens on trivial prompts).
-      - The harmony/GLM reasoners take the effort verbatim (they understand "none").
+      - The harmony/GLM reasoners take the effort level verbatim — EXCEPT that gpt-oss's
+        harmony template has no genuine "none": llama.cpp maps `reasoning_effort:"none"` to
+        `enable_thinking=false` + an erased effort, but the harmony template ignores the flag
+        and defaults the erased effort to "medium", so "none" silently runs at MEDIUM. A model
+        flagged `no_reasoning_off` therefore sends "none" as "low" (its real floor) instead.
 
     `payload["model"]` must be the served name; a None effort is a no-op (non-reasoning
     models must not carry the field — their templates would still render it)."""
@@ -91,6 +95,8 @@ def apply_local_reasoning(payload: dict[str, Any], reasoning_effort: str | None)
         if mapped:
             kwargs["reasoning_effort"] = mapped
         return
+    if reasoning_effort == "none" and model is not None and model.no_reasoning_off:
+        reasoning_effort = "low"
     payload["reasoning_effort"] = reasoning_effort
 
 
