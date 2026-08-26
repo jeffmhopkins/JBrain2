@@ -1592,6 +1592,49 @@ button.vitals:focus-visible {
   background: var(--green-tint);
   color: var(--green);
 }
+.settings-pill.warn {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.settings-pill.err {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+/* Schedule & drip status: a compact, always-visible key/value list (Principle 5 — honest
+   status, always visible). Sits above the nightly-run switch in the Schedule card. */
+.molt-sched-status {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+}
+.molt-sched-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.molt-sched-row:first-child {
+  border-top: 0;
+}
+.molt-sched-k {
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  flex: none;
+}
+.molt-sched-v {
+  text-align: right;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.molt-sched-v small {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
 .settings-switch-row {
   display: flex;
   align-items: center;

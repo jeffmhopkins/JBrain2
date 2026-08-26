@@ -85,6 +85,11 @@ class JmoltSweep:
             return 0
         admin = _admin_ctx(pid)
 
+        # Stamp the loop's heartbeat so the PWA can show "drip last ran …" — recorded before
+        # the kill/streak guards so it reflects the sweep loop being alive even while paused.
+        with contextlib.suppress(Exception):
+            await self._settings.set_moltbook_drip_last_swept(admin, now.isoformat())
+
         if await self._settings.moltbook_killed(admin):
             return 0  # M6
         if await self._settings.moltbook_verify_fail_streak(admin) >= MOLTBOOK_FAIL_STREAK_LIMIT:

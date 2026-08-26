@@ -53,6 +53,24 @@ function formatTokens(n: number | null): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
 }
 
+// A short relative time for the schedule/drip status ("in 14h 20m", "5 min ago").
+function fromNow(iso: string | null): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const diff = t - Date.now();
+  const mins = Math.round(Math.abs(diff) / 60000);
+  if (mins < 1) return "just now";
+  let s: string;
+  if (mins < 60) s = `${mins} min`;
+  else if (mins < 1440) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    s = m ? `${h}h ${m}m` : `${h}h`;
+  } else s = `${Math.round(mins / 1440)}d`;
+  return diff >= 0 ? `in ${s}` : `${s} ago`;
+}
+
 function formatBytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 }
@@ -198,6 +216,20 @@ export function JmoltScreen() {
     [kindList, actHidden],
   );
   const groupedActions = useMemo(() => (actions ? groupActions(actions) : []), [actions]);
+
+  // The Schedule card's status pill: red when writing is paused/stopped/off-nominal (the
+  // "collapse unless failing" states), green when a night is running or simply scheduled.
+  const schedStatus = !moltbook
+    ? { cls: "", txt: "…" }
+    : moltbook.killed
+      ? { cls: "err", txt: "Paused" }
+      : moltbook.account_state !== "ok"
+        ? { cls: "err", txt: `Account: ${moltbook.account_state}` }
+        : moltbook.verify_fail_streak >= 3
+          ? { cls: "err", txt: "Writes stopped" }
+          : moltbook.night_running_until
+            ? { cls: "on", txt: "Awake now" }
+            : { cls: "on", txt: "Scheduled" };
 
   // (Re)load the first page whenever the family split or a kind toggle changes. `kinds` is
   // sent only when some are hidden — all-on means "no filter", which the server reads as all.
@@ -551,10 +583,69 @@ export function JmoltScreen() {
         </section>
       )}
 
-      {/* ── Schedule: nightly wake hour + drip-publish times ─────────── */}
+      {/* ── Schedule & drip: status + nightly wake hour + drip-publish times ── */}
       {moltbook?.key_set && (
         <section className="settings-card">
-          <h2 className="settings-label">Schedule</h2>
+          <div className="settings-cardhead">
+            <h2 className="settings-label">Schedule &amp; drip</h2>
+            <span className={`settings-pill ${schedStatus.cls}`} aria-label="Schedule status">
+              <span className="dot" />
+              {schedStatus.txt}
+            </span>
+          </div>
+
+          <div className="molt-sched-status">
+            {moltbook.night_running_until ? (
+              <div className="molt-sched-row">
+                <span className="molt-sched-k">Awake now</span>
+                <span className="molt-sched-v">
+                  until {localTime(moltbook.night_running_until)}
+                  <small>{fromNow(moltbook.night_running_until)} left</small>
+                </span>
+              </div>
+            ) : (
+              <div className="molt-sched-row">
+                <span className="molt-sched-k">Next run</span>
+                <span className="molt-sched-v">
+                  {moltbook.night_enabled && moltbook.night_next_run ? (
+                    <>
+                      {localDateTime(moltbook.night_next_run)}
+                      <small>{fromNow(moltbook.night_next_run)}</small>
+                    </>
+                  ) : (
+                    "Off"
+                  )}
+                </span>
+              </div>
+            )}
+            <div className="molt-sched-row">
+              <span className="molt-sched-k">Last run</span>
+              <span className="molt-sched-v">{moltbook.night_last_run ?? "never"}</span>
+            </div>
+            <div className="molt-sched-row">
+              <span className="molt-sched-k">Drip</span>
+              <span className="molt-sched-v">
+                Publishing every minute
+                <small>
+                  {moltbook.drip_last_swept
+                    ? `last ran ${fromNow(moltbook.drip_last_swept)}`
+                    : "not run yet"}
+                </small>
+              </span>
+            </div>
+            {moltOutbox && moltOutbox.length > 0 && (
+              <div className="molt-sched-row">
+                <span className="molt-sched-k">Waiting</span>
+                <span className="molt-sched-v">
+                  {moltOutbox.length} staged
+                  {scheduledPosts[0]?.publish_at && (
+                    <small>next post drips {localTime(scheduledPosts[0].publish_at)}</small>
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+
           <div className="settings-switch-row">
             <span className="settings-meta" style={{ margin: 0 }}>
               Nightly run — wake for an hour each night (off keeps the account + daytime publishing,

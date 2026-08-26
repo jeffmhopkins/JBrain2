@@ -13,7 +13,9 @@ claim URL + verification code the owner needs to post the X verification tweet).
 """
 
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -71,6 +73,16 @@ class MoltbookStatusOut(BaseModel):
     # independently of the global pause; `night_hour` is the owner-local hour (0–23) it fires.
     night_enabled: bool
     night_hour: int
+    # Computed schedule/drip status for the PWA's "when things happen" panel — all derived
+    # from stored state, no new persistence beyond the drip heartbeat:
+    #   night_next_run     — ISO of the next scheduled run (null when the run is disabled),
+    #   night_last_run     — owner-local date (YYYY-MM-DD) of the most recent run, or null,
+    #   night_running_until— ISO end-time while a night is running right now, else null,
+    #   drip_last_swept    — ISO of the drip sweep's most recent tick, or null.
+    night_next_run: str | None
+    night_last_run: str | None
+    night_running_until: str | None
+    drip_last_swept: str | None
 
 
 class MoltbookRegisterIn(BaseModel):
@@ -124,11 +136,32 @@ class MoltbookClaimOut(BaseModel):
     status: str
 
 
+def _next_night_run(tz_name: str, night_hour: int, last_night: str, now: datetime) -> str:
+    """ISO of the next scheduled nightly run in the owner's timezone: the next `night_hour:00`
+    that is still in the future and hasn't already run for that date. Pure derived data."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = ZoneInfo("UTC")
+    local = now.astimezone(tz)
+    candidate = local.replace(hour=night_hour, minute=0, second=0, microsecond=0)
+    # Already past today's hour, or today's run already happened → the run is tomorrow.
+    if candidate <= local or candidate.date().isoformat() == last_night:
+        candidate += timedelta(days=1)
+    return candidate.isoformat()
+
+
 async def _status(
     principal: PrincipalInfo, store: SqlSettingsStore, settings: Settings
 ) -> MoltbookStatusOut:
     ctx = ctx_for(principal)
     stored = await store.moltbook_api_key(ctx)
+    night_enabled = await store.moltbook_night_enabled(ctx)
+    night_hour = await store.moltbook_night_hour(ctx)
+    last_night = await store.moltbook_last_night(ctx)
+    running_until = await store.moltbook_night_deadline(ctx)
+    drip = await store.moltbook_drip_last_swept(ctx)
+    tz_name = await store.owner_timezone(ctx) or "UTC"
     return MoltbookStatusOut(
         key_set=bool(stored or settings.moltbook_api_key),
         handle=await store.moltbook_handle(ctx),
@@ -138,8 +171,16 @@ async def _status(
         advisory_note=await store.moltbook_advisory_note(ctx),
         account_state=await store.moltbook_account_state(ctx),
         verify_fail_streak=await store.moltbook_verify_fail_streak(ctx),
-        night_enabled=await store.moltbook_night_enabled(ctx),
-        night_hour=await store.moltbook_night_hour(ctx),
+        night_enabled=night_enabled,
+        night_hour=night_hour,
+        night_next_run=(
+            _next_night_run(tz_name, night_hour, last_night, datetime.now(ZoneInfo("UTC")))
+            if night_enabled
+            else None
+        ),
+        night_last_run=last_night or None,
+        night_running_until=running_until or None,
+        drip_last_swept=drip or None,
     )
 
 
