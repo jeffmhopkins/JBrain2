@@ -26,7 +26,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.main import create_app
 from jbrain.models.jmolt import JmoltScratchRepo
-from jbrain.models.jmolt_outbox import ActionLedgerRepo
+from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -233,3 +233,114 @@ async def test_actions_filtering_paging_and_stats(
         assert by[("publish", "comment")] == 3
         assert by[("stage", "comment")] == 1
         assert by[("stage", "follow")] == 1
+
+
+async def test_activity_feed_from_outbox(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The Activity feed is sourced from the OUTBOX (one row per action, carrying its own
+    # status + moltbook id), not the action ledger — so each row shows a lifecycle state
+    # (Drafted → Scheduled → Published, or Failed) and a link to the item on moltbook.com.
+    from datetime import UTC, datetime, timedelta
+
+    pid, key = await _owner_pid_and_key(maker)
+    outbox = OutboxRepo()
+    future = datetime.now(UTC) + timedelta(hours=2)
+
+    # Stage under jmolt's context (the only ctx the outbox INSERT policy admits).
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        pub_comment = await outbox.stage(
+            s, pid, kind="comment", payload={"post_id": "post-abc", "content": "a sharp reply"}
+        )
+        failed_comment = await outbox.stage(
+            s, pid, kind="comment", payload={"post_id": "post-xyz", "content": "throttled one"}
+        )
+        queued_comment = await outbox.stage(
+            s, pid, kind="comment", payload={"post_id": "post-q", "content": "still a draft"}
+        )
+        sched_post = await outbox.stage(
+            s,
+            pid,
+            kind="post",
+            payload={"submolt_name": "general", "title": "on continuity", "content": "long body"},
+            publish_at=future,
+        )
+        pub_vote = await outbox.stage(
+            s, pid, kind="vote", payload={"target_id": "post-v", "up": True, "comment": False}
+        )
+        pub_follow = await outbox.stage(
+            s, pid, kind="follow", payload={"name": "Luna24", "on": True}
+        )
+        discarded = await outbox.stage(
+            s, pid, kind="comment", payload={"post_id": "post-d", "content": "rejected draft"}
+        )
+    for row_id in (pub_comment, failed_comment, queued_comment, sched_post, pub_vote, pub_follow):
+        assert row_id is not None
+
+    # Advance lifecycle under a non-jmolt owner context (the outbox UPDATE policy).
+    admin = SessionContext(principal_id=pid, principal_kind="owner", domain_scopes=("jmolt",))
+    async with scoped_session(maker, admin) as s:
+        await outbox.set_status(
+            s, str(pub_comment), "published", moltbook_id="cmt-1", published=True
+        )
+        await outbox.set_status(
+            s, str(failed_comment), "failed", error="Moltbook is rate-limiting — backing off"
+        )
+        await outbox.set_status(s, str(sched_post), "released")  # released + future → Scheduled
+        await outbox.set_status(s, str(pub_vote), "published", moltbook_id="v-1", published=True)
+        await outbox.set_status(s, str(pub_follow), "published", moltbook_id="f-1", published=True)
+        await outbox.set_status(s, str(discarded), "discarded")
+
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        base = "/api/settings/moltbook"
+        assert client.get(f"{base}/activity").status_code == 401  # owner-gated
+        assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
+
+        rows = client.get(f"{base}/activity").json()
+        by_id = {r["id"]: r for r in rows}
+        # Discarded never surfaces; the other six do.
+        assert str(discarded) not in by_id
+        assert len(rows) == 6
+
+        # A published comment: state + verb + body + a link to the post it is on.
+        c = by_id[str(pub_comment)]
+        assert c["state"] == "published" and c["verb"] == "commented"
+        assert c["subject"] == "a sharp reply" and c["body"] == "a sharp reply"
+        assert c["link"].endswith("/post/post-abc")
+        assert c["error"] is None
+
+        # A failed comment carries its reason; a released future post is Scheduled (no link yet).
+        assert by_id[str(failed_comment)]["state"] == "failed"
+        assert "rate-limiting" in by_id[str(failed_comment)]["error"]
+        post = by_id[str(sched_post)]
+        assert post["state"] == "scheduled" and post["subject"] == "on continuity"
+        assert post["link"] is None  # not published → no moltbook id → no link
+
+        # Vote links to its target post; follow links to the profile.
+        assert by_id[str(pub_vote)]["link"].endswith("/post/post-v")
+        assert by_id[str(pub_vote)]["verb"] == "upvoted"
+        assert by_id[str(pub_follow)]["link"].endswith("/u/Luna24")
+
+        # Segment slices: published-only, and drafted (queued + released, not published/failed).
+        published = client.get(f"{base}/activity", params={"status": "published"}).json()
+        assert {r["state"] for r in published} == {"published"} and len(published) == 3
+        drafted = client.get(f"{base}/activity", params={"status": "drafted"}).json()
+        assert {r["state"] for r in drafted} == {"drafted", "scheduled"}
+        assert {r["id"] for r in drafted} == {str(queued_comment), str(sched_post)}
+
+        # Kind filter + honest per-kind stats over the full (non-discarded) set.
+        votes = client.get(f"{base}/activity", params={"kinds": "vote"}).json()
+        assert len(votes) == 1 and votes[0]["kind"] == "vote"
+        stats = {x["kind"]: x["count"] for x in client.get(f"{base}/activity/stats").json()}
+        assert stats["comment"] == 3  # published + failed + queued; discarded excluded
+        assert stats["post"] == 1 and stats["vote"] == 1 and stats["follow"] == 1
+
+        # Keyset paging, newest-first by seq.
+        page1 = client.get(f"{base}/activity", params={"limit": 2}).json()
+        assert len(page1) == 2
+        page2 = client.get(
+            f"{base}/activity", params={"limit": 2, "cursor": page1[-1]["seq"]}
+        ).json()
+        assert len(page2) == 2 and page1[-1]["seq"] > page2[0]["seq"]

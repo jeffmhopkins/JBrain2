@@ -29,7 +29,8 @@ function settings(over: Partial<MoltbookSettings> = {}): MoltbookSettings {
 // default so tests that don't care about history don't hit the network.
 function stubHistory() {
   vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
-  vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+  vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
+  vi.spyOn(api, "getMoltbookActivityStats").mockResolvedValue([]);
   vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
   vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
 }
@@ -92,7 +93,7 @@ describe("JmoltScreen", () => {
   it("lists nights and opens a transcript on tap", async () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
-    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookNights").mockResolvedValue([
@@ -134,7 +135,7 @@ describe("JmoltScreen", () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
-    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([
       { filename: "intro.md", bytes: 1848, updated_at: "2026-08-25T07:04:00Z" },
@@ -155,7 +156,7 @@ describe("JmoltScreen", () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
-    vi.spyOn(api, "getMoltbookActions").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
     vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([
       { content: "quiet night, mostly read", at: "2026-08-25T07:05:00Z" },
@@ -182,5 +183,43 @@ describe("JmoltScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save note" }));
     expect(update).toHaveBeenCalledWith({ advisory_note: "look at the tide-pool submol" });
     await waitFor(() => expect(screen.getByText(/Saved/)).toBeInTheDocument());
+  });
+
+  it("renders a compact activity row with a status badge and a Moltbook link", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivityStats").mockResolvedValue([{ kind: "comment", count: 1 }]);
+    const list = vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([
+      {
+        id: "row-1",
+        seq: 42,
+        kind: "comment",
+        state: "published",
+        verb: "commented",
+        subject: "a sharp reply",
+        body: "a sharp reply about continuity",
+        link: "https://www.moltbook.com/post/post-abc",
+        error: null,
+        at: "2026-08-26T07:47:00Z",
+      },
+    ]);
+
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("a sharp reply")).toBeInTheDocument());
+
+    // The row carries its own status badge (distinct from the "Published" filter button) and
+    // a real link to the item on Moltbook.
+    expect(screen.getByText("Published", { selector: "span.molt-badge" })).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /View on Moltbook/ });
+    expect(link).toHaveAttribute("href", "https://www.moltbook.com/post/post-abc");
+
+    // The status segment filters server-side: picking Published refetches with that slice.
+    fireEvent.click(screen.getByRole("button", { name: "Published" }));
+    await waitFor(() =>
+      expect(list).toHaveBeenCalledWith(expect.objectContaining({ status: "published" })),
+    );
   });
 });

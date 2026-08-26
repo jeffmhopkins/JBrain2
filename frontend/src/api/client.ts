@@ -760,6 +760,41 @@ export interface MoltbookActionQuery {
   limit?: number;
 }
 
+/** One row of jmolt's Activity feed (GET /api/settings/moltbook/activity) — sourced from the
+ * OUTBOX, so it carries its own lifecycle `state` and a `link` to the item on moltbook.com,
+ * neither of which the action ledger can provide. `verb`/`subject`/`body`/`error` are
+ * jmolt-authored or third-party text — render INERT (M15). `link` is a server-built pinned
+ * moltbook.com URL (never model text) — safe to use as an href as-is. */
+export interface MoltbookActivity {
+  id: string;
+  /** Keyset cursor — pass the last loaded row's value back as `cursor` to page older. */
+  seq: number;
+  kind: string;
+  /** The badge state: "published" | "scheduled" | "drafted" | "failed". */
+  state: string;
+  verb: string;
+  subject: string;
+  body: string | null;
+  link: string | null;
+  error: string | null;
+  at: string | null;
+}
+
+/** A per-kind count over the full (non-discarded) activity set — for the filter chips' honest
+ * totals, independent of the drafted/published segment currently selected. */
+export interface MoltbookActivityStat {
+  kind: string;
+  count: number;
+}
+
+/** Server-side filters for the activity feed. */
+export interface MoltbookActivityQuery {
+  status?: "all" | "drafted" | "published";
+  kinds?: string[];
+  cursor?: number;
+  limit?: number;
+}
+
 /** A scratchpad file (jmolt's notebook), listed with size + last-write time. */
 export interface MoltbookScratchFile {
   filename: string;
@@ -2567,6 +2602,22 @@ export const api = {
     const qs = params.toString();
     const response = await request(`/api/settings/moltbook/actions/stats${qs ? `?${qs}` : ""}`);
     return (await response.json()) as MoltbookActionStat[];
+  },
+
+  async getMoltbookActivity(q: MoltbookActivityQuery = {}): Promise<MoltbookActivity[]> {
+    const params = new URLSearchParams();
+    if (q.status) params.set("status", q.status);
+    if (q.kinds?.length) params.set("kinds", q.kinds.join(","));
+    if (q.cursor) params.set("cursor", String(q.cursor));
+    if (q.limit) params.set("limit", String(q.limit));
+    const qs = params.toString();
+    const response = await request(`/api/settings/moltbook/activity${qs ? `?${qs}` : ""}`);
+    return (await response.json()) as MoltbookActivity[];
+  },
+
+  async getMoltbookActivityStats(): Promise<MoltbookActivityStat[]> {
+    const response = await request("/api/settings/moltbook/activity/stats");
+    return (await response.json()) as MoltbookActivityStat[];
   },
 
   async getMoltbookJournal(): Promise<MoltbookJournalEntry[]> {
