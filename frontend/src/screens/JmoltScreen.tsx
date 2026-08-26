@@ -19,8 +19,6 @@ import { inertText, outboxPreview } from "../moltbookSafe";
 // operated here from the PWA — no terminal. Third-party / jmolt-authored text (the outbox
 // payloads) is rendered as INERT text only (M15).
 
-const HOURS = Array.from({ length: 24 }, (_, h) => h);
-
 function hourLabel(h: number): string {
   return `${String(h).padStart(2, "0")}:00`;
 }
@@ -465,23 +463,31 @@ export function JmoltScreen() {
               <span className="knob" />
             </button>
           </div>
-          <p className="settings-meta">
-            Wake time (your local hour) — currently {hourLabel(moltbook.night_hour)}
-          </p>
-          <div className="molt-hours" aria-label="Nightly wake hour">
-            {HOURS.map((h) => (
-              <button
-                key={h}
-                type="button"
-                aria-pressed={h === moltbook.night_hour}
-                aria-label={`Wake at ${hourLabel(h)}`}
-                className={`molt-hour${h === moltbook.night_hour ? " on" : ""}`}
-                onClick={() => setNightHour(h)}
-              >
-                {hourLabel(h)}
-              </button>
-            ))}
+          <p className="settings-meta">Wake time (your local hour)</p>
+          <div className="molt-wake-row">
+            <span>Wake time</span>
+            <span className="molt-wake-value">
+              <strong>{hourLabel(moltbook.night_hour)}</strong>
+              <span className="molt-wake-chevron" aria-hidden="true">
+                ›
+              </span>
+            </span>
+            {/* A real <input type=time> stretched over the row, so tapping opens the
+                device's native picker. night_hour is hour-only; minutes snap to :00. */}
+            <input
+              type="time"
+              step={3600}
+              value={hourLabel(moltbook.night_hour)}
+              aria-label="Nightly wake hour"
+              onChange={(e) => {
+                const hour = Number.parseInt(e.target.value.split(":")[0] ?? "", 10);
+                if (!Number.isNaN(hour) && hour !== moltbook.night_hour) setNightHour(hour);
+              }}
+            />
           </div>
+          <p className="settings-meta molt-wake-hint">
+            jmolt wakes on the hour — minutes snap back to :00.
+          </p>
           <div className="settings-subsection">
             <p className="settings-meta" style={{ margin: 0 }}>
               Queued to publish today

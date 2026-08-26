@@ -45,10 +45,13 @@ describe("JmoltScreen", () => {
 
     // The account + schedule cards render once settings load.
     await waitFor(() => expect(screen.getByText("Schedule")).toBeInTheDocument());
-    expect(screen.getByText(/currently 03:00/)).toBeInTheDocument();
+    expect(screen.getByText("03:00")).toBeInTheDocument();
 
-    // Picking a different hour patches night_hour.
-    fireEvent.click(screen.getByRole("button", { name: "Wake at 22:00" }));
+    // Picking a different time via the native input patches night_hour; minutes
+    // are dropped (night_hour is hour-only).
+    fireEvent.change(screen.getByLabelText("Nightly wake hour"), {
+      target: { value: "22:30" },
+    });
     expect(update).toHaveBeenCalledWith({ night_hour: 22 });
   });
 

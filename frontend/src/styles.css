@@ -1207,26 +1207,54 @@ button.vitals:focus-visible {
   gap: 6px;
 }
 
-/* jmolt's nightly wake-hour picker: a wrap-grid of hour chips, the selected one lit. */
-.molt-hours {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-  gap: 6px;
-  margin: 4px 0 2px;
+/* jmolt's nightly wake-hour picker: a settings row backed by a real <input type=time>
+   stretched invisibly over it, so tapping opens the device's native time picker
+   (iOS wheels, Android clock, a dropdown on desktop). */
+.molt-wake-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 12px 14px;
+  font-size: var(--fs-secondary);
+  margin: 4px 0 8px;
 }
-.molt-hour {
-  padding: 8px 4px;
-  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
+.molt-wake-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
-  font-size: 0.9rem;
 }
-.molt-hour.on {
-  border-color: var(--accent, #7aa2f7);
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 18%, transparent);
+.molt-wake-value strong {
+  color: var(--text);
   font-weight: 600;
+}
+.molt-wake-chevron {
+  color: var(--text-3);
+}
+.molt-wake-row input[type="time"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+.molt-wake-row:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.molt-wake-hint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
 }
 
 /* jmolt history browser: nights (+ transcript), the action ledger, and the notebook.
