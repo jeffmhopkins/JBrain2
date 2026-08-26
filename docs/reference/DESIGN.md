@@ -1093,19 +1093,21 @@ local append with an amber "pending sync" chip until the outbox clears.
 - **Per-conversation model pick** (long-press a conversation tab): long-pressing
   (or right-clicking) the **Research** or **Full Brain** tab opens a bottom sheet
   listing the on-box models **currently loaded**, plus an **Automatic** row that
-  clears back to the default route. When a reasoning model is offerable the sheet
-  adds a **Reasoning** radio pill row (None / Low / Medium / High, styled like the
-  chat picker's Today/Older/Archived segments) — no separate "Auto": the route's
-  effective default level carries a small **"(default)"** marker under its label
-  and reads selected while no override is armed; tapping it clears the override so
-  the route's own effort keeps applying. Tapping a level arms it without closing
-  (so level-then-model lands in one visit), a model row carries the armed level
-  onto the pick, and with a reasoning pick already active a level tap re-applies
-  live. The foot's model chip appends an explicitly chosen level
-  (`GPT-OSS 120B · high`). The choice is scoped to **that
-  conversation only** — it rides every turn of that chat and is kept in memory (a
-  reload reverts to Automatic); it never touches the global task routing in Settings.
-  Only conversation tabs arm the gesture; capture tabs keep their native
+  clears back to the default route. When the default route (or a listed model)
+  reasons, the sheet adds a **Reasoning** radio pill row (None / Low / Medium / High,
+  styled like the chat picker's Today/Older/Archived segments) — no separate "Auto":
+  the route's effective default level carries a small **"(default)"** marker under its
+  label and reads selected while no override is set; tapping it clears the override so
+  the route's own effort keeps applying. The reasoning level is an **independent**
+  per-conversation override — **not** bundled into the model pick: tapping a level
+  persists it immediately (without closing) whether or not a model is pinned, so the
+  owner can dial reasoning on **Automatic** with no model change, and the backend
+  applies it only when the turn's resolved model is reasoning-capable. The foot's model
+  chip shows whichever picks are set, joined by `·` — a model (`GPT-OSS 120B`), a level
+  on the default route (`high`), or both (`GPT-OSS 120B · high`). Both picks are scoped
+  to **that conversation only** — they ride every turn of that chat and are kept in
+  memory (a reload reverts to Automatic); they never touch the global task routing in
+  Settings. Only conversation tabs arm the gesture; capture tabs keep their native
   tap/right-click.
 - **Read-aloud (per turn)**: when the owner has enabled read-aloud (the
   `brain_read_aloud` setting), each settled answer carries a **three-state** play

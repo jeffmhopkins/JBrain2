@@ -29,12 +29,13 @@ import type {
 export type Panel = "none" | "sessions" | "proposals";
 
 /** A per-conversation agent-model pick (the omnibox long-press sheet): the local
- * catalog `id` the turn runs on plus its `label` for the composer indicator, and —
- * for a reasoning model — the chosen level (`effort`; absent = the model's default). */
+ * catalog `id` the turn runs on plus its `label` for the composer indicator. The
+ * reasoning level is a SEPARATE per-conversation override (`effortOverride`), not a
+ * field here — so it can be set on the default route (Automatic) with no model change,
+ * and the backend gates it on whichever model the turn actually resolves to. */
 export interface ModelPick {
   id: string;
   label: string;
-  effort?: ReasoningEffort;
 }
 
 // A shared empty transcript so the active chat's `messages` keeps a stable reference
@@ -299,6 +300,13 @@ export interface FullBrain {
   /** Set (or clear, with null) the active chat's agent-model pick. A no-op when no
    * chat is open — there's no conversation to scope it to yet. */
   setModelOverride: (pick: ModelPick | null) => void;
+  /** The active conversation's per-conversation reasoning-effort pick, or null when the
+   * turn runs at the resolved route's own effort. Independent of the model pick, so it
+   * can be set on the default route. Turn-local: rides every send, clears on reload. */
+  effortOverride: ReasoningEffort | null;
+  /** Set (or clear, with null) the active chat's reasoning-effort pick. A no-op when no
+   * chat is open. */
+  setEffortOverride: (effort: ReasoningEffort | null) => void;
   /** Whether the agent's model can accept images — gates the chat attach
    * affordance. Defaults to false until the capability check answers (the safe
    * default: never offer an attach the model would reject; the paperclip simply
@@ -394,6 +402,12 @@ export function useFullBrain(
   // for the rest. In-memory only — "this conversation only" for this app session; a
   // reload reverts to the resolved default.
   const [modelOverrides, setModelOverrides] = useState<Record<string, ModelPick>>({});
+  // Per-conversation reasoning-effort picks, keyed by session id and kept apart from the
+  // model pick above: the level rides every send of that chat whether or not a model is
+  // also picked (so the owner can dial reasoning on the default route), and the backend
+  // applies it only when the turn's resolved model is reasoning-capable. In-memory only,
+  // same "this conversation, this app session" scope as the model pick.
+  const [effortOverrides, setEffortOverrides] = useState<Record<string, ReasoningEffort>>({});
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // The visible transcript: the active chat's buffer (empty until loaded). A stable
@@ -700,6 +714,7 @@ export function useFullBrain(
     abortRef.current = controller;
     runIdRef.current = null;
     const pick = modelOverrides[turnSessionId];
+    const effort = effortOverrides[turnSessionId];
     const body: ChatRequest = {
       session_id: turnSessionId,
       message: text,
@@ -707,10 +722,11 @@ export function useFullBrain(
       ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
-      // The owner's per-conversation model pick rides every turn of this chat —
-      // its reasoning level (when chosen) alongside it.
+      // The owner's per-conversation picks ride every turn of this chat: the model and
+      // the reasoning level independently, so either can be set without the other (the
+      // backend drops a reasoning level a non-reasoning resolved model can't use).
       ...(pick ? { model: pick.id } : {}),
-      ...(pick?.effort ? { reasoning_effort: pick.effort } : {}),
+      ...(effort ? { reasoning_effort: effort } : {}),
       // A Proposal enact outcome the owner produced inline — framed server-side as a
       // data report so the assistant follows up (not owner prose).
       ...(opts?.proposalOutcome ? { proposal_outcome: true } : {}),
@@ -1082,6 +1098,22 @@ export function useFullBrain(
     });
   }, []);
 
+  // The active chat's reasoning-effort pick (or null for the route's own effort); scoped
+  // to the open session like the model pick, and set independently of it.
+  const effortOverride = activeId !== null ? (effortOverrides[activeId] ?? null) : null;
+  const setEffortOverride = useCallback((effort: ReasoningEffort | null) => {
+    const id = activeRef.current?.id;
+    if (!id) return; // no open chat to scope the pick to
+    setEffortOverrides((prev) => {
+      if (effort === null) {
+        if (!(id in prev)) return prev;
+        const { [id]: _cleared, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [id]: effort };
+    });
+  }, []);
+
   return {
     active,
     sessions: visibleSessions,
@@ -1114,6 +1146,8 @@ export function useFullBrain(
       ),
     modelOverride,
     setModelOverride,
+    effortOverride,
+    setEffortOverride,
     create,
     startFresh,
     open,

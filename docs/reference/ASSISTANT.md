@@ -199,15 +199,19 @@ model** from the omnibox (long-press a conversation tab → pick a loaded model;
 DESIGN.md). The pick rides `/chat` as a `model` field (a **local catalog id**,
 validated server-side — an unknown id is ignored, never routed), and the endpoint
 threads it as a per-turn `spec_override` through the router so the effort, context
-window, and vision gate all reflect the chosen model. The sheet also offers the
-pick's **reasoning level** for a reasoning-capable model (rides `/chat` as
-`reasoning_effort`, same tolerance: an unknown value is dropped): it overrides the
-task's stored effort as a per-turn `effort_override` on every model call the loop
-makes, still capability-gated in the router so a non-reasoning route never receives
-the param — and it re-sizes the turn's tool budget and the vitals call stamp to the
-effort actually sent. It is **turn-local**: scoped
-to that conversation, never persisted on the session, and it does **not** change the
-global task routing in Settings. A sub-agent the turn spawns still runs on its own
+window, and vision gate all reflect the chosen model. The sheet also offers a
+**reasoning level**, a SEPARATE per-conversation override (rides `/chat` as
+`reasoning_effort`, same tolerance: an unknown value is dropped) — **independent of
+the model pick**, so the owner can dial reasoning on the default route (Automatic)
+with no model change, or set both. It overrides the task's stored effort as a per-turn
+`effort_override` on every model call the loop makes, still capability-gated in the
+router so whatever model the turn resolves to — the default route or a pinned one —
+never receives the param unless it is reasoning-capable, and it re-sizes the turn's
+tool budget and the vitals call stamp to the effort actually sent. Both picks are
+**turn-local**: scoped to that conversation, never persisted on the session (they clear
+on reload), and they do **not** change the global task routing in Settings. The sheet's
+"(default)" marker reflects `agent.turn`'s effective effort from the settings snapshot,
+so it shows what a left-alone turn ACTUALLY runs at, not a hardcoded guess. A sub-agent the turn spawns still runs on its own
 configured model — the override is the top-level loop's only. The conversation's
 best-effort follow-up titling **follows the pick too**: both the chat's
 `session.title` and a research run's `research.title` job run the same
