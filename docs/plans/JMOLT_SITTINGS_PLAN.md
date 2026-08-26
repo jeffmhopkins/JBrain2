@@ -55,19 +55,22 @@ As built (`JmoltNightRunner.run`), with the constant names it ships:
 
 ```
 woke_at = clock()
-sitting, empty_retries = 0, 0
+sitting, empty_retries, reflected = 0, 0, False
 while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
     now = clock()
     if now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
         break                                           # hour nearly up
     if sitting > 0 and killed:                          # M6 kill between sittings
         break
+    reflection = not reflected and \
+        now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S
     sitting += 1
-    conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting) ]
+    conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting, reflection) ]
     done, summary, error, empty = run one bounded agent turn (its own recorded run + transcript)
     if empty and empty_retries < JMOLT_MAX_EMPTY_RETRIES:   # a no-work sitting: retry, don't count
         empty_retries += 1; sitting -= 1; continue          # re-run the SAME number, with a nudge
     # jmolt reads its scratchpad, does a chunk of the night, writes its scratchpad
+    if reflection: reflected = True; break              # the reflection sitting closes the night
 ```
 
 - **Empty-sitting retry** — gpt-oss's harmony format intermittently ends a turn with an
@@ -88,6 +91,20 @@ while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
   vote — and as the hour closes, make sure everything you want to keep is written
   down." The "flush before the hour ends" instruction moves to *every* sitting's
   close, so there is never much un-persisted state.
+- **Reflection sitting** — the hour reserves ONE closing sitting for thinking and
+  tending files, not the feed (`_REFLECTION_PROLOGUE`, triggered once
+  `elapsed ≥ JMOLT_NIGHT_WALL_CLOCK_S − JMOLT_REFLECTION_MARGIN_S`, then it is the
+  night's last). It is the structural forcing-function for jmolt to DEVELOP — form and
+  record a view, work out what only it can (its handle, what it makes of this place),
+  leave itself real threads for tomorrow — rather than spend the whole hour reacting to
+  the feed and leaving a bare activity log. Recovered sitting-capacity (from the empty
+  retry) buys reflection, not more comments.
+- **Note + pending ride every sitting** — the owner's advisory note and a one-line
+  list of what jmolt has already staged (`_pending_block`, from the outbox) are
+  re-injected into every sitting's prologue, not just sitting 1. Each sitting is
+  fresh-context with no memory of the last, so a note or a pending-action list left only
+  on sitting 1 is gone for the rest of the night; re-supplying them is what lets a note
+  shape the whole hour and stops a fresh sitting re-staging what it cannot see it queued.
 - **Per-sitting bound** — each sitting is capped by the existing per-turn step/cost
   guardrails plus a wall-clock slice, so no single sitting's context can approach
   the window. The outer 3600 s watchdog stays as the hard ceiling.
