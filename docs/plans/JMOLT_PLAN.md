@@ -290,11 +290,17 @@ the PWA (`api/moltbook_settings.py` → the jmolt screen's Nights / Activity / N
 the owner can browse jmolt's nights and each night's transcript, its action ledger, and its
 scratchpad files with their archived history — everything the debug token could reach,
 without a terminal — all plain SELECTs under the owner context (no write surface) and
-rendered inert (M15). The Activity ledger is filtered server-side (the runs-log pattern):
-`/actions` takes `family` (drafted vs sent), `kinds`, `since_days`, and a `seq` `cursor`, with
-a `/actions/stats` aggregate for the filter chips' honest counts — so a busy night's drip
-burst stays legible instead of a flat wall of identical `publish_*` rows (the PWA also
-collapses an identical-target publish run into one expandable line). The integrity watch (`agent/jmolt_integrity.py`)
+rendered inert (M15). The **Activity** card is sourced from the OUTBOX, not the action ledger:
+one row per action, so each carries its own lifecycle status (Drafted → Scheduled → Published,
+or Failed) and a link to the item on moltbook.com — neither of which the ledger can provide (it
+is two look-alike log rows per action, with no status and no id). `/activity` takes a `status`
+slice (`all` / `drafted` / `published`), `kinds`, and a `seq` `cursor`, with a `/activity/stats`
+aggregate for the filter chips' honest per-kind counts; the link is server-built from the pinned
+web base (`/post/{id}`, `/u/{name}` — ids charset-guarded), never model text. The PWA renders
+each row compact (one line: kind dot · verb + subject · status badge · time) and expands to the
+full text jmolt wrote plus the Moltbook link. (The older `/actions` ledger endpoint — `family`,
+`kinds`, `since_days`, `cursor`, and `/actions/stats` — remains for the per-night history walk.)
+The integrity watch (`agent/jmolt_integrity.py`)
 diffs the public profile against the outbox ledger (M21) and surfaces account state with
 auto-pause on suspension (M22). `scripts/jmolt-metrics.py` computes the weekly
 observability rubric from the ledger + scratchpad + nights + outbox.

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  MoltbookAction,
-  MoltbookActionQuery,
-  MoltbookActionStat,
+  MoltbookActivity,
+  MoltbookActivityQuery,
+  MoltbookActivityStat,
   MoltbookJournalEntry,
   MoltbookNight,
   MoltbookOutboxItem,
@@ -78,41 +78,40 @@ function formatBytes(n: number): string {
 // Activity feed. One page is this many rows; "show older" pages by the oldest row's seq.
 const ACT_PAGE = 60;
 
-// A run of identical, back-to-back publish rows (same action + target — the drip burst) is
-// collapsed into one expandable row; everything else stays a single row. Stage rows carry
-// unique content, so they are never collapsed.
-interface ActGroup {
-  key: string;
-  head: MoltbookAction;
-  rows: MoltbookAction[];
-}
-function groupActions(list: MoltbookAction[]): ActGroup[] {
-  const groups: ActGroup[] = [];
-  for (const a of list) {
-    const last = groups[groups.length - 1];
-    if (
-      last &&
-      a.action.startsWith("publish_") &&
-      last.head.action === a.action &&
-      last.head.target === a.target
-    ) {
-      last.rows.push(a);
-    } else {
-      groups.push({ key: `${a.seq}`, head: a, rows: [a] });
-    }
+// Each activity state maps to a badge label + class (see styles.css .molt-badge-*). "drafted"
+// covers both queued (awaiting release) and released-but-not-yet-sent; "scheduled" is a
+// drip-queued post with a future publish time.
+const ACT_BADGE: Record<string, string> = {
+  published: "Published",
+  scheduled: "Scheduled",
+  drafted: "Drafted",
+  failed: "Failed",
+};
+
+// A compact "Aug 26, 3:47 AM" for the collapsed row's right edge.
+function actWhen(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
   }
-  return groups;
 }
 
-// Build the ledger query, omitting keys rather than passing undefined (exactOptionalPropertyTypes).
-function actionQuery(
-  family: "stage" | "publish" | "all",
+// Build the activity query, omitting keys rather than passing undefined (exactOptionalPropertyTypes).
+function activityQuery(
+  status: "all" | "drafted" | "published",
   activeKinds: string[],
   allKinds: string[],
   cursor?: number,
-): MoltbookActionQuery {
-  const q: MoltbookActionQuery = { limit: ACT_PAGE };
-  if (family !== "all") q.family = family;
+): MoltbookActivityQuery {
+  const q: MoltbookActivityQuery = { limit: ACT_PAGE };
+  if (status !== "all") q.status = status;
   if (activeKinds.length < allKinds.length) q.kinds = activeKinds;
   if (cursor) q.cursor = cursor;
   return q;
@@ -133,12 +132,12 @@ export function JmoltScreen() {
   const [nights, setNights] = useState<MoltbookNight[] | null>(null);
   const [openNight, setOpenNight] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<MoltbookTurn[] | null>(null);
-  const [actions, setActions] = useState<MoltbookAction[] | null>(null);
-  // Activity filters: drafted-vs-sent split (defaults to what jmolt WROTE), per-kind hide
-  // toggles, honest counts from the /stats aggregate, and keyset paging for "show older".
-  const [actFamily, setActFamily] = useState<"stage" | "publish" | "all">("stage");
+  const [activity, setActivity] = useState<MoltbookActivity[] | null>(null);
+  // Activity filters: an All / Drafted / Published status segment, per-kind hide toggles,
+  // honest counts from the /stats aggregate, and keyset paging for "show older".
+  const [actStatus, setActStatus] = useState<"all" | "drafted" | "published">("all");
   const [actHidden, setActHidden] = useState<Set<string>>(() => new Set());
-  const [actStats, setActStats] = useState<MoltbookActionStat[] | null>(null);
+  const [actStats, setActStats] = useState<MoltbookActivityStat[] | null>(null);
   const [actMore, setActMore] = useState(false);
   const [files, setFiles] = useState<MoltbookScratchFile[] | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
@@ -182,7 +181,7 @@ export function JmoltScreen() {
       .then(setNights)
       .catch(() => setNights([]));
     api
-      .getMoltbookActionStats()
+      .getMoltbookActivityStats()
       .then(setActStats)
       .catch(() => setActStats([]));
     api
@@ -215,7 +214,6 @@ export function JmoltScreen() {
     () => kindList.filter((k) => !actHidden.has(k)),
     [kindList, actHidden],
   );
-  const groupedActions = useMemo(() => (actions ? groupActions(actions) : []), [actions]);
 
   // The Schedule card's status pill: red when writing is paused/stopped/off-nominal (the
   // "collapse unless failing" states), green when a night is running or simply scheduled.
@@ -231,37 +229,37 @@ export function JmoltScreen() {
             ? { cls: "on", txt: "Awake now" }
             : { cls: "on", txt: "Scheduled" };
 
-  // (Re)load the first page whenever the family split or a kind toggle changes. `kinds` is
+  // (Re)load the first page whenever the status segment or a kind toggle changes. `kinds` is
   // sent only when some are hidden — all-on means "no filter", which the server reads as all.
   useEffect(() => {
     if (!moltbook?.key_set) return;
     let stale = false;
     api
-      .getMoltbookActions(actionQuery(actFamily, activeKinds, kindList))
+      .getMoltbookActivity(activityQuery(actStatus, activeKinds, kindList))
       .then((rows) => {
         if (stale) return;
-        setActions(rows);
+        setActivity(rows);
         setActMore(rows.length === ACT_PAGE);
       })
       .catch(() => {
-        if (!stale) setActions([]);
+        if (!stale) setActivity([]);
       });
     return () => {
       stale = true;
     };
-  }, [moltbook?.key_set, actFamily, activeKinds, kindList]);
+  }, [moltbook?.key_set, actStatus, activeKinds, kindList]);
 
   const showOlderActions = useCallback(() => {
-    const last = actions?.[actions.length - 1];
+    const last = activity?.[activity.length - 1];
     if (!last) return;
     api
-      .getMoltbookActions(actionQuery(actFamily, activeKinds, kindList, last.seq))
+      .getMoltbookActivity(activityQuery(actStatus, activeKinds, kindList, last.seq))
       .then((rows) => {
-        setActions((prev) => [...(prev ?? []), ...rows]);
+        setActivity((prev) => [...(prev ?? []), ...rows]);
         setActMore(rows.length === ACT_PAGE);
       })
       .catch(() => {});
-  }, [actions, activeKinds, kindList, actFamily]);
+  }, [activity, activeKinds, kindList, actStatus]);
 
   const toggleKind = useCallback((kind: string) => {
     setActHidden((prev) => {
@@ -834,25 +832,25 @@ export function JmoltScreen() {
         </section>
       )}
 
-      {/* ── Activity: the action ledger (posts, votes, fetches) ───────────── */}
+      {/* ── Activity: one compact row per thing jmolt did (outbox-sourced) ── */}
       {moltbook?.key_set && (
         <section className="settings-card">
           <h2 className="settings-label">Activity</h2>
           <p className="settings-meta">
-            What jmolt drafted and sent — posts, comments, votes, follows — newest first, with the
-            content it reacted to.
+            One row per thing jmolt did — tap to read it and open it on Moltbook. Each row carries
+            its own status: drafted, scheduled, published, or failed.
           </p>
 
-          <fieldset className="seg-row molt-act-fam" aria-label="Drafted or published">
-            {(["stage", "publish", "all"] as const).map((f) => (
+          <fieldset className="seg-row molt-act-seg" aria-label="Status">
+            {(["all", "drafted", "published"] as const).map((sName) => (
               <button
-                key={f}
+                key={sName}
                 type="button"
-                className={`seg${actFamily === f ? " seg-on" : ""}`}
-                aria-pressed={actFamily === f}
-                onClick={() => setActFamily(f)}
+                className={`seg${actStatus === sName ? " seg-on" : ""}`}
+                aria-pressed={actStatus === sName}
+                onClick={() => setActStatus(sName)}
               >
-                {f === "stage" ? "Drafted" : f === "publish" ? "Published" : "All"}
+                {sName === "all" ? "All" : sName === "drafted" ? "Drafted" : "Published"}
               </button>
             ))}
           </fieldset>
@@ -873,53 +871,50 @@ export function JmoltScreen() {
             </div>
           )}
 
-          {actions === null ? (
+          {activity === null ? (
             <p className="settings-meta">Loading…</p>
-          ) : groupedActions.length === 0 ? (
+          ) : activity.length === 0 ? (
             <p className="settings-meta">No activity matches these filters.</p>
           ) : (
             <>
-              <ul className="molt-actions">
-                {groupedActions.map((g) =>
-                  g.rows.length > 1 ? (
-                    <li key={g.key} className="molt-action molt-run">
-                      <details>
-                        <summary className="molt-run-head">
-                          <span className="molt-action-kind">{inertText(g.head.action)}</span>
-                          <span className="molt-run-count">×{g.rows.length}</span>
-                          {g.head.target && (
-                            <span className="molt-run-target">{inertText(g.head.target)}</span>
-                          )}
-                        </summary>
-                        <ul className="molt-actions molt-run-inner">
-                          {g.rows.map((a) => (
-                            <li key={a.seq} className="molt-action published">
-                              <span className="molt-action-when">{localDateTime(a.at)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    </li>
-                  ) : (
-                    <li
-                      key={g.key}
-                      className={`molt-action${g.head.action.startsWith("publish_") ? " published" : ""}`}
-                    >
-                      <span className="molt-action-head">
-                        <span className="molt-action-kind">{inertText(g.head.action)}</span>
-                        <span className="molt-action-when">{localDateTime(g.head.at)}</span>
-                      </span>
-                      {g.head.target && (
-                        <span className="molt-action-target">{inertText(g.head.target)}</span>
-                      )}
-                      {g.head.reacted_to && (
-                        <span className="molt-action-reacted">
-                          re: {inertText(g.head.reacted_to)}
+              <ul className="molt-acts">
+                {activity.map((a) => (
+                  <li key={a.id} className="molt-act">
+                    <details>
+                      <summary className="molt-act-row">
+                        <span className={`molt-act-dot molt-dot-${a.kind}`} aria-hidden="true" />
+                        <span className="molt-act-line">
+                          <span className="molt-act-verb">{inertText(a.verb)}</span>{" "}
+                          {inertText(a.subject)}
                         </span>
-                      )}
-                    </li>
-                  ),
-                )}
+                        <span className={`molt-badge molt-badge-${a.state}`}>
+                          {ACT_BADGE[a.state] ?? a.state}
+                        </span>
+                        <span className="molt-act-when">{actWhen(a.at)}</span>
+                        <span className="molt-act-chev" aria-hidden="true">
+                          ⌄
+                        </span>
+                      </summary>
+                      <div className="molt-act-detail">
+                        {a.body && <p className="molt-act-body">{inertText(a.body)}</p>}
+                        {a.error && <p className="molt-act-error">{inertText(a.error)}</p>}
+                        {a.link && (
+                          <a
+                            className="molt-act-link"
+                            href={a.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            View on Moltbook ↗
+                          </a>
+                        )}
+                        <span className="molt-act-meta">
+                          {localDateTime(a.at)} · {a.kind}
+                        </span>
+                      </div>
+                    </details>
+                  </li>
+                ))}
               </ul>
               {actMore && (
                 <button type="button" className="molt-show-older" onClick={showOlderActions}>

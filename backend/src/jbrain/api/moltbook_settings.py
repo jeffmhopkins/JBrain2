@@ -12,8 +12,9 @@ the store; the response to the owner carries only the non-secret claim material 
 claim URL + verification code the owner needs to post the X verification tweet).
 """
 
+import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -31,7 +32,16 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.settings_store import SqlSettingsStore
-from jbrain.web.moltbook import MoltbookClient, MoltbookError
+from jbrain.web.moltbook import BASE_URL, MoltbookClient, MoltbookError
+
+# The human-visible Moltbook site, derived from the pinned API base (never model-supplied) so
+# activity links can never point anywhere but moltbook.com. Posts/comments live at /post/{id},
+# profiles at /u/{name} (both probed live: 200).
+_WEB_BASE = BASE_URL.rsplit("/api/", 1)[0]
+# Ids/handles are one hop from jmolt/attacker text; only build a link when the id is on a safe
+# charset, so a crafted target can never bend the pinned URL to another path or scheme.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_SAFE_HANDLE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 log = structlog.get_logger()
 
@@ -375,6 +385,136 @@ class ActionStatOut(BaseModel):
     count: int
 
 
+# ── The Activity feed, outbox-sourced ─────────────────────────────────────────────────
+# One row per thing jmolt did, each carrying its own lifecycle status and a link to the
+# published item. Sourced from the outbox (not the action ledger) precisely because the
+# ledger has neither a status nor a moltbook id — it is two look-alike log rows per action.
+
+
+class ActivityOut(BaseModel):
+    id: str
+    seq: int  # keyset cursor — pass the last row's value back to page older
+    kind: str  # post | comment | vote | follow | subscribe | profile
+    # A collapsed lifecycle state for the badge: published | scheduled | drafted | failed.
+    state: str
+    verb: str  # "posted" | "commented" | "upvoted" | "followed" | … (styled muted client-side)
+    subject: str  # the one-line collapsed identity: post title, comment text, name, "a post"
+    body: str | None  # the full text revealed on expand (post/comment/profile); null otherwise
+    link: str | None  # the human-visible moltbook.com URL, or null when none applies
+    error: str | None  # the failure reason when state == "failed"
+    at: str | None  # published_at | publish_at | created_at — whichever the state implies
+
+
+class ActivityStatOut(BaseModel):
+    kind: str
+    count: int
+
+
+# The segment filter maps to a lifecycle slice. "drafted" is everything not yet public and not
+# failed (queued awaiting release, or released awaiting the drip — including a scheduled post);
+# "all" adds published + failed so the owner sees rate-limit failures. Discarded rows (owner
+# threw them away) never surface. `_ACT_ALL` also backs the honest per-kind chip counts.
+_ACT_DRAFTED = ("queued", "released")
+_ACT_ALL = ("queued", "released", "published", "failed")
+_ACT_SLICES: dict[str, tuple[str, ...]] = {
+    "drafted": _ACT_DRAFTED,
+    "published": ("published",),
+    "all": _ACT_ALL,
+}
+
+# How each outbox kind renders as verb + collapsed subject, and which payload field carries the
+# body shown on expand. jmolt/third-party text is returned verbatim and rendered INERT client-
+# side (M15) — the same contract as everything else jmolt authored.
+_ACT_VERB_BODY: dict[str, tuple[str, str | None]] = {
+    "post": ("posted", "content"),
+    "comment": ("commented", "content"),
+    "profile": ("updated", "description"),
+}
+
+
+def _first_line(text_value: str, *, limit: int = 200) -> str:
+    line = text_value.strip().splitlines()[0] if text_value.strip() else ""
+    return line[:limit]
+
+
+def _activity_state(status: str, publish_at: datetime | None, now: datetime) -> str:
+    """Collapse the raw outbox status into the badge's four states. A released post with a
+    still-future publish_at is Scheduled; everything else not-yet-public is Drafted."""
+    if status in ("published", "failed"):
+        return status
+    if status == "released" and publish_at is not None and publish_at > now:
+        return "scheduled"
+    return "drafted"
+
+
+def _activity_verb_subject_body(kind: str, payload: dict[str, Any]) -> tuple[str, str, str | None]:
+    """Verb, collapsed subject, and expand body for one row. The subject is what reads on the
+    one-line collapsed row; the body is revealed on expand. (The outbox stores a comment's
+    post_id and jmolt's own text, but not the handle it replied to — so a comment's subject is
+    jmolt's own words, which is the signal anyway.)"""
+    if kind == "post":
+        return "posted", str(payload.get("title", ""))[:200], str(payload.get("content", ""))
+    if kind == "comment":
+        content = str(payload.get("content", ""))
+        return "commented", _first_line(content), content
+    if kind == "profile":
+        return "updated", "its profile", str(payload.get("description", ""))
+    if kind == "vote":
+        up = bool(payload.get("up", True))
+        on_comment = bool(payload.get("comment", False))
+        return ("upvoted" if up else "downvoted"), ("a comment" if on_comment else "a post"), None
+    if kind in ("follow", "subscribe"):
+        on = bool(payload.get("on", True))
+        name = str(payload.get("name", ""))
+        verb = {
+            ("follow", True): "followed",
+            ("follow", False): "unfollowed",
+            ("subscribe", True): "subscribed to",
+            ("subscribe", False): "unsubscribed from",
+        }[(kind, on)]
+        return verb, name, None
+    return kind, "", None
+
+
+def _activity_link(kind: str, payload: dict[str, Any], moltbook_id: str | None) -> str | None:
+    """The human-visible moltbook.com link for a row, or None. A post links to itself (its
+    moltbook id); a comment links to the post it is on; a post/comment vote links to its target;
+    a follow/subscribe links to the profile. Comment votes link nowhere (the target is a comment
+    id with no stored parent post, and a /post/{comment} link would 404)."""
+    if kind == "post" and moltbook_id and _SAFE_ID.match(moltbook_id):
+        return f"{_WEB_BASE}/post/{moltbook_id}"
+    if kind == "comment":
+        pid = str(payload.get("post_id", ""))
+        return f"{_WEB_BASE}/post/{pid}" if _SAFE_ID.match(pid) else None
+    if kind == "vote" and not payload.get("comment"):
+        tid = str(payload.get("target_id", ""))
+        return f"{_WEB_BASE}/post/{tid}" if _SAFE_ID.match(tid) else None
+    if kind in ("follow", "subscribe"):
+        name = str(payload.get("name", ""))
+        return f"{_WEB_BASE}/u/{name}" if _SAFE_HANDLE.match(name) else None
+    return None
+
+
+def _to_activity(row: Any, now: datetime) -> ActivityOut:
+    state = _activity_state(row.status, row.publish_at, now)
+    verb, subject, body = _activity_verb_subject_body(row.kind, row.payload)
+    # The timestamp that matches the state: when it went out, when it will, else when staged.
+    at = row.published_at if state == "published" else None
+    at = at or (row.publish_at if state == "scheduled" else None) or row.created_at
+    return ActivityOut(
+        id=row.id,
+        seq=row.seq,
+        kind=row.kind,
+        state=state,
+        verb=verb,
+        subject=subject,
+        body=body or None,
+        link=_activity_link(row.kind, row.payload, row.moltbook_id),
+        error=row.error if state == "failed" else None,
+        at=_iso(at),
+    )
+
+
 @router.get("/settings/moltbook/nights")
 async def list_nights(request: Request, principal: OwnerDep) -> list[NightOut]:
     """jmolt's nights, newest first — one row per nightly session with its run outcome
@@ -493,6 +633,41 @@ async def list_action_stats(
     async with scoped_session(request.app.state.session_maker, ctx) as s:
         rows = await _LEDGER.stats(s, pid, since_days=since_days)
     return [ActionStatOut(family=f, kind=k, count=n) for (f, k, n) in rows]
+
+
+@router.get("/settings/moltbook/activity")
+async def list_activity(
+    request: Request,
+    principal: OwnerDep,
+    status: str = Query("all", description="'all' | 'drafted' | 'published' — the segment slice"),
+    kinds: str | None = Query(None, description="comma-separated kinds to keep"),
+    cursor: int | None = Query(None, ge=1, description="page older: pass the last row's seq"),
+    limit: int = Query(60, ge=1, le=200),
+) -> list[ActivityOut]:
+    """jmolt's activity, newest first — one row per action from the outbox, each carrying its
+    own status (Drafted → Scheduled → Published, or Failed) and a link to the item on Moltbook.
+    Compact by design: the client shows one line per row and expands for the body + link."""
+    ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
+    statuses = _ACT_SLICES.get(status, _ACT_ALL)
+    kind_list = tuple(k.strip() for k in (kinds or "").split(",") if k.strip()) or None
+    now = datetime.now(UTC)
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        rows = await OutboxRepo().list_activity(
+            s, pid, statuses=statuses, kinds=kind_list, cursor=cursor, limit=limit
+        )
+    return [_to_activity(r, now) for r in rows]
+
+
+@router.get("/settings/moltbook/activity/stats")
+async def list_activity_stats(request: Request, principal: OwnerDep) -> list[ActivityStatOut]:
+    """Per-kind counts over the full (non-discarded) activity set — so the filter chips show
+    honest totals independent of the drafted/published segment currently selected."""
+    ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        rows = await OutboxRepo().activity_counts(s, pid, statuses=_ACT_ALL)
+    return [ActivityStatOut(kind=k, count=n) for (k, n) in rows]
 
 
 @router.get("/settings/moltbook/journal")

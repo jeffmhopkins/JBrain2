@@ -31,6 +31,8 @@ class OutboxRow:
     error: str | None
     created_at: datetime
     published_at: datetime | None
+    # The outbox's own monotonic key — the keyset cursor for the activity feed's "show older".
+    seq: int = 0
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ def _row_to_outbox(r: Any) -> OutboxRow:
         error=r.error,
         created_at=r.created_at,
         published_at=r.published_at,
+        seq=int(r.seq),
     )
 
 
@@ -142,6 +145,59 @@ class OutboxRepo:
             )
         ).all()
         return [_row_to_outbox(r) for r in rows]
+
+    async def list_activity(
+        self,
+        session: AsyncSession,
+        principal_id: str,
+        *,
+        statuses: tuple[str, ...],
+        kinds: tuple[str, ...] | None = None,
+        cursor: int | None = None,
+        limit: int = 100,
+    ) -> list[OutboxRow]:
+        """The owner-facing activity feed, newest first — one row per thing jmolt did, each
+        carrying its own status (Drafted → Scheduled → Published, or Failed). Unlike the action
+        ledger (two look-alike log rows per action, no status, no id), the outbox is the source
+        that can show per-row status and a link to the published item. `statuses` selects the
+        lifecycle slice (the drafted/published segment filter), `kinds` narrows the row kinds,
+        and `cursor` (a `seq`) pages older."""
+        clauses = ["principal_id = :pid", "status = ANY(:st)"]
+        params: dict[str, Any] = {"pid": principal_id, "st": list(statuses), "lim": limit}
+        if kinds:
+            clauses.append("kind = ANY(:kinds)")
+            params["kinds"] = list(kinds)
+        if cursor:
+            clauses.append("seq < :cursor")
+            params["cursor"] = cursor
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT * FROM app.jmolt_outbox WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY seq DESC LIMIT :lim"
+                ),
+                params,
+            )
+        ).all()
+        return [_row_to_outbox(r) for r in rows]
+
+    async def activity_counts(
+        self, session: AsyncSession, principal_id: str, *, statuses: tuple[str, ...]
+    ) -> list[tuple[str, int]]:
+        """Per-kind counts over the same status slice — so the filter chips show honest totals
+        independent of the segment currently selected (the runs-log `/stats` pattern). Returns
+        (kind, count) rows."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT kind, count(*) AS n FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND status = ANY(:st) GROUP BY kind"
+                ),
+                {"pid": principal_id, "st": list(statuses)},
+            )
+        ).all()
+        return [(r.kind, int(r.n)) for r in rows]
 
     async def due(self, session: AsyncSession, *, now: datetime) -> list[OutboxRow]:
         """Released rows ready to publish: comments/votes/social/profile (no publish_at) and

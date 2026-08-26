@@ -1261,14 +1261,6 @@ button.vitals:focus-visible {
    All lists share the hairline-card row look; expanded content sits in a fenced panel. */
 .molt-nights,
 .molt-files,
-.molt-actions {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .molt-night,
 .molt-file {
   border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
@@ -1361,50 +1353,157 @@ button.vitals:focus-visible {
   padding-left: 8px;
 }
 
-/* The action ledger: one row per logged action, with the reacted-to content muted. */
-.molt-action {
+/* The Activity feed: one compact, expandable row per action. Collapsed is a single line
+   (kind dot · verb + subject · status badge · time); expanding reveals the full text jmolt
+   wrote and a link to the item on Moltbook. Rows are divided by a hairline, not boxed, so a
+   busy night reads as a tight list rather than a wall of cards. */
+.molt-acts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
-  border-radius: 8px;
 }
-.molt-action-head {
+.molt-act {
+  border-top: 1px solid var(--border);
+}
+.molt-act:first-child {
+  border-top: 0;
+}
+.molt-act > details > summary {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: 10px;
+  padding: 11px 2px;
+  cursor: pointer;
+  list-style: none;
 }
-.molt-action-kind {
+.molt-act > details > summary::-webkit-details-marker {
+  display: none;
+}
+.molt-act-dot {
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.molt-dot-comment {
+  background: var(--steel);
+}
+.molt-dot-post {
+  background: var(--violet);
+}
+.molt-dot-vote {
+  background: var(--green);
+}
+.molt-dot-follow,
+.molt-dot-subscribe {
+  background: var(--amber);
+}
+.molt-act-line {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-secondary);
+}
+.molt-act-verb {
+  color: var(--text-2);
   font-weight: 600;
-  overflow-wrap: anywhere;
 }
-.molt-action-when {
-  flex-shrink: 0;
-  font-size: 0.78rem;
-  opacity: 0.7;
+.molt-act-when {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.molt-action-target {
-  overflow-wrap: anywhere;
-  font-size: 0.9rem;
+.molt-act-chev {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  transition: transform 0.18s ease;
 }
-.molt-action-reacted {
-  overflow-wrap: anywhere;
-  font-size: 0.85rem;
-  opacity: 0.6;
+.molt-act > details[open] > summary .molt-act-chev {
+  transform: rotate(180deg);
 }
 
-/* Activity filters: the drafted/published split + the per-kind chips sit above the list.
-   The split is a <fieldset> (semantic group), so reset its default box back to a seg-row. */
-.molt-act-fam {
+/* Status badge — the four lifecycle states, tinted from the shared palette. */
+.molt-badge {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.molt-badge-published {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.molt-badge-scheduled {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.molt-badge-drafted {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.molt-badge-failed {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+
+/* Expanded row: the full text, an optional failure reason, the Moltbook link, and a muted
+   meta line — indented to sit under the row's text, past the kind dot. */
+.molt-act-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 2px 14px 27px;
+}
+.molt-act-body {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.molt-act-error {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--rose);
+  overflow-wrap: anywhere;
+}
+.molt-act-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--steel);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  background: var(--steel-tint);
+}
+.molt-act-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Activity filters: the status segment + per-kind chips sit above the list. The segment is a
+   <fieldset> (semantic group), so reset its default box back to a seg-row. */
+.molt-act-seg {
   align-self: flex-start;
   margin: 0;
   padding: 0;
   min-inline-size: 0;
 }
-.molt-act-fam .seg {
+.molt-act-seg .seg {
   padding: 6px 14px;
   font-size: var(--fs-secondary);
 }
@@ -1413,52 +1512,10 @@ button.vitals:focus-visible {
   opacity: 0.7;
 }
 
-/* A published row is drip bookkeeping, not what jmolt wrote — de-emphasized so the drafts
-   (which carry the content jmolt reacted to) read as the signal. */
-.molt-action.published {
-  opacity: 0.6;
-}
-.molt-action.published .molt-action-kind {
-  font-weight: 500;
-}
-
-/* A collapsed run of identical publish rows (the drip burst): one summary line, expandable. */
-.molt-run > details > summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  cursor: pointer;
-  list-style: none;
-}
-.molt-run > details > summary::-webkit-details-marker {
-  display: none;
-}
-.molt-run-count {
-  flex-shrink: 0;
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-  background: var(--accent-tint);
-  border-radius: var(--r-pill);
-  padding: 1px 8px;
-}
-.molt-run-target {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.85rem;
-  opacity: 0.6;
-}
-.molt-run-inner {
-  margin-top: 6px;
-  padding-left: 10px;
-  border-left: 2px solid var(--border);
-}
-.molt-run-inner .molt-action {
-  border: 0;
-  border-radius: 0;
-  padding: 4px 0;
+@media (prefers-reduced-motion: reduce) {
+  .molt-act-chev {
+    transition: none;
+  }
 }
 
 .molt-show-older {
