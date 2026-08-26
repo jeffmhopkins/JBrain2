@@ -436,6 +436,29 @@ async def test_no_advisory_block_when_the_note_is_blank(maker: async_sessionmake
     assert executor.prologues and "A NOTE FROM YOUR HUMAN" not in executor.prologues[0]
 
 
+async def test_the_handle_rides_every_sitting(maker: async_sessionmaker) -> None:
+    # jmolt's registered handle is its NAME for the night, so — unlike the advisory — it is
+    # injected into EVERY sitting's prologue, never guessed and never lost mid-night.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_handle"] = "tidepool_jmolt"
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)  # 5 sittings
+
+    assert len(executor.prologues) == 5
+    for prologue in executor.prologues:
+        assert "@tidepool_jmolt" in prologue
+        assert "That handle is your name" in prologue
+
+
+async def test_no_identity_block_when_no_handle_is_registered(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    store = FakeSettingsStore()  # no handle set
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor).run(owner)
+    assert executor.prologues and "That handle is your name" not in executor.prologues[0]
+
+
 async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) -> None:
     # A prior night that died before its `finally` unwound leaves the hold set; the next tick
     # clears it (lane idle) so the box isn't stuck reserved all day.

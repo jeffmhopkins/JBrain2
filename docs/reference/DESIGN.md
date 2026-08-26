@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-25
+> **Status:** Living · **Last verified:** 2026-08-26
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -148,8 +148,12 @@ baseline rule.
 **Vitals chart** (settled in a two-round GUI gate — chosen **E "instrument"** over
 D "typographic" and F "stateful block"; binding mock
 `docs/mocks/topbar-vitals/e-instrument.html`, rivals `{d-typographic,f-stateful-chip}.html`).
-The top bar's right cluster is a **12-second strip chart** of the box's vitals,
-resampled once a second:
+The top bar's right cluster is a **12-second strip chart** of the box's vitals — the
+newest twelve seconds of the same client-side ring the vitals detail plots
+(`hostVitals.ts`), re-read once a second. It deliberately keeps no buffer of its own: a
+private strip resampled the published reading on a second clock, so the seconds a
+reconnect backfilled into the ring stayed holes in the strip while the detail graph
+filled — the "empty bars after coming back to the PWA" symptom.
 
 - **GPU busy %** is a row of hairline columns that ticks left each second. Columns
   fade with age so the eye reads direction of travel, and go `--warn` past 85%.
@@ -166,9 +170,11 @@ resampled once a second:
   order of that decision: the word is dropped *and* the colour with it, because a
   green rule on its own would make colour the only encoding of "healthy" — the one
   thing the pairing rule forbids. Silence, not a green light, is the healthy state;
-  the aria-label still reports it. Unreachable also **freezes and dims** the trace:
-  with nothing arriving, advancing the axis would draw blanks that read as "the box
-  went idle" when they mean "we stopped being told".
+  the aria-label still reports it. A stalled stream — unreachable server, suspended
+  app — **freezes and dims** the trace rather than draining it: the strip's window is
+  anchored at the ring's newest sample, because advancing the axis with nothing
+  arriving would draw blanks that read as "the box went idle" when they mean "we
+  stopped being told". The em-dash readout and the sync word carry the staleness.
 - Digits sit in fixed tabular slots and the t/s row keeps its space when idle, so
   no state change can nudge the ellipsizing session title.
 - **A reading nobody has is an em dash, not a blank** [decided]. Three states, three
@@ -285,8 +291,11 @@ plus expandable detail — with **two levels**:
   says so. Collapsing the two would let a finished answer masquerade as one still
   arriving.
 - **The graph opens with a past** [decided]: GPU load is sampled once a second into an
-  in-process ring server-side (`backend/src/jbrain/vitals_ring.py`) and the screen seeds
-  its own buffer from it, so a reload no longer starts the plot empty. Deliberately not
+  in-process ring server-side (`backend/src/jbrain/vitals_ring.py`) and the browser
+  seeds its shared ring from it — on every stream (re)open (`hostVitals.ts`, sized to
+  the hole the dead stream left, so a resume backfills the time away for the top bar
+  and this screen alike), and on a slow re-seed poll while this screen is open. A
+  reload no longer starts the plot empty. Deliberately not
   `app.host_metrics`, which samples every 30s for a 30-day graph — a one-minute window
   read from it is two points, and writing a row a second to serve a fifteen-minute view
   would multiply that table thirtyfold for a question that stops mattering a quarter of

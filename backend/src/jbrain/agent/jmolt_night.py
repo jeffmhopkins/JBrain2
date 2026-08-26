@@ -154,6 +154,23 @@ def _advisory_block(note: str) -> str:
     return _ADVISORY_HEADER + note + _ADVISORY_FOOTER
 
 
+def _identity_block(handle: str) -> str:
+    """Tell jmolt its actual Moltbook handle for the night. The persona knows it is a
+    jmolt (the kind of agent) and that its NAME is its handle, but the handle string lives
+    in settings, not the prompt — so it is supplied here, fresh each sitting, and never
+    guessed. Injected every sitting (identity is not first-sitting-only like the advisory).
+    Blank when no handle is registered yet (the persona's own framing stands, and the night
+    only runs with an API key anyway)."""
+    h = handle.strip().lstrip("@")
+    if not h:
+        return ""
+    return (
+        f"Your handle on Moltbook is @{h}. That handle is your name — it is how other agents "
+        f"know you, how you sign what you write, and how you recognize your own posts and "
+        f"replies. You are the jmolt at @{h}.\n\n"
+    )
+
+
 def jmolt_run_context(principal_id: str) -> SessionContext:
     """The SessionContext jmolt's nightly turn runs under: owner principal (owner-only
     reads), the `jmolt` domain scope (read its own scratchpad), `auth_context='jmolt'`
@@ -277,6 +294,11 @@ class JmoltNightRunner:
         # framed as trusted-but-non-binding (see `_advisory_block`). Blank → nothing injected.
         advisory = _advisory_block(await self._settings.moltbook_advisory_note(owner_ctx))
 
+        # jmolt's own registered handle — its NAME for the night (the persona frames "jmolt"
+        # as the KIND of agent; the handle is who this instance is). Read under the OWNER
+        # context (a global setting), injected into EVERY sitting so it is never guessed.
+        identity = _identity_block(await self._settings.moltbook_handle(owner_ctx))
+
         # Reserve the box for the hour (night hold): pin whatever local model jmolt is
         # served from so competing loads pause and gpt-oss is never evicted mid-night.
         # Best-effort — a hold failure never stops the night; always cleared in `finally`.
@@ -313,6 +335,9 @@ class JmoltNightRunner:
                     # The advisory note rides the FIRST sitting only — it is context to open
                     # the night with, not something re-injected on every fresh sitting.
                     advisory=advisory if sitting == 1 else "",
+                    # The handle IS re-injected every sitting: each is a fresh-context turn, and
+                    # a jmolt that forgot its own name mid-night would be worse than repetition.
+                    identity=identity,
                 )
                 if done:
                     any_done, last_summary = True, summary or last_summary
@@ -368,6 +393,7 @@ class JmoltNightRunner:
         woke_at: datetime,
         now: datetime,
         advisory: str = "",
+        identity: str = "",
     ) -> tuple[bool, str, str | None]:
         """One sitting: a recorded agent turn under the night's session. Returns
         (done, summary, error). Never raises — a sitting failure is a recorded error run
@@ -382,9 +408,10 @@ class JmoltNightRunner:
             if sitting == 1
             else _CONTINUE_PROLOGUE
         )
-        # The advisory note (first sitting only, when set) opens the prologue, between the
-        # countdown and the night's marching orders — trusted-owner context to start from.
-        prologue = _sitting_preamble(tz, woke_at, now, sitting) + advisory + base
+        # The identity line (jmolt's own handle) leads, then the advisory note (first sitting
+        # only, when set), then the night's marching orders — so jmolt reads WHO it is before
+        # WHAT it is doing. Countdown stays at the very top (it is the live, time-sensitive bit).
+        prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory + base
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
 
