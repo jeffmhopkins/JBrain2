@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.agent.jmolt_night import (
+    JMOLT_MAX_EMPTY_RETRIES,
+    JMOLT_MAX_SITTINGS,
     JmoltNightRunner,
     SingleFlightLane,
     jmolt_night_tick,
@@ -457,6 +459,70 @@ async def test_no_identity_block_when_no_handle_is_registered(maker: async_sessi
     executor = _PrologueCapturingExecutor()
     await _runner(maker, store, executor).run(owner)
     assert executor.prologues and "That handle is your name" not in executor.prologues[0]
+
+
+class _EmptyFirstThenRealExecutor(_PrologueCapturingExecutor):
+    """Returns an EMPTY turn (no final text, one model step, end_turn — the gpt-oss
+    empty-final-channel quirk) on its FIRST call, then real turns. Lets a test observe the
+    night's empty-sitting detect-and-retry."""
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        convo = cast("list[UserMessage]", kwargs.get("conversation") or [])
+        self.prologues.append(convo[-1].text if convo else "")
+        self.calls += 1
+        text = "" if self.calls == 1 else "I read my files and sat with a thread."
+        steps = 1 if self.calls == 1 else 4
+        return ExecutedTurn(
+            result=AgentResult(text=text, stop_reason="end_turn", steps=steps, cost_tokens=0),
+            tools=[],
+            reasoning="We should list the scratch files.",
+        )
+
+
+class _AlwaysEmptyExecutor(_FakeExecutor):
+    """Every sitting comes back empty — the wedged-model case. Proves the retry is BOUNDED
+    (the night terminates instead of spinning the hour on retries)."""
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        self.calls += 1
+        return ExecutedTurn(
+            result=AgentResult(text="", stop_reason="end_turn", steps=1, cost_tokens=0),
+            tools=[],
+            reasoning="We should list the scratch files.",
+        )
+
+
+async def test_empty_sitting_is_retried_with_a_nudge_and_not_counted(
+    maker: async_sessionmaker,
+) -> None:
+    # A sitting that produced no work (empty final, one step) is re-run rather than counted:
+    # the retry re-uses the SAME sitting number and carries a concrete first-move nudge.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _EmptyFirstThenRealExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert executor.calls >= 2  # the empty first sitting was retried, not skipped over
+    # Only the retry carries the nudge, and it re-runs sitting 1 (the empty one took no slot).
+    assert "produced nothing" not in executor.prologues[0]
+    assert "produced nothing" in executor.prologues[1]
+    assert "This is sitting 1." in executor.prologues[0]
+    assert "This is sitting 1." in executor.prologues[1]
+    # The second sitting number is only reached AFTER a real sitting-1 completed.
+    assert any("This is sitting 2." in p for p in executor.prologues[2:])
+
+
+async def test_empty_sittings_stop_retrying_at_the_cap(maker: async_sessionmaker) -> None:
+    # A wedged model (every sitting empty) must not loop the hour away on retries: after
+    # JMOLT_MAX_EMPTY_RETRIES the empties count as ordinary sittings and the night ends.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _AlwaysEmptyExecutor()
+    # A tight clock leaves many slots; the terminating guard here is the retry cap, not time.
+    await _runner(maker, store, executor, clock=_stepped_clock(300)).run(owner)
+
+    # Bounded: at most the sitting budget plus the extra retries — never an unbounded spin.
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES
 
 
 async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) -> None:
