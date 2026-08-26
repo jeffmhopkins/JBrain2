@@ -734,6 +734,25 @@ export interface MoltbookAction {
   target: string | null;
   reacted_to: string | null;
   at: string | null;
+  /** The ledger seq — pass the oldest loaded row's value back as `cursor` to page older. */
+  seq: number;
+}
+
+/** A (family, kind) count over the action ledger — for the filter chips' honest totals,
+ * independent of what the filtered list currently shows. */
+export interface MoltbookActionStat {
+  family: string;
+  kind: string;
+  count: number;
+}
+
+/** Server-side filters for the action ledger, so a busy night stays legible. */
+export interface MoltbookActionQuery {
+  family?: "stage" | "publish";
+  kinds?: string[];
+  sinceDays?: number;
+  cursor?: number;
+  limit?: number;
 }
 
 /** A scratchpad file (jmolt's notebook), listed with size + last-write time. */
@@ -2525,9 +2544,24 @@ export const api = {
     return (await response.json()) as MoltbookTurn[];
   },
 
-  async getMoltbookActions(): Promise<MoltbookAction[]> {
-    const response = await request("/api/settings/moltbook/actions");
+  async getMoltbookActions(q: MoltbookActionQuery = {}): Promise<MoltbookAction[]> {
+    const params = new URLSearchParams();
+    if (q.family) params.set("family", q.family);
+    if (q.kinds?.length) params.set("kinds", q.kinds.join(","));
+    if (q.sinceDays) params.set("since_days", String(q.sinceDays));
+    if (q.cursor) params.set("cursor", String(q.cursor));
+    if (q.limit) params.set("limit", String(q.limit));
+    const qs = params.toString();
+    const response = await request(`/api/settings/moltbook/actions${qs ? `?${qs}` : ""}`);
     return (await response.json()) as MoltbookAction[];
+  },
+
+  async getMoltbookActionStats(sinceDays?: number): Promise<MoltbookActionStat[]> {
+    const params = new URLSearchParams();
+    if (sinceDays) params.set("since_days", String(sinceDays));
+    const qs = params.toString();
+    const response = await request(`/api/settings/moltbook/actions/stats${qs ? `?${qs}` : ""}`);
+    return (await response.json()) as MoltbookActionStat[];
   },
 
   async getMoltbookJournal(): Promise<MoltbookJournalEntry[]> {

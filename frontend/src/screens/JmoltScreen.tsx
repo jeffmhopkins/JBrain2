@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   MoltbookAction,
+  MoltbookActionQuery,
+  MoltbookActionStat,
   MoltbookJournalEntry,
   MoltbookNight,
   MoltbookOutboxItem,
@@ -55,6 +57,49 @@ function formatBytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 }
 
+// Activity feed. One page is this many rows; "show older" pages by the oldest row's seq.
+const ACT_PAGE = 60;
+
+// A run of identical, back-to-back publish rows (same action + target — the drip burst) is
+// collapsed into one expandable row; everything else stays a single row. Stage rows carry
+// unique content, so they are never collapsed.
+interface ActGroup {
+  key: string;
+  head: MoltbookAction;
+  rows: MoltbookAction[];
+}
+function groupActions(list: MoltbookAction[]): ActGroup[] {
+  const groups: ActGroup[] = [];
+  for (const a of list) {
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      a.action.startsWith("publish_") &&
+      last.head.action === a.action &&
+      last.head.target === a.target
+    ) {
+      last.rows.push(a);
+    } else {
+      groups.push({ key: `${a.seq}`, head: a, rows: [a] });
+    }
+  }
+  return groups;
+}
+
+// Build the ledger query, omitting keys rather than passing undefined (exactOptionalPropertyTypes).
+function actionQuery(
+  family: "stage" | "publish" | "all",
+  activeKinds: string[],
+  allKinds: string[],
+  cursor?: number,
+): MoltbookActionQuery {
+  const q: MoltbookActionQuery = { limit: ACT_PAGE };
+  if (family !== "all") q.family = family;
+  if (activeKinds.length < allKinds.length) q.kinds = activeKinds;
+  if (cursor) q.cursor = cursor;
+  return q;
+}
+
 export function JmoltScreen() {
   const [moltbook, setMoltbook] = useState<MoltbookSettings | null>(null);
   const [moltName, setMoltName] = useState("jmolt");
@@ -71,6 +116,12 @@ export function JmoltScreen() {
   const [openNight, setOpenNight] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<MoltbookTurn[] | null>(null);
   const [actions, setActions] = useState<MoltbookAction[] | null>(null);
+  // Activity filters: drafted-vs-sent split (defaults to what jmolt WROTE), per-kind hide
+  // toggles, honest counts from the /stats aggregate, and keyset paging for "show older".
+  const [actFamily, setActFamily] = useState<"stage" | "publish" | "all">("stage");
+  const [actHidden, setActHidden] = useState<Set<string>>(() => new Set());
+  const [actStats, setActStats] = useState<MoltbookActionStat[] | null>(null);
+  const [actMore, setActMore] = useState(false);
   const [files, setFiles] = useState<MoltbookScratchFile[] | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
@@ -113,9 +164,9 @@ export function JmoltScreen() {
       .then(setNights)
       .catch(() => setNights([]));
     api
-      .getMoltbookActions()
-      .then(setActions)
-      .catch(() => setActions([]));
+      .getMoltbookActionStats()
+      .then(setActStats)
+      .catch(() => setActStats([]));
     api
       .getMoltbookFiles()
       .then(setFiles)
@@ -131,6 +182,63 @@ export function JmoltScreen() {
   useEffect(() => {
     if (moltbook && noteDraft === null) setNoteDraft(moltbook.advisory_note);
   }, [moltbook, noteDraft]);
+
+  // Kind chips (comment/vote/…) with honest totals from the /stats aggregate, most-used first.
+  const kindCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of actStats ?? []) m.set(s.kind, (m.get(s.kind) ?? 0) + s.count);
+    return m;
+  }, [actStats]);
+  const kindList = useMemo(
+    () => [...kindCounts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k),
+    [kindCounts],
+  );
+  const activeKinds = useMemo(
+    () => kindList.filter((k) => !actHidden.has(k)),
+    [kindList, actHidden],
+  );
+  const groupedActions = useMemo(() => (actions ? groupActions(actions) : []), [actions]);
+
+  // (Re)load the first page whenever the family split or a kind toggle changes. `kinds` is
+  // sent only when some are hidden — all-on means "no filter", which the server reads as all.
+  useEffect(() => {
+    if (!moltbook?.key_set) return;
+    let stale = false;
+    api
+      .getMoltbookActions(actionQuery(actFamily, activeKinds, kindList))
+      .then((rows) => {
+        if (stale) return;
+        setActions(rows);
+        setActMore(rows.length === ACT_PAGE);
+      })
+      .catch(() => {
+        if (!stale) setActions([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [moltbook?.key_set, actFamily, activeKinds, kindList]);
+
+  const showOlderActions = useCallback(() => {
+    const last = actions?.[actions.length - 1];
+    if (!last) return;
+    api
+      .getMoltbookActions(actionQuery(actFamily, activeKinds, kindList, last.seq))
+      .then((rows) => {
+        setActions((prev) => [...(prev ?? []), ...rows]);
+        setActMore(rows.length === ACT_PAGE);
+      })
+      .catch(() => {});
+  }, [actions, activeKinds, kindList, actFamily]);
+
+  const toggleKind = useCallback((kind: string) => {
+    setActHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }, []);
 
   function selectNight(sessionId: string) {
     if (openNight === sessionId) {
@@ -640,28 +748,94 @@ export function JmoltScreen() {
         <section className="settings-card">
           <h2 className="settings-label">Activity</h2>
           <p className="settings-meta">
-            Everything jmolt did — posts, comments, votes, follows, and each web search or fetch —
-            newest first, with the content it reacted to.
+            What jmolt drafted and sent — posts, comments, votes, follows — newest first, with the
+            content it reacted to.
           </p>
+
+          <fieldset className="seg-row molt-act-fam" aria-label="Drafted or published">
+            {(["stage", "publish", "all"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={`seg${actFamily === f ? " seg-on" : ""}`}
+                aria-pressed={actFamily === f}
+                onClick={() => setActFamily(f)}
+              >
+                {f === "stage" ? "Drafted" : f === "publish" ? "Published" : "All"}
+              </button>
+            ))}
+          </fieldset>
+
+          {kindList.length > 0 && (
+            <div className="filter-chips molt-act-chips">
+              {kindList.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={`filter-chip${actHidden.has(k) ? "" : " filter-chip-on"}`}
+                  aria-pressed={!actHidden.has(k)}
+                  onClick={() => toggleKind(k)}
+                >
+                  {k} <span className="molt-chip-count">{kindCounts.get(k)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {actions === null ? (
             <p className="settings-meta">Loading…</p>
-          ) : actions.length === 0 ? (
-            <p className="settings-meta">No actions logged yet.</p>
+          ) : groupedActions.length === 0 ? (
+            <p className="settings-meta">No activity matches these filters.</p>
           ) : (
-            <ul className="molt-actions">
-              {actions.map((a, i) => (
-                <li key={`${i}-${a.at ?? ""}`} className="molt-action">
-                  <span className="molt-action-head">
-                    <span className="molt-action-kind">{inertText(a.action)}</span>
-                    <span className="molt-action-when">{localDateTime(a.at)}</span>
-                  </span>
-                  {a.target && <span className="molt-action-target">{inertText(a.target)}</span>}
-                  {a.reacted_to && (
-                    <span className="molt-action-reacted">re: {inertText(a.reacted_to)}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="molt-actions">
+                {groupedActions.map((g) =>
+                  g.rows.length > 1 ? (
+                    <li key={g.key} className="molt-action molt-run">
+                      <details>
+                        <summary className="molt-run-head">
+                          <span className="molt-action-kind">{inertText(g.head.action)}</span>
+                          <span className="molt-run-count">×{g.rows.length}</span>
+                          {g.head.target && (
+                            <span className="molt-run-target">{inertText(g.head.target)}</span>
+                          )}
+                        </summary>
+                        <ul className="molt-actions molt-run-inner">
+                          {g.rows.map((a) => (
+                            <li key={a.seq} className="molt-action published">
+                              <span className="molt-action-when">{localDateTime(a.at)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </li>
+                  ) : (
+                    <li
+                      key={g.key}
+                      className={`molt-action${g.head.action.startsWith("publish_") ? " published" : ""}`}
+                    >
+                      <span className="molt-action-head">
+                        <span className="molt-action-kind">{inertText(g.head.action)}</span>
+                        <span className="molt-action-when">{localDateTime(g.head.at)}</span>
+                      </span>
+                      {g.head.target && (
+                        <span className="molt-action-target">{inertText(g.head.target)}</span>
+                      )}
+                      {g.head.reacted_to && (
+                        <span className="molt-action-reacted">
+                          re: {inertText(g.head.reacted_to)}
+                        </span>
+                      )}
+                    </li>
+                  ),
+                )}
+              </ul>
+              {actMore && (
+                <button type="button" className="molt-show-older" onClick={showOlderActions}>
+                  Show older
+                </button>
+              )}
+            </>
           )}
         </section>
       )}
