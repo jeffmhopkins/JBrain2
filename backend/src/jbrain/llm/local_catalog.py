@@ -262,7 +262,8 @@ class LocalModel:
     # level onto that toggle instead of sending `reasoning_effort` (which the Qwen
     # template ignores): "none" → `enable_thinking=false` (a real "reasoning off"),
     # any other level → thinking on. False for harmony/grok/GLM (they take the effort
-    # verbatim) and for always-on `<think>` checkpoints (which have no off switch).
+    # verbatim) and for always-on `<think>` checkpoints (which have no off switch). Note a
+    # harmony reasoner (gpt-oss) still has no genuine "none" — see `no_reasoning_off`.
     hybrid_thinking: bool = False
     # For a hybrid whose chat template ALSO understands a `reasoning_effort` level (Qwen3.8
     # onward): the map from OUR routed level to the level its template accepts. The toggle
@@ -274,6 +275,15 @@ class LocalModel:
     # that is still correct for the Qwen3.5/3.6-era hybrids, whose templates ignore the field.
     # Keys are our levels; "none" never appears — it turns thinking off via the toggle.
     thinking_effort_map: dict[str, str] = field(default_factory=dict)
+    # This reasoner has NO real "reasoning off" — its lowest honored level is `low`, and a
+    # routed "none" must be sent as `low` rather than "none". gpt-oss is the case: llama.cpp
+    # turns `reasoning_effort:"none"` into `enable_thinking=false` + an ERASED effort, but the
+    # harmony template ignores `enable_thinking` and defaults the erased effort to `medium` —
+    # so "none" silently runs at MEDIUM (confirmed live 2026-08-26: the "none" turn reused the
+    # medium cache and still emitted reasoning). Mapping it to `low` gives the owner the actual
+    # minimum instead of a no-op. False for a model with a genuine off switch (a Qwen hybrid's
+    # `enable_thinking`, GLM's own template), which keeps its true "none".
+    no_reasoning_off: bool = False
     # Extra `llama-server` flags appended verbatim to the gateway command
     # (jbrain.llm.llama_swap_config). Carries the MTP self-speculative-decoding flags
     # (`--spec-type draft-mtp …`) for the MTP variant; empty for every model whose
@@ -603,6 +613,9 @@ CATALOG: tuple[LocalModel, ...] = (
         # Move the harmony template's live `Current date` off the prompt head so the daily
         # rollover stops re-prefilling the whole persona+tools prefix (deploy/chat-templates/).
         chat_template_file="gpt-oss-120b.jinja",
+        # The harmony template has no true "reasoning off": a routed "none" is sent as "low"
+        # (its real floor) instead of silently running medium (see the field's comment).
+        no_reasoning_off=True,
     ),
     LocalModel(
         id="nemotron-3.5-lightning-30b",
