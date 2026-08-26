@@ -1323,7 +1323,7 @@ def test_synthesis_view_separates_skipped_from_ran_and_failed() -> None:
 
 def test_tool_arg_previews_the_human_readable_target_not_opaque_ids():
     """A child tool step's inline preview surfaces the query/url/name/place it ran —
-    matching the frontend INLINE_ARG_KEY — and stays empty for id-only tools."""
+    matching the frontend INLINE_ARGS (toolSummary.ts) — and stays empty for id-only tools."""
     from jbrain.agent.spawn import _TOOL_ARG_LEN, _tool_arg
 
     assert _tool_arg("web_search", {"query": "rust"}) == "rust"

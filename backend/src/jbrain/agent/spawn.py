@@ -154,8 +154,9 @@ def effective_child_tools(
     return (persona_tools or frozenset()) & parent_tools
 
 
-# Mirrors the frontend's INLINE_ARG_KEY (FullBrainSurface.tsx): the one arg worth
-# previewing per tool — a query/url/name/place/subject, never an opaque id.
+# Mirrors the frontend's INLINE_ARGS (agent/toolSummary.ts) for the web tools a
+# child may hold: the one arg worth previewing per tool — a query/url/name/place/
+# subject, never an opaque id.
 _TOOL_ARG_KEY = {
     "search": "query",
     "recall": "query",
