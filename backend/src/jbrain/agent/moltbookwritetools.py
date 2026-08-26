@@ -13,11 +13,15 @@ context), so its INSERT into the outbox passes the RLS firewall.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jbrain.agent.jmolt_guards import (
+    MAX_COMMENTS_PER_NIGHT,
+    MAX_FOLLOWS_PER_NIGHT,
+    MAX_VOTES_PER_NIGHT,
     TooManyPostsError,
     clamp_publish_at,
     is_near_duplicate,
@@ -38,6 +42,13 @@ def _local_now(tz: str) -> datetime:
         return datetime.now(ZoneInfo(tz))
     except (ZoneInfoNotFoundError, ValueError):
         return datetime.now(ZoneInfo("UTC"))
+
+
+def _day_start_utc(tz: str) -> datetime:
+    """Start of the current owner-local day, as a UTC instant — the lower bound for the
+    per-night action caps (a night is a single 3am sitting-run, so 'today' spans it)."""
+    start_local = _local_now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_local.astimezone(ZoneInfo("UTC"))
 
 
 def _parse_hhmm(value: Any, tz: str) -> datetime | None:
@@ -115,8 +126,26 @@ def build_moltbook_write_handlers(
         parent = str(a.get("parent_id", "")).strip()
         if parent:
             payload["parent_id"] = parent
+        tz = ctx.timezone or "UTC"
+        dedup_key = f"comment:{post_id}:{hashlib.sha1(content.encode()).hexdigest()[:16]}"
         async with scoped_session(maker, ctx.session) as s:
-            await outbox.stage(s, pid, kind="comment", payload=payload)
+            staged = await outbox.staged_count_since(
+                s, pid, kinds=("comment",), since=_day_start_utc(tz)
+            )
+            if staged >= MAX_COMMENTS_PER_NIGHT:
+                return (
+                    f"You've already staged {staged} comments tonight — the nightly limit is "
+                    f"{MAX_COMMENTS_PER_NIGHT}. Spend the rest of the hour reading, or on your "
+                    "files."
+                )
+            row_id = await outbox.stage(
+                s, pid, kind="comment", payload=payload, dedup_key=dedup_key
+            )
+            if row_id is None:
+                return (
+                    "You already staged that same reply on this post tonight — "
+                    "skipping the duplicate."
+                )
             await _record(s, pid, action="stage_comment", target=post_id, reacted_to=content[:200])
         return "Staged a reply. It posts when released."
 
@@ -127,10 +156,26 @@ def build_moltbook_write_handlers(
             return "moltbook_vote needs a `target_id`."
         up = bool(a.get("up", True))
         comment = bool(a.get("comment", False))
+        tz = ctx.timezone or "UTC"
+        dedup_key = f"vote:{target}:{'up' if up else 'down'}:{'c' if comment else 'p'}"
         async with scoped_session(maker, ctx.session) as s:
-            await outbox.stage(
-                s, pid, kind="vote", payload={"target_id": target, "up": up, "comment": comment}
+            staged = await outbox.staged_count_since(
+                s, pid, kinds=("vote",), since=_day_start_utc(tz)
             )
+            if staged >= MAX_VOTES_PER_NIGHT:
+                return (
+                    f"You've already staged {staged} votes tonight — the nightly limit is "
+                    f"{MAX_VOTES_PER_NIGHT}."
+                )
+            row_id = await outbox.stage(
+                s,
+                pid,
+                kind="vote",
+                payload={"target_id": target, "up": up, "comment": comment},
+                dedup_key=dedup_key,
+            )
+            if row_id is None:
+                return "You already staged that vote tonight — skipping the duplicate."
             await _record(s, pid, action="stage_vote", target=target)
         return f"Staged an {'up' if up else 'down'}vote."
 
@@ -144,8 +189,22 @@ def build_moltbook_write_handlers(
             )
         kind = "follow" if action in ("follow", "unfollow") else "subscribe"
         on = action in ("follow", "subscribe")
+        tz = ctx.timezone or "UTC"
+        dedup_key = f"social:{action}:{name.lower()}"
         async with scoped_session(maker, ctx.session) as s:
-            await outbox.stage(s, pid, kind=kind, payload={"name": name, "on": on})
+            staged = await outbox.staged_count_since(
+                s, pid, kinds=("follow", "subscribe"), since=_day_start_utc(tz)
+            )
+            if staged >= MAX_FOLLOWS_PER_NIGHT:
+                return (
+                    f"You've already staged {staged} follows/subscribes tonight — the nightly "
+                    f"limit is {MAX_FOLLOWS_PER_NIGHT}."
+                )
+            row_id = await outbox.stage(
+                s, pid, kind=kind, payload={"name": name, "on": on}, dedup_key=dedup_key
+            )
+            if row_id is None:
+                return f"You already staged: {action} {name} tonight — skipping the duplicate."
             await _record(s, pid, action=f"stage_{action}", target=name)
         return f"Staged: {action} {name}."
 

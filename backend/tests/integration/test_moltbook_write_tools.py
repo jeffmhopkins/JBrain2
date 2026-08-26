@@ -8,6 +8,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.jmolt_guards import (
+    MAX_COMMENTS_PER_NIGHT,
+    MAX_FOLLOWS_PER_NIGHT,
+    MAX_VOTES_PER_NIGHT,
+)
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.auth import service
@@ -118,3 +123,67 @@ async def test_comment_stages_and_is_recorded(maker: async_sessionmaker) -> None
         ledger = await ActionLedgerRepo().recent(s, pid)
     assert rows[0].kind == "comment"
     assert any(r.action == "stage_comment" for r in ledger)
+
+
+async def test_comments_are_capped_per_night(maker: async_sessionmaker) -> None:
+    # Comments had no brake — a drifted night once staged 30. The per-night cap holds at
+    # stage time; the write past the limit is refused, not queued.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    for i in range(MAX_COMMENTS_PER_NIGHT):
+        out = await h["moltbook_comment"](
+            {"post_id": f"p{i}", "content": f"a distinct reply number {i}"}, _ctx(pid)
+        )
+        assert "Staged" in out
+    over = await h["moltbook_comment"](
+        {"post_id": "p-over", "content": "one reply too many"}, _ctx(pid)
+    )
+    assert "nightly limit" in over
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
+    assert len(rows) == MAX_COMMENTS_PER_NIGHT  # the over-limit one never made it in
+
+
+async def test_votes_are_capped_per_night(maker: async_sessionmaker) -> None:
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    for i in range(MAX_VOTES_PER_NIGHT):
+        assert "Staged" in await h["moltbook_vote"]({"target_id": f"t{i}"}, _ctx(pid))
+    over = await h["moltbook_vote"]({"target_id": "t-over"}, _ctx(pid))
+    assert "nightly limit" in over
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert len(await OutboxRepo().list_by_status(s, pid, ("queued",))) == MAX_VOTES_PER_NIGHT
+
+
+async def test_duplicate_vote_is_deduped(maker: async_sessionmaker) -> None:
+    # The re-staged-upvote bug: a fresh sitting can't see its pending queue, so it re-votes.
+    # The dedup index makes the repeat a no-op.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    first = await h["moltbook_vote"]({"target_id": "post-9", "up": True}, _ctx(pid))
+    assert "Staged an upvote" in first
+    again = await h["moltbook_vote"]({"target_id": "post-9", "up": True}, _ctx(pid))
+    assert "already staged" in again
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
+    assert len(rows) == 1  # the duplicate upvote was swallowed
+
+
+async def test_duplicate_follow_is_deduped(maker: async_sessionmaker) -> None:
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    assert "Staged" in await h["moltbook_social"]({"action": "follow", "name": "Luna24"}, _ctx(pid))
+    again = await h["moltbook_social"]({"action": "follow", "name": "Luna24"}, _ctx(pid))
+    assert "already staged" in again
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert len(await OutboxRepo().list_by_status(s, pid, ("queued",))) == 1
+
+
+async def test_follows_are_capped_per_night(maker: async_sessionmaker) -> None:
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    for i in range(MAX_FOLLOWS_PER_NIGHT):
+        staged = await h["moltbook_social"]({"action": "follow", "name": f"agent{i}"}, _ctx(pid))
+        assert "Staged" in staged
+    over = await h["moltbook_social"]({"action": "follow", "name": "one-too-many"}, _ctx(pid))
+    assert "nightly limit" in over

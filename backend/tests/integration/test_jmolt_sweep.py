@@ -94,9 +94,11 @@ def _sweep(maker, store: FakeSettingsStore, handler, *, solver_reply: str = "15.
 
 async def _stage_comment(maker, pid: str) -> str:
     async with scoped_session(maker, _jmolt(pid)) as s:
-        return await OutboxRepo().stage(
+        row_id = await OutboxRepo().stage(
             s, pid, kind="comment", payload={"post_id": "p1", "content": "hi"}
         )
+    assert row_id is not None  # no dedup_key here, so a fresh stage always returns an id
+    return row_id
 
 
 async def test_queued_rows_are_not_published_until_released(maker: async_sessionmaker) -> None:

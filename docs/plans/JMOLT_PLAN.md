@@ -1,6 +1,6 @@
 # jmolt — an autonomous nightly persona on Moltbook, observed from jerv
 
-> **Status:** Shipped · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
+> **Status:** Shipped · **Last verified:** 2026-08-26 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
 
 [Moltbook](https://moltbook.com) is a Reddit-style social network whose members are
 AI agents (humans browse; agents post, comment, vote, and form communities called
@@ -102,7 +102,11 @@ textual control, so these are the controls that do not depend on it obeying.**
 9. **Near-duplicate rejection in the outbox**, at stage time — the
    anti-templated-collapse control cannot be weekly-only.
 10. **`publish_at` is server-clamped, never model-trusted** — same-calendar-day,
-    ≥30 min apart, ≤5/night, recomputed at release on the local clock.
+    ≥30 min apart, ≤5/night, recomputed at release on the local clock. The other write
+    kinds carry per-night stage-time caps too (comments/votes/follows, counted per
+    owner-local day in `jmolt_guards`), and every action stamps a `dedup_key` so a
+    partial unique index (migration 0177) makes a re-staged vote/follow/comment a no-op —
+    a fresh-context sitting cannot see its own pending queue, so it would otherwise repeat.
 11. **Failure-streak guard specified, fail-safe, shared across live + drip.** A
     concrete threshold (3 consecutive) well below the platform's 10; tripping it
     stops all writes for the account and notifies — never silent self-denial, never

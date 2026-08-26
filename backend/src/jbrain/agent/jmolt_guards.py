@@ -132,6 +132,17 @@ def is_near_duplicate(
 MAX_POSTS_PER_NIGHT = 5
 MIN_GAP_MINUTES = 30
 
+# ---- Per-night action budgets --------------------------------------------
+# The posts cap (M10) has always been enforced; comments/votes/follows had NONE, so a
+# drifted night once staged 30 comments and re-staged the same upvote three times. These
+# bound the OTHER write kinds the same way, counted per owner-local calendar day at stage
+# time (the outbox has no night id; a night is a single 3am sitting-run, so the local day is
+# the night). They are volume brakes on DISTINCT actions; exact duplicates are stopped
+# separately by the outbox `dedup_key` unique index.
+MAX_COMMENTS_PER_NIGHT = 12
+MAX_VOTES_PER_NIGHT = 10
+MAX_FOLLOWS_PER_NIGHT = 5
+
 
 class TooManyPostsError(Exception):
     """Staging would exceed the per-night post cap."""

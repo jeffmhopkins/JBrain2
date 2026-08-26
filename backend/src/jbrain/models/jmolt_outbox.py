@@ -67,14 +67,20 @@ class OutboxRepo:
         payload: dict[str, Any],
         publish_at: datetime | None = None,
         dedup_key: str | None = None,
-    ) -> str:
-        """Stage a write (jmolt context). Returns the new row id."""
+    ) -> str | None:
+        """Stage a write (jmolt context). Returns the new row id — or None when `dedup_key`
+        is set and an identical write is already staged for this principal, which the partial
+        unique index `jmolt_outbox_dedup` (migration 0177) turns into a no-op via ON CONFLICT.
+        A fresh-context sitting cannot see its own pending queue, so this is what stops it from
+        re-staging the same vote/follow/comment it staged an hour earlier."""
         row = (
             await session.execute(
                 text(
                     "INSERT INTO app.jmolt_outbox"
                     " (principal_id, kind, payload, publish_at, dedup_key)"
                     " VALUES (:pid, :kind, cast(:payload AS jsonb), :pub, :dk)"
+                    " ON CONFLICT (principal_id, dedup_key)"
+                    " WHERE dedup_key IS NOT NULL DO NOTHING"
                     " RETURNING id"
                 ),
                 {
@@ -85,8 +91,33 @@ class OutboxRepo:
                     "dk": dedup_key,
                 },
             )
+        ).scalar_one_or_none()
+        return str(row) if row is not None else None
+
+    async def staged_count_since(
+        self,
+        session: AsyncSession,
+        principal_id: str,
+        *,
+        kinds: tuple[str, ...],
+        since: datetime,
+    ) -> int:
+        """How many live writes of `kinds` this principal has staged since `since` (a UTC
+        instant — the caller passes the start of the owner-local day). Counts everything not
+        owner-rejected or failed, so a released/published write still consumes the night's
+        budget. Backs the per-night comment/vote/follow caps."""
+        count = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND kind = ANY(:kinds)"
+                    " AND status IN ('queued', 'released', 'published')"
+                    " AND created_at >= :since"
+                ),
+                {"pid": principal_id, "kinds": list(kinds), "since": since},
+            )
         ).scalar_one()
-        return str(row)
+        return int(count)
 
     async def list_by_status(
         self, session: AsyncSession, principal_id: str, statuses: tuple[str, ...]

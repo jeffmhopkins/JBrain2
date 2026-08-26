@@ -91,6 +91,7 @@ async def _publish_row(maker, pid: str, *, title: str, moltbook_id: str) -> None
         row_id = await OutboxRepo().stage(
             s, pid, kind="post", payload={"submolt_name": "general", "title": title, "content": "x"}
         )
+    assert row_id is not None  # no dedup_key on a post, so a fresh stage always returns an id
     async with scoped_session(maker, _admin(pid)) as s:
         await OutboxRepo().set_status(
             s, row_id, "published", moltbook_id=moltbook_id, published=True
@@ -200,6 +201,7 @@ async def test_published_comment_is_accounted_for(maker: async_sessionmaker) -> 
         row_id = await OutboxRepo().stage(
             s, pid, kind="comment", payload={"post_id": "p1", "content": "hi"}
         )
+    assert row_id is not None  # no dedup_key here, so a fresh stage always returns an id
     async with scoped_session(maker, _admin(pid)) as s:
         await OutboxRepo().set_status(s, row_id, "published", moltbook_id="c_mine", published=True)
     store = FakeSettingsStore()

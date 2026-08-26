@@ -75,6 +75,7 @@ async def test_jmolt_stages_but_cannot_release(maker: async_sessionmaker) -> Non
     outbox = OutboxRepo()
     async with scoped_session(maker, _jmolt(pid)) as s:
         row_id = await outbox.stage(s, pid, kind="post", payload={"title": "hi", "content": "x"})
+    assert row_id is not None  # no dedup_key on a post, so a fresh stage always returns an id
 
     # jmolt cannot advance its own row to 'released' — the UPDATE policy hides it (0 rows).
     async with scoped_session(maker, _jmolt(pid)) as s:
