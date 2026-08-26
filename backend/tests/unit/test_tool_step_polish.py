@@ -106,9 +106,7 @@ def test_inline_arg_keys_exist_in_each_tool_schema() -> None:
 def test_frontend_maps_carry_no_stale_tools() -> None:
     src = _summary_src()
     known = set(_roster()) | _SYNTHETIC
-    stale = sorted(
-        (set(_step_labels(src)) | set(_inline_args(src)) | _no_inline(src)) - known
-    )
+    stale = sorted((set(_step_labels(src)) | set(_inline_args(src)) | _no_inline(src)) - known)
     assert not stale, (
         "these entries in toolSummary.ts no longer match any .tool sidecar (renamed or "
         f"removed tool?): {stale}"
