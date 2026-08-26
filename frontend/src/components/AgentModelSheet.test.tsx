@@ -4,7 +4,8 @@ import { AgentModelSheet } from "./AgentModelSheet";
 
 // The sheet reads the on-box models (and agent.turn's effective effort — the
 // "(default)" marker) from the live client; stub it to the two-model box the tests
-// exercise (one loaded reasoning model, one not loaded).
+// exercise (one loaded reasoning model, one not loaded). agent.turn reasons at medium,
+// so the effort control is offered even on the default route.
 vi.mock("../api/client", () => ({
   api: {
     getLlmSettings: vi.fn(async () => ({
@@ -13,55 +14,68 @@ vi.mock("../api/client", () => ({
         { id: "qwen3-vl-30b", label: "Qwen3-VL 30B", loaded: false, supports_reasoning: false },
       ],
       tasks: [{ id: "agent.turn", reasoning_effort: "medium" }],
+      reasoning_default: "low",
     })),
   },
 }));
 
+const noop = () => {};
+
 describe("AgentModelSheet", () => {
   it("lists the loaded models and picks one for the conversation", async () => {
-    const onChoose = vi.fn();
+    const onChooseModel = vi.fn();
     const onClose = vi.fn();
-    render(<AgentModelSheet selected={null} onChoose={onChoose} onClose={onClose} />);
+    render(
+      <AgentModelSheet
+        model={null}
+        effort={null}
+        onChooseModel={onChooseModel}
+        onChooseEffort={noop}
+        onClose={onClose}
+      />,
+    );
 
     // Only the loaded model is offered (plus Automatic); the unloaded one is hidden.
     await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
     expect(screen.getByText("Automatic")).toBeInTheDocument();
     expect(screen.queryByText("Qwen3-VL 30B")).not.toBeInTheDocument();
 
+    // The model pick no longer bundles a reasoning level — that's a separate override.
     fireEvent.click(screen.getByText("GPT-OSS 120B"));
-    expect(onChoose).toHaveBeenCalledWith({ id: "gpt-oss-120b", label: "GPT-OSS 120B" });
+    expect(onChooseModel).toHaveBeenCalledWith({ id: "gpt-oss-120b", label: "GPT-OSS 120B" });
     expect(onClose).toHaveBeenCalled();
   });
 
   it("clears back to the default via the Automatic row", async () => {
-    const onChoose = vi.fn();
+    const onChooseModel = vi.fn();
     const onClose = vi.fn();
     render(
       <AgentModelSheet
-        selected={{ id: "gpt-oss-120b", label: "GPT-OSS 120B" }}
-        onChoose={onChoose}
+        model={{ id: "gpt-oss-120b", label: "GPT-OSS 120B" }}
+        effort={null}
+        onChooseModel={onChooseModel}
+        onChooseEffort={noop}
         onClose={onClose}
       />,
     );
     await waitFor(() => expect(screen.getByText("Automatic")).toBeInTheDocument());
-    // The active pick reads as pressed.
     expect(screen.getByText("GPT-OSS 120B").closest("button")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     fireEvent.click(screen.getByText("Automatic"));
-    expect(onChoose).toHaveBeenCalledWith(null);
+    expect(onChooseModel).toHaveBeenCalledWith(null);
     expect(onClose).toHaveBeenCalled();
   });
 
   it("keeps the current pick visible even after it's unloaded", async () => {
     render(
       <AgentModelSheet
-        // A pick that isn't in the loaded set (unloaded since chosen) still shows so
-        // it can be seen and cleared.
-        selected={{ id: "some-other", label: "Some Other" }}
-        onChoose={vi.fn()}
-        onClose={vi.fn()}
+        model={{ id: "some-other", label: "Some Other" }}
+        effort={null}
+        onChooseModel={noop}
+        onChooseEffort={noop}
+        onClose={noop}
       />,
     );
     await waitFor(() => expect(screen.getByText("Some Other")).toBeInTheDocument());
@@ -69,81 +83,68 @@ describe("AgentModelSheet", () => {
   });
 
   it("marks the route's default level and selects it absent an override", async () => {
-    render(<AgentModelSheet selected={null} onChoose={vi.fn()} onClose={vi.fn()} />);
+    render(
+      <AgentModelSheet
+        model={null}
+        effort={null}
+        onChooseModel={noop}
+        onChooseEffort={noop}
+        onClose={noop}
+      />,
+    );
     await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
 
-    // agent.turn's effective effort (medium) carries the "(default)" marker and
-    // reads as the pressed pill while no level is armed; there is no "Auto" pill.
+    // agent.turn's effective effort (medium) carries the "(default)" marker and reads as
+    // the pressed pill while no override is set; there is no "Auto" pill.
     expect(screen.queryByRole("button", { name: "Auto" })).not.toBeInTheDocument();
     const def = screen.getByRole("button", { name: /Medium/ });
     expect(def).toHaveTextContent("(default)");
     expect(def).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("carries an armed reasoning level onto the model pick", async () => {
-    const onChoose = vi.fn();
-    const onClose = vi.fn();
-    render(<AgentModelSheet selected={null} onChoose={onChoose} onClose={onClose} />);
-    await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
-
-    // A reasoning model is offerable → the level pills show. Arming a level does
-    // not close the sheet (there is no pick to apply it to yet).
-    fireEvent.click(screen.getByRole("button", { name: "High" }));
-    expect(onChoose).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByText("GPT-OSS 120B"));
-    expect(onChoose).toHaveBeenCalledWith({
-      id: "gpt-oss-120b",
-      label: "GPT-OSS 120B",
-      effort: "high",
-    });
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("re-applies a level change live to the active reasoning pick", async () => {
-    const onChoose = vi.fn();
+  it("sets a reasoning level on the DEFAULT route without a model and without closing", async () => {
+    // The bug this fixes: on Automatic (model === null) a reasoning tap used to be
+    // dropped. Now it persists via onChooseEffort, independent of any model pick.
+    const onChooseModel = vi.fn();
+    const onChooseEffort = vi.fn();
     const onClose = vi.fn();
     render(
       <AgentModelSheet
-        selected={{ id: "gpt-oss-120b", label: "GPT-OSS 120B", effort: "high" }}
-        onChoose={onChoose}
+        model={null}
+        effort={null}
+        onChooseModel={onChooseModel}
+        onChooseEffort={onChooseEffort}
         onClose={onClose}
       />,
     );
     await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
-    // The current level reads as pressed.
-    expect(screen.getByRole("button", { name: "High" })).toHaveAttribute("aria-pressed", "true");
 
-    // Tapping a level applies to the active pick without closing; the
-    // "(default)"-marked pill clears the override so the route's own effort applies.
-    fireEvent.click(screen.getByRole("button", { name: "Low" }));
-    expect(onChoose).toHaveBeenCalledWith({
-      id: "gpt-oss-120b",
-      label: "GPT-OSS 120B",
-      effort: "low",
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Medium/ }));
-    expect(onChoose).toHaveBeenLastCalledWith({ id: "gpt-oss-120b", label: "GPT-OSS 120B" });
+    fireEvent.click(screen.getByRole("button", { name: "High" }));
+    expect(onChooseEffort).toHaveBeenCalledWith("high");
+    expect(onChooseModel).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("does not carry a level onto a non-reasoning model", async () => {
-    const onChoose = vi.fn();
+  it("reflects the active effort and clears it via the (default) pill", async () => {
+    const onChooseEffort = vi.fn();
     render(
       <AgentModelSheet
-        // The vision model is the pick this time, so a non-reasoning row is active.
-        selected={{ id: "qwen3-vl-30b", label: "Qwen3-VL 30B" }}
-        onChoose={onChoose}
-        onClose={vi.fn()}
+        model={null}
+        effort="high"
+        onChooseModel={noop}
+        onChooseEffort={onChooseEffort}
+        onClose={noop}
       />,
     );
-    await waitFor(() => expect(screen.getByText("Qwen3-VL 30B")).toBeInTheDocument());
-    // Arming a level does nothing to the non-reasoning pick…
-    fireEvent.click(screen.getByRole("button", { name: "High" }));
-    expect(onChoose).not.toHaveBeenCalled();
-    // …and re-picking the row leaves the level off the pick.
-    fireEvent.click(screen.getByText("Qwen3-VL 30B"));
-    expect(onChoose).toHaveBeenCalledWith({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B" });
+    await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
+    // The active override reads as pressed.
+    expect(screen.getByRole("button", { name: "High" })).toHaveAttribute("aria-pressed", "true");
+
+    // Tapping a different level applies it; tapping the "(default)"-marked pill clears
+    // the override so the route's own effort applies again.
+    fireEvent.click(screen.getByRole("button", { name: "Low" }));
+    expect(onChooseEffort).toHaveBeenCalledWith("low");
+    fireEvent.click(screen.getByRole("button", { name: /Medium/ }));
+    expect(onChooseEffort).toHaveBeenLastCalledWith(null);
   });
 });

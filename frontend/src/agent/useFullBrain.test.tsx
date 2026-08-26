@@ -445,32 +445,48 @@ describe("useFullBrain — per-conversation model override", () => {
     expect(bodies[0]?.model).toBeUndefined();
     expect(bodies[0]?.reasoning_effort).toBeUndefined();
     expect(result.current.modelOverride).toBeNull();
+    expect(result.current.effortOverride).toBeNull();
 
-    // Pick a model (with a reasoning level) → it shows on the override and rides the
-    // next turn, level and all.
-    act(() =>
-      result.current.setModelOverride({
-        id: "gpt-oss-120b",
-        label: "GPT-OSS 120B",
-        effort: "high",
-      }),
-    );
+    // A reasoning level with NO model pick rides the default route on its own — the
+    // decoupling that lets the owner dial reasoning on Automatic.
+    act(() => result.current.setEffortOverride("high"));
+    expect(result.current.effortOverride).toBe("high");
+    expect(result.current.modelOverride).toBeNull();
+    await act(async () => {
+      await result.current.send("harder");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]?.model).toBeUndefined();
+    expect(bodies[1]?.reasoning_effort).toBe("high");
+
+    // Add a model pick alongside → both ride the next turn, independently.
+    act(() => result.current.setModelOverride({ id: "gpt-oss-120b", label: "GPT-OSS 120B" }));
     expect(result.current.modelOverride?.id).toBe("gpt-oss-120b");
     await act(async () => {
       await result.current.send("again");
     });
-    await waitFor(() => expect(bodies).toHaveLength(2));
-    expect(bodies[1]?.model).toBe("gpt-oss-120b");
-    expect(bodies[1]?.reasoning_effort).toBe("high");
+    await waitFor(() => expect(bodies).toHaveLength(3));
+    expect(bodies[2]?.model).toBe("gpt-oss-120b");
+    expect(bodies[2]?.reasoning_effort).toBe("high");
 
-    // Clear → back to the default route.
+    // Clear the effort but keep the model → only the model rides.
+    act(() => result.current.setEffortOverride(null));
+    expect(result.current.effortOverride).toBeNull();
+    await act(async () => {
+      await result.current.send("model only");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(4));
+    expect(bodies[3]?.model).toBe("gpt-oss-120b");
+    expect(bodies[3]?.reasoning_effort).toBeUndefined();
+
+    // Clear the model too → back to the default route.
     act(() => result.current.setModelOverride(null));
     expect(result.current.modelOverride).toBeNull();
     await act(async () => {
       await result.current.send("more");
     });
-    await waitFor(() => expect(bodies).toHaveLength(3));
-    expect(bodies[2]?.model).toBeUndefined();
+    await waitFor(() => expect(bodies).toHaveLength(5));
+    expect(bodies[4]?.model).toBeUndefined();
   });
 
   it("scopes the pick to its own conversation", async () => {

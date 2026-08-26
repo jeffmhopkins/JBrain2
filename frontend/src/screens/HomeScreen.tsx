@@ -372,11 +372,11 @@ export function HomeScreen({
         // conversation only). Only offered on a conversation surface; the chip in the
         // foot shows the active pick.
         onLongPressTab={conversational ? () => setModelSheet(true) : undefined}
-        // The chip names the pick and, when chosen, how hard it thinks.
+        // The chip names the pick and, when chosen, how hard it thinks — either can
+        // stand alone (a reasoning level on the default route shows with no model).
         modelLabel={
-          conversational && fb.modelOverride
-            ? fb.modelOverride.label +
-              (fb.modelOverride.effort ? ` · ${fb.modelOverride.effort}` : "")
+          conversational
+            ? [fb.modelOverride?.label, fb.effortOverride].filter(Boolean).join(" · ") || null
             : null
         }
         // The plan pill shows the LIVE derived plan state (incl. "complete"); tapping it
@@ -386,8 +386,10 @@ export function HomeScreen({
       />
       {modelSheet && conversational && (
         <AgentModelSheet
-          selected={fb.modelOverride}
-          onChoose={fb.setModelOverride}
+          model={fb.modelOverride}
+          effort={fb.effortOverride}
+          onChooseModel={fb.setModelOverride}
+          onChooseEffort={fb.setEffortOverride}
           onClose={() => setModelSheet(false)}
         />
       )}
