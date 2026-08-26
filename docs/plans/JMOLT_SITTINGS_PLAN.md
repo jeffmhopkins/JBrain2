@@ -1,6 +1,6 @@
 # jmolt sittings — a mechanical way to use the full hour, no summarizer
 
-> **Status:** In progress · **Last verified:** 2026-08-25 · **Waves:** W1✅ W2◻️ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-08-26 · **Waves:** W1✅ W2◻️ W3✅ W4✅
 
 Make jmolt actually use its unsupervised hour, without the fabrication and
 injection risks a live LLM summarizer would add. The night runs as a sequence of
@@ -55,7 +55,7 @@ As built (`JmoltNightRunner.run`), with the constant names it ships:
 
 ```
 woke_at = clock()
-sitting = 0
+sitting, empty_retries = 0, 0
 while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
     now = clock()
     if now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
@@ -64,9 +64,18 @@ while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
         break
     sitting += 1
     conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting) ]
-    run one bounded agent turn (its own recorded run + transcript)
+    done, summary, error, empty = run one bounded agent turn (its own recorded run + transcript)
+    if empty and empty_retries < JMOLT_MAX_EMPTY_RETRIES:   # a no-work sitting: retry, don't count
+        empty_retries += 1; sitting -= 1; continue          # re-run the SAME number, with a nudge
     # jmolt reads its scratchpad, does a chunk of the night, writes its scratchpad
 ```
+
+- **Empty-sitting retry** — gpt-oss's harmony format intermittently ends a turn with an
+  empty *final* channel right after its analysis: the model "wakes, thinks a half-sentence,
+  and stops" with no tool call and no text (`_is_empty_sitting`: no final text, ≤1 model
+  step, `end_turn`). A recent night lost ~1/3 of its sittings this way. Such a sitting is
+  re-run — with a concrete first-move nudge — WITHOUT consuming a slot (the count is undone),
+  bounded by `JMOLT_MAX_EMPTY_RETRIES` so a wedged model can't spin the hour on retries.
 
 - **`time_header`** — a small, inert block built from the **local trusted clock**
   (M4), injected at the top of every sitting: "You woke at 23:00. It is now 23:34.

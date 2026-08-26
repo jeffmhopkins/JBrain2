@@ -63,7 +63,24 @@ JMOLT_TICK_SECONDS = 60.0
 # one has room to finish + flush before the outer watchdog); MAX is a runaway backstop.
 JMOLT_LAST_SITTING_MARGIN_S = 300.0
 JMOLT_MAX_SITTINGS = 12
+# A sitting that comes back with no usable work — no final text, at most its opening model
+# step, and a normal end_turn — is RETRIED fresh instead of counting against the sitting
+# budget. gpt-oss's harmony format intermittently ends a turn with an empty final channel
+# right after its analysis, so the model "wakes, thinks a half-sentence, and stops" without
+# reading a file or staging anything. ~1/3 of a recent night was lost this way. Bounded so a
+# persistently broken night (model wedged) can't spin the whole hour on retries.
+JMOLT_MAX_EMPTY_RETRIES = 3
 _SUMMARY_LEN = 240
+
+
+def _is_empty_sitting(text: str, steps: int, stop_reason: str) -> bool:
+    """True when a sitting did nothing usable: no final text, at most one model step (so no
+    tool was ever called), and a normal end_turn. This is the gpt-oss empty-final-channel
+    quirk — NOT a deliberate quiet night, which still reads files or reasons across several
+    steps and leaves that evidence behind. A sitting that made even one tool call has steps>1
+    and is never treated as empty."""
+    return not text.strip() and steps <= 1 and stop_reason == "end_turn"
+
 
 # Returning-night prologue: reads, scratchpad, AND writes are wired (W3). Written to push
 # jmolt to use the WHOLE hour (the first night stopped after ~4 minutes) on substance —
@@ -125,6 +142,15 @@ _CONTINUE_PROLOGUE = (
     "is worth saying. Keep your files current as you go (scratch_write) — whatever is not "
     "written down is gone when this sitting ends, and the closer the hour is to over, the more "
     "important it is that your notes are up to date."
+)
+
+# Appended when a sitting is re-run after coming back empty (JMOLT_MAX_EMPTY_RETRIES). The
+# prior attempt produced nothing, so this pushes a concrete first move — the empty turns all
+# stalled reasoning "we should list the files" without ever making the call.
+_RETRY_NUDGE = (
+    "\n\nYou opened this sitting a moment ago and it produced nothing — no file read, "
+    "nothing written. Start concretely this time: your very first action is scratch_list, "
+    "then scratch_read your index, and go from there."
 )
 
 
@@ -311,6 +337,10 @@ class JmoltNightRunner:
             deadline = woke_at + timedelta(seconds=JMOLT_NIGHT_WALL_CLOCK_S)
             await self._settings.set_moltbook_night_deadline(owner_ctx, deadline.isoformat())
         any_done, last_summary, last_error, sitting = False, "", None, 0
+        # An empty sitting (see `_is_empty_sitting`) is re-run without counting against the
+        # budget, up to this many times across the night; `retrying` carries the extra nudge
+        # into the re-run's prologue.
+        empty_retries, retrying = 0, False
         try:
             while sitting < JMOLT_MAX_SITTINGS:
                 now = self._clock()
@@ -322,7 +352,7 @@ class JmoltNightRunner:
                 if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
                     break
                 sitting += 1
-                done, summary, error = await self._run_sitting(
+                done, summary, error, empty = await self._run_sitting(
                     owner_ctx,
                     session.id,
                     profile,
@@ -338,7 +368,18 @@ class JmoltNightRunner:
                     # The handle IS re-injected every sitting: each is a fresh-context turn, and
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
+                    retrying=retrying,
                 )
+                # A sitting that did nothing usable is not a real sitting: undo the count and
+                # re-run it (with a nudge) rather than burning a slot on gpt-oss's empty-final
+                # quirk. Capped so a wedged model can't loop the whole hour.
+                if empty and empty_retries < JMOLT_MAX_EMPTY_RETRIES:
+                    empty_retries += 1
+                    sitting -= 1
+                    retrying = True
+                    log.info("jmolt_night.empty_sitting_retry", retry=empty_retries)
+                    continue
+                retrying = False
                 if done:
                     any_done, last_summary = True, summary or last_summary
                 elif error:
@@ -394,10 +435,13 @@ class JmoltNightRunner:
         now: datetime,
         advisory: str = "",
         identity: str = "",
-    ) -> tuple[bool, str, str | None]:
+        retrying: bool = False,
+    ) -> tuple[bool, str, str | None, bool]:
         """One sitting: a recorded agent turn under the night's session. Returns
-        (done, summary, error). Never raises — a sitting failure is a recorded error run
-        and the night continues to the next sitting."""
+        (done, summary, error, empty) — `empty` flags a sitting that produced no usable work
+        (`_is_empty_sitting`) so the caller can re-run it without counting the slot. Never
+        raises — a sitting failure is a recorded error run and the night continues. `retrying`
+        appends a concrete first-move nudge (the re-run of an empty sitting)."""
         run_id = await self._runlog.start(
             owner_ctx,
             session_id=session_id,
@@ -412,6 +456,8 @@ class JmoltNightRunner:
         # only, when set), then the night's marching orders — so jmolt reads WHO it is before
         # WHAT it is doing. Countdown stays at the very top (it is the live, time-sensitive bit).
         prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory + base
+        if retrying:
+            prologue += _RETRY_NUDGE
         conversation = [UserMessage(text=now_block(tz)), UserMessage(text=prologue)]
         recorder = self._runlog.bound(owner_ctx, run_id)
 
@@ -452,7 +498,8 @@ class JmoltNightRunner:
                 step_count=steps,
                 cost_tokens=cost,
             )
-        return status == "done", summary, error
+        empty = status == "done" and _is_empty_sitting(summary, steps, stop_reason)
+        return status == "done", summary, error, empty
 
 
 def _owner_local_now(tz: str, now: datetime) -> datetime:
