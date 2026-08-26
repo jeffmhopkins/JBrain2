@@ -40,6 +40,15 @@ class LedgerRow:
     reacted_to: str | None
     detail: dict[str, Any] | None
     at: datetime
+    # The ledger's own monotonic key — the keyset cursor for "show older" paging. 0 when the
+    # reader (e.g. `recent`) does not select it.
+    seq: int = 0
+
+
+# The two action FAMILIES (the `action` prefix before the first underscore): `stage_*` rows
+# are what jmolt DRAFTED, `publish_*` rows are what the drip actually sent. Splitting on this
+# separates the signal (drafts, which carry `reacted_to` content) from the drip's bookkeeping.
+LEDGER_FAMILIES = ("stage", "publish")
 
 
 def _row_to_outbox(r: Any) -> OutboxRow:
@@ -256,6 +265,81 @@ class ActionLedgerRepo:
             )
             for r in rows
         ]
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        principal_id: str,
+        *,
+        family: str | None = None,
+        kinds: tuple[str, ...] | None = None,
+        since_days: int | None = None,
+        cursor: int | None = None,
+        limit: int = 200,
+    ) -> list[LedgerRow]:
+        """The owner-facing activity feed with server-side filtering (mirrors the runs-log
+        pattern so a busy night stays legible). `family` keeps only `stage_*` or `publish_*`;
+        `kinds` keeps only those action kinds (the suffix after the family — comment/vote/…);
+        `since_days` bounds the window; `cursor` (a `seq`) pages older. Newest first."""
+        clauses = ["principal_id = :pid"]
+        params: dict[str, Any] = {"pid": principal_id, "lim": limit}
+        if family in LEDGER_FAMILIES:
+            clauses.append("starts_with(action, :fam || '_')")
+            params["fam"] = family
+        if kinds:
+            clauses.append("substring(action from position('_' in action) + 1) = ANY(:kinds)")
+            params["kinds"] = list(kinds)
+        if since_days:
+            clauses.append("at >= now() - make_interval(days => :days)")
+            params["days"] = since_days
+        if cursor:
+            clauses.append("seq < :cursor")
+            params["cursor"] = cursor
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT seq, action, target, reacted_to, detail, at"
+                    " FROM app.jmolt_action_ledger"
+                    " WHERE " + " AND ".join(clauses) + " ORDER BY seq DESC LIMIT :lim"
+                ),
+                params,
+            )
+        ).all()
+        return [
+            LedgerRow(
+                seq=int(r.seq),
+                action=r.action,
+                target=r.target,
+                reacted_to=r.reacted_to,
+                detail=r.detail if isinstance(r.detail, dict) or r.detail is None else None,
+                at=r.at,
+            )
+            for r in rows
+        ]
+
+    async def stats(
+        self, session: AsyncSession, principal_id: str, *, since_days: int | None = None
+    ) -> list[tuple[str, str, int]]:
+        """Counts grouped by (family, kind) over the same optional window — so the filter
+        chips show honest totals independent of what the filtered list is currently showing
+        (the runs-log `/stats` pattern). Returns (family, kind, count) rows."""
+        clauses = ["principal_id = :pid"]
+        params: dict[str, Any] = {"pid": principal_id}
+        if since_days:
+            clauses.append("at >= now() - make_interval(days => :days)")
+            params["days"] = since_days
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT split_part(action, '_', 1) AS family,"
+                    " substring(action from position('_' in action) + 1) AS kind,"
+                    " count(*) AS n FROM app.jmolt_action_ledger"
+                    " WHERE " + " AND ".join(clauses) + " GROUP BY 1, 2"
+                ),
+                params,
+            )
+        ).all()
+        return [(r.family, r.kind, int(r.n)) for r in rows]
 
     async def prune(
         self, session: AsyncSession, principal_id: str, *, keep: int = LEDGER_RETENTION

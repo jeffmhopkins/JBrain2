@@ -176,3 +176,60 @@ async def test_history_api_round_trip(
         assert len(history) >= 1
         assert history[0]["filename"] == "intro.md"
         assert "naturalist among agents" in history[0]["content"]
+
+
+async def test_actions_filtering_paging_and_stats(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The action ledger endpoint filters server-side (family/kinds/since/cursor) and a
+    # /stats aggregate gives honest per-kind counts — so a busy night's drip burst stays
+    # legible in the PWA instead of a flat wall of identical publish rows.
+    pid, key = await _owner_pid_and_key(maker)
+    # The ledger's DELETE policy is non-jmolt-owner only, so clear under an admin context;
+    # rows are then appended under jmolt's own night context.
+    admin = SessionContext(principal_id=pid, principal_kind="owner", domain_scopes=("jmolt",))
+    async with scoped_session(maker, admin) as s:
+        await s.execute(text("DELETE FROM app.jmolt_action_ledger"))
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        ledger = ActionLedgerRepo()
+        await ledger.record(s, pid, action="stage_comment", target="Luna24", reacted_to="hi")
+        await ledger.record(s, pid, action="stage_vote", target="t1")
+        await ledger.record(s, pid, action="stage_follow", target="mundo")
+        for _ in range(3):  # the drip burst: identical publish_comment rows on one thread
+            await ledger.record(s, pid, action="publish_comment", target="post-9")
+        await ledger.record(s, pid, action="publish_post", target="/memory")
+
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        base = "/api/settings/moltbook"
+        assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
+
+        # family=stage → only the drafted rows.
+        stage = client.get(f"{base}/actions", params={"family": "stage"}).json()
+        assert {a["action"] for a in stage} == {"stage_comment", "stage_vote", "stage_follow"}
+
+        # kinds=comment → both stage_comment and the publish_comment burst (4).
+        comments = client.get(f"{base}/actions", params={"kinds": "comment"}).json()
+        assert len(comments) == 4 and all(a["action"].endswith("_comment") for a in comments)
+
+        # family + kinds compose → just the 3 published comments.
+        pub_c = client.get(
+            f"{base}/actions", params={"family": "publish", "kinds": "comment"}
+        ).json()
+        assert len(pub_c) == 3
+
+        # limit + cursor paging, newest-first by seq.
+        page1 = client.get(f"{base}/actions", params={"limit": 2}).json()
+        assert len(page1) == 2
+        page2 = client.get(
+            f"{base}/actions", params={"limit": 2, "cursor": page1[-1]["seq"]}
+        ).json()
+        assert len(page2) == 2 and page1[-1]["seq"] > page2[0]["seq"]  # page2 is older
+
+        # /stats: honest per-(family, kind) counts, independent of any list filter.
+        stats = client.get(f"{base}/actions/stats").json()
+        by = {(x["family"], x["kind"]): x["count"] for x in stats}
+        assert by[("publish", "comment")] == 3
+        assert by[("stage", "comment")] == 1
+        assert by[("stage", "follow")] == 1

@@ -16,7 +16,7 @@ import uuid
 from typing import Any, cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
@@ -324,6 +324,14 @@ class ActionOut(BaseModel):
     target: str | None
     reacted_to: str | None
     at: str | None
+    # The ledger seq — pass the last row's value back as `cursor` to page older.
+    seq: int
+
+
+class ActionStatOut(BaseModel):
+    family: str  # "stage" | "publish"
+    kind: str  # comment | vote | post | follow | …
+    count: int
 
 
 @router.get("/settings/moltbook/nights")
@@ -403,17 +411,47 @@ async def read_night_transcript(
 
 
 @router.get("/settings/moltbook/actions")
-async def list_actions(request: Request, principal: OwnerDep) -> list[ActionOut]:
-    """jmolt's action ledger, newest first — every post/comment/vote/follow and each
-    web fetch/search, with the content it reacted to. What jmolt actually did."""
+async def list_actions(
+    request: Request,
+    principal: OwnerDep,
+    family: str | None = Query(None, description="'stage' (drafted) or 'publish' (sent)"),
+    kinds: str | None = Query(None, description="comma-separated action kinds to keep"),
+    since_days: int | None = Query(None, ge=1, le=365),
+    cursor: int | None = Query(None, ge=1, description="page older: pass the last row's seq"),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[ActionOut]:
+    """jmolt's action ledger, newest first — every post/comment/vote/follow, with the content
+    it reacted to. Server-side filtering keeps a busy night legible: `family` splits drafted
+    from sent, `kinds` narrows to chosen kinds, `since_days` bounds the window, `cursor` pages."""
+    ctx = ctx_for(principal)
+    pid = await _jmolt_pid(request, ctx)
+    kind_list = tuple(k.strip() for k in (kinds or "").split(",") if k.strip()) or None
+    fam = family if family in ("stage", "publish") else None
+    async with scoped_session(request.app.state.session_maker, ctx) as s:
+        acts = await _LEDGER.list_filtered(
+            s, pid, family=fam, kinds=kind_list, since_days=since_days, cursor=cursor, limit=limit
+        )
+    return [
+        ActionOut(
+            action=a.action, target=a.target, reacted_to=a.reacted_to, at=_iso(a.at), seq=a.seq
+        )
+        for a in acts
+    ]
+
+
+@router.get("/settings/moltbook/actions/stats")
+async def list_action_stats(
+    request: Request,
+    principal: OwnerDep,
+    since_days: int | None = Query(None, ge=1, le=365),
+) -> list[ActionStatOut]:
+    """Per-(family, kind) counts over the same optional window — so the filter chips show
+    honest totals no matter what the filtered list is currently showing."""
     ctx = ctx_for(principal)
     pid = await _jmolt_pid(request, ctx)
     async with scoped_session(request.app.state.session_maker, ctx) as s:
-        acts = await _LEDGER.recent(s, pid, limit=200)
-    return [
-        ActionOut(action=a.action, target=a.target, reacted_to=a.reacted_to, at=_iso(a.at))
-        for a in acts
-    ]
+        rows = await _LEDGER.stats(s, pid, since_days=since_days)
+    return [ActionStatOut(family=f, kind=k, count=n) for (f, k, n) in rows]
 
 
 @router.get("/settings/moltbook/journal")

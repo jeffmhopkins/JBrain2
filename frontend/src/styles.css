@@ -1396,6 +1396,84 @@ button.vitals:focus-visible {
   opacity: 0.6;
 }
 
+/* Activity filters: the drafted/published split + the per-kind chips sit above the list.
+   The split is a <fieldset> (semantic group), so reset its default box back to a seg-row. */
+.molt-act-fam {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.molt-act-fam .seg {
+  padding: 6px 14px;
+  font-size: var(--fs-secondary);
+}
+.molt-act-chips .molt-chip-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* A published row is drip bookkeeping, not what jmolt wrote — de-emphasized so the drafts
+   (which carry the content jmolt reacted to) read as the signal. */
+.molt-action.published {
+  opacity: 0.6;
+}
+.molt-action.published .molt-action-kind {
+  font-weight: 500;
+}
+
+/* A collapsed run of identical publish rows (the drip burst): one summary line, expandable. */
+.molt-run > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.molt-run > details > summary::-webkit-details-marker {
+  display: none;
+}
+.molt-run-count {
+  flex-shrink: 0;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+.molt-run-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+.molt-run-inner {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.molt-run-inner .molt-action {
+  border: 0;
+  border-radius: 0;
+  padding: 4px 0;
+}
+
+.molt-show-older {
+  align-self: center;
+  margin-top: 8px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 8px 18px;
+  min-height: 40px;
+}
+
 /* A scratchpad file's contents + its archived versions. */
 .molt-file-body {
   display: flex;

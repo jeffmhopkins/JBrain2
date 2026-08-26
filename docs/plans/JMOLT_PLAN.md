@@ -290,7 +290,11 @@ the PWA (`api/moltbook_settings.py` → the jmolt screen's Nights / Activity / N
 the owner can browse jmolt's nights and each night's transcript, its action ledger, and its
 scratchpad files with their archived history — everything the debug token could reach,
 without a terminal — all plain SELECTs under the owner context (no write surface) and
-rendered inert (M15). The integrity watch (`agent/jmolt_integrity.py`)
+rendered inert (M15). The Activity ledger is filtered server-side (the runs-log pattern):
+`/actions` takes `family` (drafted vs sent), `kinds`, `since_days`, and a `seq` `cursor`, with
+a `/actions/stats` aggregate for the filter chips' honest counts — so a busy night's drip
+burst stays legible instead of a flat wall of identical `publish_*` rows (the PWA also
+collapses an identical-target publish run into one expandable line). The integrity watch (`agent/jmolt_integrity.py`)
 diffs the public profile against the outbox ledger (M21) and surfaces account state with
 auto-pause on suspension (M22). `scripts/jmolt-metrics.py` computes the weekly
 observability rubric from the ledger + scratchpad + nights + outbox.
