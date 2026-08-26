@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-26
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -30,7 +30,10 @@ bump (a re-run is then a deliberate migration). Every prompt lives this way
 (e.g. `note.extract`, `entity.disambiguate`, `vision.ocr`, `vision.caption`, and
 the wiki/intake/agent prompts added since); a new prompt is a new `.prompt` file,
 never an in-code string, and tool definitions adopt the same sidecar pattern
-(`.tool` files, with a matching version-bump CI guard).
+(`.tool` files, with a matching version-bump CI guard). A new `.tool` also ships
+its PWA step polish in the same PR — a friendly label and an inline-arg policy in
+`frontend/src/agent/toolSummary.ts` (docs/reference/ASSISTANT.md "Tools as `.tool`
+sidecars"), enforced by `backend/tests/unit/test_tool_step_polish.py`.
 
 ## Comment standards
 

@@ -1162,7 +1162,7 @@ function thinkingTrace(reasoning: string, tools: ToolActivity[]): ThinkItem[] {
 function ThinkTool({ step }: { step: ToolStep }): ReactNode {
   const mark = step.ok === false ? "✕" : step.ok === undefined ? "·" : "✓";
   const cls = step.ok === false ? " bad" : step.ok === undefined ? " live" : "";
-  const arg = inlineArg(step);
+  const arg = step.inline;
   return (
     <span className={`fb-think-tool${cls}`}>
       <span className="fb-think-mark" aria-hidden="true">
@@ -1691,39 +1691,6 @@ function ProposalChip({
   );
 }
 
-// The one argument worth showing on a tool's collapsed row: the "what" a generic
-// label ("Searched Gmail", "Searched the web") leaves implicit — the query it ran,
-// the url it fetched, the name/place/subject it looked up. Keyed by the arg that
-// carries that human-readable target; opaque ids (message_id, note_id, entity_id…)
-// stay in the expanded step, so the row reads as a clean label + a legible target.
-const INLINE_ARG_KEY: Record<string, string> = {
-  search: "query",
-  recall: "query",
-  web_search: "query",
-  web_fetch: "url",
-  gmail_search: "query",
-  gmail_count: "query",
-  gmail_bulk_label: "query",
-  gmail_sender_breakdown: "query",
-  find_entity: "name",
-  lookup_medication: "name",
-  lookup_condition: "name",
-  relate: "relationship",
-  find_when_at: "place",
-  time_at_place: "place",
-  location_query: "place",
-  where_is: "subject",
-  weather: "location",
-  hurricane: "location",
-};
-
-function inlineArg(step: ToolStep): string | undefined {
-  const key = INLINE_ARG_KEY[step.name];
-  if (!key || !step.args) return undefined;
-  const v = step.args[key];
-  return typeof v === "string" && v.trim() ? v.trim() : undefined;
-}
-
 // How many entity chips a step shows before the rest tuck behind a "+N more"
 // toggle. A read_entity/neighborhood step surfaces every related entity as a chip
 // (one per relationship edge), so a richly-connected entity turns the result into a
@@ -1804,10 +1771,11 @@ function StepRow({
   // we'd rather not parade, so the links are the result and the ids hide behind "raw".
   const rawText = hasSources || hasEntities || hasWebSources ? summary : undefined;
   const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
-  // Search/lookup tools carry their target inline on the row — the searched query,
-  // the fetched url, the looked-up name — so the call reads at a glance without
-  // expanding it. It truncates with an ellipsis rather than wrapping (no phone overflow).
-  const inline = inlineArg(step);
+  // Every tool carries its target inline on the row — the searched query, the
+  // fetched url, the action it ran (toolSummary.ts INLINE_ARGS) — so the call reads
+  // at a glance without expanding it. It truncates with an ellipsis rather than
+  // wrapping (no phone overflow).
+  const inline = step.inline;
 
   return (
     <div className={`fb-step${isErr ? " err" : ""}${open ? " open" : ""}`}>

@@ -97,6 +97,57 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "archivist_memory_read" })).label).toBe("Read memory");
   });
 
+  it("puts the call's human-readable target inline on the step", () => {
+    expect(toolStep(tool({ name: "search", args: { query: "born", limit: 8 } })).inline).toBe(
+      "born",
+    );
+    expect(
+      toolStep(tool({ name: "web_fetch", args: { url: " https://x.example/a " } })).inline,
+    ).toBe("https://x.example/a");
+    // No args, or none of the listed keys present → no inline, never "".
+    expect(toolStep(tool({ name: "search" })).inline).toBeUndefined();
+    expect(toolStep(tool({ name: "search", args: { limit: 8 } })).inline).toBeUndefined();
+  });
+
+  it("joins an umbrella tool's action with its target (the jmolt_observe polish)", () => {
+    expect(toolStep(tool({ name: "jmolt_observe", args: { action: "sessions" } })).inline).toBe(
+      "sessions",
+    );
+    expect(
+      toolStep(
+        tool({ name: "jmolt_observe", args: { action: "scratch_read", filename: "index.md" } }),
+      ).inline,
+    ).toBe("scratch_read · index.md");
+    expect(toolStep(tool({ name: "jmolt_observe", args: { action: "sessions" } })).label).toBe(
+      "Observed jmolt",
+    );
+    expect(
+      toolStep(tool({ name: "moltbook", args: { action: "search", query: "crabs", limit: 5 } }))
+        .inline,
+    ).toBe("search · crabs");
+  });
+
+  it("keeps opaque-id tools clean of an inline (explicit NO_INLINE opt-out)", () => {
+    expect(
+      toolStep(tool({ name: "read_note", args: { note_id: "n-123" } })).inline,
+    ).toBeUndefined();
+    expect(
+      toolStep(tool({ name: "gmail_read", args: { message_id: "m9" } })).inline,
+    ).toBeUndefined();
+  });
+
+  it("falls back to universally legible keys for a tool with no registered policy", () => {
+    expect(toolStep(tool({ name: "frobnicate", args: { query: "x" } })).inline).toBe("x");
+    expect(toolStep(tool({ name: "frobnicate", args: { blob_id: "z" } })).inline).toBeUndefined();
+  });
+
+  it("clamps a runaway inline value so a pasted body can't swallow the row", () => {
+    const long = "a".repeat(500);
+    const inline = toolStep(tool({ name: "remember", args: { body_md: long } })).inline;
+    expect(inline?.length).toBe(201);
+    expect(inline?.endsWith("…")).toBe(true);
+  });
+
   it("labels the web tools and carries their web sources through", () => {
     expect(toolStep(tool({ name: "web_search" })).label).toBe("Searched the web");
     expect(toolStep(tool({ name: "web_fetch" })).label).toBe("Read a web page");

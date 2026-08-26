@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-25
+> **Status:** Living · **Last verified:** 2026-08-26
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -249,6 +249,18 @@ version digest **only when present** — a tool with no examples keeps its diges
 needs no bump, while adding/changing one is a deliberate bump. A `ToolRegistry`
 discovers and validates sidecars at startup (invalid sidecar or missing handler →
 startup failure), and `schemas_for(scopes)` returns only the tools in scope.
+
+**Every tool ships its "Worked"-strip polish — a requirement, not a nicety.** The
+PWA renders each call as a collapsible step row: a friendly label plus, inline to
+the right, the call's one human-readable target (the searched query, fetched url,
+chosen action — `action · target` for the umbrella tools; never an opaque id). A
+new `.tool` therefore registers, in the same PR, an entry in the frontend's
+`STEP_LABELS` and an inline-arg policy — an `INLINE_ARGS` key list, or an explicit
+`NO_INLINE` opt-out when every argument is opaque (both in
+`frontend/src/agent/toolSummary.ts`). The backend roster gate
+(`backend/tests/unit/test_tool_step_polish.py`) fails CI for a sidecar that skips
+either half, names an argument key its schema doesn't have, or leaves a stale
+entry behind after a rename.
 
 **Tool result views.** A tool may render rich UI — lab plots, tables, timelines,
 appointment cards, confirm sheets — by returning a **`view`**: a schema-validated,
