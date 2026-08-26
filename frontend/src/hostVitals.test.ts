@@ -5,10 +5,11 @@ import { ApiError } from "./api/client";
 
 const opsVitals = vi.hoisted(() => vi.fn());
 const opsVitalsStream = vi.hoisted(() => vi.fn());
+const opsVitalsHistory = vi.hoisted(() => vi.fn());
 
 vi.mock("./api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api/client")>()),
-  api: { opsVitals, opsVitalsStream },
+  api: { opsVitals, opsVitalsStream, opsVitalsHistory },
 }));
 
 /** A stand-in EventSource a test can push frames through. */
@@ -59,6 +60,7 @@ describe("useGpuBusy", () => {
     FakeSource.open = [];
     opsVitals.mockReset();
     opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
     visibility("visible");
   });
   afterEach(() => vi.useRealTimers());
@@ -338,6 +340,7 @@ describe("useModelLoad", () => {
     FakeSource.open = [];
     opsVitals.mockReset();
     opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
     visibility("visible");
   });
   afterEach(() => vi.useRealTimers());
@@ -495,6 +498,7 @@ describe("where a sample lands on the graph's grid", () => {
     FakeSource.open = [];
     opsVitals.mockReset();
     opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
     visibility("visible");
   });
   afterEach(() => vi.useRealTimers());
@@ -648,5 +652,89 @@ describe("where a sample lands on the graph's grid", () => {
     );
 
     expect(module.vitalsHistory(60).map((s) => s.gpu)).toEqual([10, 20, 30]);
+  });
+
+  it("latestVitals anchors its window at the newest sample, not the wall clock", async () => {
+    // The top bar's strip reads this: after a suspension the wall-clock window is empty
+    // (nothing arrived while the app slept), and drawing that would open the resume on
+    // blanks. Anchored at the newest sample, the strip holds the last true picture until
+    // the reconnected stream and its backfill land.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+
+    source.frame(
+      JSON.stringify({
+        gpu_busy_percent: 30,
+        samples: [
+          { at_ms: start - 2000, gpu: 10 },
+          { at_ms: start - 1000, gpu: 20 },
+          { at_ms: start, gpu: 30 },
+        ],
+      }),
+    );
+    vi.setSystemTime(start + 120_000); // two minutes suspended, nothing arriving
+
+    expect(module.vitalsHistory(12)).toHaveLength(0); // the wall-clock window: drained
+    expect(module.latestVitals(12).map((s) => s.gpu)).toEqual([10, 20, 30]);
+  });
+});
+
+describe("backfilling the ring when a stream opens", () => {
+  beforeEach(() => {
+    FakeSource.open = [];
+    opsVitals.mockReset().mockResolvedValue({ gpu_busy_percent: 40 });
+    opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
+    visibility("visible");
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("asks the box's record for the whole ring on a session's first open", async () => {
+    const { useGpuBusy } = await load();
+    renderHook(() => useGpuBusy());
+
+    await waitFor(() => expect(opsVitalsHistory).toHaveBeenCalledWith(900));
+  });
+
+  it("merges what the record returns, so the charts open with a past", async () => {
+    const now = Date.now();
+    opsVitalsHistory.mockResolvedValue([{ at_ms: now - 5000, gpu: 66 }]);
+    const module = await load();
+    const stop = module.subscribeGpuBusy(() => {});
+
+    await waitFor(() => expect(module.vitalsHistory(60).map((s) => s.gpu)).toEqual([66]));
+    stop();
+  });
+
+  it("sizes a resume's backfill to the hole the suspension left", async () => {
+    // The reported symptom: come back to the PWA after a while under GPU load and the
+    // top bar shows blanks for seconds the box recorded perfectly well. The repair used
+    // to run only while the vitals screen was open (its seeding poll); the reopen now
+    // asks the record for exactly the missing stretch, whichever screen is up.
+    const { useGpuBusy } = await load();
+    renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+    FakeSource.open[0]?.send(50);
+
+    vi.setSystemTime(Date.now() + 60_000); // suspended: the socket dies silently
+    window.dispatchEvent(new Event("pageshow"));
+    await waitFor(() => expect(FakeSource.open).toHaveLength(2));
+
+    const asked = opsVitalsHistory.mock.calls.at(-1)?.[0] as number;
+    expect(asked).toBeGreaterThanOrEqual(60);
+    expect(asked).toBeLessThan(300);
+  });
+
+  it("survives a record it cannot fetch", async () => {
+    opsVitalsHistory.mockRejectedValue(new Error("offline"));
+    const { useGpuBusy } = await load();
+    const { result } = renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.send(42);
+
+    expect(result.current.percent).toBe(42);
   });
 });

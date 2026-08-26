@@ -22,7 +22,7 @@ import { useEffect, useState } from "react";
 
 import { currentTokenRate } from "./agent/tokenMeter";
 import { ApiError, type ModelLoad, api } from "./api/client";
-import { isForeground } from "./visibility";
+import { RESUME_EVENTS, isForeground } from "./visibility";
 
 /** How long to wait before re-probing after a failure that might pass — a server
  *  mid-restart, a dropped network. A rejection is never retried; see `access`. */
@@ -32,20 +32,6 @@ const REPROBE_MS = 30_000;
  *  re-probe because the case this exists for is a deploy: the box is a few seconds from
  *  answering again, and the meter should not stay blank for half a minute after it. */
 const REOPEN_MS = 5_000;
-
-/** Everything that can mean "the app is back".
- *
- *  `visibilitychange` alone is not enough, and that is the bug this list fixes. In an iOS
- *  standalone PWA a background/foreground round trip frequently delivers only `pageshow`
- *  (the page is restored from the page cache) — no visibility event at all — and a resumed
- *  app often comes back on a different network, where `online` is the only signal. Missing
- *  the resume is not cosmetic: the socket is already dead by then, so the top bar sat on
- *  dashes until the whole app was restarted, while the detail screen — plain fetches — kept
- *  showing numbers. That is exactly the reported symptom.
- *
- *  These are deliberately additive to `visibilitychange`, not a replacement: several of them
- *  fire for the same resume, and `ensureLive` is idempotent precisely so that is harmless. */
-const RESUME_EVENTS = ["pageshow", "focus", "online"] as const;
 
 /** `EventSource.CLOSED`, as a literal. The constant is read off a stream instance that
  *  is a test double as often as a real EventSource, and the global does not exist in
@@ -323,6 +309,57 @@ export function vitalsHistory(seconds: number): VitalsSample[] {
   return history.filter((sample) => sample.at >= cutoff);
 }
 
+/** The trailing `seconds` the ring KNOWS ABOUT, anchored at the newest sample rather
+ *  than the wall clock. The top bar's strip draws from this: a wall-clock window drains
+ *  to blanks the moment frames stop arriving — a resume, an unreachable server — and a
+ *  run of blanks reads as "the box went idle" when it means "we stopped being told".
+ *  Anchored here, the strip freezes instead, and the readout ("—") and sync word are
+ *  what carry the staleness. */
+export function latestVitals(seconds: number): VitalsSample[] {
+  const newest = history[history.length - 1];
+  if (newest === undefined) return [];
+  const start = (Math.floor(newest.at / 1000) - seconds + 1) * 1000;
+  return history.filter((sample) => sample.at >= start);
+}
+
+/** One slot per SECOND across a window ending at `now`, oldest first — how both the
+ *  detail plot and the top bar's strip bucket the ring.
+ *
+ *  This replaced a 60-column bucketer, which had two problems visible on screen. It threw
+ *  away resolution the ring already held (900 samples squeezed into 60 columns), and its
+ *  bucket edges were derived from `Date.now()` on every tick, so the whole partition slid
+ *  a fraction of a bucket each second and samples visibly hopped between columns — the
+ *  line reshaped itself once a second while the data behind it had not changed.
+ *
+ *  The grid here is anchored to ABSOLUTE whole seconds, so a sample's slot is a property
+ *  of the sample, not of when the plot was drawn. The window still scrolls, but it
+ *  scrolls exactly one slot per second instead of re-partitioning.
+ *
+ *  A slot with no reading stays null — a gap, never a zero, which would read as an idle
+ *  GPU or as a turn generating nothing. */
+export function perSecond(
+  samples: VitalsSample[],
+  seconds: number,
+  channel: (s: VitalsSample) => number | null = (s) => s.gpu,
+  now: number = Date.now(),
+): (number | null)[] {
+  const slots = new Array<number | null>(seconds).fill(null);
+  const end = Math.floor(now / 1000);
+  const start = end - seconds + 1;
+  for (const sample of samples) {
+    const second = Math.floor(sample.at / 1000);
+    if (second < start || second > end) continue;
+    const value = channel(sample);
+    if (value === null) continue;
+    const slot = second - start;
+    const held = slots[slot];
+    // More than one sample inside a second (a reconnect overlapping the live stream):
+    // keep the higher. This is a load gauge — under-reporting a spike is the worse lie.
+    slots[slot] = held === null || held === undefined ? value : Math.max(held, value);
+  }
+  return slots;
+}
+
 /** A frame's reading as one of the three states. A missing or non-finite field is
  *  `absent` — the route sends an explicit null when the box exposes no gauge, and
  *  letting `undefined` through a bare null-check once rendered a literal NaN. */
@@ -351,6 +388,32 @@ function loadFromFrame(value: unknown): ModelLoad | null {
   };
 }
 
+/** Extra seconds asked for around a backfill's hole, absorbing clock skew and the
+ *  second-boundary alignment either side of it. */
+const BACKFILL_MARGIN_S = 5;
+
+/** Patch the ring from the box's own record, sized to the hole a dead stream left.
+ *
+ *  Runs on every stream (re)open: the first open of a session asks for the whole ring, so
+ *  the charts open with a past instead of filling from empty; a reopen after a resume asks
+ *  for the time away, so the seconds the box recorded while this app was suspended stop
+ *  rendering as gaps. This repair used to run only while the vitals screen was open (its
+ *  seeding poll) — which is exactly why the detail graph healed after a background round
+ *  trip while the top bar's strip kept its holes. */
+async function backfill(): Promise<void> {
+  const hole =
+    diag.lastFrameAt === 0
+      ? HISTORY_SAMPLES
+      : Math.ceil((Date.now() - diag.lastFrameAt) / 1000) + BACKFILL_MARGIN_S;
+  const seconds = Math.min(HISTORY_SAMPLES, Math.max(hole, BACKFILL_MARGIN_S * 2));
+  try {
+    const seeds = await api.opsVitalsHistory(seconds);
+    if (readerCount() > 0) seedVitalsHistory(seeds);
+  } catch {
+    // The record is a repair, not a dependency — the stream fills forward without it.
+  }
+}
+
 function openStream(): void {
   if (source !== null) return;
   let stream: EventSource;
@@ -364,6 +427,8 @@ function openStream(): void {
     publish(UNKNOWN, null);
     return;
   }
+  // Before the first frame moves lastFrameAt, while the hole still measures the outage.
+  void backfill();
   source = stream;
   diag.opens += 1;
   diag.openedAt = Date.now();

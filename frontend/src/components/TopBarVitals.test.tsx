@@ -3,21 +3,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TopBarVitals } from "./TopBarVitals";
 
-// The two live sources are hooks with their own network/timer lifecycles; the chart's
-// job is what it DRAWS from them, so they're driven directly here.
+// The live sources are module state with their own network/timer lifecycles; the chart's
+// job is what it DRAWS from them, so they're driven directly here. The strip reads the
+// shared ring (latestVitals), which the harness backs with a plain array — pushing a
+// sample stands in for one 1 Hz frame landing, and pushing many at once stands in for a
+// reconnect backfill. `perSecond` is the real bucketer, deliberately not stubbed.
 const gpu = vi.hoisted(() => ({
   value: { percent: null as number | null, state: "unknown" as "reading" | "absent" | "unknown" },
 }));
 const rate = vi.hoisted(() => ({ value: null as number | null }));
+const ring = vi.hoisted(() => ({
+  samples: [] as { at: number; gpu: number | null; tps: number | null }[],
+}));
 
-vi.mock("../hostVitals", () => ({ useGpuBusy: () => gpu.value }));
+vi.mock("../hostVitals", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hostVitals")>()),
+  useGpuBusy: () => gpu.value,
+  latestVitals: (seconds: number) => {
+    const newest = ring.samples[ring.samples.length - 1];
+    if (newest === undefined) return [];
+    const start = (Math.floor(newest.at / 1000) - seconds + 1) * 1000;
+    return ring.samples.filter((s) => s.at >= start);
+  },
+}));
 vi.mock("../agent/tokenMeter", () => ({ useTokenRate: () => rate.value }));
 
-/** Advance the chart's own 1 Hz sampling clock by `seconds`. */
+/** Advance the chart's own 1 Hz re-read clock by `seconds`. */
 function ticks(seconds: number): void {
   act(() => {
     vi.advanceTimersByTime(seconds * 1000);
   });
+}
+
+/** One second of stream: a frame lands in the ring, then the strip's tick re-reads it. */
+function frame(gpuValue: number | null, tps: number | null = null): void {
+  ring.samples.push({ at: Date.now(), gpu: gpuValue, tps });
+  ticks(1);
 }
 
 describe("TopBarVitals", () => {
@@ -25,6 +46,7 @@ describe("TopBarVitals", () => {
     vi.useFakeTimers();
     gpu.value = { percent: null, state: "unknown" };
     rate.value = null;
+    ring.samples = [];
   });
   afterEach(() => vi.useRealTimers());
 
@@ -53,25 +75,34 @@ describe("TopBarVitals", () => {
     const { container } = render(<TopBarVitals syncStatus="synced" />);
     expect(container.querySelectorAll(".vitals-bar")).toHaveLength(0);
 
-    ticks(3);
+    for (let i = 0; i < 3; i += 1) frame(50);
     expect(container.querySelectorAll(".vitals-bar")).toHaveLength(3);
 
     // The axis holds 12 seconds and no more — the oldest column falls off the left.
-    ticks(20);
+    for (let i = 0; i < 20; i += 1) frame(50);
+    expect(container.querySelectorAll(".vitals-bar")).toHaveLength(12);
+  });
+
+  it("draws the ring's past at once instead of resampling it column by column", () => {
+    // The bug this pins: the strip kept a PRIVATE history, so the seconds a reconnect
+    // backfilled into the shared ring (hostVitals) stayed holes in the top bar while
+    // the vitals screen's graph filled — the reported PWA resume symptom.
+    const now = Date.now();
+    for (let i = 11; i >= 0; i -= 1) {
+      ring.samples.push({ at: now - i * 1000, gpu: 70, tps: null });
+    }
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+
     expect(container.querySelectorAll(".vitals-bar")).toHaveLength(12);
   });
 
   it("marks a pinned GPU column hot", () => {
     gpu.value = { percent: 40, state: "reading" };
-    const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
-    ticks(1);
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+    frame(40);
     expect(container.querySelector(".vitals-bar.hot")).toBeNull();
 
-    // A new frame from the stream re-renders before the next sampling tick, which is
-    // what publishes the value the tick then reads.
-    gpu.value = { percent: 93, state: "reading" };
-    rerender(<TopBarVitals syncStatus="synced" />);
-    ticks(1);
+    frame(93);
 
     expect(container.querySelector(".vitals-bar.hot")).not.toBeNull();
   });
@@ -107,34 +138,32 @@ describe("TopBarVitals", () => {
 
   it("breaks the token trace over a gap instead of drawing through zero", () => {
     gpu.value = { percent: 20, state: "reading" };
-    rate.value = 50;
-    const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
-
-    rate.value = null; // a tool call: nothing generated
-    rerender(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
-
-    rate.value = 50;
-    rerender(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+    frame(20, 50);
+    frame(20, 50);
+    frame(20, null); // a tool call: nothing generated
+    frame(20, null);
+    frame(20, 50);
+    frame(20, 50);
 
     // Two separate move commands = two segments, so the pause reads as a gap.
     const path = container.querySelector(".vitals-trace")?.getAttribute("d") ?? "";
     expect(path.match(/M/g)).toHaveLength(2);
   });
 
-  it("freezes the axis while the server is unreachable", () => {
+  it("freezes instead of draining when frames stop arriving", () => {
     gpu.value = { percent: 60, state: "reading" };
     const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
-    ticks(4);
+    for (let i = 0; i < 4; i += 1) frame(60);
     const drawn = container.querySelectorAll(".vitals-bar").length;
 
     rerender(<TopBarVitals syncStatus="unreachable" />);
-    ticks(6);
+    ticks(6); // seconds pass with nothing arriving
 
     // Advancing would draw a run of blanks that reads as "the box went idle" when it
-    // means "we stopped being told" — so the trace holds where it was.
+    // means "we stopped being told" — so the trace holds where it was. This is what a
+    // PWA resume looks like too: the strip holds the pre-suspend picture until the
+    // reconnected stream (and its backfill) land, rather than opening on holes.
     expect(container.querySelectorAll(".vitals-bar")).toHaveLength(drawn);
     expect(container.querySelector(".vitals")).toHaveAttribute("data-sync", "unreachable");
     expect(container.querySelector(".vitals-sync")).toHaveTextContent("offline");
@@ -204,24 +233,22 @@ describe("TopBarVitals", () => {
     ticks(2);
     unmount();
 
-    // A torn-down top bar must not keep sampling behind the screen that replaced it.
+    // A torn-down top bar must not keep re-reading behind the screen that replaced it.
     expect(() => ticks(5)).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("scales the token trace to the window's own peak, not a fixed ceiling", async () => {
+  it("scales the token trace to the window's own peak, not a fixed ceiling", () => {
     // It was pinned at 140 tok/s, so a turn cruising at 20 — a normal rate for a big local
     // model — drew a 14%-high squiggle flat against the baseline, indistinguishable from
     // nothing happening. The number beside it carries magnitude; the trace carries SHAPE.
-    rate.value = 20;
-    const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
-    rate.value = 10;
-    rerender(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
-    rate.value = 20;
-    rerender(<TopBarVitals syncStatus="synced" />);
-    ticks(2);
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+    frame(30, 20);
+    frame(30, 20);
+    frame(30, 10);
+    frame(30, 10);
+    frame(30, 20);
+    frame(30, 20);
 
     const trace = container.querySelector(".vitals-trace");
     const ys = [...(trace?.getAttribute("d") ?? "").matchAll(/[ML][\d.]+ ([\d.]+)/g)].map((m) =>

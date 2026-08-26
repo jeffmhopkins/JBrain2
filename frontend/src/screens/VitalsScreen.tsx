@@ -25,6 +25,7 @@ import { type PlotSeries, TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
 import {
   type VitalsSample,
+  perSecond,
   seedVitalsHistory,
   vitalsDiagnostics,
   vitalsHistory,
@@ -1107,43 +1108,6 @@ function useTickingHistory(seconds: number): VitalsSample[] {
   }, [seconds]);
 
   return samples;
-}
-
-/** One slot per SECOND across the window, oldest first — the plot's full resolution.
- *
- *  This replaced a 60-column bucketer, which had two problems visible on screen. It threw
- *  away resolution the ring already held (900 samples squeezed into 60 columns), and its
- *  bucket edges were derived from `Date.now()` on every tick, so the whole partition slid
- *  a fraction of a bucket each second and samples visibly hopped between columns — the
- *  line reshaped itself once a second while the data behind it had not changed.
- *
- *  The grid here is anchored to ABSOLUTE whole seconds, so a sample's slot is a property
- *  of the sample, not of when the plot was drawn. The window still scrolls, but it
- *  scrolls exactly one slot per second instead of re-partitioning.
- *
- *  A slot with no reading stays null — a gap, never a zero, which would read as an idle
- *  GPU or as a turn generating nothing. */
-export function perSecond(
-  samples: VitalsSample[],
-  seconds: number,
-  channel: (s: VitalsSample) => number | null = (s) => s.gpu,
-  now: number = Date.now(),
-): (number | null)[] {
-  const slots = new Array<number | null>(seconds).fill(null);
-  const end = Math.floor(now / 1000);
-  const start = end - seconds + 1;
-  for (const sample of samples) {
-    const second = Math.floor(sample.at / 1000);
-    if (second < start || second > end) continue;
-    const value = channel(sample);
-    if (value === null) continue;
-    const slot = second - start;
-    const held = slots[slot];
-    // More than one sample inside a second (a reconnect overlapping the live stream):
-    // keep the higher. This is a load gauge — under-reporting a spike is the worse lie.
-    slots[slot] = held === null || held === undefined ? value : Math.max(held, value);
-  }
-  return slots;
 }
 
 /** Elapsed, ticking locally so a RUNNING turn's age advances between roster polls.
