@@ -57,4 +57,54 @@ describe("visibility", () => {
     // The unmounted hook holds its last value; no error from a stale listener.
     expect(result.current).toBe(true);
   });
+
+  it("recovers when a resume delivers only pageshow, with no visibility event", () => {
+    // An iOS standalone PWA restored from the page cache after a long absence: the
+    // hidden-flip fired on the way out, but no visibilitychange fires on the way back.
+    // Every useForeground-gated poll stayed torn down — the vitals screen came back
+    // frozen — until the next visibility event, which might be a screen lock away.
+    setVisibility("hidden");
+    const { result } = renderHook(() => useForeground());
+    expect(result.current).toBe(false);
+
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      window.dispatchEvent(new Event("pageshow"));
+    });
+
+    expect(result.current).toBe(true);
+  });
+
+  it("does not let a background focus or online event fake a foreground", () => {
+    // A phone in a pocket fires `online` on every network flap. The resume events are
+    // wake-up calls to RE-READ visibilityState, never evidence of visibility themselves.
+    setVisibility("hidden");
+    const { result } = renderHook(() => useForeground());
+
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(result.current).toBe(false);
+  });
+
+  it("useForegroundRef hears a pageshow-only resume too", () => {
+    setVisibility("hidden");
+    const { result } = renderHook(() => useForegroundRef());
+    expect(result.current.current).toBe(false);
+
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      window.dispatchEvent(new Event("pageshow"));
+    });
+
+    expect(result.current.current).toBe(true);
+  });
 });

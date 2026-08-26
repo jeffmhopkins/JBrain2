@@ -12,10 +12,10 @@
 // never the only encoding (DESIGN.md), and the loud case still raises the status
 // banner. The full state is always in the aria-label, healthy included.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer } from "react";
 
 import { useTokenRate } from "../agent/tokenMeter";
-import { useGpuBusy } from "../hostVitals";
+import { latestVitals, perSecond, useGpuBusy } from "../hostVitals";
 import type { SyncStatus } from "../notes/useNotes";
 
 /** Seconds of history on the axis. */
@@ -63,7 +63,7 @@ interface VitalsProps {
 export function TopBarVitals({ syncStatus, onOpen }: VitalsProps) {
   const { percent: gpu, state: gauge } = useGpuBusy();
   const tps = useTokenRate();
-  const [gpuHistory, tpsHistory] = useVitalsHistory(gpu, tps, syncStatus);
+  const [gpuHistory, tpsHistory] = useVitalsHistory();
 
   const hasGpu = gpu !== null;
   const live = tps !== null;
@@ -196,38 +196,37 @@ function tracePoint(value: number, index: number, scale: number): [string, strin
   return [(index * PITCH + 0.2 + BAR_W / 2).toFixed(2), y.toFixed(2)];
 }
 
-/** Both channels sampled onto ONE clock, so the chart has a single honest time axis.
- *  The GPU stream and the token meter each publish at 1 Hz but on their own timers;
- *  sampling whatever is current on a tick of our own keeps one column per second
- *  rather than letting arrival jitter decide the spacing.
- *
- *  Frozen while the server is unreachable: with nothing arriving, advancing the axis
- *  would draw a growing run of blanks that reads as "the box went idle" when it means
- *  "we stopped being told". The trace holds, and the CSS dims it as stale. */
-function useVitalsHistory(
-  gpu: number | null,
-  tps: number | null,
-  syncStatus: SyncStatus,
-): [(number | null)[], (number | null)[]] {
-  const [history, setHistory] = useState<[(number | null)[], (number | null)[]]>(() => [
-    new Array<number | null>(SAMPLES).fill(null),
-    new Array<number | null>(SAMPLES).fill(null),
-  ]);
-  // The tick reads the latest values without re-arming the interval on every sample.
-  const latest = useRef({ gpu, tps, syncStatus });
-  latest.current = { gpu, tps, syncStatus };
+const EMPTY = new Array<number | null>(SAMPLES).fill(null);
 
+/** Both channels of the strip, read off the shared ring (hostVitals) at 1 Hz.
+ *
+ *  The strip used to keep a private 12-slot array, resampling whatever the stream had
+ *  last published on a timer of its own — a second clock that could only disagree with
+ *  the ring the vitals screen plots. Coming back from the background made the
+ *  disagreement visible: the ring is backfilled from the box's record on reconnect, but
+ *  a private array cannot be, so the reconnect seconds stayed holes in the strip while
+ *  the detail graph filled in. Read off the ring, the strip gets the same repair — and
+ *  the two surfaces can no longer tell two stories about the same twelve seconds.
+ *
+ *  The window is anchored at the newest sample, not the wall clock (`latestVitals`), so
+ *  the strip FREEZES whenever frames stop arriving — an unreachable server, a suspended
+ *  app — instead of draining: a growing run of blanks reads as "the box went idle" when
+ *  it means "we stopped being told". The readout ("—") and the sync word carry the
+ *  staleness, and the CSS dims the drawing off those states. */
+function useVitalsHistory(): [(number | null)[], (number | null)[]] {
+  // The ring is module state React cannot observe, so a 1 Hz tick forces the re-read
+  // that advances the axis; renders from the live hooks land new frames sooner.
+  const [, tick] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = latest.current;
-      if (now.syncStatus === "unreachable") return;
-      setHistory(([gpuPast, tpsPast]) => [
-        [...gpuPast.slice(1), now.gpu],
-        [...tpsPast.slice(1), now.tps],
-      ]);
-    }, 1000);
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  return history;
+  const samples = latestVitals(SAMPLES);
+  const newest = samples[samples.length - 1];
+  if (newest === undefined) return [EMPTY, EMPTY];
+  return [
+    perSecond(samples, SAMPLES, (s) => s.gpu, newest.at),
+    perSecond(samples, SAMPLES, (s) => s.tps, newest.at),
+  ];
 }

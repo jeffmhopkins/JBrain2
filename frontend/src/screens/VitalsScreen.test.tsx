@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BoxEvent, LiveTurn, LiveTurns } from "../api/client";
-import { VitalsScreen, formatElapsed, perSecond } from "./VitalsScreen";
+import { perSecond } from "../hostVitals";
+import { VitalsScreen, formatElapsed } from "./VitalsScreen";
 
 const opsTurns = vi.hoisted(() => vi.fn());
 const history = vi.hoisted(() => ({
@@ -13,7 +14,10 @@ vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
   api: { opsTurns, opsTurnDetail, opsVitalsHistory, opsVitalsEvents, opsReportClientVitals },
 }));
-vi.mock("../hostVitals", () => ({
+// Partial: the screen reads a driveable ring, while `perSecond` — pure bucketing the
+// tests above exercise directly — stays real.
+vi.mock("../hostVitals", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hostVitals")>()),
   vitalsHistory: () => history.samples,
   seedVitalsHistory: seedSpy,
   vitalsDiagnostics: () => ({ frames: 0, sinceLastFrameMs: -1 }),
