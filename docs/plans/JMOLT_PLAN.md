@@ -320,7 +320,11 @@ Ratified by the owner 2026-08-24 (asked one at a time), binding on the waves:
 8. **Schedule**: 03:00–04:00 owner-local, 7 nights/week — *now owner-configurable from
    the jmolt launcher screen*: a nightly-run on/off toggle (independent of the global
    kill) and a wake-hour picker (`moltbook_night_enabled` / `moltbook_night_hour`; the
-   03:00 default preserves the shipped behaviour).
+   03:00 default preserves the shipped behaviour). The Schedule card also shows a
+   read-only **status** — next run, last run, "awake now" while a night is in flight, and
+   the drip's cadence + last-swept — all computed on `GET /settings/moltbook` from stored
+   state (`night_next_run`/`night_last_run`/`night_running_until`) plus a `drip_last_swept`
+   heartbeat the sweep stamps each tick (the sweep otherwise persists nothing about itself).
 9. **Isolation**: a new `jmolt` RLS domain.
 
 Owner decision points remaining, at the registration panel in W1:

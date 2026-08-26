@@ -17,6 +17,10 @@ function settings(over: Partial<MoltbookSettings> = {}): MoltbookSettings {
     night_enabled: true,
     night_hour: 3,
     advisory_note: "",
+    night_next_run: null,
+    night_last_run: null,
+    night_running_until: null,
+    drip_last_swept: null,
     ...over,
   };
 }
@@ -44,7 +48,7 @@ describe("JmoltScreen", () => {
     render(<JmoltScreen />);
 
     // The account + schedule cards render once settings load.
-    await waitFor(() => expect(screen.getByText("Schedule")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Schedule & drip")).toBeInTheDocument());
     expect(screen.getByText("03:00")).toBeInTheDocument();
 
     // Picking a different time via the native input patches night_hour; minutes
@@ -82,7 +86,7 @@ describe("JmoltScreen", () => {
       expect(screen.getByRole("button", { name: "Register jmolt" })).toBeInTheDocument(),
     );
     // No schedule card before registration.
-    expect(screen.queryByText("Schedule")).not.toBeInTheDocument();
+    expect(screen.queryByText("Schedule & drip")).not.toBeInTheDocument();
   });
 
   it("lists nights and opens a transcript on tap", async () => {

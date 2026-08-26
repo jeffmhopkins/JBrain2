@@ -160,6 +160,9 @@ MOLTBOOK_ADVISORY_NOTE_KEY = "moltbook_advisory_note"
 # The `time_left` tool reads it so jmolt can gauge how much of its hour remains mid-turn.
 MOLTBOOK_NIGHT_DEADLINE_KEY = "moltbook_night_deadline"
 MOLTBOOK_LAST_NIGHT_KEY = "moltbook_last_night"
+# ISO timestamp of the drip sweep's most recent tick — stamped each sweep so the PWA can
+# show "drip last ran …" (the sweep otherwise persists nothing about its own cadence).
+MOLTBOOK_DRIP_SWEPT_KEY = "moltbook_drip_last_swept"
 # Consecutive verification-failure streak (M11). At the limit, ALL writes stop and the
 # owner is notified — a fail-safe well below the platform's 10-in-a-row suspension line.
 MOLTBOOK_FAIL_STREAK_KEY = "moltbook_verify_fail_streak"
@@ -632,6 +635,16 @@ class SqlSettingsStore:
 
     async def set_moltbook_last_night(self, ctx: SessionContext, iso_date: str) -> None:
         await self.upsert(ctx, MOLTBOOK_LAST_NIGHT_KEY, iso_date)
+
+    async def moltbook_drip_last_swept(self, ctx: SessionContext) -> str:
+        """ISO timestamp of the drip sweep's most recent tick, or "" if it has not run since
+        the setting was introduced. Lets the PWA show "drip last ran …" — the sweep persists
+        nothing else about its 60-second cadence."""
+        raw = await self.get(ctx, MOLTBOOK_DRIP_SWEPT_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_drip_last_swept(self, ctx: SessionContext, iso: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_DRIP_SWEPT_KEY, iso)
 
     async def moltbook_last_digest(self, ctx: SessionContext) -> str:
         raw = await self.get(ctx, MOLTBOOK_LAST_DIGEST_KEY, "")

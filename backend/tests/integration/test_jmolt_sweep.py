@@ -3,6 +3,7 @@ challenge solve, and the failure-streak guard. Moltbook HTTP and the LLM are fak
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -262,6 +263,20 @@ async def test_rate_limit_stops_the_tick_rather_than_hammering(maker: async_sess
     async with scoped_session(maker, _jmolt(pid)) as s:
         assert await OutboxRepo().list_by_status(s, pid, ("failed",)) == []
         assert len(await OutboxRepo().list_by_status(s, pid, ("released",))) == 3
+
+
+async def test_tick_stamps_the_drip_heartbeat(maker: async_sessionmaker) -> None:
+    # Each sweep stamps its heartbeat so the PWA can show "drip last ran …"; the sweep
+    # otherwise persists nothing about its 60-second cadence. The owner must exist (the
+    # sweep resolves it itself), but the test doesn't need the id.
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    await _sweep(maker, store, handler).tick(now=datetime(2026, 8, 26, 12, 40, tzinfo=UTC))
+    assert str(store.values["moltbook_drip_last_swept"]).startswith("2026-08-26T12:40")
 
 
 async def test_unsolvable_challenge_skips_verify_without_spending_the_streak(

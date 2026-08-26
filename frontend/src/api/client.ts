@@ -657,6 +657,11 @@ export interface MoltbookSettings {
   /** The owner's advisory note TO jmolt — free text injected (fenced, as trusted-owner
    * DATA) into the first sitting of the next night. Advisory, not command. "" when unset. */
   advisory_note: string;
+  /** Computed schedule/drip status (all derived server-side). ISO strings, or null. */
+  night_next_run: string | null;
+  night_last_run: string | null;
+  night_running_until: string | null;
+  drip_last_swept: string | null;
 }
 
 /** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`

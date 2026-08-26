@@ -92,6 +92,47 @@ def test_starts_unregistered_switch_off(
     assert body["advisory_note"] == ""  # no note to jmolt until the owner writes one
 
 
+def test_next_night_run_computes_the_next_local_hour() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from jbrain.api.moltbook_settings import _next_night_run
+
+    utc = ZoneInfo("UTC")
+    # Before today's hour → today. Past it → tomorrow. Already ran today → tomorrow.
+    assert _next_night_run("UTC", 3, "", datetime(2026, 8, 26, 1, tzinfo=utc)).startswith(
+        "2026-08-26T03:00"
+    )
+    assert _next_night_run("UTC", 3, "", datetime(2026, 8, 26, 5, tzinfo=utc)).startswith(
+        "2026-08-27T03:00"
+    )
+    assert _next_night_run("UTC", 3, "2026-08-26", datetime(2026, 8, 26, 1, tzinfo=utc)).startswith(
+        "2026-08-27T03:00"
+    )
+
+
+def test_status_reports_schedule_and_drip(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    store.values["moltbook_last_night"] = "2026-08-26"
+    store.values["moltbook_drip_last_swept"] = "2026-08-26T17:40:00+00:00"
+    store.values["owner_timezone"] = "UTC"
+    body = test_client.get("/api/settings/moltbook").json()
+    assert body["night_last_run"] == "2026-08-26"
+    assert body["drip_last_swept"].startswith("2026-08-26T17:40")
+    assert body["night_running_until"] is None  # no deadline → no night in flight
+    assert "T03:00" in body["night_next_run"]  # next run at the default 03:00 local hour
+
+    # A night in flight surfaces its end time; disabling the run nulls the next-run.
+    store.values["moltbook_night_deadline"] = "2026-08-26T04:00:00+00:00"
+    running = test_client.get("/api/settings/moltbook").json()
+    assert running["night_running_until"] == "2026-08-26T04:00:00+00:00"
+    store.values["moltbook_night_enabled"] = False
+    off = test_client.get("/api/settings/moltbook").json()
+    assert off["night_next_run"] is None
+
+
 def test_advisory_note_set_and_cleared(
     client: tuple[TestClient, FastAPI, FakeSettingsStore],
 ) -> None:
