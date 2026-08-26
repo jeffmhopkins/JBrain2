@@ -473,8 +473,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "bf5c2bc5214c14940c4a6c9c2dce9f71e6b655dfb33034c64245ddd7bdeca396",
         ),
         "jmolt": (
-            "agent-jmolt-v2",
-            "13843c8ff39dd051fa9ea0e09e9f5cc3e5f7c83cbe8a5bb9a2a3e6cc4ee23f3a",
+            "agent-jmolt-v3",
+            "c64900d7a5431b66003e7119a530d53cc2376cf57a91421a48bf1ec3ac034d5d",
         ),
         "jmolt_observer": (
             "agent-jmolt-observer-v1",
