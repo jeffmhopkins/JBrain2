@@ -11,7 +11,9 @@ it may release/advance outbox rows — jmolt itself cannot, per the M7 split):
 4. **Publish due rows** — call the pinned client's whitelisted write; solve any verification
    challenge with the tool-free solver (M5); reconcile-before-retry on error (M23); record
    every publish to the action ledger (M14); reset the streak on success, bump + notify on
-   a verify failure.
+   a verify failure. A rate-limit (429) DEFERS rather than fails: the row stays `released` and
+   the tick stops, so the queue drains across ticks instead of a busy night's tail being
+   dropped when the platform (or the client's own write-window) throttles.
 
 Posts carry a `publish_at`, so they drip through the day; comments/votes/social/profile
 have none and publish on the next tick after release.
@@ -22,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -39,6 +41,10 @@ from jbrain.web.moltbook import MoltbookClient, MoltbookError
 log = structlog.get_logger()
 
 JMOLT_SWEEP_SECONDS = 60.0
+
+# `_publish_one`'s outcome: the row went out, was DEFERRED for a later tick (a rate-limit
+# 429 — left `released`, not dropped), or terminally FAILED.
+PublishOutcome = Literal["published", "deferred", "failed"]
 
 
 def _admin_ctx(pid: str) -> SessionContext:
@@ -95,11 +101,19 @@ class JmoltSweep:
 
         published = 0
         for row in due:
-            if await self._publish_one(pid, admin, row):
+            outcome = await self._publish_one(pid, admin, row)
+            if outcome == "published":
                 published += 1
+            elif outcome == "deferred":
+                # A rate-limit (429): stop the tick and let this row — and the rest of the queue
+                # — retry on a later tick. This spaces publishing out over ticks instead of
+                # hammering a throttling platform, and the deferred rows stay `released` (never
+                # dropped), which is the fix for a busy night's tail failing terminally.
+                log.info("jmolt_sweep.deferred_on_rate_limit", kind=row.kind)
+                break
         return published
 
-    async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> bool:
+    async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> PublishOutcome:
         # Reconcile-before-publish for posts (M23, strengthened): a crash between a landed
         # write and its DB commit would otherwise re-publish this row on restart with no
         # error to trigger reconcile. Check the account first; if the post is already there,
@@ -111,12 +125,18 @@ class JmoltSweep:
                     await self._outbox.set_status(
                         s, row.id, "published", moltbook_id=existing_id, published=True
                     )
-                return True
+                return "published"
         try:
             result = await self._do_write(row)
         except MoltbookError as exc:
+            # A rate-limit (429, platform or the client's own write-window) is NOT a failure:
+            # leave the row `released` so a later tick retries it, rather than dropping a busy
+            # night's tail. The reconcile-first post path still guards against a double-post,
+            # since a 429 means the write did not land. Not a verify rejection, so no streak.
+            if exc.status == 429:
+                return "deferred"
             await self._reconcile_or_fail(pid, admin, row, exc)
-            return False
+            return "failed"
 
         # A verification challenge? Solve it tool-free, then submit (M5).
         ver = result.get("verification") if isinstance(result, dict) else None
@@ -125,7 +145,7 @@ class JmoltSweep:
             and ver.get("verification_code")
             and not await self._solve_and_verify(pid, admin, row, ver)
         ):
-            return False
+            return "failed"
 
         moltbook_id = self._extract_id(result)
         async with scoped_session(self._maker, admin) as s:
@@ -143,7 +163,7 @@ class JmoltSweep:
                     or ""
                 )[:200],
             )
-        return True
+        return "published"
 
     async def _solve_and_verify(
         self, pid: str, admin: SessionContext, row: OutboxRow, ver: dict[str, Any]

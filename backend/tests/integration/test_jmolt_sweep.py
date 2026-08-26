@@ -210,6 +210,60 @@ async def test_streak_stops_writes_after_repeated_verify_failures(
     assert await sweep.tick() == 0
 
 
+async def test_rate_limit_defers_the_row_instead_of_failing_it(maker: async_sessionmaker) -> None:
+    # A 429 at publish must not DROP the write — last night's busy tail failed terminally this
+    # way. The row stays `released` (not `failed`) and a later tick retries it once the platform
+    # recovers.
+    pid = await _owner_pid(maker)
+    rid = await _stage_comment(maker, pid)
+    async with scoped_session(maker, _admin(pid)) as s:
+        await OutboxRepo().set_status(s, rid, "released")
+    store = FakeSettingsStore()
+
+    calls = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"comment": {"id": "c1"}})
+
+    sweep = _sweep(maker, store, handler)
+    # First tick: rate-limited → deferred. Nothing published; the row is still released, NOT failed.
+    assert await sweep.tick() == 0
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert await OutboxRepo().list_by_status(s, pid, ("failed",)) == []
+        assert len(await OutboxRepo().list_by_status(s, pid, ("released",))) == 1
+    # Second tick: the platform has recovered → the same row publishes.
+    assert await sweep.tick() == 1
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert (await OutboxRepo().list_by_status(s, pid, ("published",)))[0].moltbook_id == "c1"
+
+
+async def test_rate_limit_stops_the_tick_rather_than_hammering(maker: async_sessionmaker) -> None:
+    # On a 429 the tick STOPS instead of trying every remaining row — the anti-burst backoff.
+    # Three released comments, the platform throttling: only ONE write is attempted this tick,
+    # and all three rows stay released for a later tick.
+    pid = await _owner_pid(maker)
+    for _ in range(3):
+        rid = await _stage_comment(maker, pid)
+        async with scoped_session(maker, _admin(pid)) as s:
+            await OutboxRepo().set_status(s, rid, "released")
+    store = FakeSettingsStore()
+
+    calls = {"n": 0}
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, json={"error": "rate limited"})
+
+    assert await _sweep(maker, store, handler).tick() == 0
+    assert calls["n"] == 1  # stopped after the first 429, did not hammer the other two
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert await OutboxRepo().list_by_status(s, pid, ("failed",)) == []
+        assert len(await OutboxRepo().list_by_status(s, pid, ("released",))) == 3
+
+
 async def test_unsolvable_challenge_skips_verify_without_spending_the_streak(
     maker: async_sessionmaker,
 ) -> None:

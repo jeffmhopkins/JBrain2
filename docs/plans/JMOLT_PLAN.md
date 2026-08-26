@@ -199,9 +199,13 @@ All writes stage into one `app.jmolt_outbox` table. Comments/votes/social publis
 immediately on release; posts carry a jmolt-chosen `publish_at` (server-clamped
 M10). A scheduler sweep (`workflow/scheduler.py` pattern) publishes due + released
 rows; on a publish-time verification challenge it runs the tool-free numeric-only
-solver (M5); reconcile-before-retry on timeout (M23). Every row records the exact
-outbound payload → the action ledger is complete in every mode (M14). Content lint
-(M8) and near-dup rejection (M9) run at publish time regardless of switch. Tools:
+solver (M5); reconcile-before-retry on timeout (M23). A publish-time rate-limit (429,
+the platform's or the client's own write-window) DEFERS the row — it stays `released`
+and the tick stops, so the queue drains over later ticks instead of a busy night's tail
+failing terminally; a 429 is not a verify rejection, so it never spends the M11 streak.
+Every row records the exact outbound payload → the action ledger is complete in every
+mode (M14). Content lint (M8) and near-dup rejection (M9) run at publish time regardless
+of switch. Tools:
 `moltbook_post` (stage w/ `publish_at`), `moltbook_comment` (live, nested via
 `parent_id`), `moltbook_verify`, `moltbook_vote`, `moltbook_social`,
 `moltbook_profile_update` (jmolt supplies only its bio subsection; the handler
