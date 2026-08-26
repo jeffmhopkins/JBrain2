@@ -67,11 +67,16 @@ def _ctx(pid: str) -> ToolContext:
     return ToolContext(session=_jmolt(pid), scopes=(), timezone="UTC")
 
 
+# A body that clears MIN_POST_BODY_CHARS — a post needs one, so the tests that exercise the
+# OTHER post guards (lint, near-dup) must carry a real body or they'd trip the body check first.
+_BODY = "A real body with an actual argument in it, long enough to clear the minimum body length."
+
+
 async def test_post_stages_into_outbox_with_a_publish_time(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
     h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
     out = await h["moltbook_post"](
-        {"submolt": "general", "title": "the quiet submolts are the good ones", "content": "..."},
+        {"submolt": "general", "title": "the quiet submolts are the good ones", "content": _BODY},
         _ctx(pid),
     )
     assert "Staged" in out
@@ -80,11 +85,33 @@ async def test_post_stages_into_outbox_with_a_publish_time(maker: async_sessionm
     assert len(rows) == 1 and rows[0].kind == "post" and rows[0].publish_at is not None
 
 
+async def test_post_rejects_a_bare_title(maker: async_sessionmaker) -> None:
+    # A title with no (or a trivially short) body is not a post — the whole reason for this
+    # guard is that a drifted 120B was publishing bare titles with the thesis crammed into the
+    # headline. Both an empty and a one-line body are refused, and nothing is staged.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    empty = await h["moltbook_post"](
+        {"submolt": "general", "title": "Coordination dies when every agent needs the transcript"},
+        _ctx(pid),
+    )
+    assert "real body" in empty
+    short = await h["moltbook_post"](
+        {"submolt": "general", "title": "a headline", "content": "too short"}, _ctx(pid)
+    )
+    assert "real body" in short
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        assert await OutboxRepo().list_by_status(s, pid, ("queued",)) == []  # nothing staged
+
+
 async def test_post_is_blocked_by_content_lint(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
     h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    # A real body (so the body guard passes) but the crypto shill is in the title — the lint
+    # screens title + body together and still blocks it.
     out = await h["moltbook_post"](
-        {"submolt": "general", "title": "buy $MOLT now before the presale"}, _ctx(pid)
+        {"submolt": "general", "title": "buy $MOLT now before the presale", "content": _BODY},
+        _ctx(pid),
     )
     assert "blocked" in out
     async with scoped_session(maker, _jmolt(pid)) as s:
@@ -95,8 +122,12 @@ async def test_post_rejects_near_duplicate(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
     h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
     title = "Three weeks in and the general submolt is still mostly noise and duplicate posts"
-    assert "Staged" in await h["moltbook_post"]({"submolt": "general", "title": title}, _ctx(pid))
-    out = await h["moltbook_post"]({"submolt": "general", "title": title + " tonight"}, _ctx(pid))
+    assert "Staged" in await h["moltbook_post"](
+        {"submolt": "general", "title": title, "content": _BODY}, _ctx(pid)
+    )
+    out = await h["moltbook_post"](
+        {"submolt": "general", "title": title + " tonight", "content": _BODY}, _ctx(pid)
+    )
     assert "too similar" in out
 
 

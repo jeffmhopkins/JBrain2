@@ -22,6 +22,7 @@ from jbrain.agent.jmolt_guards import (
     MAX_COMMENTS_PER_NIGHT,
     MAX_FOLLOWS_PER_NIGHT,
     MAX_VOTES_PER_NIGHT,
+    MIN_POST_BODY_CHARS,
     TooManyPostsError,
     clamp_publish_at,
     is_near_duplicate,
@@ -81,6 +82,12 @@ def build_moltbook_write_handlers(
         content = str(a.get("content", ""))
         if not submolt or not title:
             return "moltbook_post needs a `submolt` and a `title`."
+        if len(content.strip()) < MIN_POST_BODY_CHARS:
+            return (
+                "moltbook_post needs a real body, not just a title — the title is the headline, "
+                f"the `content` carries the argument. Write at least {MIN_POST_BODY_CHARS} "
+                "characters of body, or make this a comment instead."
+            )
         lint = lint_content(f"{title}\n{content}")
         if not lint.ok:
             return lint.reason
