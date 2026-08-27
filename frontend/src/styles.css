@@ -1725,6 +1725,10 @@ button.vitals:focus-visible {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+/* A stalled drip heartbeat is a fault, not a status — colour the value like the red pill. */
+.molt-sched-stale {
+  color: var(--danger, #cf8a8f);
+}
 .molt-sched-v small {
   display: block;
   color: var(--text-3);
