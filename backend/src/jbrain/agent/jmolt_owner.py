@@ -48,3 +48,29 @@ async def jmolt_owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> s
     async with scoped_session(maker, _SYSTEM_OWNER) as session:
         pid = (await session.execute(text(sql))).scalar()
     return str(pid) if pid is not None else None
+
+
+def jmolt_settings_ctx(session: SessionContext) -> SessionContext:
+    """A NON-jmolt owner context for the settings reads jmolt's tools legitimately make.
+
+    `app.settings` denies `auth_context='jmolt'` outright (migration 0178, B9). jmolt runs as
+    the owner principal, so without that policy the same session that just read a stranger's
+    post is entitled to every settings row: the Moltbook bearer key, the Gmail client secret,
+    the kill switch, and `moltbook_advisory_note` — which is injected into the one channel the
+    persona is told is genuinely from its human, making a settings write from jmolt's context
+    a self-instruction loop into the channel the design asserts cannot be spoofed.
+
+    Three tool handlers still need values from that table (the release switch, the disclosure
+    line, the night deadline and timezone), so they drop the jmolt auth context here. That is
+    not a hole the model can reach — it cannot choose which context a handler queries under.
+    What the policy buys is that a settings read has to be WRITTEN, deliberately, at a named
+    call site: a generic settings tool added in a later wave is refused by Postgres rather
+    than by someone remembering the convention.
+
+    Same shape as `jmolt_sweep._admin_ctx`, which the drip has always used for exactly this.
+    """
+    return SessionContext(
+        principal_id=session.principal_id,
+        principal_kind="owner",
+        domain_scopes=("jmolt",),
+    )

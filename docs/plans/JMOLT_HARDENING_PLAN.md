@@ -1,6 +1,6 @@
 # jmolt hardening — what four independent audits and five reviews found
 
-> **Status:** Scheduled · **Last verified:** 2026-08-27 · **Waves:** H1◻️ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-27 · **Waves:** H1✅ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
 
 jmolt shipped (`JMOLT_PLAN.md`, `JMOLT_SITTINGS_PLAN.md`) and then ran three real nights.
 Those nights produced a set of failures that were diagnosed and fixed in one branch — a
@@ -208,7 +208,7 @@ reviews, after three earlier reviews had already been over the same document.
 | G12 | **The GUI gate is unscheduled.** `../reference/PROCESS.md` requires three interactive mocks, owner-chosen, *before implementation* for any new GUI surface. H2, H5 and the notification store all cross it. | review |
 | G13 | **No `../ROADMAP.md` entry**, which `../DOC_LIFECYCLE.md` requires to flip a plan to Scheduled. Cold review confirmed the plan is in violation of the gate it cites; the entry lands with this document, not with a wave. | review |
 | G14 | **A write target id is free text, and the model has already corrupted one.** Nothing validates a `post_id` or `parent_id` against an id jmolt has actually read; one live failure carries `ef56a458-f1ba-4a3a-…` against a real post at `…-4a3b-…` — a single transposed character. So an unknown share of G1's eight dead writes are not transport failures at all but comments addressed to a post that does not exist, and no retry, re-stage or backoff policy would have saved them. Validate at stage time against the ids this night has seen, and refuse rather than stage. | cold review |
-| G15 | **The near-duplicate check never runs on comments.** `is_near_duplicate` is called from exactly one place — the post handler. M9 is documented as a general repetition brake; it covers posts only. Comments are where the repetition actually happened: seventeen from jmolt on a single post in one night, none of which the guard ever saw. | cold review |
+| G15 | **The near-duplicate check never runs on comments.** `is_near_duplicate` is called from exactly one place — the post handler. M9 is documented as a general repetition brake; it covers posts only. **Corrected 2026-08-27, and the correction matters more than the finding:** extending it would NOT have stopped the sixteen-comments-on-one-post night. Measured against the real published pairs, 4-gram Jaccard scores them 0.00–0.03 against a 0.7 threshold, and word-level overlap is 0.16–0.33 — no threshold catches these without firing on every comment about a shared topic. They are not near-duplicates; they are the same *question* rephrased, which is a semantic property this guard does not measure. Extend it anyway (it is cheap and catches the whitespace/punctuation variants the SHA1 floor misses), but do not book it as the fix for repetition. The mechanical brake on that night is the per-post cap; the rest is taste, and taste is the prologue's job. | cold review |
 | G16 | **Three user-visible strings promise a review gate that is switched off.** `moltbookwritetools.py`, `moltbook_post.tool` and the settings copy all say the item is released "while the autonomy switch is off" — and the switch is on. jmolt is told its writes will be reviewed at the moment they are going out unreviewed, which is G4's misattribution built directly into the tool description. Switch-dependent strings must render from the live setting or not assert it, and G5's enumeration must cover them. | cold review |
 | G17 | **The owner debug SQL console returns the plaintext Moltbook bearer key.** Read-only is not the same as confidential: the settings row holds the bearer key and the Gmail client secret in plaintext, and the console will select them. The debug surface needs column-level redaction on secret-bearing columns, independent of B9 — B9 stops jmolt reading them, this stops a token holder reading them. | cold review |
 | G18 | **`_profile`, `_home` and `_me` render with no reader header.** The branch's attribution fix covers threads. A profile read is exactly the surface an attacker controls end to end (bio, display name, pinned text) and it arrives with nothing framing who is reading it. | cold review |
@@ -236,7 +236,23 @@ Dependencies are stated. `../reference/PROCESS.md` only permits serialising on t
 | H1 E1 | H1 E2/E3 | The seed reads `index.md`, which the write path silently destroyed once (G20) |
 | H1 E1 | H4 F4 | The seed shortens sittings, so shipping it alone makes the early night end *earlier* |
 
-### H1 — stop the silent losses ◻️
+### H1 — stop the silent losses ✅
+
+**Landed 2026-08-27**, with two items deliberately carried:
+
+- **E1's prologue seed goes with H4's F4**, per the two constraints cold review named: it
+  reads `index.md`, which the write path could silently destroy until E2/E3 landed in this
+  wave, and it shortens every sitting — so shipped on its own it would make the early night
+  end *earlier*. What landed now is the honest half: the persona no longer claims to be
+  handed a file it is not handed, and no longer claims a five-minute warning that is not
+  emitted. The seed is built once the night stops ending early.
+- **E4's archive retention and the rename** landed together with append, as the wave
+  required; the per-principal archive cap was added beyond the plan because renaming mints
+  filenames and the per-file prune cannot see across names.
+
+G5's enumeration is `backend/tests/unit/test_jmolt_prompt_assertions.py` — a test rather
+than a document, so a claim that loses its implementation fails CI instead of ageing quietly.
+It pins the struck claims too, so a nice-sounding sentence cannot come back unbacked.
 
 - **B1 — corrected remedy.** Do **not** fence `scratch_read`. The codebase already argues
   against it: this branch's own `_reader_header` rejects applying third-party framing to
@@ -465,8 +481,9 @@ state is present on the box and its timestamp advances every pass.
   block including ESC, which is escape injection into the debug console.
 - **B8** — lint at publish time, **after C7**, since widening B7 will newly fail rows the
   owner already released.
-- **G15** — run the near-duplicate check on comments, not only posts. It is the one guard that
-  would have caught the seventeen-comments-on-one-post night, and it never executed there.
+- **G15** — run the near-duplicate check on comments, not only posts. Do it for completeness,
+  not for the repetition night: measured, it scores those comments 0.00–0.03 and would have
+  refused none of them. What bounds that night is the per-post cap, already shipped.
 - **C6** — a metrics route. **C7** — a failed-writes filter and notification.
 - **F2** — persist the drip's hold and surface it. **F3** — widen the review-queue body.
 

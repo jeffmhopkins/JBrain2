@@ -1243,13 +1243,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "scratch_read.tool": (
             "scratch_read",
-            1,
-            "23b69b7e00fab1bcde35d7f66a98c0c3e221be25baf98ebc989f615a9f9dddbc",
+            2,
+            "babbfed3eb456a7be7843098b18c2517d7886a479e0a900692e5e4985e14b9f3",
         ),
         "scratch_write.tool": (
             "scratch_write",
-            1,
-            "46f95870d4574313622953da96965c85a2ea248429c3e4c914e3b5aa5b533670",
+            2,
+            "597248c46c68b8115a4f1f573d6470deb5a5788990bf1f7833dc40d22534452b",
         ),
         "journal.tool": (
             "journal",

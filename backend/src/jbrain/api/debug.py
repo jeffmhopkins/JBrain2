@@ -16,6 +16,7 @@ import asyncio
 import base64
 import datetime as dt
 import decimal
+import re
 import time
 import uuid
 from typing import Annotated, Any, cast
@@ -69,6 +70,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.web.fetch import WebFetcher, WebFetchError
+from jbrain.web.moltbook import scrub_secret
 
 log = structlog.get_logger()
 
@@ -868,6 +870,52 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+# G17 (docs/plans/JMOLT_HARDENING_PLAN.md). The console is read-only, which is not the same
+# as confidential: `app.settings` holds the Moltbook bearer key and the Gmail client secret
+# as plaintext jsonb, and `SELECT * FROM app.settings` returned them. The debug token is
+# handed to a helper to look at a live box, and it should not also be a credential dump.
+#
+# Two shapes, because the secrets live in two shapes. A dedicated COLUMN named for a secret
+# is redacted by name. And `app.settings` is one row per key, so a row whose key names a
+# secret has its `value` redacted — the column there is called `value` and carries everything.
+_SECRET_NAME_RE = re.compile(
+    r"(?:^|_)(?:api_key|secret|password|passwd|credential|bearer)s?(?:_|$)"
+    r"|_key$|_token$|^token$|^key$",
+    re.I,
+)
+_VALUE_COLUMNS = frozenset({"value", "val", "setting_value"})
+_KEY_COLUMNS = frozenset({"key", "name", "setting", "setting_key"})
+_REDACTED = "[redacted — a secret, not shown in the debug console]"
+
+
+def _redact_row(columns: list[str], row: list[Any]) -> list[Any]:
+    """Blank the secret-bearing cells of one result row."""
+    lowered = [c.lower() for c in columns]
+    named_key = next((i for i, c in enumerate(lowered) if c in _KEY_COLUMNS), None)
+    row_names_a_secret = (
+        named_key is not None
+        and isinstance(row[named_key], str)
+        and bool(_SECRET_NAME_RE.search(row[named_key]))
+    )
+    out: list[Any] = []
+    for i, (name, value) in enumerate(zip(lowered, row, strict=True)):
+        secret_by_column = bool(_SECRET_NAME_RE.search(name)) and i != named_key
+        secret_by_row_key = row_names_a_secret and name in _VALUE_COLUMNS
+        if secret_by_column or secret_by_row_key:
+            out.append(_REDACTED)
+        elif i == named_key:
+            # The key column names the setting; it is what the console is FOR. It is also
+            # full of strings starting "moltbook_", which the value scrubber would eat —
+            # a console that renders every setting as `moltbook_[redacted]` reads as broken.
+            out.append(value)
+        else:
+            # Belt and braces: a secret that reached a column nothing above names — an error
+            # string, a jsonb blob, a joined view — still gets its recognisable shapes taken
+            # out by the same scrubber the agent-facing paths use.
+            out.append(scrub_secret(value) if isinstance(value, str) else value)
+    return out
+
+
 def _is_single_read(sql: str) -> bool:
     """A single read statement: one statement (trailing ';' tolerated) whose first
     keyword is a read verb. The READ-ONLY transaction is the real guard; this just
@@ -897,7 +945,7 @@ async def run_sql(body: SqlRequest, request: Request, _p: DebugDep) -> SqlOut:
     except DBAPIError as exc:
         raise HTTPException(status_code=400, detail=str(exc.orig)) from exc
     truncated = len(fetched) > body.max_rows
-    rows = [[_jsonable(v) for v in row] for row in fetched[: body.max_rows]]
+    rows = [_redact_row(columns, [_jsonable(v) for v in row]) for row in fetched[: body.max_rows]]
     log.info("debug.sql", row_count=len(rows), truncated=truncated)
     return SqlOut(columns=columns, rows=rows, row_count=len(rows), truncated=truncated)
 

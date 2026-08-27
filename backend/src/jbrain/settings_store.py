@@ -173,6 +173,13 @@ MOLTBOOK_FAIL_STREAK_LIMIT = 3
 # or hard rate-limit — surfaced, not auto-paused), "tamper" (a post on the public profile
 # absent from the outbox ledger ⇒ suspected key leak — kill engaged, rotation needed).
 MOLTBOOK_STATE_KEY = "moltbook_account_state"
+# The integrity watch's deadman (C3). The watch wrote state ONLY on a transition, so
+# "healthy for days" and "never ran since deploy" were the same observation: on the live box
+# `moltbook_account_state` did not exist at all, and with full DB and log access there was no
+# way to tell whether the tamper watch had ever executed. A healthy pass logs nothing by
+# design, so silence proves nothing. This is stamped every pass, so the OWNER can see the
+# watch is alive rather than inferring it from the absence of alarms.
+MOLTBOOK_INTEGRITY_HEARTBEAT_KEY = "moltbook_integrity_last_pass"
 MOLTBOOK_STATE_DEFAULT = "ok"
 # The owner-local date of the last morning digest sent (M14), so the digest fires once a
 # morning and survives a restart inside the window — the durable-dedup pattern the nightly
@@ -681,6 +688,16 @@ class SqlSettingsStore:
 
     async def set_moltbook_account_state(self, ctx: SessionContext, state: str) -> None:
         await self.upsert(ctx, MOLTBOOK_STATE_KEY, state)
+
+    async def moltbook_integrity_last_pass(self, ctx: SessionContext) -> str:
+        """ISO timestamp of the integrity watch's last completed pass, or "" if it has never
+        run. See MOLTBOOK_INTEGRITY_HEARTBEAT_KEY: without this, a watch that has never
+        executed is indistinguishable from one that has found nothing wrong for a week."""
+        raw = await self.get(ctx, MOLTBOOK_INTEGRITY_HEARTBEAT_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_integrity_last_pass(self, ctx: SessionContext, when: str) -> None:
+        await self.upsert(ctx, MOLTBOOK_INTEGRITY_HEARTBEAT_KEY, when)
 
     async def moltbook_verify_fail_streak(self, ctx: SessionContext) -> int:
         raw = await self.get(ctx, MOLTBOOK_FAIL_STREAK_KEY, 0)

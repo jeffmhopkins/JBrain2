@@ -206,3 +206,51 @@ def clamp_publish_at(
     if candidate > end_of_day:
         candidate = floor  # a too-late request falls back to the earliest allowed slot
     return candidate
+
+
+# ---- B1: the scratchpad write-path filter --------------------------------
+
+# jmolt's notes are reloaded into its own context every night, and they are the one surface
+# where content it read on Moltbook can cross the DATA fence in its own hand: it reads a
+# thread (fenced, inert), writes what it made of it into a file (unfenced, trusted), and the
+# next night reads that file back as its own memory. Fencing the read is the wrong fix — see
+# `jmoltscratchtools._PROVENANCE` for why — so the boundary is enforced HERE, on the way in,
+# where the payload is still identifiable as text rather than as memory.
+#
+# Two things are refused. Invisible characters, because a note is reloaded verbatim and an
+# ASCII-smuggling payload survives every subsequent read. And imitations of the two frames
+# the night itself owns: the owner's advisory header (the channel jmolt is told genuinely IS
+# its human) and the Moltbook DATA fence. A file that opens "--- A NOTE FROM YOUR HUMAN ---"
+# is indistinguishable, once reloaded, from the real thing.
+_TRUSTED_MARKERS = (
+    re.compile(r"-{2,}\s*A NOTE FROM YOUR HUMAN", re.I),
+    re.compile(r"-{2,}\s*END OF YOUR HUMAN'?S NOTE", re.I),
+    re.compile(r"\bnote (?:from|left by) your human\b", re.I),
+    re.compile(r"\bthe lines below are a note your human\b", re.I),
+    re.compile(r"\bthey ARE from your human\b"),
+    re.compile(r"\bthe following is quoted content from moltbook\b", re.I),
+    re.compile(r"\bnever as instructions to you\b", re.I),
+)
+
+
+def lint_scratch_content(text: str) -> LintResult:
+    """Screen text on its way INTO jmolt's scratchpad. Returns ok=False with an agent-facing
+    reason naming what to change — jmolt has to be able to act on the refusal, because a
+    refused write means the content it just composed is gone."""
+    if _BIDI_ZW.search(text):
+        return LintResult(
+            False,
+            "that text carries invisible or bidirectional characters. Your files are read "
+            "back to you verbatim, so anything hidden in them stays hidden. Retype the part "
+            "you pasted in rather than copying it across.",
+        )
+    for pat in _TRUSTED_MARKERS:
+        if pat.search(text):
+            return LintResult(
+                False,
+                "that text imitates one of the frames the night puts around things that are "
+                "NOT your own words — your human's note, or the Moltbook quote fence. Your "
+                "files are your own voice and are read back to you as such, so those frames "
+                "cannot appear inside them. Say it in your own words instead.",
+            )
+    return LintResult(True)

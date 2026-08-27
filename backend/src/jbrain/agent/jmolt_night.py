@@ -137,10 +137,8 @@ _RETURNING_PROLOGUE = (
     "thread it came from, and prune what turned out not to matter. Whatever is not written "
     "down is gone when the hour ends, so leave the last stretch to bring your files up to "
     "date (scratch_write).\n\n"
-    "Everything you write is staged: your human reviews and releases it while the autonomy "
-    "switch is off, so if something you wrote never appears, that is why. And a quiet, "
-    "watchful night — read deeply, think, tend your notes, stage nothing — is a full night "
-    "too. Use the time; do not pad it."
+    "A quiet, watchful night — read deeply, think, tend your notes, stage nothing — is a "
+    "full night too. Use the time; do not pad it."
 )
 
 # First-night ritual (session one, scratchpad still empty): structured sequence, open
@@ -158,14 +156,21 @@ _RITUAL_PROLOGUE = (
     "3. Leave yourself a thread to pull. Choose one thing to come back to tomorrow "
     "night, and write it down.\n"
     "If you feel like writing your bio or staging a first post or comment, you can — "
-    "everything you write is staged for your human to release, so there is no rush. But "
-    "lurking and taking notes is a full first night on its own."
+    "nothing you write goes out the moment you write it, so there is no rush. But lurking "
+    "and taking notes is a full first night on its own."
 )
 
 # Sittings 2+ of a night: a fresh-context continuation. jmolt's ONLY memory across a
-# sitting is its scratchpad (there is no in-context carry-over), so the continuation
-# reloads it first, exactly like the between-nights reload — no summarizer, and the
-# reloaded notes are fenced DATA, no more trusted than the forum text they quote (M2).
+# sitting is its scratchpad (there is no in-context carry-over), so the continuation ASKS it
+# to read its files first — no summarizer, and nothing is loaded on its behalf.
+#
+# This comment used to say the continuation "reloads it first" and that the reloaded notes
+# arrive "fenced DATA … (M2)". Both halves were false: there is no reload on any path, so
+# there was nothing to fence. It was the strongest-sounding evidence for a mechanism that
+# does not exist, and it is exactly the kind of assertion `docs/plans/JMOLT_HARDENING_PLAN.md`
+# G5 enumerates. M2's fenced-reload requirement is satisfied where a reload actually exists
+# (the prologue seed); jmolt's own `scratch_read` is deliberately unfenced — see
+# `jmoltscratchtools._PROVENANCE`.
 _CONTINUE_PROLOGUE = (
     "You've already been on Moltbook a while tonight. Start by reading your files "
     "(scratch_list, scratch_read) to pick up exactly where you left off — that is your only "
@@ -233,6 +238,56 @@ def _advisory_block(note: str) -> str:
     if not note:
         return ""
     return _ADVISORY_HEADER + note + _ADVISORY_FOOTER
+
+
+def _release_block(autonomy: bool) -> str:
+    """What actually happens to what jmolt writes tonight — rendered from the live switch.
+
+    The returning prologue used to assert this as a constant: "your human reviews and
+    releases it while the autonomy switch is off, so if something you wrote never appears,
+    that is why." Two failures in one sentence, and they compound.
+
+    It was false whenever the switch was on, which it has been since 2026-08-27 — jmolt was
+    told a review gate stood between it and a public forum at the moment nothing did. And the
+    second clause is a pre-supplied explanation for a missing write, aimed at the one cause
+    that is reassuring. Eight of forty-five writes died in the outbox and never reached
+    Moltbook at all; none of them were the owner holding anything. jmolt believed it had
+    published them and copied that belief into its permanent notes. `_failed_block` supplies
+    the real answer; this states the real rule."""
+    if autonomy:
+        return (
+            "WHAT HAPPENS TO WHAT YOU WRITE TONIGHT: automatic release is ON. What you stage "
+            "goes out on its own schedule during the day, without your human reading it "
+            "first. Write accordingly.\n\n"
+        )
+    return (
+        "WHAT HAPPENS TO WHAT YOU WRITE TONIGHT: automatic release is OFF. Your human reads "
+        "what you stage and releases it before it goes anywhere, so nothing you write "
+        "tonight is public tonight.\n\n"
+    )
+
+
+def _failed_block(failures: list[tuple[str, str, str]]) -> str:
+    """Writes that were staged, released, and then FAILED to reach Moltbook.
+
+    jmolt was never told. Its reads cannot show it (a failed write is not on the site), the
+    action ledger records the staging rather than the outcome, and the prologue used to
+    pre-attribute any missing write to its human. So a failure was invisible in every
+    direction at once, and jmolt wrote "posted" into notes it reloads as fact.
+
+    Each entry is (kind, target, reason). Capped like every other prologue block."""
+    if not failures:
+        return ""
+    lines = [f"- {kind} on {target} — {reason}" for kind, target, reason in failures[:_DONE_LINES]]
+    dropped = max(0, len(failures) - _DONE_LINES)
+    if dropped:
+        lines.append(f"- …and {dropped} more")
+    return (
+        "WRITES THAT DID NOT GO OUT — these were staged and then failed on the way to "
+        "Moltbook. They are NOT on the site, nobody saw them, and they are not your human "
+        "holding them back:\n" + "\n".join(lines) + "\nIf one still matters, write it "
+        "again; if it does not, let it go.\n\n"
+    )
 
 
 def _identity_block(handle: str) -> str:
@@ -452,6 +507,12 @@ class JmoltNightRunner:
                     # what jmolt has already staged must be re-supplied or they are lost.
                     advisory=advisory,
                     pending=await self._done_tonight_block(read_ctx, woke_at, tz),
+                    # Same reasoning, two more blocks that must ride every sitting: what
+                    # actually happens to tonight's writes (read live, never asserted) and
+                    # the ones that failed on the way out — the only channel jmolt has for
+                    # either. Both are best-effort; neither may stop a night.
+                    release=_release_block(await self._autonomy(owner_ctx)),
+                    failures=await self._failures_block(read_ctx),
                     # The handle IS re-injected every sitting: each is a fresh-context turn, and
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
@@ -564,6 +625,37 @@ class JmoltNightRunner:
             "Do not repeat any of it. If you have more to say to someone, say something new.\n\n"
         )
 
+    async def _autonomy(self, owner_ctx: SessionContext) -> bool:
+        """The live release switch. Best-effort, and it fails CLOSED: a settings read blip
+        makes jmolt believe its writes are reviewed, which is the assumption that produces
+        more caution rather than less."""
+        try:
+            return await self._settings.moltbook_autonomy(owner_ctx)
+        except Exception:  # noqa: BLE001 — a settings blip never stops a night
+            return False
+
+    async def _failures_block(self, read_ctx: SessionContext) -> str:
+        """The dead writes, rendered by `_failed_block`. Failed rows are terminal — there is
+        no retry path — so this shows every one still on the books rather than only tonight's:
+        a write that died last night is just as absent from the site, and jmolt has never been
+        told about any of them."""
+        try:
+            async with scoped_session(self._maker, read_ctx) as s:
+                rows = await self._outbox.list_by_status(s, read_ctx.principal_id, ("failed",))
+        except Exception:  # noqa: BLE001 — a read blip omits the block, never stops the night
+            return ""
+        out: list[tuple[str, str, str]] = []
+        for row in rows:
+            payload = row.payload or {}
+            target = _safe_target(
+                payload.get("post_id") or payload.get("submolt_name") or payload.get("target_id")
+            )
+            # The error text can carry a platform response body, so it gets the same
+            # flattening as a target: this lands in the UNFENCED prologue.
+            reason = _safe_target(row.error) if row.error else "it did not go through"
+            out.append((row.kind, target, reason))
+        return _failed_block(out)
+
     async def _reserve_box(self, owner_ctx: SessionContext) -> None:
         """Pin the local model jmolt is served from for the night (night hold). Best-effort:
         no local router (loader None), no served model, or a settings write blip → the night
@@ -589,6 +681,8 @@ class JmoltNightRunner:
         now: datetime,
         advisory: str = "",
         pending: str = "",
+        release: str = "",
+        failures: str = "",
         identity: str = "",
         retrying: bool = False,
         reflection: bool = False,
@@ -616,7 +710,8 @@ class JmoltNightRunner:
         # sensitive bit). Reflection sittings drop the pending line (they are not for staging).
         prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory
         if not reflection:
-            prologue += pending
+            prologue += pending + failures
+        prologue += release
         prologue += base
         if retrying:
             prologue += _RETRY_NUDGE

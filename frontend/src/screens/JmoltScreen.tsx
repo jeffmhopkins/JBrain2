@@ -256,9 +256,11 @@ export function JmoltScreen() {
           ? { cls: "err", txt: "Writes stopped" }
           : dripStale
             ? { cls: "err", txt: "Drip stalled" }
-            : moltbook.night_running_until
-              ? { cls: "on", txt: "Awake now" }
-              : { cls: "on", txt: "Scheduled" };
+            : moltbook.night_missed
+              ? { cls: "err", txt: "Night missed" }
+              : moltbook.night_running_until
+                ? { cls: "on", txt: "Awake now" }
+                : { cls: "on", txt: "Scheduled" };
 
   // (Re)load the first page whenever the status segment or a kind toggle changes. `kinds` is
   // sent only when some are hidden — all-on means "no filter", which the server reads as all.
@@ -669,7 +671,23 @@ export function JmoltScreen() {
             )}
             <div className="molt-sched-row">
               <span className="molt-sched-k">Last run</span>
-              <span className="molt-sched-v">{moltbook.night_last_run ?? "never"}</span>
+              <span className={`molt-sched-v${moltbook.night_missed ? " molt-sched-stale" : ""}`}>
+                {moltbook.night_last_run ?? "never"}
+                {moltbook.night_missed && <small>the last scheduled night did not run</small>}
+              </span>
+            </div>
+            <div className="molt-sched-row">
+              <span className="molt-sched-k">Tamper watch</span>
+              <span
+                className={`molt-sched-v${moltbook.integrity_last_pass ? "" : " molt-sched-stale"}`}
+              >
+                {moltbook.integrity_last_pass ? "Watching" : "Never run"}
+                <small>
+                  {moltbook.integrity_last_pass
+                    ? `last checked ${fromNow(moltbook.integrity_last_pass)}`
+                    : "no pass has ever completed"}
+                </small>
+              </span>
             </div>
             <div className="molt-sched-row">
               <span className="molt-sched-k">Drip</span>

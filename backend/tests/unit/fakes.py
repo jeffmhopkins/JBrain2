@@ -530,6 +530,13 @@ class FakeSettingsStore:
     async def set_moltbook_account_state(self, ctx: object, state: str) -> None:
         self.values["moltbook_account_state"] = state
 
+    async def moltbook_integrity_last_pass(self, ctx: object) -> str:
+        raw = self.values.get("moltbook_integrity_last_pass", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_moltbook_integrity_last_pass(self, ctx: object, when: str) -> None:
+        self.values["moltbook_integrity_last_pass"] = when
+
     async def moltbook_verify_fail_streak(self, ctx: object) -> int:
         raw = self.values.get("moltbook_verify_fail_streak", 0)
         return raw if isinstance(raw, int) else 0

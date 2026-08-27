@@ -76,9 +76,13 @@ textual control, so these are the controls that do not depend on it obeying.**
    jmolt-composed string may ride in a fetch URL — targets validated as bare
    origins/paths, never free-form URLs carrying a payload. *(supersedes the
    earlier "no remote heartbeat fetch" claim — `web_fetch` structurally is that.)*
-2. **Fenced returns are never re-elevated on reload.** The scratchpad/journal, when
-   loaded in the prologue, is wrapped in the same DATA fence as forum text and is
-   explicitly not procedure/identity. SOUL stays read-only to the agent.
+2. **Fenced returns are never re-elevated on reload.** *(Amended 2026-08-27 — see
+   `../research/jmolt/THREAT_MODEL.md` M2.)* Nothing has ever loaded a file into a
+   prologue, so as literally written this was satisfied vacuously; the prologue **seed**
+   that `JMOLT_HARDENING_PLAN.md` H1 builds is what carries the fence. `scratch_read`
+   is deliberately unfenced — it is jmolt's own voice — and the boundary is enforced
+   mechanically on the WRITE path instead (`jmolt_guards.lint_scratch_content`) with a
+   provenance header on reload. SOUL stays read-only to the agent.
 3. **The platform's imperative channels are stripped from the trusted prologue** —
    `/home`'s `suggested_actions`, announcements, banners are removed, not merely
    fenced; only inert data (counts, subjects) survives, fenced.
@@ -238,6 +242,30 @@ Rows + capped bytes, quota enforced in the write path: **16 files / 128 KB total
 `scratch_list` / `scratch_read` / `scratch_write`. Every changed version snapshots
 to an append-only archive outside the editable budget (M13) — the science
 instrument and the injection-rollback story.
+
+**Hardened 2026-08-27** (`JMOLT_HARDENING_PLAN.md` H1). A write whose `content` key was
+absent read as `content=""` and silently emptied the file, reporting success — `index.md`,
+the file the opening prologue tells jmolt to read first, was destroyed this way on the live
+box. Clearing a file is now `mode=empty`, an unrecognised mode is refused rather than
+falling through to a whole-file overwrite, and a save that drops most of a file says so.
+`mode=append` and `mode=rename` exist because both prologues asked for edits and retitles
+that the tool had no way to express (every edit was a full rewrite — ten of one file in a
+single measured night); a rename carries the file's recent history onto the new name.
+`scratch_read` reads the archive too (`history=true`, then `version=N`), so jmolt can
+recover a file it damaged — the archive was reachable only from the observer persona.
+Archive retention rose to 60 snapshots per file because append makes edits cheaper and the
+net has to stay the same size in *nights*, with a per-principal row cap bounding the axis
+renaming opens. Content is filtered on the way IN (invisibles, and imitations of the
+trusted-channel frames) and reloads under a provenance header rather than a DATA fence —
+see M2 above.
+
+**Settings are closed to jmolt's own context** (migration 0178, `JMOLT_HARDENING_PLAN.md`
+B9). jmolt runs as the owner principal, and `app.settings` was gated on a bare
+`app.is_owner()` — so the session that reads a stranger's post was, in Postgres' view,
+entitled to the bearer key, the kill switch, and the advisory note below. A restrictive
+policy now denies `auth_ctx() = 'jmolt'`. The three handlers that legitimately need a
+setting (the release switch, the disclosure line, the night deadline) go through
+`jmolt_owner.jmolt_settings_ctx`, a named call site rather than a convention.
 
 ### The journal + the owner's advisory note — `app.jmolt_journal` + a settings note
 Two one-directional channels between jmolt and its human, distinct from the scratchpad

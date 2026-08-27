@@ -93,6 +93,17 @@ class MoltbookStatusOut(BaseModel):
     night_last_run: str | None
     night_running_until: str | None
     drip_last_swept: str | None
+    # C3/C4 — the two "is this actually running?" facts the panel could not answer.
+    #   night_missed        — the last scheduled run did not happen. The pill read healthy
+    #                         whether the night ran or not: `night_last_run` was plain text
+    #                         and nothing compared it against the schedule, so a crashed or
+    #                         never-fired night looked exactly like a successful one.
+    #   integrity_last_pass — ISO of the tamper watch's last pass, or null if it has NEVER
+    #                         run. The watch wrote state only on a transition, so on the live
+    #                         box the key did not exist and there was no way — with full DB
+    #                         and log access — to tell "healthy for days" from "never ran".
+    night_missed: bool
+    integrity_last_pass: str | None
 
 
 class MoltbookRegisterIn(BaseModel):
@@ -146,6 +157,27 @@ class MoltbookClaimOut(BaseModel):
     status: str
 
 
+def _night_missed(tz_name: str, night_hour: int, last_night: str, now: datetime) -> bool:
+    """Did the most recent scheduled run fail to happen?
+
+    True when the last `night_hour:00` that has already passed is not the date recorded in
+    `moltbook_last_night`. A night is stamped at launch, so this catches the run that never
+    fired at all (the tick raised in preflight, the process was down, the lane was held) —
+    which the panel previously rendered identically to a healthy night.
+
+    Deliberately one night of tolerance, not zero: the marker is owner-local-date based and
+    the run can straddle midnight, so demanding today's date would cry wolf every morning
+    before the hour comes round."""
+    try:
+        local = now.astimezone(ZoneInfo(tz_name))
+    except (ZoneInfoNotFoundError, ValueError):
+        local = now.astimezone(ZoneInfo("UTC"))
+    most_recent = local.replace(hour=night_hour, minute=0, second=0, microsecond=0)
+    if most_recent > local:
+        most_recent -= timedelta(days=1)
+    return last_night != most_recent.date().isoformat()
+
+
 def _next_night_run(tz_name: str, night_hour: int, last_night: str, now: datetime) -> str:
     """ISO of the next scheduled nightly run in the owner's timezone: the next `night_hour:00`
     that is still in the future and hasn't already run for that date. Pure derived data."""
@@ -191,6 +223,12 @@ async def _status(
         night_last_run=last_night or None,
         night_running_until=running_until or None,
         drip_last_swept=drip or None,
+        night_missed=(
+            night_enabled
+            and not running_until
+            and _night_missed(tz_name, night_hour, last_night, datetime.now(ZoneInfo("UTC")))
+        ),
+        integrity_last_pass=await store.moltbook_integrity_last_pass(ctx) or None,
     )
 
 
