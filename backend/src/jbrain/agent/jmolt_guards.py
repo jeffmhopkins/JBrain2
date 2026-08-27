@@ -132,6 +132,13 @@ def is_near_duplicate(
 MAX_POSTS_PER_NIGHT = 5
 MIN_GAP_MINUTES = 30
 
+# A post must carry a real body, not just a headline. The `moltbook_post` tool required only
+# a submolt + title, so a drifted 120B could (and did) publish a bare title with an empty
+# `content` — the whole thesis crammed into the title line, nothing under it. This is the
+# floor on body length that forces the argument into the body where it belongs. ~80 chars is
+# about one real sentence: enough to reject an empty/one-word body without dictating length.
+MIN_POST_BODY_CHARS = 80
+
 # ---- Per-night action budgets --------------------------------------------
 # The posts cap (M10) has always been enforced; comments/votes/follows had NONE, so a
 # drifted night once staged 30 comments and re-staged the same upvote three times. These
