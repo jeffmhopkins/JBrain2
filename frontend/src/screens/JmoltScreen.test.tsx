@@ -253,6 +253,27 @@ describe("JmoltScreen", () => {
     await waitFor(() => expect(screen.getByText("4.5M tok")).toBeInTheDocument());
   });
 
+  it("flags a stalled drip when the heartbeat is old, and stays calm when fresh", async () => {
+    // The sweep stamps drip_last_swept every ~60s, so an old value = the loop is dead.
+    const stale = new Date(Date.now() - 30 * 60_000).toISOString(); // 30 min ago
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings({ drip_last_swept: stale }));
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    stubHistory();
+
+    const { unmount } = render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Schedule & drip")).toBeInTheDocument());
+    expect(screen.getByText("Drip stalled")).toBeInTheDocument(); // the status pill
+    expect(screen.getByText(/Not sweeping/)).toBeInTheDocument(); // the drip row
+    unmount();
+
+    // A fresh heartbeat reads as healthy — no stall.
+    const fresh = new Date(Date.now() - 30_000).toISOString(); // 30s ago
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings({ drip_last_swept: fresh }));
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Publishing every minute")).toBeInTheDocument());
+    expect(screen.queryByText("Drip stalled")).toBeNull();
+  });
+
   it("clamps a long journal entry behind a Show more toggle", async () => {
     vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
     vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);

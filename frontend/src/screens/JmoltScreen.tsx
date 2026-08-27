@@ -80,6 +80,9 @@ function formatBytes(n: number): string {
 // Activity feed. One page is this many rows; "show older" pages by the oldest row's seq.
 const ACT_PAGE = 60;
 
+// The drip heartbeat is stamped every ~60s; older than this and the sweep loop is stalled.
+const DRIP_STALE_MS = 5 * 60_000;
+
 // Each activity state maps to a badge label + class (see styles.css .molt-badge-*). "drafted"
 // covers both queued (awaiting release) and released-but-not-yet-sent; "scheduled" is a
 // drip-queued post with a future publish time.
@@ -232,6 +235,15 @@ export function JmoltScreen() {
     [kindList, actHidden],
   );
 
+  // The drip sweep stamps its heartbeat at the top of every ~60s tick — before the kill/streak
+  // guards, so a live loop refreshes it even while paused. A heartbeat older than a few minutes
+  // therefore means the sweep loop itself is not running and daytime publishing is effectively
+  // dead — a real fault the calm "Scheduled" pill would otherwise hide. (A never-stamped box
+  // reads as "not run yet", not stalled, to avoid a false alarm at first boot.)
+  const dripStale =
+    !!moltbook?.drip_last_swept &&
+    Date.now() - new Date(moltbook.drip_last_swept).getTime() > DRIP_STALE_MS;
+
   // The Schedule card's status pill: red when writing is paused/stopped/off-nominal (the
   // "collapse unless failing" states), green when a night is running or simply scheduled.
   const schedStatus = !moltbook
@@ -242,9 +254,11 @@ export function JmoltScreen() {
         ? { cls: "err", txt: `Account: ${moltbook.account_state}` }
         : moltbook.verify_fail_streak >= 3
           ? { cls: "err", txt: "Writes stopped" }
-          : moltbook.night_running_until
-            ? { cls: "on", txt: "Awake now" }
-            : { cls: "on", txt: "Scheduled" };
+          : dripStale
+            ? { cls: "err", txt: "Drip stalled" }
+            : moltbook.night_running_until
+              ? { cls: "on", txt: "Awake now" }
+              : { cls: "on", txt: "Scheduled" };
 
   // (Re)load the first page whenever the status segment or a kind toggle changes. `kinds` is
   // sent only when some are hidden — all-on means "no filter", which the server reads as all.
@@ -648,11 +662,11 @@ export function JmoltScreen() {
             </div>
             <div className="molt-sched-row">
               <span className="molt-sched-k">Drip</span>
-              <span className="molt-sched-v">
-                Publishing every minute
+              <span className={`molt-sched-v${dripStale ? " molt-sched-stale" : ""}`}>
+                {dripStale ? "Not sweeping — loop stalled" : "Publishing every minute"}
                 <small>
                   {moltbook.drip_last_swept
-                    ? `last ran ${fromNow(moltbook.drip_last_swept)}`
+                    ? `last swept ${fromNow(moltbook.drip_last_swept)}`
                     : "not run yet"}
                 </small>
               </span>
