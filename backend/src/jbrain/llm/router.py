@@ -25,7 +25,7 @@ from jbrain.config import Settings
 from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import local_catalog, model_sampling, prefill
 from jbrain.llm.anthropic import AnthropicClient
-from jbrain.llm.errors import LlmBadResponseError, LlmError
+from jbrain.llm.errors import LlmBadResponseError, LlmError, LlmStreamTruncatedError
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -37,8 +37,10 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    ReasoningChunk,
     Sampling,
     StreamPart,
+    TextChunk,
     ToolResultMessage,
     UsageRecorder,
     UserMessage,
@@ -837,25 +839,65 @@ class LlmRouter:
                 on_progress=publish if probe is not None else None,
             ) as streaming,
         ):
-            async for part in client.converse_stream(
-                model=model,
-                system=system,
-                messages=messages,
-                tools=tools,
-                max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort,
-                sampling=resolved_sampling,
-            ):
+            # Tracked so a truncated stream can be recovered ONLY when nothing visible has
+            # been shown yet: re-issuing after answer text has streamed would replay it to
+            # the reader. Reasoning chunks don't count — they are a scratch channel the PWA
+            # renders as transient thinking, not the answer.
+            answered = False
+            try:
+                async for part in client.converse_stream(
+                    model=model,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    sampling=resolved_sampling,
+                ):
+                    if first_part:
+                        first_part = False
+                        # Prefill ended HERE, not when this block does. The row has to be
+                        # settled at the moment the wait it describes is over, or the status
+                        # line reads "Reading your prompt…" for the whole answer (measured on
+                        # the box).
+                        await prefill_done()
+                    streaming()
+                    if isinstance(part, LlmTurn):
+                        final = part
+                    elif isinstance(part, TextChunk):
+                        answered = True
+                    yield part
+            except LlmStreamTruncatedError:
+                # The stream was cut before any finish_reason (llm/errors.py). The ROUND is
+                # intact — the prompt is unchanged and nothing was committed — and the same
+                # call non-streaming is reliable where the streaming tool-call path is not
+                # (measured on the box: 12/12 versus ~44%). So re-issue it once, unstreamed,
+                # and replay the completed turn as parts. This is the difference between an
+                # agent losing a sitting and an agent taking one slower step.
+                if answered:
+                    raise  # answer text already reached the reader; a retry would duplicate it
+                log.warning("llm.stream_truncated_retry", task=task, provider=provider, model=model)
+                turn = await client.converse(
+                    model=model,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    sampling=resolved_sampling,
+                )
                 if first_part:
                     first_part = False
-                    # Prefill ended HERE, not when this block does. The row has to be settled
-                    # at the moment the wait it describes is over, or the status line reads
-                    # "Reading your prompt…" for the whole answer (measured on the box).
                     await prefill_done()
                 streaming()
-                if isinstance(part, LlmTurn):
-                    final = part
-                yield part
+                # Replayed in the order a live stream would have produced them, so a consumer
+                # that switches on part type cannot tell the recovered turn from a clean one.
+                if turn.reasoning:
+                    yield ReasoningChunk(text=turn.reasoning)
+                if turn.text:
+                    yield TextChunk(text=turn.text)
+                final = turn
+                yield turn
         if final is not None:
             elapsed = time.perf_counter() - start
             # The exact token count for the characters we just sent — the only free, exact

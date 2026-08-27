@@ -18,6 +18,7 @@ from jbrain.llm import (
     ToolCall,
     UserMessage,
 )
+from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.retry import BASE_DELAY_SECONDS
 from jbrain.llm.types import StreamPart
 
@@ -324,3 +325,168 @@ async def test_router_converse_stream_records_usage_from_final_turn() -> None:
     # Usage recorded exactly once, from the closing turn — chunks carry none.
     assert records == [("agent.turn", 5, 9)]
     assert fake.stream_calls[0]["model"] == "grok-4.3"
+
+
+# --- Truncated streams -------------------------------------------------------
+# The failure this guards against was invisible in production for two nights: llama.cpp
+# cut the SSE body after the reasoning deltas and before the tool_calls/finish/usage
+# chunks, and the adapter turned that into a well-formed, successful, empty `end_turn`.
+# Nine of one agent's sixteen turns were recorded as "the model chose to say nothing"
+# when it had in fact produced a tool call. The wire shapes below are the real ones —
+# ~2.3KB of reasoning, then nothing.
+
+
+TRUNCATED_AFTER_REASONING = sse(
+    'data: {"choices":[{"delta":{"reasoning_content":"We need to "},"finish_reason":null}]}',
+    'data: {"choices":[{"delta":{"reasoning_content":"list files."},"finish_reason":null}]}',
+)
+
+
+async def test_openai_stream_truncated_before_finish_reason_raises() -> None:
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=stream_transport(TRUNCATED_AFTER_REASONING),
+    )
+    parts: list[StreamPart] = []
+    with pytest.raises(LlmStreamTruncatedError):
+        async for part in client.converse_stream(
+            model="m", system="s", messages=[UserMessage(text="hi")], tools=[TOOL]
+        ):
+            parts.append(part)
+    # The reasoning that DID arrive still streamed — but no LlmTurn was ever yielded, so
+    # no caller can mistake the fragment for a completed turn. This is the whole point.
+    assert [p.text for p in parts if isinstance(p, ReasoningChunk)] == [
+        "We need to ",
+        "list files.",
+    ]
+    assert not any(isinstance(p, LlmTurn) for p in parts)
+
+
+async def test_openai_stream_truncated_mid_tool_call_raises() -> None:
+    # The id/name delta arrived and the arguments never did — a half-built tool call is
+    # exactly the fragment that must not be handed back as if it were complete.
+    body = sse(
+        'data: {"choices":[{"delta":{"reasoning_content":"listing"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+        '"function":{"name":"search","arguments":""}}]},"finish_reason":null}]}',
+    )
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1", "", provider="local", transport=stream_transport(body)
+    )
+    with pytest.raises(LlmStreamTruncatedError):
+        async for _ in client.converse_stream(
+            model="m", system="s", messages=[UserMessage(text="hi")], tools=[TOOL]
+        ):
+            pass
+
+
+async def test_openai_stream_without_done_sentinel_still_succeeds_when_finished() -> None:
+    # `finish_reason` is the invariant, NOT `[DONE]`: a server that closes the body right
+    # after the finish chunk has told us the turn is over, and must not be treated as cut.
+    body = sse(
+        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    )
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1", "", provider="local", transport=stream_transport(body)
+    )
+    parts = await collect(client, model="m", system="s", messages=[UserMessage(text="hi")])
+    final = parts[-1]
+    assert isinstance(final, LlmTurn)
+    assert final.text == "hi" and final.stop_reason == "end_turn"
+
+
+async def test_openai_stream_empty_body_raises_rather_than_yielding_an_empty_turn() -> None:
+    # The degenerate case: nothing at all on the wire. Before the fix this yielded a
+    # perfectly valid-looking empty turn.
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1", "", provider="local", transport=stream_transport(b"")
+    )
+    with pytest.raises(LlmStreamTruncatedError):
+        async for _ in client.converse_stream(
+            model="m", system="s", messages=[UserMessage(text="hi")]
+        ):
+            pass
+
+
+class _TruncatingClient:
+    """A client whose stream dies mid-turn but whose non-streaming call works — the exact
+    live asymmetry this recovery exists for (measured on the box: streaming ~44%,
+    non-streaming 12/12 on the same model, tools and prompt)."""
+
+    def __init__(self, turn: LlmTurn, *, stream_text: str = "") -> None:
+        self._turn = turn
+        self._stream_text = stream_text
+        self.converse_calls = 0
+
+    async def converse_stream(self, **_kw: object):
+        yield ReasoningChunk(text="We need to list files.")
+        if self._stream_text:
+            yield TextChunk(text=self._stream_text)
+        raise LlmStreamTruncatedError("local stream ended without a finish_reason")
+
+    async def converse(self, **_kw: object) -> LlmTurn:
+        self.converse_calls += 1
+        return self._turn
+
+
+async def test_router_recovers_a_truncated_stream_non_streaming() -> None:
+    recovered = LlmTurn(
+        text="",
+        tool_calls=(ToolCall(id="c1", name="search", arguments={"q": "x"}),),
+        stop_reason="tool_use",
+        usage=LlmUsage(4204, 27),
+        reasoning="We need to list files.",
+    )
+    client = _TruncatingClient(recovered)
+    router = LlmRouter({"xai": client}, {"agent.turn": ("xai", "grok-4.3")})
+
+    parts = [
+        p
+        async for p in router.converse_stream("agent.turn", system="s", messages=[UserMessage("u")])
+    ]
+
+    assert client.converse_calls == 1  # retried exactly once, not a loop
+    final = parts[-1]
+    assert isinstance(final, LlmTurn)
+    # The consumer gets the tool call that was dropped on the wire — the whole point.
+    assert [c.name for c in final.tool_calls] == ["search"]
+    assert final.stop_reason == "tool_use"
+    assert final.usage.output_tokens == 27
+
+
+async def test_router_does_not_retry_once_answer_text_has_streamed() -> None:
+    # A retry after visible text would replay it to the reader. Fail loudly instead.
+    client = _TruncatingClient(
+        LlmTurn(text="whole answer", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1)),
+        stream_text="partial ans",
+    )
+    router = LlmRouter({"xai": client}, {"agent.turn": ("xai", "grok-4.3")})
+
+    with pytest.raises(LlmStreamTruncatedError):
+        async for _ in router.converse_stream(
+            "agent.turn", system="s", messages=[UserMessage("u")]
+        ):
+            pass
+    assert client.converse_calls == 0
+
+
+async def test_router_records_usage_from_a_recovered_turn() -> None:
+    # A recovered round must still bill: otherwise the truncation quietly under-reports
+    # cost, which is how the zero-token runs looked plausible in the first place.
+    records: list[tuple[str, int, int]] = []
+
+    class Recorder:
+        async def record(self, *, task: str, provider: str, model: str, usage: LlmUsage) -> None:
+            records.append((task, usage.input_tokens, usage.output_tokens))
+
+    client = _TruncatingClient(
+        LlmTurn(text="done", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(11, 22))
+    )
+    router = LlmRouter({"xai": client}, {"agent.turn": ("xai", "grok-4.3")}, recorder=Recorder())
+    async for _ in router.converse_stream("agent.turn", system="s", messages=[UserMessage("u")]):
+        pass
+
+    assert records == [("agent.turn", 11, 22)]

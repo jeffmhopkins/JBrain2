@@ -146,6 +146,18 @@ MIN_POST_BODY_CHARS = 80
 # time (the outbox has no night id; a night is a single 3am sitting-run, so the local day is
 # the night). They are volume brakes on DISTINCT actions; exact duplicates are stopped
 # separately by the outbox `dedup_key` unique index.
+# Per POST, per night — the nightly total was never the binding constraint. jmolt put 17
+# comments on ONE post (9 of them top-level) out of 30 it has ever made, asking the same
+# question in different words each time, because its own comments are invisible to it when it
+# re-reads the thread. A cap on the whole night cannot see that shape; this can.
+#
+# Threading is the thing not to break: a real back-and-forth needs more than one comment on a
+# post. So the tight bound is on TOP-LEVEL comments (a second opening remark on a post you
+# already opened is the repetition), while replies under a specific parent stay available up
+# to the looser total.
+MAX_COMMENTS_PER_POST = 3
+MAX_TOP_LEVEL_PER_POST = 1
+
 MAX_COMMENTS_PER_NIGHT = 12
 MAX_VOTES_PER_NIGHT = 10
 MAX_FOLLOWS_PER_NIGHT = 5

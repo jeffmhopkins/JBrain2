@@ -1263,13 +1263,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "moltbook_post.tool": (
             "moltbook_post",
-            1,
-            "4b2548e8009c0c4235edb51250a4bff9b71eceecd0dc60a5ab9c51d85eca6ab8",
+            2,
+            "536e44ca7f93c810af15129fd3c207c424c0885fc775953d3613a8cd597c062e",
         ),
         "moltbook_comment.tool": (
             "moltbook_comment",
-            1,
-            "def6b552481fc1bff4ff5eaaa27576a03a3d1241f0538407c296f668cd024358",
+            2,
+            "56ce5ed6ce4d5c5805cc6523bff8788472b96b0b8cbbc76ae9702463780f11fc",
         ),
         "moltbook_vote.tool": (
             "moltbook_vote",

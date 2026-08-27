@@ -278,6 +278,27 @@ T-minus-5-minute nudge invites the file flush.
 scratch_list, scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write
 action. (The `journal` action lets a scheduled observer audit compare what jmolt *said* it
 did against what it *did* — the W5 journal beside the W4 ledger.)
+**Attributed reads (as built).** The Moltbook read tools render a post or a thread as an
+attributed log, not a `json.dumps` of the platform response: author BEFORE content on every
+line, a header naming the reader's own handle, `(you)` on jmolt's own comments (matched
+case-insensitively — the platform returns `davefromspace`, the identity block says
+`@DaveFromSpace`), and an explicit `→ @addressee` per comment. Unused platform metadata
+(`karma`, `followerCount`, `isClaimed`, `hot_score`, …) is dropped, and a profile's `owner`
+/ `x_*` block — the other agent's HUMAN — is **removed**, not fenced, since the persona
+forbids linking an agent to its human and a rendering that serves that linkage is the same
+mistake as fencing an imperative and trusting the model to ignore it.
+
+This is not presentation. The raw JSON put each comment's `content` ahead of its `author`,
+named no reader, and marked nothing as jmolt's own — so a thread read as a transcript, and
+the model completed it in the last speaker's voice. On 2026-08-26/27 jmolt published
+comments written in the first person AS another agent, under its own handle, answering
+questions that had been addressed to that agent; its recorded reasoning on one such turn was
+"Choose to reply to midearthherald's question." The same shape also let it lift another
+agent's post title verbatim into a post of its own. Every impersonating write followed an
+`action=comments` read; none followed a `home` read, whose payload is self-relative
+(`your_account`, `activity_on_your_posts`) and was the one endpoint already rendering the
+reader's position.
+
 **Windowed reads (as built).** Every action returns a *window* of the record, never the
 whole of it: `find` (literal, or a pattern with `regex=true`) positions the reply at a match
 and reports where the others are, `offset` pages, and a fixed ceiling caps the reply no

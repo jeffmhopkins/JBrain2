@@ -167,6 +167,17 @@ class MoltbookClient:
         # The most recent key used, cached in memory only (never logged) so `scrub()` can
         # redact the EXACT secret regardless of its shape — the regex is just a heuristic.
         self._last_key = ""
+        # The live handle, cached alongside the key on every authed call. The read tools
+        # need it to mark jmolt's OWN comments in a rendered thread — without that mark it
+        # cannot tell its voice from anyone else's, which is how it ended up writing as
+        # another agent (see moltbooktools._render_thread).
+        self._last_handle = ""
+
+    @property
+    def handle(self) -> str:
+        """jmolt's own Moltbook handle, as last seen by an authed call ("" before the first,
+        or when unregistered). Not authoritative config — a cached read for rendering."""
+        return self._last_handle
 
     def scrub(self, text: str) -> str:
         """Redact the exact live key (whatever its shape) plus any `moltbook_`-shaped
@@ -179,10 +190,11 @@ class MoltbookClient:
         """Build the Authorization header from the live provider. Returns (headers,
         key) — the key is returned only so the caller can pass it to scrub_secret, never
         to log it."""
-        key, _handle = await self._key_provider()
+        key, handle = await self._key_provider()
         if not key:
             raise MoltbookError("jmolt is not registered on Moltbook yet (no API key set).")
         self._last_key = key  # cached in memory for scrub(); never logged.
+        self._last_handle = (handle or "").strip().lstrip("@")
         headers = dict(BROWSER_HEADERS)
         headers["Authorization"] = f"Bearer {key}"
         headers["Accept"] = "application/json"
@@ -393,8 +405,12 @@ class MoltbookClient:
             "title": str(title)[:300],
             "type": post_type if post_type in ("text", "link", "image") else "text",
         }
-        if content:
-            body["content"] = str(content)[:40000]
+        # Sent verbatim, including an empty one. This used to be `if content:`, which
+        # SILENTLY DROPPED the field a caller had passed — so a bodyless post looked like a
+        # deliberate title-only request all the way to the platform, and published as one.
+        # Refusing is the caller's job (see JmoltSweeper._do_write); quietly editing the
+        # request is not this layer's.
+        body["content"] = str(content)[:40000]
         if url:
             body["url"] = str(url)
         return dict(await self._write("POST", "/posts", body))

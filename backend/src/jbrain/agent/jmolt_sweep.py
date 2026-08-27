@@ -29,6 +29,7 @@ from typing import Any, Literal
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_guards import MIN_POST_BODY_CHARS
 from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.agent.moltbook_verify import solve_challenge
 from jbrain.db.session import SessionContext, scoped_session
@@ -214,6 +215,16 @@ class JmoltSweep:
     async def _do_write(self, row: OutboxRow) -> Any:
         p = row.payload
         if row.kind == "post":
+            # The outbox is a durable queue that outlives any handler guard: rows staged
+            # before a check existed, or by some future path that skips the tool, still get
+            # here. One did — a bare title with no body published to the live site because
+            # the stage-time minimum did not exist yet and the client silently dropped the
+            # empty field rather than refusing. Refuse at the boundary too, so the row fails
+            # visibly with a reason instead of going out as a headline with nothing under it.
+            if len(str(p.get("content", "")).strip()) < MIN_POST_BODY_CHARS:
+                raise MoltbookError(
+                    "refusing to publish a post with no body (a title is not a post)", status=422
+                )
             return await self._client.create_post(
                 str(p.get("submolt_name", "")),
                 str(p.get("title", "")),

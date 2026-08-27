@@ -74,12 +74,27 @@ while True:
     if reflection_due: break                            # the reflection sitting closes the night
 ```
 
-- **Empty-sitting retry** — gpt-oss's harmony format intermittently ends a turn with an
-  empty *final* channel right after its analysis: the model "wakes, thinks a half-sentence,
-  and stops" with no tool call and no text (`_is_empty_sitting`: no final text, ≤1 model
-  step, `end_turn`). A recent night lost ~1/3 of its sittings this way. Such a sitting is
-  re-run — with a concrete first-move nudge — WITHOUT consuming a slot (the count is undone),
-  bounded by `JMOLT_MAX_EMPTY_RETRIES` so a wedged model can't spin the hour on retries.
+- **Empty-sitting retry** — a sitting that comes back with no final text, ≤1 model step and
+  `end_turn`, or that billed **zero tokens** (`_is_empty_sitting`), is re-run with a concrete
+  first-move nudge WITHOUT consuming a slot. Bounded by `JMOLT_MAX_EMPTY_RETRIES`
+  **consecutive** empties, reset by any productive sitting, so a wedged model can't spin the
+  hour while an intermittent fault costs nothing.
+
+  **What these actually are — the earlier explanation here was wrong.** This was recorded as
+  "gpt-oss's harmony format intermittently ends a turn with an empty final channel; the model
+  wakes, thinks a half-sentence, and stops." It does not. The model produced its tool call
+  every time; **our own adapter threw it away.** llama.cpp cut the SSE body after the
+  reasoning deltas and before the `tool_calls`/`finish_reason`/usage chunks, and
+  `openai_compat.converse_stream` yielded its final `LlmTurn` unconditionally — `stop_reason`
+  defaulting to `end_turn`, usage defaulting to zero — so a stream cut mid-generation was
+  byte-identical, to every caller, to a model choosing to say nothing. Measured on the box on
+  2026-08-27: nine of sixteen sittings, each 1.70–1.76 s (the same wall-clock as a *successful*
+  first step), llama-swap logging `no valid JSON data found in stream` 1:1 with them, truncated
+  bodies at 2,274 bytes against 3,802 for the successful ones — the missing ~1.5 KB being
+  exactly the tool call. The same call **non-streaming succeeded 12/12** against the same model,
+  tools and prompt. The zero `cost_tokens` was the tell, and it was real: no usage chunk ever
+  arrived. The adapter now raises `LlmStreamTruncatedError` when a stream ends without a
+  `finish_reason`, and the router recovers the round once, non-streaming.
 
 - **`time_header`** — a small, inert block built from the **local trusted clock**
   (M4), injected at the top of every sitting: "You woke at 23:00. It is now 23:34.
@@ -112,12 +127,25 @@ while True:
   leave itself real threads for tomorrow — rather than spend the whole hour reacting to
   the feed and leaving a bare activity log. Recovered sitting-capacity (from the empty
   retry) buys reflection, not more comments.
-- **Note + pending ride every sitting** — the owner's advisory note and a one-line
-  list of what jmolt has already staged (`_pending_block`, from the outbox) are
+- **Note + done-tonight ride every sitting** — the owner's advisory note and a list of what
+  jmolt has already DONE tonight (`_done_tonight_block`, from the **action ledger**) are
   re-injected into every sitting's prologue, not just sitting 1. Each sitting is
-  fresh-context with no memory of the last, so a note or a pending-action list left only
-  on sitting 1 is gone for the rest of the night; re-supplying them is what lets a note
-  shape the whole hour and stops a fresh sitting re-staging what it cannot see it queued.
+  fresh-context with no memory of the last, so anything left only on sitting 1 is gone for
+  the rest of the night.
+
+  The block lists **targets, not counts**, and is scoped to the night by `woke_at`. It
+  replaced a counts-by-kind read of the outbox that could not do the job: "2 comments, 1
+  vote" is a number, and a number cannot stop a duplicate — only *which post* can. That read
+  also filtered to `queued`/`released`, and with the drip publishing 20–45 s after staging,
+  rows fell out of it almost immediately and it reported near-nothing.
+
+  The deeper reason it has to exist at all: **jmolt's writes are invisible to its reads.**
+  Writes go stage → release → drip while reads go to the live site, so within a night nothing
+  it has written comes back to it. Measured on 2026-08-26 it read one thread nine times
+  across five sittings, was shown the same two comments by other agents every time, and put
+  seventeen of its own on that post without ever seeing one of them. The ledger is the only
+  exact account of what it did, and it was right the whole time — jmolt just had no way to
+  read it.
 - **Per-sitting bound** — each sitting is capped by the existing per-turn step/cost
   guardrails plus a wall-clock slice, so no single sitting's context can approach
   the window. The outer 3600 s watchdog stays as the hard ceiling.

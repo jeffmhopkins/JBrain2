@@ -12,9 +12,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import httpx
+import structlog
 
 from jbrain.llm import local_catalog
-from jbrain.llm.errors import LlmBadResponseError
+from jbrain.llm.errors import LlmBadResponseError, LlmStreamTruncatedError
 from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -34,6 +35,8 @@ from jbrain.llm.types import (
     UserMessage,
     parse_json_payload,
 )
+
+log = structlog.get_logger()
 
 DEFAULT_TIMEOUT = 120.0
 
@@ -401,6 +404,10 @@ class OpenAiCompatClient:
         input_tokens = 0
         output_tokens = 0
         stop: StopReason = "end_turn"
+        # Whether the provider ever told us the turn was over. A stream that ends without
+        # it was cut mid-generation, and the difference is invisible in the deltas — see
+        # the raise below.
+        saw_finish = False
         async for event in events:
             usage_body = event.get("usage")
             if usage_body:
@@ -423,7 +430,29 @@ class OpenAiCompatClient:
                     self._accumulate_tool_call(calls_by_index, tc)
                 finish = choice.get("finish_reason")
                 if finish:
+                    saw_finish = True
                     stop = _OPENAI_STOP.get(finish, "end_turn")
+        if not saw_finish:
+            # The body ended cleanly but early: no finish_reason ever arrived, so the turn
+            # was cut mid-generation and whatever we accumulated is a fragment. Yielding it
+            # would be indistinguishable from a real turn — `stop` still reads "end_turn"
+            # from its default and usage is zero — which is precisely how this went unnoticed
+            # in production: an agent's tool call was dropped on the wire and the run was
+            # recorded as a successful empty turn. Refuse rather than hand back a fragment
+            # wearing a completed turn's clothes. Body-free log, per retry.py's rule; the
+            # SHAPE of what survived is the diagnostic, never its text.
+            log.warning(
+                "llm.stream_truncated",
+                provider=self.provider,
+                model=model,
+                reasoning_chars=sum(len(p) for p in reasoning_parts),
+                text_chars=sum(len(p) for p in text_parts),
+                tool_calls=len(calls_by_index),
+            )
+            raise LlmStreamTruncatedError(
+                f"{self.provider} stream ended without a finish_reason "
+                f"({len(calls_by_index)} partial tool call(s) discarded)"
+            )
         tool_calls = tuple(self._finish_tool_call(buf) for _, buf in sorted(calls_by_index.items()))
         yield LlmTurn(
             text="".join(text_parts),
