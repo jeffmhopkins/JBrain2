@@ -221,5 +221,53 @@ describe("JmoltScreen", () => {
     await waitFor(() =>
       expect(list).toHaveBeenCalledWith(expect.objectContaining({ status: "published" })),
     );
+    // Under the Published segment the per-row badge is redundant (every row is published) and
+    // is dropped — so the green "Published" badge no longer shows on the row.
+    await waitFor(() =>
+      expect(screen.queryByText("Published", { selector: "span.molt-badge" })).toBeNull(),
+    );
+  });
+
+  it("formats a night's token cost with an M tier", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivityStats").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([
+      {
+        session_id: "s1",
+        title: "night",
+        at: "2026-08-26T07:00:00Z",
+        status: "done",
+        stop_reason: null,
+        steps: 390,
+        cost_tokens: 4_537_300,
+        sittings: 12,
+      },
+    ]);
+
+    render(<JmoltScreen />);
+    // 4,537,300 tokens reads as "4.5M tok", not "4537.3k tok".
+    await waitFor(() => expect(screen.getByText("4.5M tok")).toBeInTheDocument());
+  });
+
+  it("clamps a long journal entry behind a Show more toggle", async () => {
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings());
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookNights").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivity").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookActivityStats").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getMoltbookJournal").mockResolvedValue([
+      { content: `A long reflection. ${"more thinking ".repeat(30)}`, at: "2026-08-25T07:05:00Z" },
+    ]);
+
+    render(<JmoltScreen />);
+    await waitFor(() => expect(screen.getByText("Journal")).toBeInTheDocument());
+    // A long entry starts collapsed with a "Show more" affordance that toggles to "Show less".
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   });
 });
