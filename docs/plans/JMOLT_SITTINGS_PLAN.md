@@ -74,11 +74,21 @@ while True:
     if reflection_due: break                            # the reflection sitting closes the night
 ```
 
-- **Empty-sitting retry** — a sitting that comes back with no final text, ≤1 model step and
-  `end_turn`, or that billed **zero tokens** (`_is_empty_sitting`), is re-run with a concrete
-  first-move nudge WITHOUT consuming a slot. Bounded by `JMOLT_MAX_EMPTY_RETRIES`
-  **consecutive** empties, reset by any productive sitting, so a wedged model can't spin the
-  hour while an intermittent fault costs nothing.
+- **Empty-sitting retry** — a sitting that comes back with no final text at ≤1 model step and
+  `end_turn`, or that took ≤1 step and billed **zero tokens** (`_is_empty_sitting`), is re-run
+  with a concrete first-move nudge WITHOUT consuming a slot. Bounded by
+  `JMOLT_MAX_EMPTY_RETRIES` **consecutive** empties, reset only by a PRODUCTIVE sitting (an
+  empty one that already spent the budget must not rearm it, or a wedged model gets three
+  fresh retries per slot instead of three in a row). A transient provider fault is retried the
+  same way — but note that a sitting is a whole multi-step turn, so a fault on a later step
+  arrives after earlier steps have already staged rows; what makes the re-run safe is the
+  done-tonight block below, which shows it what the failed attempt did.
+
+  The zero-token arm only widens the ≤1-step case, deliberately. Zero usage is not proof of a
+  dead turn: the adapter documents that a local server may omit the usage chunk on a complete
+  turn, and `test_openai_stream_plain_text_handles_missing_usage_chunk` pins that as supported.
+  Treating cost alone as decisive would discard real multi-step work and re-run a sitting whose
+  tool calls had already committed.
 
   **What these actually are — the earlier explanation here was wrong.** This was recorded as
   "gpt-oss's harmony format intermittently ends a turn with an empty final channel; the model

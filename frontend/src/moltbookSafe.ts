@@ -74,9 +74,16 @@ export function outboxBody(payload: Record<string, unknown>): string {
   return "";
 }
 
-/** True for a staged POST carrying no body — the shape that must never be released. */
+/** True for a staged POST the owner would see as a bare headline — the shape that must
+ * never be released.
+ *
+ * A body that merely REPEATS the title counts: `outboxBody` suppresses it as a duplicate,
+ * so such a post renders in the queue exactly like a bodyless one. Flagging only the empty
+ * case would leave the identical-looking row releasable, which is the failure this pair
+ * exists to close. */
 export function isBodylessPost(kind: string, payload: Record<string, unknown>): boolean {
   if (kind !== "post") return false;
   const content = typeof payload.content === "string" ? payload.content.trim() : "";
-  return content.length === 0;
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  return content.length === 0 || content === title;
 }

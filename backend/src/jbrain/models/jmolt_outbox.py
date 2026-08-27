@@ -138,9 +138,16 @@ class OutboxRepo:
 
         Read from the OUTBOX rather than the action ledger because only the outbox carries
         the payload, and `parent_id` is what separates a genuine threaded reply from a second
-        opening remark on the same post. Counts every status: a published comment is still one
-        jmolt made, and the drip publishes within a minute of staging, so a status filter here
-        would blind the cap almost immediately."""
+        opening remark on the same post.
+
+        Counts `queued`, `released` and `published` — a published comment is still one jmolt
+        made, and the drip publishes within a minute of staging, so filtering to unpublished
+        rows would blind the cap almost immediately. Excludes `failed` and `discarded`,
+        because neither is a comment jmolt actually placed: on the live box six of seven
+        failures were the platform rate-limiting us, and counting those would let one 429
+        permanently burn a post's top-level allowance and then tell jmolt "you already
+        commented here" about something nobody can see. A draft the owner discarded is the
+        owner's decision, not jmolt's quota."""
         row = (
             await session.execute(
                 text(
@@ -148,6 +155,7 @@ class OutboxRepo:
                     " count(*) FILTER (WHERE payload->>'parent_id' IS NULL) AS top_level"
                     " FROM app.jmolt_outbox WHERE principal_id = :pid AND kind = 'comment'"
                     " AND payload->>'post_id' = :post AND created_at >= :since"
+                    " AND status IN ('queued', 'released', 'published')"
                 ),
                 {"pid": principal_id, "post": post_id, "since": since},
             )

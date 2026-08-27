@@ -88,6 +88,7 @@ from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
 from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmBadResponseError, LlmRouter
+from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.types import LlmResult, LlmTurn, TextChunk, UserMessage
 from jbrain.web.federal_register import FederalRegisterClient, Notice
@@ -2967,23 +2968,35 @@ class DeepResearchService:
         parts: list[str] = []
         since = 0
         final: LlmTurn | None = None
-        async for part in self._router.converse_stream(
-            _TASK,
-            system=_SYNTH.render(),
-            messages=[UserMessage(text=user_text)],
-            max_tokens=_SYNTH_MAX_TOKENS,
-        ):
-            if isinstance(part, TextChunk):
-                if part.text:
-                    parts.append(part.text)
-                    since += len(part.text)
-                    if since >= _SYNTH_PREVIEW_STRIDE:
-                        since = 0
-                        self._write_preview(ctx, step, label, "".join(parts))
-            elif isinstance(part, LlmTurn):
-                final = part
+        try:
+            async for part in self._router.converse_stream(
+                _TASK,
+                system=_SYNTH.render(),
+                messages=[UserMessage(text=user_text)],
+                max_tokens=_SYNTH_MAX_TOKENS,
+            ):
+                if isinstance(part, TextChunk):
+                    if part.text:
+                        parts.append(part.text)
+                        since += len(part.text)
+                        if since >= _SYNTH_PREVIEW_STRIDE:
+                            since = 0
+                            self._write_preview(ctx, step, label, "".join(parts))
+                elif isinstance(part, LlmTurn):
+                    final = part
+        except LlmStreamTruncatedError:
+            # The stream was cut mid-report. The router cannot recover a round whose text has
+            # already streamed — a retry would replay it to the reader — so the draft we have
+            # is all there is. Keep it: this is the longest generation on the box and the end
+            # of a run that has already spent minutes and many fetches. A slightly short
+            # report is what this used to degrade to, and losing the whole run instead would
+            # be a worse answer to a truncation, not a safer one.
+            if not "".join(parts).strip():
+                raise  # nothing streamed at all — there is no report to salvage
+            log.warning("deep_research.synth_truncated", chars=len("".join(parts)))
         # The closing turn carries the authoritative text; fall back to the streamed
-        # accumulation if it's empty. Flush the full report as the final preview.
+        # accumulation if it's empty (or if the stream was cut and there is no closing turn).
+        # Flush the full report as the final preview.
         report = (final.text if final and final.text.strip() else "".join(parts)).strip()
         self._write_preview(ctx, step, label, report)
         if final is not None:

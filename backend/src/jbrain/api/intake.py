@@ -14,6 +14,7 @@ from contextlib import suppress
 from datetime import UTC, datetime  # noqa: TC003 - Pydantic needs the runtime symbol
 from typing import Annotated, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -31,6 +32,9 @@ from jbrain.intake.materialize import materialize_submission
 from jbrain.intake.persona import brief_from_snapshot, build_intake_system_prompt
 from jbrain.intake.service import IntakeLinkConfig, IntakeRepo, IntakeSessionState
 from jbrain.llm import LlmRouter
+
+log = structlog.get_logger()
+
 
 router = APIRouter()
 
@@ -477,6 +481,14 @@ async def intake_chat(
                 elif isinstance(ev, UsageEvent):
                     cost += ev.input_tokens + ev.output_tokens
                 yield f"data: {ev.model_dump_json()}\n\n".encode()
+        except Exception as exc:  # noqa: BLE001 — a third party is watching this stream
+            # The turn was already COUNTED at claim, so an exception escaping this generator
+            # would burn it AND abort the SSE mid-flight with no terminal event — the
+            # recipient's browser just sees the connection die. Settle it as a terminal
+            # `done` instead, the way /chat does. (Reachable since the adapter began raising
+            # on a truncated stream rather than yielding a silently-empty turn.)
+            log.warning("intake.stream_failed", error=repr(exc))
+            yield b'data: {"type": "done", "stop_reason": "error"}\n\n'
         finally:
             # Always release the turn lock and record the result — even on a mid-stream
             # disconnect. The turn was already COUNTED at claim, so a dropped turn can't

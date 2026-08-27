@@ -9,11 +9,18 @@ docstring in `jmolt_night.py`.
 from jbrain.agent.jmolt_night import _is_empty_sitting
 
 
-def test_zero_cost_is_empty_whatever_the_steps_say() -> None:
-    # A turn that billed nothing did not happen — on this box a missing usage chunk means
-    # the stream was cut before the model's real output reached us. Nine such turns were
-    # recorded as successful nights' work before this arm existed.
-    assert _is_empty_sitting("I looked around.", 4, "end_turn", 0)
+def test_zero_cost_widens_the_single_step_case() -> None:
+    # A single-step turn that billed nothing has no evidence of work in either direction.
+    assert _is_empty_sitting("", 1, "end_turn", 0)
+    assert _is_empty_sitting("a stray word", 1, "end_turn", 0)
+
+
+def test_zero_cost_does_not_discard_multi_step_work() -> None:
+    # Zero usage is ALSO legitimate: the adapter documents that a local server may omit the
+    # usage chunk on a complete turn, and test_openai_stream_plain_text_handles_missing_usage
+    # _chunk pins that as supported. Treating cost alone as decisive would re-run a sitting
+    # whose tool calls had already staged rows.
+    assert not _is_empty_sitting("I looked around.", 4, "end_turn", 0)
 
 
 def test_a_real_turn_of_the_same_shape_is_not_empty() -> None:
@@ -28,8 +35,10 @@ def test_unknown_cost_falls_back_to_the_text_and_step_reading() -> None:
 
 
 def test_a_tool_call_is_never_empty() -> None:
-    # steps>1 means a tool ran, which is evidence of a real sitting however quiet it was.
+    # steps>1 means a tool ran, which is evidence of a real sitting however quiet it was —
+    # and re-running it would repeat whatever that tool committed.
     assert not _is_empty_sitting("", 2, "end_turn", 500)
+    assert not _is_empty_sitting("", 2, "end_turn", 0)
 
 
 def test_an_abnormal_stop_is_not_treated_as_the_empty_quirk() -> None:

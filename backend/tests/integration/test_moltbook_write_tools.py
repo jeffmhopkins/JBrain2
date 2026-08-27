@@ -221,6 +221,25 @@ async def test_the_per_post_cap_does_not_affect_a_different_post(
     assert "Staged" in out
 
 
+async def test_a_rate_limited_comment_does_not_burn_the_posts_allowance(
+    maker: async_sessionmaker,
+) -> None:
+    # Live evidence: six of seven comment failures on the box were the platform throttling
+    # us. Counting those would let one 429 permanently spend a post's top-level allowance and
+    # then tell jmolt it had already commented on something nobody can see.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    await h["moltbook_comment"]({"post_id": "p1", "content": "an opening question"}, _ctx(pid))
+    async with scoped_session(
+        maker, SessionContext(principal_kind="owner", domain_scopes=("jmolt",))
+    ) as s:
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
+        await OutboxRepo().set_status(s, str(rows[0].id), "failed", error="rate limited")
+
+    retry = await h["moltbook_comment"]({"post_id": "p1", "content": "asking again"}, _ctx(pid))
+    assert "Staged" in retry
+
+
 async def test_comments_are_capped_per_night(maker: async_sessionmaker) -> None:
     # Comments had no brake — a drifted night once staged 30. The per-night cap holds at
     # stage time; the write past the limit is refused, not queued.

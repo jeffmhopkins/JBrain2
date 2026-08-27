@@ -30,6 +30,7 @@ from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
 from jbrain.llm import LlmRouter
+from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.types import LlmTurn, ReasoningChunk, TextChunk, UserMessage
 from jbrain.web.feeds import FeedClient
@@ -498,30 +499,40 @@ class DailyBriefingBuilder:
             tail = reason[-_REASON_PREVIEW_TAIL:] if reason else ""
             on_stream(draft or None, tail or None)
 
-        async for part in self._router.converse_stream(
-            _TASK,
-            system=_SYNTH.render(),
-            messages=[UserMessage(text=user_text)],
-            max_tokens=_WRITER_MAX_TOKENS,
-        ):
-            if isinstance(part, TextChunk):
-                if part.text:
-                    parts.append(part.text)
-                    since += len(part.text)
-                    if since >= _WRITE_PREVIEW_STRIDE:
-                        since = 0
-                        _flush()
-            elif isinstance(part, ReasoningChunk):
-                # The thinking channel: stream its tail live so a long think shows the model working
-                # rather than a blank pane. Only the tail is sent (the trace can be megabytes).
-                if part.text:
-                    reason_parts.append(part.text)
-                    rsince += len(part.text)
-                    if rsince >= _REASON_PREVIEW_STRIDE:
-                        rsince = 0
-                        _flush()
-            elif isinstance(part, LlmTurn):
-                final = part
+        try:
+            async for part in self._router.converse_stream(
+                _TASK,
+                system=_SYNTH.render(),
+                messages=[UserMessage(text=user_text)],
+                max_tokens=_WRITER_MAX_TOKENS,
+            ):
+                if isinstance(part, TextChunk):
+                    if part.text:
+                        parts.append(part.text)
+                        since += len(part.text)
+                        if since >= _WRITE_PREVIEW_STRIDE:
+                            since = 0
+                            _flush()
+                elif isinstance(part, ReasoningChunk):
+                    # The thinking channel: stream its tail live so a long think shows the
+                    # model working rather than a blank pane. Only the tail is sent (the
+                    # trace can be megabytes).
+                    if part.text:
+                        reason_parts.append(part.text)
+                        rsince += len(part.text)
+                        if rsince >= _REASON_PREVIEW_STRIDE:
+                            rsince = 0
+                            _flush()
+                elif isinstance(part, LlmTurn):
+                    final = part
+        except LlmStreamTruncatedError:
+            # Cut mid-draft. The router cannot recover a round whose text already streamed, so
+            # the partial draft is all there is — keep it and let the caller's `writer_failed`
+            # diagnostic gate judge it, which is the loud, actionable path this module built
+            # for exactly this. Raising instead would bypass that gate with a raw exception.
+            if not "".join(parts).strip():
+                raise
+            log.warning("daily_briefing.writer_truncated", chars=len("".join(parts)))
         # The closing turn carries the authoritative text; fall back to the streamed accumulation
         # if it's empty. Flush the full draft (and closing reasoning tail) as the final frame.
         report = (final.text if final and final.text.strip() else "".join(parts)).strip()

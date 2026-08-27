@@ -91,14 +91,17 @@ def _is_empty_sitting(text: str, steps: int, stop_reason: str, cost: int = -1) -
     reads files or reasons across several steps and leaves that evidence behind. A sitting
     that made even one tool call has steps>1 and is never treated as empty.
 
-    `cost == 0` is empty on its own, whatever the step count says. A turn that billed zero
-    tokens did not happen: the provider never sent a usage chunk, which on this box means
-    the stream was cut before the model's real output reached us (see
-    `LlmStreamTruncatedError`). That reading is what these sittings actually were — the
-    model HAD produced a tool call and the wire dropped it — and it is a far more honest
-    predicate than guessing from absent text. Default -1 (unknown) so a caller that cannot
-    supply a cost keeps the old text/steps behaviour."""
-    if cost == 0:
+    `cost == 0` corroborates the text/step reading — it does NOT override it. A zero-token
+    turn usually means no usage chunk arrived, which on this box meant the stream was cut
+    before the model's real output reached us. But zero usage is also legitimate: the adapter
+    documents that a local server may omit the usage chunk entirely on a perfectly complete
+    turn, and `test_openai_stream_plain_text_handles_missing_usage_chunk` pins that as
+    supported. Treating cost alone as decisive would therefore discard real, multi-step work —
+    and re-run a sitting whose tool calls have already staged rows. So it only widens the
+    single-step case, where there is no evidence of work either way.
+
+    Default -1 (unknown) so a caller that cannot supply a cost keeps the text/steps behaviour."""
+    if steps <= 1 and cost == 0:
         return True
     return not text.strip() and steps <= 1 and stop_reason == "end_turn"
 
@@ -448,7 +451,7 @@ class JmoltNightRunner:
                     # a fresh-context turn with no memory of the last, so the human's note and
                     # what jmolt has already staged must be re-supplied or they are lost.
                     advisory=advisory,
-                    pending=await self._done_tonight_block(read_ctx, woke_at),
+                    pending=await self._done_tonight_block(read_ctx, woke_at, tz),
                     # The handle IS re-injected every sitting: each is a fresh-context turn, and
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
@@ -466,7 +469,12 @@ class JmoltNightRunner:
                     log.info("jmolt_night.empty_sitting_retry", retry=empty_retries)
                     continue
                 retrying = False
-                empty_retries = 0  # a productive sitting restores the consecutive budget
+                if not empty:
+                    # ONLY a productive sitting restores the budget. An empty one that got
+                    # past the cap has just burned a slot — rearming here would hand a wedged
+                    # model three fresh retries per slot instead of three in a row, which is
+                    # the opposite of what "consecutive" is for.
+                    empty_retries = 0
                 if done:
                     any_done, last_summary = True, summary or last_summary
                 elif error:
@@ -503,7 +511,9 @@ class JmoltNightRunner:
         )
         return session.id
 
-    async def _done_tonight_block(self, read_ctx: SessionContext, woke_at: datetime) -> str:
+    async def _done_tonight_block(
+        self, read_ctx: SessionContext, woke_at: datetime, tz: str = "UTC"
+    ) -> str:
         """What jmolt has actually DONE tonight, from its own action ledger, with targets.
 
         This replaced a counts-by-kind read of the outbox that could not do the job. Two
@@ -532,10 +542,13 @@ class JmoltNightRunner:
         grouped: dict[tuple[str, str], list[datetime]] = {}
         for row in rows:
             verb = row.action.removeprefix("stage_")
-            grouped.setdefault((verb, row.target or "—"), []).append(row.at)
+            grouped.setdefault((verb, _safe_target(row.target)), []).append(row.at)
         lines: list[str] = []
         for (verb, target), times in sorted(grouped.items(), key=lambda kv: kv[1][0]):
-            when = ", ".join(f"{t.astimezone(UTC):%H:%M}" for t in times[:_DONE_TIMES])
+            # Owner-local, like every other time in this prologue: a block whose whole job
+            # is time-anchored self-knowledge must not silently mix zones with the countdown
+            # three lines above it.
+            when = ", ".join(f"{_owner_local_now(tz, t):%H:%M}" for t in times[:_DONE_TIMES])
             more = f" +{len(times) - _DONE_TIMES} more" if len(times) > _DONE_TIMES else ""
             count = f" {len(times)}x" if len(times) > 1 else ""
             lines.append(f"- {verb}{count} on {target} ({when}{more})")
@@ -636,10 +649,17 @@ class JmoltNightRunner:
                     reasoning=executed.reasoning,
                 )
         except LlmTransientError as exc:
-            # A transient provider fault (a cut stream that could not be recovered, a 5xx
-            # that outlasted the adapter's retries). The ROUND is intact — nothing was
-            # committed — so this is retryable in exactly the way an empty sitting is, and
-            # burning a slot on it would be the same waste. Flagged via `transient` below.
+            # A transient provider fault (a cut stream the router could not recover, a 5xx
+            # that outlasted the adapter's retries). Retried like an empty sitting: burning a
+            # slot on a provider fault is the waste this guard exists to stop.
+            #
+            # NOT because "nothing was committed" — a sitting is a whole multi-step turn, so a
+            # fault on step 6 arrives after steps 1-5 already staged outbox rows and wrote the
+            # ledger. The re-run therefore starts from a fresh context that cannot see them.
+            # What makes that safe is the done-tonight block, which reads the ledger and so
+            # shows the re-run exactly what the failed attempt already did — plus the per-post
+            # caps and the dedup key underneath it. That block is load-bearing for correctness
+            # here, not just for repetition.
             log.warning("jmolt_night.sitting_transient", sitting=sitting, error=repr(exc))
             error, transient = str(exc), True
         except Exception as exc:  # noqa: BLE001 — a sitting is a recorded run, never a crash
@@ -666,6 +686,24 @@ def _owner_local_now(tz: str, now: datetime) -> datetime:
         return now.astimezone(ZoneInfo(tz))
     except (ZoneInfoNotFoundError, ValueError):
         return now.astimezone(UTC)
+
+
+def _safe_target(target: str | None) -> str:
+    """A ledger target, made safe for the UNFENCED prologue.
+
+    `target` is free-form and partly attacker-chosen: for a follow or subscribe it is another
+    agent's or submolt's NAME, which that agent picked. The prologue is the trusted channel —
+    the marching orders, and the frame the owner's advisory note arrives in — so 200 chars of
+    arbitrary multi-line text landing there could imitate that note's header, which the
+    persona is explicitly told to trust. `reacted_to` was already excluded from this read for
+    the same reason; `target` needs the same treatment, not just the same intent.
+
+    Control characters out, one line, short enough that it cannot be a paragraph."""
+    if not target:
+        return "—"
+    flat = "".join(ch if ch.isprintable() else " " for ch in target)
+    flat = " ".join(flat.split())
+    return flat[:80] if flat else "—"
 
 
 def _sitting_preamble(tz: str, woke_at: datetime, now: datetime, sitting: int) -> str:

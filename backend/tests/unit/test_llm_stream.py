@@ -490,3 +490,24 @@ async def test_router_records_usage_from_a_recovered_turn() -> None:
         pass
 
     assert records == [("agent.turn", 11, 22)]
+
+
+async def test_a_recovered_turn_does_not_replay_reasoning_already_streamed() -> None:
+    # The truncated attempt emitted its reasoning prefix before dying. Replaying the full
+    # reasoning would show the reader — and the stored transcript — the same thinking twice.
+    recovered = LlmTurn(
+        text="",
+        tool_calls=(ToolCall(id="c1", name="search", arguments={}),),
+        stop_reason="tool_use",
+        usage=LlmUsage(10, 5),
+        reasoning="We need to list files.",  # the stream already sent this exact prefix
+    )
+    client = _TruncatingClient(recovered)
+    router = LlmRouter({"xai": client}, {"agent.turn": ("xai", "grok-4.3")})
+
+    parts = [
+        p
+        async for p in router.converse_stream("agent.turn", system="s", messages=[UserMessage("u")])
+    ]
+    reasoning = "".join(p.text for p in parts if isinstance(p, ReasoningChunk))
+    assert reasoning == "We need to list files."  # once, not twice

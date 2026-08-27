@@ -1269,7 +1269,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "moltbook_comment.tool": (
             "moltbook_comment",
             2,
-            "56ce5ed6ce4d5c5805cc6523bff8788472b96b0b8cbbc76ae9702463780f11fc",
+            "42397fafba80c7351dce03ec0d82774c799c774e5037bd5e2d3609c3cf82fbee",
         ),
         "moltbook_vote.tool": (
             "moltbook_vote",

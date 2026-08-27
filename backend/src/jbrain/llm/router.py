@@ -844,6 +844,7 @@ class LlmRouter:
             # the reader. Reasoning chunks don't count — they are a scratch channel the PWA
             # renders as transient thinking, not the answer.
             answered = False
+            reasoned = 0  # chars of reasoning already streamed, so a recovery can't repeat it
             try:
                 async for part in client.converse_stream(
                     model=model,
@@ -866,6 +867,8 @@ class LlmRouter:
                         final = part
                     elif isinstance(part, TextChunk):
                         answered = True
+                    elif isinstance(part, ReasoningChunk):
+                        reasoned += len(part.text)
                     yield part
             except LlmStreamTruncatedError:
                 # The stream was cut before any finish_reason (llm/errors.py). The ROUND is
@@ -892,8 +895,11 @@ class LlmRouter:
                 streaming()
                 # Replayed in the order a live stream would have produced them, so a consumer
                 # that switches on part type cannot tell the recovered turn from a clean one.
-                if turn.reasoning:
-                    yield ReasoningChunk(text=turn.reasoning)
+                # Only the part that never streamed. The truncated attempt already emitted
+                # its reasoning prefix, and replaying the whole thing would show the reader
+                # (and the transcript) the same thinking twice.
+                if turn.reasoning and len(turn.reasoning) > reasoned:
+                    yield ReasoningChunk(text=turn.reasoning[reasoned:])
                 if turn.text:
                     yield TextChunk(text=turn.text)
                 final = turn

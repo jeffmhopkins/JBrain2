@@ -536,15 +536,15 @@ class _AlternatingEmptyExecutor(_PrologueCapturingExecutor):
 
 
 class _ZeroCostExecutor(_FakeExecutor):
-    """A turn that LOOKS productive — real text, several steps — but billed nothing. On the
-    box that means the provider never sent a usage chunk, i.e. the stream was cut and the
-    model's real output never reached us."""
+    """A single-step turn carrying text but billing nothing — no usage chunk arrived, which
+    on this box meant the stream was cut before the model's real output did. Multi-step
+    zero-cost turns are deliberately NOT empty: see `_is_empty_sitting`."""
 
     async def run_turn(self, **_kwargs: object) -> ExecutedTurn:
         self.calls += 1
         return ExecutedTurn(
             result=AgentResult(
-                text="I looked around.", stop_reason="end_turn", steps=4, cost_tokens=0
+                text="I looked around.", stop_reason="end_turn", steps=1, cost_tokens=0
             ),
             tools=[],
             reasoning="",
@@ -582,18 +582,34 @@ async def test_empty_retry_budget_resets_after_a_productive_sitting(
     executor = _AlternatingEmptyExecutor()
     await _runner(maker, store, executor, clock=_stepped_clock(200)).run(owner)
 
-    # Every empty was retried rather than counted, so the night still reaches its full
-    # feed budget plus the closing sitting — it is not cut short by the intermittent fault.
-    productive = [p for p in executor.prologues if "produced nothing" not in p]
-    assert len(productive) == JMOLT_MAX_SITTINGS + 1
+    # Every empty was retried rather than counted. Under the OLD night-wide budget the
+    # alternating fault would spend all three retries by call 6 and then burn a real slot on
+    # every subsequent empty; with a consecutive budget none of them is ever counted, so the
+    # night is bounded by its clock rather than eaten by the fault.
+    retried = [p for p in executor.prologues if "produced nothing" in p]
+    assert len(retried) == len(executor.prologues) // 2  # every empty got a retry, none counted
     assert "not for the feed" in executor.prologues[-1]  # and it still closes on reflection
+
+
+async def test_a_wedged_model_does_not_rearm_the_retry_budget_each_slot(
+    maker: async_sessionmaker,
+) -> None:
+    # "Consecutive" has to mean consecutive. Resetting after ANY sitting — including an empty
+    # one that already burned a slot — would give a permanently wedged model three fresh
+    # retries per slot (~48 attempts across the budget) instead of three in a row.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _AlwaysEmptyExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
+
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES + 1
 
 
 async def test_a_zero_cost_sitting_is_retried_not_counted(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     store = FakeSettingsStore()
     executor = _ZeroCostExecutor()
-    await _runner(maker, store, executor, clock=_stepped_clock(300)).run(owner)
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
 
     # It looks productive but billed nothing, so it is treated as empty: retried, then
     # bounded by the consecutive cap rather than spending the night.
@@ -622,8 +638,10 @@ async def test_empty_sittings_stop_retrying_at_the_cap(maker: async_sessionmaker
     owner = await _owner(maker)
     store = FakeSettingsStore()
     executor = _AlwaysEmptyExecutor()
-    # A tight clock leaves many slots; the terminating guard here is the retry cap, not time.
-    await _runner(maker, store, executor, clock=_stepped_clock(300)).run(owner)
+    # A 60s step leaves ~55 iterations of clock headroom, so the retry cap — not the time
+    # bound — is what has to stop this night. At 300s the clock ended it first and the
+    # assertion below passed without ever exercising the cap.
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
 
     # Bounded: at most the sitting budget plus the extra retries — never an unbounded spin.
     assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES
@@ -740,30 +758,6 @@ async def test_the_night_never_exceeds_the_budget_plus_its_closing_sitting(
     await _runner(maker, store, executor, clock=_stepped_clock(1)).run(owner)
 
     assert executor.calls == JMOLT_MAX_SITTINGS + 1
-
-
-async def test_pending_staged_actions_ride_each_sitting(maker: async_sessionmaker) -> None:
-    # A fresh-context sitting can't see its own pending outbox, so what jmolt has already
-    # staged is re-supplied in the prologue — the guard against re-staging the same action.
-    owner = await _owner(maker)
-    store = FakeSettingsStore()
-    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="comment", payload={"post_id": "p1", "content": "hi"}
-        )
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="comment", payload={"post_id": "p2", "content": "yo"}
-        )
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="vote", payload={"target_id": "t1", "up": True}
-        )
-    executor = _PrologueCapturingExecutor()
-    await _runner(maker, store, executor).run(owner)  # one non-reflection sitting
-
-    first = executor.prologues[0]
-    assert "already staged" in first
-    assert "2 comments" in first and "1 vote" in first
-    assert "do not stage them again" in first
 
 
 async def test_done_tonight_block_names_targets_not_just_counts(

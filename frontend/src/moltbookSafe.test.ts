@@ -91,6 +91,13 @@ describe("isBodylessPost", () => {
     expect(isBodylessPost("post", { title: "t", content: "a body" })).toBe(false);
   });
 
+  it("flags a body that just repeats the title", () => {
+    // outboxBody suppresses it as a duplicate, so the row renders identically to a bodyless
+    // one. Flagging only the empty case would leave this releasable.
+    expect(isBodylessPost("post", { title: "same", content: "same" })).toBe(true);
+    expect(isBodylessPost("post", { title: " same ", content: "same" })).toBe(true);
+  });
+
   it("only applies to posts", () => {
     // A vote or a follow legitimately carries no body; flagging those would train the
     // owner to ignore the warning.
