@@ -85,12 +85,17 @@ async def _ready(model: str | None) -> str | None:
     return model
 
 
-def _stepped_clock(step_s: float) -> Callable[[], datetime]:
+def _stepped_clock(step_s: float, *, start: datetime | None = None) -> Callable[[], datetime]:
     """A deterministic clock advancing `step_s` per call (the faked executor returns
     instantly, so a real clock would spin). The sittings loop reads it once per iteration:
     with the 3600 s budget and 300 s margin, elapsed crosses at 3300 s, so step 2000 → 1
-    sitting, step 600 → 5 sittings."""
-    state = {"t": datetime(2026, 8, 25, 3, 0, tzinfo=UTC)}
+    sitting, step 600 → 5 sittings.
+
+    `start` matters for anything that compares the runner's clock against a DB timestamp.
+    The default epoch is a fixed date in the past, so `now()` in Postgres is always AFTER
+    it — which silently made "since tonight" filters match everything, including rows from
+    other tests. Those tests pass a start near real now instead."""
+    state = {"t": start or datetime(2026, 8, 25, 3, 0, tzinfo=UTC)}
 
     def _now() -> datetime:
         cur = state["t"]
@@ -118,6 +123,30 @@ def _runner(
         clock=clock or _stepped_clock(2000),  # default: one sitting per night
         served_model_loader=served_model_loader,  # type: ignore[arg-type]
     )
+
+
+def _night_clock() -> Callable[[], datetime]:
+    """A one-sitting clock whose night starts a moment ago in REAL time.
+
+    The done-tonight block filters the ledger on `at >= woke_at`, comparing the runner's
+    clock against Postgres' `now()`. With the default epoch (a fixed date in 2026-08) every
+    DB row is newer than `woke_at`, so the filter matched everything and these tests could
+    not tell a scoped block from an unscoped one."""
+    return _stepped_clock(2000, start=datetime.now(UTC) - timedelta(seconds=1))
+
+
+async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """Empty the action ledger for this owner.
+
+    The module shares one database and one owner principal across tests, so ledger rows
+    survive from test to test. Any assertion about what the done-tonight block does or does
+    not contain has to start from a known-empty ledger or it is testing the residue of
+    whatever ran before it."""
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await s.execute(
+            text("DELETE FROM app.jmolt_action_ledger WHERE principal_id = :pid"),
+            {"pid": owner.principal_id},
+        )
 
 
 async def _jmolt_session_count(maker: async_sessionmaker, owner: SessionContext) -> int:
@@ -643,8 +672,10 @@ async def test_empty_sittings_stop_retrying_at_the_cap(maker: async_sessionmaker
     # assertion below passed without ever exercising the cap.
     await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
 
-    # Bounded: at most the sitting budget plus the extra retries — never an unbounded spin.
-    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES
+    # Bounded: the sitting budget, plus the extra retries, plus the reserved closing sitting
+    # — which is deliberately NOT drawn from the budget (the budget bounds feed sittings; the
+    # reflection sitting is extra), so it is the +1. Never an unbounded spin.
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES + 1
 
 
 async def test_the_last_sitting_is_reserved_for_reflection(maker: async_sessionmaker) -> None:
@@ -767,6 +798,7 @@ async def test_done_tonight_block_names_targets_not_just_counts(
     # only useful fact is WHICH POST, because jmolt's own writes are invisible when it reads
     # the thread back.
     owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await ActionLedgerRepo().record(
@@ -779,7 +811,7 @@ async def test_done_tonight_block_names_targets_not_just_counts(
             s, owner.principal_id, action="stage_vote", target="post-xyz"
         )
     executor = _PrologueCapturingExecutor()
-    await _runner(maker, store, executor).run(owner)
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
 
     first = executor.prologues[0]
     assert "post-abc" in first and "post-xyz" in first
@@ -793,6 +825,7 @@ async def test_done_tonight_block_counts_published_rows_too(maker: async_session
     # near-nothing. Reading the LEDGER instead makes the outbox row's later status
     # irrelevant — what jmolt did is recorded once and stays recorded.
     owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await ActionLedgerRepo().record(
@@ -805,7 +838,7 @@ async def test_done_tonight_block_counts_published_rows_too(maker: async_session
             payload={"post_id": "post-published", "content": "hi"},
         )
     executor = _PrologueCapturingExecutor()
-    await _runner(maker, store, executor).run(owner)
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
     assert "post-published" in executor.prologues[0]
 
 
@@ -813,6 +846,7 @@ async def test_done_tonight_block_ignores_earlier_nights(maker: async_sessionmak
     # Scoped to THIS night: yesterday's actions are not repetition tonight, and a block that
     # grew without bound would crowd out the prologue it precedes.
     owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await s.execute(
@@ -823,7 +857,7 @@ async def test_done_tonight_block_ignores_earlier_nights(maker: async_sessionmak
             {"pid": owner.principal_id},
         )
     executor = _PrologueCapturingExecutor()
-    await _runner(maker, store, executor).run(owner)
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
     assert "post-yesterday" not in executor.prologues[0]
 
 
@@ -831,8 +865,9 @@ async def test_done_tonight_block_is_absent_when_nothing_has_happened(
     maker: async_sessionmaker,
 ) -> None:
     owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
     executor = _PrologueCapturingExecutor()
-    await _runner(maker, FakeSettingsStore(), executor).run(owner)
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock()).run(owner)
     assert "ALREADY DONE TONIGHT" not in executor.prologues[0]
 
 

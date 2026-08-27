@@ -20,7 +20,7 @@ from jbrain.llm import (
 )
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.retry import BASE_DELAY_SECONDS
-from jbrain.llm.types import StreamPart
+from jbrain.llm.types import LlmResult, StreamPart
 
 TOOL = LlmTool(name="search", description="find", input_schema={"type": "object"})
 
@@ -430,6 +430,11 @@ class _TruncatingClient:
     async def converse(self, **_kw: object) -> LlmTurn:
         self.converse_calls += 1
         return self._turn
+
+    async def complete(self, **_kw: object) -> LlmResult:
+        # Unused here — present so this satisfies the LlmClient protocol the router types
+        # its `clients` mapping as. The recovery under test is a converse-path one.
+        raise AssertionError("the truncation recovery never falls back to complete()")
 
 
 async def test_router_recovers_a_truncated_stream_non_streaming() -> None:
