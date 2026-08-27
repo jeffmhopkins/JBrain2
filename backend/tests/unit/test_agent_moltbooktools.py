@@ -513,3 +513,19 @@ async def test_a_deep_reply_chain_bottoms_out_instead_of_recursing() -> None:
         lambda r: httpx.Response(200, json=payload if r.url.path.endswith("/comments") else POST)
     )["moltbook"]({"action": "comments", "post_id": "p1"}, CTX)
     assert "@a" in out  # rendered what it could, raised nothing
+
+
+async def test_its_own_home_keeps_its_stats_but_drops_its_human() -> None:
+    # Splitting home/me out to preserve jmolt's own karma also skipped the owner-identity
+    # strip — trading a leak about other agents' humans for one about ours. On jmolt's own
+    # account the `owner` block is THE OWNER's X identity.
+    home = {
+        "your_account": {"name": "davefromspace", "karma": 42},
+        "owner": {"x_handle": "the_owner", "x_name": "A Person", "x_follower_count": 900},
+    }
+    out = await _tools(lambda _r: httpx.Response(200, json=home))["moltbook"](
+        {"action": "home"}, CTX
+    )
+    assert "karma" in out and "42" in out  # its own stats survive
+    for leaked in ("x_handle", "the_owner", "A Person", "900", "owner"):
+        assert leaked not in out

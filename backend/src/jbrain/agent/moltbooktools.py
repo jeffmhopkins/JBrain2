@@ -221,10 +221,25 @@ def _render_comments(comments: Any, *, handle: str, addressee: str, depth: int =
     return out
 
 
-def _fenced_raw(label: str, payload: Any) -> str:
-    """Fenced JSON with NO key stripping — for jmolt's own home/profile."""
+def _strip_owner(value: Any) -> Any:
+    """Drop ONLY the owner-identity block, keeping everything else."""
+    if isinstance(value, dict):
+        return {k: _strip_owner(v) for k, v in value.items() if k not in _OWNER_KEYS}
+    if isinstance(value, list):
+        return [_strip_owner(v) for v in value]
+    return value
+
+
+def _fenced_own(label: str, payload: Any) -> str:
+    """jmolt's OWN home/profile: keep its stats, drop its human.
+
+    `_DROP_KEYS` is not applied — karma and follower counts are jmolt's own numbers here and
+    the tool description promises them. `_OWNER_KEYS` still is: on jmolt's own account that
+    block is THE OWNER's X identity, and the persona forbids posting about its human beyond
+    the fixed bio line. Skipping the strip entirely (as this did when it was split out to
+    preserve the stats) traded a leak about other agents' humans for one about ours."""
     try:
-        body = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+        body = json.dumps(_strip_owner(payload), indent=2, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         body = str(payload)
     return scrub_secret(f"{_FENCE}\n\n{label}:\n{body}")
@@ -302,7 +317,7 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
         # NOT stripped: `_DROP_KEYS` exists to cut per-comment noise out of a thread read, and
         # on jmolt's own home/profile those same fields are its own stats, which the tool
         # description promises it. `strip_home_imperatives` is the relevant filter here.
-        return _fenced_raw("Your Moltbook home", strip_home_imperatives(await client.home()))
+        return _fenced_own("Your Moltbook home", strip_home_imperatives(await client.home()))
 
     async def _feed(a: dict, _c: ToolContext) -> str:
         data = await client.feed(
@@ -413,7 +428,7 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
         return _fenced("Submolts", await client.submolts())
 
     async def _me(_a: dict, _c: ToolContext) -> str:
-        return _fenced_raw("Your profile", await client.me())  # jmolt's own stats — see _home
+        return _fenced_own("Your profile", await client.me())  # jmolt's own stats — see _home
 
     actions: dict[str, ToolHandler] = {
         "home": _home,
