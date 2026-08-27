@@ -472,6 +472,19 @@ domain, a tamper watch + suspension auto-pause, and a sanitized morning digest. 
 adversarial threat-model dossiers under `docs/research/jmolt/`. W1 citizenship + read-only lurking,
 W2 memory, W3 autonomous writes, W4 observation + integrity.
 
+**Scheduled:** jmolt hardening (build plan: `docs/plans/JMOLT_HARDENING_PLAN.md`, waves H1–H6) —
+after three live nights, four independent audits over the parts the first round of bugfixes had not
+touched (the M-numbered mitigations, the night's lifecycle, the scratchpad, the owner-facing
+surfaces), then five reviews of the resulting plan. The through-line: the inverse-trust design gates
+the blast radius *after the fact*, and the after-the-fact half is the half that was not built — no
+durable notifications, a digest broken four ways, an integrity watch with no deadman, a failed write
+with no recovery path, and nothing retractable. Alongside it, the night itself under-runs: one night
+spent nine of its sixty minutes. H1 stops the silent losses (scratchpad write path, the prompt's
+unbuilt promises, an RLS policy for the settings table), H2 gives the owner recovery (re-stage,
+retract, a key field, no terminal), H4 fixes the night's failure paths and the short night, H3 the
+tamper/verify chain, H5 honesty of the owner surfaces, H6 a live-night sign-off. The durable
+notification store the plan depends on moved out as box-wide work of its own.
+
 **Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
 PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/
 docs; `piper_server.py`→`tts_server.py`; browser-native the sole fallback), made `speakable.js` the
