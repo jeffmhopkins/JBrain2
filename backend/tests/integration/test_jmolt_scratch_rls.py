@@ -418,3 +418,28 @@ async def test_a_write_imitating_the_owner_channel_is_refused(
     assert "invisible" in hidden
 
     assert "no file named" in await handlers["scratch_read"]({"filename": "index.md"}, ctx)
+
+
+async def test_every_op_the_repo_writes_is_allowed_by_the_archive_constraint(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0179. `jmolt_scratch_archive.op` is CHECK-constrained, and every scratchpad
+    change snapshots to the archive — so an op the constraint does not know is not a bad
+    archive row, it is a failed WRITE. Adding append/rename without widening the constraint
+    made both modes raise on their first use, which is exactly the class of silent-loss bug
+    this wave exists to remove.
+
+    Pinned as a test rather than left to review: whoever adds the next mode has no reason to
+    know this constraint exists."""
+    pid = await _owner_pid(maker)
+    repo = JmoltScratchRepo()
+
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        await repo.write(s, pid, "ops.md", "one")
+        await repo.append(s, pid, "ops.md", "two")
+        await repo.rename(s, pid, "ops.md", "ops-renamed.md")
+        await repo.delete(s, pid, "ops-renamed.md")
+
+    async with scoped_session(maker, _jmolt_ctx(pid)) as s:
+        rows = await repo.history(s, pid, "ops-renamed.md")
+    assert {v.op for v in rows} >= {"write", "append", "rename", "delete"}
