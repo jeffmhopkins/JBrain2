@@ -322,17 +322,17 @@ async def test_append_adds_to_the_end_and_is_held_to_the_same_quota(
     ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
 
     started = await handlers["scratch_write"](
-        {"filename": "people.md", "mode": "append", "content": "- @luna24"}, ctx
+        {"filename": "app-note.md", "mode": "append", "content": "- @luna24"}, ctx
     )
     assert "Started" in started
     added = await handlers["scratch_write"](
-        {"filename": "people.md", "mode": "append", "content": "- @dave"}, ctx
+        {"filename": "app-note.md", "mode": "append", "content": "- @dave"}, ctx
     )
     assert "Added to" in added
-    assert "- @luna24\n- @dave" in await handlers["scratch_read"]({"filename": "people.md"}, ctx)
+    assert "- @luna24\n- @dave" in await handlers["scratch_read"]({"filename": "app-note.md"}, ctx)
 
     over = await handlers["scratch_write"](
-        {"filename": "people.md", "mode": "append", "content": "x" * MAX_FILE_BYTES}, ctx
+        {"filename": "app-note.md", "mode": "append", "content": "x" * MAX_FILE_BYTES}, ctx
     )
     assert "per-file limit" in over
 
@@ -347,24 +347,26 @@ async def test_rename_carries_history_and_refuses_to_land_on_a_file(
     handlers = build_jmolt_scratch_handlers(maker)
     repo = JmoltScratchRepo()
     ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
-    await handlers["scratch_write"]({"filename": "notes.md", "content": "v1"}, ctx)
-    await handlers["scratch_write"]({"filename": "notes.md", "content": "v2"}, ctx)
-    await handlers["scratch_write"]({"filename": "other.md", "content": "mine"}, ctx)
+    # Filenames unique to this test: the archive persists across the module (it is
+    # append-only by design) and the carried-history assertion below is exact.
+    await handlers["scratch_write"]({"filename": "ren-src.md", "content": "v1"}, ctx)
+    await handlers["scratch_write"]({"filename": "ren-src.md", "content": "v2"}, ctx)
+    await handlers["scratch_write"]({"filename": "ren-taken.md", "content": "mine"}, ctx)
 
     blocked = await handlers["scratch_write"](
-        {"filename": "notes.md", "mode": "rename", "new_filename": "other.md"}, ctx
+        {"filename": "ren-src.md", "mode": "rename", "new_filename": "ren-taken.md"}, ctx
     )
     assert "already have a file named" in blocked
-    assert "mine" in await handlers["scratch_read"]({"filename": "other.md"}, ctx)
+    assert "mine" in await handlers["scratch_read"]({"filename": "ren-taken.md"}, ctx)
 
     ok = await handlers["scratch_write"](
-        {"filename": "notes.md", "mode": "rename", "new_filename": "moltbook.md"}, ctx
+        {"filename": "ren-src.md", "mode": "rename", "new_filename": "ren-dst.md"}, ctx
     )
     assert "Renamed" in ok
-    assert "no file named" in await handlers["scratch_read"]({"filename": "notes.md"}, ctx)
-    assert "v2" in await handlers["scratch_read"]({"filename": "moltbook.md"}, ctx)
+    assert "no file named" in await handlers["scratch_read"]({"filename": "ren-src.md"}, ctx)
+    assert "v2" in await handlers["scratch_read"]({"filename": "ren-dst.md"}, ctx)
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
-        carried = await repo.history(s, pid, "moltbook.md")
+        carried = await repo.history(s, pid, "ren-dst.md")
     assert [v.content for v in carried if v.op != "rename"] == ["v2", "v1"]
 
 
@@ -375,16 +377,19 @@ async def test_jmolt_can_read_its_own_archive(maker: async_sessionmaker) -> None
     pid = await _owner_pid(maker)
     handlers = build_jmolt_scratch_handlers(maker)
     ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
-    await handlers["scratch_write"]({"filename": "n.md", "content": "the good version"}, ctx)
-    await handlers["scratch_write"]({"filename": "n.md", "content": "oops"}, ctx)
+    # Unique filename: this indexes into the archive by position, and the archive
+    # persists across the module.
+    fn = "arch-read.md"
+    await handlers["scratch_write"]({"filename": fn, "content": "the good version"}, ctx)
+    await handlers["scratch_write"]({"filename": fn, "content": "oops"}, ctx)
 
-    listing = await handlers["scratch_read"]({"filename": "n.md", "history": True}, ctx)
+    listing = await handlers["scratch_read"]({"filename": fn, "history": True}, ctx)
     assert "1." in listing and "2." in listing
     assert "the good version" not in listing  # metadata only
 
-    recovered = await handlers["scratch_read"]({"filename": "n.md", "version": 2}, ctx)
+    recovered = await handlers["scratch_read"]({"filename": fn, "version": 2}, ctx)
     assert "the good version" in recovered
-    assert "no version 9" in await handlers["scratch_read"]({"filename": "n.md", "version": 9}, ctx)
+    assert "no version 9" in await handlers["scratch_read"]({"filename": fn, "version": 9}, ctx)
 
 
 async def test_a_write_imitating_the_owner_channel_is_refused(
