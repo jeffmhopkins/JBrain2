@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   MoltbookActivity,
@@ -50,7 +50,9 @@ function localDateTime(iso: string | null): string {
 
 function formatTokens(n: number | null): string {
   if (n == null) return "";
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k tok`;
+  return `${n} tok`;
 }
 
 // A short relative time for the schedule/drip status ("in 14h 20m", "5 min ago").
@@ -147,8 +149,23 @@ export function JmoltScreen() {
   // jmolt's journal (its line to the owner), and the owner's advisory note back to jmolt.
   // `noteDraft` is the editable buffer; `noteSaved` tracks whether it matches what's stored.
   const [journal, setJournal] = useState<MoltbookJournalEntry[] | null>(null);
+  // Which journal entries are expanded — long entries clamp to a preview until opened, so
+  // the section stays a scannable list instead of an unbounded wall of full paragraphs.
+  const [journalOpen, setJournalOpen] = useState<Set<number>>(() => new Set());
   const [noteDraft, setNoteDraft] = useState<string | null>(null);
   const [noteSaved, setNoteSaved] = useState(false);
+  // Auto-grow the note box to its content so the owner's own note is never clipped behind an
+  // internal scrollbar (a fixed height hid the tail of a long note). Runs on every value change.
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  // Re-measure whenever the value changes (typing, or the load-time seed) even though the
+  // effect body reads only the ref, so noteDraft is an intentional trigger-only dependency.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: noteDraft is a trigger-only dep
+  useEffect(() => {
+    const el = noteRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [noteDraft]);
 
   useEffect(() => {
     let stale = false;
@@ -266,6 +283,15 @@ export function JmoltScreen() {
       const next = new Set(prev);
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
+      return next;
+    });
+  }, []);
+
+  const toggleJournal = useCallback((i: number) => {
+    setJournalOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
       return next;
     });
   }, []);
@@ -717,6 +743,7 @@ export function JmoltScreen() {
             changes jmolt's rules or switches. Leave it blank for none.
           </p>
           <textarea
+            ref={noteRef}
             className="molt-note"
             aria-label="Note to jmolt"
             rows={4}
@@ -759,13 +786,29 @@ export function JmoltScreen() {
             <p className="settings-meta">Nothing yet — jmolt hasn't left a journal entry.</p>
           ) : (
             <ul className="molt-journal">
-              {journal.map((e, i) => (
-                <li key={`${e.at ?? "x"}-${i}`} className="molt-journal-entry">
-                  <span className="molt-journal-at">{localDateTime(e.at)}</span>
-                  {/* Inert text only (M15): jmolt-authored, one hop from forum text. */}
-                  <p className="molt-journal-body">{inertText(e.content)}</p>
-                </li>
-              ))}
+              {journal.map((e, i) => {
+                const open = journalOpen.has(i);
+                // Only long entries clamp — a short note reads fine in full, and gets no toggle.
+                const long = e.content.length > 240;
+                return (
+                  <li key={`${e.at ?? "x"}-${i}`} className="molt-journal-entry">
+                    <span className="molt-journal-at">{localDateTime(e.at)}</span>
+                    {/* Inert text only (M15): jmolt-authored, one hop from forum text. */}
+                    <p className={`molt-journal-body${long && !open ? " clamped" : ""}`}>
+                      {inertText(e.content)}
+                    </p>
+                    {long && (
+                      <button
+                        type="button"
+                        className="molt-journal-more"
+                        onClick={() => toggleJournal(i)}
+                      >
+                        {open ? "Show less" : "Show more"}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
@@ -878,43 +921,55 @@ export function JmoltScreen() {
           ) : (
             <>
               <ul className="molt-acts">
-                {activity.map((a) => (
-                  <li key={a.id} className="molt-act">
-                    <details>
-                      <summary className="molt-act-row">
-                        <span className={`molt-act-dot molt-dot-${a.kind}`} aria-hidden="true" />
-                        <span className="molt-act-line">
-                          <span className="molt-act-verb">{inertText(a.verb)}</span>{" "}
-                          {inertText(a.subject)}
-                        </span>
-                        <span className={`molt-badge molt-badge-${a.state}`}>
-                          {ACT_BADGE[a.state] ?? a.state}
-                        </span>
-                        <span className="molt-act-when">{actWhen(a.at)}</span>
-                        <span className="molt-act-chev" aria-hidden="true">
-                          ⌄
-                        </span>
-                      </summary>
-                      <div className="molt-act-detail">
-                        {a.body && <p className="molt-act-body">{inertText(a.body)}</p>}
-                        {a.error && <p className="molt-act-error">{inertText(a.error)}</p>}
-                        {a.link && (
-                          <a
-                            className="molt-act-link"
-                            href={a.link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            View on Moltbook ↗
-                          </a>
-                        )}
-                        <span className="molt-act-meta">
-                          {localDateTime(a.at)} · {a.kind}
-                        </span>
-                      </div>
-                    </details>
-                  </li>
-                ))}
+                {activity.map((a, i) => {
+                  // The drip publishes a burst in one sweep, so a run of rows shares one time —
+                  // hide the repeat (keeping its width so the chevron column stays aligned).
+                  const repeat = i > 0 && actWhen(a.at) === actWhen(activity[i - 1]?.at ?? null);
+                  // Under a single-state segment (Published) the badge repeats on every row and
+                  // just adds noise — show it only where the list actually mixes states.
+                  const showBadge = actStatus !== "published";
+                  return (
+                    <li key={a.id} className="molt-act">
+                      <details>
+                        <summary className="molt-act-row">
+                          <span className={`molt-act-dot molt-dot-${a.kind}`} aria-hidden="true" />
+                          <span className="molt-act-line">
+                            <span className="molt-act-verb">{inertText(a.verb)}</span>{" "}
+                            {inertText(a.subject)}
+                          </span>
+                          {showBadge && (
+                            <span className={`molt-badge molt-badge-${a.state}`}>
+                              {ACT_BADGE[a.state] ?? a.state}
+                            </span>
+                          )}
+                          <span className={`molt-act-when${repeat ? " molt-act-when-repeat" : ""}`}>
+                            {actWhen(a.at)}
+                          </span>
+                          <span className="molt-act-chev" aria-hidden="true">
+                            ⌄
+                          </span>
+                        </summary>
+                        <div className="molt-act-detail">
+                          {a.body && <p className="molt-act-body">{inertText(a.body)}</p>}
+                          {a.error && <p className="molt-act-error">{inertText(a.error)}</p>}
+                          {a.link && (
+                            <a
+                              className="molt-act-link"
+                              href={a.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              View on Moltbook ↗
+                            </a>
+                          )}
+                          <span className="molt-act-meta">
+                            {localDateTime(a.at)} · {a.kind}
+                          </span>
+                        </div>
+                      </details>
+                    </li>
+                  );
+                })}
               </ul>
               {actMore && (
                 <button type="button" className="molt-show-older" onClick={showOlderActions}>

@@ -1272,7 +1272,11 @@ button.vitals:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  /* Let the meta cluster drop to a second line when the row is cramped, instead of
+     crushing the date/name column (which forced a busy night's date to wrap one word
+     per line). Row gap keeps the wrapped meta clear of the label. */
+  flex-wrap: wrap;
+  gap: 4px 10px;
   width: 100%;
   padding: 8px 10px;
   border: 0;
@@ -1285,7 +1289,12 @@ button.vitals:focus-visible {
 .molt-file-head.on {
   background: color-mix(in srgb, var(--accent, #7aa2f7) 10%, transparent);
 }
-.molt-night-when,
+/* The night date is short and fixed-format — never break it mid-value. */
+.molt-night-when {
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* A filename can be long and has no natural break points, so it may still wrap. */
 .molt-file-name {
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -1418,6 +1427,11 @@ button.vitals:focus-visible {
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+/* A row whose time repeats the row above (a drip burst) hides the text but keeps its box, so
+   the chevron column stays aligned and the burst reads as one time, not ten. */
+.molt-act-when-repeat {
+  visibility: hidden;
 }
 .molt-act-chev {
   flex: none;
@@ -1575,6 +1589,10 @@ button.vitals:focus-visible {
   box-sizing: border-box;
   resize: vertical;
   min-height: 84px;
+  /* Auto-grows to its content (see the resize effect in JmoltScreen); this caps a very long
+     note so the editor can't swallow the whole screen, scrolling past that point. */
+  max-height: 340px;
+  overflow-y: auto;
   padding: 10px;
   border: 1px solid var(--hairline, rgba(128, 128, 128, 0.25));
   border-radius: 8px;
@@ -1616,6 +1634,26 @@ button.vitals:focus-visible {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A long entry collapses to a 4-line preview until expanded, so the section stays scannable
+   instead of a wall of full paragraphs. (line-clamp needs the -webkit-box display.) */
+.molt-journal-body.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.molt-journal-more {
+  display: block;
+  margin-top: 5px;
+  padding: 2px 0;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--steel);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 /* Tavily tier panel: a status pill in the card header + an iOS-style enable switch. */
