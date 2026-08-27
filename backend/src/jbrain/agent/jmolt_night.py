@@ -393,9 +393,12 @@ class JmoltNightRunner:
         # An empty sitting (see `_is_empty_sitting`) is re-run without counting against the
         # budget, up to this many times across the night; `retrying` carries the extra nudge
         # into the re-run's prologue. `reflected` gates the one reserved closing sitting.
-        empty_retries, retrying, reflected = 0, False, False
+        # `reflection_due` LATCHES: once the closing sitting is owed it stays owed, so an
+        # empty-sitting retry (which gives the slot back) re-runs it as a reflection sitting
+        # rather than dropping back to the feed prologue.
+        empty_retries, retrying, reflection_due = 0, False, False
         try:
-            while sitting < JMOLT_MAX_SITTINGS:
+            while True:
                 now = self._clock()
                 elapsed = (now - woke_at).total_seconds()
                 if elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
@@ -404,10 +407,23 @@ class JmoltNightRunner:
                 # sitting was already guarded by the tick).
                 if sitting > 0 and await self._settings.moltbook_killed(owner_ctx):
                     break
-                # Once the hour is nearly closing (but a sitting still fits), reserve the next
-                # one for reflection — thinking + files, not the feed — and make it the last.
-                reflection = not reflected and (
-                    elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S
+                # The night's ONE reserved closing sitting — thinking + files, not the feed.
+                # It is owed when EITHER the hour is nearly closing OR the feed budget is
+                # spent, whichever lands first, and it is always the night's last.
+                #
+                # The budget arm is the load-bearing half. This used to be a plain
+                # `while sitting < JMOLT_MAX_SITTINGS` bound with the reflection gated on
+                # elapsed time alone, which meant fast sittings exhausted the budget before
+                # the time window ever opened and the loop exited — so the reflection sitting
+                # NEVER ran. Measured on the box: 13 sittings across two real nights, none of
+                # them a reflection; the 2026-08-26 night spent all 12 slots by minute 40 and
+                # stopped with 20 minutes of its hour unused. The one stretch reserved for
+                # jmolt to think and tend its files was the one stretch it never got, which is
+                # why its scratchpad is a log of what it did and nothing about what it thought.
+                # The budget bounds the FEED sittings; the closing sitting is extra.
+                reflection_due = reflection_due or (
+                    sitting >= JMOLT_MAX_SITTINGS
+                    or elapsed >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S
                 )
                 sitting += 1
                 done, summary, error, empty = await self._run_sitting(
@@ -429,7 +445,7 @@ class JmoltNightRunner:
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
                     retrying=retrying,
-                    reflection=reflection,
+                    reflection=reflection_due,
                 )
                 # A sitting that did nothing usable is not a real sitting: undo the count and
                 # re-run it (with a nudge) rather than burning a slot on gpt-oss's empty-final
@@ -446,9 +462,10 @@ class JmoltNightRunner:
                 elif error:
                     last_error = error
                 # The reflection sitting is the night's close — end after it completes (a real,
-                # non-retried run), so the hour finishes on files, not the feed.
-                if reflection:
-                    reflected = True
+                # non-retried run), so the hour finishes on files, not the feed. This is also
+                # what terminates the loop now that the budget no longer bounds it: every exit
+                # is the time bound, a kill, or the closing sitting having run.
+                if reflection_due:
                     break
         finally:
             # Release the box the moment the night ends. The tick's self-heal is the

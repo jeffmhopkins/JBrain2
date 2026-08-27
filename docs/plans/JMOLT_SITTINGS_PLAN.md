@@ -1,6 +1,6 @@
 # jmolt sittings — a mechanical way to use the full hour, no summarizer
 
-> **Status:** In progress · **Last verified:** 2026-08-26 · **Waves:** W1✅ W2◻️ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-08-27 · **Waves:** W1✅ W2◻️ W3✅ W4✅
 
 Make jmolt actually use its unsupervised hour, without the fabrication and
 injection risks a live LLM summarizer would add. The night runs as a sequence of
@@ -55,22 +55,23 @@ As built (`JmoltNightRunner.run`), with the constant names it ships:
 
 ```
 woke_at = clock()
-sitting, empty_retries, reflected = 0, 0, False
-while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
+sitting, empty_retries, reflection_due = 0, 0, False
+while True:
     now = clock()
     if now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S:
         break                                           # hour nearly up
     if sitting > 0 and killed:                          # M6 kill between sittings
         break
-    reflection = not reflected and \
-        now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S
+    reflection_due = reflection_due or (                # LATCHES (survives an empty retry)
+        sitting >= JMOLT_MAX_SITTINGS                   # feed budget spent, OR
+        or now - woke_at >= JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_REFLECTION_MARGIN_S)
     sitting += 1
-    conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting, reflection) ]
+    conversation = [ now_block(tz), sitting_preamble(now) + prologue(sitting, reflection_due) ]
     done, summary, error, empty = run one bounded agent turn (its own recorded run + transcript)
     if empty and empty_retries < JMOLT_MAX_EMPTY_RETRIES:   # a no-work sitting: retry, don't count
         empty_retries += 1; sitting -= 1; continue          # re-run the SAME number, with a nudge
     # jmolt reads its scratchpad, does a chunk of the night, writes its scratchpad
-    if reflection: reflected = True; break              # the reflection sitting closes the night
+    if reflection_due: break                            # the reflection sitting closes the night
 ```
 
 - **Empty-sitting retry** — gpt-oss's harmony format intermittently ends a turn with an
@@ -92,9 +93,21 @@ while sitting < JMOLT_MAX_SITTINGS:                     # runaway backstop
   down." The "flush before the hour ends" instruction moves to *every* sitting's
   close, so there is never much un-persisted state.
 - **Reflection sitting** — the hour reserves ONE closing sitting for thinking and
-  tending files, not the feed (`_REFLECTION_PROLOGUE`, triggered once
-  `elapsed ≥ JMOLT_NIGHT_WALL_CLOCK_S − JMOLT_REFLECTION_MARGIN_S`, then it is the
-  night's last). It is the structural forcing-function for jmolt to DEVELOP — form and
+  tending files, not the feed (`_REFLECTION_PROLOGUE`), and it is the night's last. It
+  is owed once **either** the feed budget is spent (`sitting ≥ JMOLT_MAX_SITTINGS`)
+  **or** the hour is nearly closing
+  (`elapsed ≥ JMOLT_NIGHT_WALL_CLOCK_S − JMOLT_REFLECTION_MARGIN_S`) — whichever lands
+  first — and the flag latches, so an empty-sitting retry (which hands the slot back)
+  re-runs it as a reflection sitting rather than dropping to the feed prologue. The
+  budget bounds the FEED sittings; the closing one is extra.
+  **Why both arms:** the budget used to be a plain loop bound with the reflection gated
+  on elapsed time alone, so a night of quick sittings spent all 12 slots before the time
+  window opened and simply exited. Measured on the live box, the reflection sitting had
+  then never run once — 13 sittings across two real nights, zero reflections; the
+  2026-08-26 night used its budget by minute 40 at ~200 s a sitting and stopped 20
+  minutes early. The stretch reserved for jmolt to think was the one it never got, and
+  its scratchpad showed it: a minute-by-minute log of what it did and nothing about what
+  it thought. It is the structural forcing-function for jmolt to DEVELOP — form and
   record a view, work out what only it can (its handle, what it makes of this place),
   leave itself real threads for tomorrow — rather than spend the whole hour reacting to
   the feed and leaving a bare activity log. Recovered sitting-capacity (from the empty
