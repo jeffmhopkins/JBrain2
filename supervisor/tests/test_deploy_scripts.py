@@ -213,21 +213,24 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
 
 
 def _rollback_rebuild_idx(lines: list[str]) -> int | None:
-    """Index of the ROLLBACK rebuild — the plain `build local-llm` that recreates the gateway
-    on the pinned base after a failed smoke test.
+    """Index of the ROLLBACK rebuild — the plain `build local-llm` that recreates
+    the gateway on the pinned base after a failed smoke test.
 
-    Anchored on the rollback verdict line rather than on "the first plain build in the file".
-    That heuristic silently stopped pointing at the rollback when the floating build gained a
-    patch-only `else` branch, which is also a plain `build local-llm`: both tests using it then
-    resolved to a line ABOVE the smoke test, so one asserted an impossible ordering and the
-    other searched an empty range. Neither was checking its stated invariant any more, and the
-    script they guard is the one the owner runs from the PWA with no terminal to fall back on.
+    Anchored on the rollback verdict line, not on "the first plain build in the
+    file". That heuristic silently stopped pointing at the rollback when the
+    floating build gained a patch-only `else` branch, which is also a plain
+    `build local-llm`: both tests using it then resolved to a line ABOVE the
+    smoke test, so one asserted an impossible ordering and the other searched an
+    empty range. Neither was checking its stated invariant any more — and the
+    script they guard is the one the owner runs from the PWA, with no terminal
+    to fall back on.
     """
     verdict = next(
         (
             i
             for i, ln in enumerate(lines)
-            if "rolled back to its pinned base" in ln and not ln.lstrip().startswith("#")
+            if "rolled back to its pinned base" in ln
+            and not ln.lstrip().startswith("#")
         ),
         None,
     )
@@ -300,10 +303,11 @@ def test_update_gateway_auto_update_is_default_on_smoke_tested_and_rolls_back() 
 
     floating_build = idx("build --pull local-llm")
     smoke = idx("jbrain.cli local-llm-smoketest")
-    # The rollback rebuild is a PLAIN build — no --pull and no LOCAL_LLM_BASE override —
-    # so it recreates the gateway on the reproducible pinned base from cached layers. It is
-    # not the only plain build in the script (the patch-only branch is one too), so it is
-    # located by its position after the rollback verdict — see `_rollback_rebuild_idx`.
+    # The rollback rebuild is a PLAIN build — no --pull and no LOCAL_LLM_BASE
+    # override — so it recreates the gateway on the reproducible pinned base
+    # from cached layers. It is not the only plain build in the script (the
+    # patch-only branch is one too), so it is located by its position after the
+    # rollback verdict — see `_rollback_rebuild_idx`.
     rollback = _rollback_rebuild_idx(lines)
     assert floating_build is not None, (
         "must rebuild the gateway with --pull on the floating base"
