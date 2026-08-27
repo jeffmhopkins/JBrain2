@@ -23,12 +23,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_guards import MIN_POST_BODY_CHARS
 from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
 from jbrain.agent.moltbook_verify import solve_challenge
 from jbrain.db.session import SessionContext, scoped_session
@@ -41,6 +44,21 @@ from jbrain.web.moltbook import MoltbookClient, MoltbookError
 log = structlog.get_logger()
 
 JMOLT_SWEEP_SECONDS = 60.0
+
+# The drip has to actually DRIP. It used to publish every due row back-to-back inside one
+# tick: measured on the box, writes went out 0.19-0.43 s apart, twelve inside three seconds,
+# and the platform 429'd us seven times in one release. `RateLedger` did not stop it and
+# cannot — it counts calls per MINUTE, so twenty-five writes in one second satisfies it
+# exactly as well as twenty-five spread across sixty. A sliding-window COUNT is not a rate.
+#
+# So the tick spaces its writes and bounds how many it will do. Three seconds apart is an
+# instantaneous 20/min — genuinely under the 25/min the local ledger allows and the ~30/min
+# the platform documents, rather than merely averaging under it across a minute. Ten of them
+# occupies ~27 s of a 60 s tick, so a tick still finishes well before the next, and a busy
+# night's thirty-comment tail drains over three or four ticks. Slower is the point: this is a
+# drip through the day, not a flush.
+JMOLT_WRITE_GAP_S = 3.0
+JMOLT_MAX_WRITES_PER_TICK = 10
 
 # `_publish_one`'s outcome: the row went out, was DEFERRED for a later tick (a rate-limit
 # 429 — left `released`, not dropped), or terminally FAILED.
@@ -68,6 +86,8 @@ class JmoltSweep:
         router: LlmRouter,
         settings_store: SqlSettingsStore,
         notify: NotifyBus | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._maker = maker
         self._client = client
@@ -76,6 +96,13 @@ class JmoltSweep:
         self._notify = notify
         self._outbox = OutboxRepo()
         self._ledger = ActionLedgerRepo()
+        self._sleep = sleep or asyncio.sleep
+        self._clock = clock or time.monotonic
+        # When the platform hands back a Retry-After, honour it: ticks before this monotonic
+        # instant publish nothing. Without it a 429 saying "wait 300 s" was retried at the
+        # next 60 s tick — five more knocks on a door that had just told us to stop. The
+        # header was already parsed onto the exception and then read by nobody.
+        self._hold_until = 0.0
 
     async def tick(self, *, now: datetime | None = None) -> int:
         """One sweep. Returns the number of rows published. Never raises."""
@@ -101,21 +128,39 @@ class JmoltSweep:
                 for row in await self._outbox.list_by_status(s, pid, ("queued",)):
                     await self._outbox.set_status(s, row.id, "released")
 
+        # A Retry-After the platform gave us on an earlier 429 outranks our own cadence.
+        if self._clock() < self._hold_until:
+            return 0
+
         async with scoped_session(self._maker, admin) as s:
             due = await self._outbox.due(s, now=now)
 
         published = 0
-        for row in due:
+        for row in due[:JMOLT_MAX_WRITES_PER_TICK]:
+            if published:
+                # Space them. This gap is the difference between a drip and a flush — see
+                # JMOLT_WRITE_GAP_S. Only between writes, so a tick with one row is immediate.
+                await self._sleep(JMOLT_WRITE_GAP_S)
             outcome = await self._publish_one(pid, admin, row)
             if outcome == "published":
                 published += 1
             elif outcome == "deferred":
                 # A rate-limit (429): stop the tick and let this row — and the rest of the queue
-                # — retry on a later tick. This spaces publishing out over ticks instead of
-                # hammering a throttling platform, and the deferred rows stay `released` (never
-                # dropped), which is the fix for a busy night's tail failing terminally.
-                log.info("jmolt_sweep.deferred_on_rate_limit", kind=row.kind)
+                # — retry on a later tick. The deferred rows stay `released` (never dropped),
+                # which is what keeps a busy night's tail from failing terminally.
+                log.info(
+                    "jmolt_sweep.deferred_on_rate_limit",
+                    kind=row.kind,
+                    hold_s=round(max(0.0, self._hold_until - self._clock())),
+                )
                 break
+        if len(due) > JMOLT_MAX_WRITES_PER_TICK:
+            # Say it rather than let a long queue look like a short one — a silently
+            # slow-draining outbox is how a stuck queue hides.
+            log.info(
+                "jmolt_sweep.queue_tail",
+                waiting=len(due) - JMOLT_MAX_WRITES_PER_TICK,
+            )
         return published
 
     async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> PublishOutcome:
@@ -139,6 +184,10 @@ class JmoltSweep:
             # night's tail. The reconcile-first post path still guards against a double-post,
             # since a 429 means the write did not land. Not a verify rejection, so no streak.
             if exc.status == 429:
+                if exc.retry_after_s:
+                    # Capped so a hostile or fat-fingered header cannot park the queue for a
+                    # day; the platform gets the benefit of the doubt, not the keys.
+                    self._hold_until = self._clock() + min(float(exc.retry_after_s), 900.0)
                 return "deferred"
             await self._reconcile_or_fail(pid, admin, row, exc)
             return "failed"
@@ -214,6 +263,16 @@ class JmoltSweep:
     async def _do_write(self, row: OutboxRow) -> Any:
         p = row.payload
         if row.kind == "post":
+            # The outbox is a durable queue that outlives any handler guard: rows staged
+            # before a check existed, or by some future path that skips the tool, still get
+            # here. One did — a bare title with no body published to the live site because
+            # the stage-time minimum did not exist yet and the client silently dropped the
+            # empty field rather than refusing. Refuse at the boundary too, so the row fails
+            # visibly with a reason instead of going out as a headline with nothing under it.
+            if len(str(p.get("content", "")).strip()) < MIN_POST_BODY_CHARS:
+                raise MoltbookError(
+                    "refusing to publish a post with no body (a title is not a post)", status=422
+                )
             return await self._client.create_post(
                 str(p.get("submolt_name", "")),
                 str(p.get("title", "")),

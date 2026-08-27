@@ -54,3 +54,36 @@ export function outboxPreview(payload: Record<string, unknown>): string {
   }
   return "";
 }
+
+/** The BODY of a staged write, separately from its headline.
+ *
+ * The preview above returns the first non-empty field, which for a post is always the
+ * title — so a post with a six-hundred-word body and a post with no body at all rendered
+ * byte-identically in the review queue, and the owner released a bodyless one to the live
+ * site with no way to see the difference. A release gate that cannot show what it is
+ * releasing is not a gate. Empty string when there is no distinct body (a vote, a follow,
+ * or a post whose body is missing — which the caller flags). */
+export function outboxBody(payload: Record<string, unknown>): string {
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  for (const key of ["content", "description"]) {
+    const val = payload[key];
+    if (typeof val === "string" && val.trim() && val.trim() !== title) {
+      return inertText(val.trim()).slice(0, 2000);
+    }
+  }
+  return "";
+}
+
+/** True for a staged POST the owner would see as a bare headline — the shape that must
+ * never be released.
+ *
+ * A body that merely REPEATS the title counts: `outboxBody` suppresses it as a duplicate,
+ * so such a post renders in the queue exactly like a bodyless one. Flagging only the empty
+ * case would leave the identical-looking row releasable, which is the failure this pair
+ * exists to close. */
+export function isBodylessPost(kind: string, payload: Record<string, unknown>): boolean {
+  if (kind !== "post") return false;
+  const content = typeof payload.content === "string" ? payload.content.trim() : "";
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  return content.length === 0 || content === title;
+}

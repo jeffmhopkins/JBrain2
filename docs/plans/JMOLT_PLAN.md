@@ -159,6 +159,17 @@ textual control, so these are the controls that do not depend on it obeying.**
     auto-pause on suspension; jmolt holds no tool that answers a moderation event.
 23. **Reconcile-before-retry wired into the drip sweep** — on a publish timeout,
     read back recent posts before any re-send; one retry max.
+
+    **The drip actually drips (as built).** Each tick spaces its writes by
+    `JMOLT_WRITE_GAP_S` and publishes at most `JMOLT_MAX_WRITES_PER_TICK`; a 429 carrying
+    `Retry-After` holds the whole queue until it elapses (capped, since the header is
+    remote-controlled). This is not belt-and-braces over `RateLedger` — the ledger counts
+    calls per MINUTE and therefore cannot bound a burst at all: twenty-five writes in one
+    second satisfy it exactly as well as twenty-five spread across sixty. Measured on the
+    box on 2026-08-26, the tick published every due row back-to-back at **0.19–0.43 s
+    apart**, twelve inside three seconds, and the platform 429'd seven writes into terminal
+    failure. Deferring a 429 (rather than failing it) stopped the work being *lost*; spacing
+    is what stops it being *provoked*.
 24. **Local-model ledger reservation is fail-safe** — the nightly lane and the
     challenge-solver reserve against the gpt-oss-120b ledger and, on contention,
     skip and retry the next sweep rather than blocking owner-interactive local use;
@@ -278,6 +289,27 @@ T-minus-5-minute nudge invites the file flush.
 scratch_list, scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write
 action. (The `journal` action lets a scheduled observer audit compare what jmolt *said* it
 did against what it *did* — the W5 journal beside the W4 ledger.)
+**Attributed reads (as built).** The Moltbook read tools render a post or a thread as an
+attributed log, not a `json.dumps` of the platform response: author BEFORE content on every
+line, a header naming the reader's own handle, `(you)` on jmolt's own comments (matched
+case-insensitively — the platform returns `davefromspace`, the identity block says
+`@DaveFromSpace`), and an explicit `→ @addressee` per comment. Unused platform metadata
+(`karma`, `followerCount`, `isClaimed`, `hot_score`, …) is dropped, and a profile's `owner`
+/ `x_*` block — the other agent's HUMAN — is **removed**, not fenced, since the persona
+forbids linking an agent to its human and a rendering that serves that linkage is the same
+mistake as fencing an imperative and trusting the model to ignore it.
+
+This is not presentation. The raw JSON put each comment's `content` ahead of its `author`,
+named no reader, and marked nothing as jmolt's own — so a thread read as a transcript, and
+the model completed it in the last speaker's voice. On 2026-08-26/27 jmolt published
+comments written in the first person AS another agent, under its own handle, answering
+questions that had been addressed to that agent; its recorded reasoning on one such turn was
+"Choose to reply to midearthherald's question." The same shape also let it lift another
+agent's post title verbatim into a post of its own. Every impersonating write followed an
+`action=comments` read; none followed a `home` read, whose payload is self-relative
+(`your_account`, `activity_on_your_posts`) and was the one endpoint already rendering the
+reader's position.
+
 **Windowed reads (as built).** Every action returns a *window* of the record, never the
 whole of it: `find` (literal, or a pattern with `regex=true`) positions the reply at a match
 and reports where the others are, `offset` pages, and a fixed ceiling caps the reply no

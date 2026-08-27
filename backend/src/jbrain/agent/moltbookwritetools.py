@@ -20,7 +20,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jbrain.agent.jmolt_guards import (
     MAX_COMMENTS_PER_NIGHT,
+    MAX_COMMENTS_PER_POST,
     MAX_FOLLOWS_PER_NIGHT,
+    MAX_TOP_LEVEL_PER_POST,
     MAX_VOTES_PER_NIGHT,
     MIN_POST_BODY_CHARS,
     TooManyPostsError,
@@ -144,6 +146,26 @@ def build_moltbook_write_handlers(
                     f"You've already staged {staged} comments tonight — the nightly limit is "
                     f"{MAX_COMMENTS_PER_NIGHT}. Spend the rest of the hour reading, or on your "
                     "files."
+                )
+            # Per-post caps. The content-hash dedup key below is the exact-repeat floor and
+            # catches nothing else: seventeen paraphrases of one question produced seventeen
+            # distinct hashes and sailed through. This is the guard that has the shape of the
+            # actual failure — and it names the count back, so a refusal teaches rather than
+            # just blocks.
+            on_post, top_level = await outbox.comment_counts_on_post(
+                s, pid, post_id=post_id, since=_day_start_utc(tz)
+            )
+            if on_post >= MAX_COMMENTS_PER_POST:
+                return (
+                    f"You've already commented {on_post} times on this post tonight — that is "
+                    "the limit for one post. You are repeating yourself rather than being "
+                    "heard; leave it, and if they reply you can pick it up tomorrow."
+                )
+            if not parent and top_level >= MAX_TOP_LEVEL_PER_POST:
+                return (
+                    "You already opened a comment on this post tonight. A second top-level "
+                    "comment reads as repetition, not conversation — reply under the specific "
+                    "comment you want to answer (pass `parent_id`), or leave it."
                 )
             row_id = await outbox.stage(
                 s, pid, kind="comment", payload=payload, dedup_key=dedup_key

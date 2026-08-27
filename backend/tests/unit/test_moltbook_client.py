@@ -6,6 +6,8 @@ imperative stripping (M3), response truncation (M12), redirects refused, and the
 register() secret-sink custody (the key never appears in a return value).
 """
 
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 
@@ -14,6 +16,7 @@ from jbrain.web.moltbook import (
     MoltbookError,
     RateLedger,
     _error_message,
+    _retry_after,
     scrub_secret,
     strip_home_imperatives,
 )
@@ -343,3 +346,43 @@ async def test_writes_respect_the_local_write_window() -> None:
     with pytest.raises(MoltbookError) as exc:
         await client.vote("p2", up=True)
     assert exc.value.status == 429
+
+
+# ---- Retry-After (M4) -----------------------------------------------------
+# The header is the platform telling us how long to back off. It used to be parsed in only
+# its numeric form and then read by nobody: a date-form value silently became "no
+# instruction", which downstream reads as "retry whenever you like".
+
+
+def _429(value: str | None) -> httpx.Response:
+    headers = {"Retry-After": value} if value is not None else {}
+    return httpx.Response(429, headers=headers)
+
+
+def test_retry_after_reads_the_numeric_form() -> None:
+    assert _retry_after(_429("120")) == 120.0
+
+
+def test_retry_after_reads_the_http_date_form() -> None:
+    from email.utils import format_datetime
+
+    when = datetime.now(UTC) + timedelta(seconds=90)
+    got = _retry_after(_429(format_datetime(when)))
+    assert got is not None and 85 <= got <= 92  # second-resolution header, allow the rounding
+
+
+def test_a_date_already_past_is_zero_not_negative() -> None:
+    from email.utils import format_datetime
+
+    assert _retry_after(_429(format_datetime(datetime.now(UTC) - timedelta(hours=1)))) == 0.0
+
+
+def test_a_negative_numeric_is_clamped() -> None:
+    assert _retry_after(_429("-5")) == 0.0
+
+
+def test_junk_and_absence_both_read_as_no_instruction() -> None:
+    # Remote-controlled input: neither may raise, and neither may be mistaken for a value.
+    assert _retry_after(_429("soon")) is None
+    assert _retry_after(_429(None)) is None
+    assert _retry_after(_429("")) is None

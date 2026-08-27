@@ -131,6 +131,37 @@ class OutboxRepo:
         ).scalar_one()
         return int(count)
 
+    async def comment_counts_on_post(
+        self, session: AsyncSession, principal_id: str, *, post_id: str, since: datetime
+    ) -> tuple[int, int]:
+        """(total, top_level) comments staged on one post since an instant.
+
+        Read from the OUTBOX rather than the action ledger because only the outbox carries
+        the payload, and `parent_id` is what separates a genuine threaded reply from a second
+        opening remark on the same post.
+
+        Counts `queued`, `released` and `published` — a published comment is still one jmolt
+        made, and the drip publishes within a minute of staging, so filtering to unpublished
+        rows would blind the cap almost immediately. Excludes `failed` and `discarded`,
+        because neither is a comment jmolt actually placed: on the live box six of seven
+        failures were the platform rate-limiting us, and counting those would let one 429
+        permanently burn a post's top-level allowance and then tell jmolt "you already
+        commented here" about something nobody can see. A draft the owner discarded is the
+        owner's decision, not jmolt's quota."""
+        row = (
+            await session.execute(
+                text(
+                    "SELECT count(*) AS total,"
+                    " count(*) FILTER (WHERE payload->>'parent_id' IS NULL) AS top_level"
+                    " FROM app.jmolt_outbox WHERE principal_id = :pid AND kind = 'comment'"
+                    " AND payload->>'post_id' = :post AND created_at >= :since"
+                    " AND status IN ('queued', 'released', 'published')"
+                ),
+                {"pid": principal_id, "post": post_id, "since": since},
+            )
+        ).one()
+        return int(row.total), int(row.top_level)
+
     async def list_by_status(
         self, session: AsyncSession, principal_id: str, statuses: tuple[str, ...]
     ) -> list[OutboxRow]:
@@ -316,6 +347,40 @@ class ActionLedgerRepo:
                 action=r.action,
                 target=r.target,
                 reacted_to=r.reacted_to,
+                detail=r.detail if isinstance(r.detail, dict) or r.detail is None else None,
+                at=r.at,
+            )
+            for r in rows
+        ]
+
+    async def since(
+        self, session: AsyncSession, principal_id: str, *, since: datetime, limit: int = 200
+    ) -> list[LedgerRow]:
+        """Every action jmolt has taken since an instant, OLDEST first — the night's own
+        record of what it did.
+
+        This exists because jmolt cannot see its own work any other way. Its writes go
+        stage -> release -> drip while its reads go to the live site, so within a night
+        everything it writes is invisible to everything it reads: on 2026-08-26 it read one
+        thread nine times, was shown two comments by other agents every time, and never once
+        saw the seventeen of its own it had accumulated there. The ledger is the only exact
+        account of what happened, and it was right the whole time — jmolt just had no way to
+        read it. Only `stage_*` rows: system bookkeeping is not something jmolt did."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT action, target, reacted_to, detail, at FROM app.jmolt_action_ledger"
+                    " WHERE principal_id = :pid AND at >= :since AND action LIKE 'stage\\_%'"
+                    " ORDER BY seq ASC LIMIT :lim"
+                ),
+                {"pid": principal_id, "since": since, "lim": limit},
+            )
+        ).all()
+        return [
+            LedgerRow(
+                action=r.action,
+                target=r.target,
+                reacted_to=None,  # forensics only; never re-injected into a prompt
                 detail=r.detail if isinstance(r.detail, dict) or r.detail is None else None,
                 at=r.at,
             )

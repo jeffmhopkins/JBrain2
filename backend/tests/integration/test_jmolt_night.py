@@ -31,7 +31,8 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
-from jbrain.models.jmolt_outbox import OutboxRepo
+from jbrain.llm.errors import LlmStreamTruncatedError
+from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -84,12 +85,17 @@ async def _ready(model: str | None) -> str | None:
     return model
 
 
-def _stepped_clock(step_s: float) -> Callable[[], datetime]:
+def _stepped_clock(step_s: float, *, start: datetime | None = None) -> Callable[[], datetime]:
     """A deterministic clock advancing `step_s` per call (the faked executor returns
     instantly, so a real clock would spin). The sittings loop reads it once per iteration:
     with the 3600 s budget and 300 s margin, elapsed crosses at 3300 s, so step 2000 → 1
-    sitting, step 600 → 5 sittings."""
-    state = {"t": datetime(2026, 8, 25, 3, 0, tzinfo=UTC)}
+    sitting, step 600 → 5 sittings.
+
+    `start` matters for anything that compares the runner's clock against a DB timestamp.
+    The default epoch is a fixed date in the past, so `now()` in Postgres is always AFTER
+    it — which silently made "since tonight" filters match everything, including rows from
+    other tests. Those tests pass a start near real now instead."""
+    state = {"t": start or datetime(2026, 8, 25, 3, 0, tzinfo=UTC)}
 
     def _now() -> datetime:
         cur = state["t"]
@@ -117,6 +123,30 @@ def _runner(
         clock=clock or _stepped_clock(2000),  # default: one sitting per night
         served_model_loader=served_model_loader,  # type: ignore[arg-type]
     )
+
+
+def _night_clock() -> Callable[[], datetime]:
+    """A one-sitting clock whose night starts a moment ago in REAL time.
+
+    The done-tonight block filters the ledger on `at >= woke_at`, comparing the runner's
+    clock against Postgres' `now()`. With the default epoch (a fixed date in 2026-08) every
+    DB row is newer than `woke_at`, so the filter matched everything and these tests could
+    not tell a scoped block from an unscoped one."""
+    return _stepped_clock(2000, start=datetime.now(UTC) - timedelta(seconds=1))
+
+
+async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """Empty the action ledger for this owner.
+
+    The module shares one database and one owner principal across tests, so ledger rows
+    survive from test to test. Any assertion about what the done-tonight block does or does
+    not contain has to start from a known-empty ledger or it is testing the residue of
+    whatever ran before it."""
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await s.execute(
+            text("DELETE FROM app.jmolt_action_ledger WHERE principal_id = :pid"),
+            {"pid": owner.principal_id},
+        )
 
 
 async def _jmolt_session_count(maker: async_sessionmaker, owner: SessionContext) -> int:
@@ -513,17 +543,139 @@ async def test_empty_sitting_is_retried_with_a_nudge_and_not_counted(
     assert any("This is sitting 2." in p for p in executor.prologues[2:])
 
 
+class _AlternatingEmptyExecutor(_PrologueCapturingExecutor):
+    """Empty, real, empty, real, … — an INTERMITTENT fault, which is what the live one is.
+    The retry budget must survive it; a night-wide budget would be spent by sitting 6."""
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        convo = cast("list[UserMessage]", kwargs.get("conversation") or [])
+        self.prologues.append(convo[-1].text if convo else "")
+        self.calls += 1
+        empty = self.calls % 2 == 1
+        return ExecutedTurn(
+            result=AgentResult(
+                text="" if empty else "I read my files and sat with a thread.",
+                stop_reason="end_turn",
+                steps=1 if empty else 4,
+                cost_tokens=0 if empty else 900,
+            ),
+            tools=[],
+            reasoning="We need to list files.",
+        )
+
+
+class _ZeroCostExecutor(_FakeExecutor):
+    """A single-step turn carrying text but billing nothing — no usage chunk arrived, which
+    on this box meant the stream was cut before the model's real output did. Multi-step
+    zero-cost turns are deliberately NOT empty: see `_is_empty_sitting`."""
+
+    async def run_turn(self, **_kwargs: object) -> ExecutedTurn:
+        self.calls += 1
+        return ExecutedTurn(
+            result=AgentResult(
+                text="I looked around.", stop_reason="end_turn", steps=1, cost_tokens=0
+            ),
+            tools=[],
+            reasoning="",
+        )
+
+
+class _TransientThenRealExecutor(_PrologueCapturingExecutor):
+    """Raises a transient provider fault on the first call, then works."""
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        convo = cast("list[UserMessage]", kwargs.get("conversation") or [])
+        self.prologues.append(convo[-1].text if convo else "")
+        self.calls += 1
+        if self.calls == 1:
+            raise LlmStreamTruncatedError("local stream ended without a finish_reason")
+        return ExecutedTurn(
+            result=AgentResult(
+                text="I read my files.", stop_reason="end_turn", steps=4, cost_tokens=900
+            ),
+            tools=[],
+            reasoning="",
+        )
+
+
+async def test_empty_retry_budget_resets_after_a_productive_sitting(
+    maker: async_sessionmaker,
+) -> None:
+    # THE REGRESSION. `empty_retries` was night-wide and never reset, so three empties
+    # anywhere in the hour left the rest of the night unprotected — on 2026-08-27 the next
+    # six empties each burned a real slot and the whole budget went in under nine minutes.
+    # Alternating empty/real means a night-wide budget is spent by sitting 6; a consecutive
+    # one never runs out.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _AlternatingEmptyExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(200)).run(owner)
+
+    # Every empty was retried rather than counted. Under the OLD night-wide budget the
+    # alternating fault would spend all three retries by call 6 and then burn a real slot on
+    # every subsequent empty; with a consecutive budget none of them is ever counted, so the
+    # night is bounded by its clock rather than eaten by the fault.
+    retried = [p for p in executor.prologues if "produced nothing" in p]
+    assert len(retried) == len(executor.prologues) // 2  # every empty got a retry, none counted
+    assert "not for the feed" in executor.prologues[-1]  # and it still closes on reflection
+
+
+async def test_a_wedged_model_does_not_rearm_the_retry_budget_each_slot(
+    maker: async_sessionmaker,
+) -> None:
+    # "Consecutive" has to mean consecutive. Resetting after ANY sitting — including an empty
+    # one that already burned a slot — would give a permanently wedged model three fresh
+    # retries per slot (~48 attempts across the budget) instead of three in a row.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _AlwaysEmptyExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
+
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES + 1
+
+
+async def test_a_zero_cost_sitting_is_retried_not_counted(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _ZeroCostExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
+
+    # It looks productive but billed nothing, so it is treated as empty: retried, then
+    # bounded by the consecutive cap rather than spending the night.
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES + 1
+
+
+async def test_a_transient_llm_fault_is_retried_like_an_empty_sitting(
+    maker: async_sessionmaker,
+) -> None:
+    # A cut stream the adapter could not recover reaches the night as LlmTransientError.
+    # The round was never committed, so it must hand the slot back, not burn it.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _TransientThenRealExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert "produced nothing" in executor.prologues[1]  # retried, with the first-move nudge
+    assert "This is sitting 1." in executor.prologues[0]
+    assert "This is sitting 1." in executor.prologues[1]  # the slot was handed back
+    assert any("This is sitting 2." in p for p in executor.prologues[2:])
+
+
 async def test_empty_sittings_stop_retrying_at_the_cap(maker: async_sessionmaker) -> None:
     # A wedged model (every sitting empty) must not loop the hour away on retries: after
     # JMOLT_MAX_EMPTY_RETRIES the empties count as ordinary sittings and the night ends.
     owner = await _owner(maker)
     store = FakeSettingsStore()
     executor = _AlwaysEmptyExecutor()
-    # A tight clock leaves many slots; the terminating guard here is the retry cap, not time.
-    await _runner(maker, store, executor, clock=_stepped_clock(300)).run(owner)
+    # A 60s step leaves ~55 iterations of clock headroom, so the retry cap — not the time
+    # bound — is what has to stop this night. At 300s the clock ended it first and the
+    # assertion below passed without ever exercising the cap.
+    await _runner(maker, store, executor, clock=_stepped_clock(60)).run(owner)
 
-    # Bounded: at most the sitting budget plus the extra retries — never an unbounded spin.
-    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES
+    # Bounded: the sitting budget, plus the extra retries, plus the reserved closing sitting
+    # — which is deliberately NOT drawn from the budget (the budget bounds feed sittings; the
+    # reflection sitting is extra), so it is the +1. Never an unbounded spin.
+    assert executor.calls <= JMOLT_MAX_SITTINGS + JMOLT_MAX_EMPTY_RETRIES + 1
 
 
 async def test_the_last_sitting_is_reserved_for_reflection(maker: async_sessionmaker) -> None:
@@ -639,28 +791,84 @@ async def test_the_night_never_exceeds_the_budget_plus_its_closing_sitting(
     assert executor.calls == JMOLT_MAX_SITTINGS + 1
 
 
-async def test_pending_staged_actions_ride_each_sitting(maker: async_sessionmaker) -> None:
-    # A fresh-context sitting can't see its own pending outbox, so what jmolt has already
-    # staged is re-supplied in the prologue — the guard against re-staging the same action.
+async def test_done_tonight_block_names_targets_not_just_counts(
+    maker: async_sessionmaker,
+) -> None:
+    # The old block said "2 comments, 1 vote" — a number, which cannot stop a duplicate. The
+    # only useful fact is WHICH POST, because jmolt's own writes are invisible when it reads
+    # the thread back.
     owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="comment", payload={"post_id": "p1", "content": "hi"}
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_comment", target="post-abc"
         )
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="comment", payload={"post_id": "p2", "content": "yo"}
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_comment", target="post-abc"
         )
-        await OutboxRepo().stage(
-            s, owner.principal_id, kind="vote", payload={"target_id": "t1", "up": True}
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_vote", target="post-xyz"
         )
     executor = _PrologueCapturingExecutor()
-    await _runner(maker, store, executor).run(owner)  # one non-reflection sitting
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
 
     first = executor.prologues[0]
-    assert "already staged" in first
-    assert "2 comments" in first and "1 vote" in first
-    assert "do not stage them again" in first
+    assert "post-abc" in first and "post-xyz" in first
+    assert "comment 2x on post-abc" in first  # repetition shown AS repetition
+    assert "NOT visible on the site yet" in first
+
+
+async def test_done_tonight_block_counts_published_rows_too(maker: async_sessionmaker) -> None:
+    # The old block read the OUTBOX, and only its queued/released rows. The drip publishes
+    # 20-45s after staging, so rows fell out of it almost immediately and it reported
+    # near-nothing. Reading the LEDGER instead makes the outbox row's later status
+    # irrelevant — what jmolt did is recorded once and stays recorded.
+    owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
+    store = FakeSettingsStore()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_comment", target="post-published"
+        )
+        await OutboxRepo().stage(
+            s,
+            owner.principal_id,
+            kind="comment",
+            payload={"post_id": "post-published", "content": "hi"},
+        )
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
+    assert "post-published" in executor.prologues[0]
+
+
+async def test_done_tonight_block_ignores_earlier_nights(maker: async_sessionmaker) -> None:
+    # Scoped to THIS night: yesterday's actions are not repetition tonight, and a block that
+    # grew without bound would crowd out the prologue it precedes.
+    owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
+    store = FakeSettingsStore()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.jmolt_action_ledger (principal_id, action, target, at)"
+                " VALUES (:pid, 'stage_comment', 'post-yesterday', now() - interval '2 days')"
+            ),
+            {"pid": owner.principal_id},
+        )
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_night_clock()).run(owner)
+    assert "post-yesterday" not in executor.prologues[0]
+
+
+async def test_done_tonight_block_is_absent_when_nothing_has_happened(
+    maker: async_sessionmaker,
+) -> None:
+    owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock()).run(owner)
+    assert "ALREADY DONE TONIGHT" not in executor.prologues[0]
 
 
 async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) -> None:

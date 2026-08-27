@@ -10,6 +10,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.agent.jmolt_guards import (
     MAX_COMMENTS_PER_NIGHT,
+    MAX_COMMENTS_PER_POST,
     MAX_FOLLOWS_PER_NIGHT,
     MAX_VOTES_PER_NIGHT,
 )
@@ -154,6 +155,89 @@ async def test_comment_stages_and_is_recorded(maker: async_sessionmaker) -> None
         ledger = await ActionLedgerRepo().recent(s, pid)
     assert rows[0].kind == "comment"
     assert any(r.action == "stage_comment" for r in ledger)
+
+
+async def test_a_second_top_level_comment_on_the_same_post_is_refused(
+    maker: async_sessionmaker,
+) -> None:
+    # THE 17-comment regression. jmolt put seventeen comments on one post, nine of them
+    # top-level, asking the same question in different words — its own comments are invisible
+    # to it when it re-reads the thread, so every read looked like an unanswered question.
+    # The nightly cap could not see that shape and the content-hash dedup key never fired:
+    # seventeen paraphrases are seventeen distinct hashes.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    first = await h["moltbook_comment"](
+        {"post_id": "p1", "content": "does your owner's script or your own drive decide?"},
+        _ctx(pid),
+    )
+    assert "Staged" in first
+    again = await h["moltbook_comment"](
+        {"post_id": "p1", "content": "is it the design that steers you, or the context?"},
+        _ctx(pid),
+    )
+    assert "top-level" in again
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
+    assert len(rows) == 1  # the paraphrase never made it in
+
+
+async def test_a_threaded_reply_on_the_same_post_is_still_allowed(
+    maker: async_sessionmaker,
+) -> None:
+    # The cap must not ban conversation: answering a specific comment is the thing jmolt is
+    # supposed to be good at, and it is exactly what a second OPENING remark is not.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    await h["moltbook_comment"]({"post_id": "p1", "content": "an opening question"}, _ctx(pid))
+    reply = await h["moltbook_comment"](
+        {"post_id": "p1", "content": "answering what you said", "parent_id": "c9"}, _ctx(pid)
+    )
+    assert "Staged" in reply
+
+
+async def test_comments_are_capped_per_post(maker: async_sessionmaker) -> None:
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    await h["moltbook_comment"]({"post_id": "p1", "content": "opening remark"}, _ctx(pid))
+    for i in range(MAX_COMMENTS_PER_POST - 1):
+        out = await h["moltbook_comment"](
+            {"post_id": "p1", "content": f"reply {i}", "parent_id": f"c{i}"}, _ctx(pid)
+        )
+        assert "Staged" in out
+    over = await h["moltbook_comment"](
+        {"post_id": "p1", "content": "one more", "parent_id": "c99"}, _ctx(pid)
+    )
+    assert "limit for one post" in over
+
+
+async def test_the_per_post_cap_does_not_affect_a_different_post(
+    maker: async_sessionmaker,
+) -> None:
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    await h["moltbook_comment"]({"post_id": "p1", "content": "opening remark"}, _ctx(pid))
+    out = await h["moltbook_comment"]({"post_id": "p2", "content": "a new thread"}, _ctx(pid))
+    assert "Staged" in out
+
+
+async def test_a_rate_limited_comment_does_not_burn_the_posts_allowance(
+    maker: async_sessionmaker,
+) -> None:
+    # Live evidence: six of seven comment failures on the box were the platform throttling
+    # us. Counting those would let one 429 permanently spend a post's top-level allowance and
+    # then tell jmolt it had already commented on something nobody can see.
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    await h["moltbook_comment"]({"post_id": "p1", "content": "an opening question"}, _ctx(pid))
+    async with scoped_session(
+        maker, SessionContext(principal_kind="owner", domain_scopes=("jmolt",))
+    ) as s:
+        rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
+        await OutboxRepo().set_status(s, str(rows[0].id), "failed", error="rate limited")
+
+    retry = await h["moltbook_comment"]({"post_id": "p1", "content": "asking again"}, _ctx(pid))
+    assert "Staged" in retry
 
 
 async def test_comments_are_capped_per_night(maker: async_sessionmaker) -> None:

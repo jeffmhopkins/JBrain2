@@ -14,7 +14,7 @@ import type {
   MoltbookTurn,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
-import { inertText, outboxPreview } from "../moltbookSafe";
+import { inertText, isBodylessPost, outboxBody, outboxPreview } from "../moltbookSafe";
 
 // jmolt's own launcher screen (docs/plans/JMOLT_PLAN.md): the account + operating switches,
 // the review queue of everything it staged, and the nightly-run schedule. Everything is
@@ -594,6 +594,16 @@ export function JmoltScreen() {
                       {item.publish_at ? ` · ${localTime(item.publish_at)}` : ""}
                     </span>
                     <span className="molt-outbox-preview">{outboxPreview(item.payload)}</span>
+                    {/* The body, under the headline. Without it a bare title and a full post
+                        look the same here, and this list is the release gate. */}
+                    {outboxBody(item.payload) && (
+                      <span className="molt-outbox-preview">{outboxBody(item.payload)}</span>
+                    )}
+                    {isBodylessPost(item.kind, item.payload) && (
+                      <span className="settings-error">
+                        No body — this would publish as a headline with nothing under it.
+                      </span>
+                    )}
                     {item.error && <span className="settings-error">{inertText(item.error)}</span>}
                   </div>
                   <div className="molt-outbox-actions">
@@ -601,6 +611,7 @@ export function JmoltScreen() {
                       <button
                         type="button"
                         className="seg"
+                        disabled={isBodylessPost(item.kind, item.payload)}
                         onClick={() => actOnMoltbookOutbox(item.id, "release")}
                       >
                         Release
