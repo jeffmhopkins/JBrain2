@@ -21,6 +21,8 @@ function settings(over: Partial<MoltbookSettings> = {}): MoltbookSettings {
     night_last_run: null,
     night_running_until: null,
     drip_last_swept: null,
+    night_missed: false,
+    integrity_last_pass: null,
     ...over,
   };
 }
@@ -290,5 +292,61 @@ describe("JmoltScreen", () => {
     // A long entry starts collapsed with a "Show more" affordance that toggles to "Show less".
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+  });
+});
+
+describe("the schedule card reports whether things actually ran", () => {
+  // C3/C4. Both facts were unavailable to the owner in exactly the same way: a healthy pass
+  // and a pass that never happened produced identical UI, so the calm pill was evidence of
+  // nothing. The remote owner has no terminal — this card IS the instrument.
+  afterEach(() => vi.restoreAllMocks());
+
+  function stubAll() {
+    stubHistory();
+    vi.spyOn(api, "getMoltbookOutbox").mockResolvedValue([]);
+  }
+
+  it("shows a missed night instead of a healthy Scheduled pill", async () => {
+    stubAll();
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings({ night_missed: true }));
+
+    render(<JmoltScreen />);
+
+    expect(await screen.findByText("Night missed")).toBeInTheDocument();
+    expect(screen.getByText("the last scheduled night did not run")).toBeInTheDocument();
+  });
+
+  it("does not cry wolf while a night is running", async () => {
+    stubAll();
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(
+      settings({ night_running_until: new Date(Date.now() + 600_000).toISOString() }),
+    );
+
+    render(<JmoltScreen />);
+
+    // "Awake now" is both the pill and the schedule row label.
+    expect((await screen.findAllByText("Awake now")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Night missed")).not.toBeInTheDocument();
+  });
+
+  it("says the tamper watch has never run rather than staying silent", async () => {
+    stubAll();
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(settings({ integrity_last_pass: null }));
+
+    render(<JmoltScreen />);
+
+    expect(await screen.findByText("Never run")).toBeInTheDocument();
+    expect(screen.getByText("no pass has ever completed")).toBeInTheDocument();
+  });
+
+  it("shows when the tamper watch last completed a pass", async () => {
+    stubAll();
+    vi.spyOn(api, "getMoltbookSettings").mockResolvedValue(
+      settings({ integrity_last_pass: new Date(Date.now() - 120_000).toISOString() }),
+    );
+
+    render(<JmoltScreen />);
+
+    expect(await screen.findByText("Watching")).toBeInTheDocument();
   });
 });

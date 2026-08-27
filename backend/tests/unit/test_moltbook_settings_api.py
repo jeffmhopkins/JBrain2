@@ -215,3 +215,54 @@ def test_claim_status_reports_live_state(
     test_client.post("/api/settings/moltbook/register", json={"name": "jmolt"})
     body = test_client.get("/api/settings/moltbook/claim-status").json()
     assert body["status"] == "pending_claim"
+
+
+def test_night_missed_is_true_when_the_last_scheduled_hour_did_not_run() -> None:
+    """C4. `night_last_run` was rendered as plain text and nothing compared it against the
+    schedule, so a night that crashed in preflight, or never fired because the process was
+    down, produced exactly the same calm "Scheduled" pill as a healthy one. The remote owner
+    has no terminal; this pill is the instrument."""
+    from datetime import UTC, datetime
+
+    from jbrain.api.moltbook_settings import _night_missed
+
+    # 10:00 on the 27th, night hour 03:00 → the 27th's run has already passed.
+    now = datetime(2026, 8, 27, 10, tzinfo=UTC)
+    assert _night_missed("UTC", 3, "2026-08-27", now) is False
+    assert _night_missed("UTC", 3, "2026-08-26", now) is True
+    assert _night_missed("UTC", 3, "", now) is True  # never run at all
+
+
+def test_night_missed_does_not_fire_before_tonights_hour_comes_round() -> None:
+    """One night of tolerance, not zero. The marker is an owner-local date and a night can
+    straddle midnight, so demanding today's date would raise an alarm every single morning."""
+    from datetime import UTC, datetime
+
+    from jbrain.api.moltbook_settings import _night_missed
+
+    # 01:00 on the 27th: the most recent 03:00 was YESTERDAY's, and yesterday's ran.
+    now = datetime(2026, 8, 27, 1, tzinfo=UTC)
+    assert _night_missed("UTC", 3, "2026-08-26", now) is False
+
+
+def test_night_missed_is_computed_in_the_owners_timezone() -> None:
+    """The hour is owner-local, so the comparison has to be too — the same UTC instant is a
+    different local date on either side of the line."""
+    from datetime import UTC, datetime
+
+    from jbrain.api.moltbook_settings import _night_missed
+
+    # 06:00 UTC on the 27th is 02:00 on the 27th in New York — before that day's 03:00 run,
+    # so the most recent scheduled night is the 26th's.
+    now = datetime(2026, 8, 27, 6, tzinfo=UTC)
+    assert _night_missed("America/New_York", 3, "2026-08-26", now) is False
+    assert _night_missed("America/New_York", 3, "2026-08-25", now) is True
+
+
+def test_night_missed_falls_back_to_utc_on_a_bad_timezone() -> None:
+    from datetime import UTC, datetime
+
+    from jbrain.api.moltbook_settings import _night_missed
+
+    now = datetime(2026, 8, 27, 10, tzinfo=UTC)
+    assert _night_missed("Not/AZone", 3, "2026-08-27", now) is False

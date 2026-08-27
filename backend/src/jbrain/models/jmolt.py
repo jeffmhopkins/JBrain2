@@ -30,11 +30,21 @@ MAX_FILE_BYTES = 24 * 1024
 # a novel into the digest, and the table keeps only the most recent N so it stays bounded.
 MAX_JOURNAL_BYTES = 8 * 1024
 JOURNAL_RETENTION = 200
-# Archive retention (M13 — "bounded"): keep the last N snapshots per file. With the quota
-# above this bounds the archive at ~MAX_FILES * ARCHIVE_RETENTION * MAX_FILE_BYTES ≈ 9.4 MB.
-# Combined with dedup ("snapshot only on change"), a well-behaved night adds a handful of
-# rows and a looping/injected one can't grow the table without bound.
-ARCHIVE_RETENTION = 25
+# Archive retention (M13 — "bounded"): keep the last N snapshots per file.
+#
+# Raised from 25 with the arrival of append mode. The archive is the ONLY recovery net for a
+# scratchpad write that went wrong, and a measured night rewrote one file ten times — at 25
+# that was already down to ~2.5 nights of history for an active file. Append makes an edit
+# cheap, so the rewrite rate goes up, not down; raising this in the same change is what keeps
+# the net the same size in nights rather than in rows.
+ARCHIVE_RETENTION = 60
+# Renaming carries a file's recent history onto the new name (a rename is a retitle, and the
+# versions before it are still the same file's). Bounded deliberately: the per-file prune
+# cannot see across names, so an unbounded copy would give a rename loop a multiplier.
+RENAME_HISTORY_CARRY = 5
+# The per-file prune bounds rows per NAME; renaming grows the set of names. This bounds the
+# other axis. 1200 * MAX_FILE_BYTES ≈ 28 MB worst case, and a real night is a few hundred KB.
+ARCHIVE_MAX_ROWS_PER_PRINCIPAL = 1200
 
 
 class QuotaError(Exception):
@@ -160,6 +170,35 @@ class JmoltScratchRepo:
         filename = filename.strip()
         if not filename:
             raise QuotaError("a filename is required.")
+        new_bytes = await self._check_quota(session, principal_id, filename, content)
+        # M13 dedup — snapshot only on change: an identical rewrite is a no-op (no upsert,
+        # no archive row), so a loop that keeps saving the same content grows nothing.
+        # (`read` returns None for a file that does not exist, so this is also the
+        # "already stored identically" test without a second existence lookup.)
+        if await self.read(session, principal_id, filename) == content:
+            return
+        stmt = (
+            pg_insert(JmoltScratch)
+            .values(
+                principal_id=principal_id,
+                filename=filename,
+                content=content,
+                bytes=new_bytes,
+                updated_at=func.now(),
+            )
+            .on_conflict_do_update(
+                index_elements=[JmoltScratch.principal_id, JmoltScratch.filename],
+                set_={"content": content, "bytes": new_bytes, "updated_at": func.now()},
+            )
+        )
+        await session.execute(stmt)
+        await self._archive(session, principal_id, filename, content, new_bytes, "write")
+
+    async def _check_quota(
+        self, session: AsyncSession, principal_id: str, filename: str, content: str
+    ) -> int:
+        """Raise QuotaError if `content` cannot be stored as `filename`. Returns its byte
+        length. Shared by every write path so append and save are held to one budget."""
         new_bytes = len(content.encode("utf-8"))
         if new_bytes > MAX_FILE_BYTES:
             raise QuotaError(
@@ -179,10 +218,28 @@ class JmoltScratchRepo:
                 f"({others_total + new_bytes} bytes used of {MAX_TOTAL_BYTES}). "
                 "Trim or delete something first."
             )
-        # M13 dedup — snapshot only on change: an identical rewrite is a no-op (no upsert,
-        # no archive row), so a loop that keeps saving the same content grows nothing.
-        if filename in existing and await self.read(session, principal_id, filename) == content:
-            return
+        return new_bytes
+
+    async def append(
+        self, session: AsyncSession, principal_id: str, filename: str, delta: str
+    ) -> tuple[int, int]:
+        """Add `delta` to the end of a file, creating it if absent. Returns (prior, new)
+        byte lengths.
+
+        This exists because there was no way to add a line to a note without resending the
+        whole file: every edit was a full rewrite, which is how a truncated tool call becomes
+        a silently emptied file (the reason `write` now refuses an absent content key). The
+        quota is checked against the COMBINED content, so append cannot be used to walk past
+        a budget a save would have refused."""
+        filename = filename.strip()
+        if not filename:
+            raise QuotaError("a filename is required.")
+        prior = await self.read(session, principal_id, filename) or ""
+        # A newline between the old tail and the new text unless one is already there —
+        # appending to notes, not concatenating a byte stream.
+        joiner = "" if not prior or prior.endswith("\n") else "\n"
+        content = prior + joiner + delta
+        new_bytes = await self._check_quota(session, principal_id, filename, content)
         stmt = (
             pg_insert(JmoltScratch)
             .values(
@@ -198,7 +255,54 @@ class JmoltScratchRepo:
             )
         )
         await session.execute(stmt)
-        await self._archive(session, principal_id, filename, content, new_bytes, "write")
+        await self._archive(session, principal_id, filename, content, new_bytes, "append")
+        return len(prior.encode("utf-8")), new_bytes
+
+    async def rename(self, session: AsyncSession, principal_id: str, old: str, new: str) -> None:
+        """Retitle a file, carrying its recent history onto the new name.
+
+        Both prologues tell jmolt to retitle a file that has outgrown its name, and until now
+        the only way to do it was read → write-new → delete-old, which orphans the old name's
+        archive rows from the file they belong to. A rename does not change the file count, so
+        it is deliberately not held to MAX_FILES — refusing a retitle at the file cap would
+        make the cap unescapable in exactly the situation the prologue asks for.
+
+        History is COPIED, not moved: `jmolt_scratch_archive` has INSERT and DELETE policies
+        and no UPDATE policy, so append-only is a Postgres guarantee rather than a convention
+        here, and rewriting a row's filename would need a policy that weakens it."""
+        old, new = old.strip(), new.strip()
+        if not old or not new:
+            raise QuotaError("a rename needs both the current filename and the new one.")
+        if old == new:
+            raise QuotaError(f"{old!r} is already called that.")
+        content = await self.read(session, principal_id, old)
+        if content is None:
+            raise QuotaError(f"you have no file named {old!r}.")
+        if await self.read(session, principal_id, new) is not None:
+            raise QuotaError(
+                f"you already have a file named {new!r} — renaming onto it would destroy it. "
+                "Pick another name, or delete that one first if you meant to replace it."
+            )
+        nbytes = len(content.encode("utf-8"))
+        await session.execute(
+            text(
+                "UPDATE app.jmolt_scratch SET filename = :new, updated_at = now()"
+                " WHERE principal_id = :pid AND filename = :old"
+            ),
+            {"pid": principal_id, "old": old, "new": new},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.jmolt_scratch_archive"
+                " (principal_id, filename, content, bytes, op)"
+                " SELECT principal_id, :new, content, bytes, op"
+                " FROM app.jmolt_scratch_archive"
+                " WHERE principal_id = :pid AND filename = :old"
+                " ORDER BY seq DESC LIMIT :carry"
+            ),
+            {"pid": principal_id, "old": old, "new": new, "carry": RENAME_HISTORY_CARRY},
+        )
+        await self._archive(session, principal_id, new, content, nbytes, "rename")
 
     async def delete(self, session: AsyncSession, principal_id: str, filename: str) -> bool:
         """Delete a file, snapshotting its last content to the archive. Returns whether a
@@ -264,4 +368,17 @@ class JmoltScratchRepo:
                 " )"
             ),
             {"pid": principal_id, "fn": filename, "keep": ARCHIVE_RETENTION},
+        )
+        # The per-file prune bounds rows per NAME. Renaming mints names, so bound the whole
+        # principal's archive too — otherwise a rename loop grows the table without ever
+        # tripping a per-file cap.
+        await session.execute(
+            text(
+                "DELETE FROM app.jmolt_scratch_archive"
+                " WHERE principal_id = :pid AND seq NOT IN ("
+                "   SELECT seq FROM app.jmolt_scratch_archive"
+                "   WHERE principal_id = :pid ORDER BY seq DESC LIMIT :keep"
+                " )"
+            ),
+            {"pid": principal_id, "keep": ARCHIVE_MAX_ROWS_PER_PRINCIPAL},
         )

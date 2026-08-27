@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from jbrain.agent.jmolt_owner import jmolt_settings_ctx
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.settings_store import SqlSettingsStore
 
@@ -59,8 +60,10 @@ def build_jmolt_time_handlers(
     settings = settings_store or SqlSettingsStore(maker)
 
     async def time_left(_a: dict, ctx: ToolContext) -> str:
-        tz = await settings.owner_timezone(ctx.session) or "UTC"
-        deadline = await settings.moltbook_night_deadline(ctx.session)
+        # Settings deny jmolt's own auth context (migration 0178, B9).
+        sctx = jmolt_settings_ctx(ctx.session)
+        tz = await settings.owner_timezone(sctx) or "UTC"
+        deadline = await settings.moltbook_night_deadline(sctx)
         return time_left_message(deadline, tz, datetime.now(UTC))
 
     return {"time_left": time_left}

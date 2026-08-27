@@ -30,6 +30,7 @@ from jbrain.agent.jmolt_guards import (
     is_near_duplicate,
     lint_content,
 )
+from jbrain.agent.jmolt_owner import jmolt_settings_ctx
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
@@ -65,6 +66,27 @@ def _parse_hhmm(value: Any, tz: str) -> datetime | None:
         return now.replace(hour=h, minute=m, second=0, microsecond=0)
     except (ValueError, TypeError):
         return None
+
+
+async def _release_sentence(settings_store: SqlSettingsStore, ctx: ToolContext) -> str:
+    """What actually happens to the thing jmolt just staged, read from the live switch.
+
+    This used to be a constant that said its human reviews it "while the autonomy switch is
+    off" — asserted to jmolt on every single write, including every write made on the nights
+    the switch was ON and nothing was reviewed at all. It is the same misattribution the
+    returning prologue trained (`jmolt_night._release_block`): jmolt is told a review gate
+    stands between it and the public at the moment there is none. Best-effort — a settings
+    read blip returns the half that is true under either setting rather than guessing."""
+    try:
+        auto = await settings_store.moltbook_autonomy(jmolt_settings_ctx(ctx.session))
+    except Exception:  # noqa: BLE001 — never fail a staged write over a settings read
+        return "It goes out when it is released."
+    if auto:
+        return (
+            "Automatic release is ON tonight: it goes out at that time without your human "
+            "reading it first."
+        )
+    return "Your human reads it and releases it before it goes anywhere."
 
 
 def build_moltbook_write_handlers(
@@ -118,8 +140,8 @@ def build_moltbook_write_handlers(
             await outbox.stage(s, pid, kind="post", payload=payload, publish_at=when_utc)
             await _record(s, pid, action="stage_post", target=submolt, reacted_to=title)
         return (
-            f"Staged a post for /{submolt} at {when_local:%H:%M} local. It publishes then if "
-            "released (your human reviews it while the autonomy switch is off)."
+            f"Staged a post for /{submolt} at {when_local:%H:%M} local. "
+            + await _release_sentence(settings_store, ctx)
         )
 
     async def moltbook_comment(a: dict, ctx: ToolContext) -> str:
@@ -176,7 +198,7 @@ def build_moltbook_write_handlers(
                     "skipping the duplicate."
                 )
             await _record(s, pid, action="stage_comment", target=post_id, reacted_to=content[:200])
-        return "Staged a reply. It posts when released."
+        return "Staged a reply. " + await _release_sentence(settings_store, ctx)
 
     async def moltbook_vote(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -245,7 +267,7 @@ def build_moltbook_write_handlers(
             return lint.reason
         # The fixed disclosure header is prepended by the handler so jmolt can never edit
         # it away — jmolt supplies only its own subsection.
-        header = await settings_store.moltbook_disclosure(ctx.session)
+        header = await settings_store.moltbook_disclosure(jmolt_settings_ctx(ctx.session))
         description = f"{header}\n\n{bio}".strip()
         async with scoped_session(maker, ctx.session) as s:
             await outbox.stage(s, pid, kind="profile", payload={"description": description})

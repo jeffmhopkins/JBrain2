@@ -7,6 +7,7 @@ HTTP is faked; the settings + outbox are real.
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -278,3 +279,52 @@ async def test_platform_read_failure_leaves_state_untouched(maker: async_session
     # A 5xx is a "cannot check", never a false tamper — the prior state stands.
     assert await _watch(maker, store, handler).check() == "ok"
     assert store.values.get("moltbook_killed", False) is False
+
+
+async def test_a_healthy_pass_leaves_a_heartbeat(maker: async_sessionmaker) -> None:
+    """C3 — the deadman. The watch wrote state ONLY on a transition, so a healthy pass wrote
+    nothing and logged nothing. That made "healthy for days" and "never ran since deploy"
+    the same observation, and on the live box `moltbook_account_state` did not exist at all:
+    with full DB and log access there was no way to tell which one was true. The owner has no
+    terminal, so "no alarms" has to mean something, and it only can if the watch says it ran.
+    """
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"agent": {"username": "jmolt", "status": "active"}})
+
+    assert await _watch(maker, store, handler).check() == "ok"
+    assert store.values["moltbook_integrity_last_pass"]
+
+
+async def test_the_heartbeat_records_a_pass_the_platform_broke(maker: async_sessionmaker) -> None:
+    """Stamped before the platform read, deliberately: a watch that ran and could not reach
+    Moltbook is alive, and that is exactly the fact the owner is missing. Recording only
+    successful passes would make a permanently-unreachable platform look like a dead watch —
+    the same ambiguity in a different place."""
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "down"})
+
+    await _watch(maker, store, handler).check()
+    assert store.values["moltbook_integrity_last_pass"]
+
+
+async def test_the_heartbeat_advances_on_every_pass(maker: async_sessionmaker) -> None:
+    """It has to be an advancing timestamp, not a flag: "it ran once, months ago" is the
+    state the deadman exists to make visible."""
+    await _owner_pid(maker)
+    store = FakeSettingsStore()
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"agent": {"username": "jmolt", "status": "active"}})
+
+    watch = _watch(maker, store, handler)
+    await watch.check(now=datetime(2026, 8, 27, 3, 0, tzinfo=UTC))
+    first = store.values["moltbook_integrity_last_pass"]
+    await watch.check(now=datetime(2026, 8, 27, 4, 0, tzinfo=UTC))
+
+    assert store.values["moltbook_integrity_last_pass"] != first

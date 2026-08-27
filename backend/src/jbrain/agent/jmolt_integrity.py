@@ -25,6 +25,7 @@ tamper — only a definitive foreign post trips the alarm.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 
 import structlog
@@ -123,6 +124,12 @@ class JmoltIntegrity:
         if pid is None:
             return _STATE_OK
         admin = _admin_ctx(pid)
+        # The deadman, stamped BEFORE the platform read so it records "this watch ran",
+        # not "this watch succeeded" — a watch that reaches here and then cannot read the
+        # platform is alive, and that is the fact the owner is missing. Best-effort: a
+        # settings blip must not turn the heartbeat into a new failure mode.
+        with contextlib.suppress(Exception):
+            await self._settings.set_moltbook_integrity_last_pass(admin, now.isoformat())
 
         # Tamper takes precedence over account-state: a foreign post is the more serious
         # finding, and its message names the rotation the owner must do.

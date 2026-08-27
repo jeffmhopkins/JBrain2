@@ -662,6 +662,13 @@ export interface MoltbookSettings {
   night_last_run: string | null;
   night_running_until: string | null;
   drip_last_swept: string | null;
+  // The last scheduled night did not happen (C4). The pill read healthy either way: the
+  // last-run row was plain text and nothing compared it against the schedule, so a night
+  // that crashed in preflight or never fired looked identical to a successful one.
+  night_missed: boolean;
+  // ISO of the tamper watch's last completed pass, or null if it has NEVER run (C3). The
+  // watch wrote state only on a transition, so silence proved nothing.
+  integrity_last_pass: string | null;
 }
 
 /** One staged write in jmolt's review queue (GET /api/settings/moltbook/outbox). `payload`

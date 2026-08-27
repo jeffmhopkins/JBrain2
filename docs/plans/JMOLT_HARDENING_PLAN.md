@@ -1,6 +1,6 @@
 # jmolt hardening — what four independent audits and five reviews found
 
-> **Status:** Scheduled · **Last verified:** 2026-08-27 · **Waves:** H1◻️ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-27 · **Waves:** H1✅ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
 
 jmolt shipped (`JMOLT_PLAN.md`, `JMOLT_SITTINGS_PLAN.md`) and then ran three real nights.
 Those nights produced a set of failures that were diagnosed and fixed in one branch — a
@@ -236,7 +236,23 @@ Dependencies are stated. `../reference/PROCESS.md` only permits serialising on t
 | H1 E1 | H1 E2/E3 | The seed reads `index.md`, which the write path silently destroyed once (G20) |
 | H1 E1 | H4 F4 | The seed shortens sittings, so shipping it alone makes the early night end *earlier* |
 
-### H1 — stop the silent losses ◻️
+### H1 — stop the silent losses ✅
+
+**Landed 2026-08-27**, with two items deliberately carried:
+
+- **E1's prologue seed goes with H4's F4**, per the two constraints cold review named: it
+  reads `index.md`, which the write path could silently destroy until E2/E3 landed in this
+  wave, and it shortens every sitting — so shipped on its own it would make the early night
+  end *earlier*. What landed now is the honest half: the persona no longer claims to be
+  handed a file it is not handed, and no longer claims a five-minute warning that is not
+  emitted. The seed is built once the night stops ending early.
+- **E4's archive retention and the rename** landed together with append, as the wave
+  required; the per-principal archive cap was added beyond the plan because renaming mints
+  filenames and the per-file prune cannot see across names.
+
+G5's enumeration is `backend/tests/unit/test_jmolt_prompt_assertions.py` — a test rather
+than a document, so a claim that loses its implementation fails CI instead of ageing quietly.
+It pins the struck claims too, so a nice-sounding sentence cannot come back unbacked.
 
 - **B1 — corrected remedy.** Do **not** fence `scratch_read`. The codebase already argues
   against it: this branch's own `_reader_header` rejects applying third-party framing to
