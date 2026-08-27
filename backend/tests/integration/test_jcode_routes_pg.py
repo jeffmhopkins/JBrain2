@@ -200,6 +200,8 @@ async def test_create_does_not_warm_and_warm_endpoint_swaps(
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/sessions", json={"repo": "r"})).status_code == 201
+        # A settle-wait, not a race: the assertion below is that NOTHING happened, and
+        # there is no state to poll for. See `_until` for the ones that were races.
         await asyncio.sleep(0.05)  # nothing should have run in the background
         assert gw.unloaded == [] and gw.loaded == []  # no surprise swap on create
 
@@ -209,7 +211,13 @@ async def test_create_does_not_warm_and_warm_endpoint_swaps(
         assert status["resident"] == ["gpt-oss-120b"]  # names what a swap would evict
 
         assert (await client.post("/api/jcode/model/warm")).status_code == 200
-        await asyncio.sleep(0.1)  # let the background warm task run
+        # Both halves matter. `warming is False` alone would pass at t=0, before the task
+        # has even started; `gw.loaded` alone would pass while the done-callback is still
+        # pending. Together they mean the task ran AND settled.
+        await _until(
+            lambda: _both(gw.loaded == ["qwen3-coder-next"], _model_is(client, "warming", False)),
+            what="the background warm task to run and settle",
+        )
         assert gw.unloaded == ["gpt-oss-120b"]  # the other model was evicted
         assert gw.loaded == ["qwen3-coder-next"]  # the coder was warmed
 
@@ -218,6 +226,41 @@ async def test_create_does_not_warm_and_warm_endpoint_swaps(
         assert done["hosting"] is True
         # The warm task has finished, so the bar's signal is back down.
         assert done["warming"] is False
+
+
+async def _model_is(client: AsyncClient, field: str, value: object) -> bool:
+    """Read one field off GET /api/jcode/model — the predicate `_until` polls."""
+    return (await client.get("/api/jcode/model")).json()[field] == value
+
+
+async def _both(ready: bool, awaitable) -> bool:
+    """Combine an already-evaluated condition with an async one, without leaving the
+    awaitable un-awaited when the first is False (which would warn and leak)."""
+    got = await awaitable
+    return ready and got
+
+
+async def _until(check, *, what: str, timeout_s: float = 5.0) -> None:
+    """Wait until an async predicate holds, instead of sleeping a fixed slice.
+
+    These tests drive real asyncio background work — the warm task and the done-callback
+    that lowers `warming` — and used fixed `asyncio.sleep(0.05)` waits to let it happen.
+    That is a race, not a wait: it passes on an idle machine and loses whenever the runner
+    is busy, which is exactly how `test_status_reports_warming_while_the_load_is_in_flight`
+    failed in CI while every assertion in it was correct.
+
+    Polling the state the assertion is about is deterministic when the code works, returns
+    as soon as it does (so it is FASTER than the sleep in the common case), and still fails
+    on a real regression — with a message naming what never happened, rather than a bare
+    `assert True is False`."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while True:
+        if await check():
+            return
+        if loop.time() >= deadline:
+            raise AssertionError(f"timed out after {timeout_s}s waiting for {what}")
+        await asyncio.sleep(0.01)
 
 
 class _BlockingGateway(_FakeGateway):
@@ -259,7 +302,10 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/model/warm")).status_code == 200
-        await asyncio.sleep(0.05)  # let the warm task reach the blocked load()
+        await _until(
+            lambda: _model_is(client, "warming", True),
+            what="the warm task to reach the blocked load()",
+        )
 
         mid = (await client.get("/api/jcode/model")).json()
         assert mid["loaded"] is True  # the gateway already lists it...
@@ -267,7 +313,10 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
         assert mid["progress"] == 0.5  # ...and the measured fraction is read off its row
 
         gw.gate.set()  # release the load
-        await asyncio.sleep(0.05)  # let the warm task finish + the done-callback fire
+        await _until(
+            lambda: _model_is(client, "warming", False),
+            what="the warm task to finish and its done-callback to fire",
+        )
         done = (await client.get("/api/jcode/model")).json()
         assert done["warming"] is False
         assert done["progress"] is None  # settled row → nothing in flight to report
@@ -288,6 +337,9 @@ async def test_warm_is_a_noop_when_the_coder_is_already_resident(
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/model/warm")).status_code == 200
+        # Left as a settle-wait deliberately: every assertion below is a NEGATIVE (nothing
+        # loaded, nothing evicted), and you cannot poll for "nothing will happen" — a poll
+        # would return instantly and prove less than the sleep does.
         await asyncio.sleep(0.1)  # let the (short-circuiting) warm task run
         assert gw.loaded == []  # not reloaded — already resident
         assert gw.unloaded == []  # nothing evicted
