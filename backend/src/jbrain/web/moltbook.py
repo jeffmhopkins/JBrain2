@@ -35,6 +35,8 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -541,13 +543,32 @@ def _strip_imperatives(obj: Any, _depth: int = 0) -> Any:
 
 
 def _retry_after(resp: httpx.Response) -> float | None:
+    """Seconds to wait, from a `Retry-After` in either form the RFC allows.
+
+    The date form is not exotic — plenty of servers send it — and parsing only the numeric
+    one meant a perfectly good back-off instruction silently became "no instruction", which
+    reads downstream as "retry whenever you like". Negative/absurd values clamp to 0 rather
+    than travelling as nonsense; the caller caps the upper end."""
     raw = resp.headers.get("Retry-After")
     if raw is None:
         return None
     try:
-        return float(raw)
+        return max(0.0, float(raw))
     except ValueError:
+        pass
+    when = parsedate_to_datetime_safe(raw)
+    if when is None:
         return None
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
+def parsedate_to_datetime_safe(raw: str) -> datetime | None:
+    """An HTTP-date, or None. Never raises on junk — this header is remote-controlled."""
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _error_message(status: int) -> str:

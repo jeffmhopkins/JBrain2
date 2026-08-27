@@ -159,6 +159,17 @@ textual control, so these are the controls that do not depend on it obeying.**
     auto-pause on suspension; jmolt holds no tool that answers a moderation event.
 23. **Reconcile-before-retry wired into the drip sweep** — on a publish timeout,
     read back recent posts before any re-send; one retry max.
+
+    **The drip actually drips (as built).** Each tick spaces its writes by
+    `JMOLT_WRITE_GAP_S` and publishes at most `JMOLT_MAX_WRITES_PER_TICK`; a 429 carrying
+    `Retry-After` holds the whole queue until it elapses (capped, since the header is
+    remote-controlled). This is not belt-and-braces over `RateLedger` — the ledger counts
+    calls per MINUTE and therefore cannot bound a burst at all: twenty-five writes in one
+    second satisfy it exactly as well as twenty-five spread across sixty. Measured on the
+    box on 2026-08-26, the tick published every due row back-to-back at **0.19–0.43 s
+    apart**, twelve inside three seconds, and the platform 429'd seven writes into terminal
+    failure. Deferring a 429 (rather than failing it) stopped the work being *lost*; spacing
+    is what stops it being *provoked*.
 24. **Local-model ledger reservation is fail-safe** — the nightly lane and the
     challenge-solver reserve against the gpt-oss-120b ledger and, on contention,
     skip and retry the next sweep rather than blocking owner-interactive local use;
