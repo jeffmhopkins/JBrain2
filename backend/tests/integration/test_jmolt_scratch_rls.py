@@ -369,6 +369,17 @@ async def test_rename_carries_history_and_refuses_to_land_on_a_file(
         carried = await repo.history(s, pid, "ren-dst.md")
     assert [v.content for v in carried if v.op != "rename"] == ["v2", "v1"]
 
+    # The consequence that actually matters, and the reason the ordering above is asserted:
+    # history is read newest-first and jmolt recovers a file by version NUMBER. Copying the
+    # rows in the order the "newest N" query returns them gives the newest version the lowest
+    # new seq, so a renamed file answers version=1 with its OLDEST content — handing back the
+    # wrong version through the exact recovery path this wave added.
+    # Version 1 is the rename's own snapshot and carries the current content either way, so
+    # it cannot tell the two orders apart. The first CARRIED version can: newest-first means
+    # version 2 is v2 and version 3 is v1. Inverted, they swap.
+    assert "v2" in await handlers["scratch_read"]({"filename": "ren-dst.md", "version": 2}, ctx)
+    assert "v1" in await handlers["scratch_read"]({"filename": "ren-dst.md", "version": 3}, ctx)
+
 
 async def test_jmolt_can_read_its_own_archive(maker: async_sessionmaker) -> None:
     """H1/E2. The archive existed but the tool that reads it lived on the observer persona,

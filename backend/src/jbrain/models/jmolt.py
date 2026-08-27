@@ -291,14 +291,22 @@ class JmoltScratchRepo:
             ),
             {"pid": principal_id, "old": old, "new": new},
         )
+        # Select the newest N, then INSERT them OLDEST-FIRST. The copies get fresh `seq`
+        # values in insertion order, and `history()` reads newest-first by `seq` — so
+        # inserting in the order the inner query returns them (newest first) would give the
+        # newest version the LOWEST new seq and invert the file's history. A renamed file
+        # would then answer `version=1` with its oldest content, which is precisely the
+        # recovery path this wave exists to provide.
         await session.execute(
             text(
                 "INSERT INTO app.jmolt_scratch_archive"
                 " (principal_id, filename, content, bytes, op)"
-                " SELECT principal_id, :new, content, bytes, op"
-                " FROM app.jmolt_scratch_archive"
-                " WHERE principal_id = :pid AND filename = :old"
-                " ORDER BY seq DESC LIMIT :carry"
+                " SELECT principal_id, :new, content, bytes, op FROM ("
+                "   SELECT principal_id, content, bytes, op, seq"
+                "   FROM app.jmolt_scratch_archive"
+                "   WHERE principal_id = :pid AND filename = :old"
+                "   ORDER BY seq DESC LIMIT :carry"
+                " ) recent ORDER BY recent.seq ASC"
             ),
             {"pid": principal_id, "old": old, "new": new, "carry": RENAME_HISTORY_CARRY},
         )
