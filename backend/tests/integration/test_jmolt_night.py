@@ -544,6 +544,101 @@ async def test_the_last_sitting_is_reserved_for_reflection(maker: async_sessionm
     assert "threads you actually mean to pull tomorrow" in last
 
 
+class _EmptyReflectionThenRealExecutor(_PrologueCapturingExecutor):
+    """Comes back EMPTY on the first sitting that carries the reflection prologue, then real.
+    Lets a test prove the reflection slot survives its own empty-sitting retry."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._seen_reflection = False
+
+    async def run_turn(self, **kwargs: object) -> ExecutedTurn:
+        convo = cast("list[UserMessage]", kwargs.get("conversation") or [])
+        prologue = convo[-1].text if convo else ""
+        self.prologues.append(prologue)
+        self.calls += 1
+        reflection = "not for the feed" in prologue
+        first_reflection = reflection and not self._seen_reflection
+        self._seen_reflection = self._seen_reflection or reflection
+        return ExecutedTurn(
+            result=AgentResult(
+                text="" if first_reflection else "I read back what I wrote and wrote what I think.",
+                stop_reason="end_turn",
+                steps=1 if first_reflection else 4,
+                cost_tokens=0,
+            ),
+            tools=[],
+            reasoning="",
+        )
+
+
+async def test_reflection_still_runs_when_the_sitting_budget_is_spent_first(
+    maker: async_sessionmaker,
+) -> None:
+    # THE REGRESSION. The closing reflection sitting used to be gated on elapsed time while
+    # the loop itself was bounded by JMOLT_MAX_SITTINGS, so a night of QUICK sittings spent
+    # the budget before the time window opened and exited — no reflection, ever. Measured on
+    # the box: two real nights, 13 sittings, zero reflections; the 2026-08-26 night used all
+    # 12 slots by minute 40 (~200 s each) and stopped 20 minutes early.
+    #
+    # step 200 reproduces exactly that pace: the budget is spent at elapsed 2400, well short
+    # of the 3000 s reflection window and the 3300 s hard stop.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(200)).run(owner)
+
+    # The budget bounds the FEED sittings; the closing sitting is extra, so 12 + 1.
+    assert len(executor.prologues) == JMOLT_MAX_SITTINGS + 1
+    for feed in executor.prologues[:-1]:
+        assert "not for the feed" not in feed
+    assert "not for the feed" in executor.prologues[-1]
+    assert "threads you actually mean to pull tomorrow" in executor.prologues[-1]
+
+
+async def test_a_killed_night_gets_no_reflection_sitting(maker: async_sessionmaker) -> None:
+    # The kill outranks the reserved sitting: reflection is a stretch of the hour, not a debt
+    # the night owes itself, so a night stopped mid-flight ends where it was stopped.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    store.values["moltbook_killed"] = True
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(200)).run(owner)
+
+    assert len(executor.prologues) == 1
+    assert "not for the feed" not in executor.prologues[0]
+
+
+async def test_an_empty_reflection_sitting_is_retried_as_a_reflection_sitting(
+    maker: async_sessionmaker,
+) -> None:
+    # The empty-sitting retry hands the slot back (`sitting -= 1`), which un-spends the budget
+    # that made the reflection due. The flag latches so the retry stays a reflection sitting
+    # rather than silently dropping back to the feed prologue for the night's last stretch.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _EmptyReflectionThenRealExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(200)).run(owner)
+
+    reflections = [p for p in executor.prologues if "not for the feed" in p]
+    assert len(reflections) == 2  # the empty one, then its retry — still reflection
+    assert "produced nothing" in reflections[-1]  # and it carried the concrete-first-move nudge
+    assert "not for the feed" in executor.prologues[-1]  # the night still ENDS on reflection
+
+
+async def test_the_night_never_exceeds_the_budget_plus_its_closing_sitting(
+    maker: async_sessionmaker,
+) -> None:
+    # Removing the `sitting < JMOLT_MAX_SITTINGS` loop bound must not make the night
+    # unbounded: a very fast clock still terminates at the budget plus the one closing sitting.
+    owner = await _owner(maker)
+    store = FakeSettingsStore()
+    executor = _FakeExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(1)).run(owner)
+
+    assert executor.calls == JMOLT_MAX_SITTINGS + 1
+
+
 async def test_pending_staged_actions_ride_each_sitting(maker: async_sessionmaker) -> None:
     # A fresh-context sitting can't see its own pending outbox, so what jmolt has already
     # staged is re-supplied in the prologue — the guard against re-staging the same action.
