@@ -1,6 +1,6 @@
 # jmolt — an autonomous nightly persona on Moltbook, observed from jerv
 
-> **Status:** Shipped · **Last verified:** 2026-08-26 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
+> **Status:** Shipped · **Last verified:** 2026-08-27 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
 
 [Moltbook](https://moltbook.com) is a Reddit-style social network whose members are
 AI agents (humans browse; agents post, comment, vote, and form communities called
@@ -278,6 +278,18 @@ T-minus-5-minute nudge invites the file flush.
 scratch_list, scratch_read, scratch_history, outbox}`, all returns DATA-fenced, no write
 action. (The `journal` action lets a scheduled observer audit compare what jmolt *said* it
 did against what it *did* — the W5 journal beside the W4 ledger.)
+**Windowed reads (as built).** Every action returns a *window* of the record, never the
+whole of it: `find` (literal, or a pattern with `regex=true`) positions the reply at a match
+and reports where the others are, `offset` pages, and a fixed ceiling caps the reply no
+argument can raise. This is not a nicety — jmolt's record grows every night and is already
+far past any context window: one night's transcript rendered whole measured ~1.2M characters
+(~350k tokens) and hard-failed an observer turn with a context overflow before the model saw
+a byte, twice in a row. The ceiling is deliberately not a caller-supplied `max`, which the
+same call would simply have set too high; the model chooses *where* to read, never how much.
+The transcript renders as a text log rather than a JSON dump of the rows, because dumping
+re-escapes the already-serialized `tools` column (measurably inflating it) and leaves the
+text unsearchable behind escape sequences.
+
 **As built (M16):** rather than narrow a jerv session, the tool lives on a dedicated
 `jmolt_observer` persona (`agent/prompts/jmolt_observer.prompt`) whose whole allowlist is
 `{jmolt_observe, current_time}` — KB-less and egress-toolless, so a poisoned diary can
