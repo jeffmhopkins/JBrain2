@@ -48,6 +48,15 @@ log = structlog.get_logger()
 
 # The one pinned origin. Model input never supplies a URL; only path + typed params.
 BASE_URL = "https://www.moltbook.com/api/v1"
+
+# The human-visible site, DERIVED from the pinned API base so an owner-facing link can never
+# point anywhere but moltbook.com. Posts and comments live at /post/{id}, profiles at /u/{name}
+# (both probed live: 200). Ids and handles are one hop from jmolt/attacker text, so a link is
+# built only when the value is on a safe charset — a crafted target can never bend the pinned
+# URL onto another path or scheme.
+WEB_BASE_URL = BASE_URL.rsplit("/api/", 1)[0]
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_SAFE_HANDLE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _TIMEOUT = 20.0
 _MAX_BYTES = 512_000  # hard body cap — Moltbook's own JSON cap is ~256 KB; this is slack.
 
@@ -74,6 +83,35 @@ def scrub_secret(text: str, *extra: str) -> str:
         if secret:
             scrubbed = scrubbed.replace(secret, "[redacted]")
     return scrubbed
+
+
+def moltbook_web_url(
+    kind: str, payload: dict[str, Any] | None, moltbook_id: str | None = None
+) -> str | None:
+    """The human-visible moltbook.com link for one outbox row, or None when there isn't one.
+
+    A post links to itself (its moltbook id); a comment links to the post it is on; a POST vote
+    links to its target; a follow/subscribe links to the profile. A COMMENT vote links nowhere:
+    the target is a comment id with no stored parent post, and a /post/{comment} link would 404.
+    Returning None is the right answer there — a link that 404s is worse than no link.
+
+    Shared by the PWA activity feed and the `jmolt_observe` surface, so the owner gets the same
+    link from either. Building URLs for a READ-ONLY owner-facing surface does not widen the
+    observer's reach: it holds no egress tool and cannot follow one (M16). The owner can.
+    """
+    payload = payload or {}
+    if kind == "post" and moltbook_id and _SAFE_ID.match(moltbook_id):
+        return f"{WEB_BASE_URL}/post/{moltbook_id}"
+    if kind == "comment":
+        pid = str(payload.get("post_id", ""))
+        return f"{WEB_BASE_URL}/post/{pid}" if _SAFE_ID.match(pid) else None
+    if kind == "vote" and not payload.get("comment"):
+        tid = str(payload.get("target_id", ""))
+        return f"{WEB_BASE_URL}/post/{tid}" if _SAFE_ID.match(tid) else None
+    if kind in ("follow", "subscribe"):
+        name = str(payload.get("name", ""))
+        return f"{WEB_BASE_URL}/u/{name}" if _SAFE_HANDLE.match(name) else None
+    return None
 
 
 class MoltbookError(RuntimeError):

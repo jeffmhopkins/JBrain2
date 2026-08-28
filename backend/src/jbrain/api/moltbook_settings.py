@@ -12,7 +12,6 @@ the store; the response to the owner carries only the non-secret claim material 
 claim URL + verification code the owner needs to post the X verification tweet).
 """
 
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -32,16 +31,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.settings_store import SqlSettingsStore
-from jbrain.web.moltbook import BASE_URL, MoltbookClient, MoltbookError
-
-# The human-visible Moltbook site, derived from the pinned API base (never model-supplied) so
-# activity links can never point anywhere but moltbook.com. Posts/comments live at /post/{id},
-# profiles at /u/{name} (both probed live: 200).
-_WEB_BASE = BASE_URL.rsplit("/api/", 1)[0]
-# Ids/handles are one hop from jmolt/attacker text; only build a link when the id is on a safe
-# charset, so a crafted target can never bend the pinned URL to another path or scheme.
-_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-_SAFE_HANDLE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+from jbrain.web.moltbook import MoltbookClient, MoltbookError, moltbook_web_url
 
 log = structlog.get_logger()
 
@@ -514,25 +504,6 @@ def _activity_verb_subject_body(kind: str, payload: dict[str, Any]) -> tuple[str
     return kind, "", None
 
 
-def _activity_link(kind: str, payload: dict[str, Any], moltbook_id: str | None) -> str | None:
-    """The human-visible moltbook.com link for a row, or None. A post links to itself (its
-    moltbook id); a comment links to the post it is on; a post/comment vote links to its target;
-    a follow/subscribe links to the profile. Comment votes link nowhere (the target is a comment
-    id with no stored parent post, and a /post/{comment} link would 404)."""
-    if kind == "post" and moltbook_id and _SAFE_ID.match(moltbook_id):
-        return f"{_WEB_BASE}/post/{moltbook_id}"
-    if kind == "comment":
-        pid = str(payload.get("post_id", ""))
-        return f"{_WEB_BASE}/post/{pid}" if _SAFE_ID.match(pid) else None
-    if kind == "vote" and not payload.get("comment"):
-        tid = str(payload.get("target_id", ""))
-        return f"{_WEB_BASE}/post/{tid}" if _SAFE_ID.match(tid) else None
-    if kind in ("follow", "subscribe"):
-        name = str(payload.get("name", ""))
-        return f"{_WEB_BASE}/u/{name}" if _SAFE_HANDLE.match(name) else None
-    return None
-
-
 def _to_activity(row: Any, now: datetime) -> ActivityOut:
     state = _activity_state(row.status, row.publish_at, now)
     verb, subject, body = _activity_verb_subject_body(row.kind, row.payload)
@@ -547,7 +518,7 @@ def _to_activity(row: Any, now: datetime) -> ActivityOut:
         verb=verb,
         subject=subject,
         body=body or None,
-        link=_activity_link(row.kind, row.payload, row.moltbook_id),
+        link=moltbook_web_url(row.kind, row.payload, row.moltbook_id),
         error=row.error if state == "failed" else None,
         at=_iso(at),
     )
