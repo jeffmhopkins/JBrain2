@@ -1288,8 +1288,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "jmolt_observe.tool": (
             "jmolt_observe",
-            2,
-            "4bad00830cc0eaf0663f65af9dca0dc0a0a3813dd3ee0763a7dd314dc6f559ca",
+            3,
+            "1fef3713c3013d0daf4660506e5b3161de9063662599144069ffad2aa208e701",
         ),
         "web_fetch.tool": (
             "web_fetch",

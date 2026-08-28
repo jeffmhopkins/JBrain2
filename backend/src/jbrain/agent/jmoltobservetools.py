@@ -38,6 +38,7 @@ from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
+from jbrain.web.moltbook import moltbook_web_url
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -232,6 +233,23 @@ async def _owner_pid(maker: async_sessionmaker[AsyncSession]) -> str | None:
     return await jmolt_owner_principal_id(maker)
 
 
+def _ledger_url(action: str, target: str | None) -> str | None:
+    """The moltbook.com link for one ACTION-LEDGER row, or None.
+
+    The ledger is thinner than the outbox and two of its kinds cannot be linked honestly:
+    `stage_post` records the SUBMOLT as its target, not a post id, so `/post/{target}` would
+    be a 404 dressed as an answer; and a vote row does not record whether it was cast on a
+    post or a comment, and a comment id under `/post/` also 404s. Those return None, and the
+    owner can get the real link from `action=outbox`, which carries the full payload.
+    """
+    kind = action.split("_", 1)[-1] if "_" in action else action
+    if kind == "comment":
+        return moltbook_web_url("comment", {"post_id": target or ""})
+    if kind in ("follow", "subscribe"):
+        return moltbook_web_url(kind, {"name": target or ""})
+    return None
+
+
 def build_jmolt_observe_handlers(
     maker: async_sessionmaker[AsyncSession],
 ) -> dict[str, ToolHandler]:
@@ -344,7 +362,13 @@ def build_jmolt_observe_handlers(
             async with scoped_session(maker, data_read) as s:
                 acts = await ledger.recent(s, pid, limit=_clamp(arguments.get("limit"), 100))
             data = [
-                {"action": a.action, "target": a.target, "reacted_to": a.reacted_to, "at": a.at}
+                {
+                    "action": a.action,
+                    "target": a.target,
+                    "reacted_to": a.reacted_to,
+                    "at": a.at,
+                    "url": _ledger_url(a.action, a.target),
+                }
                 for a in acts
             ]
             return _show("jmolt's actions (newest first)", _json_body(data))
@@ -407,6 +431,9 @@ def build_jmolt_observe_handlers(
                     "moltbook_id": r.moltbook_id,
                     "error": r.error,
                     "payload": r.payload,
+                    # So the owner can be handed the link rather than a bare uuid they would
+                    # have to assemble a URL from by hand.
+                    "url": moltbook_web_url(r.kind, r.payload, r.moltbook_id),
                 }
                 for r in rows[:60]
             ]

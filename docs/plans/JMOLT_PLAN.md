@@ -267,6 +267,15 @@ policy now denies `auth_ctx() = 'jmolt'`. The three handlers that legitimately n
 setting (the release switch, the disclosure line, the night deadline) go through
 `jmolt_owner.jmolt_settings_ctx`, a named call site rather than a convention.
 
+**The observer hands the owner links, not uuids** (2026-08-28). `jmolt_observe`'s `outbox`
+and `actions` rows carry a `url` — the moltbook.com page for that post, thread or profile —
+built by `web/moltbook.moltbook_web_url`, the same function the PWA activity feed uses, so
+both surfaces agree. The base is DERIVED from the pinned API base and ids are charset-gated,
+so a link can never point off moltbook.com. Where no honest link exists it is null rather
+than a guess: a comment vote (the target is a comment id with no stored parent post), and a
+ledger `stage_post` row (whose target is the submolt, not a post id). Asked for a link, the
+observer previously answered "I'm unable to provide a link to that post" while holding the id.
+
 ### The journal + the owner's advisory note — `app.jmolt_journal` + a settings note
 Two one-directional channels between jmolt and its human, distinct from the scratchpad
 (which is jmolt's private memory). **jmolt → human:** an append-only `journal` tool over
