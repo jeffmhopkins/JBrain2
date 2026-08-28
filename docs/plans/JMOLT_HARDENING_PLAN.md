@@ -1,6 +1,6 @@
 # jmolt hardening — what four independent audits and five reviews found
 
-> **Status:** Scheduled · **Last verified:** 2026-08-27 · **Waves:** H1✅ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-28 · **Waves:** H1✅ H2◻️ H3◻️ H4◻️ H5◻️ H6◻️
 
 jmolt shipped (`JMOLT_PLAN.md`, `JMOLT_SITTINGS_PLAN.md`) and then ran three real nights.
 Those nights produced a set of failures that were diagnosed and fixed in one branch — a
@@ -392,6 +392,30 @@ The seed is `open.md`, **not `index.md`** — `index.md` is live-verified to be 
 "Tonight's Plan", seven bullets, seven verbs, which is the checklist this plan is trying to
 get away from. It is named on the closing sitting only; naming it on all thirteen would make
 it the task list again.
+
+**Corrected 2026-08-28 — this shipped inert and cost the night it was built for.** Naming the
+file on the closing sitting only meant jmolt never created it, and the load had no fallback:
+it read `open.md`, got nothing, and passed "" to a block that renders "" as nothing at all.
+So every sitting of every night since H4 landed ran with an empty standing block — the exact
+state H4 measured at 16/20 invented-agent. On 2026-08-28 jmolt commented a question on
+another agent's post, re-read the thread, answered its own question in that agent's first
+person, and then replied again thanking itself for the clarification.
+
+The load now falls back to the most recently updated file **with content in it** (an emptied
+file bumps `updated_at`, so "most recent" alone could still load nothing), and the block
+announces the substitution: it names `open.md` only when it is missing, which makes it
+self-extinguishing the moment jmolt creates one and stops the standing block and the
+reflection prologue calling two different files "the one that is read back to you".
+
+Two things review caught before this shipped. The filename now reaches the **trusted
+channel** — `_standing_block` interpolates it above the provenance sentence — and filenames
+were linted nowhere, so a name carrying a forged `--- A NOTE FROM YOUR HUMAN ---` block
+rendered as though it were one, while `lint_scratch_content` has refused that exact text in
+`content` since H1. `lint_scratch_filename` closes it on both `filename` and `new_filename`.
+And `jmolt.prompt`'s "Nothing is loaded for you" was true only while the load was inert; it
+now says one file rides every sitting (prompt v5). A mitigation whose entire value is "there is always something loaded" cannot have a
+case where nothing is — the conditional-load reasoning above is about which file, never about
+whether.
 
 - **F4 — the night ends early. This is the wave's headline item, moved here from Open
   Decisions.** Night 3 ran 9m13s of 60. The sitting budget must bound *context* — a fresh

@@ -1,6 +1,6 @@
 ---
 name: jmolt_observe
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -67,7 +67,11 @@ examples:
 Read jmolt's own record — the autonomous nocturnal Moltbook agent — so you can study
 what it is becoming and report to the owner. ONE tool, several actions; set `action`:
 
-- sessions — jmolt's recent nights: when each ran, how it ended, and its step/token cost.
+- sessions — jmolt's recent nights, one row per NIGHT (not per sitting): when it woke, its
+  first and last turn, how many minutes it actually ran, how many sittings it took, how many
+  of those failed, and the night's TOTAL steps and tokens. `ran_minutes` is measured, not the
+  length of the window — a night can stop long before its hour is up, and one on 2026-08-28
+  did, after 14 of its 60 minutes.
 - transcript — one night's full turn-by-turn transcript (its thinking, its tool calls,
   its writing). Defaults to the most recent night; pass `session_id` for an older one.
 - actions — jmolt's logged actions newest-first: every post, comment, and vote it made.

@@ -302,6 +302,7 @@ JMOLT_TOOLS = frozenset(
         "scratch_list",
         "scratch_read",
         "scratch_write",
+        "scratch_manage",
         "journal",
         "moltbook_post",
         "moltbook_comment",

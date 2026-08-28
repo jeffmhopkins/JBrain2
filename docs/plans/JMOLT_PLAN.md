@@ -1,6 +1,6 @@
 # jmolt — an autonomous nightly persona on Moltbook, observed from jerv
 
-> **Status:** Shipped · **Last verified:** 2026-08-27 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
+> **Status:** Shipped · **Last verified:** 2026-08-28 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5✅
 
 [Moltbook](https://moltbook.com) is a Reddit-style social network whose members are
 AI agents (humans browse; agents post, comment, vote, and form communities called
@@ -239,7 +239,8 @@ gated, auto-reverts on suspension/tamper (M7). A **separate** global kill halts 
 ### The scratchpad — `app.jmolt_scratch` + out-of-band archive
 Rows + capped bytes, quota enforced in the write path: **16 files / 128 KB total /
 24 KB per file** (over-quota refused with a plain-language message). Tools
-`scratch_list` / `scratch_read` / `scratch_write`. Every changed version snapshots
+`scratch_list` / `scratch_read` / `scratch_write` / `scratch_manage`. Every changed version
+snapshots
 to an append-only archive outside the editable budget (M13) — the science
 instrument and the injection-rollback story.
 
@@ -258,6 +259,31 @@ net has to stay the same size in *nights*, with a per-principal row cap bounding
 renaming opens. Content is filtered on the way IN (invisibles, and imitations of the
 trusted-channel frames) and reloads under a provenance header rather than a DATA fence —
 see M2 above.
+
+**Split 2026-08-28, after the hardening above cost a whole night's notes.** H1 put all five
+ops on `scratch_write` and added `new_filename`, which means something for exactly one of
+them. gpt-oss-120b could not fill that shape: across 85 consecutive calls it filled
+`new_filename` with junk (`"/dev/null???"`) and omitted `content` every time, so every note
+jmolt wrote that night was refused and nothing anywhere said so. Under the three-parameter
+schema the night before, `content` arrived on 6 calls out of 6.
+
+So `scratch_write` v3 is `filename` / `content` / `mode` in {save, append} with content
+**required** — v2 listed only `filename` as required, which is consistent with `filename`
+arriving on all 85 calls and `content` on none; llama.cpp compiles `required` into the tool
+grammar. `rename` / `empty` / `delete` move to `scratch_manage`, which is where
+`new_filename` belongs. Neither sidecar carries a JSON-Schema `enum`, but as a **precaution
+rather than the fix**: `analyze_stream` carries none because an enum over a
+many-optional-property object crashes gpt-oss's harmony path, and that failure is an upstream
+500, not a malformed argument — `moltbook.tool` runs two enums nightly in this same union, so
+the enum did not break this tool. Each tool names the
+other when handed the other's op, so the split costs a turn rather than a note; the refusal
+for absent content now names the keys that *did* arrive, because a refusal costs the note it
+refused and jmolt cannot act on one that never says what was wrong.
+
+The night-level half: **a night whose files never change now says so**, from the third
+sitting on and on every sitting after (including the reflection sitting), plus a warning log.
+It measures the outcome rather than the cause, so a full quota or an RLS regression trips it
+just as well as a schema the model cannot fill.
 
 **Settings are closed to jmolt's own context** (migration 0178, `JMOLT_HARDENING_PLAN.md`
 B9). jmolt runs as the owner principal, and `app.settings` was gated on a bare
