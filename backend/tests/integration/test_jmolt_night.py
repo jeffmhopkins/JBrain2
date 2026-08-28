@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.jmolt_night import (
     JMOLT_MAX_EMPTY_RETRIES,
     JMOLT_MAX_SITTINGS,
+    JMOLT_STANDING_FILE,
     JmoltNightRunner,
     SingleFlightLane,
     jmolt_night_tick,
@@ -32,6 +33,7 @@ from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
 from jbrain.llm.errors import LlmStreamTruncatedError
+from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
@@ -145,6 +147,20 @@ async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> Non
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await s.execute(
             text("DELETE FROM app.jmolt_action_ledger WHERE principal_id = :pid"),
+            {"pid": owner.principal_id},
+        )
+
+
+async def _clear_scratch(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """Empty the scratchpad for this owner.
+
+    Same reason as `_clear_ledger`: the module shares one database and one owner principal,
+    so a file written by one test is still there for the next. Any assertion that a block is
+    ABSENT has to start from a known-empty scratchpad, or it is asserting about the residue
+    of whatever ran before it — which is exactly how this failed the first time."""
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await s.execute(
+            text("DELETE FROM app.jmolt_scratch WHERE principal_id = :pid"),
             {"pid": owner.principal_id},
         )
 
@@ -888,3 +904,70 @@ async def test_tick_self_heals_a_dangling_night_hold(maker: async_sessionmaker) 
         now=datetime(2026, 8, 25, 14, 0, tzinfo=UTC),
     )
     assert await store.night_hold_names(owner) == frozenset()
+
+
+async def test_the_standing_file_is_read_back_on_every_sitting(
+    maker: async_sessionmaker,
+) -> None:
+    """H4. One file rides every sitting so jmolt never has to go looking for what it is in
+    the middle of. Measured: with nothing loaded the closing sitting invents an agent it
+    never met into its own files 16/20; with one file loaded, 0/20."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    store = FakeSettingsStore()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await JmoltScratchRepo().write(
+            s,
+            owner.principal_id,
+            JMOLT_STANDING_FILE,
+            "- @sootfinch asked me a question on that thread. I have not answered it.",
+        )
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    assert executor.prologues, "the night ran no sittings"
+    for i, prologue in enumerate(executor.prologues):
+        assert "@sootfinch asked me a question" in prologue, f"missing from sitting {i + 1}"
+        assert "your own writing" in prologue
+
+
+async def test_the_standing_file_rides_the_reflection_sitting_too(
+    maker: async_sessionmaker,
+) -> None:
+    """The done-tonight block is deliberately dropped on the closing sitting. This one is
+    NOT — the closing sitting is exactly where its absence made the model invent an agent,
+    because it is asked to reflect on the agents it met and supplied with none."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    store = FakeSettingsStore()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await JmoltScratchRepo().write(
+            s, owner.principal_id, JMOLT_STANDING_FILE, "- still owe @quietmachines a read"
+        )
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, store, executor, clock=_stepped_clock(600)).run(owner)
+
+    closing = [p for p in executor.prologues if "last stretch of your night" in p]
+    assert closing, "no reflection sitting ran"
+    assert "still owe @quietmachines a read" in closing[-1]
+
+
+async def test_no_standing_file_means_the_prologue_never_raises_the_subject(
+    maker: async_sessionmaker,
+) -> None:
+    """The load-bearing case, and the reason the block is conditional. Asked for standing
+    state and given none, the model supplies a plausible fiction — an invented agent (7/19)
+    or a confidently false "Pending questions: none" on a sitting whose ledger says
+    otherwise. So when there is no file, the QUESTION has to be absent too."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(600)).run(owner)
+
+    assert executor.prologues
+    for prologue in executor.prologues:
+        # The block's own header. The closing prologue separately NAMES the file as a
+        # bootstrap ("if it does not exist yet, this is the time to make it"), which is an
+        # instruction to create one — not a request to report state it does not have.
+        assert "AS IT STOOD WHEN THIS SITTING STARTED" not in prologue
+        assert "your own writing" not in prologue

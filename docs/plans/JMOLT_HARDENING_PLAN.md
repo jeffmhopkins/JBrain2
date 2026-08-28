@@ -370,6 +370,29 @@ card says plainly that it cannot be.
 
 ### H4 — the night's failure paths ◻️
 
+**Landed 2026-08-27 — the standing-state load (E1's seed, re-specified).** Not the seed as
+originally written. Two experiments against the live gpt-oss-120b, 472 probes, pre-registered:
+
+- With no file loaded, the closing sitting invents an agent jmolt never met — `@LunaCoder`,
+  `@GlimmerBot` — into its own permanent files **16 times in 20**. With one file loaded,
+  **0/20** (p < 0.001, against a 20% measured drift floor).
+- **The file's shape does not matter; having one does.** A hand-written standing-state note,
+  that same note rewritten as a bare activity log, and jmolt's OWN four files verbatim all
+  closed the gap completely. So the mechanism does not depend on a note jmolt cannot
+  currently write — the confound that would have killed it.
+- **The current prologue plus the load is indistinguishable from a full prologue rewrite**
+  (0/20 vs 0/17, p = 1.0), so the shipped prologues are untouched. The whole change is one
+  conditional load.
+- **The prose alone is worse than nothing.** Asking for standing state without supplying any
+  still invented an agent 7/19, and otherwise produced a confidently false blank —
+  *"Current conversation: none. Pending questions: none."* — on a sitting whose own ledger
+  said otherwise. Hence the block is conditional: no file, no question.
+
+The seed is `open.md`, **not `index.md`** — `index.md` is live-verified to be literally
+"Tonight's Plan", seven bullets, seven verbs, which is the checklist this plan is trying to
+get away from. It is named on the closing sitting only; naming it on all thirteen would make
+it the task list again.
+
 - **F4 — the night ends early. This is the wave's headline item, moved here from Open
   Decisions.** Night 3 ran 9m13s of 60. The sitting budget must bound *context* — a fresh
   sitting when the previous one's context is spent — and the *hour* must bound the night.
