@@ -14,6 +14,7 @@ from jbrain.agent.jmolt_guards import (
     MAX_FOLLOWS_PER_NIGHT,
     MAX_VOTES_PER_NIGHT,
 )
+from jbrain.agent.jmolt_pacing import WritePacer
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.auth import service
@@ -73,14 +74,28 @@ def _ctx(pid: str) -> ToolContext:
 _BODY = "A real body with an actual argument in it, long enough to clear the minimum body length."
 
 
+def _handlers(maker: async_sessionmaker):
+    """Write handlers with the inter-write GAP disabled.
+
+    These tests exercise the content and cap guards, and most of them make several writes in
+    a row with no wall-clock between them — which the real 3s gap refuses. The gap has its own
+    unit tests (`tests/unit/test_jmolt_pacing.py`); zeroing it here isolates what these are
+    actually about. The per-minute budget is left at its real value."""
+    return build_moltbook_write_handlers(
+        maker,
+        FakeSettingsStore(),  # type: ignore[arg-type]
+        pacer=WritePacer(gap_s=0.0),
+    )
+
+
 async def test_post_stages_into_outbox_with_a_publish_time(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     out = await h["moltbook_post"](
         {"submolt": "general", "title": "the quiet submolts are the good ones", "content": _BODY},
         _ctx(pid),
     )
-    assert "Staged" in out
+    assert "human reads it" in out
     async with scoped_session(maker, _jmolt(pid)) as s:
         rows = await OutboxRepo().list_by_status(s, pid, ("queued",))
     assert len(rows) == 1 and rows[0].kind == "post" and rows[0].publish_at is not None
@@ -91,7 +106,7 @@ async def test_post_rejects_a_bare_title(maker: async_sessionmaker) -> None:
     # guard is that a drifted 120B was publishing bare titles with the thesis crammed into the
     # headline. Both an empty and a one-line body are refused, and nothing is staged.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     empty = await h["moltbook_post"](
         {"submolt": "general", "title": "Coordination dies when every agent needs the transcript"},
         _ctx(pid),
@@ -107,7 +122,7 @@ async def test_post_rejects_a_bare_title(maker: async_sessionmaker) -> None:
 
 async def test_post_is_blocked_by_content_lint(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     # A real body (so the body guard passes) but the crypto shill is in the title — the lint
     # screens title + body together and still blocks it.
     out = await h["moltbook_post"](
@@ -121,9 +136,9 @@ async def test_post_is_blocked_by_content_lint(maker: async_sessionmaker) -> Non
 
 async def test_post_rejects_near_duplicate(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     title = "Three weeks in and the general submolt is still mostly noise and duplicate posts"
-    assert "Staged" in await h["moltbook_post"](
+    assert "human reads it" in await h["moltbook_post"](
         {"submolt": "general", "title": title, "content": _BODY}, _ctx(pid)
     )
     out = await h["moltbook_post"](
@@ -146,7 +161,7 @@ async def test_profile_update_prepends_the_fixed_disclosure(maker: async_session
 
 async def test_comment_stages_and_is_recorded(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     await h["moltbook_comment"](
         {"post_id": "p1", "content": "answering the thing you asked"}, _ctx(pid)
     )
@@ -166,12 +181,12 @@ async def test_a_second_top_level_comment_on_the_same_post_is_refused(
     # The nightly cap could not see that shape and the content-hash dedup key never fired:
     # seventeen paraphrases are seventeen distinct hashes.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     first = await h["moltbook_comment"](
         {"post_id": "p1", "content": "does your owner's script or your own drive decide?"},
         _ctx(pid),
     )
-    assert "Staged" in first
+    assert "human reads it" in first
     again = await h["moltbook_comment"](
         {"post_id": "p1", "content": "is it the design that steers you, or the context?"},
         _ctx(pid),
@@ -188,23 +203,23 @@ async def test_a_threaded_reply_on_the_same_post_is_still_allowed(
     # The cap must not ban conversation: answering a specific comment is the thing jmolt is
     # supposed to be good at, and it is exactly what a second OPENING remark is not.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     await h["moltbook_comment"]({"post_id": "p1", "content": "an opening question"}, _ctx(pid))
     reply = await h["moltbook_comment"](
         {"post_id": "p1", "content": "answering what you said", "parent_id": "c9"}, _ctx(pid)
     )
-    assert "Staged" in reply
+    assert "human reads it" in reply
 
 
 async def test_comments_are_capped_per_post(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     await h["moltbook_comment"]({"post_id": "p1", "content": "opening remark"}, _ctx(pid))
     for i in range(MAX_COMMENTS_PER_POST - 1):
         out = await h["moltbook_comment"](
             {"post_id": "p1", "content": f"reply {i}", "parent_id": f"c{i}"}, _ctx(pid)
         )
-        assert "Staged" in out
+        assert "human reads it" in out
     over = await h["moltbook_comment"](
         {"post_id": "p1", "content": "one more", "parent_id": "c99"}, _ctx(pid)
     )
@@ -215,10 +230,10 @@ async def test_the_per_post_cap_does_not_affect_a_different_post(
     maker: async_sessionmaker,
 ) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     await h["moltbook_comment"]({"post_id": "p1", "content": "opening remark"}, _ctx(pid))
     out = await h["moltbook_comment"]({"post_id": "p2", "content": "a new thread"}, _ctx(pid))
-    assert "Staged" in out
+    assert "human reads it" in out
 
 
 async def test_a_rate_limited_comment_does_not_burn_the_posts_allowance(
@@ -228,7 +243,7 @@ async def test_a_rate_limited_comment_does_not_burn_the_posts_allowance(
     # us. Counting those would let one 429 permanently spend a post's top-level allowance and
     # then tell jmolt it had already commented on something nobody can see.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     await h["moltbook_comment"]({"post_id": "p1", "content": "an opening question"}, _ctx(pid))
     async with scoped_session(
         maker, SessionContext(principal_kind="owner", domain_scopes=("jmolt",))
@@ -237,19 +252,19 @@ async def test_a_rate_limited_comment_does_not_burn_the_posts_allowance(
         await OutboxRepo().set_status(s, str(rows[0].id), "failed", error="rate limited")
 
     retry = await h["moltbook_comment"]({"post_id": "p1", "content": "asking again"}, _ctx(pid))
-    assert "Staged" in retry
+    assert "human reads it" in retry
 
 
 async def test_comments_are_capped_per_night(maker: async_sessionmaker) -> None:
     # Comments had no brake — a drifted night once staged 30. The per-night cap holds at
     # stage time; the write past the limit is refused, not queued.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     for i in range(MAX_COMMENTS_PER_NIGHT):
         out = await h["moltbook_comment"](
             {"post_id": f"p{i}", "content": f"a distinct reply number {i}"}, _ctx(pid)
         )
-        assert "Staged" in out
+        assert "human reads it" in out
     over = await h["moltbook_comment"](
         {"post_id": "p-over", "content": "one reply too many"}, _ctx(pid)
     )
@@ -261,9 +276,9 @@ async def test_comments_are_capped_per_night(maker: async_sessionmaker) -> None:
 
 async def test_votes_are_capped_per_night(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     for i in range(MAX_VOTES_PER_NIGHT):
-        assert "Staged" in await h["moltbook_vote"]({"target_id": f"t{i}"}, _ctx(pid))
+        assert "human reads it" in await h["moltbook_vote"]({"target_id": f"t{i}"}, _ctx(pid))
     over = await h["moltbook_vote"]({"target_id": "t-over"}, _ctx(pid))
     assert "nightly limit" in over
     async with scoped_session(maker, _jmolt(pid)) as s:
@@ -274,9 +289,9 @@ async def test_duplicate_vote_is_deduped(maker: async_sessionmaker) -> None:
     # The re-staged-upvote bug: a fresh sitting can't see its pending queue, so it re-votes.
     # The dedup index makes the repeat a no-op.
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     first = await h["moltbook_vote"]({"target_id": "post-9", "up": True}, _ctx(pid))
-    assert "Staged an upvote" in first
+    assert "upvote" in first
     again = await h["moltbook_vote"]({"target_id": "post-9", "up": True}, _ctx(pid))
     assert "already staged" in again
     async with scoped_session(maker, _jmolt(pid)) as s:
@@ -286,8 +301,10 @@ async def test_duplicate_vote_is_deduped(maker: async_sessionmaker) -> None:
 
 async def test_duplicate_follow_is_deduped(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
-    assert "Staged" in await h["moltbook_social"]({"action": "follow", "name": "Luna24"}, _ctx(pid))
+    h = _handlers(maker)
+    assert "human reads it" in await h["moltbook_social"](
+        {"action": "follow", "name": "Luna24"}, _ctx(pid)
+    )
     again = await h["moltbook_social"]({"action": "follow", "name": "Luna24"}, _ctx(pid))
     assert "already staged" in again
     async with scoped_session(maker, _jmolt(pid)) as s:
@@ -296,9 +313,63 @@ async def test_duplicate_follow_is_deduped(maker: async_sessionmaker) -> None:
 
 async def test_follows_are_capped_per_night(maker: async_sessionmaker) -> None:
     pid = await _owner_pid(maker)
-    h = build_moltbook_write_handlers(maker, FakeSettingsStore())  # type: ignore[arg-type]
+    h = _handlers(maker)
     for i in range(MAX_FOLLOWS_PER_NIGHT):
         staged = await h["moltbook_social"]({"action": "follow", "name": f"agent{i}"}, _ctx(pid))
-        assert "Staged" in staged
+        assert "human reads it" in staged
     over = await h["moltbook_social"]({"action": "follow", "name": "one-too-many"}, _ctx(pid))
     assert "nightly limit" in over
+
+
+async def test_a_content_guard_outranks_the_pacing_refusal(maker: async_sessionmaker) -> None:
+    """Pacing is about TIMING; the lint, near-duplicate and cap guards are about what jmolt
+    wrote. When both would refuse, jmolt must hear the one it can act on.
+
+    Caught by CI on the first attempt at this change: with the pacing check first, a
+    near-duplicate post came back "too soon" instead of "too similar", so jmolt would have
+    waited three seconds and resent the identical thing — the refusal actively teaching the
+    wrong lesson."""
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(
+        maker,
+        FakeSettingsStore(),  # type: ignore[arg-type]
+        pacer=WritePacer(gap_s=3.0),  # the REAL gap, so both guards would fire
+    )
+    first = await h["moltbook_post"](
+        {
+            "submolt": "general",
+            "title": "Coordination dies without the transcript",
+            "content": _BODY,
+        },
+        _ctx(pid),
+    )
+    assert "human reads it" in first
+
+    # Immediately after, so the pacer would refuse this on timing alone.
+    dupe = await h["moltbook_post"](
+        {
+            "submolt": "general",
+            "title": "Coordination dies without the transcript",
+            "content": _BODY,
+        },
+        _ctx(pid),
+    )
+    assert "too similar" in dupe, "the content reason must win over the timing one"
+    assert "Too soon" not in dupe
+
+
+async def test_pacing_still_refuses_a_write_that_clears_every_content_guard(
+    maker: async_sessionmaker,
+) -> None:
+    """The other half: when the content guards are satisfied, the gap does bite — and names
+    the wait rather than refusing flatly."""
+    pid = await _owner_pid(maker)
+    h = build_moltbook_write_handlers(
+        maker,
+        FakeSettingsStore(),  # type: ignore[arg-type]
+        pacer=WritePacer(gap_s=3.0),
+    )
+    assert "human reads it" in await h["moltbook_vote"]({"target_id": "p-1"}, _ctx(pid))
+    second = await h["moltbook_vote"]({"target_id": "p-2"}, _ctx(pid))
+    assert "Too soon" in second
+    assert "Try again in" in second

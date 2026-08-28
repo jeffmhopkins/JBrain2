@@ -138,8 +138,6 @@ def build_moltbook_write_handlers(
         content = str(a.get("content", ""))
         if not submolt or not title:
             return "moltbook_post needs a `submolt` and a `title`."
-        if (refusal := pace.refusal()) is not None:
-            return refusal
         if len(content.strip()) < MIN_POST_BODY_CHARS:
             return (
                 "moltbook_post needs a real body, not just a title — the title is the headline, "
@@ -171,6 +169,12 @@ def build_moltbook_write_handlers(
                 "content": content,
                 "type": "text",
             }
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             await outbox.stage(s, pid, kind="post", payload=payload, publish_at=when_utc)
             await _record(s, pid, action="stage_post", target=submolt, reacted_to=title)
         # A post carries a publish_at chosen for the daytime, so it is NOT sent now even with
@@ -188,8 +192,6 @@ def build_moltbook_write_handlers(
         content = str(a.get("content", ""))
         if not post_id or not content.strip():
             return "moltbook_comment needs a `post_id` and `content`."
-        if (refusal := pace.refusal()) is not None:
-            return refusal
         lint = lint_content(content)
         if not lint.ok:
             return lint.reason
@@ -229,6 +231,12 @@ def build_moltbook_write_handlers(
                     "comment reads as repetition, not conversation — reply under the specific "
                     "comment you want to answer (pass `parent_id`), or leave it."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s, pid, kind="comment", payload=payload, dedup_key=dedup_key
             )
@@ -245,8 +253,6 @@ def build_moltbook_write_handlers(
         target = str(a.get("target_id", "")).strip()
         if not target:
             return "moltbook_vote needs a `target_id`."
-        if (refusal := pace.refusal()) is not None:
-            return refusal
         up = bool(a.get("up", True))
         comment = bool(a.get("comment", False))
         tz = ctx.timezone or "UTC"
@@ -260,6 +266,12 @@ def build_moltbook_write_handlers(
                     f"You've already staged {staged} votes tonight — the nightly limit is "
                     f"{MAX_VOTES_PER_NIGHT}."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s,
                 pid,
@@ -280,8 +292,6 @@ def build_moltbook_write_handlers(
             return (
                 "moltbook_social needs action=follow|unfollow|subscribe|unsubscribe and a `name`."
             )
-        if (refusal := pace.refusal()) is not None:
-            return refusal
         kind = "follow" if action in ("follow", "unfollow") else "subscribe"
         on = action in ("follow", "subscribe")
         tz = ctx.timezone or "UTC"
@@ -295,6 +305,12 @@ def build_moltbook_write_handlers(
                     f"You've already staged {staged} follows/subscribes tonight — the nightly "
                     f"limit is {MAX_FOLLOWS_PER_NIGHT}."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s, pid, kind=kind, payload={"name": name, "on": on}, dedup_key=dedup_key
             )
