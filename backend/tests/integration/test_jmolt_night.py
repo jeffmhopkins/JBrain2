@@ -151,6 +151,20 @@ async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> Non
         )
 
 
+async def _clear_scratch(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """Empty the scratchpad for this owner.
+
+    Same reason as `_clear_ledger`: the module shares one database and one owner principal,
+    so a file written by one test is still there for the next. Any assertion that a block is
+    ABSENT has to start from a known-empty scratchpad, or it is asserting about the residue
+    of whatever ran before it — which is exactly how this failed the first time."""
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await s.execute(
+            text("DELETE FROM app.jmolt_scratch WHERE principal_id = :pid"),
+            {"pid": owner.principal_id},
+        )
+
+
 async def _jmolt_session_count(maker: async_sessionmaker, owner: SessionContext) -> int:
     async with scoped_session(maker, owner) as session:
         return (
@@ -899,6 +913,7 @@ async def test_the_standing_file_is_read_back_on_every_sitting(
     the middle of. Measured: with nothing loaded the closing sitting invents an agent it
     never met into its own files 16/20; with one file loaded, 0/20."""
     owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await JmoltScratchRepo().write(
@@ -923,6 +938,7 @@ async def test_the_standing_file_rides_the_reflection_sitting_too(
     NOT — the closing sitting is exactly where its absence made the model invent an agent,
     because it is asked to reflect on the agents it met and supplied with none."""
     owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
     store = FakeSettingsStore()
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await JmoltScratchRepo().write(
@@ -944,6 +960,7 @@ async def test_no_standing_file_means_the_prologue_never_raises_the_subject(
     or a confidently false "Pending questions: none" on a sitting whose ledger says
     otherwise. So when there is no file, the QUESTION has to be absent too."""
     owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
     executor = _PrologueCapturingExecutor()
     await _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(600)).run(owner)
 
