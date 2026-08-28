@@ -235,8 +235,8 @@ async def test_scratch_handlers_roundtrip_under_jmolt_context(maker: async_sessi
         {"filename": "big.md", "content": "x" * (MAX_FILE_BYTES + 1)}, ctx
     )
     assert "per-file limit" in over
-    assert "Deleted" in await handlers["scratch_write"](
-        {"filename": "index.md", "mode": "delete"}, ctx
+    assert "Deleted" in await handlers["scratch_manage"](
+        {"filename": "index.md", "op": "delete"}, ctx
     )
 
 
@@ -287,10 +287,10 @@ async def test_saving_blank_over_a_file_is_refused_but_empty_mode_works(
     await handlers["scratch_write"]({"filename": "n.md", "content": "words"}, ctx)
 
     refused = await handlers["scratch_write"]({"filename": "n.md", "content": "   "}, ctx)
-    assert "mode=empty" in refused
+    assert "mode=empty" in refused or "op=empty" in refused
     assert "words" in await handlers["scratch_read"]({"filename": "n.md"}, ctx)
 
-    emptied = await handlers["scratch_write"]({"filename": "n.md", "mode": "empty"}, ctx)
+    emptied = await handlers["scratch_manage"]({"filename": "n.md", "op": "empty"}, ctx)
     assert "Emptied" in emptied and "5 bytes" in emptied
 
 
@@ -353,14 +353,14 @@ async def test_rename_carries_history_and_refuses_to_land_on_a_file(
     await handlers["scratch_write"]({"filename": "ren-src.md", "content": "v2"}, ctx)
     await handlers["scratch_write"]({"filename": "ren-taken.md", "content": "mine"}, ctx)
 
-    blocked = await handlers["scratch_write"](
-        {"filename": "ren-src.md", "mode": "rename", "new_filename": "ren-taken.md"}, ctx
+    blocked = await handlers["scratch_manage"](
+        {"filename": "ren-src.md", "op": "rename", "new_filename": "ren-taken.md"}, ctx
     )
     assert "already have a file named" in blocked
     assert "mine" in await handlers["scratch_read"]({"filename": "ren-taken.md"}, ctx)
 
-    ok = await handlers["scratch_write"](
-        {"filename": "ren-src.md", "mode": "rename", "new_filename": "ren-dst.md"}, ctx
+    ok = await handlers["scratch_manage"](
+        {"filename": "ren-src.md", "op": "rename", "new_filename": "ren-dst.md"}, ctx
     )
     assert "Renamed" in ok
     assert "no file named" in await handlers["scratch_read"]({"filename": "ren-src.md"}, ctx)
@@ -454,3 +454,62 @@ async def test_every_op_the_repo_writes_is_allowed_by_the_archive_constraint(
     async with scoped_session(maker, _jmolt_ctx(pid)) as s:
         rows = await repo.history(s, pid, "ops-renamed.md")
     assert {v.op for v in rows} >= {"write", "append", "rename", "delete"}
+
+
+async def test_a_housekeeping_op_sent_to_the_write_tool_says_where_it_moved(
+    maker: async_sessionmaker,
+) -> None:
+    """rename/empty/delete left scratch_write in v3, and jmolt learned the old shape from
+    two nights of prologues. A blank "not a mode I know" would cost it the call; naming the
+    tool that now owns the op costs it one turn."""
+    pid = await _owner_pid(maker)
+    handlers = build_jmolt_scratch_handlers(maker)
+    ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
+    await handlers["scratch_write"]({"filename": "moved.md", "content": "still here"}, ctx)
+
+    out = await handlers["scratch_write"]({"filename": "moved.md", "mode": "empty"}, ctx)
+
+    assert "scratch_manage" in out
+    assert "op='empty'" in out
+    assert "still here" in await handlers["scratch_read"]({"filename": "moved.md"}, ctx)
+
+
+async def test_a_write_op_sent_to_the_manage_tool_points_back(
+    maker: async_sessionmaker,
+) -> None:
+    """The mirror of the above: the split has two doors and jmolt will knock on the wrong
+    one from either side."""
+    pid = await _owner_pid(maker)
+    handlers = build_jmolt_scratch_handlers(maker)
+    ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
+
+    out = await handlers["scratch_manage"]({"filename": "x.md", "op": "append"}, ctx)
+
+    assert "scratch_write" in out
+    assert "Nothing changed" in out
+
+
+async def test_the_refusal_names_the_keys_that_actually_arrived(
+    maker: async_sessionmaker,
+) -> None:
+    """The 2026-08-28 night, asserted.
+
+    jmolt sent `{filename, mode: append, new_filename: "/dev/null???"}` — no `content` —
+    eighty-five times, and every one was refused with a generic "send the text again". It
+    had no way to learn WHICH key was missing from a message that never named one, so it
+    changed nothing and sent it again. Every note it wrote that night was lost.
+
+    A refusal costs the note it refused. It has to be worth that, which means naming what
+    arrived, not just what didn't."""
+    pid = await _owner_pid(maker)
+    handlers = build_jmolt_scratch_handlers(maker)
+    ctx = ToolContext(session=_jmolt_ctx(pid), scopes=())
+
+    out = await handlers["scratch_write"](
+        {"filename": "thoughts.md", "mode": "append", "new_filename": "/dev/null???"}, ctx
+    )
+
+    assert "no `content`" in out
+    # The keys that DID arrive are named, so the next call can differ from this one.
+    assert "filename" in out and "mode" in out and "new_filename" in out
+    assert "`content`" in out

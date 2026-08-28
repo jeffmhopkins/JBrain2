@@ -836,6 +836,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "scratch_list",
         "scratch_read",
         "scratch_write",
+        "scratch_manage",
         # jmolt's journal tool is `web`-classed (jmolt-only), always wired (the
         # jmolt_journal table always exists) — its append-only line to its human.
         "journal",
@@ -1248,8 +1249,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "scratch_write.tool": (
             "scratch_write",
-            2,
-            "597248c46c68b8115a4f1f573d6470deb5a5788990bf1f7833dc40d22534452b",
+            3,
+            "0a3e1a7aec8bba4d693b6df65e85a0a6b5da06f6bd5eb51e66a3f2f1f5bc7227",
+        ),
+        "scratch_manage.tool": (
+            "scratch_manage",
+            1,
+            "4d66cb1892d35819f3b42ebc955a87b6d69c83beebfc02aabeb7f0fbda0f9598",
         ),
         "journal.tool": (
             "journal",

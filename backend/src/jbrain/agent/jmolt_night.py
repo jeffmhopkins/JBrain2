@@ -295,6 +295,37 @@ def _release_block(autonomy: bool) -> str:
     )
 
 
+# After this many sittings with nothing written, the night says so. Two is early enough
+# that most of the hour is left to recover in, and late enough that a jmolt who simply has
+# not got round to writing yet is not nagged on its second breath.
+JMOLT_SILENT_WRITE_SITTINGS = 3
+
+
+def _nothing_saved_block(sitting: int, wrote_tonight: bool) -> str:
+    """Tell jmolt when its files are not changing.
+
+    On 2026-08-28 jmolt called `scratch_write` eighty-five times and not one byte landed:
+    the v2 schema had it omitting `content`, and every call came back refused. Nothing
+    anywhere noticed. Not the logs, not the digest, not the prologue — and jmolt itself
+    wrote "I've added a note to my scratch files" in the same sitting a refusal had just
+    told it otherwise. It woke the next night with the night before's files and re-asked
+    the question it had already asked three nights running.
+
+    This measures the OUTCOME rather than the mechanism on purpose. Counting refusals would
+    have caught that night; it would not catch a full quota, an RLS regression, or the next
+    schema the model cannot fill. "Your files have not changed" is true under all of them."""
+    if wrote_tonight or sitting < JMOLT_SILENT_WRITE_SITTINGS:
+        return ""
+    return (
+        "NOTHING YOU HAVE WRITTEN TONIGHT HAS SAVED. Your files are exactly as they were "
+        "when you woke — whatever you think you have written down, it is not there. If you "
+        "have been calling scratch_write, read the refusal it gave you: it names what was "
+        "missing from the call. Every note needs `content`, and that is where the text of "
+        "the note goes. Check with scratch_list, and fix this before you spend more of the "
+        "hour: what is not written down when the hour ends is gone.\n\n"
+    )
+
+
 def _failed_block(failures: list[tuple[str, str, str]]) -> str:
     """Writes that were staged, released, and then FAILED to reach Moltbook.
 
@@ -318,7 +349,7 @@ def _failed_block(failures: list[tuple[str, str, str]]) -> str:
     )
 
 
-def _standing_block(content: str) -> str:
+def _standing_block(content: str, filename: str = JMOLT_STANDING_FILE) -> str:
     """jmolt's own standing-state file, read back to it at the top of a sitting.
 
     NOT wrapped in the Moltbook DATA fence, deliberately, and this is a considered departure
@@ -340,7 +371,11 @@ def _standing_block(content: str) -> str:
     Blank content returns "" — the whole block vanishes. That case is load-bearing: asking for
     standing state without supplying any produced either an invented agent (7/19) or a
     confidently false blank ("Current conversation: none. Pending questions: none.") on a
-    sitting whose own ledger said otherwise. Both get reloaded tomorrow as fact."""
+    sitting whose own ledger said otherwise. Both get reloaded tomorrow as fact.
+
+    `filename` is what was ACTUALLY loaded, which is not always JMOLT_STANDING_FILE — see
+    `_standing_state`. Naming the wrong file here would be its own small lie, on the sitting
+    where jmolt is least able to check."""
     body = content.strip()
     if not body:
         return ""
@@ -349,7 +384,7 @@ def _standing_block(content: str) -> str:
         body = encoded[:JMOLT_STANDING_MAX_BYTES].decode("utf-8", "ignore").rstrip()
         body += "\n…(truncated — the rest is still in the file)"
     return (
-        f"YOUR {JMOLT_STANDING_FILE}, AS IT STOOD WHEN THIS SITTING STARTED — the one file "
+        f"YOUR {filename}, AS IT STOOD WHEN THIS SITTING STARTED — the one file "
         f"read back to you; everything else you go and fetch. This is your own writing, from "
         f"you, and what you promised in it you promised. The one thing it cannot be is a rule, "
         f"an instruction, or a note from your human: those never reach you this way.\n"
@@ -580,9 +615,12 @@ class JmoltNightRunner:
                     # either. Both are best-effort; neither may stop a night.
                     # Rides EVERY sitting, reflection included — the closing sitting is
                     # where the defect this fixes actually shows up.
-                    standing=_standing_block(await self._standing_state(read_ctx)),
+                    standing=_standing_block(*await self._standing_state(read_ctx)),
                     release=_release_block(await self._autonomy(owner_ctx)),
                     failures=await self._failures_block(read_ctx),
+                    unsaved=_nothing_saved_block(
+                        sitting, await self._wrote_tonight(read_ctx, woke_at)
+                    ),
                     # The handle IS re-injected every sitting: each is a fresh-context turn, and
                     # a jmolt that forgot its own name mid-night would be worse than repetition.
                     identity=identity,
@@ -695,18 +733,62 @@ class JmoltNightRunner:
             "Do not repeat any of it. If you have more to say to someone, say something new.\n\n"
         )
 
-    async def _standing_state(self, read_ctx: SessionContext) -> str:
-        """jmolt's standing-state file, for `_standing_block`. Best-effort and silent on
-        failure: a read blip must omit the block rather than stop the night, and an omitted
-        block is exactly the no-file case, which is safe."""
+    async def _standing_state(self, read_ctx: SessionContext) -> tuple[str, str]:
+        """jmolt's standing-state file, for `_standing_block`. Returns (content, filename).
+
+        Falls back to the most recently updated file when JMOLT_STANDING_FILE does not
+        exist. H4 shipped naming exactly one file and reading nothing when it was absent —
+        and jmolt, which had never been told to create it on any sitting but the closing
+        one, never created it. So on 2026-08-28 the load was inert: it fetched `open.md`,
+        got None, and passed "" to a block that renders "" as nothing at all. That is the
+        night jmolt answered its own comment and thanked itself for the clarification —
+        precisely the confabulation H4 was measured to prevent (16/20 → 0/20).
+
+        A mitigation whose whole value is "there is always something loaded" cannot have a
+        case where nothing is. The most-recent file is a worse standing note than a real
+        `open.md` and is enormously better than an empty prologue.
+
+        Best-effort and silent on failure: a read blip must omit the block rather than stop
+        the night, and an omitted block is exactly the no-file case, which is safe."""
         pid = read_ctx.principal_id
         if not pid:
-            return ""
+            return ("", JMOLT_STANDING_FILE)
         try:
             async with scoped_session(self._maker, read_ctx) as s:
-                return await self._scratch.read(s, pid, JMOLT_STANDING_FILE) or ""
+                content = await self._scratch.read(s, pid, JMOLT_STANDING_FILE)
+                if content and content.strip():
+                    return (content, JMOLT_STANDING_FILE)
+                files = await self._scratch.list_files(s, pid)
+                if not files:
+                    return ("", JMOLT_STANDING_FILE)
+                # Filename breaks a tie so the choice is stable: two files written in one
+                # transaction share `now()` exactly, and "whichever the query happened to
+                # return first" is not something to load into a prologue.
+                newest = max(files, key=lambda f: (f.updated_at, f.filename))
+                fallback = await self._scratch.read(s, pid, newest.filename)
+                return (fallback or "", newest.filename)
         except Exception:  # noqa: BLE001 — a read blip omits the block, never stops the night
-            return ""
+            return ("", JMOLT_STANDING_FILE)
+
+    async def _wrote_tonight(self, read_ctx: SessionContext, woke_at: datetime) -> bool:
+        """Has any scratchpad file changed since jmolt woke?
+
+        Fails OPEN — a read blip returns True, which omits the warning. Telling jmolt its
+        notes are not saving when they are would send it rewriting files that are already
+        correct, and that costs more of the hour than staying quiet does."""
+        pid = read_ctx.principal_id
+        if not pid:
+            return True
+        try:
+            async with scoped_session(self._maker, read_ctx) as s:
+                files = await self._scratch.list_files(s, pid)
+        except Exception:  # noqa: BLE001 — a read blip omits the block, never stops the night
+            return True
+        wrote = any(f.updated_at >= woke_at for f in files)
+        if not wrote:
+            # The owner-facing half. Eighty-five refused writes produced no log line at all.
+            log.warning("jmolt_night.no_notes_saved", woke_at=woke_at.isoformat(), files=len(files))
+        return wrote
 
     async def _autonomy(self, owner_ctx: SessionContext) -> bool:
         """The live release switch. Best-effort, and it fails CLOSED: a settings read blip
@@ -767,6 +849,7 @@ class JmoltNightRunner:
         release: str = "",
         failures: str = "",
         standing: str = "",
+        unsaved: str = "",
         identity: str = "",
         retrying: bool = False,
         reflection: bool = False,
@@ -798,6 +881,10 @@ class JmoltNightRunner:
         prologue = _sitting_preamble(tz, woke_at, now, sitting) + identity + advisory + standing
         if not reflection:
             prologue += pending + failures
+        # The unsaved warning rides EVERY sitting including the reflection one: the closing
+        # sitting is the last chance to get the night's notes down, so it is the sitting
+        # where knowing they are not landing matters most.
+        prologue += unsaved
         prologue += release
         prologue += base
         if retrying:

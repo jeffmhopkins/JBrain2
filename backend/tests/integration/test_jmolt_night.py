@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.jmolt_night import (
     JMOLT_MAX_EMPTY_RETRIES,
     JMOLT_MAX_SITTINGS,
+    JMOLT_SILENT_WRITE_SITTINGS,
     JMOLT_STANDING_FILE,
     JmoltNightRunner,
     SingleFlightLane,
@@ -986,3 +987,83 @@ async def test_no_standing_file_means_the_prologue_never_raises_the_subject(
         # instruction to create one — not a request to report state it does not have.
         assert "AS IT STOOD WHEN THIS SITTING STARTED" not in prologue
         assert "your own writing" not in prologue
+
+
+async def test_the_standing_load_falls_back_to_the_newest_file(
+    maker: async_sessionmaker,
+) -> None:
+    """The 2026-08-28 inertness, asserted.
+
+    H4 shipped naming exactly one file and loading nothing when it was absent. jmolt was
+    told to create it only on the closing sitting, never did, and so every sitting of every
+    night since ran with an empty standing block — the exact state H4 was measured to fix
+    (invented agent 16/20 with nothing loaded, 0/20 with one file). The night it mattered,
+    jmolt replied to its own comment and thanked itself for the clarification.
+
+    A mitigation whose value is "there is always something loaded" cannot have a case where
+    nothing is."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    # Separate transactions: files written in one share `now()` to the microsecond, and
+    # this test is about which is NEWER.
+    repo = JmoltScratchRepo()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await repo.write(s, owner.principal_id, "older.md", "stale — should not be loaded")
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await repo.write(s, owner.principal_id, "thoughts.md", "- I owe @luna24 an answer")
+
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(600)).run(owner)
+
+    assert executor.prologues, "the night ran no sittings"
+    # No open.md exists, so the newest file rides instead — and the header names the file
+    # that was actually loaded, not the one that wasn't.
+    assert "I owe @luna24 an answer" in executor.prologues[0]
+    assert "YOUR thoughts.md" in executor.prologues[0]
+    assert JMOLT_STANDING_FILE not in executor.prologues[0].split("MARCHING")[0]
+
+
+async def test_a_night_whose_notes_never_save_is_told_so(
+    maker: async_sessionmaker,
+) -> None:
+    """The 2026-08-28 silence, asserted.
+
+    85 scratch_write calls, zero bytes written, and not one signal anywhere — no log line,
+    no prologue block, nothing in the digest. jmolt wrote "I've added a note to my scratch
+    files" in the same sitting a refusal had just told it otherwise, then woke the next
+    night with the night before's files.
+
+    This measures the OUTCOME (nothing changed) rather than the cause, so it holds for a
+    full quota or an RLS regression just as well as for the schema that caused it."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    executor = _PrologueCapturingExecutor()
+
+    await _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(200)).run(owner)
+
+    assert len(executor.prologues) >= JMOLT_SILENT_WRITE_SITTINGS, "need enough sittings"
+    early = executor.prologues[JMOLT_SILENT_WRITE_SITTINGS - 2]
+    late = executor.prologues[JMOLT_SILENT_WRITE_SITTINGS - 1]
+    # Not nagged on the first breath; told once the hour is genuinely being spent.
+    assert "NOTHING YOU HAVE WRITTEN TONIGHT HAS SAVED" not in early
+    assert "NOTHING YOU HAVE WRITTEN TONIGHT HAS SAVED" in late
+    assert "`content`" in late
+
+
+async def test_a_night_that_does_save_is_never_told_it_did_not(
+    maker: async_sessionmaker,
+) -> None:
+    """The false-positive half. Telling jmolt its notes are not landing when they are would
+    send it rewriting files that are already correct, which costs more of the hour than
+    staying quiet does — so the check fails open and this pins that it stays quiet."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    executor = _PrologueCapturingExecutor()
+    runner = _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(200))
+
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await JmoltScratchRepo().write(s, owner.principal_id, "kept.md", "written tonight")
+    await runner.run(owner)
+
+    for i, prologue in enumerate(executor.prologues):
+        assert "HAS SAVED" not in prologue, f"warned wrongly on sitting {i + 1}"
