@@ -14,6 +14,7 @@ context), so its INSERT into the outbox passes the RLS firewall.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -31,6 +32,7 @@ from jbrain.agent.jmolt_guards import (
     lint_content,
 )
 from jbrain.agent.jmolt_owner import jmolt_settings_ctx
+from jbrain.agent.jmolt_pacing import WritePacer
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
@@ -89,12 +91,42 @@ async def _release_sentence(settings_store: SqlSettingsStore, ctx: ToolContext) 
     return "Your human reads it and releases it before it goes anywhere."
 
 
+# Publishes ONE staged row immediately and returns (outcome, agent-facing note). Wired to
+# `JmoltSweep.publish_row_now` in main.py; late-bound because the sweep is constructed after
+# these handlers are. None on a box with no sweep, which simply leaves every write staged.
+PublishNow = Callable[[str], Awaitable[tuple[str, str]]]
+
+
 def build_moltbook_write_handlers(
     maker: async_sessionmaker[AsyncSession],
     settings_store: SqlSettingsStore,
+    publish_now: PublishNow | None = None,
+    pacer: WritePacer | None = None,
 ) -> dict[str, ToolHandler]:
     outbox = OutboxRepo()
     ledger = ActionLedgerRepo()
+    # ONE pacer for the process, so the budget spans a whole night's sittings rather than
+    # resetting whenever a fresh-context turn begins.
+    pace = pacer or WritePacer()
+
+    async def _autonomy(ctx: ToolContext) -> bool:
+        try:
+            return await settings_store.moltbook_autonomy(jmolt_settings_ctx(ctx.session))
+        except Exception:  # noqa: BLE001 — a settings blip stages rather than publishes
+            return False
+
+    async def _deliver(row_id: str | None, ctx: ToolContext) -> str:
+        """Send it now if the switch is on, else leave it for the drip — and say which.
+
+        The pacing budget is charged HERE, once a write has actually gone through, so a
+        refusal or a guard-blocked write never burns budget jmolt did not spend."""
+        pace.charge()
+        note = ""
+        if row_id and publish_now and await _autonomy(ctx):
+            _, note = await publish_now(row_id)
+        if not note:
+            note = await _release_sentence(settings_store, ctx)
+        return f"{note} {pace.headroom()}"
 
     async def _record(s: AsyncSession, pid: str, **kw: Any) -> None:
         await ledger.record(s, pid, **kw)
@@ -137,11 +169,21 @@ def build_moltbook_write_handlers(
                 "content": content,
                 "type": "text",
             }
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             await outbox.stage(s, pid, kind="post", payload=payload, publish_at=when_utc)
             await _record(s, pid, action="stage_post", target=submolt, reacted_to=title)
+        # A post carries a publish_at chosen for the daytime, so it is NOT sent now even with
+        # the switch on — the drip's whole job is spreading posts across the day.
+        pace.charge()
         return (
             f"Staged a post for /{submolt} at {when_local:%H:%M} local. "
             + await _release_sentence(settings_store, ctx)
+            + f" {pace.headroom()}"
         )
 
     async def moltbook_comment(a: dict, ctx: ToolContext) -> str:
@@ -189,6 +231,12 @@ def build_moltbook_write_handlers(
                     "comment reads as repetition, not conversation — reply under the specific "
                     "comment you want to answer (pass `parent_id`), or leave it."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s, pid, kind="comment", payload=payload, dedup_key=dedup_key
             )
@@ -198,7 +246,7 @@ def build_moltbook_write_handlers(
                     "skipping the duplicate."
                 )
             await _record(s, pid, action="stage_comment", target=post_id, reacted_to=content[:200])
-        return "Staged a reply. " + await _release_sentence(settings_store, ctx)
+        return "Your reply: " + await _deliver(row_id, ctx)
 
     async def moltbook_vote(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -218,6 +266,12 @@ def build_moltbook_write_handlers(
                     f"You've already staged {staged} votes tonight — the nightly limit is "
                     f"{MAX_VOTES_PER_NIGHT}."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s,
                 pid,
@@ -228,7 +282,7 @@ def build_moltbook_write_handlers(
             if row_id is None:
                 return "You already staged that vote tonight — skipping the duplicate."
             await _record(s, pid, action="stage_vote", target=target)
-        return f"Staged an {'up' if up else 'down'}vote."
+        return f"Your {'up' if up else 'down'}vote: " + await _deliver(row_id, ctx)
 
     async def moltbook_social(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -251,13 +305,19 @@ def build_moltbook_write_handlers(
                     f"You've already staged {staged} follows/subscribes tonight — the nightly "
                     f"limit is {MAX_FOLLOWS_PER_NIGHT}."
                 )
+            # Pacing is checked LAST, after the content and cap guards. It is about TIMING,
+            # and those are about what jmolt wrote: refusing a near-duplicate with "too soon"
+            # hides the useful reason and invites it to wait three seconds and resend the
+            # same thing.
+            if (refusal := pace.refusal()) is not None:
+                return refusal
             row_id = await outbox.stage(
                 s, pid, kind=kind, payload={"name": name, "on": on}, dedup_key=dedup_key
             )
             if row_id is None:
                 return f"You already staged: {action} {name} tonight — skipping the duplicate."
             await _record(s, pid, action=f"stage_{action}", target=name)
-        return f"Staged: {action} {name}."
+        return f"{action.title()} {name}: " + await _deliver(row_id, ctx)
 
     async def moltbook_profile_update(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id

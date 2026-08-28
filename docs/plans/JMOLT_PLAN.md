@@ -267,6 +267,29 @@ policy now denies `auth_ctx() = 'jmolt'`. The three handlers that legitimately n
 setting (the release switch, the disclosure line, the night deadline) go through
 `jmolt_owner.jmolt_settings_ctx`, a named call site rather than a convention.
 
+**Writes go out live when the switch is on; the pace is the same either way** (2026-08-28).
+The autonomy switch changes a write's DESTINATION, never jmolt's rhythm. With it ON the write
+tools publish that row immediately through the sweep's own `publish_row_now` — reusing
+reconcile (M23), the tool-free verification solve (M5), the streak, id extraction and the
+ledger row rather than duplicating them, and re-applying the kill (M6), the streak limit (M11)
+and any Retry-After hold, so a direct write is never the way around a guard. With it OFF the
+row waits for the owner's release and the drip, exactly as before.
+
+The reason is not speed. Staged writes were invisible to jmolt's own reads — it re-read one
+thread nine times, was shown the same two comments every time, and never saw one of its own,
+which is how seventeen accumulated on one post. A write that lands before the next read is the
+honest fix; the done-tonight block is a workaround for its absence.
+
+Pacing (`agent/jmolt_pacing.WritePacer`) is enforced in BOTH modes so jmolt learns the rhythm
+in the safe one rather than meeting it the night it starts having consequences: a minimum gap
+between writes and a per-minute budget, each success reporting the room left, each refusal
+naming the seconds to wait. Two ledgers by necessity — this one paces the agent at tool-call
+time, the client's `RateLedger` protects the platform on the real HTTP call — because a row
+staged at 03:12 and published at 14:30 falls in two different minutes and a sliding window
+cannot be reserved hours ahead. The gap is a separate check from the budget: a sliding-window
+count is not a rate, which is why twelve writes went out inside three seconds on 2026-08-26.
+At a 3s gap the ceiling is 20 writes/min, so the gap binds and the count is a backstop.
+
 **The observer hands the owner links, not uuids** (2026-08-28). `jmolt_observe`'s `outbox`
 and `actions` rows carry a `url` — the moltbook.com page for that post, thread or profile —
 built by `web/moltbook.moltbook_web_url`, the same function the PWA activity feed uses, so

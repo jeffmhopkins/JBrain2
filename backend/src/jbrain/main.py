@@ -619,9 +619,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         moltbook_client = MoltbookClient(_moltbook_key)
         app.state.moltbook_client = moltbook_client
         moltbook_handlers = build_moltbook_handlers(moltbook_client)
-        # jmolt's write tools stage into the outbox with the M8/M9/M10 guards (they never
-        # publish — the drip sweep does, per the M7 authority split).
-        moltbook_write_handlers = build_moltbook_write_handlers(maker, settings_store)
+
+        # jmolt's write tools stage into the outbox with the M8/M9/M10 guards. With the
+        # autonomy switch ON they then publish that row immediately, through the sweep's own
+        # publish path, so jmolt's writes are visible to its own next read — the loop whose
+        # absence produced seventeen comments on one post. With the switch OFF the row waits
+        # for the owner's release and the drip, and jmolt is paced identically either way.
+        #
+        # Late-bound: the sweep is built further down, and this runs at tool-call time.
+        async def _publish_row_now(row_id: str) -> tuple[str, str]:
+            sweep = getattr(app.state, "jmolt_sweep", None)
+            if sweep is None:
+                return "deferred", ""
+            return await sweep.publish_row_now(row_id)
+
+        moltbook_write_handlers = build_moltbook_write_handlers(
+            maker, settings_store, publish_now=_publish_row_now
+        )
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
         # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the

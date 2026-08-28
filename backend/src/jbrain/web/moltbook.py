@@ -165,6 +165,27 @@ class RateLedger:
         dq = self._window(kind)
         dq.append(self.clock())
 
+    def remaining(self, kind: str) -> int:
+        """Calls of this kind still allowed in the current window. Surfaced to jmolt so
+        pacing is a FACT it is handed rather than a rule it is told — the class of control
+        the threat model prefers, since a textual rule on a 120B is a suggestion."""
+        now = self.clock()
+        dq = self._window(kind)
+        self._evict(dq, now)
+        return max(0, self._limit(kind) - len(dq))
+
+    def retry_after(self, kind: str) -> float:
+        """Seconds until a call of this kind fits again — 0.0 when one fits now.
+
+        The window is sliding, so the answer is exactly when the OLDEST call in it ages
+        out. A refusal that says "in 14 seconds" is actionable where a bare "no" is not."""
+        now = self.clock()
+        dq = self._window(kind)
+        self._evict(dq, now)
+        if len(dq) < self._limit(kind):
+            return 0.0
+        return max(0.0, 60.0 - (now - dq[0]))
+
 
 # A provider callable returns (key, handle) live from the settings store; "" key means
 # unregistered — the client refuses to call rather than sending a blank Authorization.
