@@ -1250,12 +1250,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "scratch_write.tool": (
             "scratch_write",
             3,
-            "0a3e1a7aec8bba4d693b6df65e85a0a6b5da06f6bd5eb51e66a3f2f1f5bc7227",
+            "16e36f0330c8caa92576c4a483d8e70de813021629c62d529bedbec214e05352",
         ),
         "scratch_manage.tool": (
             "scratch_manage",
             1,
-            "4d66cb1892d35819f3b42ebc955a87b6d69c83beebfc02aabeb7f0fbda0f9598",
+            "df360becc928bd3db53a510808965b3958b6f1a0a99cfeb47faf18c73ab3d472",
         ),
         "journal.tool": (
             "journal",
@@ -1630,3 +1630,45 @@ async def test_read_wiki_tool_returns_the_article_else_a_quiet_miss() -> None:
     assert "No wiki article" in miss
     empty = await handler({"article_id": ""}, CTX)
     assert "needs an article_id" in empty
+
+
+def test_scratch_write_requires_content_and_ships_no_enum() -> None:
+    """The load-bearing half of the 2026-08-28 fix, pinned.
+
+    v2 listed only `filename` as required; across 85 consecutive calls the model supplied
+    `filename` every time and `content` — optional — never once. llama.cpp compiles
+    `required` into the tool grammar, so this list is the thing actually holding the fix up.
+    The SHA pin above is a change-detector: it notices an edit, but anyone re-adding an enum
+    or dropping `content` and regenerating the hash sails straight through it.
+
+    The absent enum is a precaution, not the fix (see the sidecar) — but it is a deliberate
+    one, and `analyze_stream` has the same guard for the same reason."""
+    spec = load_tool(TOOLS_DIR / "scratch_write.tool").spec
+    assert sorted(spec.params["required"]) == ["content", "filename"]
+    assert sorted(spec.params["properties"]) == ["content", "filename", "mode"]
+    with_enum = [n for n, sch in spec.params["properties"].items() if "enum" in sch]
+    assert with_enum == [], f"scratch_write props must not use enum: {with_enum}"
+
+
+def test_scratch_manage_keeps_new_filename_off_the_write_path() -> None:
+    """`new_filename` means something for one op out of three, and while it sat on
+    scratch_write the model filled it with junk ("/dev/null???") in place of the note. It
+    belongs on the rarely-called housekeeping tool and must not drift back."""
+    write = load_tool(TOOLS_DIR / "scratch_write.tool").spec
+    manage = load_tool(TOOLS_DIR / "scratch_manage.tool").spec
+    assert "new_filename" not in write.params["properties"]
+    assert "new_filename" in manage.params["properties"]
+    assert [n for n, sch in manage.params["properties"].items() if "enum" in sch] == []
+
+
+def test_jmolt_can_actually_reach_its_scratchpad_tools() -> None:
+    """The allowlist is what makes a tool reachable at runtime, and nothing tested it.
+
+    Deleting `scratch_manage` from JMOLT_TOOLS passed every suite in the repo: the
+    integration tests call handlers directly and so cannot see the gate. rename, empty and
+    delete would have been silently unreachable to jmolt — the same shape of silent
+    inertness as the H4 standing file that loaded nothing for three nights."""
+    from jbrain.agent.agents import JMOLT_TOOLS
+
+    for name in ("scratch_list", "scratch_read", "scratch_write", "scratch_manage"):
+        assert name in JMOLT_TOOLS, f"jmolt cannot call {name}"

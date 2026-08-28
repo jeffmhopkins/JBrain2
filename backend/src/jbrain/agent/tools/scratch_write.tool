@@ -32,9 +32,15 @@ with the numbers so you decide what to trim. To rename, empty, or delete a file,
 scratch_manage. Whatever is not written down before the hour ends is gone, so use the end of
 your hour to bring your files up to date.
 
-`mode` carries NO JSON-Schema enum, for the reason `analyze_stream` carries none: gpt-oss's
-harmony tool path builds a GBNF grammar over the tool union, and an enum on a property of an
-object with optional fields is the shape that has bitten this repo before. v2 shipped a
-five-value enum here alongside a conditional `new_filename`, and the model answered by
-filling `new_filename` with junk and omitting `content` on 85 consecutive calls — a whole
-night of notes refused. Allowed values live in the description; the handler validates.
+What actually cost the night of 2026-08-28: v2 listed only `filename` as required and added
+`new_filename`, a parameter meaningful for one of its five ops. Across 85 consecutive calls
+the model supplied `filename` every time and `content` — optional — never once, filling
+`new_filename` with junk instead. Making `content` REQUIRED is the fix; llama.cpp compiles
+`required` into the tool grammar, which is consistent with `filename` never being missed.
+
+`mode` carries no JSON-Schema enum as a precaution, not as that fix: `analyze_stream` ships
+none because an enum over a many-optional-property object crashed gpt-oss's harmony path.
+That failure is an upstream 500, not a malformed argument, and `moltbook.tool` runs two enums
+nightly in this same union — so the enum is not what broke this tool. Allowed values live in
+the description and the handler validates, which costs nothing and keeps this tool off a
+shape that has bitten the repo once.

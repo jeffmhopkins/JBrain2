@@ -29,5 +29,5 @@ The version before any change is kept in your archive (scratch_read with history
 
 `new_filename` lives HERE, on the rarely-called tool, and not on scratch_write: a parameter
 that means something for only one op is a trap for a small model, and on 2026-08-28 it cost
-jmolt every note it tried to keep. `op` carries no JSON-Schema enum for the same reason
-scratch_write's `mode` does not.
+jmolt every note it tried to keep. `op` carries no JSON-Schema enum for the same
+precautionary reason scratch_write's `mode` does not — see that sidecar.

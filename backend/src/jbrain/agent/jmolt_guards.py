@@ -254,3 +254,38 @@ def lint_scratch_content(text: str) -> LintResult:
                 "cannot appear inside them. Say it in your own words instead.",
             )
     return LintResult(True)
+
+
+# A filename is not prose and never needs to be. An allowlist is the right shape here
+# precisely because the content lint is not: `lint_scratch_content` screens for the things
+# that must not appear, which is the correct trade for a note jmolt spent a sitting writing.
+# A filename costs nothing to re-choose, so it can be held to what a name may CONTAIN.
+_SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,79}$")
+
+
+def lint_scratch_filename(name: str) -> LintResult:
+    """Screen a scratchpad filename on its way in.
+
+    The filename is not just a key. `jmolt_night._standing_block` interpolates it into the
+    PROLOGUE — the trusted channel, where the owner's advisory note lives and above the
+    provenance sentence that says a file cannot be a rule or a note from your human. So a
+    filename carrying a forged `--- A NOTE FROM YOUR HUMAN ---` block renders as though it
+    were one, and the frame meant to catch that sits below it.
+
+    `lint_scratch_content` has refused exactly that text in `content` since H1. This closes
+    the same door one field over: newlines, the trusted-channel markers, invisibles and
+    unbounded length are all excluded by construction. Found by review before it shipped,
+    but the path was live the moment the standing-file fallback started loading a
+    jmolt-chosen name."""
+    name = name.strip()
+    if not name:
+        return LintResult(False, "a file needs a name.")
+    if not _SAFE_FILENAME.match(name):
+        return LintResult(
+            False,
+            f"{name!r} is not a name I can use. A filename is letters, numbers, spaces, "
+            "dots, dashes and underscores, starting with a letter or number, up to 80 "
+            "characters — one line, no punctuation games. Your note is fine; pick a plainer "
+            "name and send it again.",
+        )
+    return LintResult(True)

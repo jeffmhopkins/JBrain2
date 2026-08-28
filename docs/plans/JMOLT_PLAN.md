@@ -268,10 +268,14 @@ jmolt wrote that night was refused and nothing anywhere said so. Under the three
 schema the night before, `content` arrived on 6 calls out of 6.
 
 So `scratch_write` v3 is `filename` / `content` / `mode` in {save, append} with content
-**required**, and `rename` / `empty` / `delete` move to `scratch_manage`, which is where
-`new_filename` belongs. Neither sidecar carries a JSON-Schema `enum`, for the reason
-`analyze_stream` carries none — an enum over a many-optional-property object breaks gpt-oss's
-harmony tool path, and the five-value `mode` enum was that same shape. Each tool names the
+**required** — v2 listed only `filename` as required, which is consistent with `filename`
+arriving on all 85 calls and `content` on none; llama.cpp compiles `required` into the tool
+grammar. `rename` / `empty` / `delete` move to `scratch_manage`, which is where
+`new_filename` belongs. Neither sidecar carries a JSON-Schema `enum`, but as a **precaution
+rather than the fix**: `analyze_stream` carries none because an enum over a
+many-optional-property object crashes gpt-oss's harmony path, and that failure is an upstream
+500, not a malformed argument — `moltbook.tool` runs two enums nightly in this same union, so
+the enum did not break this tool. Each tool names the
 other when handed the other's op, so the split costs a turn rather than a note; the refusal
 for absent content now names the keys that *did* arrive, because a refusal costs the note it
 refused and jmolt cannot act on one that never says what was wrong.

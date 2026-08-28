@@ -260,3 +260,62 @@ async def test_sessions_reports_the_night_not_one_of_its_sittings(
     assert '"cost_tokens": 1634470' in out
     # Measured from the turns, so "how long did it run" is read, never inferred.
     assert '"ran_minutes": 10.0' in out
+
+
+async def test_ran_minutes_spans_the_whole_night_and_the_stop_reason_is_the_last_one(
+    maker: async_sessionmaker,
+) -> None:
+    """Both numbers were measured wrong in ways that hid the thing they exist to show.
+
+    `ran_minutes` ran first_turn→last_turn, but turns are written when a sitting COMPLETES
+    and a sitting's user and assistant rows share one transaction timestamp — so a
+    one-sitting night measured 0.0 and every other night silently dropped its first sitting.
+    It runs from `woke_at` now.
+
+    `last_stop_reason` was `max()`, which sorts text: a night that ran out of budget after
+    three clean sittings reported "end_turn", hiding the single signal that matters most for
+    a system whose defect of record is nights ending early."""
+    pid = await _owner_pid(maker)
+    sid = uuid.uuid4()
+    woke = datetime(2026, 8, 28, 7, 0, tzinfo=UTC)
+    async with scoped_session(maker, _admin(pid)) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions"
+                " (id, principal_id, domain_scopes, agent, title, created_at, last_active_at)"
+                " VALUES (:id, :pid, ARRAY['jmolt'], 'jmolt', 'night', :at, :at)"
+            ),
+            {"id": sid, "pid": pid, "at": woke},
+        )
+        # 'budget' sorts BEFORE 'end_turn' lexically, and is the one that actually ended it.
+        for i, reason in enumerate(("end_turn", "end_turn", "budget")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.runs (id, session_id, kind, status, stop_reason,"
+                    " step_count, cost_tokens, prompt_version, ran_as, started_at)"
+                    " VALUES (:id, :sid, 'agent', 'done', :reason, 1, 1, 1, 'scoped', :at)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "sid": sid,
+                    "reason": reason,
+                    "at": woke + timedelta(minutes=i),
+                },
+            )
+        # One sitting's pair of turns, written together at the end of it.
+        for role in ("user", "assistant"):
+            await s.execute(
+                text(
+                    "INSERT INTO app.agent_turns (id, session_id, role, content, created_at)"
+                    " VALUES (:id, :sid, :role, 'x', :at)"
+                ),
+                {"id": uuid.uuid4(), "sid": sid, "role": role, "at": woke + timedelta(minutes=9)},
+            )
+
+    out = await build_jmolt_observe_handlers(maker)["jmolt_observe"](
+        {"action": "sessions"}, _observe_ctx()
+    )
+
+    # Nine minutes from waking — not 0.0, which is what first_turn→last_turn measures here.
+    assert '"ran_minutes": 9.0' in out
+    assert '"last_stop_reason": "budget"' in out

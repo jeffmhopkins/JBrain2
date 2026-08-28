@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, Text, func, select, text
+from sqlalchemy import DateTime, Integer, Text, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -171,11 +171,25 @@ class JmoltScratchRepo:
         if not filename:
             raise QuotaError("a filename is required.")
         new_bytes = await self._check_quota(session, principal_id, filename, content)
-        # M13 dedup — snapshot only on change: an identical rewrite is a no-op (no upsert,
-        # no archive row), so a loop that keeps saving the same content grows nothing.
+        # M13 dedup — snapshot only on change: an identical rewrite adds no archive row, so
+        # a loop that keeps saving the same content grows nothing.
         # (`read` returns None for a file that does not exist, so this is also the
         # "already stored identically" test without a second existence lookup.)
+        #
+        # It still TOUCHES `updated_at`. Returning outright left the row untouched while the
+        # tool answered "Saved 'x.md'." — so jmolt saving a file byte-identically was told it
+        # had saved and then, next sitting, told by the prologue that nothing had saved all
+        # night (`jmolt_night._wrote_tonight` reads `updated_at`). The dedup is about the
+        # ARCHIVE, and a write that happened should say when it happened.
         if await self.read(session, principal_id, filename) == content:
+            await session.execute(
+                update(JmoltScratch)
+                .where(
+                    JmoltScratch.principal_id == principal_id,
+                    JmoltScratch.filename == filename,
+                )
+                .values(updated_at=func.now())
+            )
             return
         stmt = (
             pg_insert(JmoltScratch)

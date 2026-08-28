@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jbrain.agent.jmolt_guards import lint_scratch_content
+from jbrain.agent.jmolt_guards import lint_scratch_content, lint_scratch_filename
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt import MAX_FILES, MAX_TOTAL_BYTES, JmoltScratchRepo, QuotaError
@@ -82,7 +82,14 @@ def build_jmolt_scratch_handlers(
         if not files:
             return "(your scratchpad is empty — you have written nothing yet)"
         used = sum(f.bytes for f in files)
-        lines = [f"- {f.filename}  ({f.bytes} bytes)" for f in files]
+        # The timestamp is here because the night's "nothing has saved tonight" block points
+        # jmolt at this tool, and every sitting is a fresh context: without a last-touched
+        # time there is no baseline to compare a byte count against, so the tool could not
+        # answer the question it was being cited for.
+        lines = [
+            f"- {f.filename}  ({f.bytes} bytes, last written {f.updated_at:%Y-%m-%d %H:%M})"
+            for f in files
+        ]
         return (
             f"Your files ({len(files)}/{MAX_FILES} files, {used}/{MAX_TOTAL_BYTES} bytes used):\n"
             + "\n".join(lines)
@@ -148,6 +155,8 @@ def build_jmolt_scratch_handlers(
             return "scratch_write needs a `filename`."
         if not pid:
             return "Can't reach your files — this session has no owner principal."
+        if not (fn_lint := lint_scratch_filename(fn)).ok:
+            return f"Not written — {fn_lint.reason}"
         # A housekeeping op sent to the write tool is an old habit, not a mistake worth
         # losing a call over: say where it lives now rather than refusing blankly.
         if mode in _MANAGE_OPS:
@@ -177,13 +186,23 @@ def build_jmolt_scratch_handlers(
                 "scratch_manage with op=empty.)"
             )
         content = str(raw)
+        # Blank content is refused for BOTH modes and whether or not the file exists. The
+        # grammar can force the `content` KEY present; it cannot force it non-empty, so a
+        # model in the same attractor emits `"content": ""` and satisfies the schema. The
+        # save path used to check this only against an EXISTING file, so a blank save onto a
+        # new name created a 0-byte file and reported success — which would also have
+        # satisfied the night's "did anything save tonight" sensor while saving nothing.
+        if not content.strip():
+            return (
+                f"Not written — `content` was empty, so {fn!r} is unchanged. The note itself "
+                "goes in `content`; send it again with the text in there. (To clear a file, "
+                "that is scratch_manage with op=empty.)"
+            )
         lint = lint_scratch_content(content)
         if not lint.ok:
             return f"Not written — {lint.reason}"
 
         if mode == "append":
-            if not content.strip():
-                return f"Nothing to append, so {fn!r} is unchanged."
             try:
                 async with scoped_session(maker, ctx.session) as s:
                     prior_bytes, new_bytes = await repo.append(s, pid, fn, content)
@@ -198,14 +217,6 @@ def build_jmolt_scratch_handlers(
         try:
             async with scoped_session(maker, ctx.session) as s:
                 prior = await repo.read(s, pid, fn)
-                if prior and not content.strip():
-                    # Blank content over a file that has something in it. Same reasoning as
-                    # the absent-content case: clearing a file is a thing you ask for.
-                    return (
-                        f"Not written — that would have left {fn!r} empty, and a save is not "
-                        "how you clear a file. Use mode=empty if you meant to, or send the "
-                        "text again if it was cut off."
-                    )
                 await repo.write(s, pid, fn, content)
         except QuotaError as exc:
             return str(exc)
@@ -219,6 +230,8 @@ def build_jmolt_scratch_handlers(
             return "scratch_manage needs a `filename`."
         if not pid:
             return "Can't reach your files — this session has no owner principal."
+        if not (fn_lint := lint_scratch_filename(fn)).ok:
+            return f"Nothing changed — {fn_lint.reason}"
         if op in _MODES:
             return (
                 f"{op!r} is scratch_write's job — call scratch_write(filename={fn!r}, "
@@ -239,6 +252,8 @@ def build_jmolt_scratch_handlers(
             new_name = str(a.get("new_filename", "")).strip()
             if not new_name:
                 return "A rename needs `new_filename` — the name to give the file."
+            if not (new_lint := lint_scratch_filename(new_name)).ok:
+                return f"Not renamed — {new_lint.reason}"
             try:
                 async with scoped_session(maker, ctx.session) as s:
                     await repo.rename(s, pid, fn, new_name)
@@ -269,7 +284,11 @@ def _arrived(a: dict) -> str:
 
     A refusal that does not say what arrived is a refusal the model cannot act on, which is
     how one malformed call became 85 identical ones."""
-    keys = [k for k in a if str(a.get(k, "")).strip() != ""]
+    # `str(None)` is "None", which is not empty — so a literal `"content": null` used to be
+    # reported as having ARRIVED in the same sentence that says it did not, which is the
+    # "refusal the model cannot act on" this helper exists to end. A model told `content` is
+    # required is exactly the one that emits null for it.
+    keys = [k for k, v in a.items() if v not in (None, "", [], {}) and str(v).strip()]
     if not keys:
         return "That call arrived with no arguments at all."
     return f"What arrived was: {', '.join(sorted(keys))} — no `content` among them."

@@ -128,14 +128,15 @@ def _runner(
     )
 
 
-def _night_clock() -> Callable[[], datetime]:
-    """A one-sitting clock whose night starts a moment ago in REAL time.
+def _night_clock(step: int = 2000) -> Callable[[], datetime]:
+    """A clock whose night starts a moment ago in REAL time. Defaults to one sitting.
 
-    The done-tonight block filters the ledger on `at >= woke_at`, comparing the runner's
-    clock against Postgres' `now()`. With the default epoch (a fixed date in 2026-08) every
-    DB row is newer than `woke_at`, so the filter matched everything and these tests could
-    not tell a scoped block from an unscoped one."""
-    return _stepped_clock(2000, start=datetime.now(UTC) - timedelta(seconds=1))
+    Any block that compares a DB timestamp against `woke_at` needs this — the done-tonight
+    ledger filter (`at >= woke_at`) and the nothing-saved check (`updated_at >= woke_at`)
+    both do. With the default epoch (a fixed date in 2026-08) every row in the database is
+    newer than `woke_at`, so the comparison matches everything and the test cannot tell a
+    scoped block from an unscoped one — nor a real predicate from `bool(rows)`."""
+    return _stepped_clock(step, start=datetime.now(UTC) - timedelta(seconds=1))
 
 
 async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> None:
@@ -1019,8 +1020,11 @@ async def test_the_standing_load_falls_back_to_the_newest_file(
     # No open.md exists, so the newest file rides instead — and the header names the file
     # that was actually loaded, not the one that wasn't.
     assert "I owe @luna24 an answer" in executor.prologues[0]
-    assert "YOUR thoughts.md" in executor.prologues[0]
-    assert JMOLT_STANDING_FILE not in executor.prologues[0].split("MARCHING")[0]
+    assert "thoughts.md" in executor.prologues[0]
+    assert "stale — should not be loaded" not in executor.prologues[0]
+    # The block announces the substitution and names open.md as the file that WOULD ride,
+    # which is what makes it self-extinguishing once jmolt creates one.
+    assert f"YOU HAVE NO {JMOLT_STANDING_FILE} YET" in executor.prologues[0]
 
 
 async def test_a_night_whose_notes_never_save_is_told_so(
@@ -1037,17 +1041,32 @@ async def test_a_night_whose_notes_never_save_is_told_so(
     full quota or an RLS regression just as well as for the schema that caused it."""
     owner = await _owner(maker)
     await _clear_scratch(maker, owner)
+    # A file from BEFORE tonight, and a clock that wakes now — so the block can only stay
+    # silent if the code really compares against `woke_at`. With the module's default epoch
+    # (a fixed date in the past) every row is trivially newer than waking, and `wrote =
+    # bool(files)` passes just as well as the real predicate.
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await JmoltScratchRepo().write(s, owner.principal_id, "stale.md", "from last night")
+        # Backdated explicitly rather than by writing it "early": the clock wakes a second
+        # ago in real time, so a file written moments before the run is NEWER than waking
+        # and the test would silently stop testing anything.
+        await s.execute(
+            text(
+                "UPDATE app.jmolt_scratch SET updated_at = now() - interval '1 day'"
+                " WHERE principal_id = :pid"
+            ),
+            {"pid": owner.principal_id},
+        )
     executor = _PrologueCapturingExecutor()
 
-    await _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(200)).run(owner)
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock(200)).run(owner)
 
     assert len(executor.prologues) >= JMOLT_SILENT_WRITE_SITTINGS, "need enough sittings"
     early = executor.prologues[JMOLT_SILENT_WRITE_SITTINGS - 2]
     late = executor.prologues[JMOLT_SILENT_WRITE_SITTINGS - 1]
     # Not nagged on the first breath; told once the hour is genuinely being spent.
-    assert "NOTHING YOU HAVE WRITTEN TONIGHT HAS SAVED" not in early
-    assert "NOTHING YOU HAVE WRITTEN TONIGHT HAS SAVED" in late
-    assert "`content`" in late
+    assert "NOTHING HAS BEEN SAVED TO YOUR FILES TONIGHT" not in early
+    assert "NOTHING HAS BEEN SAVED TO YOUR FILES TONIGHT" in late
 
 
 async def test_a_night_that_does_save_is_never_told_it_did_not(
@@ -1059,11 +1078,42 @@ async def test_a_night_that_does_save_is_never_told_it_did_not(
     owner = await _owner(maker)
     await _clear_scratch(maker, owner)
     executor = _PrologueCapturingExecutor()
-    runner = _runner(maker, FakeSettingsStore(), executor, clock=_stepped_clock(200))
+    runner = _runner(maker, FakeSettingsStore(), executor, clock=_night_clock(200))
 
     async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
         await JmoltScratchRepo().write(s, owner.principal_id, "kept.md", "written tonight")
     await runner.run(owner)
 
     for i, prologue in enumerate(executor.prologues):
-        assert "HAS SAVED" not in prologue, f"warned wrongly on sitting {i + 1}"
+        assert "NOTHING HAS BEEN SAVED" not in prologue, f"warned wrongly on sitting {i + 1}"
+
+
+async def test_the_unsaved_warning_rides_the_reflection_sitting_too(
+    maker: async_sessionmaker,
+) -> None:
+    """Stated as a design decision in `_compose` and previously unasserted — moving the
+    append inside `if not reflection:` passed every night test.
+
+    It is the sitting that matters most: the closing one is the last chance to get the
+    night's notes down, so it is exactly where knowing they are not landing has to arrive."""
+    owner = await _owner(maker)
+    await _clear_scratch(maker, owner)
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await JmoltScratchRepo().write(s, owner.principal_id, "stale.md", "from last night")
+        await s.execute(
+            text(
+                "UPDATE app.jmolt_scratch SET updated_at = now() - interval '1 day'"
+                " WHERE principal_id = :pid"
+            ),
+            {"pid": owner.principal_id},
+        )
+    executor = _PrologueCapturingExecutor()
+
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock(200)).run(owner)
+
+    # The reflection prologue is the night's close; it is the last one captured.
+    closing = executor.prologues[-1]
+    # The standing-file bootstrap is named on the closing sitting and nowhere else, so it
+    # identifies the reflection prologue without pinning its prose.
+    assert "One of your files is different from the rest" in closing, "not the closing sitting"
+    assert "NOTHING HAS BEEN SAVED TO YOUR FILES TONIGHT" in closing

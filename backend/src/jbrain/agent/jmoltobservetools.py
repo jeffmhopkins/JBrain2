@@ -316,6 +316,14 @@ def build_jmolt_observe_handlers(
             # which actually stopped after 14m45s with three quarters of its hour unused.
             # A summary is only as honest as the columns under it.
             #
+            # The span runs from `se.created_at` (when the night woke), NOT from the first
+            # turn. Turns are written when a sitting COMPLETES, and a sitting's user and
+            # assistant rows share one transaction timestamp — so first_turn..last_turn is
+            # zero for a one-sitting night and silently drops the whole first sitting on
+            # every other one. `last_stop_reason` is ordered by `started_at` rather than
+            # max()'d, which sorted the text: a night that ran out of budget after three
+            # clean sittings reported "end_turn", hiding the one signal that matters most.
+            #
             # The turn span is a scalar SUBQUERY rather than a second LEFT JOIN: joining
             # both runs and turns fans out to one row per (run × turn), and the sums come
             # back multiplied by the turn count. That is the same defect this query exists
@@ -332,7 +340,8 @@ def build_jmolt_observe_handlers(
                             " coalesce(sum(r.step_count), 0)::bigint AS steps,"
                             " coalesce(sum(r.cost_tokens), 0)::bigint AS cost_tokens,"
                             " count(*) FILTER (WHERE r.status = 'error') AS failed_sittings,"
-                            " max(r.stop_reason) FILTER (WHERE r.stop_reason IS NOT NULL)"
+                            " (array_agg(r.stop_reason ORDER BY r.started_at DESC)"
+                            "    FILTER (WHERE r.stop_reason IS NOT NULL))[1]"
                             "   AS last_stop_reason,"
                             " (SELECT min(t.created_at) FROM app.agent_turns t"
                             "    WHERE t.session_id = se.id) AS first_turn,"
@@ -354,7 +363,7 @@ def build_jmolt_observe_handlers(
                     "woke_at": r.created_at,
                     "first_turn": r.first_turn,
                     "last_turn": r.last_turn,
-                    "ran_minutes": _span_minutes(r.first_turn, r.last_turn),
+                    "ran_minutes": _span_minutes(r.created_at, r.last_turn),
                     "sittings": r.sittings,
                     "failed_sittings": r.failed_sittings,
                     "last_stop_reason": r.last_stop_reason,

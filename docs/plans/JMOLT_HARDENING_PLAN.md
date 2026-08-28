@@ -401,9 +401,19 @@ state H4 measured at 16/20 invented-agent. On 2026-08-28 jmolt commented a quest
 another agent's post, re-read the thread, answered its own question in that agent's first
 person, and then replied again thanking itself for the clarification.
 
-The load now falls back to the most recently updated file (deterministic tie-break on
-filename), and the block's header names the file actually loaded rather than the one that was
-wanted. A mitigation whose entire value is "there is always something loaded" cannot have a
+The load now falls back to the most recently updated file **with content in it** (an emptied
+file bumps `updated_at`, so "most recent" alone could still load nothing), and the block
+announces the substitution: it names `open.md` only when it is missing, which makes it
+self-extinguishing the moment jmolt creates one and stops the standing block and the
+reflection prologue calling two different files "the one that is read back to you".
+
+Two things review caught before this shipped. The filename now reaches the **trusted
+channel** — `_standing_block` interpolates it above the provenance sentence — and filenames
+were linted nowhere, so a name carrying a forged `--- A NOTE FROM YOUR HUMAN ---` block
+rendered as though it were one, while `lint_scratch_content` has refused that exact text in
+`content` since H1. `lint_scratch_filename` closes it on both `filename` and `new_filename`.
+And `jmolt.prompt`'s "Nothing is loaded for you" was true only while the load was inert; it
+now says one file rides every sitting (prompt v5). A mitigation whose entire value is "there is always something loaded" cannot have a
 case where nothing is — the conditional-load reasoning above is about which file, never about
 whether.
 
