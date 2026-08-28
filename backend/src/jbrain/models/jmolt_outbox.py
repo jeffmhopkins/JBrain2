@@ -162,6 +162,16 @@ class OutboxRepo:
         ).one()
         return int(row.total), int(row.top_level)
 
+    async def get(self, session: AsyncSession, row_id: str) -> OutboxRow | None:
+        """One row by id, or None. For the direct-publish path, which stages a row and then
+        publishes that same row rather than sweeping the whole queue."""
+        row = (
+            await session.execute(
+                text("SELECT * FROM app.jmolt_outbox WHERE id = :id"), {"id": row_id}
+            )
+        ).first()
+        return _row_to_outbox(row) if row is not None else None
+
     async def list_by_status(
         self, session: AsyncSession, principal_id: str, statuses: tuple[str, ...]
     ) -> list[OutboxRow]:

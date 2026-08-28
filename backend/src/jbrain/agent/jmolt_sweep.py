@@ -163,6 +163,60 @@ class JmoltSweep:
             )
         return published
 
+    async def publish_row_now(self, row_id: str) -> tuple[PublishOutcome, str]:
+        """Publish ONE staged row immediately, for a write tool running under autonomy.
+
+        With the switch on, jmolt's write tools call Moltbook through here rather than
+        leaving the row for the next drip tick. The point is not speed: it closes the loop
+        that produced the seventeen-comment night. Staged writes were invisible to jmolt's
+        own reads — it re-read one thread nine times, was shown the same two comments every
+        time, and never saw one of its own — so a write that lands before the next read is
+        the honest fix, not another prologue block reminding it what it did.
+
+        Everything the drip does is reused rather than reimplemented: reconcile-before-publish
+        (M23), the tool-free verification solve (M5), the streak, id extraction, the ledger
+        row. Duplicating that in the write tool is how the two paths would drift apart.
+
+        Both gates the tick applies are applied here too — a direct write must not be the way
+        around the kill switch (M6) or the verify-fail streak (M11) — plus the platform's own
+        Retry-After hold, which outranks anything jmolt wants.
+
+        Returns (outcome, agent-facing note). Never raises: a write tool must not turn a
+        publish problem into a broken turn, and the row survives either way for the drip.
+        """
+        pid = await _owner_principal_id(self._maker)
+        if pid is None:
+            return "deferred", "staged — the box has no owner principal to publish under."
+        admin = _admin_ctx(pid)
+        try:
+            if await self._settings.moltbook_killed(admin):
+                return "deferred", "staged, and held: writing is paused (the global kill)."
+            streak = await self._settings.moltbook_verify_fail_streak(admin)
+            if streak >= MOLTBOOK_FAIL_STREAK_LIMIT:
+                return "deferred", (
+                    "staged, and held: too many verification failures in a row, so writing is "
+                    "stopped until your human clears it."
+                )
+            if self._clock() < self._hold_until:
+                wait = int(self._hold_until - self._clock())
+                return "deferred", (
+                    f"staged, and held: Moltbook asked us to back off for another {wait}s. "
+                    "It goes out on its own once that clears."
+                )
+            async with scoped_session(self._maker, admin) as s:
+                row = await self._outbox.get(s, row_id)
+            if row is None:
+                return "deferred", "staged."
+            outcome = await self._publish_one(pid, admin, row)
+        except Exception:  # noqa: BLE001 — a publish problem must not break jmolt's turn
+            log.warning("jmolt_sweep.publish_now_failed", row_id=row_id, exc_info=True)
+            return "deferred", "staged — it could not go out just now, so the drip will retry."
+        if outcome == "published":
+            return outcome, "posted to Moltbook now."
+        if outcome == "deferred":
+            return outcome, "staged — Moltbook is rate-limiting, so the drip will send it."
+        return outcome, "it did NOT go out — the write failed on the way to Moltbook."
+
     async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> PublishOutcome:
         # Reconcile-before-publish for posts (M23, strengthened): a crash between a landed
         # write and its DB commit would otherwise re-publish this row on restart with no
