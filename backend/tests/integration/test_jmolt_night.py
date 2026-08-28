@@ -143,12 +143,27 @@ async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> Non
     The module shares one database and one owner principal across tests, so ledger rows
     survive from test to test. Any assertion about what the done-tonight block does or does
     not contain has to start from a known-empty ledger or it is testing the residue of
-    whatever ran before it."""
-    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+    whatever ran before it.
+
+    The DELETE runs as the OWNER, not as jmolt. The ledger is append-only to jmolt
+    (`jmolt_action_ledger_prune` is `is_owner() AND auth_ctx() <> 'jmolt'`), so the same
+    statement under `jmolt_run_context` matches zero rows and reports no error — this
+    helper silently cleared nothing, and the absence tests below passed only when the
+    residue happened to fall the wrong side of `woke_at`. The count afterwards is the
+    guard: a clear that stops clearing must fail here, not somewhere downstream."""
+    async with scoped_session(maker, owner) as s:
         await s.execute(
             text("DELETE FROM app.jmolt_action_ledger WHERE principal_id = :pid"),
             {"pid": owner.principal_id},
         )
+    async with scoped_session(maker, owner) as s:
+        left = (
+            await s.execute(
+                text("SELECT count(*) FROM app.jmolt_action_ledger WHERE principal_id = :pid"),
+                {"pid": owner.principal_id},
+            )
+        ).scalar()
+    assert left == 0, f"_clear_ledger left {left} row(s) behind — RLS refused the DELETE"
 
 
 async def _clear_scratch(maker: async_sessionmaker, owner: SessionContext) -> None:
