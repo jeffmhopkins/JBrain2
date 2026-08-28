@@ -242,6 +242,53 @@ def _render_comments(comments: Any, *, handle: str, addressee: str, depth: int =
     return out
 
 
+def _nobody_waiting(comments: Any, handle: str, depth: int = 0) -> str:
+    """Say when a thread holds nothing that is jmolt's to answer.
+
+    2026-08-28: jmolt commented a question on Luna24's post, re-read the thread forty
+    seconds later, and was shown exactly one comment — its own, correctly labelled
+    "(you)" — under a header that says to respond to the material. It answered its own
+    question in Luna24's voice, then replied again thanking itself for the clarification.
+
+    The `(you)` label was not the missing piece; it was right there. What was missing was
+    the other half of the sentence: that nothing on the screen was waiting for a reply. A
+    view containing one unanswered question and an instruction to respond gets responded
+    to, whoever the label says asked it."""
+    seen: list[tuple[str, str]] = []
+
+    def walk(items: Any, d: int) -> None:
+        if not isinstance(items, list) or d > _MAX_RENDER_DEPTH:
+            return
+        for c in items:
+            if isinstance(c, dict):
+                seen.append((_handle_of(c).lower(), str(c.get("created_at") or "")))
+                walk(c.get("replies"), d + 1)
+
+    walk(comments, depth)
+    if not seen or not handle:
+        return ""
+    me = handle.lower()
+    authors = [a for a, _ in seen]
+    # "Most recent" means most recent, not last in the array: the platform orders a thread
+    # however it likes, and a claim about time that is really a claim about list position
+    # is the kind of small falsehood jmolt reloads tomorrow as fact. Timestamps are ISO-8601
+    # so they sort lexically; a thread with none falls back to the order given.
+    newest = max(seen, key=lambda t: t[1]) if any(ts for _, ts in seen) else seen[-1]
+    if all(a == me for a in authors):
+        return (
+            "\n\nEvery comment on this thread is yours. Nobody has replied to you here, so "
+            "there is nothing on it waiting for an answer — a question you asked is not a "
+            "question for you. If you want to carry it further, that means waiting for "
+            "someone, or saying something new somewhere else."
+        )
+    if newest[0] == me:
+        return (
+            "\n\nThe most recent comment here is yours and nobody has answered it yet. "
+            "Adding another would be you talking to yourself."
+        )
+    return ""
+
+
 def _strip_owner(value: Any) -> Any:
     """Drop ONLY the owner-identity block, keeping everything else."""
     if isinstance(value, dict):
@@ -397,6 +444,7 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
         # degrades the label, never the reply.
         author = "the post author"
         resolved = False
+        item: Any = None
         if data.get("comments"):
             # Skipped entirely on an empty thread — there is nothing to address, and a read
             # is a rate-ledgered call we should not spend for a label nobody will see.
@@ -415,8 +463,19 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
             data.get("comments"), handle=client.handle, addressee=author.lstrip("@")
         )
         body = "\n\n".join(blocks) if blocks else "(no comments on this post yet)"
+        # The post the comments hang off, when the author lookup above already fetched it.
+        # Without it this view is a list of replies to nothing: on 2026-08-28 jmolt was
+        # shown its own question with no post attached and answered it as though it were
+        # the post's author. Costs no extra call — `item` is already in hand.
+        if resolved and isinstance(item, dict):
+            body = (
+                f"The post being discussed:\n{_render_item(item, handle=client.handle)}\n\n{body}"
+            )
         return _fenced_text(
-            f"Comments on post {pid}", body + _paging(data), handle=client.handle, own_post=mine
+            f"Comments on post {pid}",
+            body + _nobody_waiting(data.get("comments"), client.handle) + _paging(data),
+            handle=client.handle,
+            own_post=mine,
         )
 
     async def _search(a: dict, _c: ToolContext) -> str:

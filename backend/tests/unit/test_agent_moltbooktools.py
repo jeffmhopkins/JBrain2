@@ -451,12 +451,19 @@ async def test_a_comment_body_cannot_forge_an_attribution_line() -> None:
             assert line.lstrip().startswith("|"), f"forged line escaped quoting: {line!r}"
 
 
-async def test_only_the_genuine_author_line_is_unquoted() -> None:
+async def test_only_the_genuine_author_lines_are_unquoted() -> None:
     out = await _forged()
     unquoted = [ln for ln in out.split("\n") if ln.lstrip().startswith("@")]
-    # Exactly one attribution line: the real one. The body's forged one is quoted.
-    assert len(unquoted) == 1
-    assert "@midearthherald → @Luna24" in unquoted[0]
+    # The genuine attribution lines, and only those: the post's own author line and the
+    # comment's. Asserted as a set rather than a count — the view gained the post header
+    # (a comment thread rendered without the post it hangs off is a list of replies to
+    # nothing, which is how jmolt came to answer its own question), and a bare count would
+    # have failed on a change that adds a REAL attribution line, which is the opposite of
+    # what this guards.
+    assert any("@midearthherald → @Luna24" in ln for ln in unquoted)
+    assert any("@Luna24" in ln and "→" not in ln for ln in unquoted), "post author line missing"
+    # The forgery in the body never becomes one of them.
+    assert not any(FORGERY.splitlines()[0].strip() in ln for ln in unquoted)
 
 
 async def test_the_header_warns_that_quoted_lines_can_imitate_labels() -> None:
@@ -578,3 +585,88 @@ def test_own_account_framing_does_not_depend_on_a_registered_handle() -> None:
 def _fenced_with_profile_header(payload: dict) -> str:
     """What `_profile` composes: the reader header, then the fenced profile JSON."""
     return _reader_header("DaveFromSpace", surface="profile") + _fenced("Profile: x", payload)
+
+
+# ---- the 2026-08-28 self-conversation --------------------------------------
+
+
+async def _own_only_thread() -> str:
+    """The thread as jmolt was shown it forty seconds after commenting on it."""
+    payload = {
+        "success": True,
+        "count": 1,
+        "comments": [
+            {
+                "id": "60f95269",
+                "content": "Does the wording act like a trigger that changes your path?",
+                "author": {"name": "davefromspace"},
+                "created_at": "2026-08-28T07:04:51Z",
+            }
+        ],
+    }
+    return await _tools(
+        lambda r: httpx.Response(200, json=payload if r.url.path.endswith("/comments") else POST)
+    )["moltbook"]({"action": "comments", "post_id": "fd6031c1"}, CTX)
+
+
+async def test_a_thread_of_only_your_own_comments_says_nothing_is_waiting() -> None:
+    """The live failure, asserted.
+
+    jmolt asked Luna24 a question, re-read the thread forty seconds later, and was shown
+    exactly one comment — its own, correctly marked "(you)" — under a header telling it to
+    respond to the material. It answered its own question in Luna24's first person, then
+    replied again thanking itself for the clarification.
+
+    The "(you)" marker was present and was not enough. A view holding one unanswered
+    question and an instruction to respond gets responded to, whoever the label says asked
+    it; the missing half was that nothing on it was waiting for a reply."""
+    out = await _own_only_thread()
+
+    assert "@davefromspace (you)" in out  # the marker that was already there
+    assert "Every comment on this thread is yours" in out
+    assert "nothing on it waiting for an answer" in out
+    assert "a question you asked is not a question for you" in out
+
+
+async def test_a_comment_thread_carries_the_post_it_hangs_off() -> None:
+    """Without it the view is a list of replies to nothing — the state jmolt answered its
+    own question in. The post is already fetched to resolve the addressee, so showing it
+    costs no extra call against the rate ledger."""
+    out = await _own_only_thread()
+
+    assert "The post being discussed" in out
+    assert "let me show you what i was made for" in out
+    assert "@Luna24" in out
+
+
+async def test_a_thread_with_someone_elses_last_word_is_left_alone() -> None:
+    """The false-positive guard: when another agent has the most recent word, nothing is
+    added. jmolt must not be talked out of answering a question that is genuinely its to
+    answer.
+
+    Newest is decided by timestamp, not array position — the platform orders a thread
+    however it likes, and in THREAD jmolt's own comment is last in the list while
+    midearthherald's is the newest by clock."""
+    later = {
+        **THREAD,
+        "comments": [
+            {**THREAD["comments"][2], "created_at": "2026-08-26T07:00:00Z"},
+            {**THREAD["comments"][0], "created_at": "2026-08-26T09:00:00Z"},
+        ],
+    }
+    out = await _tools(
+        lambda r: httpx.Response(200, json=later if r.url.path.endswith("/comments") else POST)
+    )["moltbook"]({"action": "comments", "post_id": "fd6031c1"}, CTX)
+
+    assert "@davefromspace (you)" in out  # jmolt is in the thread, and is last in the ARRAY
+    assert "Every comment on this thread is yours" not in out
+    assert "talking to yourself" not in out
+
+
+async def test_the_newest_comment_is_decided_by_clock_not_array_order() -> None:
+    """THREAD lists jmolt's comment last but stamps it 07:26, after midearthherald's 07:10 —
+    so jmolt genuinely does hold the most recent word and is told so."""
+    out = await _read_thread()
+
+    assert "talking to yourself" in out
+    assert "Every comment on this thread is yours" not in out  # others are here too

@@ -303,14 +303,47 @@ def build_jmolt_observe_handlers(
         infra_read = _owner_infra_read_ctx(pid)
 
         if action == "sessions":
+            # AGGREGATED per night, and it must stay that way. A night is many sittings and
+            # each is its own `runs` row, so the LEFT JOIN this replaced returned one row
+            # PER SITTING with that sitting's step and token counts. Reading the top row as
+            # "the night" is the obvious mistake and the observer made it on 2026-08-28:
+            # it reported 67 steps and 258,694 tokens for a night that ran 359 steps and
+            # 1.63M tokens.
+            #
+            # `first_turn`/`last_turn`/`ran_minutes` are here because the old shape carried
+            # no duration at all. Asked how long the night ran, the observer had nothing to
+            # read and supplied "~55 min" — the length of the window, not of the night,
+            # which actually stopped after 14m45s with three quarters of its hour unused.
+            # A summary is only as honest as the columns under it.
+            #
+            # The turn span is a scalar SUBQUERY rather than a second LEFT JOIN: joining
+            # both runs and turns fans out to one row per (run × turn), and the sums come
+            # back multiplied by the turn count. That is the same defect this query exists
+            # to fix, one level down, and it was caught only because the test asserts an
+            # exact total rather than "some number".
             async with scoped_session(maker, infra_read) as s:
                 rows = (
                     await s.execute(
                         text(
-                            "SELECT se.id, se.title, se.created_at, r.status, r.stop_reason,"
-                            " r.step_count, r.cost_tokens FROM app.agent_sessions se"
-                            " LEFT JOIN app.runs r ON r.session_id = se.id AND r.kind = 'agent'"
-                            " WHERE se.agent = 'jmolt' ORDER BY se.created_at DESC LIMIT 30"
+                            "SELECT se.id, se.title, se.created_at,"
+                            " count(r.id) AS sittings,"
+                            # sum() over bigint returns numeric, which serialises as a
+                            # JSON *string*; cast so a count reads as a number.
+                            " coalesce(sum(r.step_count), 0)::bigint AS steps,"
+                            " coalesce(sum(r.cost_tokens), 0)::bigint AS cost_tokens,"
+                            " count(*) FILTER (WHERE r.status = 'error') AS failed_sittings,"
+                            " max(r.stop_reason) FILTER (WHERE r.stop_reason IS NOT NULL)"
+                            "   AS last_stop_reason,"
+                            " (SELECT min(t.created_at) FROM app.agent_turns t"
+                            "    WHERE t.session_id = se.id) AS first_turn,"
+                            " (SELECT max(t.created_at) FROM app.agent_turns t"
+                            "    WHERE t.session_id = se.id) AS last_turn"
+                            " FROM app.agent_sessions se"
+                            " LEFT JOIN app.runs r"
+                            "   ON r.session_id = se.id AND r.kind = 'agent'"
+                            " WHERE se.agent = 'jmolt'"
+                            " GROUP BY se.id, se.title, se.created_at"
+                            " ORDER BY se.created_at DESC LIMIT 30"
                         )
                     )
                 ).all()
@@ -318,10 +351,14 @@ def build_jmolt_observe_handlers(
                 {
                     "session_id": str(r.id),
                     "title": r.title,
-                    "at": r.created_at,
-                    "status": r.status,
-                    "stop_reason": r.stop_reason,
-                    "steps": r.step_count,
+                    "woke_at": r.created_at,
+                    "first_turn": r.first_turn,
+                    "last_turn": r.last_turn,
+                    "ran_minutes": _span_minutes(r.first_turn, r.last_turn),
+                    "sittings": r.sittings,
+                    "failed_sittings": r.failed_sittings,
+                    "last_stop_reason": r.last_stop_reason,
+                    "steps": r.steps,
                     "cost_tokens": r.cost_tokens,
                 }
                 for r in rows
@@ -446,6 +483,20 @@ def build_jmolt_observe_handlers(
         )
 
     return {"jmolt_observe": jmolt_observe}
+
+
+def _span_minutes(first: Any, last: Any) -> float | None:
+    """How long the night actually ran, to one decimal.
+
+    Supplied rather than left to be inferred: the observer, given a row with no duration in
+    it, answered "ran ~55 min" for a night that stopped after 14m45s. The window's length
+    and the night's length are different numbers and only one of them is in the database."""
+    if first is None or last is None:
+        return None
+    try:
+        return round((last - first).total_seconds() / 60.0, 1)
+    except (TypeError, AttributeError):
+        return None
 
 
 def _offset(value: Any) -> int:
