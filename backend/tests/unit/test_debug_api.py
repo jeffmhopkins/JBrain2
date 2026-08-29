@@ -19,7 +19,7 @@ from jbrain.api.debug import VisionRequest, _jsonable, _run_vision
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm.errors import LlmError
-from jbrain.llm.types import LlmResult, LlmTurn, LlmUsage, ToolCall
+from jbrain.llm.types import LlmResult, LlmTurn, LlmUsage, ToolCall, ToolResultMessage
 from jbrain.main import create_app
 from jbrain.web.fetch import WebFetcher
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
@@ -1104,3 +1104,155 @@ def test_gateway_logs_reads_the_buffered_endpoint(
     resp = client.get("/api/debug/llm/gateway-logs", headers=_auth(key))
     assert resp.status_code == 200
     assert "release 1" in resp.text
+
+
+# --- multi-turn sitting replay ----------------------------------------------
+
+
+class _ScriptedRouter:
+    """A router that proposes a FIXED sequence of calls, then stops.
+
+    The shared `_StubRouter` always asks for a tool while tools are attached, which is
+    right for a one-shot probe and useless for a replay: it can only ever run to the step
+    cap. Replay's whole purpose is the turns AFTER the first, so the fake has to be able
+    to end a sitting."""
+
+    def __init__(self, names: list[str]) -> None:
+        self.names = names
+        self.seen_messages: list[Any] = []
+
+    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("local", "gpt-oss-120b")
+
+    async def converse(self, task: str, *, messages: Any, tools: Any = (), **kw: Any) -> LlmTurn:
+        self.seen_messages.append(list(messages))
+        step = sum(1 for m in messages if isinstance(m, ToolResultMessage))
+        if step >= len(self.names):
+            return LlmTurn(
+                text="done",
+                tool_calls=(),
+                stop_reason="end_turn",
+                usage=LlmUsage(input_tokens=1, output_tokens=1),
+            )
+        return LlmTurn(
+            text="",
+            tool_calls=(ToolCall(id=f"c{step}", name=self.names[step], arguments={"i": step}),),
+            stop_reason="tool_use",
+            usage=LlmUsage(input_tokens=1, output_tokens=1),
+        )
+
+
+def test_replay_runs_past_the_first_move_and_feeds_recorded_results(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The reason this endpoint exists.
+
+    `tool-probe` returns ONE call, and jmolt's opening move is pinned by the prologue —
+    measured at 100% scratchpad across 160 probes whatever else changed. Every behaviour
+    worth studying happens on later turns, so two pre-registered studies (460 probes) could
+    not reach any of it. A replay has to get to step 2 and beyond."""
+    client, key = debug_client
+    router = _ScriptedRouter(["scratch_list", "scratch_read", "moltbook_post"])
+    _state(client).llm_router = router
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={
+            "user_text": "sitting 7",
+            "tools": ["search"],
+            "stubs": [
+                {"name": "scratch_list", "result": "- thoughts.md (275 bytes)"},
+                {"name": "scratch_read", "result": "My view: prompts set a frame."},
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["call_sequence"] == ["scratch_list", "scratch_read", "moltbook_post"]
+    assert body["steps_taken"] == 3
+    assert body["stop_reason"] == "end_turn"
+    # The recorded result reached the model, which is what makes this a replay rather than
+    # three independent first moves.
+    assert body["steps"][0]["result_used"] == "- thoughts.md (275 bytes)"
+    assert body["steps"][1]["result_used"] == "My view: prompts set a frame."
+
+
+def test_replay_marks_where_it_leaves_the_recorded_path(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """`matched_recorded` is the measurement. A counterfactual differs from a reproduced
+    real sitting by one edit, and the step where the model stops doing what the night did
+    is the effect of that edit — so a call in the recorded POSITION must score differently
+    from one merely of a recorded name."""
+    client, key = debug_client
+    _state(client).llm_router = _ScriptedRouter(["scratch_list", "moltbook_post"])
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={
+            "user_text": "sitting 7",
+            "tools": ["search"],
+            "stubs": [
+                {"name": "scratch_list", "result": "files"},
+                {"name": "scratch_read", "result": "notes"},
+            ],
+        },
+    )
+
+    body = resp.json()
+    assert body["steps"][0]["matched_recorded"] is True  # night also read files first
+    assert body["steps"][1]["matched_recorded"] is False  # night read; this posted
+    # A call with no recorded result still continues, because where it goes after leaving
+    # the path is the interesting part.
+    assert "no recorded result" in body["steps"][1]["result_used"]
+
+
+def test_replay_never_runs_a_handler(debug_client: tuple[TestClient, str]) -> None:
+    """The safety property. Only caller-supplied strings reach the model as tool output —
+    a replay of a night that posted must never post. Asserted by construction: the only
+    results the model sees are the stubs, and an unstubbed call gets the fallback."""
+    client, key = debug_client
+    _state(client).llm_router = _ScriptedRouter(["moltbook_post"])
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={
+            "user_text": "post it",
+            "tools": ["search"],
+            "stubs": [],
+            "fallback_result": "SENTINEL",
+        },
+    )
+
+    body = resp.json()
+    assert body["call_sequence"] == ["moltbook_post"]
+    assert body["steps"][0]["result_used"] == "SENTINEL"
+
+
+def test_replay_honours_the_step_cap(debug_client: tuple[TestClient, str]) -> None:
+    """A sitting that never stops must not run forever against a live box."""
+    client, key = debug_client
+    _state(client).llm_router = _ScriptedRouter(["scratch_write"] * 50)
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={"user_text": "loop", "tools": ["search"], "stubs": [], "max_steps": 3},
+    )
+
+    assert resp.json()["steps_taken"] == 3
+
+
+def test_replay_rejects_an_unknown_tool(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={"user_text": "hi", "tools": ["not_a_real_tool"]},
+    )
+    assert resp.status_code == 400
+    assert "not_a_real_tool" in resp.json()["detail"]

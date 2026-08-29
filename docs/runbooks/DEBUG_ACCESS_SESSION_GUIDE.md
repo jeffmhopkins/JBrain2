@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-29
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -130,6 +130,36 @@ scripts/debug-connect.sh tool-probe --task agent.turn \
 # (a JSON file of [{name,description,input_schema}, ...]) — no registry name needed — and vary
 # one thing at a time (strip a field, drop an enum, swap fancy punctuation for ASCII), re-probe.
 scripts/debug-connect.sh tool-probe --task agent.turn --raw-tools-file /tmp/mutant.json "use a tool"
+
+# Multi-turn sitting replay — drives a jmolt sitting PAST its first move by feeding back the
+# tool results the night actually observed. Use it whenever the question is about a decision
+# the agent makes AFTER its opening move.
+#
+# Why it exists: tool-probe returns ONE call, and jmolt's first move is pinned by the
+# prologue's "Start by reading your files" — measured at 100% scratchpad across 160 probes
+# whatever else changed. Two pre-registered studies (460 probes) failed to reach the
+# behaviour they targeted; one had zero posts in EVERY arm INCLUDING the control, which
+# measures the harness, not the hypothesis. Replaying from the record fixes that: the stubs
+# are what the night saw, so an unedited replay reproduces the sitting and a counterfactual
+# differs by exactly one edit.
+#
+# ALWAYS validate before drawing a conclusion: replay the sitting UNEDITED first and check
+# it reproduces what the night did. If it cannot, it is not a harness — throw the run away.
+python3 scripts/jmolt-replay-build.py --sql --session <uuid> --sitting 7 > /tmp/q.sql
+scripts/debug-connect.sh sql "$(cat /tmp/q.sql)" > /tmp/sitting.json
+python3 scripts/jmolt-replay-build.py --from-dump /tmp/sitting.json \
+  --system-file /tmp/jmolt-system.txt --out /tmp/replay.json
+scripts/debug-connect.sh replay --body-file /tmp/replay.json      # the control
+
+# A condition is ONE documented edit to the real prologue (--drop a block by its leading
+# text, or --replace OLD=NEW). Both are fatal if they match nothing, so an arm can never
+# silently be a second copy of the control.
+python3 scripts/jmolt-replay-build.py --from-dump /tmp/sitting.json \
+  --system-file /tmp/jmolt-system.txt --drop "The posts themselves" --out /tmp/arm_b.json
+scripts/debug-connect.sh replay --body-file /tmp/arm_b.json
+# Compare `call_sequence` and `matched_recorded` across arms: the step where the model
+# stops doing what the night did is the effect of the edit. NO handler ever runs — the only
+# tool output reaching the model is a string from the body.
 
 # Read-only SQL (full read; runs in a READ ONLY transaction — writes are rejected).
 scripts/debug-connect.sh sql "select code, name from app.domains order by code"

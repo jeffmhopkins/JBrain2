@@ -57,11 +57,15 @@ from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
+    AssistantMessage,
+    LlmMessage,
     LlmTool,
     LlmTurn,
     ReasoningChunk,
     Sampling,
     TextChunk,
+    ToolResult,
+    ToolResultMessage,
     UserMessage,
 )
 from jbrain.models.agent import TurnAttachment
@@ -537,6 +541,169 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
         stop_reason=turn.stop_reason,
         input_tokens=turn.usage.input_tokens,
         output_tokens=turn.usage.output_tokens,
+    )
+
+
+# --- Multi-turn sitting replay ----------------------------------------------
+# Drive a jmolt sitting PAST ITS FIRST MOVE by feeding back recorded tool results, so a
+# prompt change can be measured against the decision it is supposed to affect.
+#
+# Why this exists. `/tool-probe` returns ONE proposed call, and jmolt's opening move is
+# pinned by a sentence of the prologue ("Start by reading your files") — measured at 100%
+# scratchpad across 160 probes regardless of any other wording. Every behaviour worth
+# studying (the duplicate posts of 2026-08-29, the fourteen-minute night) happens on LATER
+# turns, after tool results come back. Two pre-registered studies, 460 probes between them,
+# could not reach any of it: one arm produced zero posts in EVERY condition including the
+# control, which measures the harness rather than the hypothesis.
+#
+# The results fed back are the ones the night actually observed, pulled from
+# `agent_turns.tools` — not invented stubs — so a replay reproduces a real sitting and a
+# counterfactual differs from it by exactly one edit. `matched_recorded` per step is the
+# measure: where the model stops following the night it actually had is the effect.
+#
+# Reuses the llm.complete scope (it IS a converse). NO HANDLER EVER RUNS: the only tool
+# output that reaches the model is a string the caller supplied.
+
+
+class ReplayStub(BaseModel):
+    name: str = Field(min_length=1)
+    result: str = ""
+    is_error: bool = False
+
+
+class ReplayRequest(BaseModel):
+    user_text: str = Field(min_length=1)
+    system: str = ""
+    task: str = "agent.turn"
+    strength: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    # The night's observed tool results, in the order the sitting produced them. Matched to
+    # the model's calls by NAME (FIFO per name) so a replay that reorders its reads still
+    # continues; `matched_recorded` records whether the order held.
+    stubs: list[ReplayStub] = Field(default_factory=list)
+    # What a call with no recorded result gets back. The replay continues rather than
+    # stopping, because where it goes AFTER leaving the recorded path is the interesting part.
+    fallback_result: str = "(no recorded result for this call)"
+    max_steps: int = Field(default=8, ge=1, le=24)
+    max_tokens: int = Field(default=2048, ge=1, le=32768)
+
+
+class ReplayStep(BaseModel):
+    index: int
+    name: str
+    arguments: dict[str, Any]
+    matched_recorded: bool
+    result_used: str
+    stop_reason: str
+
+
+class ReplayOut(BaseModel):
+    provider: str
+    model: str
+    tool_count: int
+    steps: list[ReplayStep]
+    # Names in call order — the thing to compare across conditions.
+    call_sequence: list[str]
+    final_text: str
+    stop_reason: str
+    steps_taken: int
+    input_tokens: int
+    output_tokens: int
+    error: str | None = None
+
+
+@router.post("/replay")
+async def replay(body: ReplayRequest, request: Request, _p: DebugDep) -> ReplayOut:
+    """Replay a sitting multi-turn against recorded tool results. See the module note."""
+    request.state.debug_detail = f"{len(body.tools)} tools, {body.max_steps} steps"
+    registry = cast(ToolRegistry, request.app.state.agent_registry)
+    unknown = [t for t in body.tools if t not in registry.names()]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown tools: {unknown}")
+    llm_tools = [registry.get(name).as_llm_tool() for name in body.tools]
+    router_ = _llm_router(request)
+    provider, model = await router_.effective_spec(body.task, body.strength)
+
+    # FIFO pool per tool name, plus the recorded ORDER, so a step can be scored both ways.
+    pool: dict[str, list[ReplayStub]] = {}
+    for stub in body.stubs:
+        pool.setdefault(stub.name, []).append(stub)
+    recorded_order = [stub.name for stub in body.stubs]
+
+    messages: list[LlmMessage] = [UserMessage(text=body.user_text)]
+    steps: list[ReplayStep] = []
+    in_tokens = out_tokens = 0
+    stop_reason, final_text = "end_turn", ""
+
+    for i in range(body.max_steps):
+        try:
+            turn = await router_.converse(
+                body.task,
+                system=body.system,
+                messages=messages,
+                tools=llm_tools,
+                max_tokens=body.max_tokens,
+                strength=body.strength,
+            )
+        except LlmError as exc:
+            return ReplayOut(
+                provider=provider,
+                model=model,
+                tool_count=len(llm_tools),
+                steps=steps,
+                call_sequence=[s.name for s in steps],
+                final_text=final_text,
+                stop_reason="error",
+                steps_taken=len(steps),
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                error=str(exc),
+            )
+        in_tokens += turn.usage.input_tokens
+        out_tokens += turn.usage.output_tokens
+        final_text, stop_reason = turn.text, turn.stop_reason
+        if not turn.tool_calls:
+            break
+
+        results: list[ToolResult] = []
+        for call in turn.tool_calls:
+            queued = pool.get(call.name) or []
+            stub = queued.pop(0) if queued else None
+            content = stub.result if stub is not None else body.fallback_result
+            # "On the recorded path" means this call is the one the night made at this
+            # position — not merely that a result of that name was still available.
+            on_path = i < len(recorded_order) and recorded_order[i] == call.name
+            steps.append(
+                ReplayStep(
+                    index=i,
+                    name=call.name,
+                    arguments=call.arguments,
+                    matched_recorded=on_path,
+                    result_used=content[:400],
+                    stop_reason=turn.stop_reason,
+                )
+            )
+            results.append(
+                ToolResult(
+                    tool_call_id=call.id,
+                    content=content,
+                    is_error=bool(stub and stub.is_error),
+                )
+            )
+        messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+        messages.append(ToolResultMessage(results=results))
+
+    return ReplayOut(
+        provider=provider,
+        model=model,
+        tool_count=len(llm_tools),
+        steps=steps,
+        call_sequence=[s.name for s in steps],
+        final_text=final_text,
+        stop_reason=stop_reason,
+        steps_taken=len(steps),
+        input_tokens=in_tokens,
+        output_tokens=out_tokens,
     )
 
 
