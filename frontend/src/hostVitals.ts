@@ -377,7 +377,7 @@ function fromFrame(value: unknown): GpuBusy {
  *  start time worth showing. `kind` is absent on an older box and reads as a load. */
 function loadFromFrame(value: unknown): ModelLoad | null {
   if (typeof value !== "object" || value === null) return null;
-  const { model, at_ms: at, percent, kind } = value as Record<string, unknown>;
+  const { model, at_ms: at, percent, kind, reading } = value as Record<string, unknown>;
   if (typeof model !== "string" || model === "") return null;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
   return {
@@ -385,6 +385,8 @@ function loadFromFrame(value: unknown): ModelLoad | null {
     at_ms: at,
     percent: typeof percent === "number" && Number.isFinite(percent) ? percent : null,
     kind: kind === "prefill" ? "prefill" : "model_load",
+    // Same treatment as `model`: an empty string would put a blank where a phrase goes.
+    reading: typeof reading === "string" && reading !== "" ? reading : null,
   };
 }
 

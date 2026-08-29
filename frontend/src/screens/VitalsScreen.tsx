@@ -353,7 +353,11 @@ function EventRow({ event }: { event: BoxEvent }) {
             the point of the badge is that NOTHING on screen asked for this one. */}
         {event.source === "worker" && <span className="kind">background</span>}
       </span>
-      {event.detail !== "" && <span className="vr-meta">{event.detail}</span>}
+      {/* A prefill's detail is already the subject of its label ("reading what web_fetch
+          returned…"); repeating it in the meta column would say it twice on one row. */}
+      {event.detail !== "" && event.kind !== "prefill" && (
+        <span className="vr-meta">{event.detail}</span>
+      )}
       <span className="vr-right">
         {/* Never on a settled row: "loaded gpt-oss-120b 100%" would put a progress figure
             on a row whose whole point is that it is over. */}
@@ -400,9 +404,13 @@ function eventLabel(event: BoxEvent): string {
   }
   if (event.kind === "prefill") {
     // A turn eating a long prompt. Named by the work, not the model: the weights are
-    // already on the box by now, so the model's name explains nothing about the wait.
-    if (!running) return "read the prompt";
-    return "reading the prompt…";
+    // already on the box by now, so the model's name explains nothing about the wait. WHAT
+    // it is eating comes off the row (`llm.router._reading`) — "your prompt" only on the
+    // first round, "what web_fetch returned" once a tool loop is running, which is the whole
+    // difference between a wait that looks unexplained and one that reads as obvious. An
+    // older row carries no phrase and keeps the words it had.
+    const what = event.detail === "" ? "the prompt" : event.detail;
+    return running ? `reading ${what}…` : `read ${what}`;
   }
   if (event.kind === "model_unload") {
     return failed ? `could not unload ${event.subject}` : `unloaded ${event.subject}`;

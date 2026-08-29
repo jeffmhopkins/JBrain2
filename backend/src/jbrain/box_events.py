@@ -267,15 +267,21 @@ async def span(kind: str, subject: str, *, detail: str | None = None) -> AsyncIt
 
 @asynccontextmanager
 async def lazy_span(
-    kind: str, subject: str
+    kind: str, subject: str, *, detail: str | None = None
 ) -> AsyncIterator[tuple[Callable[[float], Awaitable[None]], Callable[[], Awaitable[None]]]]:
     """A `span` that only comes into existence if something is published to it.
 
     `span` opens its row up front, which is right for work we know is happening the moment we
     start it. Prefill is not that: most turns answer straight off a primed prefix, and a row
     per turn — opened, settled, and pruned a day later — would bury the handful of rows that
-    explain a real spike. So the row is opened by the FIRST publish and settled on the way out
-    only if it exists.
+    explain a real spike. So the row is opened by the first publish that carries any PROGRESS
+    (see `publish`) and settled on the way out only if it exists.
+
+    `detail` names the work in the words the surfaces will show — the caller is the only one
+    who knows them. A prefill's wait is the model eating whatever is NEW in the prompt, which
+    on a tool round is the page it just fetched and not the owner's question, and a status
+    line that says "your prompt" for that is describing the wrong thing (`llm.router`).
+    Defaults to the ambient reason (`because`), like every other row here.
 
     Yields `(publish, finish)`. FINISH MATTERS: the work being narrated here can end long
     before the block does. A prefill ends at the turn's first token, while the block wraps the
@@ -287,11 +293,19 @@ async def lazy_span(
     Everything here is best-effort in the usual way: a database hiccup costs a narration,
     never the turn."""
     row: uuid.UUID | None = None
-    reason = _reason.get()
+    reason = detail if detail is not None else _reason.get()
 
     async def publish(fraction: float) -> None:
         nonlocal row
         if row is None:
+            # A ZERO does not open one either. The first sample of a slow turn regularly
+            # lands before its first batch is through (measured: three consecutive reads at
+            # `processed: 0`), and a turn that then answers off its cached prefix left a row
+            # that lived a fifth of a second at 0% — five of them in five minutes on
+            # 2026-08-28, each one a flash of "Reading your prompt… 0%" for a wait that never
+            # happened. The row wants the first evidence of a wait, not the first reading.
+            if fraction <= 0:
+                return
             row = uuid.uuid4()
             await _write(
                 _INSERT_OPEN,

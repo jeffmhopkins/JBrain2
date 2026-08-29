@@ -26,6 +26,14 @@ from jbrain.llm.router import (
     JSON_NUDGE,
     TASK_REASONING_DEFAULTS,
     LocalAdmitter,
+    _reading,
+)
+from jbrain.llm.types import (
+    AssistantMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultMessage,
+    UserMessage,
 )
 
 
@@ -951,6 +959,54 @@ class _SlowClient:
 async def _drain(router: LlmRouter, **kwargs: object) -> None:
     async for _ in router.converse_stream("agent.turn", system="s", messages=[], **kwargs):  # type: ignore[arg-type]
         pass
+
+
+def test_the_first_round_of_a_turn_is_reading_the_owners_prompt() -> None:
+    assert _reading([UserMessage(text="how long until the Roman telescope launches?")]) == (
+        "your prompt"
+    )
+
+
+def test_a_tool_round_is_reading_what_the_tool_returned() -> None:
+    # The bug the owner reported: after a `web_fetch` the line said "Reading your prompt" for
+    # 33 s while the box read a Wikipedia article. Their prompt was already in the KV cache —
+    # the page was the only new thing in front of the model.
+    messages = [
+        UserMessage(text="how long until the Roman telescope launches?"),
+        AssistantMessage(
+            tool_calls=[ToolCall(id="c1", name="web_fetch", arguments={"url": "https://…"})]
+        ),
+        ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="…the article…")]),
+    ]
+    assert _reading(messages) == "what web_fetch returned"
+
+
+def test_a_round_of_several_tools_is_named_without_picking_one() -> None:
+    # Two names would make a sentence nobody wants to read on one line, and picking the first
+    # would name whichever the model happened to list first.
+    messages = [
+        AssistantMessage(
+            tool_calls=[
+                ToolCall(id="c1", name="web_search", arguments={}),
+                ToolCall(id="c2", name="web_fetch", arguments={}),
+            ]
+        ),
+        ToolResultMessage(
+            results=[
+                ToolResult(tool_call_id="c1", content="…"),
+                ToolResult(tool_call_id="c2", content="…"),
+            ]
+        ),
+    ]
+    assert _reading(messages) == "what the tools returned"
+
+
+def test_a_result_whose_call_is_out_of_view_still_says_it_is_a_result() -> None:
+    # History arrives trimmed. Unnamed is not the same as absent: the wait is still the box
+    # eating something that came back, and saying "your prompt" for it is the wrong sentence.
+    assert _reading(
+        [ToolResultMessage(results=[ToolResult(tool_call_id="gone", content="…")])]
+    ) == ("what the tool returned")
 
 
 async def test_a_local_turn_stuck_in_prefill_is_probed(monkeypatch: pytest.MonkeyPatch) -> None:

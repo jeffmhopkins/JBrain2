@@ -474,6 +474,31 @@ describe("what the box was doing", () => {
     expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
   });
 
+  it("names what a prefill is reading, not just that it is reading", async () => {
+    // A turn deep in a tool loop resends a prompt the KV cache already holds; the only new
+    // thing in front of the model is the result that just came back. "reading the prompt…"
+    // for a 33 s wait on a fetched page names the wrong thing, which is what the owner
+    // reported — the box knows the right one and puts it on the row.
+    opsVitalsEvents.mockResolvedValue([
+      event({ kind: "prefill", detail: "what web_fetch returned", percent: 0.45 }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("reading what web_fetch returned…")).toBeInTheDocument();
+    // And only once: the phrase is the label's subject, so a meta column repeating it would
+    // say the same thing twice on one row.
+    expect(screen.queryByText("what web_fetch returned")).not.toBeInTheDocument();
+  });
+
+  it("keeps the old words for a row from a box that named nothing", async () => {
+    opsVitalsEvents.mockResolvedValue([
+      event({ kind: "prefill", ended_ms: Date.now() - 1000, status: "ok" }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("read the prompt")).toBeInTheDocument();
+  });
+
   it("says how far in a running load is, where a long name cannot clip it", async () => {
     // The elapsed count beside the row answers "how long has this been going". Only the
     // fraction answers "how much longer" — which on a load that reads tens of GB is the

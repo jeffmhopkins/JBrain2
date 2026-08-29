@@ -288,6 +288,36 @@ class LocalAdmitter(Protocol):
     async def ensure_room(self, served_model: str) -> None: ...
 
 
+def _reading(messages: Sequence[LlmMessage]) -> str:
+    """What the model is eating while a turn sits in prefill, in the words the status line
+    and the vitals row will show.
+
+    "Your prompt" is only true on the first round. Every later round of a tool loop resends
+    the same conversation, so the KV cache carries all of it and the ONLY thing the box has
+    to read is the result that just came back — a fetched page is nine thousand tokens of it.
+    The owner watched "Reading your prompt" through a 33 s wait that was the box reading a
+    Wikipedia article it had fetched a second earlier, and said so: naming the wrong thing
+    makes the wait look unexplained even when the box is telling the truth about there being
+    one.
+
+    The tool is named where one name covers the round, because "what web_fetch returned" is
+    the sentence that answers the question. The results carry only their call ids, so the
+    names come off the assistant turn that requested them."""
+    last = messages[-1] if messages else None
+    if not isinstance(last, ToolResultMessage) or not last.results:
+        return "your prompt"
+    prior = messages[-2] if len(messages) > 1 else None
+    names = (
+        {call.id: call.name for call in prior.tool_calls}
+        if isinstance(prior, AssistantMessage)
+        else {}
+    )
+    called = {name for result in last.results if (name := names.get(result.tool_call_id))}
+    if len(called) == 1:
+        return f"what {next(iter(called))} returned"
+    return "what the tool returned" if len(last.results) == 1 else "what the tools returned"
+
+
 def _prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
     """Roughly how much text this turn puts in front of the model, in characters.
 
@@ -824,14 +854,19 @@ class LlmRouter:
         # The gap before the first part is PREFILL — the model eating the prompt, and the
         # longest silence a local turn has. `watch` publishes how far in it is while the gap
         # runs, and stops the moment anything streams. The denominator is an estimate off the
-        # prompt's own size, which `calibrate` below corrects from the turn's real usage.
+        # prompt's own size, which `calibrate` below corrects from the turn's real usage —
+        # less the prefix the KV cache already holds, which on a tool round is nearly all of
+        # it (`prefill._fraction`).
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         prompt_chars = _prompt_chars(system, messages, tools)
-        # The row is opened by the first published fraction, so a turn that answers off a
-        # primed prefix — which is most of them — writes nothing at all.
+        # The row is opened by the first fraction that shows a wait, so a turn that answers
+        # off a primed prefix — which is most of them — writes nothing at all.
         async with (
-            box_events.lazy_span(box_events.PREFILL, model) as (publish, prefill_done),
+            box_events.lazy_span(box_events.PREFILL, model, detail=_reading(messages)) as (
+                publish,
+                prefill_done,
+            ),
             prefill.watch(
                 probe,
                 model,

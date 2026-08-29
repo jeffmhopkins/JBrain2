@@ -1,9 +1,11 @@
 """The prefill fraction, against slot bodies captured verbatim from the live box.
 
 The bodies in `_BUSY` / `_SETTLED` are real — read off llama-server on 2026-08-20 while a
-12,286-token prompt was being eaten by gpt-oss-120b. That is the point of them: this module
-exists because three previous attempts at a progress figure were written against a GUESSED
-shape and shipped dead, so its tests are written against the shape the box actually sends.
+12,286-token prompt was being eaten by gpt-oss-120b. `_TOOL_ROUND` is the same, read on
+2026-08-29 while a prompt whose prefix was already cached had its new tail eaten. That is the
+point of them: this module exists because three previous attempts at a progress figure were
+written against a GUESSED shape and shipped dead, so its tests are written against the shape
+the box actually sends.
 """
 
 from __future__ import annotations
@@ -45,9 +47,47 @@ _SETTLED: dict[str, object] = {
 }
 
 
+# A tool round, captured on 2026-08-29: the same prompt as a previous turn plus a new tail,
+# so the KV cache carried 18,054 of its 22,561 tokens and the box had only 4,507 left to eat.
+# This is the ordinary shape of every round of an agent's tool loop, not an edge case.
+_TOOL_ROUND: dict[str, object] = {
+    "id": 0,
+    "is_processing": True,
+    "id_task": 631,
+    "n_prompt_tokens": 22150,
+    "n_prompt_tokens_processed": 2048,
+    "n_prompt_tokens_cache": 18054,
+    "next_token": [{"has_next_token": False, "n_remain": 8, "n_decoded": 0}],
+}
+
+
 def test_the_fraction_comes_off_the_processed_counter() -> None:
-    # 4096 of an estimated 12286 — the numerator is the only exact number in the body.
-    assert prefill._fraction([_BUSY], 12286) == pytest.approx(4096 / 12286)
+    # 4096 of an estimated 12286, less the 146 tokens the cache already held — the numerator
+    # is the only exact number in the body, and it counts only what was actually evaluated.
+    assert prefill._fraction([_BUSY], 12286) == pytest.approx(4096 / (12286 - 146))
+
+
+def test_a_cached_prefix_comes_out_of_the_denominator() -> None:
+    # The bug the owner reported: after a `web_fetch` the line read "Reading your prompt… 11%",
+    # climbed to 22%, and vanished. The box was not 22% through anything — it had eaten 2048 of
+    # the 4507 tokens it actually had to eat, and the other 18,054 were already in the cache.
+    assert prefill._fraction([_TOOL_ROUND], 22561) == pytest.approx(2048 / 4507)
+
+
+def test_the_engine_corrects_an_estimate_that_reads_short() -> None:
+    # `n_prompt_tokens` is a floor on the true total (it is clamped at it), so it can only
+    # correct our chars-per-token guess upward. Here the guess says 19k against a real 22,150
+    # in the body: dividing by the guess minus the cache would claim 2048/950 — past arrival,
+    # on a turn barely a batch in.
+    assert prefill._fraction([_TOOL_ROUND], 19_000) == pytest.approx(2048 / (22150 - 18054))
+
+
+def test_a_prompt_the_cache_covers_entirely_draws_nothing() -> None:
+    # Nothing left to divide by. A repeat prompt is served from the cache and answers before
+    # the first sample is even due, so this is a guard against a degenerate reading, not a
+    # wait anyone is watching.
+    covered = {**_TOOL_ROUND, "n_prompt_tokens_cache": 22561, "n_prompt_tokens": 22561}
+    assert prefill._fraction([covered], 22561) is None
 
 
 def test_a_settled_slot_reports_nothing() -> None:
@@ -69,10 +109,20 @@ def test_an_unrecognised_body_reports_nothing_rather_than_guessing() -> None:
     assert prefill._fraction([{"is_processing": True, "prompt_progress": 0.5}], 12286) is None
 
 
+def test_a_short_estimate_is_caught_by_the_engines_own_floor() -> None:
+    # A prompt that tokenizes denser than predicted used to read as arrived — 4096 over an
+    # estimate of 1000, clamped to 100% while the box kept eating. The body's own
+    # `n_prompt_tokens` is a floor on the total, so the bar keeps a real denominator here
+    # (4096 of the 6144 the engine admits to) instead of sitting full.
+    assert prefill._fraction([_BUSY], 1000) == pytest.approx(4096 / (6290 - 146))
+
+
 def test_the_fraction_is_clamped_to_arrival() -> None:
-    # The denominator is an ESTIMATE, so a prompt that tokenizes denser than predicted would
-    # otherwise report over 100%. Reads as arrived instead.
-    assert prefill._fraction([_BUSY], 1000) == 1.0
+    # With no floor to fall back on — a build that drops the field — a short estimate reads
+    # as arrival rather than as 400%. An estimate that runs ahead is the honest failure here:
+    # the bar reaches full and the answer follows.
+    no_window = {k: v for k, v in _BUSY.items() if k != "n_prompt_tokens"}
+    assert prefill._fraction([no_window], 1000) == 1.0
 
 
 def test_no_estimate_means_no_bar() -> None:

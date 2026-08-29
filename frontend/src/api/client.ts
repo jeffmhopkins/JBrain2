@@ -84,6 +84,11 @@ export interface ModelLoad {
    *  warm-up. `prefill` is a turn eating a long prompt with no load involved. Absent on
    *  an older box, which is read as a load. */
   kind?: "model_load" | "prefill";
+  /** `prefill` only: what the box is reading, in the box's own words — "your prompt" on the
+   *  first round of a turn, "what web_fetch returned" once a tool loop is running, since a
+   *  later round's prompt is cached except for the result that just came back. Absent on an
+   *  older box, which reads as the prompt. */
+  reading?: string | null;
 }
 
 /** What a turn was asked to do, resolved at its start (backend migration 0166). Every

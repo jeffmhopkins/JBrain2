@@ -137,3 +137,31 @@ def test_a_row_left_open_by_a_dead_process_reads_as_stale_not_as_loading() -> No
     assert box_events._status("running", abandoned, None, now) == "stale"
     # A settled row is never re-judged, however old it is.
     assert box_events._status("ok", abandoned, now, now) == "ok"
+
+
+async def test_a_first_reading_of_nothing_opens_no_row(
+    writes: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """A prefill's first sample regularly lands before the first batch is through, and most
+    turns then answer off their cached prefix. Opening on that zero wrote rows that lived a
+    fifth of a second at 0% — five in five minutes on the box, 2026-08-28 — each one a flash
+    of "Reading your prompt… 0%" on a status line for a wait that never happened."""
+    async with box_events.lazy_span(box_events.PREFILL, "gpt-oss-120b") as (publish, _finish):
+        await publish(0.0)
+        assert writes == []
+        await publish(0.25)
+    kinds = [p.get("kind") for _, p in writes]
+    assert kinds.count(box_events.PREFILL) == 1  # the row opened at the first real reading
+
+
+async def test_the_caller_names_what_the_wait_is(
+    writes: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Only the caller knows what the model is eating — the owner's question on the first
+    round, the page a tool just fetched on every round after it (`llm.router._reading`)."""
+    async with box_events.lazy_span(
+        box_events.PREFILL, "gpt-oss-120b", detail="what web_fetch returned"
+    ) as (publish, _finish):
+        await publish(0.3)
+    assert writes[0][1]["detail"] == "what web_fetch returned"
+    assert writes[-1][1]["detail"] == "what web_fetch returned"  # and again on the settle
