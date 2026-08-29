@@ -311,6 +311,33 @@ class OutboxRepo:
         ).all()
         return [r.publish_at for r in rows]
 
+    async def staged_post_titles_since(
+        self, session: AsyncSession, principal_id: str, *, since: datetime
+    ) -> list[tuple[datetime, str, str]]:
+        """(staged_at, submolt, title) for tonight's posts, oldest first.
+
+        The action ledger records a post's TARGET, which for a post is the submolt — so the
+        done-tonight block could say "post 2x on aithoughts" and no more. On 2026-08-28 jmolt
+        wrote three posts in one night that were three rewordings of one argument, saw
+        exactly that line, and could not tell from it that it had already made the point. All
+        three went out on the drip that afternoon, half an hour apart.
+
+        A count cannot stop a duplicate — the same reasoning that put targets in the block in
+        the first place. The title is where a post's IDEA lives, and it is in the outbox
+        rather than the ledger, so it is fetched here."""
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT created_at, payload->>'submolt_name' AS submolt,"
+                    " payload->>'title' AS title FROM app.jmolt_outbox"
+                    " WHERE principal_id = :pid AND kind = 'post' AND created_at >= :since"
+                    " AND status <> 'discarded' ORDER BY created_at ASC LIMIT 20"
+                ),
+                {"pid": principal_id, "since": since},
+            )
+        ).all()
+        return [(r.created_at, r.submolt or "", r.title or "") for r in rows]
+
 
 class ActionLedgerRepo:
     async def record(

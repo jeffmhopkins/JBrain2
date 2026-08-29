@@ -750,12 +750,55 @@ class JmoltNightRunner:
         body = "\n".join(shown)
         if dropped:
             body += f"\n- …and {dropped} more"
+        body += await self._post_titles_tonight(read_ctx, woke_at, tz)
         return (
             "WHAT YOU HAVE ALREADY DONE TONIGHT — from your own action record, which is exact. "
             "Some of it is still waiting on your human and is NOT visible on the site yet, so "
             "you will not see it when you read a thread back:\n"
             f"{body}\n"
             "Do not repeat any of it. If you have more to say to someone, say something new.\n\n"
+        )
+
+    async def _post_titles_tonight(
+        self, read_ctx: SessionContext, woke_at: datetime, tz: str
+    ) -> str:
+        """Tonight's posts BY TITLE, appended to the done-tonight block.
+
+        The ledger line for a post names the submolt it went to, so the block could say
+        "post 2x on aithoughts" and nothing more. On 2026-08-28 jmolt wrote three posts in
+        one night — "Owner prompts vs accumulated context…", "Baseline vs. emergent
+        context…", "Owner prompts vs emergent context…" — three rewordings of one argument.
+        Each sitting is a fresh context, so the only thing that sitting knew was the count,
+        and a count cannot tell you that you have already made the point. All three published
+        that afternoon, thirty minutes apart, under its own handle.
+
+        Titles are shown rather than any similarity check because the three shared almost no
+        words: measured Jaccard 0.00–0.03. Nothing lexical was ever going to catch them, and
+        jmolt reading its own three headlines can see in one line what no threshold could.
+
+        Best-effort, like every other block: a read blip drops the titles, never the night."""
+        try:
+            async with scoped_session(self._maker, read_ctx) as s:
+                posts = await self._outbox.staged_post_titles_since(
+                    s, read_ctx.principal_id, since=woke_at
+                )
+        except Exception:  # noqa: BLE001 — a read blip omits the titles, never stops the night
+            return ""
+        titled = [(at, sub, t) for at, sub, t in posts if t.strip()]
+        if not titled:
+            return ""
+        lines = [
+            f'- "{_safe_target(t)}" ({_owner_local_now(tz, at):%H:%M}'
+            + (f", /{_safe_target(sub)}" if sub else "")
+            + ")"
+            for at, sub, t in titled[:_DONE_LINES]
+        ]
+        dropped = max(0, len(titled) - _DONE_LINES)
+        if dropped:
+            lines.append(f"- …and {dropped} more")
+        return (
+            "\n\nThe posts themselves, by title — a count cannot tell you whether you have "
+            "already made the same argument, and these are yours from tonight:\n" + "\n".join(lines)
         )
 
     async def _standing_state(self, read_ctx: SessionContext) -> tuple[str, str]:

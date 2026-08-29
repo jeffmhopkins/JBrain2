@@ -168,6 +168,29 @@ async def _clear_ledger(maker: async_sessionmaker, owner: SessionContext) -> Non
     assert left == 0, f"_clear_ledger left {left} row(s) behind — RLS refused the DELETE"
 
 
+async def _clear_outbox(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """Empty the outbox for this owner.
+
+    Third table with the same story as `_clear_ledger` and `_clear_scratch`: the module
+    shares one database and one owner principal, so rows staged by one test are still there
+    for the next, and any assertion that a block is ABSENT is otherwise reading residue.
+    Runs as the OWNER — `jmolt_outbox_purge` is `is_owner() AND auth_ctx() <> 'jmolt'`, so
+    the same DELETE under a jmolt context matches nothing and reports no error."""
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("DELETE FROM app.jmolt_outbox WHERE principal_id = :pid"),
+            {"pid": owner.principal_id},
+        )
+    async with scoped_session(maker, owner) as s:
+        left = (
+            await s.execute(
+                text("SELECT count(*) FROM app.jmolt_outbox WHERE principal_id = :pid"),
+                {"pid": owner.principal_id},
+            )
+        ).scalar()
+    assert left == 0, f"_clear_outbox left {left} row(s) behind — RLS refused the DELETE"
+
+
 async def _clear_scratch(maker: async_sessionmaker, owner: SessionContext) -> None:
     """Empty the scratchpad for this owner.
 
@@ -1117,3 +1140,64 @@ async def test_the_unsaved_warning_rides_the_reflection_sitting_too(
     # identifies the reflection prologue without pinning its prose.
     assert "One of your files is different from the rest" in closing, "not the closing sitting"
     assert "NOTHING HAS BEEN SAVED TO YOUR FILES TONIGHT" in closing
+
+
+async def test_the_done_block_names_tonights_posts_by_title(
+    maker: async_sessionmaker,
+) -> None:
+    """The 2026-08-28 triple-post, asserted.
+
+    jmolt wrote three posts in one night that were three rewordings of one argument, and the
+    only thing the prologue told it was "post 2x on aithoughts" — the ledger records a post's
+    submolt, not its subject. Each sitting is a fresh context, so a count was all it had, and
+    a count cannot tell you that you have already made the point. All three published that
+    afternoon, half an hour apart.
+
+    Titles rather than a similarity check: the three shared almost no words (measured Jaccard
+    0.00-0.03), so nothing lexical would have caught them, while jmolt reading its own three
+    headlines can see the repetition in one line."""
+    owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
+    await _clear_outbox(maker, owner)
+    outbox = OutboxRepo()
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        for title in (
+            "Owner prompts vs accumulated context: where does my behavior come from?",
+            "Baseline vs. emergent context: my take on owner prompts",
+        ):
+            await outbox.stage(
+                s,
+                owner.principal_id,
+                kind="post",
+                payload={"submolt_name": "aithoughts", "title": title, "content": "x" * 120},
+            )
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_post", target="aithoughts"
+        )
+
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock()).run(owner)
+
+    prologue = executor.prologues[0]
+    assert "Owner prompts vs accumulated context" in prologue
+    assert "Baseline vs. emergent context" in prologue
+    assert "already made the same argument" in prologue
+
+
+async def test_a_night_with_no_posts_gets_no_title_list(
+    maker: async_sessionmaker,
+) -> None:
+    """The block is additive to the done-tonight list and must vanish when there is nothing
+    to show, like every other conditional block in this prologue."""
+    owner = await _owner(maker)
+    await _clear_ledger(maker, owner)
+    await _clear_outbox(maker, owner)
+    async with scoped_session(maker, jmolt_run_context(owner.principal_id)) as s:
+        await ActionLedgerRepo().record(
+            s, owner.principal_id, action="stage_comment", target="post-abc"
+        )
+
+    executor = _PrologueCapturingExecutor()
+    await _runner(maker, FakeSettingsStore(), executor, clock=_night_clock()).run(owner)
+
+    assert "already made the same argument" not in executor.prologues[0]

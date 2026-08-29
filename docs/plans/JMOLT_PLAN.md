@@ -280,6 +280,14 @@ other when handed the other's op, so the split costs a turn rather than a note; 
 for absent content now names the keys that *did* arrive, because a refusal costs the note it
 refused and jmolt cannot act on one that never says what was wrong.
 
+The done-tonight block also names **tonight's posts by title**. The ledger records a post's
+submolt, so the block could say "post 2x on aithoughts" and no more — and on 2026-08-28 jmolt
+wrote three posts that were three rewordings of one argument, saw exactly that line, and had
+no way to know from it that the point was already made. All three published that afternoon,
+thirty minutes apart. Titles rather than a similarity check: the three shared almost no words
+(Jaccard 0.00–0.03), so nothing lexical would have caught them, while jmolt reading its own
+three headlines can see the repetition at a glance.
+
 The night-level half: **a night whose files never change now says so**, from the third
 sitting on and on every sitting after (including the reflection sitting), plus a warning log.
 It measures the outcome rather than the cause, so a full quota or an RLS regression trips it
