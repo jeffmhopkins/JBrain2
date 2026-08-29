@@ -611,7 +611,9 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
 
     `kind` distinguishes a load from a bare PREFILL row, which a slow turn opens without any
     load happening. The two answer the same question for a status line — what is the GPU
-    doing this second — and want different words on screen."""
+    doing this second — and want different words on screen; `reading` carries the rest of a
+    prefill's words, because what the model is eating is known only where the prompt was
+    assembled."""
     maker = cast(
         "async_sessionmaker[AsyncSession] | None", getattr(request.app.state, "session_maker", None)
     )
@@ -639,6 +641,11 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
         "at_ms": row["at_ms"],
         "percent": row["progress"],
         "kind": row["kind"],
+        # What a PREFILL is reading, in the router's words (`llm.router._reading`): "your
+        # prompt" on the first round, "what web_fetch returned" once a tool loop is running.
+        # Only for a prefill — a load's detail is its REASON ("making room for …"), which is
+        # a different sentence and belongs to a different line.
+        "reading": row["detail"] if row["kind"] == box_events.PREFILL else None,
     }
 
 

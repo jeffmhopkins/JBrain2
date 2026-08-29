@@ -132,12 +132,17 @@ export function modelLoadStatus(
   percent: number | null,
   sinceMs: number,
   what: "model_load" | "prefill" = "model_load",
+  reading?: string | null,
 ): AgentStatus {
   // A prefill names no model on purpose. "Loading gpt-oss-120b" answers "why is nothing
   // happening" — the model is not there yet. Once it IS there and the wait is the prompt
-  // being eaten, the model's name explains nothing and the prompt is the thing to name.
+  // being eaten, the model's name explains nothing and what is being eaten is the thing to
+  // name — which is only "your prompt" on the first round. Every later round of a tool loop
+  // is cached except the result that just came back, so a 30 s wait after a fetch is the box
+  // reading the page, and the box says so (`reading`). Falls back to the prompt for a box
+  // that predates the field.
   return what === "prefill"
-    ? { kind: "loading", label: "Reading", emphasis: "your prompt", percent, sinceMs }
+    ? { kind: "loading", label: "Reading", emphasis: reading || "your prompt", percent, sinceMs }
     : { kind: "loading", label: "Loading", emphasis: model, percent, sinceMs };
 }
 

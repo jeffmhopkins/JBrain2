@@ -16,7 +16,10 @@ at a load percentage were all guesses at a log format, and all shipped dead):
                                        trails the work by one batch; the true total appears
                                        only once the slot settles. Using it as the denominator
                                        reads 0.75 when the real answer is 0.50.
-    n_prompt_tokens_cache      int   — the reused prefix; nonzero when a prior turn primed it
+    n_prompt_tokens_cache      int   — the reused prefix, and the reason the numerator is not
+                                       measured against the whole prompt: these tokens are
+                                       already in the KV cache, so they are never processed
+                                       and `_fraction` takes them out of the denominator too
     next_token[0].n_decoded    int   — 0 throughout prefill, >0 once tokens are coming, which
                                        is what separates "still eating" from "answering"
 
@@ -25,6 +28,10 @@ we know how many characters we sent, and every completed turn returns its own
 `usage.prompt_tokens`, so the chars-per-token ratio is measured from real traffic and gets
 better with use (`calibrate`). Seeded with a general-purpose default so the first turn on a
 cold process is approximate rather than absent.
+
+What the bar therefore measures is THE WORK THIS TURN HAS TO DO, not the size of the prompt:
+an agent turn deep in a tool loop sends 38k tokens and has to eat the 9k of web page it just
+fetched, and a bar scaled to the 38k tops out at 22% and disappears (`_fraction`).
 
 Approximate on purpose, and clamped: an estimate that runs ahead reads as arrived rather
 than as 118%, and one that runs behind leaves the bar short of full, which is the honest
@@ -104,10 +111,30 @@ def estimate_tokens(served_model: str, prompt_chars: int) -> float:
 def _fraction(slots: Sequence[dict[str, object]], estimated_tokens: float) -> float | None:
     """The busy slot's prefill fraction, or None when nothing is prefilling.
 
-    None covers three different states that all mean "do not draw a bar": no slot is busy,
-    the busy one is already generating (`n_decoded` past zero), or the body did not carry the
-    counter — a build whose field names moved. The last one is why this reads defensively
-    rather than indexing: the schema above is one build's, pinned to a digest off master."""
+    Both halves of the division are about the work THIS request has to do, which on an agent
+    turn is almost never the whole prompt. `n_prompt_tokens_processed` counts only tokens
+    actually evaluated — the reused KV prefix is not in it — so the denominator has to have
+    the prefix taken out of it too, or the bar reads the cache-miss share of the prompt and
+    stops there. MEASURED on the box 2026-08-29, the same prompt sent twice:
+
+        cold      47,318 chars → 18,057 tokens, cache 0,      processed 0 → 16,384
+        +suffix   59,168 chars → 22,561 tokens, cache 18,054, processed 0 →  4,096
+
+    The second round ate 4,507 new tokens; against the old denominator it could only ever
+    reach 4,507/22,561 = 20%. That is exactly what the owner saw on a turn after a
+    `web_fetch` (a 38,207-token prompt whose page was ~8.7k new tokens): the line read
+    "Reading your prompt… 11%", climbed to 22%, and vanished — a bar that never finishes
+    reads as a box that gave up.
+
+    `n_prompt_tokens` earns its place here as a FLOOR on the total. While the slot is busy it
+    reads `processed + batch + cache`, but clamped at the true total — measured above, the
+    window stopped at 18,057 and 22,561 rather than running past them — so it can only
+    correct our estimate upward, toward a number the engine knows and we are guessing at.
+
+    None covers the states that all mean "do not draw a bar": no slot is busy, the busy one
+    is already generating (`n_decoded` past zero), the body did not carry the counter (a
+    build whose field names moved — this box floats on a digest off master, so the rename is
+    a when), or the prefix accounts for the whole prompt, which leaves nothing to divide by."""
     if estimated_tokens <= 0:
         return None
     for slot in slots:
@@ -121,7 +148,16 @@ def _fraction(slots: Sequence[dict[str, object]], estimated_tokens: float) -> fl
         processed = slot.get("n_prompt_tokens_processed")
         if not isinstance(processed, int):
             return None
-        return max(0.0, min(1.0, processed / estimated_tokens))
+        cached = slot.get("n_prompt_tokens_cache")
+        window = slot.get("n_prompt_tokens")
+        reused = cached if isinstance(cached, int) and cached > 0 else 0
+        total = estimated_tokens
+        if isinstance(window, int) and window > total:
+            total = float(window)
+        remaining = total - reused
+        if remaining <= 0:
+            return None
+        return max(0.0, min(1.0, processed / remaining))
     return None
 
 

@@ -494,8 +494,39 @@ async def test_the_load_probe_answers_repeat_readers_from_one_read(
         "at_ms": 1_760_000_000_000,
         "percent": 0.43,
         "kind": "model_load",
+        # A load's detail is its REASON ("making room for …"), a different sentence for a
+        # different line — only a prefill names what it is reading.
+        "reading": None,
     }
     assert len(reads) == 1
+
+
+async def test_a_prefill_carries_what_it_is_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The status line does not guess what a wait is. A tool round resends a prompt the KV
+    cache already holds, so the box is reading the result that just came back — the phrase
+    for that is written where the prompt was assembled (`llm.router._reading`) and rides the
+    same row as the fraction, which is what stops the two from ever describing different
+    work."""
+    from jbrain.api import ops
+
+    request, _reads, _state = _probe_request(
+        monkeypatch,
+        {
+            "at_ms": 1_760_000_000_000,
+            "subject": "gpt-oss-120b",
+            "progress": 0.45,
+            "kind": "prefill",
+            "detail": "what web_fetch returned",
+        },
+    )
+
+    assert await ops._load_in_flight(request) == {
+        "model": "gpt-oss-120b",
+        "at_ms": 1_760_000_000_000,
+        "percent": 0.45,
+        "kind": "prefill",
+        "reading": "what web_fetch returned",
+    }
 
 
 async def test_the_load_probe_survives_a_box_that_cannot_answer(
@@ -538,6 +569,7 @@ async def test_a_load_with_no_measurement_still_reports_itself(
         "at_ms": 1_760_000_000_000,
         "percent": None,
         "kind": "model_load",
+        "reading": None,
     }
 
 

@@ -369,6 +369,7 @@ describe("useModelLoad", () => {
       at_ms: 1000,
       percent: 0.43,
       kind: "model_load",
+      reading: null,
     });
   });
 
@@ -392,6 +393,7 @@ describe("useModelLoad", () => {
       at_ms: 20,
       percent: null,
       kind: "model_load",
+      reading: null,
     });
 
     line.unmount();
@@ -416,6 +418,7 @@ describe("useModelLoad", () => {
         at_ms: 5,
         percent: 0.1,
         kind: "model_load",
+        reading: null,
       }),
     );
   });
@@ -435,7 +438,38 @@ describe("useModelLoad", () => {
       at_ms: 1000,
       percent: null,
       kind: "model_load",
+      reading: null,
     });
+  });
+
+  it("carries what a prefill is reading, in the box's words", async () => {
+    // The status line does not guess at this. A tool round's prompt is cached except for the
+    // result that just came back, so "your prompt" is the wrong sentence for that wait, and
+    // only the box knows the right one.
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.send(94, {
+      model: "gpt-oss-120b",
+      at_ms: 1000,
+      percent: 0.45,
+      kind: "prefill",
+      reading: "what web_fetch returned",
+    });
+    expect(line.result.current?.reading).toBe("what web_fetch returned");
+
+    // An empty phrase is no phrase: it would render "Reading" with nothing after it.
+    FakeSource.open[0]?.send(94, {
+      model: "gpt-oss-120b",
+      at_ms: 1001,
+      percent: 0.5,
+      kind: "prefill",
+      reading: "",
+    });
+    expect(line.result.current?.reading).toBeNull();
   });
 
   it("ignores a frame from a box too old to send the field, or one half-populated", async () => {

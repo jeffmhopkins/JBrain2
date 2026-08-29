@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-08-29
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -392,25 +392,44 @@ plus expandable detail — with **two levels**:
 
   - `n_prompt_tokens_processed` is the numerator — exact, monotonic, advancing one batch
     (2048) at a time.
+  - `n_prompt_tokens_cache` is the prefix the KV cache already held, and it is **not** in
+    the numerator: these tokens are never processed.
   - `n_prompt_tokens` is **not** the total. While a slot is busy it reads
     `processed + batch + cache`, a window trailing the work by one batch; the true total
     appears only once the slot settles. Used as the denominator it reads 0.75 where the real
-    answer is 0.50.
+    answer is 0.50. It is still a **floor** on the total — it is clamped at it, measured —
+    so it is worth taking when it comes out above our own estimate.
   - `next_token[0].n_decoded` separates "still eating the prompt" from "answering", which
     `is_processing` alone cannot.
 
   So the numerator is exact and **the denominator is not in the body**. It comes from us:
   the prompt's own character count over a chars-per-token ratio that every completed turn
-  corrects from its real `usage.prompt_tokens`. Approximate on purpose and clamped, and
-  cheaper than the exact alternative — llama-server's `/tokenize` would cost a second full
-  send of the prompt per slow turn to remove an error a handful of turns removes anyway.
-  Nothing is drawn for a turn that answers inside three seconds, which is what keeps a
-  prompt-cache hit — measured returning instantly on an identical repeat — from ever
-  flashing a bar.
+  corrects from its real `usage.prompt_tokens`, **less the cached prefix**. Approximate on
+  purpose and clamped, and cheaper than the exact alternative — llama-server's `/tokenize`
+  would cost a second full send of the prompt per slow turn to remove an error a handful of
+  turns removes anyway. Nothing is drawn for a turn that answers inside three seconds, or
+  for a first reading that has not got a batch in yet, which is what keeps a prompt-cache
+  hit — measured returning instantly on an identical repeat — from ever flashing a bar.
 
-  On screen it is worded as *Reading **your prompt*** rather than by model name: while the
-  weights are still arriving the model's name answers "why is nothing happening", and once
-  they have arrived it explains nothing.
+- **The bar measures the work, not the prompt** [decided]. Scaling it to the whole prompt
+  was wrong for every round of a tool loop, which is most of what a long turn is. MEASURED
+  2026-08-29, the same prompt sent twice: cold it was 18,057 tokens with an empty cache;
+  with a new tail appended, 22,561 tokens of which the cache held 18,054, leaving 4,507 to
+  eat. The owner's own turn after a `web_fetch` was the same shape — a 38,207-token prompt
+  whose page was ~8.7k new tokens — and the line read *Reading your prompt… 11%*, climbed to
+  22%, and vanished. A bar that never finishes reads as a box that gave up. Taking the
+  reused prefix out of the denominator makes the figure the fraction of the work **this
+  request actually has to do**.
+
+- **It says what it is reading** [decided]. *Reading **your prompt*** is true only on the
+  first round: after that the conversation is in the cache and the one new thing in front of
+  the model is the result that just came back, so the line reads *Reading **what web_fetch
+  returned*** — the tool named where one name covers the round. The phrase is written where
+  the prompt is assembled (`llm.router._reading`), rides the same row as the fraction, and
+  both surfaces repeat it rather than guessing: the status line and the vitals row cannot
+  describe different work. It is not named by model, on either wording: while the weights are
+  still arriving the model's name answers "why is nothing happening", and once they have
+  arrived it explains nothing.
 - **It rides the stream that is already open** [decided]. The load is a field on the 1 Hz
   vitals frame (`/ops/vitals/stream`), not a poll or a socket of its own. That stream is
   already open on every screen, already foreground-gated, already access-probed, and

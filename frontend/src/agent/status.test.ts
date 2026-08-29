@@ -58,6 +58,28 @@ describe("modelLoadStatus", () => {
     });
   });
 
+  it("names what the box is actually reading once a tool has returned", () => {
+    // The owner watched "Reading your prompt" through a 33 s wait that was the box eating a
+    // web page it had just fetched — their prompt was in the KV cache and cost nothing. The
+    // box says what it is reading; the line repeats it rather than guessing.
+    expect(
+      modelLoadStatus("gpt-oss-120b", 0.45, 1000, "prefill", "what web_fetch returned"),
+    ).toEqual({
+      kind: "loading",
+      label: "Reading",
+      emphasis: "what web_fetch returned",
+      percent: 0.45,
+      sinceMs: 1000,
+    });
+  });
+
+  it("falls back to the prompt when the box names nothing", () => {
+    // An older box sends no phrase at all, and must not render "Reading" with a blank after it.
+    expect(modelLoadStatus("gpt-oss-120b", null, 1000, "prefill", null).emphasis).toBe(
+      "your prompt",
+    );
+  });
+
   it("carries a null fraction through rather than inventing a zero", () => {
     // A gateway build that prints no parseable progress is the ordinary case; "0%" on a
     // load that is halfway through reads as stuck.
