@@ -38,6 +38,7 @@
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
 #   scripts/debug-connect.sh load gpt-oss-120b
+#   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
@@ -374,6 +375,25 @@ PY
 
   load)   m="${1:?usage: debug-connect.sh load <model_id>}";   _call POST "/api/debug/llm/local-models/$m/load" | _pp ;;
   unload) m="${1:?usage: debug-connect.sh unload <model_id>}"; _call POST "/api/debug/llm/local-models/$m/unload" | _pp ;;
+
+  replay) # --body-file f.json — multi-turn sitting replay against recorded tool results
+    # Drives a jmolt sitting PAST its first move by feeding back the results the night
+    # actually observed, so a prompt change can be measured against the decision it is meant
+    # to affect. `tool-probe` returns one call and jmolt's opening move is pinned by the
+    # prologue, so nothing later is reachable with it. Build the body with
+    # scripts/jmolt-replay-build.py (it pulls a real sitting out of agent_turns).
+    BODYFILE=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --body-file) BODYFILE="$2"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    [ -n "$BODYFILE" ] || { echo "usage: debug-connect.sh replay --body-file <f.json>" >&2; exit 2; }
+    _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
+    ;;
 
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"
