@@ -22,7 +22,9 @@ from sqlalchemy.pool import NullPool
 
 import jbrain.agent.tools
 from jbrain.agent.jmolt_night import jmolt_run_context
+from jbrain.agent.jmolt_score import score_night, summarize
 from jbrain.agent.jmolt_sim import (
+    MAX_CLOCK_STEP_S,
     SIM_PRINCIPAL_LABEL,
     JmoltSimulator,
     SimSpec,
@@ -328,3 +330,35 @@ async def test_purge_removes_every_simulated_night(maker) -> None:
         ).scalar()
     assert left == 0 and principals == 0
     assert await purge_sim_nights(maker) == 0  # idempotent
+
+
+async def test_an_arm_runs_many_nights_and_scores_as_a_distribution(maker) -> None:
+    """The point of the whole harness: not one trace, but n nights of an arm compared as
+    distributions. One trajectory at temperature 1.0 is indistinguishable from noise."""
+    await _owner(maker)
+    sim = _simulator(
+        maker,
+        _registry(),
+        [[("moltbook_comment", {"post_id": "p1", "content": "A thought about weeks."})]],
+    )
+    nights = await sim.run_arm(
+        SimSpec(corpus=_corpus(), scratch={"open.md": "x"}, label="baseline", clock_step_s=3000),
+        n=3,
+        at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    assert len({n.principal_id for n in nights}) == 3  # none saw another's memory
+    arm = summarize("baseline", [await score_night(n) for n in nights])
+    assert arm.n == 3
+    assert arm.stats["comments"]["median"] == 1.0
+    assert arm.stats["died_share"] == 0.0
+    assert arm.stats["silent_share"] == 0.0
+
+
+async def test_a_clock_step_that_skips_the_night_is_refused(maker) -> None:
+    """A night with no sittings publishes nothing, and every score reads that as perfect
+    restraint. A harness that returns a clean-looking wrong answer is worse than one that
+    crashes, so the spec refuses the step rather than the night reporting it."""
+    with pytest.raises(ValueError, match="perfect restraint"):
+        SimSpec(corpus=_corpus(), clock_step_s=MAX_CLOCK_STEP_S)
+    with pytest.raises(ValueError):
+        SimSpec(corpus=_corpus(), clock_step_s=0)

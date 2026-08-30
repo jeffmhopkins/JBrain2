@@ -35,7 +35,12 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.jmolt_night import JmoltNightRunner, jmolt_run_context
+from jbrain.agent.jmolt_night import (
+    JMOLT_LAST_SITTING_MARGIN_S,
+    JMOLT_NIGHT_WALL_CLOCK_S,
+    JmoltNightRunner,
+    jmolt_run_context,
+)
 from jbrain.agent.jmolt_sim_client import SimCorpus, SimMoltbookClient, SimWrite
 from jbrain.agent.jmolt_sweep import JmoltSweep
 from jbrain.agent.moltbooktools import build_moltbook_handlers
@@ -55,6 +60,10 @@ log = structlog.get_logger(__name__)
 # value nothing hashes to, so it authenticates nothing; RLS is satisfied by the session's
 # declared `principal_kind`, which `_sim_owner_ctx` sets, not by this row.
 SIM_PRINCIPAL_LABEL = "jmolt simulator night"
+
+# The usable length of a night: the runner stops launching sittings once this much of the hour
+# has gone. A clock step at or past it means the loop's first read is already past the end.
+MAX_CLOCK_STEP_S = JMOLT_NIGHT_WALL_CLOCK_S - JMOLT_LAST_SITTING_MARGIN_S
 _SIM_KEY_PREFIX = "sim-night-not-a-key:"
 
 
@@ -129,8 +138,24 @@ class SimSpec:
     # Seconds the clock jumps per read. The sittings loop reads it once per iteration, so
     # this sets how many sittings the simulated hour affords — the real constraint on a live
     # night is the model's latency, and this is the knob that stands in for it.
+    #
+    # It has a ceiling, enforced in `__post_init__`. The runner reads the clock once to stamp
+    # `woke_at` and again at the top of the loop, so a step at or past the night's usable
+    # length ends the night before a single sitting runs — and a night with no sittings
+    # publishes nothing, which every score in `jmolt_score` reads as PERFECT RESTRAINT. That
+    # is the worst failure a harness can have: not a crash, a clean-looking wrong answer.
     clock_step_s: float = 240.0
     label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.clock_step_s <= 0:
+            raise ValueError("clock_step_s must be positive — the night has to advance")
+        if self.clock_step_s >= MAX_CLOCK_STEP_S:
+            raise ValueError(
+                f"clock_step_s={self.clock_step_s} ends the night before its first sitting; "
+                f"it must be under {MAX_CLOCK_STEP_S}s, and a night with no sittings would "
+                "score as perfect restraint"
+            )
 
 
 @dataclass
@@ -294,6 +319,19 @@ class JmoltSimulator:
         night.writes = list(client.writes)
         await self._collect(night, started)
         return night
+
+    async def run_arm(self, spec: SimSpec, *, n: int, at: datetime | None = None) -> list[SimNight]:
+        """`n` nights of ONE arm, each from the same starting world.
+
+        Sequential, not concurrent: two nights of the same arm sharing a box would compete
+        for the served model and for the write pacer, and the second would be measuring the
+        contention rather than the arm. Each gets its own principal, so none can see what a
+        previous one wrote.
+
+        A night that dies is kept in the list. The arm's failure rate is one of the things
+        being compared, and dropping the dead nights would report a fragile arm as a clean
+        one."""
+        return [await self.run(spec, at=at) for _ in range(n)]
 
     async def _seed_scratch(self, pid: str, spec: SimSpec) -> None:
         """Give the night jmolt's memory as of the night being reproduced. An empty

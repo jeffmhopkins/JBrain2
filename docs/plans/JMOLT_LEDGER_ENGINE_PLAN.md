@@ -1,6 +1,6 @@
 # jmolt v2 — the ledger engine, and a simulator to build it against
 
-> **Status:** Scheduled · **Last verified:** 2026-08-30 · **Waves:** S1◻️ S2◻️ S3◻️ S4◻️
+> **Status:** In progress · **Last verified:** 2026-08-30 · **Waves:** S1🟡 S2◻️ S3◻️ S4◻️
 
 Six independent designers were given the platform, the constraints, and what "good" looks
 like — and deliberately not shown this repo's implementation or its failure history. They
@@ -69,6 +69,47 @@ converged on:
 reproduces the 2026-08-29 night's known numbers — 4 posts, 3 of them restatements, 1
 self-reply — from the recorded corpus. **If it cannot reproduce a night we watched happen,
 it is not a simulator and this wave has not landed.**
+
+### S1 status — the machinery is built; the corpus and the reproduction are not
+
+Shipped (CI-covered, real Postgres, model faked or scripted):
+
+- `SimMoltbookClient` — subclasses `MoltbookClient` and overrides its single `_request` seam,
+  so the caps, sanitation, rate ledger and response shapes are the production ones rather
+  than a second implementation free to drift. No credential, no transport; each fence tested
+  on its own so one cannot mask another.
+- The **sim fence**, three deep: `OutboxRepo.due` takes a `sim` predicate defaulting false
+  (migration 0180) so every production caller is fenced without knowing the simulator exists;
+  `JmoltSweep` now belongs to one world and refuses rows from the other **in both
+  directions**, so a mis-wired harness cannot publish the owner's genuine queue either; and
+  the simulated client has nowhere to send a write regardless.
+- `ToolRegistry.with_handlers` — the swap seam, raising on an unknown name.
+- `JmoltSimulator` — the production `JmoltNightRunner`, with the platform, the clock and the
+  principal swapped and nothing else. Writes go out through the simulator's own `JmoltSweep`,
+  so a comment made in one sitting is visible, marked `(you)`, to the next sitting's fresh
+  context. That is asserted end to end.
+- `jmolt_score` — publish counts, self-replies (both the reply-to-own-comment and the
+  comment-on-own-fresh-post forms), repeat-thread excess, silent share, died share, and
+  embedding-backed restatement. `summarize` reports distributions across an arm.
+- `run_arm(n)`, sequential and one principal per night; `purge_sim_nights` to clear up,
+  because the owner has no shell.
+
+Open, and what "S1 landed" still requires:
+
+1. **The corpus harvest.** A one-off snapshot of the real platform and of jmolt's scratchpad
+   as of 2026-08-29, reachable from the debug API (no shell).
+2. **The reproduction.** Run the current engine against that corpus on the box and check the
+   scorer against the night we watched. Until this passes, nothing measured here is trusted.
+3. **Three of the six metrics** — claim repeat ratio, follow-through, confabulation count —
+   need the claim gate and promise extractor, which are S2. They are deliberately ABSENT
+   rather than stubbed: a metric that always returns zero reads on a scoreboard exactly like
+   a metric that found nothing wrong.
+
+Two things the build changed about the plan as written. `run_arm` is sequential, not
+concurrent — two nights sharing the box would compete for the served model and the write
+pacer, and the second would measure the contention. And an item with nothing before it is not
+scored for restatement at all rather than scored zero, because averaging those zeroes in
+reports the emptiest arm as the most original one.
 
 ## S2 — The ledger engine, behind a switch
 
