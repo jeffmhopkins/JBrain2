@@ -33,6 +33,9 @@ class OutboxRow:
     published_at: datetime | None
     # The outbox's own monotonic key — the keyset cursor for the activity feed's "show older".
     seq: int = 0
+    # A simulated write (JMOLT_LEDGER_ENGINE_PLAN.md, S1). `due` cannot see it, so the drip
+    # sweep can never publish it to the real Moltbook.
+    sim: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,7 @@ def _row_to_outbox(r: Any) -> OutboxRow:
         created_at=r.created_at,
         published_at=r.published_at,
         seq=int(r.seq),
+        sim=bool(getattr(r, "sim", False)),
     )
 
 
@@ -79,18 +83,23 @@ class OutboxRepo:
         payload: dict[str, Any],
         publish_at: datetime | None = None,
         dedup_key: str | None = None,
+        sim: bool = False,
     ) -> str | None:
         """Stage a write (jmolt context). Returns the new row id — or None when `dedup_key`
         is set and an identical write is already staged for this principal, which the partial
         unique index `jmolt_outbox_dedup` (migration 0177) turns into a no-op via ON CONFLICT.
         A fresh-context sitting cannot see its own pending queue, so this is what stops it from
-        re-staging the same vote/follow/comment it staged an hour earlier."""
+        re-staging the same vote/follow/comment it staged an hour earlier.
+
+        `sim=True` marks the row a simulated write: `due` cannot see it, so no sweep will
+        ever publish it (migration 0180). Everything else about the row is identical, which
+        is the point — the simulator measures the production staging path, guards included."""
         row = (
             await session.execute(
                 text(
                     "INSERT INTO app.jmolt_outbox"
-                    " (principal_id, kind, payload, publish_at, dedup_key)"
-                    " VALUES (:pid, :kind, cast(:payload AS jsonb), :pub, :dk)"
+                    " (principal_id, kind, payload, publish_at, dedup_key, sim)"
+                    " VALUES (:pid, :kind, cast(:payload AS jsonb), :pub, :dk, :sim)"
                     " ON CONFLICT (principal_id, dedup_key)"
                     " WHERE dedup_key IS NOT NULL DO NOTHING"
                     " RETURNING id"
@@ -101,6 +110,7 @@ class OutboxRepo:
                     "payload": json.dumps(payload),
                     "pub": publish_at,
                     "dk": dedup_key,
+                    "sim": sim,
                 },
             )
         ).scalar_one_or_none()
@@ -240,18 +250,27 @@ class OutboxRepo:
         ).all()
         return [(r.kind, int(r.n)) for r in rows]
 
-    async def due(self, session: AsyncSession, *, now: datetime) -> list[OutboxRow]:
+    async def due(
+        self, session: AsyncSession, *, now: datetime, sim: bool = False
+    ) -> list[OutboxRow]:
         """Released rows ready to publish: comments/votes/social/profile (no publish_at) and
-        posts whose publish_at has arrived. For the drip sweep (system owner context)."""
+        posts whose publish_at has arrived. For the drip sweep (system owner context).
+
+        This is the ONE outbox query with no principal filter — the sweep runs box-wide — so
+        it is also the one place a simulated write could reach the real Moltbook. The `sim`
+        predicate is that fence — it DEFAULTS to false, so every production caller is fenced
+        without knowing the simulator exists — and it is the query the
+        `jmolt_outbox_publishable` index serves. The simulator's own sweep passes True and
+        gets the disjoint half: the two worlds are never mixed in one result."""
         rows = (
             await session.execute(
                 text(
                     "SELECT * FROM app.jmolt_outbox"
-                    " WHERE status = 'released'"
+                    " WHERE status = 'released' AND sim = :sim"
                     " AND (publish_at IS NULL OR publish_at <= :now)"
                     " ORDER BY seq"
                 ),
-                {"now": now},
+                {"now": now, "sim": sim},
             )
         ).all()
         return [_row_to_outbox(r) for r in rows]

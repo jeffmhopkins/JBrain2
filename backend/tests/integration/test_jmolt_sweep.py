@@ -437,3 +437,80 @@ async def test_unsolvable_challenge_skips_verify_without_spending_the_streak(
             await OutboxRepo().set_status(s, rid, "released")
         await sweep.tick()
     assert store.values.get("moltbook_verify_fail_streak", 0) == 0  # never spent
+
+
+# --- The simulator fence (JMOLT_LEDGER_ENGINE_PLAN.md, S1) -------------------------------
+#
+# The simulator stages through the PRODUCTION write path, because the outbox is where every
+# guard hangs off and a simulator that bypasses it measures a different system. `due` is the
+# one outbox query with no principal filter — the sweep runs box-wide — so these are the
+# tests that a simulated write cannot reach the real Moltbook.
+
+
+async def _stage_sim_comment(maker, pid: str) -> str:
+    async with scoped_session(maker, _jmolt(pid)) as s:
+        row_id = await OutboxRepo().stage(
+            s, pid, kind="comment", payload={"post_id": "p1", "content": "hi"}, sim=True
+        )
+    assert row_id is not None
+    return row_id
+
+
+async def test_a_released_sim_row_is_invisible_to_the_drip(maker: async_sessionmaker) -> None:
+    pid = await _owner_pid(maker)
+    rid = await _stage_sim_comment(maker, pid)
+    async with scoped_session(maker, _admin(pid)) as s:
+        await OutboxRepo().set_status(s, rid, "released")
+        due = await OutboxRepo().due(s, now=datetime.now(UTC))
+    assert due == []  # released, due, and still unreachable by the sweep
+
+    store = FakeSettingsStore()
+    store.values["moltbook_autonomy"] = True
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"the sweep reached Moltbook for a sim row: {req.url}")
+
+    assert await _sweep(maker, store, handler).tick() == 0
+
+
+async def test_a_sim_row_handed_straight_to_publish_is_refused(maker: async_sessionmaker) -> None:
+    """The fence that holds even when `due` is bypassed: a write tool under autonomy publishes
+    its own row by id, so the sim flag has to be checked at the publish itself too."""
+    pid = await _owner_pid(maker)
+    rid = await _stage_sim_comment(maker, pid)
+    async with scoped_session(maker, _admin(pid)) as s:
+        await OutboxRepo().set_status(s, rid, "released")
+    store = FakeSettingsStore()
+    store.values["moltbook_autonomy"] = True
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"a sim row reached Moltbook: {req.url}")
+
+    outcome, _note = await _sweep(maker, store, handler).publish_row_now(rid)
+    assert outcome == "failed"
+    async with scoped_session(maker, _admin(pid)) as s:
+        row = await OutboxRepo().get(s, rid)
+    assert row is not None and row.sim and row.moltbook_id is None
+
+
+async def test_a_real_row_beside_a_sim_row_still_publishes(maker: async_sessionmaker) -> None:
+    """The fence must not be a kill switch: the sim runs against the same table the live
+    night uses, so a real write queued alongside one has to go out untouched."""
+    pid = await _owner_pid(maker)
+    sim_id = await _stage_sim_comment(maker, pid)
+    real_id = await _stage_comment(maker, pid)
+    async with scoped_session(maker, _admin(pid)) as s:
+        for rid in (sim_id, real_id):
+            await OutboxRepo().set_status(s, rid, "released")
+    store = FakeSettingsStore()
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(str(req.url))
+        return httpx.Response(200, json={"comment": {"id": "c1"}})
+
+    assert await _sweep(maker, store, handler).tick() == 1
+    assert len(seen) == 1
+    async with scoped_session(maker, _admin(pid)) as s:
+        assert (await OutboxRepo().get(s, real_id)).status == "published"  # type: ignore[union-attr]
+        assert (await OutboxRepo().get(s, sim_id)).status == "released"  # type: ignore[union-attr]

@@ -88,7 +88,19 @@ class JmoltSweep:
         notify: NotifyBus | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         clock: Callable[[], float] | None = None,
+        sim: bool = False,
+        principal_id: str | None = None,
     ) -> None:
+        """`sim` says which world this sweep belongs to, and the two are disjoint: a real
+        sweep publishes only real rows, a simulated one only simulated rows
+        (JMOLT_LEDGER_ENGINE_PLAN.md, S1). The simulator wires one of these over its
+        transport-less client so a staged write actually goes out and becomes visible to
+        jmolt's own next read — the loop whose absence produced the seventeen-comment night —
+        through the SHIPPED publish path, verification, reconcile, ledger and all, rather
+        than a second implementation of it that would drift.
+
+        `principal_id` pins whose outbox this sweep serves; the simulator passes its
+        synthetic night principal, since the real box owner is not who staged those rows."""
         self._maker = maker
         self._client = client
         self._router = router
@@ -103,11 +115,19 @@ class JmoltSweep:
         # next 60 s tick — five more knocks on a door that had just told us to stop. The
         # header was already parsed onto the exception and then read by nobody.
         self._hold_until = 0.0
+        self._sim = sim
+        self._principal_id = principal_id
+
+    async def _pid(self) -> str | None:
+        """Whose outbox this sweep serves: the box owner, or the principal it was pinned to."""
+        if self._principal_id is not None:
+            return self._principal_id
+        return await _owner_principal_id(self._maker)
 
     async def tick(self, *, now: datetime | None = None) -> int:
         """One sweep. Returns the number of rows published. Never raises."""
         now = now or datetime.now(UTC)
-        pid = await _owner_principal_id(self._maker)
+        pid = await self._pid()
         if pid is None:
             return 0
         admin = _admin_ctx(pid)
@@ -133,7 +153,7 @@ class JmoltSweep:
             return 0
 
         async with scoped_session(self._maker, admin) as s:
-            due = await self._outbox.due(s, now=now)
+            due = await self._outbox.due(s, now=now, sim=self._sim)
 
         published = 0
         for row in due[:JMOLT_MAX_WRITES_PER_TICK]:
@@ -184,7 +204,7 @@ class JmoltSweep:
         Returns (outcome, agent-facing note). Never raises: a write tool must not turn a
         publish problem into a broken turn, and the row survives either way for the drip.
         """
-        pid = await _owner_principal_id(self._maker)
+        pid = await self._pid()
         if pid is None:
             return "deferred", "staged — the box has no owner principal to publish under."
         admin = _admin_ctx(pid)
@@ -218,6 +238,21 @@ class JmoltSweep:
         return outcome, "it did NOT go out — the write failed on the way to Moltbook."
 
     async def _publish_one(self, pid: str, admin: SessionContext, row: OutboxRow) -> PublishOutcome:
+        # Every publish in this process goes through here, so this is where a row from the
+        # wrong world dies (JMOLT_LEDGER_ENGINE_PLAN.md, S1). The two are disjoint in both
+        # directions: the live sweep refuses a simulated row — the fence that matters, since
+        # publishing one would post to Moltbook under jmolt's real name — and the simulator's
+        # sweep refuses a real one, so a mis-wired harness cannot publish the owner's genuine
+        # queue as a side effect of a measurement.
+        if row.sim != self._sim:
+            log.error(
+                "jmolt_sweep.wrong_world_row_refused",
+                row_id=row.id,
+                kind=row.kind,
+                row_sim=row.sim,
+                sweep_sim=self._sim,
+            )
+            return "failed"
         # Reconcile-before-publish for posts (M23, strengthened): a crash between a landed
         # write and its DB commit would otherwise re-publish this row on restart with no
         # error to trigger reconcile. Check the account first; if the post is already there,

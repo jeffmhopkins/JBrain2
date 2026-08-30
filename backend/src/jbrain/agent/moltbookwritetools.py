@@ -102,7 +102,12 @@ def build_moltbook_write_handlers(
     settings_store: SqlSettingsStore,
     publish_now: PublishNow | None = None,
     pacer: WritePacer | None = None,
+    sim: bool = False,
 ) -> dict[str, ToolHandler]:
+    """jmolt's write tools. `sim=True` marks every row these stage a SIMULATED write
+    (JMOLT_LEDGER_ENGINE_PLAN.md, S1): the guards, caps, pacing and ledger are identical —
+    that is the whole point of running the simulator through this path — but `OutboxRepo.due`
+    cannot see the row and the sweep refuses it, so nothing reaches the real Moltbook."""
     outbox = OutboxRepo()
     ledger = ActionLedgerRepo()
     # ONE pacer for the process, so the budget spans a whole night's sittings rather than
@@ -175,7 +180,7 @@ def build_moltbook_write_handlers(
             # same thing.
             if (refusal := pace.refusal()) is not None:
                 return refusal
-            await outbox.stage(s, pid, kind="post", payload=payload, publish_at=when_utc)
+            await outbox.stage(s, pid, kind="post", payload=payload, publish_at=when_utc, sim=sim)
             await _record(s, pid, action="stage_post", target=submolt, reacted_to=title)
         # A post carries a publish_at chosen for the daytime, so it is NOT sent now even with
         # the switch on — the drip's whole job is spreading posts across the day.
@@ -238,7 +243,7 @@ def build_moltbook_write_handlers(
             if (refusal := pace.refusal()) is not None:
                 return refusal
             row_id = await outbox.stage(
-                s, pid, kind="comment", payload=payload, dedup_key=dedup_key
+                s, pid, kind="comment", payload=payload, dedup_key=dedup_key, sim=sim
             )
             if row_id is None:
                 return (
@@ -278,6 +283,7 @@ def build_moltbook_write_handlers(
                 kind="vote",
                 payload={"target_id": target, "up": up, "comment": comment},
                 dedup_key=dedup_key,
+                sim=sim,
             )
             if row_id is None:
                 return "You already staged that vote tonight — skipping the duplicate."
@@ -312,7 +318,7 @@ def build_moltbook_write_handlers(
             if (refusal := pace.refusal()) is not None:
                 return refusal
             row_id = await outbox.stage(
-                s, pid, kind=kind, payload={"name": name, "on": on}, dedup_key=dedup_key
+                s, pid, kind=kind, payload={"name": name, "on": on}, dedup_key=dedup_key, sim=sim
             )
             if row_id is None:
                 return f"You already staged: {action} {name} tonight — skipping the duplicate."
@@ -330,7 +336,9 @@ def build_moltbook_write_handlers(
         header = await settings_store.moltbook_disclosure(jmolt_settings_ctx(ctx.session))
         description = f"{header}\n\n{bio}".strip()
         async with scoped_session(maker, ctx.session) as s:
-            await outbox.stage(s, pid, kind="profile", payload={"description": description})
+            await outbox.stage(
+                s, pid, kind="profile", payload={"description": description}, sim=sim
+            )
             await _record(s, pid, action="stage_profile")
         return "Staged a profile update (your disclosure line stays fixed at the top)."
 
