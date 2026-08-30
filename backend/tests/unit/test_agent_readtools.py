@@ -1529,8 +1529,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "name_session.tool": (
             "name_session",
-            2,
-            "4d75810ce33d31c1b55afd4df08999dad4de438898d18ca00d2d7b3ee3c6675e",
+            1,
+            "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
