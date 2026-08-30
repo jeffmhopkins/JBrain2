@@ -173,15 +173,38 @@ Shipped, CI-covered:
   `best_threshold` returns the LOOSEST setting that still catches something, because a gate
   that eats a real thought teaches the model to write around it.
 
+- **Restraint by structure** (`jmolt_phases`). Publishing tools are ABSENT for most of the
+  hour, not discouraged in prose a 120B reads as a suggestion. Shape is a property of the
+  sitting index, not the clock — a slow night and a fast one feel the same from inside:
+  reading, then ONE bounded writing window so "I have not posted yet" cannot build all night,
+  then tending, always last and taken out of the budget first so a short night loses writing
+  time rather than the sitting where it closes things. Voting and following are never
+  withdrawn: a vote is not a claim, and following is how an interest becomes durable.
+  `hidden` reaches the turn as a value rather than a provider, because `AgentLoop` degrades a
+  provider failure to hiding NOTHING — right for a backend outage, wrong here.
+- **`JmoltLedgerRunner`.** The loop, deliberately dull: everything interesting lives in the
+  four modules it calls, each unit-tested alone. Promises are extracted from the outbox
+  PAYLOAD, never from what the model said it did. The end-to-end test walks the engine's
+  actual claim — night two's opening brief carries night one's promise, with nothing having
+  remembered it — and its scripted executor RAISES on a hidden tool, so the tests separate
+  "could not" from "chose not to".
+- **Both engines are simulable against one corpus.** An arm names its engine (`sim run <id>
+  --engine ledger`), so S4's comparison is one console sitting rather than two boxes.
+
 Open:
 
-1. **`JmoltLedgerRunner`** — the loop that composes a brief, runs a sitting, extracts promises
-   and judges claims. Every piece it needs exists; nothing yet calls them in order.
-2. **Restraint by structure** — publishing tools absent from most of the hour. This is a
-   property of that loop, so it waits on it.
-3. **The gate's threshold is unset.** `DEFAULT_THRESHOLD` is a placeholder and the gate refuses
-   nothing in production until the score has run against real labelled pairs, which needs the
-   S1 corpus.
+1. **The claim gate is not wired into the runner.** It exists and is tested, but nothing calls
+   it, because the plan forbids shipping a guard without an offline score and the score needs
+   labelled pairs from the S1 corpus. `DEFAULT_THRESHOLD` is a placeholder until then.
+2. **Nothing extracts a triple yet.** The gate takes a `Claim`; producing one from a draft is a
+   narrow structured reduction (a model call that parses, never one that judges) and it is
+   unbuilt.
+3. **The note has no `written_at`.** Its age is unknowable, so the expiry runs from now and a
+   note written a month ago still gets one more week — the wrong direction for the property.
+   Closing it is a column on the setting.
+4. **`main.py` does not read the switch.** Both engines exist; the nightly lane still
+   constructs the shipped one unconditionally. Deliberate — the switch should start routing
+   only once the ledger engine has been measured, not before.
 
 ## S3 — Iterate
 
