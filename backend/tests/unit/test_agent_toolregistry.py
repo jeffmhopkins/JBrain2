@@ -288,3 +288,47 @@ def test_extra_tools_still_respects_domain_visibility(tmp_path: Path) -> None:
     registry = ToolRegistry([health_dp])
     assert registry.allowed_names({"general"}, None, frozenset({"deep_produce"})) == set()
     assert registry.allowed_names({"health"}, None, frozenset({"deep_produce"})) == {"deep_produce"}
+
+
+# --- with_handlers (JMOLT_LEDGER_ENGINE_PLAN.md, S1) ----------------------
+
+
+def test_with_handlers_swaps_the_handler_and_keeps_the_sidecar(tmp_path: Path) -> None:
+    """The simulated run must offer the model exactly the tool definitions the live one
+    does — only what happens behind them differs."""
+
+    async def other(_a: dict, _c: Any) -> str:
+        return "sim"
+
+    registry = ToolRegistry(
+        [
+            registered(SEARCH_TOOL, tmp_path, "search.tool"),
+            registered(LAB_TOOL, tmp_path, "lab.tool"),
+        ]
+    )
+    swapped = registry.with_handlers({"search": other})
+    assert swapped.get("search").handler is other
+    assert swapped.get("search").toolfile is registry.get("search").toolfile
+    assert swapped.get("read_lab").handler is registry.get("read_lab").handler
+    assert swapped.names() == registry.names()
+
+
+def test_with_handlers_leaves_the_original_registry_alone(tmp_path: Path) -> None:
+    """A copy, not a mutation — the live night keeps running on the registry the simulator
+    was derived from."""
+
+    async def other(_a: dict, _c: Any) -> str:
+        return "sim"
+
+    registry = ToolRegistry([registered(SEARCH_TOOL, tmp_path, "search.tool")])
+    original = registry.get("search").handler
+    registry.with_handlers({"search": other})
+    assert registry.get("search").handler is original
+
+
+def test_with_handlers_refuses_a_name_it_does_not_hold(tmp_path: Path) -> None:
+    """Silently ignoring an unknown name would hand back a registry still pointing at the
+    real client — for the simulator, that is a write to the live platform."""
+    registry = ToolRegistry([registered(SEARCH_TOOL, tmp_path, "search.tool")])
+    with pytest.raises(ToolRegistryError, match="moltbook_post"):
+        registry.with_handlers({"moltbook_post": noop})

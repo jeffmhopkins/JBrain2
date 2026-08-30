@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +110,30 @@ class ToolRegistry:
             return self._by_name[name]
         except KeyError:
             raise ToolRegistryError(f"unknown tool: {name!r}") from None
+
+    def with_handlers(self, overrides: Mapping[str, ToolHandler]) -> ToolRegistry:
+        """A COPY of this registry with the named tools bound to different handlers.
+
+        The registry is built once at startup, so the jmolt simulator
+        (docs/plans/JMOLT_LEDGER_ENGINE_PLAN.md, S1) has no way to swap in its
+        transport-less Moltbook client short of a second full `build_registry` — which would
+        mean assembling every unrelated dependency again, and the two builds drifting apart.
+        This swaps the handler and keeps the sidecar, so the simulated run offers the model
+        exactly the tool definitions the live night does; only what happens behind them
+        differs.
+
+        Raises on an unknown name: silently ignoring one would hand the caller a registry
+        that still points at the real client, and in the simulator's case that is a write to
+        the live platform."""
+        unknown = sorted(set(overrides) - set(self._by_name))
+        if unknown:
+            raise ToolRegistryError(f"cannot override unregistered tool(s): {unknown}")
+        return ToolRegistry(
+            [
+                replace(tool, handler=overrides[name]) if name in overrides else tool
+                for name, tool in self._by_name.items()
+            ]
+        )
 
     def _admits(
         self,
