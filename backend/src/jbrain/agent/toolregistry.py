@@ -38,6 +38,34 @@ NEVER_DEFAULT: frozenset[str] = frozenset(
 )
 
 
+# Tools hoisted to the FRONT of the schema list the model sees. Position is not cosmetic on
+# a long tool block: `name_session` is bookkeeping the model must volunteer with no prompt to
+# act on, and it is the call that goes missing. Measured on the box 2026-08-30 against
+# gpt-oss-120b, on a chat opened with "Hi" (the case where naming is the ONLY call available),
+# the real 44-tool jerv turn called it 58 of 88 times from its alphabetical slot at index 17,
+# and 52 of 52 from either END of the same list — the failures writing the call into the reply
+# as prose (`{"name":"General Greeting"}` as the whole answer) rather than emitting it.
+#
+# Two things this is NOT. It is not the tool description: adding a paragraph saying only a
+# tool call names a chat measured 9/12, identical to the control's 9/12. And it is not a
+# defence — `allowed_names` is the gate, and hoisting changes nothing a session may call.
+#
+# It IS a property of how one model reads one long schema block, so treat it as load-bearing
+# only while that holds: `test_name_session_leads_the_schema_list` pins the order so a
+# reshuffle is deliberate, and a model or llama.cpp change is reason to re-measure, not to
+# assume. Keep this list SHORT — hoisting everything hoists nothing.
+FIRST_IN_LIST: tuple[str, ...] = ("name_session",)
+
+
+def _schema_order(name: str) -> tuple[int, str]:
+    """Sort key for the offered tool list: hoisted names first (in `FIRST_IN_LIST` order),
+    then alphabetical. Total and deterministic, so the tool block stays cache-stable."""
+    try:
+        return (FIRST_IN_LIST.index(name), "")
+    except ValueError:
+        return (len(FIRST_IN_LIST), name)
+
+
 class ToolRegistryError(ValueError):
     """A sidecar lacks a handler, a handler lacks a sidecar, or a tool name is
     duplicated — raised at startup so a misconfigured tool set never serves."""
@@ -159,10 +187,13 @@ class ToolRegistry:
         """The adapter tool definitions a session may see — visibility only; RLS at
         the DB layer is the boundary, and `allowed_names` is the dispatch-time gate.
         Stable order so a prompt's tool list does not churn between turns. `hidden`
-        names tools a runtime backend outage removes for this turn (see `_admits`)."""
+        names tools a runtime backend outage removes for this turn (see `_admits`).
+
+        `FIRST_IN_LIST` names hoist to the front; everything else stays alphabetical, so
+        the order is still deterministic and a turn's tool block still caches."""
         return [
             self._by_name[name].as_llm_tool()
-            for name in sorted(self._by_name)
+            for name in sorted(self._by_name, key=_schema_order)
             if self._admits(self._by_name[name], scopes, allow, extra, hidden)
         ]
 

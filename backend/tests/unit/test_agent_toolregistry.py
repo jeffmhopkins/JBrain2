@@ -288,3 +288,40 @@ def test_extra_tools_still_respects_domain_visibility(tmp_path: Path) -> None:
     registry = ToolRegistry([health_dp])
     assert registry.allowed_names({"general"}, None, frozenset({"deep_produce"})) == set()
     assert registry.allowed_names({"health"}, None, frozenset({"deep_produce"})) == {"deep_produce"}
+
+
+def test_name_session_leads_the_schema_list() -> None:
+    """Position is load-bearing on a long tool block, so pin it.
+
+    `name_session` is bookkeeping the model must volunteer with nothing in the owner's
+    message prompting it, and it is the call that goes missing. Measured on the box
+    2026-08-30 against gpt-oss-120b, a chat opened with "Hi" — the case where naming is the
+    only call available — reached it 58 of 88 times from its alphabetical slot at index 17
+    and 52 of 52 from an end of the same list; the failures narrated the call into the
+    reply (`{"name":"General Greeting"}` as the whole answer) instead of emitting it.
+
+    Asserted against the SHIPPED sidecars, not a fixture: what silently undoes this is a
+    new `.tool` whose name sorts ahead of it, which invented tools would never catch."""
+    from jbrain.agent.agents import JERV_TOOLS
+    from jbrain.agent.readtools import TOOLS_DIR
+
+    registry = ToolRegistry(
+        [RegisteredTool(load_tool(path), noop) for path in sorted(TOOLS_DIR.glob("*.tool"))]
+    )
+    offered = [t.name for t in registry.schemas_for(set(), allow=JERV_TOOLS)]
+    assert offered[0] == "name_session", f"name_session must lead, got {offered[:3]}"
+    # Everything behind the hoisted names stays alphabetical, so the block still caches.
+    assert offered[1:] == sorted(offered[1:])
+
+
+def test_hoisting_changes_visibility_order_only_never_the_gate() -> None:
+    """The hoist is an ordering nudge for one model, never a permission change:
+    `allowed_names` is the dispatch-time boundary and must not have moved."""
+    from jbrain.agent.agents import JERV_TOOLS
+    from jbrain.agent.readtools import TOOLS_DIR
+
+    registry = ToolRegistry(
+        [RegisteredTool(load_tool(path), noop) for path in sorted(TOOLS_DIR.glob("*.tool"))]
+    )
+    offered = {t.name for t in registry.schemas_for(set(), allow=JERV_TOOLS)}
+    assert offered == registry.allowed_names(set(), allow=JERV_TOOLS)

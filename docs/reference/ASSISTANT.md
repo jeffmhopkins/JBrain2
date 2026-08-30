@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-08-30
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -364,6 +364,19 @@ turn's volatile suffix, and jerv calls the `name_session` tool alongside its ans
 Owner-only metadata; the handler refuses a chat that already has a name, so naming is
 a one-way door and neither a confused model nor an injected instruction can rename a
 chat the owner named.
+
+`name_session` is hoisted to the **front** of the offered tool list
+(`toolregistry.FIRST_IN_LIST`), which is not cosmetic. It is the one call the model must
+volunteer with nothing in the owner's message prompting it, and on a 44-schema block it
+is the call that goes missing — measured on the box 2026-08-30 against gpt-oss-120b, a
+chat opened with `Hi` reached it 58 of 88 times from its alphabetical slot at index 17
+and 52 of 52 from an end of the same list. The failures did not skip naming; they wrote
+the call into the reply as prose (`{"name":"General Greeting"}` as the entire answer), so
+the chat stayed untitled while the turn claimed it had been named. Wording does not fix
+it: a tool-description paragraph saying only a call counts measured 9 of 12, identical to
+the control. This is a property of how one model reads one long schema block, so a model
+or llama.cpp change is a reason to re-measure, not to assume — the order is pinned by
+`test_name_session_leads_the_schema_list`.
 
 This replaced a separate `session.title` completion that ran *before* the first reply.
 That call FOLLOWED the interactive model, so on a one-slot local box its ~200-token
