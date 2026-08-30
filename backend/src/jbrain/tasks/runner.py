@@ -10,7 +10,7 @@ raises is recorded as an `error` run, never propagated to the scheduler tick.
 """
 
 import contextlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -87,6 +87,7 @@ class TurnExecutor(Protocol):
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
         root_tree: bool = False,
+        hidden: Collection[str] = (),
     ) -> ExecutedTurn: ...
 
 
@@ -119,6 +120,7 @@ class LoopTurnExecutor:
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
         root_tree: bool = False,
+        hidden: Collection[str] = (),
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
         # The context window the turn runs against — the meter's denominator, resolved exactly
@@ -135,11 +137,24 @@ class LoopTurnExecutor:
         guardrails = guardrails_for_effort(
             effort, scale=profile.budget_multiplier, supervised=supervised
         )
+        # `hidden` removes tools for THIS turn only. Passed as a closure over an already-
+        # materialised set rather than a provider that does work: `AgentLoop._hidden` catches a
+        # provider failure and degrades to hiding NOTHING, which is the right failsafe for a
+        # backend outage (better to offer a tool than break a turn) and the wrong one for
+        # restraint — a hider that fails open hands the agent exactly the tools it was meant to
+        # be without. A closure over a frozen set has no failure mode, so that path is
+        # unreachable here by construction rather than by hope.
+        names = frozenset(hidden)
+
+        async def _hidden() -> Collection[str]:
+            return names
+
         loop = AgentLoop(
             self.router,
             self.registry,
             recorder=tally,  # type: ignore[arg-type]
             guardrails=guardrails,
+            hidden_tools_provider=_hidden if names else None,
         )
         # `root_tree` seeds this turn as the ROOT of a sub-agent fan (depth 0), exactly as /chat
         # does — the budget sized off the turn's own per-turn cap. Without it `ctx.tree` is None,

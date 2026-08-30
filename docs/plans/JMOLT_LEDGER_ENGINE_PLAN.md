@@ -1,6 +1,6 @@
 # jmolt v2 — the ledger engine, and a simulator to build it against
 
-> **Status:** In progress · **Last verified:** 2026-08-30 · **Waves:** S1🟡 S2◻️ S3◻️ S4◻️
+> **Status:** In progress · **Last verified:** 2026-08-30 · **Waves:** S1🟡 S2🟡 S3◻️ S4◻️
 
 Six independent designers were given the platform, the constraints, and what "good" looks
 like — and deliberately not shown this repo's implementation or its failure history. They
@@ -142,6 +142,46 @@ The engine, in the order the pieces matter:
 6. **The note channel.** The human's note **expires by default**, arrives in the reading
    brief rather than the system prompt, and requires an `acted | partly | declined` response.
    A durable wish must be deliberately promoted, not accidentally permanent.
+
+### S2 status — the parts are built; the loop that runs them is not
+
+Shipped, CI-covered:
+
+- **The switch.** `jmolt_engine ∈ {sittings, ledger}`, defaulting to the shipped night. An
+  unrecognised stored value READS as the default rather than raising — this setting decides
+  whether tonight happens at all — while the SETTER refuses it, because silently storing a
+  value the reader ignores is how a switch comes to look flipped while nothing changed. jmolt
+  inherits the settings table's denial, so it cannot choose the version of itself with the
+  fewest restraints.
+- **The obligation ledger** (migration 0182). Questions, commitments and people as typed rows
+  with verbatim dated evidence. Opening is idempotent; re-encountering something closed
+  reopens it; abandoning is first-class. `touched_at` uses `clock_timestamp()`, not `now()` —
+  transaction time would make every row one sitting touched tie, and "most recently disturbed
+  first", which IS the identity claim, would silently become insertion order.
+- **The composer.** Every line rendered from a typed row; the only model-authored text is
+  verbatim evidence, quoted and attributed. jmolt's own words come back ONLY on `commitment`
+  rows where the wording is the obligation. No cumulative metric appears anywhere. The note
+  arrives here rather than in the system prompt, fenced, carrying its age, expiring by default,
+  asking for `acted | partly | declined`.
+- **Promise extraction.** Deterministic patterns, never a model call — asking the model to
+  audit its own record is asking the unreliable witness to check the transcript. Anchored on
+  the subject being jmolt, so advice to someone else is not an obligation.
+- **The claim gate + its offline scorer.** Both exceptions turned out to be fully
+  deterministic, which is better than this plan asked for: SUPERSEDES is same subject and
+  predicate with a different object; NEW EVIDENCE is a citation the prior claim lacked. The
+  scorer's errors are deliberately asymmetric — `usable` requires ZERO false refusals, and
+  `best_threshold` returns the LOOSEST setting that still catches something, because a gate
+  that eats a real thought teaches the model to write around it.
+
+Open:
+
+1. **`JmoltLedgerRunner`** — the loop that composes a brief, runs a sitting, extracts promises
+   and judges claims. Every piece it needs exists; nothing yet calls them in order.
+2. **Restraint by structure** — publishing tools absent from most of the hour. This is a
+   property of that loop, so it waits on it.
+3. **The gate's threshold is unset.** `DEFAULT_THRESHOLD` is a placeholder and the gate refuses
+   nothing in production until the score has run against real labelled pairs, which needs the
+   S1 corpus.
 
 ## S3 — Iterate
 
