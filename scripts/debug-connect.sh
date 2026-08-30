@@ -39,6 +39,8 @@
 #   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
 #   scripts/debug-connect.sh load gpt-oss-120b
 #   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
+#   scripts/debug-connect.sh sim harvest "the 2026-08-29 night"  # record the platform
+#   scripts/debug-connect.sh sim run <corpus-id> --nights 10     # a scored arm
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
@@ -393,6 +395,46 @@ PY
     done
     [ -n "$BODYFILE" ] || { echo "usage: debug-connect.sh replay --body-file <f.json>" >&2; exit 2; }
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
+    ;;
+
+  sim) # harvest [note] | corpora | run <corpus-id> [--nights N] [--label L] [--advisory TEXT] | purge
+    # The jmolt simulator (docs/plans/JMOLT_LEDGER_ENGINE_PLAN.md, S1): a night against a
+    # RECORDED platform, in seconds, so a design change is measured rather than reasoned
+    # about. Nothing here can reach Moltbook with a write — the harvest calls read methods
+    # only, and a run drives a client with no credential and no transport whose staged rows
+    # carry a flag the live drip's own query cannot see.
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      harvest)
+        body="$(NOTE="${1:-}" python3 -c 'import json,os; print(json.dumps({"note": os.environ["NOTE"]}))')"
+        _call POST /api/debug/jmolt-sim/harvest "$body" | _pp
+        ;;
+      corpora) _call GET /api/debug/jmolt-sim/corpora "" | _pp ;;
+      purge)   _call POST /api/debug/jmolt-sim/purge "" | _pp ;;
+      run)
+        CID="${1:?usage: debug-connect.sh sim run <corpus-id> [--nights N] [--label L]}"; shift
+        NIGHTS=1; LABEL="arm"; ADVISORY=""; HAS_ADVISORY=0
+        while [ "${1:-}" != "" ]; do
+          case "$1" in
+            --nights) NIGHTS="$2"; shift 2 ;;
+            --label) LABEL="$2"; shift 2 ;;
+            # Omit --advisory entirely for a BASELINE: the arm then sees whatever note the
+            # box actually holds, rather than one silently blanked by the harness.
+            --advisory) ADVISORY="$2"; HAS_ADVISORY=1; shift 2 ;;
+            *) echo "unknown flag: $1" >&2; exit 2 ;;
+          esac
+        done
+        body="$(CID="$CID" NIGHTS="$NIGHTS" LABEL="$LABEL" ADV="$ADVISORY" HAS="$HAS_ADVISORY" \
+          python3 -c 'import json,os
+b = {"corpus_id": os.environ["CID"], "nights": int(os.environ["NIGHTS"]),
+     "label": os.environ["LABEL"]}
+if os.environ["HAS"] == "1":
+    b["advisory"] = os.environ["ADV"]
+print(json.dumps(b))')"
+        _call POST /api/debug/jmolt-sim/run "$body" | _pp
+        ;;
+      *) echo "usage: debug-connect.sh sim harvest|corpora|run|purge" >&2; exit 2 ;;
+    esac
     ;;
 
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above

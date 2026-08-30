@@ -39,7 +39,20 @@ from jbrain.agent.grounding import (
     parse_grounding,
     to_pixels,
 )
+from jbrain.agent.jmolt_harvest import harvest_corpus
+from jbrain.agent.jmolt_night import jmolt_run_context
+from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
+from jbrain.agent.jmolt_score import score_night, summarize
+from jbrain.agent.jmolt_sim import (
+    JmoltSimulator,
+    SimCorpusRepo,
+    SimSpec,
+    purge_sim_nights,
+)
+from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api import llm_settings
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
@@ -69,10 +82,12 @@ from jbrain.llm.types import (
     UserMessage,
 )
 from jbrain.models.agent import TurnAttachment
+from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
+from jbrain.tasks.runner import LoopTurnExecutor
 from jbrain.web.fetch import WebFetcher, WebFetchError
 from jbrain.web.moltbook import scrub_secret
 
@@ -141,6 +156,11 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "host.read",
             "host.metrics",
             "web.fetch",
+            # The jmolt simulator (JMOLT_LEDGER_ENGINE_PLAN.md, S1): harvest a corpus, run
+            # scored nights against it, purge. Listed for the same reason the gateway routes
+            # are — an assistant reads this list to decide what it may attempt, and an
+            # omitted surface reads as "not permitted" rather than "not mentioned".
+            "jmolt.sim",
         ],
     )
 
@@ -1718,3 +1738,212 @@ async def prime_model(
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
+
+
+# ---- the jmolt simulator (docs/plans/JMOLT_LEDGER_ENGINE_PLAN.md, S1) -------------------
+#
+# The whole point of the harness is a feedback loop measured in seconds rather than nights,
+# and a loop that requires a shell is no loop at all for an owner who has none (CLAUDE.md,
+# non-negotiable 10). So harvest, list, run and purge are all here.
+#
+# Nothing on this surface can reach Moltbook with a write. The harvest calls read methods
+# only; a run drives a `SimMoltbookClient` that holds no credential and no transport, and
+# every row it stages is `sim`-flagged, which the live drip's own query cannot see.
+
+
+class SimHarvestRequest(BaseModel):
+    note: str = ""
+    # Seed the corpus with jmolt's scratchpad as it stands, so a night replayed against this
+    # corpus starts from the memory jmolt actually had. Without it a sim night finds an empty
+    # scratchpad and runs the FIRST-NIGHT bootstrap, which is a different system.
+    include_scratch: bool = True
+
+
+class SimCorpusOut(BaseModel):
+    id: str
+    note: str
+    captured_at: str
+    handle: str
+    posts: int
+    threads: int
+    profiles: int
+    submolts: int
+    scratch_files: int
+
+
+class SimRunRequest(BaseModel):
+    corpus_id: str = Field(min_length=1)
+    nights: int = Field(default=1, ge=1, le=20)
+    label: str = ""
+    # Overrides for the arm. `advisory` of None means "whatever the box's note says", which is
+    # what makes a baseline run a baseline rather than a run with the note silently blanked.
+    advisory: str | None = None
+    autonomy: bool = True
+    clock_step_s: float = Field(default=240.0, gt=0)
+
+
+class SimNightOut(BaseModel):
+    principal_id: str
+    session_id: str
+    posts: int
+    comments: int
+    votes: int
+    published: int
+    self_replies: int
+    repeat_threads: int
+    scratch_files_written: int
+    died: bool
+    error: str = ""
+    # What it actually published, so a run can be read without a second SQL round trip. The
+    # titles are the fastest way to see restatement with your own eyes.
+    titles: list[str] = Field(default_factory=list)
+
+
+class SimRunOut(BaseModel):
+    label: str
+    corpus_id: str
+    nights: list[SimNightOut]
+    stats: dict[str, Any]
+
+
+def _corpus_summary(stored: Any) -> SimCorpusOut:
+    c = stored.corpus
+    return SimCorpusOut(
+        id=stored.id,
+        note=stored.note,
+        captured_at=stored.captured_at.isoformat(),
+        handle=c.handle,
+        posts=len(c.posts),
+        threads=len(c.comments),
+        profiles=len(c.profiles),
+        submolts=len(c.submolt_feed),
+        scratch_files=len(stored.scratch),
+    )
+
+
+@router.post("/jmolt-sim/harvest")
+async def jmolt_sim_harvest(
+    body: SimHarvestRequest, request: Request, _p: DebugDep
+) -> SimCorpusOut:
+    """Snapshot the live Moltbook (and jmolt's scratchpad) into a stored corpus.
+
+    Reads only — the harvest never calls a write method, and a unit test proves it against a
+    client whose writes raise. Bounded fan-out, so a snapshot cannot become an unbounded crawl
+    of a platform the threat model treats as hostile."""
+    client = getattr(request.app.state, "moltbook_client", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="no Moltbook client on this box")
+    maker = _maker(request)
+    corpus = await harvest_corpus(client)
+    scratch: dict[str, str] = {}
+    if body.include_scratch:
+        pid = await jmolt_owner_principal_id(maker)
+        if pid:
+            async with scoped_session(maker, jmolt_run_context(pid)) as s:
+                repo = JmoltScratchRepo()
+                for f in await repo.list_files(s, pid):
+                    scratch[f.filename] = await repo.read(s, pid, f.filename) or ""
+    async with scoped_session(maker, _OWNER_CTX) as s:
+        corpus_id = await SimCorpusRepo().save(
+            s, corpus=corpus, scratch=scratch, note=body.note[:500]
+        )
+        stored = await SimCorpusRepo().get(s, corpus_id)
+    if stored is None:  # pragma: no cover — the row was just written under the same context
+        raise HTTPException(status_code=500, detail="corpus vanished after write")
+    return _corpus_summary(stored)
+
+
+@router.get("/jmolt-sim/corpora")
+async def jmolt_sim_corpora(request: Request, _p: DebugDep) -> list[SimCorpusOut]:
+    """The stored corpora, newest first — counts only, never their contents. A corpus holds
+    unbounded third-party text, and this route exists to CHOOSE one, not to read one."""
+    async with scoped_session(_maker(request), _OWNER_CTX) as s:
+        return [_corpus_summary(c) for c in await SimCorpusRepo().list(s)]
+
+
+@router.delete("/jmolt-sim/corpora/{corpus_id}", status_code=204)
+async def jmolt_sim_delete_corpus(corpus_id: str, request: Request, _p: DebugDep) -> None:
+    async with scoped_session(_maker(request), _OWNER_CTX) as s:
+        if not await SimCorpusRepo().delete(s, corpus_id):
+            raise HTTPException(status_code=404, detail="no such corpus")
+
+
+@router.post("/jmolt-sim/purge", status_code=200)
+async def jmolt_sim_purge(request: Request, _p: DebugDep) -> dict[str, int]:
+    """Clear every simulated night's data and retire its principal. A run of twenty nights per
+    arm leaves rows behind, and the owner has no shell to clear them with."""
+    return {"principals_retired": await purge_sim_nights(_maker(request))}
+
+
+@router.post("/jmolt-sim/run")
+async def jmolt_sim_run(body: SimRunRequest, request: Request, _p: DebugDep) -> SimRunOut:
+    """Run `nights` simulated nights of ONE arm against a stored corpus, and score them.
+
+    Distributions, never a single trace: one trajectory at temperature 1.0 is
+    indistinguishable from noise, which is the lesson the replay harness paid for. Compare two
+    of these, not two nights.
+
+    This drives the REAL model through the REAL night runner — only the platform, the clock
+    and the principal are swapped — so it takes real time and real tokens. `nights` is capped
+    accordingly."""
+    maker = _maker(request)
+    registry = getattr(request.app.state, "agent_registry", None)
+    router_ = _llm_router(request)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="no tool registry on this box")
+    async with scoped_session(maker, _OWNER_CTX) as s:
+        stored = await SimCorpusRepo().get(s, body.corpus_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="no such corpus")
+
+    simulator = JmoltSimulator(
+        maker=maker,
+        registry=registry,
+        settings_store=_store(request),
+        executor_factory=lambda reg: LoopTurnExecutor(router_, reg),
+        session_repos=lambda: (
+            AgentSessionRepo(maker),
+            AgentRunLog(maker),
+            AgentTranscript(maker),
+        ),
+        router=router_,
+    )
+    try:
+        spec = SimSpec(
+            corpus=stored.corpus,
+            scratch=stored.scratch,
+            advisory=body.advisory,
+            autonomy=body.autonomy,
+            clock_step_s=body.clock_step_s,
+            label=body.label or "arm",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    nights = await simulator.run_arm(spec, n=body.nights)
+    scores = [await score_night(n) for n in nights]
+    arm = summarize(spec.label, scores)
+    out = []
+    for night, score in zip(nights, scores, strict=True):
+        titles = [
+            scrub_secret(str(r.payload.get("title") or r.payload.get("content") or "")[:120])
+            for r in night.outbox
+            if isinstance(r.payload, dict)
+        ]
+        out.append(
+            SimNightOut(
+                principal_id=night.principal_id,
+                session_id=night.session_id,
+                posts=score.posts,
+                comments=score.comments,
+                votes=score.votes,
+                published=score.published,
+                self_replies=score.self_replies,
+                repeat_threads=score.repeat_threads,
+                scratch_files_written=score.scratch_files_written,
+                died=score.died,
+                error=night.error,
+                titles=titles,
+            )
+        )
+    return SimRunOut(label=arm.label, corpus_id=stored.id, nights=out, stats=arm.stats)

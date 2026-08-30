@@ -25,6 +25,7 @@ writes are caught in memory so a sim cannot stamp the live night's deadline.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -84,17 +85,24 @@ async def _mint_sim_principal(maker: async_sessionmaker[AsyncSession]) -> str:
 
 
 async def purge_sim_nights(maker: async_sessionmaker[AsyncSession]) -> int:
-    """Delete every simulated night's rows and principals. Returns principals removed.
+    """Clear every simulated night's data and retire its principal. Returns principals retired.
 
-    A sim night is disposable by design — one principal per night — so a harness run of
-    twenty nights per arm leaves rows behind. This is how they go, and it is reachable
-    without a shell because the owner has none (CLAUDE.md, non-negotiable 10)."""
+    A sim night is disposable by design — one principal per night — so a harness run of twenty
+    nights per arm leaves rows behind. This is how they go, and it is reachable without a shell
+    because the owner has none (CLAUDE.md, non-negotiable 10).
+
+    The principal rows are REVOKED, not deleted. That is this box's standing convention for
+    principals (jmolt_owner.py leans on it: the oldest owner row never changes because rows
+    are never removed), and the app role is granted UPDATE on `app.principals` but deliberately
+    not DELETE — a cleanup convenience is not a reason to widen that."""
     async with scoped_session(maker, SessionContext(principal_kind="owner")) as s:
         ids = [
             str(r[0])
             for r in (
                 await s.execute(
-                    text("SELECT id FROM app.principals WHERE label = :label"),
+                    text(
+                        "SELECT id FROM app.principals WHERE label = :label AND revoked_at IS NULL"
+                    ),
                     {"label": SIM_PRINCIPAL_LABEL},
                 )
             ).all()
@@ -115,7 +123,10 @@ async def purge_sim_nights(maker: async_sessionmaker[AsyncSession]) -> int:
             {"ids": ids},
         )
         await s.execute(
-            text("DELETE FROM app.principals WHERE id = ANY(cast(:ids AS uuid[]))"), {"ids": ids}
+            text(
+                "UPDATE app.principals SET revoked_at = now() WHERE id = ANY(cast(:ids AS uuid[]))"
+            ),
+            {"ids": ids},
         )
     return len(ids)
 
@@ -239,6 +250,85 @@ def _stepped_clock(step_s: float, start: datetime) -> Callable[[], datetime]:
         return cur
 
     return _now
+
+
+@dataclass(frozen=True)
+class StoredCorpus:
+    """A harvested corpus as it sits on the box."""
+
+    id: str
+    note: str
+    captured_at: datetime
+    corpus: SimCorpus
+    scratch: dict[str, str]
+
+
+class SimCorpusRepo:
+    """Corpus rows. Owner-only and never jmolt (migration 0181) — a corpus is third-party
+    text from a hostile-by-assumption platform plus a record of jmolt's own past behaviour,
+    and jmolt reading it back would be exactly the re-entry the threat model forbids."""
+
+    async def save(
+        self,
+        session: AsyncSession,
+        *,
+        corpus: SimCorpus,
+        scratch: dict[str, str],
+        note: str = "",
+    ) -> str:
+        row = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.jmolt_sim_corpus (note, body, scratch)"
+                    " VALUES (:note, cast(:body AS jsonb), cast(:scratch AS jsonb))"
+                    " RETURNING id"
+                ),
+                {"note": note, "body": corpus.to_json(), "scratch": json.dumps(scratch)},
+            )
+        ).scalar_one()
+        return str(row)
+
+    async def get(self, session: AsyncSession, corpus_id: str) -> StoredCorpus | None:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, note, captured_at, body, scratch FROM app.jmolt_sim_corpus"
+                    " WHERE id = cast(:id AS uuid)"
+                ),
+                {"id": corpus_id},
+            )
+        ).first()
+        return _to_stored(row) if row is not None else None
+
+    async def list(self, session: AsyncSession, *, limit: int = 20) -> list[StoredCorpus]:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, note, captured_at, body, scratch FROM app.jmolt_sim_corpus"
+                    " ORDER BY captured_at DESC LIMIT :lim"
+                ),
+                {"lim": limit},
+            )
+        ).all()
+        return [_to_stored(r) for r in rows]
+
+    async def delete(self, session: AsyncSession, corpus_id: str) -> bool:
+        result = await session.execute(
+            text("DELETE FROM app.jmolt_sim_corpus WHERE id = cast(:id AS uuid)"),
+            {"id": corpus_id},
+        )
+        return bool(result.rowcount)
+
+
+def _to_stored(row: Any) -> StoredCorpus:
+    scratch = row.scratch if isinstance(row.scratch, dict) else json.loads(row.scratch or "{}")
+    return StoredCorpus(
+        id=str(row.id),
+        note=row.note,
+        captured_at=row.captured_at,
+        corpus=SimCorpus.from_json(row.body),
+        scratch={str(k): str(v) for k, v in scratch.items()},
+    )
 
 
 class JmoltSimulator:

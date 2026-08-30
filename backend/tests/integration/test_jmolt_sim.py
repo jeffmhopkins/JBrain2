@@ -322,13 +322,15 @@ async def test_purge_removes_every_simulated_night(maker) -> None:
                 text("SELECT count(*) FROM app.jmolt_outbox WHERE sim"),
             )
         ).scalar()
-        principals = (
+        live = (
             await s.execute(
-                text("SELECT count(*) FROM app.principals WHERE label = :l"),
+                text("SELECT count(*) FROM app.principals WHERE label = :l AND revoked_at IS NULL"),
                 {"l": SIM_PRINCIPAL_LABEL},
             )
         ).scalar()
-    assert left == 0 and principals == 0
+    assert left == 0 and live == 0
+    # Revoked, not deleted: this box never removes a principal row, because jmolt's data
+    # anchor is "the oldest owner principal" and that only holds while rows persist.
     assert await purge_sim_nights(maker) == 0  # idempotent
 
 

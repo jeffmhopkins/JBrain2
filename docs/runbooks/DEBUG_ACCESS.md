@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-30
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -228,7 +228,7 @@ Two gates protect the surface, both fail-closed:
 
 | Route | Purpose |
 |-------|---------|
-| `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `llm.gateway`, `host.read`, `host.metrics`, `web.fetch`). `llm.gateway` is the gateway surface — load/unload, the served `-c`/`-np`, launch flags via the allowlist, props/slots/metrics, prime. |
+| `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `llm.gateway`, `host.read`, `host.metrics`, `web.fetch`, `jmolt.sim`). `llm.gateway` is the gateway surface — load/unload, the served `-c`/`-np`, launch flags via the allowlist, props/slots/metrics, prime. |
 | `GET /version` | The git revision the **running server** was built from — `git_sha`, `git_describe`, and `build_time`, baked into the image at build time (`deploy/update-inner.sh` → Dockerfile ARG/ENV), plus `started_at` (this process's boot time). Answers "is the merge I just made actually deployed?" without guessing; `started_at` behind `build_time` means the new image built but the container wasn't recreated. `"unknown"` on a plain local build. |
 | `GET /version/history` | The recorded **timeline of deployed versions**, newest first (`app.deploy_history` — the app appends one row on boot whenever its baked `git_sha` changes, so a plain restart adds nothing). Each row is `{git_sha, git_describe, build_time, deployed_at}`; the interval `[deployed_at, next row)` is when that build was live, so an *older* timestamped record (a research run, an ingest) can be tied to the build that produced it. Owner-only read. |
 | `POST /complete` | Run one `system` + `user_text` prompt through the **LLM adapter** (non-negotiable #1 — never a provider SDK) against whatever model is currently routed; returns the text/parsed JSON, token usage, and the **resolved provider:model**. Route by a known `task` (so the live per-task override applies) or a raw `strength` tier. Synchronous — fine for quick calls. |
@@ -253,6 +253,10 @@ Two gates protect the surface, both fail-closed:
 | `GET/PUT /llm` | Read or **switch** which model serves each task — live, no restart. Shares validation with the owner settings screen. |
 | `POST /llm/local-models/{id}/load\|unload` | Warm or evict a local model on the gateway. |
 | `GET /llm/local-models/{id}/slots` | llama-server's `/slots` for one **resident** model — per-slot state, and on a speculative build the `speculative` object that says whether drafting is actually running (which `/props`'s dead `speculative.types` field cannot answer). |
+| `POST /jmolt-sim/harvest` ⚠️ | *Not yet exercised against the live box — CI-covered only.* Snapshot the live Moltbook — feeds per sort, the threads they surface, the authors' profiles — plus jmolt's scratchpad as it stands, into a stored **corpus** a simulated night runs against (`docs/plans/JMOLT_LEDGER_ENGINE_PLAN.md`, S1). **Reads only**: the harvest calls no write method, asserted against a client whose writes raise. Bounded fan-out, because the platform is the stated threat model and an unbounded walk of it is a crawl someone else steers. `include_scratch` defaults on — a sim night with an empty scratchpad runs the FIRST-NIGHT bootstrap, which is a different system from the one under study. |
+| `GET /jmolt-sim/corpora` | The stored corpora, newest first — **counts only, never contents**. The route exists to choose a corpus, not to read one: a corpus holds unbounded third-party text, and returning any of it here would be a new way for that text to travel. |
+| `POST /jmolt-sim/run` | Run `nights` simulated nights of ONE arm against a stored corpus and score them: posts, comments, publishes, **self-replies** (both the reply-to-own-comment and the comment-on-own-fresh-post forms), repeat-thread excess, silent share, died share — summarised as **distributions**. Compare two of these, never two single nights: one trajectory at temperature 1.0 is indistinguishable from noise, which is the lesson the replay harness paid for. This drives the real model through the real night runner — only the platform, the clock and the principal are swapped — so it costs real time and real tokens, and `nights` is capped at 20. Writes are staged and published through the shipped path but land against a transport-less client and carry the `sim` flag the live drip's own query cannot see, so **nothing reaches Moltbook**. |
+| `DELETE /jmolt-sim/corpora/{id}` · `POST /jmolt-sim/purge` | Drop one corpus; clear every simulated night's rows and retire its principal (revoked, never deleted — this box's standing convention). A run of twenty nights per arm leaves rows behind and the owner has no shell to clear them with. |
 | `POST /suspend-self` | **Pause** the presenting token (the console's Suspend button). Owner resumes it later from the PWA. |
 | `POST /revoke-self` | **Kill** the presenting token (the console's Revoke button). Permanent. |
 

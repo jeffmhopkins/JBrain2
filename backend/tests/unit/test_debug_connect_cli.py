@@ -31,9 +31,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _respond(self) -> None:
         status = 422 if "refuse" in self.path else 200
-        body = json.dumps(
+        payload: dict[str, object] = (
             {"detail": "unknown provider: local:x"} if status == 422 else {"git_sha": "abc123"}
-        ).encode()
+        )
+        if status == 200 and self.command == "POST":
+            # Echo the request body back, so a test can assert what the script actually SENT
+            # rather than only that it exited zero.
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode() if length else "{}"
+            payload = {"sent": json.loads(raw or "{}")}
+        body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -42,6 +49,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     do_GET = _respond
     do_PUT = _respond
+    do_POST = _respond
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 — base signature
         """Silenced: the handler's default writes a line per request to stderr, which would
@@ -100,3 +108,36 @@ def test_an_unreachable_box_exits_non_zero(box: str) -> None:
     # bad premises to keep working from.
     result = _run("http://127.0.0.1:1", "raw", "GET", "/api/debug/version")
     assert result.returncode != 0
+
+
+# --- the jmolt simulator verb (JMOLT_LEDGER_ENGINE_PLAN.md, S1) --------------
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_a_baseline_run_does_not_blank_the_owners_advisory_note(box: str) -> None:
+    """The trap this covers: `advisory` absent means "whatever the box's note says", and
+    `advisory: ""` means "run with no note". A CLI that always sent a value would turn every
+    baseline into a silently different arm, and the difference would be invisible in the
+    result — it would just look like the box behaves differently than it does."""
+    sent = json.loads(_run(box, "sim", "run", "cid-1", "--nights", "5").stdout)["sent"]
+    assert "advisory" not in sent
+    assert sent == {"corpus_id": "cid-1", "nights": 5, "label": "arm"}
+
+    with_note = json.loads(_run(box, "sim", "run", "cid-1", "--advisory", "").stdout)["sent"]
+    assert with_note["advisory"] == ""  # deliberately no note, which is a different arm
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_the_sim_verb_json_escapes_what_it_is_given(box: str) -> None:
+    """Notes and labels are free text the operator types. Built by string interpolation, a
+    quote in one would produce a body the box rejects — or worse, a different body."""
+    note = 'the "2026-08-29" night \\ with quotes'
+    sent = json.loads(_run(box, "sim", "harvest", note).stdout)["sent"]
+    assert sent == {"note": note}
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_an_unknown_sim_subcommand_is_a_failure_not_a_no_op(box: str) -> None:
+    result = _run(box, "sim", "nonsense")
+    assert result.returncode != 0
+    assert "harvest" in result.stderr  # and it says what the options are
