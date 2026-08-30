@@ -364,3 +364,58 @@ async def test_a_clock_step_that_skips_the_night_is_refused(maker) -> None:
         SimSpec(corpus=_corpus(), clock_step_s=MAX_CLOCK_STEP_S)
     with pytest.raises(ValueError):
         SimSpec(corpus=_corpus(), clock_step_s=0)
+
+
+# --- both engines, one corpus (JMOLT_LEDGER_ENGINE_PLAN.md, S2/S4) ----------
+
+
+async def test_the_simulator_runs_the_ledger_engine_too(maker) -> None:
+    """S4 cuts over on evidence, and evidence means both engines against the SAME corpus. An
+    arm names its engine, rather than the box's switch deciding for every arm at once."""
+    await _owner(maker)
+    sim = _simulator(
+        maker,
+        _registry(),
+        [[("moltbook", {"action": "feed"})]],
+    )
+    night = await sim.run(
+        SimSpec(
+            corpus=_corpus(),
+            engine="ledger",
+            scratch={"open.md": "x"},
+            clock_step_s=600,
+            label="ledger",
+        ),
+        at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    assert night.error == ""
+    assert night.session_id
+    assert night.label == "ledger"
+
+
+async def test_two_engines_can_be_scored_against_the_same_corpus(maker) -> None:
+    """The comparison the whole harness exists for. Distributions per arm, same world."""
+    await _owner(maker)
+    corpus = _corpus()
+    arms = {}
+    for engine in ("sittings", "ledger"):
+        sim = _simulator(maker, _registry(), [[("moltbook", {"action": "feed"})]])
+        nights = await sim.run_arm(
+            SimSpec(
+                corpus=corpus,
+                engine=engine,
+                scratch={"open.md": "x"},
+                clock_step_s=600,
+                label=engine,
+            ),
+            n=2,
+            at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        arms[engine] = summarize(engine, [await score_night(n) for n in nights])
+    assert set(arms) == {"sittings", "ledger"}
+    assert all(a.n == 2 and a.stats["died_share"] == 0.0 for a in arms.values())
+
+
+async def test_an_unknown_engine_is_refused_before_a_night_is_spent(maker) -> None:
+    with pytest.raises(ValueError, match="unknown engine"):
+        SimSpec(corpus=_corpus(), engine="ledger-v2")

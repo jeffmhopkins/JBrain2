@@ -121,7 +121,10 @@ def test_a_baseline_run_does_not_blank_the_owners_advisory_note(box: str) -> Non
     result — it would just look like the box behaves differently than it does."""
     sent = json.loads(_run(box, "sim", "run", "cid-1", "--nights", "5").stdout)["sent"]
     assert "advisory" not in sent
-    assert sent == {"corpus_id": "cid-1", "nights": 5, "label": "arm"}
+    assert sent == {"corpus_id": "cid-1", "nights": 5, "label": "arm", "engine": "sittings"}
+
+    other = json.loads(_run(box, "sim", "run", "cid-1", "--engine", "ledger").stdout)["sent"]
+    assert other["engine"] == "ledger"
 
     with_note = json.loads(_run(box, "sim", "run", "cid-1", "--advisory", "").stdout)["sent"]
     assert with_note["advisory"] == ""  # deliberately no note, which is a different arm

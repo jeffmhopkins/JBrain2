@@ -85,7 +85,7 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import MOLTBOOK_ENGINE_DEFAULT, SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.tasks.runner import LoopTurnExecutor
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -1775,6 +1775,10 @@ class SimRunRequest(BaseModel):
     corpus_id: str = Field(min_length=1)
     nights: int = Field(default=1, ge=1, le=20)
     label: str = ""
+    # Which engine this arm runs. Named per-arm rather than read from the box's switch, so two
+    # engines can be measured against one corpus in one sitting at the console — which is what
+    # "cut over on evidence" requires.
+    engine: str = MOLTBOOK_ENGINE_DEFAULT
     # Overrides for the arm. `advisory` of None means "whatever the box's note says", which is
     # what makes a baseline run a baseline rather than a run with the note silently blanked.
     advisory: str | None = None
@@ -1801,6 +1805,7 @@ class SimNightOut(BaseModel):
 
 class SimRunOut(BaseModel):
     label: str
+    engine: str
     corpus_id: str
     nights: list[SimNightOut]
     stats: dict[str, Any]
@@ -1911,6 +1916,7 @@ async def jmolt_sim_run(body: SimRunRequest, request: Request, _p: DebugDep) -> 
     try:
         spec = SimSpec(
             corpus=stored.corpus,
+            engine=body.engine,
             scratch=stored.scratch,
             advisory=body.advisory,
             autonomy=body.autonomy,
@@ -1946,4 +1952,6 @@ async def jmolt_sim_run(body: SimRunRequest, request: Request, _p: DebugDep) -> 
                 titles=titles,
             )
         )
-    return SimRunOut(label=arm.label, corpus_id=stored.id, nights=out, stats=arm.stats)
+    return SimRunOut(
+        label=arm.label, engine=spec.engine, corpus_id=stored.id, nights=out, stats=arm.stats
+    )

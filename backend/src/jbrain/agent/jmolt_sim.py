@@ -36,6 +36,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.jmolt_ledger_night import JmoltLedgerRunner
 from jbrain.agent.jmolt_night import (
     JMOLT_LAST_SITTING_MARGIN_S,
     JMOLT_NIGHT_WALL_CLOCK_S,
@@ -50,6 +51,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, LedgerRow, OutboxRepo, OutboxRow
+from jbrain.settings_store import MOLTBOOK_ENGINE_DEFAULT, MOLTBOOK_ENGINES
 
 log = structlog.get_logger(__name__)
 
@@ -141,6 +143,10 @@ class SimSpec:
     """
 
     corpus: SimCorpus
+    # Which engine this arm runs (`sittings` | `ledger`). The whole point of S4 is cutting over
+    # on evidence, and evidence means both engines against the SAME corpus — so the arm names
+    # its engine rather than the box's switch deciding for every arm at once.
+    engine: str = MOLTBOOK_ENGINE_DEFAULT
     scratch: dict[str, str] = field(default_factory=dict)
     advisory: str | None = None
     handle: str | None = None
@@ -159,6 +165,8 @@ class SimSpec:
     label: str = ""
 
     def __post_init__(self) -> None:
+        if self.engine not in MOLTBOOK_ENGINES:
+            raise ValueError(f"unknown engine {self.engine!r}; expected one of {MOLTBOOK_ENGINES}")
         if self.clock_step_s <= 0:
             raise ValueError("clock_step_s must be positive — the night has to advance")
         if self.clock_step_s >= MAX_CLOCK_STEP_S:
@@ -387,19 +395,37 @@ class JmoltSimulator:
             build_moltbook_write_handlers(self._maker, settings, publish_now=_publish_now, sim=True)
         )
         sessions, runlog, transcript = self._session_repos()
-        runner = JmoltNightRunner(
-            sessions=sessions,
-            runlog=runlog,
-            transcript=transcript,
-            executor=self._executor_factory(self._registry.with_handlers(overrides)),
-            settings_store=settings,
-            maker=self._maker,
-            clock=_stepped_clock(spec.clock_step_s, started),
-            # No night hold: a simulated night must not reserve the box's real GPU.
-            served_model_loader=None,
-        )
+        executor = self._executor_factory(self._registry.with_handlers(overrides))
+        clock = _stepped_clock(spec.clock_step_s, started)
+        runner: Any
+        if spec.engine == "ledger":
+            runner = JmoltLedgerRunner(
+                sessions=sessions,
+                runlog=runlog,
+                transcript=transcript,
+                executor=executor,
+                settings_store=settings,
+                maker=self._maker,
+                clock=clock,
+            )
+        else:
+            runner = JmoltNightRunner(
+                sessions=sessions,
+                runlog=runlog,
+                transcript=transcript,
+                executor=executor,
+                settings_store=settings,
+                maker=self._maker,
+                clock=clock,
+                # No night hold: a simulated night must not reserve the box's real GPU.
+                served_model_loader=None,
+            )
         night = SimNight(
-            principal_id=pid, session_id="", started_at=started, label=spec.label, writes=[]
+            principal_id=pid,
+            session_id="",
+            started_at=started,
+            label=spec.label or spec.engine,
+            writes=[],
         )
         try:
             night.session_id = await runner.run(_sim_owner_ctx(pid))

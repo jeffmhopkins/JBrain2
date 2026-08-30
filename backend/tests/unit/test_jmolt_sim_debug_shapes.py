@@ -63,6 +63,13 @@ def test_a_run_refuses_more_nights_than_a_sitting_of_the_box_can_afford() -> Non
     assert SimRunRequest(corpus_id="c", nights=20).nights == 20
 
 
+def test_an_arm_names_its_own_engine_and_defaults_to_the_shipped_one() -> None:
+    """Named per-arm rather than read from the box's switch, so two engines can be measured
+    against one corpus in one sitting — which is what "cut over on evidence" requires."""
+    assert SimRunRequest(corpus_id="c").engine == "sittings"
+    assert SimRunRequest(corpus_id="c", engine="ledger").engine == "ledger"
+
+
 def test_an_arm_defaults_to_the_boxs_own_advisory_note() -> None:
     """`advisory=None` means "whatever the box says", which is what makes a baseline run a
     baseline rather than a run with the owner's note silently blanked."""
