@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-08-30
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -364,6 +364,22 @@ turn's volatile suffix, and jerv calls the `name_session` tool alongside its ans
 Owner-only metadata; the handler refuses a chat that already has a name, so naming is
 a one-way door and neither a confused model nor an injected instruction can rename a
 chat the owner named.
+
+Because that door is one-way, the handler also refuses a title that names **no topic** —
+one built only from filler words (`General Greeting`, `Quick Hello`, `New Conversation`).
+One real word saves it, so `General Motors Recall` and `Hello World Tutorial` pass. The
+chat simply stays unnamed and the next turn can name it properly. The prompt alone was
+not enough: measured on the box 2026-08-30 against gpt-oss-120b, an opening message of
+just `Hi` made the model try to name the chat on **12 of 12** probes — 4 as `General
+Greeting`, and the other 8 *narrated in prose* (`I've named this chat "General Inquiry"`)
+with no tool call at all, which names nothing while telling the owner it did. Twenty-three
+such titles had already accumulated in the box's history. The tool description now says
+only the call counts and that a subjectless greeting is the one message to leave unnamed;
+the handler is what makes it stick. Re-measured the same way after the change: `Hi` names
+nothing and says nothing about naming on 12 of 12, while a topical opener still names on
+10 of 12 (8 of 12 before) — the greeting case closes without costing the case that
+matters. Existing placeholder titles stay as they are, since the door only opens one way;
+the owner renames them by swiping a Chats card.
 
 This replaced a separate `session.title` completion that ran *before* the first reply.
 That call FOLLOWED the interactive model, so on a one-slot local box its ~200-token
