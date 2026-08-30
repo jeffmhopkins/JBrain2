@@ -429,6 +429,15 @@ class FakeSettingsStore:
     async def moltbook_killed(self, ctx: object) -> bool:
         return self.values.get("moltbook_killed", False) is True
 
+    async def moltbook_engine(self, ctx: object) -> str:
+        # Imported here, as `owner_timezone` does below: `fakes` is imported by nearly every
+        # test module and a top-level import of the real store would make the fake depend on
+        # it loading cleanly.
+        from jbrain.settings_store import MOLTBOOK_ENGINE_DEFAULT, MOLTBOOK_ENGINES
+
+        engine = self.values.get("jmolt_engine", MOLTBOOK_ENGINE_DEFAULT)
+        return engine if engine in MOLTBOOK_ENGINES else MOLTBOOK_ENGINE_DEFAULT
+
     async def moltbook_disclosure(self, ctx: object) -> str:
         raw = self.values.get(
             "moltbook_disclosure",

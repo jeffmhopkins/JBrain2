@@ -26,7 +26,7 @@ from jbrain.agent.jmolt_owner import jmolt_settings_ctx
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import MOLTBOOK_ENGINE_DEFAULT, SqlSettingsStore
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -118,3 +118,53 @@ async def test_the_tools_settings_context_still_reads(maker: async_sessionmaker)
     sctx = jmolt_settings_ctx(jmolt_run_context(pid))
     assert sctx.auth_context != "jmolt"
     assert await store.moltbook_disclosure(sctx) == "Autonomous experiment."
+
+
+# --- the engine switch (JMOLT_LEDGER_ENGINE_PLAN.md, S2) --------------------
+
+
+async def test_jmolt_cannot_choose_which_engine_runs_it(maker: async_sessionmaker) -> None:
+    """The switch decides which loop jmolt's night runs — which prologue it sees, where its
+    state comes from, when its publishing tools exist. An agent that could flip it could
+    choose the version of itself with the fewest restraints, so it inherits the same denial
+    as the kill switch rather than a new convention."""
+    pid = await _owner_pid(maker)
+    store = SqlSettingsStore(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    await store.set_moltbook_engine(owner, "ledger")
+
+    async with scoped_session(maker, jmolt_run_context(pid)) as s:
+        await s.execute(
+            text("UPDATE app.settings SET value = '\"sittings\"'::jsonb WHERE key = 'jmolt_engine'")
+        )
+        assert (
+            await s.execute(text("SELECT count(*) FROM app.settings WHERE key = 'jmolt_engine'"))
+        ).scalar() == 0  # it cannot even see the row
+
+    assert await store.moltbook_engine(owner) == "ledger"  # the owner's choice survived
+
+
+async def test_an_unreadable_switch_runs_the_night_that_ran_yesterday(
+    maker: async_sessionmaker,
+) -> None:
+    """This setting decides whether tonight happens at all, so both ways of not having an
+    answer — never set, or set to something unrecognised — resolve to the shipped night. A
+    typo or a half-finished experiment must not be able to spend jmolt's hour on nothing.
+
+    The SETTER refuses the same value the reader shrugs at, deliberately: a setter is an act,
+    and silently storing something the reader ignores is how a switch comes to look flipped
+    while nothing changed."""
+    pid = await _owner_pid(maker)
+    store = SqlSettingsStore(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+
+    # The shipped night is what an untouched box runs. (`app.settings` has no DELETE grant —
+    # rows are only ever upserted — so "never set" is asserted on the constant the reader
+    # falls back to rather than by clearing a row this module's other tests wrote.)
+    assert MOLTBOOK_ENGINE_DEFAULT == "sittings"
+
+    await store.upsert(owner, "jmolt_engine", "experimental-v3")
+    assert await store.moltbook_engine(owner) == "sittings"
+
+    with pytest.raises(ValueError, match="experimental-v3"):
+        await store.set_moltbook_engine(owner, "experimental-v3")

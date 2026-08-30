@@ -150,6 +150,18 @@ MOLTBOOK_AUTONOMY_KEY = "moltbook_autonomy"
 MOLTBOOK_AUTONOMY_DEFAULT = False
 MOLTBOOK_KILL_KEY = "moltbook_kill"
 MOLTBOOK_KILL_DEFAULT = False
+# Which night engine runs (docs/plans/JMOLT_LEDGER_ENGINE_PLAN.md, S2). `sittings` is the
+# shipped one and the default, so a box that never touches this switch runs the night it ran
+# yesterday. `ledger` is the second engine, built alongside rather than in place of it —
+# neither is a migration the other has to survive, and both can be measured against the same
+# recorded corpus before either is chosen.
+#
+# The switch names the LOOP and where state lives. Everything the threat model rests on —
+# the outbox chokepoint, the caps and rate ledger, the content lint, the kill switch, the M19
+# RLS split, the observer — is shared, so flipping it can never widen what a night may do.
+MOLTBOOK_ENGINE_KEY = "jmolt_engine"
+MOLTBOOK_ENGINE_DEFAULT = "sittings"
+MOLTBOOK_ENGINES = ("sittings", "ledger")
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
 MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
 # The owner's advisory note TO jmolt: a scratchpad the human edits, injected (fenced, as
@@ -588,6 +600,25 @@ class SqlSettingsStore:
         sweep independent of the autonomy switch). DEFAULTS OFF. M6: auto-engaged on
         suspension/tamper, and owner-operable from the PWA + debug API."""
         return await self.get(ctx, MOLTBOOK_KILL_KEY, MOLTBOOK_KILL_DEFAULT) is True
+
+    async def moltbook_engine(self, ctx: SessionContext) -> str:
+        """Which night engine runs: `sittings` (the shipped one, and the default) or `ledger`.
+
+        An unrecognised value reads as the DEFAULT rather than raising. This setting decides
+        whether tonight happens at all, and a typo or a half-finished experiment must not be
+        able to cost jmolt its hour — the failure mode of a bad value is "the night ran the
+        way it ran yesterday", which is always a safe answer."""
+        raw = await self.get(ctx, MOLTBOOK_ENGINE_KEY, MOLTBOOK_ENGINE_DEFAULT)
+        return raw if raw in MOLTBOOK_ENGINES else MOLTBOOK_ENGINE_DEFAULT
+
+    async def set_moltbook_engine(self, ctx: SessionContext, engine: str) -> None:
+        """Choose the night engine. Owner-only, like every other jmolt switch — and unlike
+        the read above this REFUSES an unknown value, because a setter is a deliberate act
+        and silently storing something the reader will ignore is how a switch comes to look
+        flipped while nothing changed."""
+        if engine not in MOLTBOOK_ENGINES:
+            raise ValueError(f"unknown jmolt engine {engine!r}; expected one of {MOLTBOOK_ENGINES}")
+        await self.upsert(ctx, MOLTBOOK_ENGINE_KEY, engine)
 
     async def moltbook_disclosure(self, ctx: SessionContext) -> str:
         """The fixed honest disclosure line prepended to jmolt's self-authored bio (M-bio)."""
