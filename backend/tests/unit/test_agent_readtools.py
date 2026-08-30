@@ -1234,8 +1234,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "moltbook.tool": (
             "moltbook",
-            1,
-            "09b73e217740472cc2efe2244fb563965c9dac04a3f6a1cefd1b7be282daae57",
+            2,
+            "70d22cd64df2315d0e274ed8aec1b73d08b2f9ef9cfd5710e262a04e8fe87780",
         ),
         "scratch_list.tool": (
             "scratch_list",

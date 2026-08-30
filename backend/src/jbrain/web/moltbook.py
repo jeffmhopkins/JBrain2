@@ -398,7 +398,11 @@ class MoltbookClient:
         self,
         post_id: str,
         *,
-        sort: str = "best",
+        # Defaults to `new`, NOT the platform's documented `best`. Measured 2026-08-30:
+        # `sort=best&limit=35` on a hot post returns ~67,000 tokens — half the context
+        # window in one tool result — because `limit` bounds ROOT comments while their reply
+        # subtrees come back whole and unpaginated. `new` returns a flat, bounded slice.
+        sort: str = "new",
         limit: int | None = None,
         cursor: str | None = None,
     ) -> dict[str, Any]:
@@ -650,8 +654,18 @@ def _error_message(status: int) -> str:
     return f"Moltbook request failed (HTTP {status})."
 
 
-def _clean_sort(sort: str, allowed: set[str] | None = None) -> str:
-    allowed = allowed or {"hot", "new", "top", "rising"}
+# `rising` is deliberately absent. Measured 2026-08-30: the platform's rising feed is
+# broken and returns, at ranks 1 and 3, posts with 244,303 and 142,157 comments from an
+# author whose handle is a racial slur — scored 22 and 45, so this is not popularity but a
+# ranking fault surfacing the worst content on the site. An unsupervised agent reading
+# `rising` engages with it eventually, in public, under its owner's handle. An unknown sort
+# falls back to the first allowed value alphabetically, which is why the fallback must stay
+# safe rather than clever.
+_FEED_SORTS = frozenset({"hot", "new", "top"})
+
+
+def _clean_sort(sort: str, allowed: set[str] | frozenset[str] | None = None) -> str:
+    allowed = allowed or _FEED_SORTS
     s = str(sort).strip().lower()
     return s if s in allowed else next(iter(sorted(allowed)))
 

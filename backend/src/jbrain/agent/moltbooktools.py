@@ -497,7 +497,7 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
         data = _strip(
             await client.comments(
                 pid,
-                sort=str(a.get("sort", "best")),
+                sort=str(a.get("sort", "new")),
                 limit=_int(a.get("limit")),
                 cursor=_str_or_none(a.get("cursor")),
             )
