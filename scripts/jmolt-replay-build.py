@@ -32,6 +32,9 @@ import sys
 
 # Tools jmolt actually holds at night. Kept explicit rather than read from the registry so
 # a replay pins the tool set it was run with.
+# Sentinel used to smuggle a tool name past the SQL console's secret scrubber. See dump_sql.
+NAME_SPLIT = "|"
+
 JMOLT_TOOLS = [
     "moltbook",
     "current_time",
@@ -55,8 +58,18 @@ def dump_sql(session_id: str, sitting: int) -> str:
     Turns persist at sitting END and a sitting writes one user row and one assistant row,
     so ordering by created_at and taking the Nth pair is the sitting. `tools` carries the
     calls with their `summary` — the result text the model actually saw."""
+    # The tool NAME is emitted split around a sentinel. The debug SQL console runs the
+    # M17/M18 secret scrubber over every value, and `moltbook_comment` matches the Moltbook
+    # API-key shape closely enough to come back as `moltbook_[redacted]` — which would then
+    # never match the model's real call, silently turning that step's recorded result into
+    # the fallback. Splitting the string breaks the pattern; the driver rejoins it. Summaries
+    # are unaffected, so only the name needs this.
     return (
-        "select t.content::text as prologue, coalesce(a.tools::text,'[]') as tools from"
+        "select t.content::text as prologue, coalesce(a.tools::text,'[]') as tools,"
+        " coalesce((select jsonb_agg(substr(e->>'name',1,4) || '" + NAME_SPLIT + "'"
+        "   || substr(e->>'name',5) order by ord)"
+        "   from jsonb_array_elements(a.tools) with ordinality as x(e,ord)),'[]'::jsonb)::text"
+        "   as split_names from"
         " (select content, created_at, row_number() over (order by created_at) as n"
         f"  from app.agent_turns where session_id='{session_id}' and role='user') t"
         " join (select tools, created_at, row_number() over (order by created_at) as n"
@@ -70,6 +83,10 @@ def build(dump: dict, system: str, drops: list[str], replaces: list[str]) -> dic
     if not rows:
         sys.exit("no rows in dump — check the session id and sitting number")
     prologue, tools_json = rows[0][0], rows[0][1]
+    # Names recovered from the split column (see dump_sql); positional against `tools`.
+    split_names = (
+        [n.replace(NAME_SPLIT, "", 1) for n in json.loads(rows[0][2])] if len(rows[0]) > 2 else []
+    )
 
     for lead in drops:
         idx = prologue.find(lead)
@@ -85,12 +102,19 @@ def build(dump: dict, system: str, drops: list[str], replaces: list[str]) -> dic
         prologue = prologue.replace(old, new)
 
     stubs = []
-    for entry in json.loads(tools_json):
+    for i, entry in enumerate(json.loads(tools_json)):
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
+        name = split_names[i] if i < len(split_names) else entry["name"]
+        if "[redacted]" in name:
+            sys.exit(
+                f"tool name at index {i} is still redacted ({name!r}). A replay with a "
+                "redacted stub name silently falls back instead of replaying, so it would "
+                "not be the sitting that happened. Re-dump with the current --sql."
+            )
         stubs.append(
             {
-                "name": entry["name"],
+                "name": name,
                 "result": str(entry.get("summary") or ""),
                 "is_error": not entry.get("ok", True),
             }

@@ -33,13 +33,21 @@ _TOOLS = json.dumps(
 )
 
 
-def _dump() -> dict:
-    return {"columns": ["prologue", "tools"], "rows": [[_PROLOGUE, _TOOLS]]}
+def _dump(split_names: list[str] | None = None) -> dict:
+    names = split_names or ["scra|tch_list", "molt|book_comment", "no_n|ame_entry"]
+    return {
+        "columns": ["prologue", "tools", "split_names"],
+        "rows": [[_PROLOGUE, _TOOLS, json.dumps(names)]],
+    }
 
 
 def test_stubs_carry_the_observed_results_and_their_error_flag() -> None:
     body = build_mod.build(_dump(), system="sys", drops=[], replaces=[])
-    assert [s["name"] for s in body["stubs"]] == ["scratch_list", "moltbook_post", "no_name_entry"]
+    assert [s["name"] for s in body["stubs"]] == [
+        "scratch_list",
+        "moltbook_comment",
+        "no_name_entry",
+    ]
     assert body["stubs"][0]["result"] == "- thoughts.md (275 bytes)"
     # A failed call must replay as a failure: the night's model saw an error there, and a
     # replay that turns it into a success is no longer the sitting that happened.
@@ -79,3 +87,25 @@ def test_replace_edits_the_real_prologue() -> None:
 def test_an_empty_dump_is_fatal_rather_than_an_empty_replay() -> None:
     with pytest.raises(SystemExit):
         build_mod.build({"rows": []}, system="", drops=[], replaces=[])
+
+
+def test_a_scrubbed_tool_name_is_recovered_from_the_split_column() -> None:
+    """The debug SQL console runs the M17/M18 secret scrubber over every value, and
+    `moltbook_comment` is close enough to the Moltbook API-key shape to come back as
+    `moltbook_[redacted]`.
+
+    A stub with that name can never match the model's real call, so its recorded result is
+    silently swapped for the fallback and that step stops being a replay — invisibly, in a
+    run that otherwise looks fine. The name is therefore dumped split around a sentinel and
+    rejoined here."""
+    body = build_mod.build(_dump(), system="", drops=[], replaces=[])
+    names = [s["name"] for s in body["stubs"]]
+    assert "moltbook_comment" in names
+    assert not any("[redacted]" in n for n in names)
+
+
+def test_a_name_that_is_still_redacted_is_fatal() -> None:
+    """Better to refuse than to build a replay that quietly is not one."""
+    dump = _dump(["scra|tch_list", "moltbook_[redacted]", "no_n|ame_entry"])
+    with pytest.raises(SystemExit):
+        build_mod.build(dump, system="", drops=[], replaces=[])
