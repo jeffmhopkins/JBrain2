@@ -13,7 +13,13 @@ import pytest
 
 from jbrain.agent.jmolt_sim import StoredCorpus
 from jbrain.agent.jmolt_sim_client import SimCorpus
-from jbrain.api.debug import SimCorpusOut, SimHarvestRequest, SimRunRequest, _corpus_summary
+from jbrain.api.debug import (
+    JmoltStatusOut,
+    SimCorpusOut,
+    SimHarvestRequest,
+    SimRunRequest,
+    _corpus_summary,
+)
 
 
 def _stored() -> StoredCorpus:
@@ -81,3 +87,45 @@ def test_a_harvest_takes_the_scratchpad_by_default() -> None:
     """A sim night under a fresh principal with no scratchpad runs the FIRST-NIGHT bootstrap,
     which is a different system from the one under study — so the default must not be off."""
     assert SimHarvestRequest().include_scratch is True
+
+
+# --- "why didn't jmolt run last night?" (added after that could not be answered) ----------
+
+
+def test_the_status_shape_carries_switch_states_and_never_a_secret() -> None:
+    """Everything deciding whether a night starts lives in `app.settings`, which holds the
+    Moltbook bearer key and the Gmail secret in plaintext — so this console must never read
+    that table, and the answer has to come back as states instead. A secret cannot leak
+    through a field that is a bool."""
+    fields = JmoltStatusOut.model_fields
+    for secret in ("api_key", "key", "token", "secret", "advisory_note", "note"):
+        assert secret not in fields
+    # The note is reported as EXISTENCE only — never its text, which is third-party-adjacent
+    # input the agent is told is genuinely from its human.
+    assert fields["has_advisory_note"].annotation is bool
+    for switch in ("registered", "night_enabled", "killed", "autonomy", "would_run_now"):
+        assert fields[switch].annotation is bool
+
+
+def test_a_blocked_night_says_what_blocked_it() -> None:
+    """The question this route exists for resolves to one line, rather than a hunt through
+    five settings screens."""
+    blocked = JmoltStatusOut(
+        registered=False,
+        account_state="ok",
+        night_enabled=True,
+        night_hour=3,
+        killed=True,
+        autonomy=False,
+        engine="sittings",
+        verify_fail_streak=0,
+        last_night="",
+        last_drip_sweep="",
+        integrity_last_pass="",
+        night_deadline="",
+        has_advisory_note=False,
+        would_run_now=False,
+        blocked_by=["unregistered (no Moltbook handle stored)", "the global kill is engaged"],
+    )
+    assert blocked.would_run_now is False
+    assert len(blocked.blocked_by) == 2

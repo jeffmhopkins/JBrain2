@@ -191,14 +191,44 @@ Shipped, CI-covered:
 - **Both engines are simulable against one corpus.** An arm names its engine (`sim run <id>
   --engine ledger`), so S4's comparison is one console sitting rather than two boxes.
 
+### What the live box changed, 2026-08-30
+
+Pulled jmolt's real posts and reduced each with the box's OWN gpt-oss-120b. Three findings.
+
+**The acceptance numbers hold, but the failure is bigger than stated.** The 2026-08-29 night is
+4 posts, 3 restatements, 1 self-reply (comment #61's parent is jmolt's own comment #56) —
+exactly as this plan assumed. But the restatement does not start there: #58 restates #53 from
+the night before, and **six posts across two nights assert one claim**. So the claim store must
+span nights (migration 0183), or the gate lets the first restatement of every night through,
+every night.
+
+**The research survives contact with our data, and so does embedding the triple.** Prose
+lexical similarity on our own duplicate pairs reproduces the cold study's reported 0.07-0.20
+band (mean 0.154) and is NOT separable — the closest unrelated pair scores 0.184 against the
+most distant restatement's 0.100. Triples double the separation in means (0.222 vs 0.104) and
+still overlap by 0.008. **There is no lexical shortcut**; the embedder is required.
+
+**The supersession exception as designed was unreachable code.** Asked to reduce six posts
+making ONE claim, the model returned five spellings of the subject ("owner's prompt",
+"owner-given prompt", "owner's initial prompt", "owner prompt", "owner prompts") and four
+different predicates (CAUSES, REDUCES_TO, IS, CLAIMS_ABOUT). An exception requiring subject AND
+predicate to match exactly would never have fired — silently, while looking like a safeguard.
+It now measures the OBJECTS: high triple similarity with low object similarity is *same
+territory, different conclusion*. That also closes the loophole the equality version carried,
+where rewording the object turned a restatement into a "changed view".
+
+The labelled pairs, the model's own triples and the measured numbers are checked in at
+`backend/tests/fixtures/jmolt_claim_pairs.json`, so the threshold can be set the moment an
+embedder is reachable. `POST /api/debug/embed` is that route.
+
 Open:
 
-1. **The claim gate is not wired into the runner.** It exists and is tested, but nothing calls
-   it, because the plan forbids shipping a guard without an offline score and the score needs
-   labelled pairs from the S1 corpus. `DEFAULT_THRESHOLD` is a placeholder until then.
-2. **Nothing extracts a triple yet.** The gate takes a `Claim`; producing one from a draft is a
-   narrow structured reduction (a model call that parses, never one that judges) and it is
-   unbuilt.
+1. **The claim gate is not wired into the runner**, and its two thresholds are placeholders.
+   Everything needed to set them now exists — the labelled fixture, the claim store, the embed
+   route — but the route has to be DEPLOYED first, which needs this branch merged.
+2. **Extraction works but is not wired.** The box's own model reduces a post to a triple
+   reliably enough to score against (that is where the findings above came from); nothing in
+   the runner calls it yet.
 3. **The note has no `written_at`.** Its age is unknowable, so the expiry runs from now and a
    note written a month ago still gets one more week — the wrong direction for the property.
    Closing it is a column on the setting.

@@ -85,7 +85,11 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.jmolt import JmoltScratchRepo
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
-from jbrain.settings_store import MOLTBOOK_ENGINE_DEFAULT, SqlSettingsStore
+from jbrain.settings_store import (
+    MOLTBOOK_ENGINE_DEFAULT,
+    MOLTBOOK_FAIL_STREAK_LIMIT,
+    SqlSettingsStore,
+)
 from jbrain.storage import BlobStore
 from jbrain.tasks.runner import LoopTurnExecutor
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -164,6 +168,8 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # `POST /embed` — the box's own embedder, needed to set the claim gate's
             # threshold against real pairs. Reads and writes nothing.
             "embed",
+            # `GET /jmolt/status` — why a night did or did not run. Switch STATES only.
+            "jmolt.status",
         ],
     )
 
@@ -1826,6 +1832,81 @@ def _corpus_summary(stored: Any) -> SimCorpusOut:
         profiles=len(c.profiles),
         submolts=len(c.submolt_feed),
         scratch_files=len(stored.scratch),
+    )
+
+
+class JmoltStatusOut(BaseModel):
+    """Why jmolt did or did not run. Switch STATES only — never a key, never a note's text."""
+
+    registered: bool
+    account_state: str
+    night_enabled: bool
+    night_hour: int
+    killed: bool
+    autonomy: bool
+    engine: str
+    verify_fail_streak: int
+    last_night: str
+    last_drip_sweep: str
+    integrity_last_pass: str
+    night_deadline: str
+    has_advisory_note: bool
+    # Whether each of the conditions the nightly lane checks would let a night start RIGHT NOW,
+    # named the way the code names them, so "it did not run" resolves to one line rather than a
+    # hunt through five settings screens.
+    would_run_now: bool
+    blocked_by: list[str]
+
+
+@router.get("/jmolt/status")
+async def jmolt_status(request: Request, _p: DebugDep) -> JmoltStatusOut:
+    """Answer "why didn't jmolt run last night?" in one call.
+
+    Written after that exact question could not be answered from this surface. On 2026-08-30
+    the nightly run did not happen: no `agent_sessions` row, no outbox rows, and the api log is
+    uvicorn's access log so it carries no `jmolt_night` events. Everything that decides whether
+    a night starts lives in `app.settings`, which this console must never read — the table
+    holds the Moltbook bearer key and the Gmail secret in plaintext, so "just SELECT it" is not
+    an option and should not become one.
+
+    So this reads those switches through the settings STORE and returns their states: booleans,
+    an hour, timestamps, and whether a note EXISTS — never the key, never the note's text. A
+    secret cannot leak through a field that is a bool.
+    """
+    store = _store(request)
+    ctx = _OWNER_CTX
+    handle = await store.moltbook_handle(ctx)
+    killed = await store.moltbook_killed(ctx)
+    enabled = await store.moltbook_night_enabled(ctx)
+    streak = await store.moltbook_verify_fail_streak(ctx)
+    state = await store.moltbook_account_state(ctx)
+    blocked: list[str] = []
+    if not handle:
+        blocked.append("unregistered (no Moltbook handle stored)")
+    if killed:
+        blocked.append("the global kill is engaged")
+    if not enabled:
+        blocked.append("the nightly run is switched off")
+    if streak >= MOLTBOOK_FAIL_STREAK_LIMIT:
+        blocked.append(f"the verification failure streak is at {streak} — writing is stopped")
+    if state != "ok":
+        blocked.append(f"the account state is {state!r}, not 'ok'")
+    return JmoltStatusOut(
+        registered=bool(handle),
+        account_state=state,
+        night_enabled=enabled,
+        night_hour=await store.moltbook_night_hour(ctx),
+        killed=killed,
+        autonomy=await store.moltbook_autonomy(ctx),
+        engine=await store.moltbook_engine(ctx),
+        verify_fail_streak=streak,
+        last_night=await store.moltbook_last_night(ctx),
+        last_drip_sweep=await store.moltbook_drip_last_swept(ctx),
+        integrity_last_pass=await store.moltbook_integrity_last_pass(ctx),
+        night_deadline=await store.moltbook_night_deadline(ctx),
+        has_advisory_note=bool((await store.moltbook_advisory_note(ctx) or "").strip()),
+        would_run_now=not blocked,
+        blocked_by=blocked,
     )
 
 

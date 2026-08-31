@@ -39,6 +39,7 @@
 #   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
 #   scripts/debug-connect.sh load gpt-oss-120b
 #   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
+#   scripts/debug-connect.sh jmolt-status                        # why no night last night?
 #   scripts/debug-connect.sh sim harvest "the 2026-08-29 night"  # record the platform
 #   scripts/debug-connect.sh sim run <corpus-id> --nights 10     # a scored arm
 #   scripts/debug-connect.sh sim run <id> --engine ledger --nights 10  # the other engine
@@ -396,6 +397,10 @@ PY
     done
     [ -n "$BODYFILE" ] || { echo "usage: debug-connect.sh replay --body-file <f.json>" >&2; exit 2; }
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
+    ;;
+
+  jmolt-status) # why jmolt did or did not run last night — switch states, never a secret
+    _call GET /api/debug/jmolt/status "" | _pp
     ;;
 
   sim) # harvest [note] | corpora | run <corpus-id> [--nights N] [--label L] [--advisory TEXT] | purge
