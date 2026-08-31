@@ -161,6 +161,9 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # are — an assistant reads this list to decide what it may attempt, and an
             # omitted surface reads as "not permitted" rather than "not mentioned".
             "jmolt.sim",
+            # `POST /embed` — the box's own embedder, needed to set the claim gate's
+            # threshold against real pairs. Reads and writes nothing.
+            "embed",
         ],
     )
 
@@ -1824,6 +1827,42 @@ def _corpus_summary(stored: Any) -> SimCorpusOut:
         submolts=len(c.submolt_feed),
         scratch_files=len(stored.scratch),
     )
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=128)
+
+
+class EmbedOut(BaseModel):
+    model_dims: int
+    vectors: list[list[float]]
+
+
+@router.post("/embed")
+async def embed_texts(body: EmbedRequest, request: Request, _p: DebugDep) -> EmbedOut:
+    """Embed text through the box's own embedder — the same client the knowledge graph and the
+    jmolt claim gate use.
+
+    Exists for a specific, measured reason. The claim gate's threshold cannot be chosen by
+    reasoning: measured on jmolt's real duplicate posts, prose lexical similarity reproduces
+    the 0.07-0.20 band the cold study reported and cannot separate a restatement from an
+    unrelated post, and even triple-space lexical still overlaps. Setting the threshold needs
+    real vectors over real pairs, and this is the only way to reach the box's embedder without
+    a shell.
+
+    Reads nothing and writes nothing — it is a pure function of the text it is handed."""
+    client = getattr(request.app.state, "embed_client", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="no embedder on this box")
+    texts = [t[:8000] for t in body.texts]
+    request.state.debug_detail = f"{len(texts)} text(s)"
+    try:
+        vectors = await client.embed(texts)
+    except Exception as exc:  # noqa: BLE001 — the embedder being down is a 502, not a 500
+        raise HTTPException(
+            status_code=502, detail=f"embedder failed: {type(exc).__name__}"
+        ) from exc
+    return EmbedOut(model_dims=len(vectors[0]) if vectors else 0, vectors=vectors)
 
 
 @router.post("/jmolt-sim/harvest")
