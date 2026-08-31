@@ -22,8 +22,14 @@ claim or cites evidence the prior one lacked — the two behaviours that constit
 rather than looping. Both are decided from the triple and the citations, never from the
 model's account of its own intent:
 
-- **Supersedes**: same subject and predicate, different object. That IS a changed view, and
-  it needs no one's opinion to detect.
+- **Supersedes**: the claim lands in the same territory but reaches a DIFFERENT CONCLUSION —
+  a high triple similarity with a LOW object similarity. It is not decided by string equality
+  on the subject and predicate, which is what this gate tried first and what the box's own
+  extractions killed: across six real posts making ONE claim, the model returned five
+  spellings of the subject ("owner's prompt", "owner-given prompt", "owner's initial prompt",
+  "owner prompt", "owner prompts") and four different predicates (CAUSES, REDUCES_TO, IS,
+  CLAIMS_ABOUT). An exception gated on exact equality would have been unreachable code —
+  silently, while looking like a safeguard.
 - **New evidence**: the candidate cites a source the prior claim did not.
 
 One retry maximum, and it is a hard cap rather than a suggestion. A gate that keeps saying
@@ -78,8 +84,17 @@ _SYNONYMS = {
 # Provisional: the plan forbids shipping this gate without an offline score, and this number is
 # the first thing that score exists to set.
 DEFAULT_THRESHOLD = 0.88
+# BELOW this cosine between two claims' OBJECTS, the second reached a different conclusion and
+# the supersession exception fires. Provisional for the same reason.
+DEFAULT_OBJECT_THRESHOLD = 0.75
 
 _WORD = re.compile(r"[a-z0-9]+")
+# A possessive is grammar, not content. Measured against the box's real extractions: the same
+# subject came back as "owner's prompt", "owner-given prompt", "owner's initial prompt",
+# "owner prompt" and "owner prompts" across six posts making ONE claim, and the apostrophe
+# forms normalised to "owner s prompt" — a token that is not a word, in a subject that no
+# longer matched any of its own spellings.
+_POSSESSIVE = re.compile(r"['’]s\b|s['’](?=\s|$)")
 
 
 class Embedder(Protocol):
@@ -107,7 +122,7 @@ def _normalize_term(raw: str) -> str:
     """A term reduced to comparable form: lowercased, punctuation dropped, a leading article
     removed. Deliberately NOT stemming — stemming collapses distinctions the object has to
     keep, and an object is where a changed view shows up."""
-    words = _WORD.findall((raw or "").lower())
+    words = _WORD.findall(_POSSESSIVE.sub("", (raw or "").lower()))
     if len(words) > 1 and words[0] in _LEADING_ARTICLES:
         words = words[1:]
     return " ".join(words)
@@ -142,8 +157,9 @@ class Claim:
 
     @property
     def stem(self) -> tuple[str, str]:
-        """Subject and predicate. Two claims sharing a stem with different objects are a
-        changed view, which is the supersession exception."""
+        """Subject and predicate. Kept for logging and for the tests that pin normalisation —
+        NOT used in the gate's decision, because real extractions do not agree on either well
+        enough to compare by equality (see the module docstring)."""
         return (self.subject, self.predicate)
 
 
@@ -167,14 +183,26 @@ class ClaimGate:
     """Holds the night's prior claims and decides on candidates."""
 
     threshold: float = DEFAULT_THRESHOLD
+    object_threshold: float = DEFAULT_OBJECT_THRESHOLD
     _claims: list[Claim] = field(default_factory=list)
     _vectors: list[list[float]] = field(default_factory=list)
+    # The objects, embedded separately, so "same territory, different conclusion" is a
+    # measurement rather than a string comparison.
+    _objects: list[list[float]] = field(default_factory=list)
 
     async def load(self, claims: Sequence[Claim], embed: Embedder) -> None:
-        """Seed the gate with what jmolt has already claimed. Embedded in one batch: the
-        alternative is a call per claim on every night, which turns a guard into a cost."""
+        """Seed the gate with what jmolt has already claimed. Embedded in one batch — the
+        alternative is a call per claim on every night, which turns a guard into a cost. The
+        triples and their objects go in the same request, for the same reason."""
         self._claims = list(claims)
-        self._vectors = await embed.embed([c.text for c in self._claims]) if self._claims else []
+        if not self._claims:
+            self._vectors, self._objects = [], []
+            return
+        n = len(self._claims)
+        vectors = await embed.embed(
+            [c.text for c in self._claims] + [c.object for c in self._claims]
+        )
+        self._vectors, self._objects = vectors[:n], vectors[n:]
 
     async def judge(self, candidate: Claim, embed: Embedder) -> Verdict:
         """Decide one candidate against everything already claimed.
@@ -184,20 +212,26 @@ class ClaimGate:
         draft it keeps."""
         if not self._claims:
             return Verdict(allowed=True, reason="nothing claimed yet")
-        [vector] = await embed.embed([candidate.text])
-        best, best_score = None, -1.0
-        for claim, prior in zip(self._claims, self._vectors, strict=True):
+        vector, object_vector = await embed.embed([candidate.text, candidate.object])
+        best, best_score, best_i = None, -1.0, -1
+        for i, (claim, prior) in enumerate(zip(self._claims, self._vectors, strict=True)):
             score = _cosine(vector, prior)
             if score > best_score:
-                best, best_score = claim, score
+                best, best_score, best_i = claim, score, i
         assert best is not None
         if best_score < self.threshold:
             return Verdict(True, "not close to anything said before", best_score, best)
         # Close enough to be the same claim. The two exceptions, in order — supersession first
         # because it is the stronger signal: a changed view is development even when it cites
         # nothing new, while new evidence for an unchanged view is the weaker case.
-        if candidate.stem == best.stem and candidate.object != best.object:
-            return Verdict(True, "supersedes a prior claim", best_score, best)
+        object_score = _cosine(object_vector, self._objects[best_i])
+        if object_score < self.object_threshold:
+            return Verdict(
+                True,
+                f"same territory, different conclusion (objects {object_score:.2f} apart)",
+                best_score,
+                best,
+            )
         fresh = candidate.citations - best.citations
         if fresh:
             return Verdict(
@@ -205,15 +239,17 @@ class ClaimGate:
             )
         return Verdict(False, "already said, with nothing new", best_score, best)
 
-    def remember(self, claim: Claim, vector: list[float] | None = None) -> None:
-        """Record a claim as said. Callers that already embedded it can pass the vector back
-        rather than paying for it twice."""
-        self._claims.append(claim)
-        self._vectors.append(vector or [])
+    async def remember(self, claim: Claim, embed: Embedder) -> None:
+        """Record a claim as said, so the rest of the night can repeat it.
 
-    async def remember_now(self, claim: Claim, embed: Embedder) -> None:
-        [vector] = await embed.embed([claim.text])
-        self.remember(claim, vector)
+        Deliberately takes the embedder rather than accepting a vector from the caller. The
+        earlier signature let a caller hand back the vector it already had "to avoid paying
+        twice", and a caller that passed none stored an EMPTY vector — a claim that could never
+        match anything again, which is a gate silently switched off one claim at a time."""
+        vector, object_vector = await embed.embed([claim.text, claim.object])
+        self._claims.append(claim)
+        self._vectors.append(vector)
+        self._objects.append(object_vector)
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:

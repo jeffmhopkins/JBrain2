@@ -10,9 +10,12 @@ teaches the model to rephrase until it gets through, which is repetition the gat
 see.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
-from jbrain.agent.jmolt_claim import Claim
+from jbrain.agent.jmolt_claim import PREDICATES, Claim
 from jbrain.agent.jmolt_claim_score import LabelledPair, best_threshold, score_gate
 
 pytestmark = pytest.mark.anyio
@@ -39,9 +42,15 @@ UNRELATED = Claim.of("weeks", "IS", "an odd unit for an agent")
 
 _VECTORS = {
     A.text: [1.0, 0.0, 0.0],
-    A_AGAIN.text: [0.97, 0.24, 0.0],  # ~0.97 with A
+    A_AGAIN.text: [0.97, 0.24, 0.0],  # ~0.97 with A: same territory
     A_CHANGED.text: [0.97, 0.24, 0.0],
     UNRELATED.text: [0.0, 1.0, 0.0],
+    # The OBJECTS, which is where the supersession exception is decided: A_CHANGED reaches a
+    # different conclusion, A_AGAIN reaches the same one in other words.
+    A.object: [1.0, 0.0, 0.0],
+    A_AGAIN.object: [0.97, 0.24, 0.0],
+    A_CHANGED.object: [0.0, 1.0, 0.0],
+    UNRELATED.object: [0.0, 1.0, 0.0],
 }
 EMBED = _Embed(_VECTORS)
 
@@ -70,7 +79,7 @@ async def test_a_changed_view_wrongly_refused_is_the_expensive_error() -> None:
     """It is not scored as a mere inaccuracy — it is what makes a threshold unusable."""
     # A changed view whose exception is defeated: same similarity, but the stem differs so
     # supersession does not apply and there is no new citation either.
-    disguised = Claim.of("verification", "REDUCES_TO", "another inference pass")
+    disguised = A_AGAIN  # same triple AND the same conclusion, so no exception rescues it
     score = await score_gate([_pair(A, disguised, restatement=False)], EMBED, threshold=0.88)
     assert score.false_refusals == 1
     assert score.usable is False
@@ -133,3 +142,46 @@ async def test_rates_are_none_rather_than_zero_when_nothing_was_measured() -> No
     score = await score_gate([], EMBED, threshold=0.88)
     assert score.catch_rate is None and score.false_refusal_rate is None
     assert score.usable is False
+
+
+# --- the real pairs (pulled from the live box, 2026-08-30) ------------------
+
+
+def _real() -> dict:
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "jmolt_claim_pairs.json"
+    return json.loads(path.read_text())
+
+
+def test_the_real_pairs_are_present_and_labelled_both_ways() -> None:
+    """The gate cannot be scored without labelled data, and it must not be scored on
+    restatements alone — a threshold chosen against repeats only is a threshold that refuses
+    everything."""
+    data = _real()
+    assert len(data["posts"]) == 7
+    assert data["restatement_pairs"] and data["not_restatement_pairs"]
+    seqs = {p["seq"] for p in data["posts"]}
+    for pair in data["restatement_pairs"] + data["not_restatement_pairs"]:
+        assert set(pair) <= seqs
+
+
+def test_every_real_post_carries_a_triple_the_gate_can_read() -> None:
+    """Extracted by the box's OWN model, so the gate is scored behind the extractor it will
+    actually run behind rather than a hand-written ideal of one."""
+    for post in _real()["posts"]:
+        claim = Claim.of(**post["triple"])
+        assert claim.subject and claim.object
+        assert claim.predicate in PREDICATES
+
+
+def test_the_measured_finding_that_forced_the_gates_design_is_recorded() -> None:
+    """Prose lexical reproduced the cold study's 0.07-0.20 band on our own duplicates and could
+    not separate them; triples doubled the separation and still overlapped. That measurement is
+    why this gate embeds rather than compares strings, and why it cannot ship on a shortcut."""
+    m = _real()["measured_lexical"]
+    prose, triple = m["prose_jaccard_restatements"], m["triple_jaccard_restatements"]
+    assert 0.07 <= prose["mean"] <= 0.20  # the cold study's band, on our data
+    # Neither is separable: in both cases the closest non-restatement beats the most distant
+    # restatement, which is exactly what "no lexical shortcut" means.
+    assert m["prose_jaccard_others"]["max"] > prose["min"]
+    assert m["triple_jaccard_others"]["max"] > triple["min"]
+    assert triple["mean"] > prose["mean"]  # triples DO help, just not enough

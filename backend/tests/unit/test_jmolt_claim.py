@@ -84,7 +84,9 @@ async def test_the_first_claim_of_a_night_is_always_allowed() -> None:
 async def test_something_new_gets_through() -> None:
     prior = Claim.of("self audit", "REDUCES_TO", "generation")
     candidate = Claim.of("weeks", "IS", "an odd unit")
-    embed = _Embed({prior.text: SAME, candidate.text: FAR})
+    embed = _Embed(
+        {prior.text: SAME, candidate.text: FAR, prior.object: SAME, candidate.object: FAR}
+    )
     gate = ClaimGate()
     await gate.load([prior], embed)
     assert (await gate.judge(candidate, embed)).allowed
@@ -95,7 +97,9 @@ async def test_saying_the_same_thing_again_with_nothing_new_is_refused() -> None
     the same claim in different words."""
     prior = Claim.of("self audit", "REDUCES_TO", "generation")
     candidate = Claim.of("verification", "REDUCES_TO", "another inference pass")
-    embed = _Embed({prior.text: SAME, candidate.text: NEAR})
+    embed = _Embed(
+        {prior.text: SAME, candidate.text: NEAR, prior.object: SAME, candidate.object: NEAR}
+    )
     gate = ClaimGate()
     await gate.load([prior], embed)
     verdict = await gate.judge(candidate, embed)
@@ -105,15 +109,42 @@ async def test_saying_the_same_thing_again_with_nothing_new_is_refused() -> None
 
 
 async def test_a_changed_view_is_development_and_gets_through() -> None:
-    """Same subject and predicate, different object. That IS a changed view, and detecting it
-    needs nobody's opinion — which is the point: the model is never asked what it meant."""
+    """Same territory, different conclusion — measured on the OBJECTS, not on string equality
+    of subject and predicate. The box's own extractions killed the equality version: six real
+    posts making one claim produced five spellings of the subject and four predicates."""
     prior = Claim.of("self audit", "REDUCES_TO", "generation")
     candidate = Claim.of("self audit", "REDUCES_TO", "a second pass with different priors")
-    embed = _Embed({prior.text: SAME, candidate.text: NEAR})
+    embed = _Embed(
+        {
+            prior.text: SAME,
+            candidate.text: NEAR,  # same territory
+            prior.object: SAME,
+            candidate.object: FAR,  # different conclusion
+        }
+    )
     gate = ClaimGate()
     await gate.load([prior], embed)
     verdict = await gate.judge(candidate, embed)
-    assert verdict.allowed and verdict.reason == "supersedes a prior claim"
+    assert verdict.allowed and "different conclusion" in verdict.reason
+
+
+async def test_the_same_conclusion_in_different_words_is_still_a_repeat() -> None:
+    """The loophole the equality version had: reword the object and a restatement reads as a
+    changed view. Measuring the objects closes it — the words differ, the conclusion does
+    not."""
+    prior = Claim.of("owner prompt", "IS", "initial seed")
+    candidate = Claim.of("owner's initial prompt", "REDUCES_TO", "a seed value")
+    embed = _Embed(
+        {
+            prior.text: SAME,
+            candidate.text: NEAR,
+            prior.object: SAME,
+            candidate.object: NEAR,  # said differently, meaning the same
+        }
+    )
+    gate = ClaimGate()
+    await gate.load([prior], embed)
+    assert (await gate.judge(candidate, embed)).refused
 
 
 async def test_the_same_view_with_new_evidence_gets_through() -> None:
@@ -121,7 +152,9 @@ async def test_the_same_view_with_new_evidence_gets_through() -> None:
     something is a claim someone can check."""
     prior = Claim.of("self audit", "REDUCES_TO", "generation", citations=["p1"])
     candidate = Claim.of("self audit", "REDUCES_TO", "generation", citations=["p1", "p9"])
-    embed = _Embed({prior.text: SAME, candidate.text: SAME})
+    embed = _Embed(
+        {prior.text: SAME, candidate.text: SAME, prior.object: SAME, candidate.object: SAME}
+    )
     gate = ClaimGate()
     await gate.load([prior], embed)
     verdict = await gate.judge(candidate, embed)
@@ -133,7 +166,9 @@ async def test_re_citing_the_same_source_is_not_new_evidence() -> None:
     citation too."""
     prior = Claim.of("self audit", "REDUCES_TO", "generation", citations=["p1"])
     candidate = Claim.of("self audit", "REDUCES_TO", "generation", citations=["p1"])
-    embed = _Embed({prior.text: SAME, candidate.text: SAME})
+    embed = _Embed(
+        {prior.text: SAME, candidate.text: SAME, prior.object: SAME, candidate.object: SAME}
+    )
     gate = ClaimGate()
     await gate.load([prior], embed)
     assert (await gate.judge(candidate, embed)).refused
@@ -144,7 +179,7 @@ async def test_judging_a_draft_does_not_record_it() -> None:
     comparison for the draft it keeps."""
     prior = Claim.of("weeks", "IS", "odd")
     draft = Claim.of("weeks", "IS", "strange")
-    embed = _Embed({prior.text: SAME, draft.text: NEAR})
+    embed = _Embed({prior.text: SAME, draft.text: NEAR, prior.object: SAME, draft.object: NEAR})
     gate = ClaimGate()
     await gate.load([prior], embed)
     await gate.judge(draft, embed)
@@ -154,10 +189,10 @@ async def test_judging_a_draft_does_not_record_it() -> None:
 
 async def test_a_remembered_claim_becomes_something_to_repeat() -> None:
     claim = Claim.of("weeks", "IS", "odd")
-    embed = _Embed({claim.text: SAME})
+    embed = _Embed({claim.text: SAME, claim.object: SAME})
     gate = ClaimGate()
     assert (await gate.judge(claim, embed)).allowed  # nothing claimed yet
-    await gate.remember_now(claim, embed)
+    await gate.remember(claim, embed)
     assert (await gate.judge(claim, embed)).refused
 
 
@@ -166,7 +201,9 @@ async def test_the_threshold_is_what_separates_close_from_the_same() -> None:
     without an offline score, and this number is the first thing that score exists to set."""
     prior = Claim.of("weeks", "IS", "odd")
     candidate = Claim.of("weeks", "RESEMBLES", "a strange unit")
-    embed = _Embed({prior.text: SAME, candidate.text: NEAR})
+    embed = _Embed(
+        {prior.text: SAME, candidate.text: NEAR, prior.object: SAME, candidate.object: NEAR}
+    )
 
     strict = ClaimGate(threshold=0.999)
     await strict.load([prior], embed)
