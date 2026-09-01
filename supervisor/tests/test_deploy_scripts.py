@@ -1192,3 +1192,49 @@ def test_the_stuck_message_says_reboot_not_replug() -> None:
     assert stuck, "the still-claimed branch should report what to do"
     assert "reboot" in stuck[0].lower()
     assert "re-plug" not in stuck[0].lower()
+
+
+# --- SDR: the sidecar's compose wiring (SDR_RADIO_PLAN.md, S0b-ii) -------------
+
+COMPOSE = DEPLOY / "docker-compose.yml"
+
+
+def test_sdr_service_is_profile_gated() -> None:
+    # A stock deploy has no radio; the service must never start on one.
+    assert "profiles: [sdr]" in COMPOSE.read_text()
+
+
+def test_sdr_passes_through_the_whole_usb_tree_not_one_node() -> None:
+    # devnum increments on every re-plug, so pinning /dev/bus/usb/001/005 breaks the
+    # first time the dongle moves. The radio is selected by serial instead.
+    # Comments legitimately NAME a pinned node to explain why it is wrong, so look at
+    # the mapping lines only.
+    mappings = [
+        ln
+        for ln in COMPOSE.read_text().splitlines()
+        if "/dev/bus/usb" in ln and "#" not in ln
+    ]
+    assert mappings == ["      - /dev/bus/usb:/dev/bus/usb"], mappings
+
+
+def test_sdr_network_is_egress_free_and_declared() -> None:
+    # A receiver has no business reaching the internet; topology, not policy.
+    compose = COMPOSE.read_text()
+    radio = compose.index("\n  radio:\n")
+    assert "internal: true" in compose[radio : radio + 200]
+
+
+def test_only_the_api_and_the_sdr_join_the_radio_network() -> None:
+    compose = COMPOSE.read_text()
+    joiners = [ln for ln in compose.splitlines() if "networks:" in ln and "radio" in ln]
+    assert len(joiners) == 2, f"unexpected members of the radio network: {joiners}"
+    assert any("[radio]" in ln for ln in joiners)
+    assert any("edge" in ln for ln in joiners)
+
+
+def test_the_sdr_image_installs_the_radio_tools() -> None:
+    # A sidecar that starts without rtl_fm fails three layers from the cause, so the
+    # Dockerfile proves the tool exists at BUILD time.
+    dockerfile = (DEPLOY / "Dockerfile.sdr").read_text()
+    assert "rtl-sdr" in dockerfile
+    assert "command -v rtl_fm" in dockerfile

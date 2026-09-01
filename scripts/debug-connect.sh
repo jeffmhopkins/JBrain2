@@ -395,6 +395,24 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
+  sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?
+
+  tune) # <MHz> [--seconds N] [--mode fm|nfm|wbfm|am|usb|lsb] [--gain G] [--no-transcribe]
+    f="${1:?usage: debug-connect.sh tune <MHz> [--seconds N] [--mode M] [--gain G]}"; shift
+    SECS=8; MODE=fm; G=; TR=true
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --seconds) SECS="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
+        --gain) G="$2"; shift 2 ;;
+        --no-transcribe) TR=false; shift ;;
+        *) shift ;;
+      esac
+    done
+    q="frequency_mhz=$f&seconds=$SECS&mode=$MODE&transcribe=$TR"
+    [ -n "$G" ] && q="$q&gain=$G"
+    _call POST "/api/debug/sdr/capture?$q" | _pp ;;
+
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"
     path="${2:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️ S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
+> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -197,11 +197,22 @@ privileged one — the same property `host_kernel_write` already relies on for
 
 ### S0b-ii — the sidecar + client, then the gate
 
-Build the `sdr` image (`librtlsdr`, `rtl_fm`, `rtl_power`), add the profile-guarded
-compose service with `/dev/bus/usb` passed through on an egress-free network, settle
-how the container gets permission to open the node (run-as-root vs a udev rule plus a
-joined GID, mirroring the `/dev/dri` GID-joining the GPU services already do), and add
-the pinned-URL client on the api with a `/health` probe.
+**Built.** The `sdr` image (`python:3.12-slim` + the `rtl-sdr` apt package; the service
+is stdlib `http.server` piping to `rtl_fm`, so there are no new Python dependencies),
+the profile-guarded compose service with the whole `/dev/bus/usb` tree passed through on
+the egress-free `radio` network, a pinned `sdr_url` on the api, and
+`POST /api/debug/sdr/capture` — tune, record, transcribe, in one console command.
+
+The permission question resolved to **run as root**, deliberately: the alternative (a
+udev rule assigning a group, then joining that GID) solves a problem this container does
+not have. It is egress-free, holds no owner data, and its entire job is to open one USB
+device. The GPU services join host GIDs because they must run non-root for other reasons.
+
+Two design points carried from earlier waves: the sidecar holds a **lock** and refuses a
+second caller with `409` rather than queueing (one tuner — an unknown wait is worse than
+a plain no), and the capture reports **`peak`/`heard_something`** alongside the
+transcript, because a dead antenna and a working capture of silence produce audio of
+identical length and whisper will confabulate words over noise.
 
 **This is the blocking gate.** S0a proved the device is visible and nameable and
 S0b-i frees it; S0b-ii must still answer, on the real box with the real antenna: does

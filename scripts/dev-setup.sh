@@ -114,6 +114,11 @@ BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}"  # bot-challe
 # it carries Chromium plus its ~80 runtime apt packages, so a cold build on first
 # `jbrain up` is a long, surprising wait.
 HTMLRENDER_BASE_IMAGE="${HTMLRENDER_BASE_IMAGE:-mcr.microsoft.com/playwright/python:v1.49.1-noble}"
+# Base for the locally-built `sdr` sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately
+# a plain slim Python: the service is stdlib plus the `rtl-sdr` apt package, so nothing
+# else needs pre-pulling. Listed here so a new dependency in that image is a visible edit
+# to this file (CLAUDE.md #8) rather than a silent one in the Dockerfile.
+SDR_BASE_IMAGE="${SDR_BASE_IMAGE:-python:3.12-slim}"
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
