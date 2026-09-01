@@ -24698,6 +24698,9 @@ button.task-band:active {
   padding: 14px;
   text-align: center;
 }
+/* The readout is also the way in to typing a frequency, so it is a button — but it
+   must still READ as the display it is, not as a chip. No border, no fill: the only
+   affordance is that it responds. */
 .sdr-freq {
   font-family: var(--font-mono);
   font-size: 34px;
@@ -24705,6 +24708,38 @@ button.task-band:active {
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: center;
+}
+.sdr-freq:active {
+  opacity: 0.6;
+}
+.sdr-freq-edit {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  cursor: auto;
+}
+.sdr-freq-input {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  width: 5.5ch;
+  border: 0;
+  border-bottom: 2px solid var(--accent);
+  background: none;
+  color: inherit;
+  padding: 0 0 2px;
+  text-align: center;
+}
+.sdr-freq-input:focus {
+  outline: none;
 }
 .sdr-unit {
   font-size: var(--fs-note);
@@ -24734,12 +24769,49 @@ button.task-band:active {
   font-size: 20px;
   cursor: pointer;
 }
+/* The step is a control, not a caption: it reads as tappable (a bordered chip) so
+   the owner finds the picker without being told it is there. */
 .sdr-stepsize {
   font-size: var(--fs-micro);
   color: var(--text-3);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   min-width: 66px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.sdr-stepsize[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sdr-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sdr-stepopt {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.sdr-stepopt-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+/* The audio element is moved in and out of this slot as the sheet mounts, so the
+   slot styles the child rather than itself (sdrAudio.ts). */
+.sdr-audio-slot {
+  display: block;
 }
 /* --mode is unset inside a sheet, so the segmented row is rebound to the accent
    the same way the model sheet's reasoning pills are. */

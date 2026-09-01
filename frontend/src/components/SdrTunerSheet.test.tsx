@@ -36,8 +36,79 @@ describe("the tuner sheet", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
 
-    // The id is what stops a stale client moving a session that has been replaced.
-    await waitFor(() => expect(tune).toHaveBeenCalledWith(99.325, undefined, "abc123"));
+    // wbfm opens on the 100 kHz step, so broadcast FM is one tap per channel rather
+    // than the eight a fixed 25 kHz cost. The id is what stops a stale client moving
+    // a session that has been replaced.
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(99.4, undefined, "abc123"));
+  });
+
+  it("opens on a step that suits the mode", () => {
+    const { unmount } = render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: /Tuning step, 100 kHz/ })).toBeInTheDocument();
+    unmount();
+
+    // Narrowband voice sits on a raster a 100 kHz step would jump straight over, so
+    // the default follows the mode rather than being one value for every band.
+    render(<SdrTunerSheet listening={{ ...LISTENING, mode: "fm" }} onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: /Tuning step, 25 kHz/ })).toBeInTheDocument();
+  });
+
+  it("lets the owner pick the step, and then tunes by it", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tuning step/ }));
+    fireEvent.click(screen.getByRole("button", { name: "12.5 kHz", pressed: false }));
+
+    // The picker closes on choice and the chip reports what is now in force.
+    expect(screen.queryByRole("button", { name: "12.5 kHz" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Tuning step, 12.5 kHz/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(99.3125, undefined, "abc123"));
+  });
+
+  it("tunes to a frequency typed into the readout", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "162.55" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    // Stepping reaches a neighbour; typing is how you leave the band entirely.
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(162.55, undefined, "abc123"));
+  });
+
+  it("refuses a frequency the radio cannot reach, without calling the radio", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "5000" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    // The message names the range: a bare refusal leaves the owner guessing at it.
+    expect(await screen.findByText("This radio tunes 24-1766 MHz.")).toBeInTheDocument();
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("abandons the edit on Escape without retuning", () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "1" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+
+    // Escape must reach the field, not the Sheet: closing the whole tuner over a
+    // mistyped digit would be a rude way to lose the edit.
+    expect(screen.getByRole("dialog", { name: "Tuned station" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Tap to enter a frequency/ })).toBeInTheDocument();
+    expect(tune).not.toHaveBeenCalled();
   });
 
   it("releases the radio and closes", async () => {

@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, api } from "./api/client";
+import { playSdrAudio, stopSdrAudio } from "./sdrAudio";
 
 export interface SdrListening {
   session_id: string;
@@ -45,7 +46,17 @@ let timer: number | null = null;
 let inFlight = false;
 
 function publish(next: SdrState): void {
+  const was = published.listening?.session_id ?? null;
+  const now = next.listening?.session_id ?? null;
   published = next;
+  // Audio follows the LEASE, not the sheet: it starts when a session appears and
+  // stops when it goes, so closing the tuner does not silence the radio (sdrAudio.ts).
+  // A retune keeps the session id, so this deliberately does not fire on one — the
+  // stream survives the sidecar relaunching its encoder underneath it.
+  if (now !== was) {
+    if (now) playSdrAudio();
+    else stopSdrAudio();
+  }
   for (const listener of listeners) listener(next);
 }
 

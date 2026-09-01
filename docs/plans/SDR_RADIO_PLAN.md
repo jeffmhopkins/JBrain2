@@ -60,7 +60,7 @@ Three consequences drive the whole design:
 | D3 | **Transcripts are external-corpus sources, searchable.** | Reuses the `persist_analysis` pattern so "what did they say about Oak Street" works through normal hybrid search. Explicitly **never notes** — notes are the sole sources of truth, and noisy machine transcription must not reach the wiki. |
 | D4 | **Phase 2 auto-record = squelch watch on a channel list.** | The classic scanner behaviour and the one that feeds the library steadily. Deferred out of v1 (D2); its lease implications are designed for now (§4.2) so Phase 2 is additive. |
 | D5 | **Waterfall = quantized power bins over binary WebSocket, rendered to canvas.** | ~1024 bins × 10 fps × 1 byte ≈ 10 KB/s — trivial on LAN, phone-friendly, and zoom/palette stay client-side. Server-rendered PNG strips would be a video stream for no benefit. |
-| D6 | **Audio = Opus over HTTP chunked, played by a plain `<audio>` element.** | ~2–3 s latency is irrelevant for scanner listening, and it is a fraction of the code of WebSocket-Opus-into-MediaSource. Reversible: the transport is behind one endpoint, so a low-latency path can replace it without touching the UI's model. |
+| D6 | **Audio = MP3 over HTTP chunked, played by a plain `<audio>` element.** | ~2–3 s latency is irrelevant for scanner listening, and it is a fraction of the code of WebSocket-into-MediaSource. Reversible: the transport is behind one endpoint, so a low-latency path can replace it without touching the UI's model. **Amended 2026-09-01 after the first on-box listen:** this shipped as Opus-in-WebM and did not work, because a container with an initialisation header only decodes for a listener who received that header. Listeners here join late and repeatedly — one lease outlives many openings of the sheet — so late joiners got a headerless stream, and a retune spliced a second header into connections already in flight. MP3 is self-framing: any byte offset is a valid place to start. |
 | D7 | **A lease-gated tuner control on the omnibox, in addition to the launcher.** | The composer grows a radio icon left of the attach clip, shown *only* while a tool holds the lease; tapping it opens the tuned-station controls. **The icon is the lease** — present means this session holds the radio, absent means idle or held elsewhere — so the arbitration in §4.2 stops being invisible plumbing. Follows the shipped plan-pill precedent (a live-state-gated composer affordance that opens a `<Sheet>`). **Chosen 2026-09-01: the bottom-sheet variant** — `../mocks/sdr-tuner/a-tuner-sheet.html`, now the binding spec; the icon stays a pure opener. |
 
 ## 4. Architecture — where it slots
@@ -347,7 +347,7 @@ model input.
 ### Control API (owner-only, launcher-facing)
 
 `GET /api/sdr/status` · `POST /api/sdr/tune` · `POST /api/sdr/listen` (start/stop) ·
-`POST /api/sdr/record` (start/stop) · `GET /api/sdr/audio` (chunked Opus, D6) ·
+`POST /api/sdr/record` (start/stop) · `GET /api/sdr/audio` (chunked MP3, D6) ·
 `WS /api/sdr/waterfall` (binary power bins, D5) · `GET /api/sdr/recordings`.
 
 ## 7. Open decisions (deferred, not dropped)

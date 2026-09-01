@@ -1,4 +1,4 @@
-"""The live listening session: one tuned radio, streamed as Opus while it runs.
+"""The live listening session: one tuned radio, streamed as MP3 while it runs.
 
 This is the lease made real. The box has exactly one tuner, so there is at most one
 Session at a time and everything else is told 409 rather than queued — an unknown
@@ -12,14 +12,28 @@ play that. We could pipe rtl_fm straight into the encoder, but then nothing can 
 the samples — and the level meter is the one honest signal that separates a working
 capture from a dead antenna (whisper will confabulate words over noise, so the
 transcript cannot be trusted for that judgement). So the PCM comes through Python:
-we measure it, then write it on to ffmpeg, which encodes Opus in a WebM container
-that an ordinary `<audio>` element plays from a chunked response.
+we measure it, then write it on to ffmpeg, which encodes MP3 that an ordinary
+`<audio>` element plays from a chunked response.
 
-**Retuning restarts the pipeline.** `rtl_fm` cannot be retuned in place. A tune
-therefore tears down and relaunches at the new frequency, but keeps the SESSION id,
-so the UI sees a continuous session with a brief audio gap rather than a session
-that vanished and came back — which would flicker the icon and, worse, read as the
-lease having been dropped.
+**Why MP3 and not Opus-in-WebM.** Listeners join LATE and REPEATEDLY: one session
+outlives many openings of the tuner sheet, and a retune relaunches the encoder under
+whoever is already listening. A container with an initialisation header — WebM — only
+decodes for a listener who was there to receive that header, so everyone who attached
+later got a headerless stream their browser could not start, and a retune spliced a
+SECOND header into connections already in progress. MP3 has no header: it is a
+sequence of self-describing frames, so a listener can begin at any byte and a
+relaunched encoder simply continues the stream. That is the property this shape needs,
+and it is why internet radio has been served this way for thirty years.
+
+**Retuning restarts the pipeline, and must not hang up on anyone.** `rtl_fm` cannot be
+retuned in place, so a tune tears down and relaunches at the new frequency while
+keeping the SESSION id — the UI sees a continuous session with a brief audio gap
+rather than one that vanished and came back, which would flicker the icon and read as
+the lease having been dropped. Subscribers stay attached across that restart: the
+end-of-stream sentinel means the SESSION is over, never that its pipeline is being
+replaced. Sending it on a retune closed every listener's connection, and because the
+browser had seconds of audio buffered, it played on and then went silent — a failure
+that looks like a dead radio several seconds after the thing that actually caused it.
 """
 
 from __future__ import annotations
@@ -39,7 +53,9 @@ MAX_HZ = 1_766_000_000
 MODES = {"fm": "fm", "nfm": "fm", "wbfm": "wbfm", "am": "am", "usb": "usb", "lsb": "lsb"}
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
+AUDIO_BITRATE = "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
+AUDIO_CONTENT_TYPE = "audio/mpeg"
 _CHUNK = 4096
 
 # A subscriber that stops reading (a closed tab, a stalled phone) must not wedge the
@@ -117,6 +133,10 @@ class Session:
         self._subs: set[queue.Queue[bytes | None]] = set()
         self._lock = threading.Lock()
         self._stopping = False
+        # A retune replaces the pipeline under listeners who are still attached. It
+        # sets this so the audio pump tears down WITHOUT telling them the stream is
+        # over — the sentinel means the session ended, not that ffmpeg was relaunched.
+        self._restarting = False
         self._rtl: subprocess.Popen[bytes] | None = None
         self._enc: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
@@ -135,14 +155,14 @@ class Session:
         return [*cmd, "-"]
 
     def _enc_cmd(self) -> list[str]:
-        # Opus in WebM: what a plain <audio src> plays from a chunked response.
-        # -flush_packets keeps latency down; without it the muxer buffers and the
-        # first sound arrives seconds late, which reads as a broken radio.
+        # MP3, because a listener must be able to join mid-stream (see the module
+        # docstring). -flush_packets keeps latency down; without it the muxer buffers
+        # and the first sound arrives seconds late, which reads as a broken radio.
         return [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-f", "s16le", "-ar", str(AUDIO_RATE), "-ac", "1", "-i", "-",
-            "-c:a", "libopus", "-b:a", "24k", "-application", "voip",
-            "-f", "webm", "-flush_packets", "1", "-",
+            "-c:a", "libmp3lame", "-b:a", str(AUDIO_BITRATE),
+            "-f", "mp3", "-flush_packets", "1", "-",
         ]  # fmt: skip
 
     def _start_pipeline(self) -> None:
@@ -167,9 +187,29 @@ class Session:
         self._threads = [
             threading.Thread(target=self._pump_pcm, daemon=True),
             threading.Thread(target=self._pump_audio, daemon=True),
+            threading.Thread(target=self._drain_tuner_log, daemon=True),
         ]
         for thread in self._threads:
             thread.start()
+
+    def _drain_tuner_log(self) -> None:
+        """Read rtl_fm's stderr, forever, into the container log.
+
+        Two reasons, and the first is not optional: an unread pipe fills at 64 KB and
+        then BLOCKS the writer, so a chatty tuner would wedge itself mid-session with
+        no way to tell from outside. The second is that when the radio misbehaved
+        there was nowhere to look — rtl_fm's own account of what it tuned and how it
+        is coping never reached `docker logs`. Now it does."""
+        rtl = self._rtl
+        if rtl is None or rtl.stderr is None:
+            return
+        try:
+            for line in rtl.stderr:
+                text = line.decode("utf-8", "replace").rstrip()
+                if text:
+                    print(f"[rtl_fm] {text}", flush=True)  # noqa: T201
+        except (ValueError, OSError):
+            pass  # the process went away; teardown handles it
 
     def _pump_pcm(self) -> None:
         """rtl_fm -> (measure) -> ffmpeg. The tap that makes the level meter honest."""
@@ -213,13 +253,17 @@ class Session:
         except (ValueError, OSError):
             pass
         finally:
-            with self._lock:
-                subs = list(self._subs)
-            for sub in subs:
-                try:
-                    sub.put_nowait(None)  # sentinel: the stream ended
-                except queue.Full:
-                    pass
+            # Only when the SESSION is over. On a retune the listeners keep their
+            # connections and pick up the new pipeline's frames mid-stream, which is
+            # exactly what MP3's self-framing buys us.
+            if not self._restarting:
+                with self._lock:
+                    subs = list(self._subs)
+                for sub in subs:
+                    try:
+                        sub.put_nowait(None)  # sentinel: the stream ended
+                    except queue.Full:
+                        pass
 
     def _kill(self) -> None:
         for proc in (self._rtl, self._enc):
@@ -237,15 +281,22 @@ class Session:
     def tune(self, frequency_hz: int, mode: str | None = None) -> None:
         """Retune in place. Restarts the pipeline but keeps the session id."""
         wanted = validate(frequency_hz, mode or self.mode)
+        self._restarting = True
         self._stopping = True
-        self._kill()
-        for thread in self._threads:
-            thread.join(timeout=2)
-        self._stopping = False
-        self.frequency_hz = frequency_hz
-        self.mode = wanted
-        self.peak = 0.0
-        self._start_pipeline()
+        try:
+            self._kill()
+            for thread in self._threads:
+                thread.join(timeout=2)
+            self._stopping = False
+            self.frequency_hz = frequency_hz
+            self.mode = wanted
+            self.peak = 0.0
+            self._start_pipeline()
+        finally:
+            # Cleared only after the pumps have exited and the new ones are up, so the
+            # old pump's teardown sees it set and keeps every listener attached. If the
+            # relaunch raises, clearing it here means a later stop() still says so.
+            self._restarting = False
 
     def subscribe(self) -> queue.Queue[bytes | None]:
         sub: queue.Queue[bytes | None] = queue.Queue(maxsize=_SUB_QUEUE_CHUNKS)

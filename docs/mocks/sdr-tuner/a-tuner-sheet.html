@@ -17,6 +17,14 @@
   · Content order in the sheet, top to bottom: frequency readout + station name +
     tune steppers · mode segments · signal meter · squelch slider · transport
     (play/pause, waveform, elapsed) · record + release actions.
+  · The readout is TAPPABLE: it swaps for a numeric field (inputMode="decimal", so
+    the phone raises a number pad with a decimal point) to type a frequency
+    outright. Enter or blur commits, Escape abandons without retuning. Stepping
+    reaches a neighbour; typing is how you leave the band entirely.
+  · The step size is TAPPABLE too, opening a list of the real channel spacings
+    (1 / 5 / 9 / 10 / 12.5 / 25 / 50 / 100 / 200 kHz). It opens on a step that suits
+    the mode — 100 kHz for wbfm, 10 kHz for am, 25 kHz otherwise — because a fixed
+    25 kHz made a broadcast-FM station eight taps away. An explicit pick wins.
   · Record is ARM-THEN-CONFIRM (tap, "Tap again", 2.6s window), per the
     destructive-action doctrine in ../../reference/DESIGN.md.
   · Release is a first-class action in the sheet, and it makes the icon disappear.
@@ -35,7 +43,7 @@
   WHAT THIS MOCK FAKES
   Signal, waveform and elapsed time tick from a timer; the deck above the phone
   stands in for the sdr_listen tool call that takes the lease. Real audio arrives
-  as chunked Opus through a plain <audio> element (decision D6).
+  as chunked MP3 through a plain <audio> element (decision D6).
 
   Tokens only — no raw hex outside :root / [data-theme="light"].
   Values match frontend/src/styles/tokens.css and docs/reference/DESIGN.md.
@@ -121,13 +129,13 @@
   .sheet-note{font-size:12.5px;color:var(--text-2);line-height:1.5;margin-bottom:14px;}
 
   .readout{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:14px;text-align:center;margin-bottom:12px;}
-  .freq{font-family:var(--mono);font-size:34px;font-weight:600;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .freq{font-family:var(--mono);font-size:34px;cursor:pointer;font-weight:600;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1;}
   .freq .u{font-size:15px;color:var(--text-2);font-weight:400;margin-left:4px;}
   .stn{font-size:13px;color:var(--text-2);margin-top:5px;}
   .tuner{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;}
   .step{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--text-2);width:44px;height:44px;border-radius:var(--r-input);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
   .step:hover{color:var(--text);}
-  .stepsz{font-size:11px;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;min-width:66px;}
+  .stepsz{font-size:11px;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;min-width:66px;border:1px solid var(--border);border-radius:999px;background:var(--surface);padding:6px 10px;cursor:pointer;}
 
   .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin:14px 2px 8px;}
   .segsm{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;}
@@ -240,7 +248,7 @@
       <div class="stn" id="stn">NOAA Weather Radio · Melbourne FL</div>
       <div class="tuner">
         <button class="step" onclick="tune(-1)" aria-label="Tune down"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <span class="stepsz" id="stepsz">25 kHz</span>
+        <button class="stepsz" id="stepsz" aria-haspopup="listbox">100 kHz</button>
         <button class="step" onclick="tune(1)" aria-label="Tune up"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
     </div>

@@ -161,4 +161,4 @@ async def audio(request: Request, settings: SettingsDep, _owner: OwnerDep) -> St
         finally:
             await client.aclose()
 
-    return StreamingResponse(pump(), media_type="audio/webm", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(pump(), media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
