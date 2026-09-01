@@ -1429,6 +1429,148 @@ async def host_metrics(request: Request, settings: SettingsDep, _p: DebugDep) ->
     return cast(dict[str, object], resp.json())
 
 
+# Kernel drivers that claim an RTL2832U dongle for DVB-T reception. Any of them
+# bound to the device means userspace (librtlsdr) cannot open it — the blacklist
+# step in the SDR plan's S0 exists precisely to keep them off it.
+_DVB_DRIVERS: frozenset[str] = frozenset({"dvb_usb_rtl28xxu", "rtl2832", "rtl2830", "dvb_usb_v2"})
+
+
+class SdrDeviceOut(BaseModel):
+    name: str
+    usb_id: str
+    manufacturer: str | None
+    product: str | None
+    serial: str | None
+    device_node: str | None
+    drivers: list[str]
+    claimed_by_dvb: bool
+
+
+class SdrProbeOut(BaseModel):
+    found: bool
+    ready: bool
+    summary: str
+    next_step: str
+    sysfs_readable: bool
+    usb_device_count: int
+    sdrs: list[SdrDeviceOut]
+
+
+def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
+    """Turn the supervisor's raw USB scan into an answer to one question: can this
+    box drive an SDR yet, and if not, what is in the way?
+
+    Kept separate from the route so it is testable without a supervisor."""
+    readable = bool(payload.get("sysfs_readable"))
+    devices = cast(list[dict[str, Any]], payload.get("devices") or [])
+    raw_sdrs = cast(list[dict[str, Any]], payload.get("sdrs") or [])
+
+    sdrs = [
+        SdrDeviceOut(
+            name=d["name"],
+            usb_id=d["usb_id"],
+            manufacturer=d.get("manufacturer"),
+            product=d.get("product"),
+            serial=d.get("serial"),
+            device_node=d.get("device_node"),
+            drivers=list(d.get("drivers") or []),
+            claimed_by_dvb=bool(set(d.get("drivers") or []) & _DVB_DRIVERS),
+        )
+        for d in raw_sdrs
+    ]
+
+    if not readable:
+        return SdrProbeOut(
+            found=False,
+            ready=False,
+            summary="Cannot tell \u2014 the supervisor cannot read /sys/bus/usb.",
+            next_step="Check that the supervisor container is up; this read needs no "
+            "device passthrough, only a readable /sys.",
+            sysfs_readable=False,
+            usb_device_count=len(devices),
+            sdrs=[],
+        )
+
+    if not sdrs:
+        return SdrProbeOut(
+            found=False,
+            ready=False,
+            summary=f"No RTL-SDR found. The scan itself worked \u2014 {len(devices)} USB "
+            f"device(s) enumerated.",
+            next_step="Plug the dongle in (or re-seat it) and probe again. If it is "
+            "plugged in, report its USB id from the full device list so it can be "
+            "added to the known-SDR table.",
+            sysfs_readable=True,
+            usb_device_count=len(devices),
+            sdrs=[],
+        )
+
+    claimed = [d for d in sdrs if d.claimed_by_dvb]
+    named = sdrs[0].product or sdrs[0].usb_id
+    if claimed:
+        holder = ", ".join(
+            sorted({drv for d in claimed for drv in d.drivers if drv in _DVB_DRIVERS})
+        )
+        return SdrProbeOut(
+            found=True,
+            ready=False,
+            summary=f"Found {named} ({sdrs[0].usb_id}), but the kernel DVB driver "
+            f"{holder} has claimed it.",
+            next_step=f"Blacklist {holder} on the host and re-plug (or reboot). Until "
+            "then librtlsdr cannot open the device.",
+            sysfs_readable=True,
+            usb_device_count=len(devices),
+            sdrs=sdrs,
+        )
+
+    other = sorted({drv for d in sdrs for drv in d.drivers})
+    if other:
+        return SdrProbeOut(
+            found=True,
+            ready=False,
+            summary=f"Found {named} ({sdrs[0].usb_id}), claimed by {', '.join(other)}.",
+            next_step="Identify what bound that driver before passing the device through.",
+            sysfs_readable=True,
+            usb_device_count=len(devices),
+            sdrs=sdrs,
+        )
+
+    node = sdrs[0].device_node or "/dev/bus/usb"
+    return SdrProbeOut(
+        found=True,
+        ready=True,
+        summary=f"Found {named} ({sdrs[0].usb_id}), unclaimed \u2014 userspace can open it.",
+        next_step=f"Pass {node} (or all of /dev/bus/usb) into the sdr service and "
+        "librtlsdr should enumerate it.",
+        sysfs_readable=True,
+        usb_device_count=len(devices),
+        sdrs=sdrs,
+    )
+
+
+@router.get("/sdr")
+async def sdr_probe(request: Request, settings: SettingsDep, _p: DebugDep) -> SdrProbeOut:
+    """Is the USB SDR dongle actually there, what exactly is it called, and is
+    anything holding it?
+
+    The S0 spike of `docs/plans/SDR_RADIO_PLAN.md`, and deliberately the cheapest
+    possible one: enumerating and NAMING a USB device is a sysfs read, so this works
+    with no device passthrough, no privileges, and no sdr container \u2014 it can answer
+    "will this work?" before any of that exists. Proxied from the supervisor (the only
+    container that reads /sys), like host metrics.
+
+    The answer that matters is `ready`. A dongle found but claimed by the kernel's
+    DVB-T driver is the expected first result on a stock Ubuntu box and is exactly what
+    the blacklist step fixes; `next_step` says so rather than leaving the reader to
+    know it."""
+    request.state.debug_detail = "sdr usb probe"
+    resp = await _supervisor(request).get(
+        "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    resp.raise_for_status()
+    return _sdr_verdict(cast(dict[str, Any], resp.json()))
+
+
 @router.get("/update/status")
 async def update_status(
     request: Request,

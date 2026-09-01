@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-09-01
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -23,7 +23,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `worker` | same image as `api` | Postgres job-queue consumer: extraction, chunking, embedding, analysis, wiki builds, the scheduled sweeps. | internal |
 | `db` | TimescaleDB-HA (Postgres 17 + Timescale + PostGIS + pgvector) | The single stateful service — relational + vector + FTS + time-series + geo + job queue + workflow state. | internal |
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`bge-small-en-v1.5`, 384-dim, 1 GB cap). Model = env var; swap ⇒ re-embed job. | internal |
-| `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset) behind an internal token. Drives the Ops screen. | internal |
+| `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset, plus `/metrics` and `/usb` host reads) behind an internal token. Drives the Ops screen. | internal |
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search` (general, + infoboxes/instant answers), `news_search` (news category, dated leads), and `science_search` (science category, paper leads). Reached only by the KB-blind `jerv` and the jcode search bridge (the sandbox has no route here — the api brokers). | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
 | `byparr` | Byparr (stealth headless browser, FlareSolverr-compatible) | `web_fetch`'s challenge-solver leg (direct → reader → byparr → Tavily): solves bot-wall challenges and returns the solved HTML; a genuine miss falls through to Tavily. See `../plans/CHALLENGE_SOLVER_PLAN.md`. | internal |
