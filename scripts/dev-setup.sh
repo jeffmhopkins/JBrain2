@@ -119,6 +119,10 @@ HTMLRENDER_BASE_IMAGE="${HTMLRENDER_BASE_IMAGE:-mcr.microsoft.com/playwright/pyt
 # else needs pre-pulling. Listed here so a new dependency in that image is a visible edit
 # to this file (CLAUDE.md #8) rather than a silent one in the Dockerfile.
 SDR_BASE_IMAGE="${SDR_BASE_IMAGE:-python:3.12-slim}"
+# The sdr image also apt-installs `rtl-sdr` (librtlsdr + rtl_fm) and `ffmpeg` (the
+# Opus encoder for the live listening stream). Both are image-level, not Python
+# dependencies, and are named here so a change to them is a visible edit to this
+# file (CLAUDE.md #8) rather than a silent one in the Dockerfile.
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then

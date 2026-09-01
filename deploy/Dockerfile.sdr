@@ -19,18 +19,25 @@ FROM python:3.12-slim
 
 # rtl-sdr brings librtlsdr plus rtl_fm / rtl_power / rtl_test. usbutils is not
 # needed — enumeration happens through sysfs in the supervisor, not here.
+#
+# ffmpeg is the encoder for the LIVE listening path: rtl_fm emits raw PCM, which no
+# browser plays, and Opus-in-WebM is what an ordinary <audio> element accepts from a
+# chunked response. It is a real ~150 MB dependency on an opt-in profile, taken
+# rather than hand-rolling an Opus muxer.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends rtl-sdr \
+    && apt-get install -y --no-install-recommends rtl-sdr ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY deploy/sdr/server.py ./server.py
+COPY deploy/sdr/listen.py ./listen.py
 
 # Fail the BUILD, not the first capture: this is the check that would have caught a
 # sidecar shipping without its radio tools, whose only on-box symptom is a capture
 # failing three layers away from the cause (the htmlrender image learned this the
 # hard way — see its Dockerfile).
-RUN python -c "import server" && command -v rtl_fm >/dev/null
+RUN python -c "import server" && command -v rtl_fm >/dev/null \
+    && command -v ffmpeg >/dev/null && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus
 
 EXPOSE 8000
 

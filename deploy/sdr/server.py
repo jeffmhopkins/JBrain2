@@ -33,7 +33,11 @@ import subprocess
 import threading
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
+
+from listen import SdrBusy as ListenBusy
+from listen import SdrError as ListenError
+from listen import Tuner
 
 # The R820T2 tuner's real range. Anything outside it cannot be tuned, so it is
 # rejected here rather than handed to rtl_fm to fail on. HF below 24 MHz needs
@@ -53,6 +57,11 @@ WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wbfm capture rate
 
 MAX_SECONDS = 120
 _LOCK = threading.Lock()
+
+# The one live listening session this box can have. Separate from _LOCK, which
+# guards the one-shot `capture` path: a capture and a listen both want the tuner,
+# so each refuses while the other holds it.
+TUNER = Tuner()
 
 
 class SdrBusy(RuntimeError):
@@ -101,6 +110,8 @@ def capture(freq_hz: int, seconds: float, mode: str, gain: str | None, serial: s
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
     seconds = max(0.5, min(float(seconds), MAX_SECONDS))
 
+    if TUNER.current() is not None:
+        raise SdrBusy("the radio is busy with a live listening session")
     if not _LOCK.acquire(blocking=False):
         raise SdrBusy("the radio is busy with another capture")
     try:
@@ -155,29 +166,113 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
-        if self.path.split("?")[0] != "/healthz":
+        route = self.path.split("?")[0]
+        if route == "/listen/audio":
+            self._stream_audio()
+            return
+        if route != "/healthz":
             self._json(404, {"detail": "not found"})
             return
         # Report whether the tools are even present: a sidecar that starts but has no
         # rtl_fm is a failure the api should see at /healthz, not on first capture.
+        session = TUNER.current()
         self._json(
             200,
             {
                 "status": "ok",
                 "rtl_fm": shutil.which("rtl_fm") is not None,
+                "ffmpeg": shutil.which("ffmpeg") is not None,
                 "busy": _LOCK.locked(),
+                "listening": session.info().as_dict() if session is not None else None,
             },
         )
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
-        if self.path.split("?")[0] != "/capture":
-            self._json(404, {"detail": "not found"})
-            return
+    def _body(self) -> dict[str, Any] | None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length) or b"{}")
+            return cast(dict[str, Any], json.loads(self.rfile.read(length) or b"{}"))
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"detail": "body must be JSON"})
+            return None
+
+    def _stream_audio(self) -> None:
+        """Stream the live session's Opus to one listener until they hang up.
+
+        No Content-Length: this is an open-ended chunked response, which is what an
+        `<audio>` element wants from a live source."""
+        session = TUNER.current()
+        if session is None:
+            self._json(409, {"detail": "nothing is listening"})
+            return
+        sub = session.subscribe()
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/webm")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                chunk = sub.get()
+                if chunk is None:  # the session ended
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # the listener closed the tab; entirely normal
+        finally:
+            session.unsubscribe(sub)
+
+    def _listen(self, body: dict[str, Any]) -> None:
+        try:
+            info = TUNER.start(
+                frequency_hz=int(body.get("frequency_hz", 0)),
+                mode=str(body.get("mode", "fm")),
+                gain=body.get("gain"),
+            )
+        except ListenBusy as busy:
+            self._json(409, {"detail": str(busy)})
+            return
+        except (ListenError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        self._json(200, info.as_dict())
+
+    def _tune(self, body: dict[str, Any]) -> None:
+        session = TUNER.current()
+        if session is None:
+            self._json(409, {"detail": "nothing is listening"})
+            return
+        wanted = body.get("session_id")
+        if wanted is not None and wanted != session.id:
+            # A stale client retuning a session that has since been replaced would
+            # otherwise silently move someone else's radio.
+            self._json(409, {"detail": "that session is no longer the live one"})
+            return
+        try:
+            session.tune(int(body.get("frequency_hz", 0)), body.get("mode"))
+        except (ListenError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        self._json(200, session.info().as_dict())
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
+        route = self.path.split("?")[0]
+        if route in ("/listen/start", "/listen/tune", "/listen/stop"):
+            body = self._body()
+            if body is None:
+                return
+            if route == "/listen/start":
+                self._listen(body)
+            elif route == "/listen/tune":
+                self._tune(body)
+            else:
+                stopped = TUNER.stop(body.get("session_id"))
+                self._json(200, {"stopped": stopped})
+            return
+        if route != "/capture":
+            self._json(404, {"detail": "not found"})
+            return
+        body = self._body()
+        if body is None:
             return
 
         try:

@@ -237,6 +237,26 @@ audible locally; and — the open risk — **is whisper's output on narrowband v
 enough to be worth a library?** A negative answer reshapes S3/S4 rather than being
 discovered after they are built.
 
+**S0b-ii's gate is closed, and it verified itself.** Tuning 99.3 MHz wide FM on the
+box returned `peak 0.432` and this transcript:
+
+> *"of the week on Instagram at LightRock993 and LightRock993.com every Wednesday.
+> The pet of the week brought to you by Seacoast Air Conditioning."*
+
+**LightRock993** is WLRQ-FM's own on-air branding at exactly the frequency requested,
+and Seacoast Air Conditioning is a Brevard County advertiser. There is no way to
+produce that text except by receiving that transmitter — a self-verifying result
+rather than a plausible one. Every link is now proven on hardware: enumeration,
+the DVB unbind, the container claiming the device, demodulation at the right
+frequency, and transcription.
+
+What it does **not** answer is the question the plan turns on. Broadcast FM is clean,
+wideband, professionally produced audio — near whisper's best case. Narrowband voice
+comms are 3 kHz, compressed, clipped and bursty. A good result here was necessary and
+is nowhere near sufficient; it proves the *pipeline* has no defects of its own, so if
+narrowband comes back as mush that will be the audio rather than the plumbing.
+Deliberately deferred — the owner chose to finish the tuner surface first.
+
 ### S1 — the lease + the control API
 
 The lease state machine (§4.2) with its priority order and TTL. The control endpoints:

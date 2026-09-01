@@ -24647,3 +24647,199 @@ button.task-band:active {
   font-size: 12px;
   color: var(--text-2);
 }
+
+/* --- The radio: the omnibox icon and its tuner sheet ------------------------
+   Binding spec: docs/mocks/sdr-tuner/a-tuner-sheet.html. The icon carries the
+   mode accent rather than --text-2 because, unlike attach, it reports live
+   state; the pulse marks live audio. */
+.sdr-btn {
+  color: var(--steel);
+  position: relative;
+}
+.sdr-live {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--green);
+  box-shadow: 0 0 0 2px var(--surface-composer);
+  animation: sdr-pulse 2s ease-in-out infinite;
+}
+@keyframes sdr-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.sdr-note {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.sdr-label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+  margin: 14px 2px 8px;
+}
+.sdr-readout {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 14px;
+  text-align: center;
+}
+.sdr-freq {
+  font-family: var(--font-mono);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.sdr-unit {
+  font-size: var(--fs-note);
+  color: var(--text-2);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.sdr-station {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  margin-top: 5px;
+}
+.sdr-tuner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.sdr-step {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-input);
+  font-size: 20px;
+  cursor: pointer;
+}
+.sdr-stepsize {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  min-width: 66px;
+}
+/* --mode is unset inside a sheet, so the segmented row is rebound to the accent
+   the same way the model sheet's reasoning pills are. */
+.sdr-modes {
+  --mode: var(--accent);
+  --mode-tint: var(--accent-tint);
+}
+
+.sdr-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sdr-bars {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 22px;
+}
+.sdr-bars i {
+  width: 5px;
+  background: var(--border);
+  border-radius: 2px;
+  display: block;
+}
+.sdr-bars i:nth-child(1) {
+  height: 6px;
+}
+.sdr-bars i:nth-child(2) {
+  height: 9px;
+}
+.sdr-bars i:nth-child(3) {
+  height: 12px;
+}
+.sdr-bars i:nth-child(4) {
+  height: 15px;
+}
+.sdr-bars i:nth-child(5) {
+  height: 18px;
+}
+.sdr-bars i:nth-child(6) {
+  height: 21px;
+}
+.sdr-bars i.on {
+  background: var(--green);
+}
+.sdr-level,
+.sdr-elapsed {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.sdr-elapsed {
+  margin-left: auto;
+}
+.sdr-audio {
+  width: 100%;
+  margin-top: 14px;
+}
+.sdr-error {
+  font-size: var(--fs-secondary);
+  color: var(--rose);
+  margin: 10px 2px 0;
+}
+
+.sdr-actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 16px;
+}
+.sdr-act {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+  padding: 13px 8px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.sdr-act-ghost {
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.sdr-act-release {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.sdr-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sdr-live {
+    animation: none;
+  }
+}

@@ -1,0 +1,107 @@
+// The live radio session, shared by every reader.
+//
+// The box has one tuner, so there is at most one session — and its EXISTENCE is what
+// decides whether the omnibox shows a radio icon at all. Keeping that in one shared
+// reading rather than per-component state is what stops the composer and the tuner
+// sheet ever disagreeing about whether the radio is held
+// (docs/plans/SDR_RADIO_PLAN.md D7, docs/mocks/sdr-tuner/a-tuner-sheet.html).
+//
+// Shaped after hostVitals' pub/sub: there is no React context anywhere in this app,
+// and a module store with a subscribe hook is the established way a screen learns
+// about live box state. Refcounted — the first reader starts polling, the last stops —
+// so an app with no radio surface open costs nothing.
+
+import { useEffect, useState } from "react";
+import { ApiError, api } from "./api/client";
+
+export interface SdrListening {
+  session_id: string;
+  frequency_hz: number;
+  mode: string;
+  gain: string | null;
+  elapsed_s: number;
+  peak: number;
+  listeners: number;
+}
+
+export interface SdrState {
+  /** False on a box with no radio, or one whose sidecar is unreachable. Either way
+   *  the icon must not appear: a lit icon over a dead radio is worse than none. */
+  available: boolean;
+  /** Null when the radio is idle. Non-null is precisely the icon's condition. */
+  listening: SdrListening | null;
+}
+
+type Listener = (state: SdrState) => void;
+
+const IDLE: SdrState = { available: false, listening: null };
+// A second is the same cadence the vitals stream uses, and the tuner shows an
+// elapsed time and a level meter that both want to move.
+const POLL_MS = 1000;
+
+let published: SdrState = IDLE;
+const listeners = new Set<Listener>();
+let timer: number | null = null;
+let inFlight = false;
+
+function publish(next: SdrState): void {
+  published = next;
+  for (const listener of listeners) listener(next);
+}
+
+async function poll(): Promise<void> {
+  if (inFlight) return; // a slow box must not stack requests
+  inFlight = true;
+  try {
+    publish(await api.getSdrStatus());
+  } catch (error) {
+    // 401/403 means the session is gone or this principal may not see the radio —
+    // either way stop claiming a radio we cannot see. Anything else is transient.
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      publish(IDLE);
+    }
+  } finally {
+    inFlight = false;
+  }
+}
+
+function start(): void {
+  if (timer !== null) return;
+  void poll();
+  timer = window.setInterval(() => void poll(), POLL_MS);
+}
+
+function stop(): void {
+  if (timer === null) return;
+  window.clearInterval(timer);
+  timer = null;
+}
+
+/** Subscribe to the shared reading; returns an unsubscribe. */
+export function subscribeSdr(listener: Listener): () => void {
+  listeners.add(listener);
+  if (listeners.size === 1) {
+    start();
+  } else {
+    listener(published); // a late joiner gets the current reading, not a blank
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) stop();
+  };
+}
+
+/** The live radio session, or an idle reading. One poll serves every reader. */
+export function useSdrSession(): SdrState {
+  const [state, setState] = useState<SdrState>(() => published);
+  useEffect(() => subscribeSdr(setState), []);
+  return state;
+}
+
+/** Test seam: forget the shared reading between cases. */
+export function resetSdrSession(): void {
+  stop();
+  listeners.clear();
+  published = IDLE;
+  inFlight = false;
+}

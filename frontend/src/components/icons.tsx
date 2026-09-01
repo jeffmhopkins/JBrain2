@@ -93,6 +93,16 @@ export const FinancialIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const RadioIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+    <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+    <circle cx="12" cy="12" r="2" />
+    <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+    <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+  </Icon>
+);
+
 export const ClipIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
