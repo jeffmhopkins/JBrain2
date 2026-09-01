@@ -79,6 +79,19 @@ def test_search_spreads_across_several_engines() -> None:
         assert engines[name].get("disabled") is not True, f"{name} must not be disabled"
 
 
+def test_a_broken_engine_is_disabled_explicitly_not_merely_omitted() -> None:
+    """`bing news` returns an empty body on every query from this box, so it was meant to be
+    dropped — but under `use_default_settings` an OMITTED engine keeps its built-in def, and
+    `bing news` ships enabled. Leaving it out therefore turned nothing off: it went on failing
+    four to five times a day (once per news beat of the daily briefing) for as long as the
+    settings file claimed it was gone. Turning an engine off takes an explicit entry."""
+    engines = {e["name"]: e for e in _settings().get("engines", [])}
+    assert engines.get("bing news", {}).get("disabled") is True, (
+        "bing news must be listed with `disabled: true` — omitting it leaves the enabled "
+        "built-in definition standing"
+    )
+
+
 def test_duckduckgo_is_de_weighted_so_it_is_not_the_sole_primary() -> None:
     # The observed failure: a deep-research fan's volume got DuckDuckGo rate-limited while
     # it carried most results. De-weighting it makes it one source among many.
@@ -125,6 +138,7 @@ _KNOWN_SEARXNG_ENGINES = frozenset(
         "wikipedia",
         # News-category engines (news_search) — SearXNG built-ins.
         "google news",
+        "bing news",  # listed only to turn it OFF (see the disabled-engines test below)
         # Science-category engines (science_search) — SearXNG built-ins.
         "arxiv",
         "pubmed",

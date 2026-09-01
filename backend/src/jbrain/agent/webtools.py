@@ -37,7 +37,13 @@ from jbrain.web.fetch import (
     is_youtube_url,
     window_text,
 )
-from jbrain.web.search import NEWS_TIME_RANGES, SearchResult, SearxngClient, WebSearchError
+from jbrain.web.search import (
+    NEWS_TIME_RANGES,
+    TIME_RANGES,
+    SearchResult,
+    SearxngClient,
+    WebSearchError,
+)
 
 log = structlog.get_logger()
 
@@ -455,12 +461,24 @@ def build_web_handlers(
         # Optional recency window (SearXNG time_range) — "prices this week", a recent release.
         # A bad value is ignored (widest results) rather than erroring; blank = no window.
         since = str(arguments.get("since", "")).strip().lower()
+        window = since if since in TIME_RANGES else ""
         if emit:
             emit("web_search", query)
         try:
             result = await search.search(query, limit, time_range=since)
         except WebSearchError as exc:
             return str(exc) + budget_note
+        # The client already retried a blanked window without it (search.py). Say so, because
+        # the model chose the window and would otherwise read widened results as if they were
+        # filtered — and because "today's showtimes" is the very question that tempts a `since`
+        # the page's publish date can never satisfy.
+        window_note = (
+            f"\n\n[The `since={window}` window returned nothing, so it was dropped and these"
+            " results are UNFILTERED by date. `since` filters on when a PAGE was published, not"
+            " on what it is about — don't set it to ask what is on today.]"
+            if result.window_dropped
+            else ""
+        )
         # The zero-click extras SearXNG returned alongside the hits — a knowledge panel and/or
         # instant answers. These ARE a direct answer (not an unverified lead), so they lead the
         # reply; still shown even when the hit list is thin or fully pruned.
@@ -468,8 +486,14 @@ def build_web_handlers(
         hits = result.hits
         if not hits:
             if extras:
-                return ToolOutput(extras + budget_note)
-            return f"No web results for '{query}'." + budget_note
+                return ToolOutput(extras + window_note + budget_note)
+            # A window that blanked the search has ALREADY been retried away, so rewording the
+            # query is the only thing left to vary — say that, or the model spends its whole
+            # turn rephrasing against a filter that was never the problem.
+            tried = (
+                f" (searched the last {window}, then again with no time limit)" if window else ""
+            )
+            return f"No web results for '{query}'{tried}." + budget_note
         # Drop hits on a host recently found paywalled/bot-walled/unreadable (the 24h skip
         # list) — reading one would only waste a fetch on a wall — and tell the model how many
         # were hidden so it knows the result set was pruned, not thin.
@@ -481,10 +505,11 @@ def build_web_handlers(
         )
         if not kept:
             if extras:
-                return ToolOutput(extras + note + budget_note)
+                return ToolOutput(extras + note + window_note + budget_note)
             return (
                 f"No usable web results for '{query}': all {hidden} were on sites recently found"
                 " paywalled or inaccessible (skipped for the next day). Try a different query."
+                + window_note
                 + budget_note
             )
         lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in kept]
@@ -500,7 +525,8 @@ def build_web_handlers(
             " read the page before reporting or citing anything from it):"
         )
         return ToolOutput(
-            extras + header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
+            extras + header + "\n" + "\n".join(lines) + note + window_note + budget_note,
+            web_sources=web_sources,
         )
 
     async def news_search_tool(arguments: dict, ctx: ToolContext) -> str:

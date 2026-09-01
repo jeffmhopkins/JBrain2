@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-09-01
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -723,7 +723,17 @@ response fields it used to discard — a Wikidata/Wikipedia **infobox** (a knowl
 lead the reply above the (still-unverified) result leads, as a direct answer the model can use
 without a `web_fetch` — framed to verify anything load-bearing, since they're third-party data.
 `web_search` also takes an optional `since` recency window (the same `time_range` filter news
-uses), for a general query that wants recent results without forcing the news category.
+uses), for a general query that wants recent results without forcing the news category —
+**and a window that comes back empty is retried once WITHOUT it**, with the widened result
+labelled so the model knows what it is reading. A window is far more destructive than it
+looks: SearXNG skips every engine lacking `time_range_support` outright (on this deployment
+that drops **bing** and **wikipedia**, the latter being the infobox source, so the knowledge
+panel goes with it), and the survivors filter on when a page was **published**, which blanks
+any query about an evergreen page. Measured live on 2026-09-01: nine `since="day"` searches
+for local cinema showtimes returned zero results each while the same query with no window
+returned ten — the agent spent the whole turn rewording a query whose wording was never the
+problem. The tool description now says `since` filters the publish date and not the subject,
+and an empty reply names the windows already tried.
 The same SearXNG also backs the **jcode sandbox's `web-search` / `web-fetch`
 helpers**, bridged through the api (the sandbox is on the `jcode` network and can't
 reach searxng directly) and gated per session by the owner's opt-in — the identical
