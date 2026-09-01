@@ -177,6 +177,38 @@ def _join_authors(raw: object) -> str:
     return str(raw or "").strip()
 
 
+def _unresponsive_engines(body: dict[str, object]) -> list[str]:
+    """The engines that FAILED this query, as SearXNG reported them in `unresponsive_engines`
+    — rows of `[engine, human-readable reason]` (`webutils.get_json_response`). This is the only
+    machine-readable per-engine health signal the JSON API gives us, and it was discarded.
+
+    Without it, working out which engines are down means tailing the searxng CONTAINER log and
+    correlating its error lines against search volume by hand — how the 2026-09-01 investigation
+    had to proceed, and it read Brave as dead when Brave was answering 29 of 31 searches. The
+    two failure modes look identical in that log and are opposites: an engine failing on every
+    single query is blocked (DuckDuckGo, whose engine passes `suspended_time=0` so SearXNG never
+    benches it), while one failing twice in a burst is merely rate-limited and recovers in
+    minutes. Only a per-query record separates them.
+
+    Tolerant of the row shape (list, tuple, or a bare name) because this is diagnostics: a
+    format change upstream must never raise inside a search that otherwise succeeded."""
+    raw = body.get("unresponsive_engines")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for row in raw:
+        if isinstance(row, str):
+            name, reason = row.strip(), ""
+        elif isinstance(row, (list, tuple)) and row:
+            name = str(row[0]).strip()
+            reason = str(row[1]).strip() if len(row) > 1 else ""
+        else:
+            continue
+        if name:
+            out.append(f"{name}: {reason}" if reason else name)
+    return out
+
+
 class SearxngClient:
     """Query a pinned SearXNG instance. `transport` is injectable so tests run
     against a mock with no network (DEVELOPMENT.md "no network in tests")."""
@@ -242,7 +274,21 @@ class SearxngClient:
             # Transport-level failure (unreachable / timeout) or a non-JSON body.
             log.warning("web.search_failed", error=repr(exc))
             raise WebSearchError("the web search service is unavailable right now") from exc
-        return body if isinstance(body, dict) else {}
+        if not isinstance(body, dict):
+            return {}
+        # Per-engine health, one line per query that lost an engine. Deliberately WITHOUT the
+        # query text: which engines are blocked is independent of what was asked, and this line
+        # is for operating the box, not for reading what the owner searched for. `time_range`
+        # rides along because a window itself removes engines (see `search`), so a reader can
+        # tell a blocked engine from a filtered-out one.
+        if down := _unresponsive_engines(body):
+            log.info(
+                "web.search_engines_down",
+                engines=down,
+                categories=categories or "general",
+                time_range=time_range or "",
+            )
+        return body
 
     @staticmethod
     def _rows(body: dict[str, object], limit: int) -> list[dict]:

@@ -214,6 +214,57 @@ async def test_search_passes_a_time_range_window() -> None:
     assert "time_range" not in calls[1].url.params
 
 
+def _info_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
+    """structlog does not route through caplog; capture the event + its fields directly."""
+    seen: list[tuple[str, dict]] = []
+    monkeypatch.setattr("jbrain.web.search.log.info", lambda ev, **kw: seen.append((ev, kw)))
+    return seen
+
+
+async def test_search_logs_the_engines_that_failed_the_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SearXNG names the failed engines per query; we log them so engine health is queryable
+    instead of reconstructed from the container log by hand. No query text on that line."""
+    body: dict[str, object] = dict(_SEARX_OK)
+    body["unresponsive_engines"] = [
+        ["duckduckgo", "CAPTCHA required"],
+        ["brave", "Too many requests"],
+        "mojeek",  # a bare name (a looser upstream shape) is still reported
+    ]
+    seen = _info_events(monkeypatch)
+    await _searx(lambda r: httpx.Response(200, json=body)).search("gpu prices", time_range="day")
+    fields = next(kw for ev, kw in seen if ev == "web.search_engines_down")
+    assert fields["engines"] == [
+        "duckduckgo: CAPTCHA required",
+        "brave: Too many requests",
+        "mojeek",
+    ]
+    # The window rides along: a window itself removes engines, so a reader can tell a blocked
+    # engine from a filtered-out one. The query text does NOT — engine health is independent
+    # of what was asked, and this line is for operating the box.
+    assert fields["time_range"] == "day" and fields["categories"] == "general"
+    assert "gpu prices" not in repr(fields), "engine health must not carry the query text"
+
+
+async def test_search_logs_nothing_when_every_engine_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No line when nothing failed — the signal has to stay rare enough to be worth reading."""
+    seen = _info_events(monkeypatch)
+    await _searx(lambda r: httpx.Response(200, json=_SEARX_OK)).search("gpu prices")
+    assert [ev for ev, _ in seen if ev == "web.search_engines_down"] == []
+
+
+async def test_unresponsive_engines_tolerates_a_junk_shape() -> None:
+    """Diagnostics must never sink a search that otherwise worked, whatever upstream sends."""
+    for junk in ("not-a-list", [None, 42, [], {}], {"duckduckgo": "captcha"}):
+        body = _SEARX_OK | {"unresponsive_engines": junk}
+        client = _searx(lambda r, b=body: httpx.Response(200, json=b))
+        result = await client.search("q")
+        assert result.hits, f"a junk unresponsive_engines ({junk!r}) must not break the search"
+
+
 async def test_search_retries_without_a_window_that_blanked_it() -> None:
     """The 2026-09-01 blanked-search bug: nine `since=day` searches for cinema showtimes each
     returned nothing while the same query with no window returned ten hits. A window filters on

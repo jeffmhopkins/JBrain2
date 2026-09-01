@@ -734,6 +734,23 @@ for local cinema showtimes returned zero results each while the same query with 
 returned ten — the agent spent the whole turn rewording a query whose wording was never the
 problem. The tool description now says `since` filters the publish date and not the subject,
 and an empty reply names the windows already tried.
+
+**Per-engine health is logged, not reconstructed.** Every SearXNG JSON response carries an
+`unresponsive_engines` list — the engines that failed THAT query, with a reason — which the
+client used to discard. It is now logged as `web.search_engines_down` (read it with
+`scripts/debug-connect.sh logs api`), carrying the engine list, the category and the
+`time_range`, but deliberately **not the query text**: which engines are blocked is
+independent of what was asked. Without it, "which engines are down" means tailing the searxng
+CONTAINER log and correlating error lines against search volume by hand — how the 2026-09-01
+investigation had to proceed, and it read Brave as dead when Brave was answering 29 of 31
+searches. The distinction that log cannot make is the one that matters: an engine failing on
+**every** query is blocked (DuckDuckGo — its engine raises `SearxEngineCaptchaException(
+suspended_time=0)`, and SearXNG's fallback is `if suspended_time is None`, so the 0 stands and
+the engine is never benched), while one failing twice inside a burst is merely rate-limited and
+back within minutes. Note SearXNG has **no** escalation on consecutive failures to lean on:
+`SuspendedStatus.continuous_errors` is incremented and reset but never read, and the suspension
+is a flat per-error-type constant. Escalating a repeat offender is therefore ours to build if
+the logged data shows it is worth it — and the data is the point of logging it first.
 The same SearXNG also backs the **jcode sandbox's `web-search` / `web-fetch`
 helpers**, bridged through the api (the sandbox is on the `jcode` network and can't
 reach searxng directly) and gated per session by the owner's opt-in — the identical
