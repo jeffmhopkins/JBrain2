@@ -179,6 +179,24 @@ host_file_write() {
   return 0
 }
 
+# Unload a host kernel module, from either caller.
+#
+# The sibling of host_file_write for the other half of a blacklist: the drop-in stops
+# the module being AUTOLOADED next time, but it does not evict the copy already bound
+# to a device. Without this an owner with no terminal (CLAUDE.md #10) would have to
+# reboot the box to finish the job.
+#
+# Best-effort by design: a daemon that refuses --privileged, a missing nsenter, or a
+# module genuinely in use all leave the drop-in in place, so the next boot gets it.
+host_module_unload() {
+  if [ -n "$HOST_UPDATE" ]; then
+    modprobe -r "$1" >/dev/null 2>&1
+  else
+    docker run --rm --privileged --pid=host --network none "$HELPER_IMAGE" \
+      nsenter -t 1 -m -u -i -n -p modprobe -r "$1" >/dev/null 2>&1
+  fi
+}
+
 # Apply a loaded module's parameter for THIS BOOT, from either caller.
 #
 # NOT usable for ttm.pages_limit — see the note at the call site. The parameter is
@@ -192,6 +210,40 @@ host_module_param_write() {
     docker run --rm --privileged --network none "$HELPER_IMAGE" \
       sh -c "echo $2 > /sys/module/$1" >/dev/null 2>&1
   fi
+}
+
+# The RTL-SDR modprobe drop-in, in ONE place so a test can pin its contents.
+#
+# The RTL2832U inside an RTL-SDR dongle IS a DVB-T tuner chip — that is what it was
+# built as — so the kernel's television drivers bind it on sight and librtlsdr's
+# libusb_claim_interface() then fails with -6. Blacklisting them is the standard fix
+# (docs/plans/SDR_RADIO_PLAN.md, S0b). Deleting this file restores DVB-T use of the
+# dongle; nothing else on the box wants these modules.
+RTLSDR_BLACKLIST_PATH=/etc/modprobe.d/blacklist-rtlsdr.conf
+RTLSDR_BLACKLIST="# Written by JBrain (deploy/update-inner.sh) so an RTL-SDR dongle can be opened
+# by librtlsdr. The RTL2832U is a DVB-T tuner chip, so these drivers claim it on
+# sight. Delete this file to use the dongle as a television receiver again.
+blacklist dvb_usb_rtl28xxu
+blacklist rtl2832
+blacklist rtl2830"
+
+# Is an RTL-SDR currently held by the kernel's DVB-T driver?
+#
+# Detects the CONDITION rather than a device id list: sysfs names each bound interface
+# as a symlink under the driver's directory (1-1:1.0), so a `:` in the entry name means
+# something is attached. That keeps this from drifting out of sync with the known-id
+# table in supervisor/usb_devices.py, and it means a box with no dongle — or one already
+# blacklisted — is left completely alone. /sys is mounted read-only in every container,
+# so this works from the PWA path too.
+# SDR_DRIVER_DIR is overridable so a test can point this at a fake sysfs tree
+# (the same injectable-paths convention as supervisor/host_metrics.py).
+sdr_dvb_claimed() {
+  _drv="${SDR_DRIVER_DIR:-/sys/bus/usb/drivers/dvb_usb_rtl28xxu}"
+  [ -d "$_drv" ] || return 1
+  for _entry in "$_drv"/*; do
+    case "${_entry##*/}" in *:*) return 0 ;; esac
+  done
+  return 1
 }
 
 # The earlyoom arguments, in ONE place so the host script and the containerized fallback
@@ -635,6 +687,25 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
     # Only the grub entry binds, which is a genuine host step with no PWA equivalent —
     # Ops -> Host settings reports the real enforced value (mem_info_gtt_total IS
     # man->size) so the owner can see whether a reboot is owed.
+  fi
+fi
+
+# ---- SDR: keep the kernel's DVB-T driver off an RTL-SDR dongle ---------------------
+#
+# Runs on every update but does nothing unless a dongle is actually plugged in AND
+# still claimed, so this is a no-op on a box with no radio and on the second update
+# after one appeared. Both halves are host operations the owner cannot perform from
+# the PWA, which is exactly what host_file_write/host_module_unload exist for.
+if sdr_dvb_claimed; then
+  echo "[update] an RTL-SDR is held by the kernel DVB driver — blacklisting it"
+  if host_file_write "$RTLSDR_BLACKLIST_PATH" "$RTLSDR_BLACKLIST"; then
+    if host_module_unload dvb_usb_rtl28xxu; then
+      echo "[update] dvb_usb_rtl28xxu blacklisted and unloaded — the dongle is free"
+    else
+      echo "[update] dvb_usb_rtl28xxu blacklisted; unload failed — re-plug the dongle or reboot"
+    fi
+  else
+    echo "[update] could not write $RTLSDR_BLACKLIST_PATH — the dongle stays claimed"
   fi
 fi
 

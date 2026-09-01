@@ -27,14 +27,24 @@ def _scan(sdrs: list[dict[str, object]], *, devices: int = 4, readable: bool = T
     return {"sysfs_readable": readable, "devices": bus + sdrs, "sdrs": sdrs}
 
 
-def test_unclaimed_dongle_is_ready_and_names_the_node_to_pass_through() -> None:
+def test_unclaimed_dongle_is_ready_and_advises_a_stable_selector() -> None:
     out = _sdr_verdict(_scan([NESDR]))
 
     assert out.found and out.ready
     assert "NESDR SMArt v5" in out.summary
     assert "0bda:2838" in out.summary
-    assert "/dev/bus/usb/001/007" in out.next_step
     assert out.sdrs[0].claimed_by_dvb is False
+    # The directory plus the serial, because devnum moves on every re-plug.
+    assert "Pass /dev/bus/usb into" in out.next_step
+    assert "serial 00000001" in out.next_step
+    assert "changes on every re-plug" in out.next_step
+
+
+def test_a_serialless_dongle_gets_advice_without_a_selector() -> None:
+    out = _sdr_verdict(_scan([{**NESDR, "serial": None}]))
+
+    assert out.ready is True
+    assert "selected by serial" not in out.next_step
 
 
 def test_dvb_driver_claim_is_found_but_not_ready_and_names_the_blacklist() -> None:
@@ -91,7 +101,7 @@ def test_missing_device_node_still_gives_actionable_advice() -> None:
     out = _sdr_verdict(_scan([no_node]))
 
     assert out.ready is True
-    assert "/dev/bus/usb" in out.next_step
+    assert "Pass /dev/bus/usb into" in out.next_step
 
 
 def test_the_full_bus_is_always_returned_so_an_unknown_dongle_can_be_identified() -> None:

@@ -1545,13 +1545,19 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             devices=every,
         )
 
-    node = sdrs[0].device_node or "/dev/bus/usb"
+    # Lead with the DIRECTORY, not the device node: devnum increments on every
+    # re-plug, so a compose file pinning /dev/bus/usb/001/005 breaks the first time
+    # the dongle is moved. Selecting by serial is what makes it stable — and what
+    # lets a second dongle join later without ambiguity.
+    node = sdrs[0].device_node or "an unknown node"
+    serial = sdrs[0].serial
+    by_serial = f", selected by serial {serial}" if serial else ""
     return SdrProbeOut(
         found=True,
         ready=True,
         summary=f"Found {named} ({sdrs[0].usb_id}), unclaimed \u2014 userspace can open it.",
-        next_step=f"Pass {node} (or all of /dev/bus/usb) into the sdr service and "
-        "librtlsdr should enumerate it.",
+        next_step=f"Pass /dev/bus/usb into the sdr service{by_serial}. Do not pin the "
+        f"per-device node ({node}) \u2014 it changes on every re-plug.",
         sysfs_readable=True,
         usb_device_count=len(devices),
         sdrs=sdrs,
