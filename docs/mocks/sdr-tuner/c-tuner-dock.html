@@ -1,0 +1,322 @@
+<!--
+  ============================================================================
+  OPTION C — INLINE DOCK STRIP  ("the radio is on, and you can see it")
+  SDR tuned-station control for JBrain2 · docks ABOVE the omnibox
+
+  WHAT THIS IS
+  No overlay at all. While a tool holds the SDR lease, the composer grows upward
+  into a tuner strip that sits between the transcript and the mode row. Collapsed
+  it is one line — frequency, station, a live waveform, play/stop. The omnibox
+  radio icon becomes an expand/collapse toggle rather than a modal opener; tapping
+  it unfolds the strip into the full control set in place.
+
+  RATIONALE
+  With one tuner, "the radio is on" is a persistent, consequential state — the
+  same class of thing as a live recording indicator. Hiding it behind a tap means
+  you can forget it is on, and forgetting means the lease sits held while you
+  wonder why a sweep says "radio busy". A dock makes the state impossible to lose
+  and costs zero taps to read. Tuning and typing coexist: nudge the frequency
+  mid-sentence without losing the draft.
+
+  COST
+  It permanently spends 44px (collapsed) to 210px (expanded) of transcript height
+  on a phone, and it makes the composer — already the densest region of the app —
+  denser still. It is also the least like anything the codebase has: not a Sheet,
+  not a pill, a genuinely new composer region with its own collapsed/expanded
+  states to design and test.
+
+  INTERACTIVITY
+  Deck above the phone simulates the tool call that grants the lease. Tap the
+  radio icon (or the strip's chevron) to expand/collapse. Tune ±, switch mode,
+  drag squelch, play/stop, arm record, release the radio.
+
+  Tokens only — no raw hex outside :root / [data-theme="light"].
+  Values match frontend/src/styles/tokens.css and docs/reference/DESIGN.md.
+  ============================================================================
+-->
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>SDR tuner · C — inline dock strip</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF; --scrim:rgba(247,247,245,.6); }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 48px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .caption{max-width:430px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;text-align:center;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .deck{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:430px;padding:0 18px;}
+  .btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;
+       padding:7px 12px;border-radius:10px;cursor:pointer;}
+  .btn:hover{color:var(--text);}
+  .btn.play{background:var(--green-tint);color:var(--green);border-color:transparent;}
+  .btn.off{background:var(--rose-tint);color:var(--rose);border-color:transparent;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);flex:none;}
+  .wordmark{font-size:21px;font-weight:700;} .wordmark span{color:var(--steel);}
+  .bar .spacer{margin-left:auto;}
+  .iconbtn{appearance:none;border:none;background:none;color:var(--text-2);padding:6px;cursor:pointer;border-radius:9px;}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;min-height:0;}
+  .chat-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:6px;}
+  .bubble{max-width:84%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.22);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .toolrow{align-self:flex-start;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);}
+  .toolrow svg{width:14px;height:14px;color:var(--steel);}
+  .toolrow b{color:var(--text);font-weight:500;}
+
+  /* ---- the dock ---- */
+  .dock{flex:none;background:var(--surface);border-top:1px solid var(--border);display:none;overflow:hidden;}
+  .dock.show{display:block;}
+  .dockline{display:flex;align-items:center;gap:10px;padding:9px 14px;min-height:46px;cursor:pointer;}
+  .dockline .ant{color:var(--steel);flex:none;display:inline-flex;}
+  .dockline .ant svg{width:18px;height:18px;}
+  .dfreq{font-family:var(--mono);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.2px;flex:none;}
+  .dstn{font-size:11.5px;color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dwave{display:flex;gap:2px;align-items:center;height:18px;width:52px;flex:none;}
+  .dwave i{flex:1;background:var(--green);opacity:.65;border-radius:1px;min-height:2px;}
+  .dpp{appearance:none;border:none;background:var(--green-tint);color:var(--green);width:32px;height:32px;border-radius:999px;
+       cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .dpp.paused{background:var(--steel-tint);color:var(--steel);}
+  .chev{color:var(--text-3);flex:none;transition:transform .2s;display:inline-flex;}
+  .dock.open .chev{transform:rotate(180deg);}
+
+  .dockbody{max-height:0;overflow:hidden;transition:max-height .24s cubic-bezier(.2,.7,.3,1);}
+  .dock.open .dockbody{max-height:260px;}
+  .dockinner{padding:2px 14px 13px;border-top:1px solid var(--border);}
+
+  .tunerow{display:flex;align-items:center;gap:10px;margin-top:12px;}
+  .step{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);width:44px;height:44px;
+        border-radius:var(--r-input);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .step:hover{color:var(--text);}
+  .bigfreq{flex:1;text-align:center;}
+  .bigfreq .n{font-family:var(--mono);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.4px;}
+  .bigfreq .u{font-size:11px;color:var(--text-2);margin-left:3px;}
+  .bigfreq .sz{display:block;font-size:10.5px;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px;}
+
+  .segsm{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;margin-top:11px;}
+  .segsm button{flex:1;border:0;background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;padding:8px;border-radius:9px;cursor:pointer;}
+  .segsm button.on{background:var(--surface);color:var(--text);box-shadow:0 0 0 1px var(--border);font-weight:600;}
+
+  .sqrow{display:flex;align-items:center;gap:10px;margin-top:11px;}
+  .sqlbl{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);font-weight:600;flex:none;}
+  .sqrow input[type=range]{flex:1;accent-color:var(--steel);}
+  .sqval{font-family:var(--mono);font-size:11.5px;color:var(--text-2);min-width:36px;text-align:right;font-variant-numeric:tabular-nums;}
+  .sig{font-family:var(--mono);font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+
+  .acts{display:flex;gap:8px;margin-top:12px;}
+  .act{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:600;color:var(--rose);
+       background:var(--rose-tint);border:1px solid transparent;border-radius:var(--r-input);padding:11px 6px;cursor:pointer;min-height:44px;}
+  .act svg{width:15px;height:15px;}
+  .act.armed{color:var(--bg);background:var(--rose);}
+  .act.ghost{color:var(--text-2);background:var(--surface-2);border-color:var(--border);}
+  .act.link{color:var(--steel);background:var(--steel-tint);}
+
+  .composer{flex:none;background:var(--surface-composer);border-top:1px solid var(--border);padding:10px 12px calc(10px + env(safe-area-inset-bottom));}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;margin-bottom:9px;}
+  .seg button{flex:1;border:none;background:none;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:9px 0;cursor:pointer;}
+  .seg button.on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:11px 13px;color:var(--text-3);font-size:15px;min-height:46px;}
+  .foot{display:flex;align-items:center;gap:10px;padding:8px 6px 0;justify-content:flex-end;}
+  .foot-icons{display:flex;gap:14px;align-items:center;}
+  .icon-btn{background:none;border:none;padding:8px;margin:-8px;color:var(--text-2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+  .icon-btn.radio-on{color:var(--steel);}
+  .icon-btn.send{color:var(--steel);}
+  .radio-wrap{position:relative;display:none;}
+  .radio-wrap.show{display:inline-flex;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+         padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast svg{color:var(--steel);flex:none;width:16px;height:16px;}
+
+  @media (prefers-reduced-motion:reduce){ .dockbody{transition:none;} .chev{transition:none;} .toast{transition:none;} }
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">SDR tuner · Option C</span><br/>
+  <b>Inline dock strip.</b> No overlay — the composer grows upward while the radio is held.
+  The omnibox icon expands and collapses it in place; tuning and typing coexist.
+  <span class="toggle" role="group" aria-label="theme">
+    <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+    <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+  </span>
+</div>
+
+<div class="deck">
+  <button class="btn play" onclick="grantLease()">▶ Tool tunes the radio</button>
+  <button class="btn off" onclick="releaseLease()">Release lease</button>
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="wordmark">JBrain<span>.</span></div>
+    <span class="spacer"></span>
+    <button class="iconbtn" id="theme" aria-label="Toggle theme">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 1-9-9z"/></svg>
+    </button>
+  </div>
+
+  <div class="chat">
+    <div class="chat-inner">
+      <div class="bubble me">Listen to the weather radio for a bit</div>
+      <div class="toolrow" id="toolrow" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+        <span><b>sdr_listen</b> · tuned 162.550 MHz</span>
+      </div>
+      <div class="bubble ai" id="aireply" style="display:none">Radio's yours — NOAA Melbourne, strong signal.</div>
+      <div class="bubble me" id="follow" style="display:none">what's the marine forecast saying?</div>
+      <div class="bubble ai" id="follow2" style="display:none">Small craft advisory through this evening — seas 4 to 6 feet outside the inlet.</div>
+    </div>
+  </div>
+
+  <div class="dock" id="dock">
+    <div class="dockline" onclick="toggleDock()">
+      <span class="ant"><svg viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg></span>
+      <span class="dfreq" id="dfreq">162.550</span>
+      <span class="dstn" id="dstn">NOAA · Melbourne FL</span>
+      <span class="dwave" id="dwave"></span>
+      <button class="dpp" id="dpp" onclick="event.stopPropagation();togglePlay()" aria-label="Play or pause">
+        <svg width="16" height="16" viewBox="0 0 24 24" id="ppi"><path d="M6 5h3v14H6zM15 5h3v14h-3z"/></svg>
+      </button>
+      <span class="chev"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></span>
+    </div>
+
+    <div class="dockbody">
+      <div class="dockinner">
+        <div class="tunerow">
+          <button class="step" onclick="tune(-1)" aria-label="Tune down"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+          <span class="bigfreq"><span class="n" id="bigfreq">162.550</span><span class="u">MHz</span><span class="sz">25 kHz step · <span id="sig">−58 dBm</span></span></span>
+          <button class="step" onclick="tune(1)" aria-label="Tune up"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+        </div>
+
+        <div class="segsm" id="modes">
+          <button class="on" onclick="setMode(this,'NFM')">NFM</button>
+          <button onclick="setMode(this,'AM')">AM</button>
+          <button onclick="setMode(this,'WFM')">WFM</button>
+          <button onclick="setMode(this,'USB')">USB</button>
+        </div>
+
+        <div class="sqrow">
+          <span class="sqlbl">Squelch</span>
+          <input type="range" min="0" max="100" value="35" id="sq" oninput="sqIn()" />
+          <span class="sqval" id="sqval">35</span>
+        </div>
+
+        <div class="acts">
+          <button class="act" id="rec" onclick="toggleRec()">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg><span id="reclbl">Record</span>
+          </button>
+          <button class="act link" onclick="toast('Opens the Radio launcher — waterfall + recordings')">
+            <svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 4-7 5 9"/></svg>Spectrum
+          </button>
+          <button class="act ghost" onclick="releaseLease()">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Release
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="seg">
+      <button>Entry</button><button>Research</button><button class="on">Full Brain</button>
+    </div>
+    <div class="field">Message…</div>
+    <div class="foot">
+      <div class="foot-icons">
+        <span class="radio-wrap" id="radiowrap">
+          <button class="icon-btn radio-on" aria-label="Expand tuner" onclick="toggleDock()">
+            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+          </button>
+        </span>
+        <button class="icon-btn" aria-label="Attach files">
+          <svg width="24" height="24" viewBox="0 0 24 24"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <button class="icon-btn send" aria-label="Send">
+          <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+  function setTheme(t){document.documentElement.dataset.theme=t;
+    document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+    document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;setTheme(h.dataset.theme==='light'?'dark':'light');};
+
+  let khz=162550, mode='NFM', playing=true, recording=false, held=false, recArmed=false;
+
+  function fmt(k){ return (k/1000).toFixed(3); }
+  function render(){
+    const f=fmt(khz);
+    document.getElementById('dfreq').textContent=f;
+    document.getElementById('bigfreq').textContent=f;
+    const known={162550:'NOAA · Melbourne FL',162400:'NOAA · Orlando',146940:'W4MLB repeater',118700:'Orlando Approach'};
+    document.getElementById('dstn').textContent = known[khz] || mode+' · unidentified';
+    document.getElementById('dock').classList.toggle('show',held);
+    document.getElementById('radiowrap').classList.toggle('show',held);
+    ['toolrow','aireply','follow','follow2'].forEach(id=>{
+      const el=document.getElementById(id); el.style.display = held ? (id==='toolrow'?'flex':'block') : 'none';
+    });
+    const ppi=document.getElementById('ppi');
+    ppi.innerHTML = playing ? '<path d="M6 5h3v14H6zM15 5h3v14h-3z"/>' : '<path d="M7 4l13 8-13 8z"/>';
+    document.getElementById('dpp').classList.toggle('paused',!playing);
+  }
+  function wave(){
+    document.getElementById('dwave').innerHTML=
+      Array.from({length:11},()=>`<i style="height:${playing?3+Math.random()*14:2}px"></i>`).join('');
+    document.getElementById('sig').textContent='−'+(54+Math.round(Math.random()*8))+' dBm';
+  }
+  function toggleDock(){ document.getElementById('dock').classList.toggle('open'); }
+  function tune(d){ khz+=d*25; render(); }
+  function setMode(el,m){ mode=m; [...document.querySelectorAll('#modes button')].forEach(b=>b.classList.remove('on')); el.classList.add('on'); render(); }
+  function sqIn(){ document.getElementById('sqval').textContent=document.getElementById('sq').value; }
+  function togglePlay(){ playing=!playing; render(); }
+  function toggleRec(){
+    const b=document.getElementById('rec'), l=document.getElementById('reclbl');
+    if(!recording && !recArmed){ recArmed=true; l.textContent='Tap again'; setTimeout(()=>{if(!recording){recArmed=false;l.textContent='Record';}},2600); return; }
+    recording=!recording; recArmed=false; b.classList.toggle('armed',recording); l.textContent=recording?'Stop':'Record';
+    toast(recording?'Recording — lands in the library, transcribed':'Saved to the recordings library');
+  }
+  function grantLease(){ held=true; render(); toast('sdr_listen took the radio — the dock is up'); }
+  function releaseLease(){ held=false; recording=false; recArmed=false;
+    document.getElementById('rec').classList.remove('armed'); document.getElementById('reclbl').textContent='Record';
+    document.getElementById('dock').classList.remove('open'); render(); toast('Radio released — dock gone'); }
+  function toast(msg){ const t=document.getElementById('toast');
+    t.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>'+msg;
+    t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),2400); }
+
+  wave(); render();
+  setInterval(()=>{ if(held) wave(); },700);
+</script>
+</body>
+</html>

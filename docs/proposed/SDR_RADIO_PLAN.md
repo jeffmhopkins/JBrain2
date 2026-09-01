@@ -61,6 +61,7 @@ Three consequences drive the whole design:
 | D4 | **Phase 2 auto-record = squelch watch on a channel list.** | The classic scanner behaviour and the one that feeds the library steadily. Deferred out of v1 (D2); its lease implications are designed for now (§4.2) so Phase 2 is additive. |
 | D5 | **Waterfall = quantized power bins over binary WebSocket, rendered to canvas.** | ~1024 bins × 10 fps × 1 byte ≈ 10 KB/s — trivial on LAN, phone-friendly, and zoom/palette stay client-side. Server-rendered PNG strips would be a video stream for no benefit. |
 | D6 | **Audio = Opus over HTTP chunked, played by a plain `<audio>` element.** | ~2–3 s latency is irrelevant for scanner listening, and it is a fraction of the code of WebSocket-Opus-into-MediaSource. Reversible: the transport is behind one endpoint, so a low-latency path can replace it without touching the UI's model. |
+| D7 | **A lease-gated tuner control on the omnibox, in addition to the launcher.** | The composer grows a radio icon left of the attach clip, shown *only* while a tool holds the lease; tapping it opens the tuned-station controls. **The icon is the lease** — present means this session holds the radio, absent means idle or held elsewhere — so the arbitration in §4.2 stops being invisible plumbing. Follows the shipped plan-pill precedent (a live-state-gated composer affordance that opens a `<Sheet>`). Mocks: `../mocks/sdr-tuner/`. |
 
 ## 4. Architecture — where it slots
 
@@ -161,12 +162,26 @@ reusing the `media_analysis_results` pattern rather than adding a second one.
 presented to the owner to choose before any implementation. The chosen mock lands in
 `docs/mocks/` and becomes binding spec. The architectural decisions in §3 (D1, D5, D6)
 and the tab structure are settled; what the mocks explore is layout, the tuning
-interaction, and how the lease state is surfaced.
+interaction, and how the lease state is surfaced. **The omnibox-tuner half of this
+gate is drafted** — three interactive mocks in `../mocks/sdr-tuner/` (bottom sheet /
+anchored popover / inline dock), awaiting owner selection; the launcher's own mock
+round is still to come.
 
-**S4b** implements it: tabs mirroring the Math launcher's pattern — **Spectrum**
-(waterfall + tuning + listen controls) and **Recordings** (the library, reusing
-`AudioTranscript.tsx` as-is for playback and word-level transcript). Phone-first,
-bottom-half controls, ≥44px targets, tokens only.
+**S4b** implements two surfaces. The **Radio launcher**: tabs mirroring the Math
+launcher's pattern — **Spectrum** (waterfall + tuning + listen controls) and
+**Recordings** (the library, reusing `AudioTranscript.tsx` as-is for playback and
+word-level transcript). And the **omnibox tuner** (D7): a new glyph in
+`components/icons.tsx`, an `sdrActive`/`onSdrTap` prop pair on `Omnibox` rendered
+inside `.foot-icons` exactly as the attach button is, fed from `HomeScreen` — the
+`attachEnabled` line is the template for a capability-gated foot icon, and
+`planStatus`/`onPlanPillTap` for a tappable live-state-gated one. The "tuning is
+active" flag rides a module pub/sub store shaped like `hostVitals.ts`'s
+`subscribeModelLoad`/`useModelLoad`; there is no React context in this frontend.
+Phone-first, bottom-half controls, ≥44px targets, tokens only.
+
+The launcher and the omnibox tuner divide by depth, not duplication: the tuner is
+the quick control while chatting; the launcher owns what needs screen area — the
+waterfall and the recordings library.
 
 ## 6. Interfaces
 
@@ -211,7 +226,8 @@ model input.
 - `docs/reference/DESIGN.md` — only if the waterfall needs a token or compact-density
   variant that does not already exist.
 - `docs/ROADMAP.md` — a slot, at promotion out of `proposed/` (§ below).
-- `docs/mocks/` — the chosen S4a mock, as binding spec.
+- `docs/mocks/sdr-tuner/` — the chosen tuner mock, as binding spec (its README's
+  Decision section filled in), plus the launcher's mock round when it runs.
 - This plan — promoted from `docs/proposed/` to `docs/plans/` when scheduled, then
   archived when all waves land.
 

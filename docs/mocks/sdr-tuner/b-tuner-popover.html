@@ -1,0 +1,307 @@
+<!--
+  ============================================================================
+  OPTION B — ANCHORED POPOVER  ("a glance, not a destination")
+  SDR tuned-station control for JBrain2 · opens FROM the omnibox radio icon
+
+  WHAT THIS IS
+  The same lease-gated radio icon, but tapping it raises a small card anchored
+  directly above the icon with a pointer notch — no scrim, no sheet. The
+  conversation stays visible and scrollable behind it. Light-dismiss: tap
+  anywhere else, or the icon again, and it's gone.
+
+  RATIONALE
+  Most radio interactions are a two-second glance ("is it still on 162.550? is
+  the signal holding?") followed by at most one nudge. A modal makes you leave
+  the conversation to answer a question you could have read in a heartbeat. The
+  popover keeps the radio subordinate to the chat, which is the right hierarchy
+  when the radio is something a TOOL turned on mid-conversation.
+
+  COST
+  It cannot hold everything. Squelch, gain, band presets, and the recordings
+  list do not fit — they live in the Radio launcher, so the deep case is a
+  second surface away. Anchored positioning is also the fiddliest of the three
+  to get right on small screens, and it is a new primitive: the codebase has a
+  shared <Sheet>, but no popover.
+
+  INTERACTIVITY
+  Deck above the phone simulates the tool call that grants the lease. Tap the
+  radio icon to raise/lower the card. Tune ±, play/stop, arm record, open the
+  full launcher, release the radio (watch the icon disappear).
+
+  Tokens only — no raw hex outside :root / [data-theme="light"].
+  Values match frontend/src/styles/tokens.css and docs/reference/DESIGN.md.
+  ============================================================================
+-->
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>SDR tuner · B — anchored popover</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF; --scrim:rgba(247,247,245,.6); }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 48px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .caption{max-width:430px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;text-align:center;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .deck{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:430px;padding:0 18px;}
+  .btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;
+       padding:7px 12px;border-radius:10px;cursor:pointer;}
+  .btn:hover{color:var(--text);}
+  .btn.play{background:var(--green-tint);color:var(--green);border-color:transparent;}
+  .btn.off{background:var(--rose-tint);color:var(--rose);border-color:transparent;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);flex:none;}
+  .wordmark{font-size:21px;font-weight:700;} .wordmark span{color:var(--steel);}
+  .bar .spacer{margin-left:auto;}
+  .iconbtn{appearance:none;border:none;background:none;color:var(--text-2);padding:6px;cursor:pointer;border-radius:9px;}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;}
+  .chat-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:6px;}
+  .bubble{max-width:84%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.22);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .toolrow{align-self:flex-start;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);}
+  .toolrow svg{width:14px;height:14px;color:var(--steel);}
+  .toolrow b{color:var(--text);font-weight:500;}
+
+  .composer{flex:none;background:var(--surface-composer);border-top:1px solid var(--border);padding:10px 12px calc(10px + env(safe-area-inset-bottom));position:relative;z-index:60;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;margin-bottom:9px;}
+  .seg button{flex:1;border:none;background:none;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:9px 0;cursor:pointer;}
+  .seg button.on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:11px 13px;color:var(--text-3);font-size:15px;min-height:46px;}
+  .foot{display:flex;align-items:center;gap:10px;padding:8px 6px 0;justify-content:flex-end;}
+  .foot-icons{display:flex;gap:14px;align-items:center;}
+  .icon-btn{background:none;border:none;padding:8px;margin:-8px;color:var(--text-2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+  .icon-btn.radio-on{color:var(--steel);}
+  .icon-btn.send{color:var(--steel);}
+  .radio-wrap{position:relative;display:none;}
+  .radio-wrap.show{display:inline-flex;}
+  .radio-wrap .live{position:absolute;top:0;right:0;width:7px;height:7px;border-radius:999px;background:var(--green);box-shadow:0 0 0 2px var(--surface-composer);animation:pulse 2s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* light-dismiss catcher — invisible, no scrim tint */
+  .catch{position:absolute;inset:0;z-index:70;display:none;}
+  .catch.show{display:block;}
+
+  .pop{position:absolute;right:12px;bottom:150px;width:264px;background:var(--surface);border:1px solid var(--border);
+       border-radius:var(--r-card);padding:13px 14px 12px;z-index:80;
+       opacity:0;transform:translateY(8px) scale(.97);transform-origin:88% 100%;pointer-events:none;
+       transition:opacity .15s ease-out,transform .15s cubic-bezier(.2,.7,.3,1);}
+  .pop.show{opacity:1;transform:none;pointer-events:auto;}
+  .pop::after{content:"";position:absolute;right:26px;bottom:-7px;width:12px;height:12px;background:var(--surface);
+              border-right:1px solid var(--border);border-bottom:1px solid var(--border);transform:rotate(45deg);}
+
+  .pophd{display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin-bottom:9px;}
+  .pophd .dot{width:7px;height:7px;border-radius:999px;background:var(--green);box-shadow:0 0 0 3px var(--green-tint);flex:none;}
+  .freq{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.4px;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .freq .u{font-size:12px;color:var(--text-2);font-weight:400;margin-left:3px;}
+  .stn{font-size:12px;color:var(--text-2);margin-top:3px;line-height:1.4;}
+
+  .row{display:flex;align-items:center;gap:9px;margin-top:11px;}
+  .step{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);width:38px;height:38px;
+        border-radius:var(--r-input);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .step:hover{color:var(--text);}
+  .bars{display:flex;gap:3px;align-items:flex-end;height:20px;flex:1;justify-content:center;}
+  .bars i{width:4px;background:var(--border);border-radius:2px;display:block;}
+  .bars i.on{background:var(--green);}
+
+  .transport{display:flex;align-items:center;gap:9px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+  .pp{appearance:none;border:none;background:var(--green-tint);color:var(--green);width:38px;height:38px;border-radius:999px;
+      cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .pp.paused{background:var(--steel-tint);color:var(--steel);}
+  .elapsed{font-family:var(--mono);font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .sig{font-family:var(--mono);font-size:11px;color:var(--text-3);margin-left:auto;font-variant-numeric:tabular-nums;}
+
+  .mini{display:flex;gap:7px;margin-top:11px;}
+  .mact{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:600;
+        color:var(--rose);background:var(--rose-tint);border:1px solid transparent;border-radius:10px;padding:10px 6px;cursor:pointer;min-height:38px;}
+  .mact svg{width:14px;height:14px;}
+  .mact.armed{color:var(--bg);background:var(--rose);}
+  .mact.ghost{color:var(--text-2);background:var(--surface-2);border-color:var(--border);}
+  .more{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:9px;background:none;border:none;
+        color:var(--steel);font:inherit;font-size:12px;font-weight:500;padding:7px;cursor:pointer;}
+  .more svg{width:13px;height:13px;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+         padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast svg{color:var(--steel);flex:none;width:16px;height:16px;}
+
+  @media (prefers-reduced-motion:reduce){ .radio-wrap .live{animation:none;} .pop{transition:none;} .toast{transition:none;} }
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">SDR tuner · Option B</span><br/>
+  <b>Anchored popover.</b> No scrim — the conversation stays readable behind it. A glance-and-nudge
+  surface; the deep controls live in the Radio launcher.
+  <span class="toggle" role="group" aria-label="theme">
+    <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+    <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+  </span>
+</div>
+
+<div class="deck">
+  <button class="btn play" onclick="grantLease()">▶ Tool tunes the radio</button>
+  <button class="btn off" onclick="releaseLease()">Release lease</button>
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="wordmark">JBrain<span>.</span></div>
+    <span class="spacer"></span>
+    <button class="iconbtn" id="theme" aria-label="Toggle theme">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 1-9-9z"/></svg>
+    </button>
+  </div>
+
+  <div class="chat">
+    <div class="chat-inner">
+      <div class="bubble me">Listen to the weather radio for a bit</div>
+      <div class="toolrow" id="toolrow" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+        <span><b>sdr_listen</b> · tuned 162.550 MHz</span>
+      </div>
+      <div class="bubble ai" id="aireply" style="display:none">Radio's yours — NOAA Melbourne, strong signal. Tap the antenna to peek or retune.</div>
+      <div class="bubble me" id="follow" style="display:none">what's the marine forecast saying?</div>
+      <div class="bubble ai" id="follow2" style="display:none">Small craft advisory through this evening — seas 4 to 6 feet outside the inlet.</div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="seg">
+      <button>Entry</button><button>Research</button><button class="on">Full Brain</button>
+    </div>
+    <div class="field">Message…</div>
+    <div class="foot">
+      <div class="foot-icons">
+        <span class="radio-wrap" id="radiowrap">
+          <button class="icon-btn radio-on" aria-label="Tuned radio" onclick="togglePop(event)">
+            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+          </button>
+          <span class="live" aria-hidden="true"></span>
+        </span>
+        <button class="icon-btn" aria-label="Attach files">
+          <svg width="24" height="24" viewBox="0 0 24 24"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <button class="icon-btn send" aria-label="Send">
+          <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="catch" id="catch" onclick="closePop()"></div>
+
+  <div class="pop" id="pop" role="dialog" aria-label="Tuned station">
+    <div class="pophd"><span class="dot"></span>On air</div>
+    <div class="freq" id="freq">162.550<span class="u">MHz</span></div>
+    <div class="stn" id="stn">NOAA Weather Radio · Melbourne FL</div>
+
+    <div class="row">
+      <button class="step" onclick="tune(-1)" aria-label="Tune down"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="bars" id="bars"></span>
+      <button class="step" onclick="tune(1)" aria-label="Tune up"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    </div>
+
+    <div class="transport">
+      <button class="pp" id="pp" onclick="togglePlay()" aria-label="Play or pause">
+        <svg width="18" height="18" viewBox="0 0 24 24" id="ppi"><path d="M6 5h3v14H6zM15 5h3v14h-3z"/></svg>
+      </button>
+      <span class="elapsed" id="elapsed">1:12</span>
+      <span class="sig" id="sig">−58 dBm · NFM</span>
+    </div>
+
+    <div class="mini">
+      <button class="mact" id="rec" onclick="toggleRec()">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg><span id="reclbl">Record</span>
+      </button>
+      <button class="mact ghost" onclick="releaseLease()">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Release
+      </button>
+    </div>
+    <button class="more" onclick="toast('Opens the Radio launcher — waterfall, squelch, recordings')">
+      Spectrum &amp; recordings <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+  function setTheme(t){document.documentElement.dataset.theme=t;
+    document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+    document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;setTheme(h.dataset.theme==='light'?'dark':'light');};
+
+  let khz=162550, playing=true, recording=false, held=false, elapsed=72, open=false, recArmed=false;
+
+  function fmt(k){ return (k/1000).toFixed(3); }
+  function render(){
+    document.getElementById('freq').innerHTML = fmt(khz)+'<span class="u">MHz</span>';
+    const known={162550:'NOAA Weather Radio · Melbourne FL',162400:'NOAA Weather Radio · Orlando',
+                 146940:'W4MLB repeater · Melbourne',118700:'Orlando Approach (AM)'};
+    document.getElementById('stn').textContent = known[khz] || 'NFM · unidentified';
+    document.getElementById('radiowrap').classList.toggle('show',held);
+    ['toolrow','aireply','follow','follow2'].forEach(id=>{
+      const el=document.getElementById(id); el.style.display = held ? (id==='toolrow'?'flex':'block') : 'none';
+    });
+    const ppi=document.getElementById('ppi');
+    ppi.innerHTML = playing ? '<path d="M6 5h3v14H6zM15 5h3v14h-3z"/>' : '<path d="M7 4l13 8-13 8z"/>';
+    document.getElementById('pp').classList.toggle('paused',!playing);
+    const m=Math.floor(elapsed/60), s=String(elapsed%60).padStart(2,'0');
+    document.getElementById('elapsed').textContent=m+':'+s;
+  }
+  function bars(){
+    const lit=Math.round(4+Math.random()*2);
+    document.getElementById('bars').innerHTML=
+      Array.from({length:8},(_,i)=>`<i class="${i<lit+1?'on':''}" style="height:${5+((i%4)*4)}px"></i>`).join('');
+    document.getElementById('sig').textContent='−'+(54+Math.round(Math.random()*8))+' dBm · NFM';
+  }
+  function tune(d){ khz+=d*25; render(); }
+  function togglePlay(){ playing=!playing; render(); }
+  function toggleRec(){
+    const b=document.getElementById('rec'), l=document.getElementById('reclbl');
+    if(!recording && !recArmed){ recArmed=true; l.textContent='Again'; setTimeout(()=>{if(!recording){recArmed=false;l.textContent='Record';}},2600); return; }
+    recording=!recording; recArmed=false; b.classList.toggle('armed',recording); l.textContent=recording?'Stop':'Record';
+    toast(recording?'Recording — lands in the library, transcribed':'Saved to the recordings library');
+  }
+  function togglePop(e){ e.stopPropagation(); open?closePop():openPop(); }
+  function openPop(){ open=true; document.getElementById('pop').classList.add('show'); document.getElementById('catch').classList.add('show'); }
+  function closePop(){ open=false; document.getElementById('pop').classList.remove('show'); document.getElementById('catch').classList.remove('show'); }
+  function grantLease(){ held=true; render(); toast('sdr_listen took the radio — icon is live'); }
+  function releaseLease(){ held=false; recording=false; recArmed=false;
+    document.getElementById('rec').classList.remove('armed'); document.getElementById('reclbl').textContent='Record';
+    closePop(); render(); toast('Radio released — icon gone'); }
+  function toast(msg){ const t=document.getElementById('toast');
+    t.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>'+msg;
+    t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),2400); }
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closePop(); });
+
+  bars(); render();
+  setInterval(()=>{ if(held){ bars(); if(playing){elapsed++; render();} } },1000);
+</script>
+</body>
+</html>
