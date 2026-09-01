@@ -1454,6 +1454,11 @@ class SdrProbeOut(BaseModel):
     sysfs_readable: bool
     usb_device_count: int
     sdrs: list[SdrDeviceOut]
+    # EVERY device on the bus, not just the SDR-shaped ones. Carried always because
+    # the not-found verdict asks the reader to identify the dongle by its USB id,
+    # and without the list that instruction is unactionable — the console has no
+    # other way to see the bus, and the owner has no terminal (CLAUDE.md rule 10).
+    devices: list[SdrDeviceOut]
 
 
 def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
@@ -1465,8 +1470,8 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
     devices = cast(list[dict[str, Any]], payload.get("devices") or [])
     raw_sdrs = cast(list[dict[str, Any]], payload.get("sdrs") or [])
 
-    sdrs = [
-        SdrDeviceOut(
+    def _row(d: dict[str, Any]) -> SdrDeviceOut:
+        return SdrDeviceOut(
             name=d["name"],
             usb_id=d["usb_id"],
             manufacturer=d.get("manufacturer"),
@@ -1476,8 +1481,9 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             drivers=list(d.get("drivers") or []),
             claimed_by_dvb=bool(set(d.get("drivers") or []) & _DVB_DRIVERS),
         )
-        for d in raw_sdrs
-    ]
+
+    sdrs = [_row(d) for d in raw_sdrs]
+    every = [_row(d) for d in devices]
 
     if not readable:
         return SdrProbeOut(
@@ -1489,6 +1495,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             sysfs_readable=False,
             usb_device_count=len(devices),
             sdrs=[],
+            devices=every,
         )
 
     if not sdrs:
@@ -1497,12 +1504,13 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             ready=False,
             summary=f"No RTL-SDR found. The scan itself worked \u2014 {len(devices)} USB "
             f"device(s) enumerated.",
-            next_step="Plug the dongle in (or re-seat it) and probe again. If it is "
-            "plugged in, report its USB id from the full device list so it can be "
-            "added to the known-SDR table.",
+            next_step="Plug the dongle in (or re-seat it) and probe again. If it IS "
+            "plugged in, it is one of the rows in `devices` below — report that row's "
+            "usb_id so it can be added to the known-SDR table.",
             sysfs_readable=True,
             usb_device_count=len(devices),
             sdrs=[],
+            devices=every,
         )
 
     claimed = [d for d in sdrs if d.claimed_by_dvb]
@@ -1521,6 +1529,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             sysfs_readable=True,
             usb_device_count=len(devices),
             sdrs=sdrs,
+            devices=every,
         )
 
     other = sorted({drv for d in sdrs for drv in d.drivers})
@@ -1533,6 +1542,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
             sysfs_readable=True,
             usb_device_count=len(devices),
             sdrs=sdrs,
+            devices=every,
         )
 
     node = sdrs[0].device_node or "/dev/bus/usb"
@@ -1545,6 +1555,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         sysfs_readable=True,
         usb_device_count=len(devices),
         sdrs=sdrs,
+        devices=every,
     )
 
 

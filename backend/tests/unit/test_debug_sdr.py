@@ -20,11 +20,11 @@ NESDR = {
 
 
 def _scan(sdrs: list[dict[str, object]], *, devices: int = 4, readable: bool = True):
-    return {
-        "sysfs_readable": readable,
-        "devices": [{"usb_id": f"dead:{i:04d}"} for i in range(devices)],
-        "sdrs": sdrs,
-    }
+    bus = [
+        {"name": f"1-{i}", "usb_id": f"dead:{i:04d}", "drivers": ["usbcore"]}
+        for i in range(devices)
+    ]
+    return {"sysfs_readable": readable, "devices": bus + sdrs, "sdrs": sdrs}
 
 
 def test_unclaimed_dongle_is_ready_and_names_the_node_to_pass_through() -> None:
@@ -92,3 +92,22 @@ def test_missing_device_node_still_gives_actionable_advice() -> None:
 
     assert out.ready is True
     assert "/dev/bus/usb" in out.next_step
+
+
+def test_the_full_bus_is_always_returned_so_an_unknown_dongle_can_be_identified() -> None:
+    # The not-found verdict tells the reader to report the device's usb_id. Without
+    # the bus in the response that instruction is unactionable — the debug console
+    # has no other window onto USB, and the owner has no terminal.
+    out = _sdr_verdict(_scan([], devices=3))
+
+    assert not out.found
+    assert [d.usb_id for d in out.devices] == ["dead:0000", "dead:0001", "dead:0002"]
+    assert "devices" in out.next_step
+
+
+def test_the_bus_is_returned_on_a_successful_find_too() -> None:
+    out = _sdr_verdict(_scan([NESDR], devices=2))
+
+    assert out.ready is True
+    assert len(out.devices) == 3  # two others plus the dongle itself
+    assert "0bda:2838" in {d.usb_id for d in out.devices}
