@@ -52,6 +52,7 @@ import type {
   JlaunchSpec,
   PublicJlaunchRun,
 } from "../jlaunch/types";
+import type { SdrListening, SdrState } from "../sdrSession";
 
 export interface Principal {
   principal_id: string;
@@ -2656,6 +2657,33 @@ export const api = {
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning
   // level. Grouping into tiers is a frontend concern (the wire is a flat list).
+  // --- the radio (docs/plans/SDR_RADIO_PLAN.md) -----------------------------
+  // Frequency and mode only — never a URL. The sidecar's address is pinned
+  // server-side, which is what keeps the SSRF guard out of this path entirely.
+  async getSdrStatus(): Promise<SdrState> {
+    const response = await request("/api/sdr/status");
+    return (await response.json()) as SdrState;
+  },
+
+  async sdrListen(frequencyMhz: number, mode: string): Promise<SdrListening> {
+    const query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}&mode=${encodeURIComponent(mode)}`;
+    const response = await request(`/api/sdr/listen?${query}`, { method: "POST" });
+    return (await response.json()) as SdrListening;
+  },
+
+  async sdrTune(frequencyMhz: number, mode?: string, sessionId?: string): Promise<SdrListening> {
+    let query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
+    if (mode) query += `&mode=${encodeURIComponent(mode)}`;
+    if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    const response = await request(`/api/sdr/tune?${query}`, { method: "POST" });
+    return (await response.json()) as SdrListening;
+  },
+
+  async sdrStop(sessionId?: string): Promise<void> {
+    const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    await request(`/api/sdr/stop${query}`, { method: "POST" });
+  },
+
   async getLlmSettings(): Promise<LlmSettings> {
     const response = await request("/api/settings/llm");
     return (await response.json()) as LlmSettings;

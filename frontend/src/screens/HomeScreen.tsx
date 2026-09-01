@@ -7,6 +7,7 @@ import { useReadAloud } from "../agent/useReadAloud";
 import { usePlanState } from "../agent/views/registry";
 import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
+import { SdrTunerSheet } from "../components/SdrTunerSheet";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
 import { useRegisterHomeBack } from "../homeBack";
@@ -14,6 +15,7 @@ import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
+import { useSdrSession } from "../sdrSession";
 
 const TOAST_MS = 4000;
 
@@ -209,6 +211,10 @@ export function HomeScreen({
   // different models. Read here rather than in the surface so the conversation surface
   // keeps taking all its live state from this screen.
   const modelLoad = useModelLoad();
+  // The radio, if one is held. `listening` non-null is exactly the icon's condition,
+  // so the composer and the tuner sheet read one fact rather than two.
+  const sdr = useSdrSession();
+  const [sdrSheet, setSdrSheet] = useState(false);
 
   // One live plan-state instance for the active conversation, driving BOTH the composer-foot
   // pill and its popover. Seeds from the session-list `plan_status` (so the pill reads right
@@ -368,6 +374,10 @@ export function HomeScreen({
         attachEnabled={
           !conversational || fb.supportsVision || (seg.mode === "research" && fb.canAnalyzeImages)
         }
+        // The radio icon appears only while a session holds the tuner — the icon IS
+        // the lease, so this is the same fact the tuner sheet reads.
+        sdrActive={sdr.listening !== null}
+        onSdrTap={() => setSdrSheet(true)}
         // Long-press a conversation tab → pick the model this chat runs on (that
         // conversation only). Only offered on a conversation surface; the chip in the
         // foot shows the active pick.
@@ -384,6 +394,9 @@ export function HomeScreen({
         planStatus={pillStatus}
         onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
       />
+      {sdrSheet && sdr.listening && (
+        <SdrTunerSheet listening={sdr.listening} onClose={() => setSdrSheet(false)} />
+      )}
       {modelSheet && conversational && (
         <AgentModelSheet
           model={fb.modelOverride}
