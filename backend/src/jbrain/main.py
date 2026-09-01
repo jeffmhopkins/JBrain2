@@ -50,6 +50,7 @@ from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
+from jbrain.agent.sdrtools import build_sdr_handlers
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.streamtools import build_stream_handlers
 from jbrain.agent.tool_artifacts import ToolArtifactRepo
@@ -863,6 +864,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
         # The gateway frees the model after each call (load-on-demand / unload-after).
+        # jerv's radio tools. Present only when the box has an SDR — and load-bearing
+        # for the GUI: sdr_listen is what takes the tuner lease, and the composer's
+        # radio icon exists only while a session holds it, so without this tool the
+        # tuner surface cannot be reached at all (SDR_RADIO_PLAN.md D7).
+        sdr_handlers: dict[str, ToolHandler] = build_sdr_handlers(settings.sdr_url)
         transcribe_handlers: dict[str, ToolHandler] = {}
         if settings.whisper_url:
             transcribe_handlers = build_transcribe_handlers(
@@ -1058,6 +1064,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             federal_register=app.state.federal_register,
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
+            sdr_handlers=sdr_handlers,
             video_handlers=video_handlers,
             stream_handlers=stream_handlers,
             grab_handlers=grab_handlers,
