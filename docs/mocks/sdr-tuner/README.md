@@ -68,6 +68,23 @@ at all, and worth deciding deliberately rather than inheriting.
 
 ## Decision
 
-_Open — awaiting owner selection. The chosen file becomes the binding spec; the
-other two are retained here as the record, and the reasoning is added to
-`../../reference/DESIGN.md` in the implementing PR._
+> **Decided (owner, 2026-09-01): A — `a-tuner-sheet.html`.** It is now the binding
+> spec and carries a BINDING SPEC header naming the component contract. B and C are
+> retained here as the record.
+
+Why A: it composes the shared `<Sheet>` rather than introducing a primitive
+(`Sheet.tsx`'s own header calls bespoke modals a design-doc violation), it inherits
+all five of that shell's dismiss paths for free, and it is the only variant with
+room for the full control set today *and* room for what the tuner will grow —
+gain, band presets, a jump to the recording just made. C's argument (a held lease
+should be impossible to forget) is real but is answered more cheaply by the icon's
+own live dot than by spending 44–210px of transcript height on every session.
+
+The consequence to carry forward: **the icon stays a pure opener.** A keeps the
+icon's meaning single — "open the tuner" — which is what makes it legible as the
+lease indicator. The cross-cutting note above about C reassigning the icon is moot.
+
+Still to gate: the **Radio launcher** (Spectrum + Recordings tabs) needs its own
+mock round; this decision covers the omnibox tuner only. The chosen pattern's
+reasoning lands in `../../reference/DESIGN.md` in the implementing PR, per that
+doc's UI-development process.

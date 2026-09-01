@@ -1,30 +1,41 @@
 <!--
   ============================================================================
-  OPTION A — TUNER SHEET  ("the radio is a place you go")
-  SDR tuned-station control for JBrain2 · opens FROM the omnibox radio icon
+  BINDING SPEC (docs/reference/PROCESS.md GUI gate) for the omnibox SDR tuner.
+  Chosen by owner 2026-09-01 from three variants; B (anchored popover) and C
+  (inline dock) are retained beside this file as the record. Feature spec:
+  ../../proposed/SDR_RADIO_PLAN.md (decision D7, wave S4).
 
-  WHAT THIS IS
-  The omnibox grows a radio icon to the LEFT of the attach clip, and ONLY while
-  a tool holds the SDR lease. Tapping it opens the standard bottom sheet — the
-  same shell as the "Conversation model" picker (frontend/src/components/Sheet.tsx
-  + AgentModelSheet.tsx), so this surface costs no new modal primitive.
+  WHAT IS BINDING
+  · A radio icon in the omnibox foot (.foot-icons), immediately LEFT of the
+    attach clip, rendered ONLY while this session holds the SDR lease. Standard
+    .icon-btn geometry (24px glyph, 8px padding, -8px margin, 14px gap); colored
+    --steel, not --text-2, because unlike attach it reports live state. A --green
+    pulse dot marks live audio.
+  · Tapping it opens the SHARED <Sheet> shell (frontend/src/components/Sheet.tsx),
+    titled "Tuned station" — no bespoke modal. All five of Sheet's dismiss paths
+    apply (scrim, Escape, swipe-down on grab/title, the grab button, platform Back).
+  · Content order in the sheet, top to bottom: frequency readout + station name +
+    tune steppers · mode segments · signal meter · squelch slider · transport
+    (play/pause, waveform, elapsed) · record + release actions.
+  · Record is ARM-THEN-CONFIRM (tap, "Tap again", 2.6s window), per the
+    destructive-action doctrine in ../../reference/DESIGN.md.
+  · Release is a first-class action in the sheet, and it makes the icon disappear.
+    THE ICON IS THE LEASE: present = this session holds the radio; absent = idle
+    or held elsewhere. That is the arbitration in SDR_RADIO_PLAN.md §4.2 made
+    visible, and it is the load-bearing idea of this design.
 
-  RATIONALE
-  A tuned radio has more state than a pill can carry: frequency, mode, squelch,
-  signal, elapsed listen time, and a record affordance. The sheet gives all of it
-  one uncramped column with 44px targets, and the scrim says plainly "you are
-  operating the radio now" — which is honest, because with one tuner you are.
-  Releasing the lease from here is a first-class action, not a hidden gesture.
+  COMPONENT CONTRACT
+    state:   { heldBy, frequencyHz, mode, squelch, signalDbm, station|null,
+               playing, elapsedMs, recording }
+    actions: tune(deltaHz) · setMode(mode) · setSquelch(n) · togglePlay()
+             · startRecord()/stopRecord() · release()
+  A null `station` renders "<mode> · unidentified" — the band-plan lookup is
+  reference data on the server, never model input (SDR_RADIO_PLAN.md §6).
 
-  COST
-  A scrim hides the conversation. You cannot read what jerv just said while
-  nudging the squelch, and every glance at the frequency is a full open/dismiss
-  cycle. Heaviest of the three for a control you may touch often.
-
-  INTERACTIVITY
-  Deck above the phone simulates the tool call that grants the lease. Tap the
-  radio icon to open. Tune ±, switch mode, drag squelch, play/stop, arm record,
-  release the radio (watch the icon disappear — the icon IS the lease).
+  WHAT THIS MOCK FAKES
+  Signal, waveform and elapsed time tick from a timer; the deck above the phone
+  stands in for the sdr_listen tool call that takes the lease. Real audio arrives
+  as chunked Opus through a plain <audio> element (decision D6).
 
   Tokens only — no raw hex outside :root / [data-theme="light"].
   Values match frontend/src/styles/tokens.css and docs/reference/DESIGN.md.

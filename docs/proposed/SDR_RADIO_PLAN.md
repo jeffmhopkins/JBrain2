@@ -61,7 +61,7 @@ Three consequences drive the whole design:
 | D4 | **Phase 2 auto-record = squelch watch on a channel list.** | The classic scanner behaviour and the one that feeds the library steadily. Deferred out of v1 (D2); its lease implications are designed for now (§4.2) so Phase 2 is additive. |
 | D5 | **Waterfall = quantized power bins over binary WebSocket, rendered to canvas.** | ~1024 bins × 10 fps × 1 byte ≈ 10 KB/s — trivial on LAN, phone-friendly, and zoom/palette stay client-side. Server-rendered PNG strips would be a video stream for no benefit. |
 | D6 | **Audio = Opus over HTTP chunked, played by a plain `<audio>` element.** | ~2–3 s latency is irrelevant for scanner listening, and it is a fraction of the code of WebSocket-Opus-into-MediaSource. Reversible: the transport is behind one endpoint, so a low-latency path can replace it without touching the UI's model. |
-| D7 | **A lease-gated tuner control on the omnibox, in addition to the launcher.** | The composer grows a radio icon left of the attach clip, shown *only* while a tool holds the lease; tapping it opens the tuned-station controls. **The icon is the lease** — present means this session holds the radio, absent means idle or held elsewhere — so the arbitration in §4.2 stops being invisible plumbing. Follows the shipped plan-pill precedent (a live-state-gated composer affordance that opens a `<Sheet>`). Mocks: `../mocks/sdr-tuner/`. |
+| D7 | **A lease-gated tuner control on the omnibox, in addition to the launcher.** | The composer grows a radio icon left of the attach clip, shown *only* while a tool holds the lease; tapping it opens the tuned-station controls. **The icon is the lease** — present means this session holds the radio, absent means idle or held elsewhere — so the arbitration in §4.2 stops being invisible plumbing. Follows the shipped plan-pill precedent (a live-state-gated composer affordance that opens a `<Sheet>`). **Chosen 2026-09-01: the bottom-sheet variant** — `../mocks/sdr-tuner/a-tuner-sheet.html`, now the binding spec; the icon stays a pure opener. |
 
 ## 4. Architecture — where it slots
 
@@ -163,9 +163,10 @@ presented to the owner to choose before any implementation. The chosen mock land
 `docs/mocks/` and becomes binding spec. The architectural decisions in §3 (D1, D5, D6)
 and the tab structure are settled; what the mocks explore is layout, the tuning
 interaction, and how the lease state is surfaced. **The omnibox-tuner half of this
-gate is drafted** — three interactive mocks in `../mocks/sdr-tuner/` (bottom sheet /
-anchored popover / inline dock), awaiting owner selection; the launcher's own mock
-round is still to come.
+gate is CLOSED** — three mocks ran in `../mocks/sdr-tuner/` and the owner chose the
+bottom sheet (`a-tuner-sheet.html`, now carrying a BINDING SPEC header with the
+component contract). The **Radio launcher still needs its own mock round** before
+S4b touches it.
 
 **S4b** implements two surfaces. The **Radio launcher**: tabs mirroring the Math
 launcher's pattern — **Spectrum** (waterfall + tuning + listen controls) and
