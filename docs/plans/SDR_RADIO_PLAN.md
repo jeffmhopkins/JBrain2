@@ -182,6 +182,19 @@ node. `devnum` increments on every re-plug, so it now leads with `/dev/bus/usb` 
 **selection by serial** — which the real dongle turns out to have from the factory,
 retiring the plan's earlier note that a second radio would need `rtl_eeprom -s` first.
 
+**On-box result, and the correction it forced.** The first run wrote the drop-in and
+then failed to unload: `modprobe -r` **refuses an in-use module**, and a driver bound
+to a device is in use. Worse, the fallback advice was wrong — a blacklist stops a
+module being *loaded*, not one already resident, so re-inserting the dongle just lets
+the loaded driver re-claim it and only a reboot would have helped. On a box the owner
+runs remotely, "go unplug it" is not a fix they can perform at all.
+
+The wave now **unbinds before unloading**: `host_driver_unbind` writes each bound
+interface into the driver's sysfs `unbind`, dropping the refcount to zero so the
+unload succeeds. sysfs is read-only in an ordinary container and read-write in a
+privileged one — the same property `host_kernel_write` already relies on for
+`/proc/sys`. The still-claimed message now says *reboot*, not *re-plug*.
+
 ### S0b-ii — the sidecar + client, then the gate
 
 Build the `sdr` image (`librtlsdr`, `rtl_fm`, `rtl_power`), add the profile-guarded
