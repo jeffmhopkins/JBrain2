@@ -217,7 +217,7 @@ services:
     # `render`: the egress-free network the htmlrender sidecar sits on. The api is its
     # only caller, and joining an `internal: true` network costs the api nothing — it
     # keeps its own egress through `edge`/`internal`.
-    networks: [edge, internal, jcode, jlaunch, render]
+    networks: [edge, internal, jcode, jlaunch, render, radio]
     depends_on:
       db:
         condition: service_healthy
@@ -800,6 +800,32 @@ services:
       HTMLRENDER_IDLE_TTL_SECONDS: ${HTMLRENDER_IDLE_TTL_SECONDS:-300}
     networks: [render]
 
+  # OPT-IN software-defined radio (docs/plans/SDR_RADIO_PLAN.md). Guarded by the `sdr`
+  # profile so a stock deploy never starts it, and only started on a box that has a
+  # dongle. The whole /dev/bus/usb tree is passed through rather than one node: devnum
+  # increments on every re-plug, so pinning /dev/bus/usb/001/005 breaks the first time
+  # the dongle moves — the radio is selected by SERIAL instead (S0b-ii).
+  #
+  # The kernel's DVB-T driver claims an RTL-SDR on sight; `update-inner.sh` blacklists
+  # and unbinds it, which is what makes the device openable here at all.
+  #
+  # EGRESS-FREE: the `radio` network is declared `internal: true`, so this container has
+  # no route off the box. Only `sdr` + `api` join it.
+  sdr:
+    logging: *logbound
+    image: jbrain2-sdr:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.sdr
+    profiles: [sdr]
+    restart: unless-stopped
+    mem_limit: ${SDR_MEM_LIMIT:-512m}
+    environment:
+      SDR_PORT: 8000
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    networks: [radio]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin
@@ -853,6 +879,10 @@ networks:
   # so the guarantee that a `<img src="http://…">` cannot leave the box is made by the
   # network topology, not only by the page-level request interception in server.py.
   render:
+    internal: true
+  # EGRESS-FREE by declaration, same as `render`: a radio receiver has no business
+  # reaching the internet. Only `sdr` + `api` join it.
+  radio:
     internal: true
 
 volumes:

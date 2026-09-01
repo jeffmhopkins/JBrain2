@@ -1,0 +1,40 @@
+# The `sdr` sidecar: tune a USB software-defined radio, return audio
+# (docs/plans/SDR_RADIO_PLAN.md, S0b-ii).
+#
+# `python:3.12-slim` rather than a from-scratch image because the whole service is
+# stdlib — `http.server` plus a pipe to rtl_fm — so the base IS the dependency set.
+# No pip install at all: a radio sidecar that pulled a Python SDR stack would be
+# carrying a second implementation of what librtlsdr already does.
+#
+# EGRESS-FREE by topology: compose puts this on a network declared `internal: true`,
+# so the container has no route off the box. A receiver has no reason to reach the
+# internet, and the network says so regardless of what runs in here.
+#
+# Runs as ROOT deliberately. The device nodes under /dev/bus/usb are root-owned, and
+# the alternatives — a udev rule assigning a group, then joining that GID here —
+# solve a problem this container does not have: it is egress-free, holds no owner
+# data, and its whole job is to open one USB device. The GPU services join host GIDs
+# because they must run as a non-root user for other reasons; this one need not.
+FROM python:3.12-slim
+
+# rtl-sdr brings librtlsdr plus rtl_fm / rtl_power / rtl_test. usbutils is not
+# needed — enumeration happens through sysfs in the supervisor, not here.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rtl-sdr \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY deploy/sdr/server.py ./server.py
+
+# Fail the BUILD, not the first capture: this is the check that would have caught a
+# sidecar shipping without its radio tools, whose only on-box symptom is a capture
+# failing three layers away from the cause (the htmlrender image learned this the
+# hard way — see its Dockerfile).
+RUN python -c "import server" && command -v rtl_fm >/dev/null
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["python", "server.py"]

@@ -16,7 +16,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { type DebugToken, decodeToken } from "./payload";
 
-type CmdType = "complete" | "sql" | "logs" | "routing" | "switch" | "model" | "sdr";
+type CmdType = "complete" | "sql" | "logs" | "routing" | "switch" | "model" | "sdr" | "tune";
 type SessionState = "active" | "suspended" | "revoked";
 
 interface HistoryEntry {
@@ -76,6 +76,7 @@ const CMD_LABELS: Record<CmdType, string> = {
   switch: "switch — route a task",
   model: "model — load / unload",
   sdr: "sdr — probe the USB radio",
+  tune: "tune — capture + transcribe FM",
 };
 
 function pretty(text: string): string {
@@ -135,6 +136,7 @@ export function Console() {
   const [provider, setProvider] = useState("");
   const [effort, setEffort] = useState("");
   const [modelId, setModelId] = useState("");
+  const [freqMhz, setFreqMhz] = useState("");
   const [modelAction, setModelAction] = useState<"load" | "unload">("load");
   const [confirmRevoke, setConfirmRevoke] = useState(false);
 
@@ -279,6 +281,13 @@ export function Console() {
       } else if (cmd === "routing") {
         path = "/api/debug/llm";
         summary = "show live routing table";
+      } else if (cmd === "tune") {
+        // Frequency only — never a URL, so the SSRF guard is untouched. Defaults to
+        // wide FM, which is what a broadcast station needs.
+        if (!freqMhz.trim()) return;
+        method = "POST";
+        path = `/api/debug/sdr/capture?frequency_mhz=${encodeURIComponent(freqMhz)}&seconds=8&mode=wbfm`;
+        summary = `tune ${freqMhz} MHz`;
       } else if (cmd === "sdr") {
         // Enumeration is a sysfs read, so this answers "is the dongle there and
         // what is holding it?" with no device passthrough and no sdr container.
@@ -327,6 +336,7 @@ export function Console() {
       effort,
       modelId,
       modelAction,
+      freqMhz,
       record,
       settle,
       call,
@@ -543,6 +553,18 @@ export function Console() {
                   onChange={(e) => setSystem(e.currentTarget.value)}
                   placeholder="system (optional)"
                   aria-label="System"
+                />
+              </div>
+            )}
+            {cmd === "tune" && (
+              <div className="dbg-row">
+                <input
+                  className="dbg-input dbg-grow"
+                  value={freqMhz}
+                  onChange={(e) => setFreqMhz(e.currentTarget.value)}
+                  placeholder="frequency in MHz (e.g. 99.3)"
+                  aria-label="Frequency MHz"
+                  disabled={session !== "active"}
                 />
               </div>
             )}

@@ -28,6 +28,12 @@ fi
 if [ -f .env ] && grep -q '^JCODE_ENABLED=true' .env; then
   PROFILE+=(--profile jcode)
 fi
+# The opt-in radio sidecar lives behind the `sdr` profile. The PWA update path sets
+# SDR_ENABLED=true when it sees a dongle on the bus, so this keeps the SSH path at
+# parity — the service is built, started and restarted with everything else.
+if [ -f .env ] && grep -q '^SDR_ENABLED=true' .env; then
+  PROFILE+=(--profile sdr)
+fi
 # The job launcher is default-on (single-user box): part of the base stack, not
 # profile-gated, so plain `up`/`build`/`restart` already include it.
 

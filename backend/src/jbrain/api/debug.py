@@ -16,6 +16,7 @@ import asyncio
 import base64
 import datetime as dt
 import decimal
+import json
 import re
 import time
 import uuid
@@ -51,6 +52,7 @@ from jbrain.ingest.ocr import (
     OCR_MAX_TOKENS,
     OCR_SYSTEM,
 )
+from jbrain.ingest.video import transcribe_audio_chunked
 from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
@@ -1586,6 +1588,95 @@ async def sdr_probe(request: Request, settings: SettingsDep, _p: DebugDep) -> Sd
     )
     resp.raise_for_status()
     return _sdr_verdict(cast(dict[str, Any], resp.json()))
+
+
+class SdrCaptureOut(BaseModel):
+    frequency_hz: int
+    frequency_mhz: float
+    mode: str
+    seconds: float
+    peak: float
+    heard_something: bool
+    transcript: str | None
+    transcript_error: str | None
+    device_log: str
+
+
+@router.post("/sdr/capture")
+async def sdr_capture(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    seconds: Annotated[float, Query(ge=0.5, le=120.0)] = 8.0,
+    mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "fm",
+    gain: Annotated[str | None, Query()] = None,
+    transcribe: Annotated[bool, Query()] = True,
+) -> SdrCaptureOut:
+    """Tune the radio, record a few seconds, and (by default) run it through whisper.
+
+    The end-to-end proof for the SDR plan's S0b-ii gate, driven from the debug console
+    so it needs no terminal (CLAUDE.md #10). Frequency and mode are the ONLY inputs —
+    never a URL or a host — and both are bounded here as well as in the sidecar, so the
+    `stream.py` SSRF guard is neither used nor widened (plan §4.4).
+
+    `peak` is the loudest sample as a fraction of full scale, and `heard_something` is
+    the honest read on it: a dead antenna, a mistuned frequency and a working capture of
+    silence all return the same duration, and only the level tells them apart. A
+    transcript of an empty band is whisper hallucinating on noise, so judge the audio by
+    `peak` first and the words second."""
+    request.state.debug_detail = f"sdr capture {frequency_mhz} MHz {mode}"
+    if not settings.sdr_url:
+        raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
+
+    freq_hz = int(round(frequency_mhz * 1_000_000))
+    async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=seconds + 60) as client:
+        resp = await client.post(
+            "/capture",
+            json={"frequency_hz": freq_hz, "seconds": seconds, "mode": mode, "gain": gain},
+        )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="The radio is busy with another capture.")
+    if resp.status_code != 200:
+        detail = resp.json().get("detail", resp.text[:400]) if resp.content else resp.text[:400]
+        raise HTTPException(status_code=502, detail=f"sdr sidecar: {detail}")
+
+    meta = cast(dict[str, Any], json.loads(resp.headers.get("X-Sdr-Meta") or "{}"))
+    wav = resp.content
+
+    transcript: str | None = None
+    error: str | None = None
+    if transcribe:
+        client_ = getattr(request.app.state, "transcribe", None)
+        if client_ is None:
+            error = "no transcription client is configured on this box"
+        else:
+            try:
+                result = await transcribe_audio_chunked(
+                    client_,
+                    _gateway(request),
+                    settings.whisper_model,
+                    wav,
+                    filename=f"sdr-{freq_hz}.wav",
+                )
+                transcript = (result or {}).get("text") or ""
+            except Exception as exc:  # noqa: BLE001 - report, never sink the capture
+                error = repr(exc)
+
+    peak = float(meta.get("peak") or 0.0)
+    return SdrCaptureOut(
+        frequency_hz=freq_hz,
+        frequency_mhz=frequency_mhz,
+        mode=meta.get("mode") or mode,
+        seconds=float(meta.get("seconds") or 0.0),
+        peak=peak,
+        # 1% of full scale is comfortably above a quiet noise floor and well below any
+        # real signal — enough to tell "the radio produced audio" from "it produced zeros".
+        heard_something=peak > 0.01,
+        transcript=transcript,
+        transcript_error=error,
+        device_log=str(meta.get("device_log") or ""),
+    )
 
 
 @router.get("/update/status")

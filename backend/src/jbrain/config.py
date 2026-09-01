@@ -251,6 +251,12 @@ class Settings(BaseSettings):
     # empty disables the HTML lane (the canvas `html` op reports unavailable and the
     # shape-op lane keeps working). The base URL is pinned here, never model-supplied.
     htmlrender_url: str = "http://htmlrender:8000"
+    # The `sdr` radio sidecar (deploy/sdr), OPT-IN behind the `sdr` compose profile and
+    # egress-free by topology. Pinned here and never model-supplied: the SDR tools take a
+    # frequency and a mode, never a URL, so the `stream.py` SSRF guard stays untouched
+    # (docs/plans/SDR_RADIO_PLAN.md §4.4). Empty (the default) means no radio on this box,
+    # and the probe/capture routes report that rather than failing obscurely.
+    sdr_url: str = ""
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).
