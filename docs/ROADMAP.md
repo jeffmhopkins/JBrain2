@@ -590,8 +590,10 @@ radio as a new sensor feeding pipelines that already exist: a Radio launcher (wa
 a lease-gated tuner on the omnibox, agent tools for tuning and sweeping, and a recordings library
 whose whisper transcripts land in the external corpus (searchable; never notes). One tuner makes the
 device lease load-bearing. S0a ✅ — the debug USB probe, a sysfs read that names the dongle and
-detects a kernel DVB claim with no passthrough and no terminal. S0b ◻️ is the blocking on-box gate
-(host enablement, sidecar, and whether whisper on narrowband voice is worth a library).
+detects a kernel DVB claim with no passthrough and no terminal; validated on the box. S0b-i ✅ — the
+DVB blacklist and module eviction, both through the PWA update path so no terminal is needed.
+S0b-ii ◻️ is the blocking on-box gate (sidecar, device permissions, and whether whisper on
+narrowband voice is worth a library).
 
 **Parked:** jcode session isolation (build plan: `docs/plans/JCODE_SESSION_ISOLATION_PLAN.md`) —
 per-session network namespace; parked after the P1 spike (the P0 substrate reverted), kept for a

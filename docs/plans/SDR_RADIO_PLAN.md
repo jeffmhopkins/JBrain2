@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b◻️ S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped on-branch: the owner can now answer "is the dongle there, what is it called, and what is holding it?" from the debug console with no terminal and no device passthrough. S0b is the host enablement + sidecar that probe de-risks.)
+> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️ S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -147,19 +147,55 @@ passthrough, no privileges, and no `sdr` container**. Only *using* a device need
 - An `sdr` command in the debug console, so it is one dropdown pick — **no terminal**
   (CLAUDE.md rule 10).
 
-### S0b — host enablement + sidecar + client
+### S0b-i — free the device from the kernel's DVB driver ✅ *(shipped on-branch)*
 
-Blacklist `dvb_usb_rtl28xxu` and install the `rtl-sdr` udev rules — scripted into
-`install.sh` and `scripts/dev-setup.sh` (rule 8), not left as a terminal instruction
-(rule 10). Build the `sdr` image, add the profile-guarded compose service with USB
-passthrough on an egress-free network, and add the pinned-URL client on the api with
-a `/health` probe.
+S0a's on-box run returned exactly the case the verdict was built for:
 
-**This wave stays a gate.** S0a proves the device is visible and nameable; S0b must
-still answer, on the real box with the real antenna: does the dongle survive a stack
-restart; what is actually audible locally; and — the open risk — **is whisper's output
-on narrowband voice good enough to be worth a library?** A negative answer reshapes
-S3/S4 rather than being discovered after they are built.
+```
+found: true, ready: false   NESDR SMArt v5 (0bda:2838), serial 09022796
+node /dev/bus/usb/001/005   drivers ["dvb_usb_rtl28xxu"]
+```
+
+The RTL2832U in an RTL-SDR **is** a DVB-T tuner chip, so the kernel's television
+driver binds it on sight; two drivers cannot own one USB interface, and librtlsdr's
+`libusb_claim_interface()` then fails with `-6`. The fix is a modprobe blacklist —
+**and evicting the module already bound**, since a drop-in only stops the *next*
+autoload.
+
+Both are host operations, and the owner has no terminal (rule 10). Neither needs one:
+
+- `host_file_write` in `update-inner.sh` already writes host files from the
+  PWA-driven path (a `--privileged` one-shot with the target directory bind-mounted).
+  Its own docstring cites rule 10 — *"that is how earlyoom's thresholds sat
+  unapplied."* The blacklist drop-in rides it.
+- A sibling `host_module_unload` reaches the host's modules through
+  `nsenter -t 1`, the same way the existing helper reaches host systemd.
+
+Applied **only when a dongle is actually claimed** (`sdr_dvb_claimed` looks for a
+bound interface under the driver's sysfs directory), so a box with no radio, or one
+already blacklisted, is untouched. Detecting the *condition* rather than a device-id
+list also keeps it from drifting out of sync with the known-id table in
+`supervisor/usb_devices.py`.
+
+One correction this wave carries: the probe's success advice used to name the device
+node. `devnum` increments on every re-plug, so it now leads with `/dev/bus/usb` plus
+**selection by serial** — which the real dongle turns out to have from the factory,
+retiring the plan's earlier note that a second radio would need `rtl_eeprom -s` first.
+
+### S0b-ii — the sidecar + client, then the gate
+
+Build the `sdr` image (`librtlsdr`, `rtl_fm`, `rtl_power`), add the profile-guarded
+compose service with `/dev/bus/usb` passed through on an egress-free network, settle
+how the container gets permission to open the node (run-as-root vs a udev rule plus a
+joined GID, mirroring the `/dev/dri` GID-joining the GPU services already do), and add
+the pinned-URL client on the api with a `/health` probe.
+
+**This is the blocking gate.** S0a proved the device is visible and nameable and
+S0b-i frees it; S0b-ii must still answer, on the real box with the real antenna: does
+the dongle survive a stack restart and re-plug, selected by serial; what is actually
+audible locally; and — the open risk — **is whisper's output on narrowband voice good
+enough to be worth a library?** A negative answer reshapes S3/S4 rather than being
+discovered after they are built.
 
 ### S1 — the lease + the control API
 

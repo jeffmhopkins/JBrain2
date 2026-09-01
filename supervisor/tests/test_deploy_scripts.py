@@ -1030,3 +1030,87 @@ def test_container_applied_sysctls_match_the_host_hardening_script() -> None:
         assert host.group(1) == container.group(1), (
             f"vm.{knob} differs: host {host.group(1)} vs container {container.group(1)}"
         )
+
+
+# --- SDR: the DVB blacklist (docs/plans/SDR_RADIO_PLAN.md, S0b) ---------------
+#
+# The owner runs this box from the PWA with no terminal (CLAUDE.md #10), so both
+# halves of freeing an RTL-SDR — the modprobe drop-in and evicting the module
+# already bound to it — have to survive the containerized update path.
+
+UPDATE = DEPLOY / "update-inner.sh"
+
+
+def _sdr_claimed(tmp_path: Path, entries: list[str] | None) -> int:
+    """Run update-inner.sh's sdr_dvb_claimed against a fake driver directory.
+
+    `entries` None = the driver isn't loaded at all (no directory). A list builds
+    the directory with those names; sysfs names a BOUND interface `1-1:1.0` and
+    the driver's own control files `bind`/`unbind`/`uevent`.
+    """
+    body = UPDATE.read_text()
+    start = body.index("sdr_dvb_claimed() {")
+    end = body.index("\n}", start) + 2
+    fn = body[start:end]
+
+    drv = tmp_path / "dvb_usb_rtl28xxu"
+    if entries is not None:
+        drv.mkdir()
+        for name in entries:
+            (drv / name).write_text("")
+
+    script = f"{fn}\nSDR_DRIVER_DIR={drv} sdr_dvb_claimed\n"
+    return subprocess.run(["sh", "-c", script], check=False).returncode
+
+
+def test_sdr_claim_detected_when_an_interface_is_bound(tmp_path: Path) -> None:
+    # A bound interface is a symlink named bus-port:config.interface.
+    assert _sdr_claimed(tmp_path, ["bind", "unbind", "uevent", "1-1:1.0"]) == 0
+
+
+def test_sdr_claim_not_detected_when_only_control_files_are_present(tmp_path: Path) -> None:
+    # The module is loaded but holds nothing — blacklisting would be a no-op.
+    assert _sdr_claimed(tmp_path, ["bind", "unbind", "uevent", "module"]) != 0
+
+
+def test_sdr_claim_not_detected_when_the_driver_is_absent(tmp_path: Path) -> None:
+    # The common case: no dongle, or already blacklisted. Must leave the box alone.
+    assert _sdr_claimed(tmp_path, None) != 0
+
+
+def test_sdr_claim_not_detected_on_an_empty_driver_dir(tmp_path: Path) -> None:
+    # The unexpanded-glob case: `for x in dir/*` yields the literal pattern.
+    assert _sdr_claimed(tmp_path, []) != 0
+
+
+def test_blacklist_names_every_driver_that_claims_an_rtl_sdr() -> None:
+    body = UPDATE.read_text()
+    start = body.index('RTLSDR_BLACKLIST="')
+    blob = body[start : body.index('"', start + len('RTLSDR_BLACKLIST="'))]
+    for module in ("dvb_usb_rtl28xxu", "rtl2832", "rtl2830"):
+        assert f"blacklist {module}" in blob
+
+
+def test_blacklist_is_written_through_the_host_helper_not_a_bare_redirect() -> None:
+    # A plain `>` inside the updater container writes the CONTAINER's /etc and the
+    # dongle stays claimed — the exact way earlyoom's thresholds sat unapplied.
+    body = UPDATE.read_text()
+    assert 'host_file_write "$RTLSDR_BLACKLIST_PATH" "$RTLSDR_BLACKLIST"' in body
+    assert "> /etc/modprobe.d" not in body
+
+
+def test_blacklist_is_conditional_on_a_live_claim() -> None:
+    # Never blacklist a driver on a box with no SDR in it.
+    body = UPDATE.read_text()
+    assert "if sdr_dvb_claimed; then" in body
+
+
+def test_module_unload_reaches_the_host_from_the_container_path() -> None:
+    # modprobe -r inside the updater container is a no-op on the host's modules;
+    # it has to go through PID 1's namespaces, like the systemctl restart above it.
+    body = UPDATE.read_text()
+    start = body.index("host_module_unload() {")
+    fn = body[start : body.index("\n}", start)]
+    assert "nsenter -t 1" in fn
+    assert "--privileged" in fn and "--pid=host" in fn
+    assert 'modprobe -r "$1"' in fn
