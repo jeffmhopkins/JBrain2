@@ -302,9 +302,13 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/model/warm")).status_code == 200
+        # Poll the state the assertions below are about, per _until's own docstring.
+        # Waiting on `warming` looks equivalent and is not: it goes true when the task
+        # starts, which is BEFORE load() opens its span and publishes the sample, so a
+        # busy runner could satisfy this poll and then read progress:None a line later.
         await _until(
-            lambda: _model_is(client, "warming", True),
-            what="the warm task to reach the blocked load()",
+            lambda: _model_is(client, "progress", 0.5),
+            what="the watchdog's progress sample to land on the open load row",
         )
 
         mid = (await client.get("/api/jcode/model")).json()

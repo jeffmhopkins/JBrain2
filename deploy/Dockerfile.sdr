@@ -21,9 +21,11 @@ FROM python:3.12-slim
 # needed — enumeration happens through sysfs in the supervisor, not here.
 #
 # ffmpeg is the encoder for the LIVE listening path: rtl_fm emits raw PCM, which no
-# browser plays, and Opus-in-WebM is what an ordinary <audio> element accepts from a
-# chunked response. It is a real ~150 MB dependency on an opt-in profile, taken
-# rather than hand-rolling an Opus muxer.
+# browser plays, and MP3 is what an ordinary <audio> element accepts from a chunked
+# response it may join at ANY point — a listener attaches every time the tuner sheet
+# opens, long after the session started (deploy/sdr/listen.py explains why that rules
+# out a header-bearing container like WebM). It is a real ~150 MB dependency on an
+# opt-in profile, taken rather than hand-rolling an MP3 muxer.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends rtl-sdr ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -37,7 +39,8 @@ COPY deploy/sdr/listen.py ./listen.py
 # failing three layers away from the cause (the htmlrender image learned this the
 # hard way — see its Dockerfile).
 RUN python -c "import server" && command -v rtl_fm >/dev/null \
-    && command -v ffmpeg >/dev/null && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus
+    && command -v ffmpeg >/dev/null \
+    && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3lame
 
 EXPOSE 8000
 

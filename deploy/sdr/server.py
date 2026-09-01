@@ -37,7 +37,7 @@ from typing import Any, cast
 
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
-from listen import Tuner
+from listen import AUDIO_CONTENT_TYPE, Tuner
 
 # The R820T2 tuner's real range. Anything outside it cannot be tuned, so it is
 # rejected here rather than handed to rtl_fm to fail on. HF below 24 MHz needs
@@ -196,17 +196,19 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def _stream_audio(self) -> None:
-        """Stream the live session's Opus to one listener until they hang up.
+        """Stream the live session's MP3 to one listener until they hang up.
 
         No Content-Length: this is an open-ended chunked response, which is what an
-        `<audio>` element wants from a live source."""
+        `<audio>` element wants from a live source. A listener can arrive at ANY point
+        in the session — the tuner sheet opens and closes many times over one lease —
+        and MP3's self-framing is what makes that work (deploy/sdr/listen.py)."""
         session = TUNER.current()
         if session is None:
             self._json(409, {"detail": "nothing is listening"})
             return
         sub = session.subscribe()
         self.send_response(200)
-        self.send_header("Content-Type", "audio/webm")
+        self.send_header("Content-Type", AUDIO_CONTENT_TYPE)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
