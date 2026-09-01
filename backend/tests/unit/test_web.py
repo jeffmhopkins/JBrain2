@@ -214,6 +214,128 @@ async def test_search_passes_a_time_range_window() -> None:
     assert "time_range" not in calls[1].url.params
 
 
+def _info_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
+    """structlog does not route through caplog; capture the event + its fields directly."""
+    seen: list[tuple[str, dict]] = []
+    monkeypatch.setattr("jbrain.web.search.log.info", lambda ev, **kw: seen.append((ev, kw)))
+    return seen
+
+
+async def test_search_logs_the_engines_that_failed_the_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SearXNG names the failed engines per query; we log them so engine health is queryable
+    instead of reconstructed from the container log by hand. No query text on that line."""
+    body: dict[str, object] = dict(_SEARX_OK)
+    body["unresponsive_engines"] = [
+        ["duckduckgo", "CAPTCHA required"],
+        ["brave", "Too many requests"],
+        "mojeek",  # a bare name (a looser upstream shape) is still reported
+    ]
+    seen = _info_events(monkeypatch)
+    await _searx(lambda r: httpx.Response(200, json=body)).search("gpu prices", time_range="day")
+    fields = next(kw for ev, kw in seen if ev == "web.search_engines_down")
+    assert fields["engines"] == [
+        "duckduckgo: CAPTCHA required",
+        "brave: Too many requests",
+        "mojeek",
+    ]
+    # The window rides along: a window itself removes engines, so a reader can tell a blocked
+    # engine from a filtered-out one. The query text does NOT — engine health is independent
+    # of what was asked, and this line is for operating the box.
+    assert fields["time_range"] == "day" and fields["categories"] == "general"
+    assert "gpu prices" not in repr(fields), "engine health must not carry the query text"
+
+
+async def test_search_logs_nothing_when_every_engine_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No line when nothing failed — the signal has to stay rare enough to be worth reading."""
+    seen = _info_events(monkeypatch)
+    await _searx(lambda r: httpx.Response(200, json=_SEARX_OK)).search("gpu prices")
+    assert [ev for ev, _ in seen if ev == "web.search_engines_down"] == []
+
+
+async def test_unresponsive_engines_tolerates_a_junk_shape() -> None:
+    """Diagnostics must never sink a search that otherwise worked, whatever upstream sends."""
+    for junk in ("not-a-list", [None, 42, [], {}], {"duckduckgo": "captcha"}):
+        body = _SEARX_OK | {"unresponsive_engines": junk}
+        client = _searx(lambda r, b=body: httpx.Response(200, json=b))
+        result = await client.search("q")
+        assert result.hits, f"a junk unresponsive_engines ({junk!r}) must not break the search"
+
+
+async def test_search_retries_without_a_window_that_blanked_it() -> None:
+    """The 2026-09-01 blanked-search bug: nine `since=day` searches for cinema showtimes each
+    returned nothing while the same query with no window returned ten hits. A window filters on
+    a page's PUBLISH date and drops every engine that can't filter by date, so it can blank a
+    search on its own — retry once without it rather than let the agent reword forever."""
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if "time_range" in request.url.params:
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(200, json=_SEARX_OK)
+
+    result = await _searx(handle).search("titusville fl movie showtimes", time_range="day")
+    assert [c.url.params.get("time_range") for c in calls] == ["day", None]
+    assert result.hits and result.window_dropped is True
+
+
+async def test_search_keeps_a_window_that_found_something() -> None:
+    """A window that answered is never widened — recency was asked for and honoured."""
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    result = await _searx(handle).search("gpu prices", time_range="week")
+    assert len(calls) == 1 and result.window_dropped is False
+
+
+async def test_web_search_tool_says_when_it_dropped_the_window() -> None:
+    """The model chose the window, so it must be told the results it is reading are NOT
+    filtered — and told why, or it will set `since` again on the next search."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "time_range" in request.url.params:
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(200, json=_SEARX_OK)
+
+    handlers = build_web_handlers(_searx(handle), WebFetcher())
+    out = await handlers["web_search"]({"query": "titusville fl showtimes", "since": "day"}, CTX)
+    text = str(out)
+    assert "`since=day` window returned nothing, so it was dropped" in text
+    assert "when a PAGE was published" in text
+    assert "https://a.example/1" in text  # the widened hits are still delivered
+
+
+async def test_web_search_tool_reports_the_windows_it_already_tried() -> None:
+    """A genuinely empty search must not read as "try different words": the window has already
+    been retried away, so wording is the only remaining variable — say so."""
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json={"results": []})), WebFetcher()
+    )
+    out = await handlers["web_search"]({"query": "zzzz", "since": "day"}, CTX)
+    assert "searched the last day, then again with no time limit" in str(out)
+
+
+async def test_search_empty_at_every_window_stays_empty() -> None:
+    """Widening is a retry, not a guarantee: a query nothing answers still reports nothing,
+    and reports it as un-windowed so the caller doesn't blame the filter twice."""
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    result = await _searx(handle).search("zzzz", time_range="day")
+    assert len(calls) == 2
+    assert result.is_empty and result.window_dropped is False
+
+
 _SEARX_SCIENCE_OK = {
     "results": [
         {

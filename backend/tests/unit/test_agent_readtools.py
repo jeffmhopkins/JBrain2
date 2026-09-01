@@ -1214,8 +1214,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_search.tool": (
             "web_search",
-            3,
-            "8167b64bcb5e43b3cf9a23b20e5e839a4811784cd32f136de22400048578ede8",
+            4,
+            "dc5d5ed259a7fb0fa7f78dd94c6a48b53293a54effb6d00dd181cb9dc39bab9b",
         ),
         "news_search.tool": (
             "news_search",

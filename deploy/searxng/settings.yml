@@ -73,12 +73,18 @@ engines:
   # ?categories=news). It serves the `news` category only, so it DOESN'T dilute a general
   # web_search — it only answers when the news category is requested. Google News carries a
   # publish date per result, which is the freshness signal the news tool surfaces.
-  # `bing news` was dropped: it returned an empty body ("Document is empty" / lxml ParserError)
-  # on every query from this box, contributing nothing while adding latency — google news
-  # carries the category. Broader news breadth is better served by a news API than by piling on
-  # more rate-limited scraper engines (see the deep-research news notes).
   - name: google news
     disabled: false
+  # `bing news` returns an empty body ("Document is empty" / lxml ParserError) on every query
+  # from this box, contributing nothing while adding latency — google news carries the
+  # category. It needs an EXPLICIT `disabled: true`: under `use_default_settings: true` the
+  # list below is merged onto the built-in defs BY NAME, so simply leaving an engine out
+  # leaves its default (enabled) definition standing. It was left out for exactly that reason
+  # and kept running regardless — still failing four to five times a day on 2026-09-01, once
+  # per news beat of the daily briefing. Broader news breadth is better served by a news API
+  # than by piling on more rate-limited scraper engines (see the deep-research news notes).
+  - name: bing news
+    disabled: true
   # Science-category engines for the `science_search` tool (SearxngClient.search_science queries
   # ?categories=science). Scholarly indexes — arXiv, PubMed, Semantic/Google Scholar, Crossref —
   # that carry authors + publish date per result. They serve the `science` category only, so they

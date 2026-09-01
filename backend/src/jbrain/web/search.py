@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 import structlog
@@ -68,11 +68,19 @@ class SearchResult:
     """A general web search: the ranked `hits` PLUS the zero-click extras SearXNG returns in the
     same response and we used to discard — a knowledge-panel `infobox` and any instant `answers`
     (definitions, unit/currency conversions, calculations). The extras let the agent answer a
-    plain fact without spending a web_fetch; the hits are still unverified leads to open."""
+    plain fact without spending a web_fetch; the hits are still unverified leads to open.
+    `window_dropped` marks a result the caller asked to bound by recency that only came back
+    once the window was retried away (see `SearxngClient.search`), so the tool can say so."""
 
     hits: list[SearchHit]
     infobox: Infobox | None = None
     answers: tuple[str, ...] = ()
+    window_dropped: bool = False
+
+    @property
+    def is_empty(self) -> bool:
+        """Nothing to show at all — no hits, no panel, no instant answer."""
+        return not (self.hits or self.infobox or self.answers)
 
 
 @dataclass(frozen=True)
@@ -169,6 +177,38 @@ def _join_authors(raw: object) -> str:
     return str(raw or "").strip()
 
 
+def _unresponsive_engines(body: dict[str, object]) -> list[str]:
+    """The engines that FAILED this query, as SearXNG reported them in `unresponsive_engines`
+    — rows of `[engine, human-readable reason]` (`webutils.get_json_response`). This is the only
+    machine-readable per-engine health signal the JSON API gives us, and it was discarded.
+
+    Without it, working out which engines are down means tailing the searxng CONTAINER log and
+    correlating its error lines against search volume by hand — how the 2026-09-01 investigation
+    had to proceed, and it read Brave as dead when Brave was answering 29 of 31 searches. The
+    two failure modes look identical in that log and are opposites: an engine failing on every
+    single query is blocked (DuckDuckGo, whose engine passes `suspended_time=0` so SearXNG never
+    benches it), while one failing twice in a burst is merely rate-limited and recovers in
+    minutes. Only a per-query record separates them.
+
+    Tolerant of the row shape (list, tuple, or a bare name) because this is diagnostics: a
+    format change upstream must never raise inside a search that otherwise succeeded."""
+    raw = body.get("unresponsive_engines")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for row in raw:
+        if isinstance(row, str):
+            name, reason = row.strip(), ""
+        elif isinstance(row, (list, tuple)) and row:
+            name = str(row[0]).strip()
+            reason = str(row[1]).strip() if len(row) > 1 else ""
+        else:
+            continue
+        if name:
+            out.append(f"{name}: {reason}" if reason else name)
+    return out
+
+
 class SearxngClient:
     """Query a pinned SearXNG instance. `transport` is injectable so tests run
     against a mock with no network (DEVELOPMENT.md "no network in tests")."""
@@ -234,7 +274,21 @@ class SearxngClient:
             # Transport-level failure (unreachable / timeout) or a non-JSON body.
             log.warning("web.search_failed", error=repr(exc))
             raise WebSearchError("the web search service is unavailable right now") from exc
-        return body if isinstance(body, dict) else {}
+        if not isinstance(body, dict):
+            return {}
+        # Per-engine health, one line per query that lost an engine. Deliberately WITHOUT the
+        # query text: which engines are blocked is independent of what was asked, and this line
+        # is for operating the box, not for reading what the owner searched for. `time_range`
+        # rides along because a window itself removes engines (see `search`), so a reader can
+        # tell a blocked engine from a filtered-out one.
+        if down := _unresponsive_engines(body):
+            log.info(
+                "web.search_engines_down",
+                engines=down,
+                categories=categories or "general",
+                time_range=time_range or "",
+            )
+        return body
 
     @staticmethod
     def _rows(body: dict[str, object], limit: int) -> list[dict]:
@@ -254,8 +308,27 @@ class SearxngClient:
         extras SearXNG returns in the same response — a Wikidata/Wikipedia `infobox` and any
         instant `answers` (definitions, conversions, calculations) — so a plain fact can be
         answered without a web_fetch. `time_range` (one of TIME_RANGES; anything else = no
-        window) optionally bounds recency for a general query, the same filter news uses."""
+        window) optionally bounds recency for a general query, the same filter news uses.
+
+        A window that comes back with NOTHING is retried once WITHOUT it, and the widened
+        result is returned flagged (`window_dropped`). A recency window is far more
+        destructive than it looks: SearXNG SKIPS every engine that lacks `time_range_support`
+        outright (on this deployment that drops bing and wikipedia — the latter being the
+        infobox source, so the knowledge panel goes too), and the engines that survive filter
+        on when a page was PUBLISHED, which blanks any query about an evergreen page. Observed
+        live: nine `since="day"` searches for local cinema showtimes returned zero results each
+        while the same query with no window returned ten — the agent burned a whole turn
+        rewording the query because the filter, not the wording, was the problem."""
         tr = time_range if time_range in TIME_RANGES else ""
+        result = await self._search_window(query, limit, tr)
+        if tr and result.is_empty:
+            widened = await self._search_window(query, limit, "")
+            if not widened.is_empty:
+                return replace(widened, window_dropped=True)
+        return result
+
+    async def _search_window(self, query: str, limit: int, tr: str) -> SearchResult:
+        """One general search at one (already validated) recency window, through the cache."""
         key = (query.strip(), tr, limit)
         if self._cache is not None and (cached := self._cache.get(key)) is not None:
             return cached
@@ -271,7 +344,7 @@ class SearxngClient:
         result = SearchResult(hits=hits, infobox=_parse_infobox(body), answers=_parse_answers(body))
         # Cache only a result that carried SOMETHING (hits or an extra): an all-empty result is
         # often a transient throttle we should retry, not a real "nothing", for the whole TTL.
-        if self._cache is not None and (hits or result.infobox or result.answers):
+        if self._cache is not None and not result.is_empty:
             self._cache[key] = result
         return result
 

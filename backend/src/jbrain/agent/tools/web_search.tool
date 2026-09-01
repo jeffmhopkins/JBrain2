@@ -1,6 +1,6 @@
 ---
 name: web_search
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -10,7 +10,7 @@ params:
       description: What to search the web for.
     since:
       type: string
-      description: Optional recency window — one of day, week, month, or year. Bounds results to that period (e.g. "prices this week", a recent release). Omit for no time limit; an unrecognized value is ignored. For a news brief, prefer news_search.
+      description: 'Optional recency window — one of day, week, month, or year. Filters on when a PAGE WAS PUBLISHED, NOT on what the page is about, and it also drops the search engines that cannot filter by date. Set it ONLY when you want recently-published pages (a story that broke this week, a just-released version). Do NOT set it for "what is on today", showtimes, hours, prices, addresses, or anything else that lives on a standing page — the page is years old and the window hides it. Omit for no time limit; an unrecognized value is ignored. For a news brief, prefer news_search.'
     limit:
       type: integer
       description: Maximum number of results (default 6, max 10).
@@ -19,7 +19,13 @@ params:
 Search the open web and return the most relevant results — each with a title, its
 URL, and a short snippet. Use this to find current events, recent or specific facts,
 or anything outside your own knowledge: search before guessing, with a precise query
-built from the key terms of what you need. Pass `since` to bound recency (day/week/month/year).
+built from the key terms of what you need.
+
+`since` (day/week/month/year) bounds the PUBLISH DATE of the pages returned — it is not a
+way to ask about today. A cinema's showtimes, a shop's hours, or a phone number live on a
+page written long ago, so `since=day` hides exactly the page you want. Leave it off unless
+you specifically need recently-published pages. If a search comes back empty, changing the
+wording is rarely the fix — check your arguments first.
 
 When the web has a direct answer to a factual query — a definition, a unit or currency
 conversion, a population, a birth date — the reply may lead with a **knowledge panel** or
