@@ -1068,7 +1068,7 @@ def test_sdr_claim_detected_when_an_interface_is_bound(tmp_path: Path) -> None:
     assert _sdr_claimed(tmp_path, ["bind", "unbind", "uevent", "1-1:1.0"]) == 0
 
 
-def test_sdr_claim_not_detected_when_only_control_files_are_present(tmp_path: Path) -> None:
+def test_sdr_claim_not_detected_when_only_control_files_exist(tmp_path: Path) -> None:
     # The module is loaded but holds nothing — blacklisting would be a no-op.
     assert _sdr_claimed(tmp_path, ["bind", "unbind", "uevent", "module"]) != 0
 
