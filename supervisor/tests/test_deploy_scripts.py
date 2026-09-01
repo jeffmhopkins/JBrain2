@@ -1320,3 +1320,17 @@ def test_the_host_cli_activates_the_same_profile() -> None:
     jbrain = (DEPLOY / "jbrain").read_text()
     assert "^SDR_ENABLED=true" in jbrain
     assert "--profile sdr" in jbrain
+
+
+def test_the_api_is_wired_to_the_sdr_sidecar() -> None:
+    # The gap this catches: update-inner.sh wrote SDR_URL into .env, but without this
+    # mapping the api never saw it and every capture answered "No SDR on this box"
+    # while the sidecar sat there healthy.
+    assert "JBRAIN_SDR_URL: ${SDR_URL:-}" in COMPOSE.read_text()
+
+
+def test_the_sdr_url_default_is_empty_not_a_hostname() -> None:
+    # A hardcoded http://sdr:8000 default would turn "this box has no radio" into a DNS
+    # failure on first capture. Empty keeps the clean 503 that names the real reason.
+    compose = COMPOSE.read_text()
+    assert "JBRAIN_SDR_URL: ${SDR_URL:-http" not in compose
