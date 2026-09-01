@@ -7,6 +7,7 @@ same duration, so `peak`/`heard_something` is the signal that tells them apart.
 """
 
 import json
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -26,8 +27,20 @@ def _request(app_state: dict[str, object] | None = None) -> Request:
     app = FastAPI()
     for key, value in (app_state or {}).items():
         setattr(app.state, key, value)
-    req = Request({"type": "http", "app": app, "headers": [], "method": "POST", "path": "/"})
-    return req
+    return Request({"type": "http", "app": app, "headers": [], "method": "POST", "path": "/"})
+
+
+async def _capture(
+    *, url: str = "http://sdr:8000", state: dict[str, object] | None = None, **kwargs: Any
+) -> debug.SdrCaptureOut:
+    """Call the route with a fake Settings and principal.
+
+    The casts live here rather than at every call site: the route takes the real
+    dependency types, and a test double is exactly what those annotations are meant
+    to exclude in production code."""
+    return await debug.sdr_capture(
+        _request(state), cast(Any, _Settings(url)), cast(Any, None), **kwargs
+    )
 
 
 def _sidecar(monkeypatch: pytest.MonkeyPatch, handler) -> None:
@@ -69,10 +82,8 @@ async def test_a_live_capture_reports_the_level_and_the_transcript(
 
     monkeypatch.setattr(debug, "transcribe_audio_chunked", fake_transcribe)
 
-    out = await debug.sdr_capture(
-        _request({"transcribe": object(), "local_gateway": None}),
-        _Settings(),
-        None,
+    out = await _capture(
+        state={"transcribe": object(), "local_gateway": None},
         frequency_mhz=99.3,
         mode="wbfm",
     )
@@ -97,12 +108,7 @@ async def test_a_silent_capture_is_reported_as_such(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(debug, "transcribe_audio_chunked", fake_transcribe)
 
-    out = await debug.sdr_capture(
-        _request({"transcribe": object(), "local_gateway": None}),
-        _Settings(),
-        None,
-        frequency_mhz=99.3,
-    )
+    out = await _capture(state={"transcribe": object(), "local_gateway": None}, frequency_mhz=99.3)
 
     assert out.heard_something is False
     assert out.transcript == "thank you for watching"  # reported, but not endorsed
@@ -118,14 +124,14 @@ async def test_a_busy_radio_is_a_409_not_a_wait(monkeypatch: pytest.MonkeyPatch)
     )
 
     with pytest.raises(HTTPException) as raised:
-        await debug.sdr_capture(_request(), _Settings(), None, frequency_mhz=99.3)
+        await _capture(frequency_mhz=99.3)
 
     assert raised.value.status_code == 409
 
 
 async def test_no_radio_configured_is_a_clean_503() -> None:
     with pytest.raises(HTTPException) as raised:
-        await debug.sdr_capture(_request(), _Settings(url=""), None, frequency_mhz=99.3)
+        await _capture(url="", frequency_mhz=99.3)
 
     assert raised.value.status_code == 503
     assert "No SDR" in raised.value.detail
@@ -142,7 +148,7 @@ async def test_a_sidecar_error_surfaces_its_reason(monkeypatch: pytest.MonkeyPat
     )
 
     with pytest.raises(HTTPException) as raised:
-        await debug.sdr_capture(_request(), _Settings(), None, frequency_mhz=99.3)
+        await _capture(frequency_mhz=99.3)
 
     assert raised.value.status_code == 502
     assert "No supported devices" in raised.value.detail
@@ -159,12 +165,7 @@ async def test_a_transcription_failure_never_loses_the_capture(
 
     monkeypatch.setattr(debug, "transcribe_audio_chunked", boom)
 
-    out = await debug.sdr_capture(
-        _request({"transcribe": object(), "local_gateway": None}),
-        _Settings(),
-        None,
-        frequency_mhz=99.3,
-    )
+    out = await _capture(state={"transcribe": object(), "local_gateway": None}, frequency_mhz=99.3)
 
     assert out.heard_something is True
     assert out.transcript is None
@@ -185,11 +186,9 @@ async def test_the_frequency_reaching_the_sidecar_is_hz_never_a_url(
 
     _sidecar(monkeypatch, handler)
 
-    await debug.sdr_capture(
-        _request(), _Settings(), None, frequency_mhz=162.55, seconds=4.0, transcribe=False
-    )
+    await _capture(frequency_mhz=162.55, seconds=4.0, transcribe=False)
 
     assert seen["path"] == "/capture"
-    body = seen["body"]
+    body = cast(dict[str, Any], seen["body"])
     assert body["frequency_hz"] == 162_550_000
     assert not any(isinstance(v, str) and "://" in v for v in body.values() if v)
