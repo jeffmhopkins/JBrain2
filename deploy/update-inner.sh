@@ -266,6 +266,31 @@ blacklist dvb_usb_rtl28xxu
 blacklist rtl2832
 blacklist rtl2830"
 
+# The RTL2832U USB ids, mirroring KNOWN_SDR_IDS in supervisor/src/supervisor/usb_devices.py.
+# Two copies is one more than ideal, but the updater cannot import Python from the api
+# image — so a test pins the two lists together instead, and drift fails CI.
+RTLSDR_USB_IDS="0bda:2832 0bda:2838 0ccd:00a9 0ccd:00b3 1554:5020 15f4:0131 185b:0620 1b80:d3a4 1d19:1101"
+
+# Is an RTL-SDR plugged into this box at all?
+#
+# Unlike sdr_dvb_claimed below this needs the id list: once the dongle is blacklisted
+# and unbound, nothing holds it, so there is no driver to detect it by. SDR_USB_ROOT is
+# overridable for tests. /sys is mounted read-only in every container, so this works
+# from the PWA path.
+sdr_present() {
+  _root="${SDR_USB_ROOT:-/sys/bus/usb/devices}"
+  [ -d "$_root" ] || return 1
+  for _vendor in "$_root"/*/idVendor; do
+    [ -f "$_vendor" ] || continue
+    _v="$(cat "$_vendor" 2>/dev/null)"
+    _p="$(cat "${_vendor%/idVendor}/idProduct" 2>/dev/null)"
+    for _known in $RTLSDR_USB_IDS; do
+      [ "$_v:$_p" = "$_known" ] && return 0
+    done
+  done
+  return 1
+}
+
 # Is an RTL-SDR currently held by the kernel's DVB-T driver?
 #
 # Detects the CONDITION rather than a device id list: sysfs names each bound interface
@@ -539,6 +564,26 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
 fi
 
+# Software-defined radio (sdr): opt-in and profile-gated, but enabled by DETECTING THE
+# DONGLE rather than by a flag the owner would have to set — they run this box from the
+# PWA with no terminal (CLAUDE.md #10), so "edit .env" is not an instruction they can
+# follow. Plug the radio in, run Update, the service appears. Same principle as the DVB
+# blacklist above: act on the condition, not on configuration.
+#
+# The flag is written once so `deploy/jbrain` (the SSH path) activates the same profile,
+# keeping host and PWA parity. A box whose dongle is later removed simply captures
+# nothing and says so — better than a service that refuses to start.
+SDR_PROFILE=""
+if sdr_present; then
+  SDR_PROFILE="--profile sdr"
+  grep -q '^SDR_ENABLED=' .env || printf 'SDR_ENABLED=%s\n' 'true' >> .env
+  grep -q '^SDR_URL=' .env || printf 'SDR_URL=%s\n' 'http://sdr:8000' >> .env
+elif grep -q '^SDR_ENABLED=true' .env; then
+  # The dongle is gone but the box was set up for one: keep the service in the update
+  # so it is rebuilt and recreated rather than silently left on an old image.
+  SDR_PROFILE="--profile sdr"
+fi
+
 # Job launcher (jlaunch): DEFAULT-ON (single-user box) — part of the base stack, not
 # profile-gated, so the plain build/recreate below already include it. Always backfill the
 # api<->jlaunch bearer for boxes that predate it (the fail-closed control server won't start
@@ -757,7 +802,7 @@ if sdr_dvb_claimed; then
 fi
 
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
-docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
 # architecture is supported WITHOUT any manual step — the owner drives this box from the
@@ -921,7 +966,7 @@ echo "[update] running migrations"
 docker compose run --rm migrate
 
 echo "[update] restarting stack"
-docker compose $JCODE_PROFILE $TUNNEL_PROFILE up -d
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d
 
 # End of the quiesced window. `up -d` covers the base stack; this puts back the
 # profile-gated services it does not name (comfyui, the mqtt pair) so an update never

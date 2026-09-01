@@ -9,6 +9,7 @@ which import/reset call by path) must declare `#!/bin/sh` and parse under a
 POSIX shell. Host-only scripts (restore.sh, install.sh) may stay bash.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -191,8 +192,8 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
         return next((i for i, ln in enumerate(lines) if needle in ln), None)
 
     stop = idx("rm -sf local-llm")
-    build = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE build")
-    up = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    build = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
+    up = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "
         "cloud stack (no local-llm) is never touched"
@@ -610,7 +611,7 @@ def test_update_releases_models_and_removes_the_gateway_before_building() -> Non
 
     unload = idx("jbrain.cli local-llm-unload")
     remove = idx("rm -sf local-llm")
-    build = idx("docker compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    build = idx("docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
 
     assert unload < remove < build, (
         "release models, then remove the gateway, then build"
@@ -736,9 +737,9 @@ def test_update_quiesces_the_stack_around_the_build_and_the_model_load() -> None
     lines = _update_lines()
 
     quiesce = _call_idx(lines, "quiesce_stack")
-    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
-    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d")
     unquiesce = _call_idx(lines, "unquiesce_stack")
 
     assert quiesce is not None, "the update must quiesce the stack for the heavy phase"
@@ -947,7 +948,7 @@ def test_migrations_run_next_to_the_recreate_not_before_the_gateway_work() -> No
 
     migrate = _cmd_idx(lines, "run --rm migrate")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
-    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d")
 
     assert migrate is not None and smoke is not None and up is not None
     assert smoke < migrate < up, (
@@ -981,7 +982,7 @@ def test_the_gateway_is_emptied_again_before_the_stack_is_recreated() -> None:
     unloads = [i for i, ln in enumerate(lines) if ln.strip() == "release_models"]
     pre_build = _cmd_idx(lines, "jbrain.cli local-llm-unload")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
-    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d")
 
     assert pre_build is not None, "there must be an unload before the build"
     assert smoke is not None and up is not None
@@ -1002,7 +1003,7 @@ def test_reclaim_hardening_runs_before_the_memory_heavy_phase_on_both_paths() ->
 
     harden = _cmd_idx(lines, "oom-hardening.sh")
     knobs = _cmd_idx(lines, "host_kernel_write vm/min_free_kbytes")
-    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
 
     assert harden is not None and knobs is not None and build is not None
@@ -1238,3 +1239,84 @@ def test_the_sdr_image_installs_the_radio_tools() -> None:
     dockerfile = (DEPLOY / "Dockerfile.sdr").read_text()
     assert "rtl-sdr" in dockerfile
     assert "command -v rtl_fm" in dockerfile
+
+
+def _sdr_present(tmp_path: Path, devices: list[tuple[str, str]]) -> int:
+    """Run update-inner.sh's sdr_present against a fake /sys/bus/usb/devices tree."""
+    body = UPDATE.read_text()
+    ids_line = next(ln for ln in body.splitlines() if ln.startswith("RTLSDR_USB_IDS="))
+    start = body.index("sdr_present() {")
+    fn = body[start : body.index("\n}", start) + 2]
+
+    root = tmp_path / "devices"
+    for i, (vendor, product) in enumerate(devices):
+        entry = root / f"1-{i}"
+        entry.mkdir(parents=True)
+        (entry / "idVendor").write_text(vendor + "\n")
+        (entry / "idProduct").write_text(product + "\n")
+
+    script = f"{ids_line}\n{fn}\nSDR_USB_ROOT={root} sdr_present\n"
+    return subprocess.run(["sh", "-c", script], check=False).returncode
+
+
+def test_sdr_present_finds_the_nooelec_dongle(tmp_path: Path) -> None:
+    # The real box: a root hub, a wireless receiver, and the NESDR SMArt v5.
+    assert (
+        _sdr_present(tmp_path, [("1d6b", "0002"), ("046d", "c52b"), ("0bda", "2838")])
+        == 0
+    )
+
+
+def test_sdr_present_is_false_with_no_radio(tmp_path: Path) -> None:
+    assert _sdr_present(tmp_path, [("1d6b", "0002"), ("046d", "c52b")]) != 0
+
+
+def test_sdr_present_is_false_on_a_box_without_sysfs(tmp_path: Path) -> None:
+    body = UPDATE.read_text()
+    ids_line = next(ln for ln in body.splitlines() if ln.startswith("RTLSDR_USB_IDS="))
+    start = body.index("sdr_present() {")
+    fn = body[start : body.index("\n}", start) + 2]
+    script = f"{ids_line}\n{fn}\nSDR_USB_ROOT={tmp_path / 'absent'} sdr_present\n"
+
+    assert subprocess.run(["sh", "-c", script], check=False).returncode != 0
+
+
+def test_the_shell_usb_id_list_matches_the_python_table() -> None:
+    # Two copies of the same fact, in languages that cannot import each other. This is
+    # the pin that makes drift fail CI instead of silently disabling the radio.
+    shell = next(
+        ln for ln in UPDATE.read_text().splitlines() if ln.startswith("RTLSDR_USB_IDS=")
+    )
+    shell_ids = set(shell.split("=", 1)[1].strip('"').split())
+
+    usb_devices = (
+        DEPLOY.parent / "supervisor/src/supervisor/usb_devices.py"
+    ).read_text()
+    python_ids = set(re.findall(r'"([0-9a-f]{4}:[0-9a-f]{4})":', usb_devices))
+
+    assert shell_ids == python_ids, "the updater's id list drifted from KNOWN_SDR_IDS"
+
+
+def test_the_sdr_profile_is_enabled_by_hardware_not_by_a_flag_the_owner_must_set() -> (
+    None
+):
+    # The owner has no terminal, so "edit .env" is not an instruction they can follow.
+    body = UPDATE.read_text()
+    assert 'if sdr_present; then\n  SDR_PROFILE="--profile sdr"' in body
+
+
+def test_the_sdr_profile_reaches_both_the_build_and_the_recreate() -> None:
+    # A profile in `build` but not `up -d` builds an image nothing starts.
+    body = UPDATE.read_text()
+    # Order among profiles is meaningless to compose; what matters is that the radio
+    # reaches BOTH commands. A profile in `build` but not `up -d` builds an image
+    # nothing starts.
+    assert "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build" in body
+    assert "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d" in body
+
+
+def test_the_host_cli_activates_the_same_profile() -> None:
+    # Host/PWA parity: an SSH `jbrain restart` must not drop the radio.
+    jbrain = (DEPLOY / "jbrain").read_text()
+    assert "^SDR_ENABLED=true" in jbrain
+    assert "--profile sdr" in jbrain

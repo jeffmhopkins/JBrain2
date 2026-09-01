@@ -208,6 +208,14 @@ udev rule assigning a group, then joining that GID) solves a problem this contai
 not have. It is egress-free, holds no owner data, and its entire job is to open one USB
 device. The GPU services join host GIDs because they must run non-root for other reasons.
 
+**Enabled by the hardware, not by a flag.** The service is profile-gated, and the
+update path turns the profile on when it finds a dongle on the bus (`sdr_present`),
+writing `SDR_ENABLED`/`SDR_URL` once so `deploy/jbrain` activates the same profile over
+SSH. Asking the owner to set a flag would have meant asking them to edit `.env` — an
+instruction they cannot follow (rule 10). Plug the radio in, run Update, the service
+appears. The one cost is a second copy of the USB id list in shell, which a test pins
+against `KNOWN_SDR_IDS` so drift fails CI rather than silently disabling the radio.
+
 Two design points carried from earlier waves: the sidecar holds a **lock** and refuses a
 second caller with `409` rather than queueing (one tuner — an unknown wait is worse than
 a plain no), and the capture reports **`peak`/`heard_something`** alongside the
