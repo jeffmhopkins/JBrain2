@@ -1,7 +1,7 @@
 ---
 name: sdr_listen
-version: 1
-permission: external
+version: 2
+permission: web
 params:
   type: object
   properties:

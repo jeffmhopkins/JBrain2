@@ -979,13 +979,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
     pins = {
         "sdr_listen.tool": (
             "sdr_listen",
-            1,
-            "bcafee51224eaadce2f18c9a75d19b22883da5743c5fc85c8cf780b081540956",
+            2,
+            "78e56ff853820b5ea1189cf1a6e96aceac52d07e7d1815ad61f911b96d740692",
         ),
         "sdr_stop.tool": (
             "sdr_stop",
-            1,
-            "6efe114cd33b24f044cd22e8e43ef67c2f22c15666bbf54b5476b35811fa960a",
+            2,
+            "ae92d813c86da7660c689c26502720ce1c33260bf34138b2c0b7f1ddf241cfcc",
         ),
         "search.tool": (
             "search",
@@ -1581,6 +1581,38 @@ def test_query_server_metrics_offered_to_jerv() -> None:
     )
     # Empty scopes (a sandboxed jerv session) + jerv's allowlist still surfaces it.
     assert {t.name for t in registry.schemas_for(set(), JERV_TOOLS)} == {"query_server_metrics"}
+
+
+def test_the_radio_tools_reach_jerv_and_only_jerv() -> None:
+    """Both halves of the radio gate, each of which shipped wrong once.
+
+    The tools were registered but absent from JERV_TOOLS, so the one agent that is
+    supposed to tune the radio could not see them — and `sdr_listen` is the ONLY way
+    to take the tuner lease, so the composer icon and the whole tuner sheet were
+    unreachable no matter what the owner asked for.
+
+    They were also `external` rather than `web`, which is the opposite mistake: an
+    `external` tool falls THROUGH to the `allow=None` wildcard, handing the radio to
+    the Full Brain curator (staged as an egress Proposal, for a receiver that emits
+    nothing). `web` is the correct class — an on-box sidecar, jerv-only by opt-in,
+    like `transcribe` and `analyze_video`.
+    """
+    from jbrain.agent.agents import JERV_TOOLS
+    from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
+
+    async def noop(_args: dict, _ctx: ToolContext) -> ToolOutput:
+        return ToolOutput("")
+
+    radio = {"sdr_listen", "sdr_stop"}
+    assert radio <= JERV_TOOLS
+    registry = ToolRegistry(
+        [RegisteredTool(load_tool(TOOLS_DIR / f"{name}.tool"), noop) for name in sorted(radio)]
+    )
+    # jerv's allowlist surfaces both, even in an empty-scope sandboxed session.
+    assert {t.name for t in registry.schemas_for(set(), JERV_TOOLS)} == radio
+    # The curator wildcard never absorbs them, at any scope — the `web` class gate.
+    assert registry.schemas_for({"general"}) == []
+    assert registry.schemas_for({"general", "health", "location"}) == []
 
 
 # --- read_wiki (the read-only wiki-editorial tool) ------------------------

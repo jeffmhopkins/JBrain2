@@ -492,7 +492,15 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   **`analyze_image`** vision read, and **`analyze_video`**
   (read an attached video by sampling frames + transcribing audio) — each resolves a
   chat attachment by id under the session scope, runs an on-box model, and is dropped
-  from the registry when its backend is unconfigured (graceful degrade). Image
+  from the registry when its backend is unconfigured (graceful degrade). On a box with
+  a USB SDR the same gate adds **`sdr_listen`** / **`sdr_stop`** (tune the radio and
+  release it, `docs/plans/SDR_RADIO_PLAN.md`): `web` rather than `external` because the
+  tuner is an RX-only receiver on an internal-only network — nothing leaves the box, so
+  there is no egress payload to stage a Proposal for — and jerv-only for the usual
+  reason, that a `web` tool reaches no agent which has not allowlisted it. `sdr_listen`
+  is also the only thing that takes the tuner lease, and the composer's radio icon
+  exists exactly while a session holds it, so the tool is what makes that surface
+  reachable at all. Image
   **generation and editing are not agent tools**: the owner drives ComfyUI through the
   Images launcher (`api/images_render.py` + `ImageRenderService`), and jerv's prompt
   points an owner who asks for a picture at the Images app. (The former

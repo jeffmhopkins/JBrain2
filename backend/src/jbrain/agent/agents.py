@@ -89,8 +89,8 @@ DEEP_PRODUCE_TOOL = "deep_produce"
 # analysis, and the host-metrics read.
 # `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
 # allowlist could not otherwise reach); `current_location`, `weather`, `hurricane`,
-# `analyze_image`, `transcribe`, `analyze_video`, and `analyze_stream`
-# are `web`-gated jerv-only tools (`analyze_stream` reads a video URL — live or VOD —
+# `analyze_image`, `transcribe`, `analyze_video`, `analyze_stream`, `sdr_listen` and
+# `sdr_stop` are `web`-gated jerv-only tools (`analyze_stream` reads a video URL — live or VOD —
 # via yt-dlp + ffmpeg, docs/archive/STREAM_ANALYSIS_PLAN.md; the SSRF-guarded second
 # outbound leg after web_fetch). `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
@@ -125,6 +125,17 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "analyze_stream",
+        # The radio pair (SDR_RADIO_PLAN.md D7): tune the owner's USB SDR and release
+        # it. `web`-gated for the same reason as transcribe/analyze_video — an on-box
+        # sidecar on an internal-only network, jerv-only, with no owner data in the
+        # call — and NOT `external`: the tuner is RX-only over the air, so nothing
+        # leaves the box and there is no egress payload for invariant #9 to approve.
+        # sdr_listen is what takes the tuner lease, and the composer's radio icon
+        # exists only while a session holds it, so this allowlist entry is the whole
+        # path to that surface. Absent from the registry on a box with no SDR (most
+        # boxes), so naming them here is harmless without one.
+        "sdr_listen",
+        "sdr_stop",
         # Grab a single still from a video (URL or attachment) at a timestamp as a
         # first-class chat image analyze_image/compare_images can read by id
         # (VIDEO_IMAGE_TOOLS_PLAN.md) — the "screenshot the video at this moment" step.

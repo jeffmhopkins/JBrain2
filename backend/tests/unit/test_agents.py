@@ -97,6 +97,11 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "transcribe",
             "analyze_video",
             "analyze_stream",
+            # The radio pair: tune the owner's USB SDR and release it. jerv is the only
+            # agent that holds them, and sdr_listen is the only thing that takes the
+            # tuner lease the composer's radio icon reflects (SDR_RADIO_PLAN.md D7).
+            "sdr_listen",
+            "sdr_stop",
             "grab_frame",
             "render_bars",
             "render_chart",
