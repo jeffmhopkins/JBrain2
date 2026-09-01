@@ -320,10 +320,24 @@ waterfall and the recordings library.
 | Tool | Permission | Cost | What it does |
 |---|---|---|---|
 | `sdr_status` | `read` | cheap | What the radio is doing, who holds the lease, current tuning |
-| `sdr_listen` | `external` | expensive | Tune + capture N seconds + transcribe → transcript card |
+| `sdr_listen` | `web` | expensive | Tune the radio and take the lease → puts the tuner icon in the composer (shipped) |
+| `sdr_stop` | `web` | cheap | Release the radio → the icon disappears (shipped) |
 | `spectrum_sweep` | `external` | expensive | `rtl_power` across a band → chart card + detected-activity list. Deferred job |
 | `sdr_recordings` | `read` | cheap | Query the library by frequency, time, or transcript text |
 | `sdr_watch` / `sdr_unwatch` | `mutate` | cheap | Arm/disarm auto-record (**registered in Phase 2**, specified here so the lease design accounts for it) |
+
+**Why the live tools are `web`, not `external`.** `external` means egress: the class
+stages an owner Proposal because a payload is about to leave the box (invariant #9).
+The tuner emits nothing — it is an RX-only receiver on an `internal: true` network —
+so there is no payload to approve, and staging one would put a consent card in front
+of "put on 99.3". `web` is the right class for the same reason `transcribe` and
+`analyze_video` carry it: an on-box sidecar, opt-in per agent, no owner data in the
+call. The class is also the *access* gate, and it cuts both ways: `web` is admitted
+only to an agent that explicitly allowlists it, so jerv must name these in
+`JERV_TOOLS` (it does) and the Full Brain curator's `tools=None` wildcard can never
+absorb the radio. Shipping them as `external` got both halves wrong at once — jerv
+could not see them, and curator could. Pinned by
+`test_the_radio_tools_reach_jerv_and_only_jerv`.
 
 A sweep returns numbers; numbers alone are not interpretable. `spectrum_sweep` therefore
 joins detected activity against a **band-plan table** so the model can say "462.5625 —
