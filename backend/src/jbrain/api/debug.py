@@ -55,7 +55,7 @@ from jbrain.ingest.ocr import (
 from jbrain.ingest.video import transcribe_audio_chunked
 from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
-from jbrain.llm.local_gateway import LocalGatewayError
+from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -75,6 +75,7 @@ from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
+from jbrain.transcribe import WhisperCppClient
 from jbrain.web.fetch import WebFetcher, WebFetchError
 from jbrain.web.moltbook import scrub_secret
 
@@ -1647,14 +1648,20 @@ async def sdr_capture(
     transcript: str | None = None
     error: str | None = None
     if transcribe:
-        client_ = getattr(request.app.state, "transcribe", None)
-        if client_ is None:
-            error = "no transcription client is configured on this box"
+        # The whisper client is built per use from the setting, exactly as the video and
+        # stream paths do in main.py — it is not held on app.state, and reading it from
+        # there is how the first on-box capture came back untranscribed.
+        if not settings.whisper_url:
+            error = "no whisper gateway on this box (whisper_url unset)"
         else:
             try:
                 result = await transcribe_audio_chunked(
-                    client_,
-                    _gateway(request),
+                    WhisperCppClient(
+                        settings.whisper_url,
+                        settings.whisper_model,
+                        timeout=settings.whisper_timeout,
+                    ),
+                    LocalGatewayClient(settings.whisper_url),
                     settings.whisper_model,
                     wav,
                     filename=f"sdr-{freq_hz}.wav",
