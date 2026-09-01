@@ -16,7 +16,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { type DebugToken, decodeToken } from "./payload";
 
-type CmdType = "complete" | "sql" | "logs" | "routing" | "switch" | "model";
+type CmdType = "complete" | "sql" | "logs" | "routing" | "switch" | "model" | "sdr";
 type SessionState = "active" | "suspended" | "revoked";
 
 interface HistoryEntry {
@@ -75,6 +75,7 @@ const CMD_LABELS: Record<CmdType, string> = {
   routing: "routing — show live table",
   switch: "switch — route a task",
   model: "model — load / unload",
+  sdr: "sdr — probe the USB radio",
 };
 
 function pretty(text: string): string {
@@ -278,6 +279,11 @@ export function Console() {
       } else if (cmd === "routing") {
         path = "/api/debug/llm";
         summary = "show live routing table";
+      } else if (cmd === "sdr") {
+        // Enumeration is a sysfs read, so this answers "is the dongle there and
+        // what is holding it?" with no device passthrough and no sdr container.
+        path = "/api/debug/sdr";
+        summary = "probe the USB radio";
       } else if (cmd === "switch") {
         if (!task.trim() || !provider.trim()) return;
         type = "switch";

@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** Proposed · **Last verified:** 2026-09-01 · **Waves:** S0◻️ S1◻️ S2◻️ S3◻️ S4◻️
+> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b◻️ S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped on-branch: the owner can now answer "is the dongle there, what is it called, and what is holding it?" from the debug console with no terminal and no device passthrough. S0b is the host enablement + sidecar that probe de-risks.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -122,19 +122,44 @@ range and a band-plan allowlist. This is a security path: **100% coverage** per 
 
 ## 5. Waves
 
-### S0 — host enablement + sidecar + client · **blocking spike**
+### S0a — the debug USB probe ✅ *(shipped on-branch)*
 
-Blacklist the kernel DVB module `dvb_usb_rtl28xxu` (which claims RTL2832U devices on
-sight) and install the `rtl-sdr` udev rules — scripted into `install.sh` and
-`scripts/dev-setup.sh` (rule 8), not left as a terminal instruction (rule 10). Build the
-`sdr` image, add the profile-guarded compose service with USB passthrough on an
-egress-free network, and add the pinned-URL client on the api with a `/health` probe.
+Answer the first question before building anything that depends on the answer:
+**is the dongle there, what exactly is it called, and is anything holding it?**
 
-**This wave is a gate, not just plumbing.** It answers, on the real box with the real
-antenna: does the dongle enumerate and survive a stack restart; what is actually
-audible locally; and — the open risk — **is whisper's output on narrowband voice good
-enough to be worth a library?** A negative answer here reshapes S3/S4 rather than being
-discovered after they are built.
+Deliberately the cheapest possible spike. Enumerating and *naming* a USB device is
+a **sysfs read** — `/sys/bus/usb/devices/` is not namespaced and Docker mounts the
+host's `/sys` read-only into every container — so this needs **no device
+passthrough, no privileges, and no `sdr` container**. Only *using* a device needs
+`/dev/bus/usb`.
+
+- `supervisor/src/supervisor/usb_devices.py` reads the bus, folds each device's
+  interface drivers back onto it, and flags the RTL2832U family by USB id. The
+  scan carries `sysfs_readable` alongside the device list, because apart they lie:
+  an empty list means "no devices" only if we could look.
+- Supervisor `GET /usb`, mirroring `/metrics` — the supervisor is already the only
+  container that reads `/sys`.
+- Api `GET /api/debug/sdr` proxies it and returns a **verdict**: `found`, `ready`,
+  a one-line `summary`, and a `next_step`. The distinction that matters is
+  found-but-not-ready: a dongle claimed by the kernel's DVB-T driver
+  (`dvb_usb_rtl28xxu`) is the expected first result on a stock Ubuntu box, and the
+  verdict says so and names the blacklist rather than leaving the reader to know it.
+- An `sdr` command in the debug console, so it is one dropdown pick — **no terminal**
+  (CLAUDE.md rule 10).
+
+### S0b — host enablement + sidecar + client
+
+Blacklist `dvb_usb_rtl28xxu` and install the `rtl-sdr` udev rules — scripted into
+`install.sh` and `scripts/dev-setup.sh` (rule 8), not left as a terminal instruction
+(rule 10). Build the `sdr` image, add the profile-guarded compose service with USB
+passthrough on an egress-free network, and add the pinned-URL client on the api with
+a `/health` probe.
+
+**This wave stays a gate.** S0a proves the device is visible and nameable; S0b must
+still answer, on the real box with the real antenna: does the dongle survive a stack
+restart; what is actually audible locally; and — the open risk — **is whisper's output
+on narrowband voice good enough to be worth a library?** A negative answer reshapes
+S3/S4 rather than being discovered after they are built.
 
 ### S1 — the lease + the control API
 
@@ -222,11 +247,13 @@ model input.
 
 ## 8. Docs to reconcile on merge
 
-- `docs/reference/SERVICES.md` — the `sdr` service row, the profile, the Radio launcher
-  in the owner-app screen list, and the new tools in the tool inventory.
+- `docs/reference/SERVICES.md` — the supervisor's `/usb` command (done, S0a), then the
+  `sdr` service row, the profile, the Radio launcher in the owner-app screen list, and
+  the new tools in the tool inventory.
+- `docs/runbooks/DEBUG_ACCESS.md` — the `sdr` console command (done, S0a).
 - `docs/reference/DESIGN.md` — only if the waterfall needs a token or compact-density
   variant that does not already exist.
-- `docs/ROADMAP.md` — a slot, at promotion out of `proposed/` (§ below).
+- `docs/ROADMAP.md` — a slot (done, at promotion out of `proposed/`).
 - `docs/mocks/sdr-tuner/` — the chosen tuner mock, as binding spec (its README's
   Decision section filled in), plus the launcher's mock round when it runs.
 - This plan — promoted from `docs/proposed/` to `docs/plans/` when scheduled, then

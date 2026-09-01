@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-09-01
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -584,6 +584,14 @@ runs) and P3 (a compare-and-contrast preset from the library) open.
 **In progress:** Deep-research scratchpad (build plan: `docs/plans/DEEP_RESEARCH_SCRATCHPAD_PLAN.md`)
 — an in-memory, run-scoped findings ledger with an explicit visibility model for `deep_research`.
 P1 + P1.5 landed; P2 (scope-model unlocks) deferred until a comparison mode needs it.
+
+**In progress:** SDR radio (build plan: `docs/plans/SDR_RADIO_PLAN.md`) — a USB software-defined
+radio as a new sensor feeding pipelines that already exist: a Radio launcher (waterfall + listening),
+a lease-gated tuner on the omnibox, agent tools for tuning and sweeping, and a recordings library
+whose whisper transcripts land in the external corpus (searchable; never notes). One tuner makes the
+device lease load-bearing. S0a ✅ — the debug USB probe, a sysfs read that names the dongle and
+detects a kernel DVB claim with no passthrough and no terminal. S0b ◻️ is the blocking on-box gate
+(host enablement, sidecar, and whether whisper on narrowband voice is worth a library).
 
 **Parked:** jcode session isolation (build plan: `docs/plans/JCODE_SESSION_ISOLATION_PLAN.md`) —
 per-session network namespace; parked after the P1 spike (the P0 substrate reverted), kept for a

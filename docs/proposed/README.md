@@ -67,16 +67,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   re-exporting the moved private helpers from `deep_research` so the tests' imports still
   resolve. Its own PR, done in a git-push-capable session. Follows from the scratchpad work
   (PR #1049).
-- `SDR_RADIO_PLAN.md` — add a USB software-defined radio (Nooelec NESDR SMArt v5, RTL2832U +
-  R820T2, receive-only, one tuner) as a new sensor feeding existing pipelines: a **Radio
-  launcher** (waterfall over binary-WS power bins, tuning, Opus-over-HTTP listening), five
-  **agent tools** (`sdr_status`, `sdr_listen`, `spectrum_sweep` as a deferred job,
-  `sdr_recordings`, plus a Phase-2 `sdr_watch`), and a **recordings library** whose whisper
-  transcripts persist as external-corpus sources — searchable through hybrid search, and
-  never notes. The single tuner makes a **device lease** the load-bearing component; the
-  SSRF guard is not widened (tools take frequency/mode, never a URL). Waves S0–S4 with S0 a
-  blocking on-box spike (does narrowband voice transcribe well enough to be worth a library?)
-  and S4a the GUI-gate mock triage. Auto-record (squelch watch) is deliberately Phase 2.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
@@ -94,4 +84,6 @@ promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `DYNAMIC_PORTAL_FETCH_PLAN.md` was promoted, shipped (P1–P3, 2026-08), and now lives in `../archive/`.
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.
 `JMOLT_SITTINGS_PLAN.md` was split out of `CONTEXT_COMPACTION_PLAN.md`, promoted to `../plans/`, and
-is in progress (W1 landed).)_
+is in progress (W1 landed).
+`SDR_RADIO_PLAN.md` was scoped with the owner (seven decisions, a closed GUI gate for the omnibox
+tuner), promoted to `../plans/`, and is in progress (S0a — the debug USB probe — landed).)_

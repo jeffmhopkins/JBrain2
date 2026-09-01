@@ -25,7 +25,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-from supervisor import host_metrics, watchdog
+from supervisor import host_metrics, usb_devices, watchdog
 from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
 
 if TYPE_CHECKING:
@@ -129,6 +129,30 @@ class ProcessMemoryOut(BaseModel):
 
 class ProcessesResponse(BaseModel):
     processes: list[ProcessMemoryOut]
+
+
+class UsbDeviceOut(BaseModel):
+    name: str
+    usb_id: str
+    manufacturer: str | None
+    product: str | None
+    serial: str | None
+    device_node: str | None
+    drivers: list[str]
+    is_sdr: bool
+    sdr_name: str | None
+
+
+class UsbResponse(BaseModel):
+    """Every USB device sysfs reports, plus the SDR-family subset called out.
+
+    `sysfs_readable` distinguishes "the box has no USB devices" (impossible in
+    practice) from "this container cannot see /sys" — without it an empty list
+    reads as a missing dongle when the real fault is the mount."""
+
+    sysfs_readable: bool
+    devices: list[UsbDeviceOut]
+    sdrs: list[UsbDeviceOut]
 
 
 class UpdateStartResponse(BaseModel):
@@ -304,6 +328,32 @@ def create_app(
                 ContainerMemoryOut(service=c.service, mem_bytes=c.mem_bytes)
                 for c in gateway.container_memory()
             ],
+        )
+
+    @authed.get("/usb")
+    def usb() -> UsbResponse:
+        # Enumeration only — this reads sysfs, so it needs no /dev/bus/usb
+        # passthrough and no privileges. Naming a device is a read; opening
+        # one is not.
+        found = usb_devices.scan()
+        out = [
+            UsbDeviceOut(
+                name=d.name,
+                usb_id=d.usb_id,
+                manufacturer=d.manufacturer,
+                product=d.product,
+                serial=d.serial,
+                device_node=d.device_node,
+                drivers=list(d.drivers),
+                is_sdr=d.is_sdr,
+                sdr_name=d.sdr_name,
+            )
+            for d in found.devices
+        ]
+        return UsbResponse(
+            sysfs_readable=found.sysfs_readable,
+            devices=out,
+            sdrs=[d for d in out if d.is_sdr],
         )
 
     @authed.get("/processes")
