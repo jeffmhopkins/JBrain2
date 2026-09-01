@@ -104,6 +104,7 @@ from jbrain.api import (
     research_library,
     research_share,
     runs,
+    sdr,
     search,
     session_bridge,
     sessions,
@@ -1495,6 +1496,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(research_library.router, prefix="/api")
     app.include_router(research_share.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
+    app.include_router(sdr.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(session_bridge.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
