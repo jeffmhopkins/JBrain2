@@ -208,6 +208,14 @@ udev rule assigning a group, then joining that GID) solves a problem this contai
 not have. It is egress-free, holds no owner data, and its entire job is to open one USB
 device. The GPU services join host GIDs because they must run non-root for other reasons.
 
+**On-box result.** The profile auto-enabled, the image built, and the container came up
+healthy on the first try — but the first capture answered *"No SDR on this box"*. The
+updater wrote `SDR_URL` into `.env` and nothing carried it into the api: compose maps
+`.env` keys onto `JBRAIN_*` container env, and that one line was missing, so a healthy
+sidecar sat unreachable behind an unset setting. The mapping defaults **empty** rather
+than to `http://sdr:8000`, because a hardcoded default would turn "this box has no
+radio" into a DNS failure instead of the clean 503 that says so.
+
 **Enabled by the hardware, not by a flag.** The service is profile-gated, and the
 update path turns the profile on when it finds a dongle on the bus (`sdr_present`),
 writing `SDR_ENABLED`/`SDR_URL` once so `deploy/jbrain` activates the same profile over

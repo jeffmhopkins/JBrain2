@@ -167,6 +167,13 @@ services:
       JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-http://jlaunch:9101}
       JBRAIN_JLAUNCH_ENABLED: ${JLAUNCH_ENABLED:-true}
       JBRAIN_JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
+      # The radio sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately defaults EMPTY
+      # rather than to http://sdr:8000: the service is profile-gated and absent on a box
+      # with no dongle, so a hardcoded default would turn "this box has no radio" into a
+      # DNS failure on first capture. `update-inner.sh` writes SDR_URL into .env when it
+      # finds a dongle, which is what fills this in — and until then the capture route
+      # answers a clean 503 that says exactly that.
+      JBRAIN_SDR_URL: ${SDR_URL:-}
       # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
       # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>
       # before forwarding, so a sandbox dev app can't be served on the owner origin.
