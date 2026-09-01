@@ -197,6 +197,45 @@ host_module_unload() {
   fi
 }
 
+# Detach every device a USB driver holds, so the module can then be unloaded.
+#
+# This is the step whose absence left the dongle claimed after the drop-in was
+# already written: modprobe -r REFUSES an in-use module, and a driver bound to a
+# device is in use. Unbinding drops the refcount to zero first.
+#
+# It also fixes what a blacklist alone cannot. `blacklist` stops a module being
+# LOADED; it does nothing about one already resident, so re-plugging the device
+# just lets the loaded driver claim it again and only a reboot would help. On a box
+# the owner runs remotely (CLAUDE.md #10) "go unplug it" is not a fix they can
+# perform, so the unbind is what makes this work with no physical access at all.
+#
+# sysfs is read-only in an ordinary container but read-write in a privileged one —
+# the same property host_kernel_write already relies on for /proc/sys. Writing an
+# interface name into the driver's `unbind` is the kernel's documented detach.
+host_driver_unbind() {
+  # SDR_DRIVER_DIR is the same override sdr_dvb_claimed honours, so a test points
+  # both at one fake tree and the two can never disagree about where to look.
+  _drv="${SDR_DRIVER_DIR:-/sys/bus/usb/drivers/$1}"
+  [ -d "$_drv" ] || return 0
+  if [ -n "$HOST_UPDATE" ]; then
+    for _i in "$_drv"/*; do
+      case "${_i##*/}" in *:*) echo "${_i##*/}" > "$_drv/unbind" 2>/dev/null ;; esac
+    done
+    return 0
+  fi
+  # No bind mount: a --privileged container already gets the host's sysfs read-WRITE
+  # at /sys (ordinary containers get it read-only), which is the same property
+  # host_kernel_write relies on for /proc/sys. The resolved path is passed in rather
+  # than recomputed, so both callers agree on which directory.
+  docker run --rm --privileged --network none "$HELPER_IMAGE" sh -c '
+    drv="$1"
+    [ -d "$drv" ] || exit 0
+    for i in "$drv"/*; do
+      case "${i##*/}" in *:*) echo "${i##*/}" > "$drv/unbind" 2>/dev/null ;; esac
+    done
+  ' -- "$_drv" >/dev/null 2>&1
+}
+
 # Apply a loaded module's parameter for THIS BOOT, from either caller.
 #
 # NOT usable for ttm.pages_limit — see the note at the call site. The parameter is
@@ -699,10 +738,18 @@ fi
 if sdr_dvb_claimed; then
   echo "[update] an RTL-SDR is held by the kernel DVB driver — blacklisting it"
   if host_file_write "$RTLSDR_BLACKLIST_PATH" "$RTLSDR_BLACKLIST"; then
+    # Unbind FIRST: modprobe -r refuses an in-use module, and a bound device is use.
+    host_driver_unbind dvb_usb_rtl28xxu
     if host_module_unload dvb_usb_rtl28xxu; then
       echo "[update] dvb_usb_rtl28xxu blacklisted and unloaded — the dongle is free"
+    elif ! sdr_dvb_claimed; then
+      # Detached but the module stayed resident (something else holds it). The
+      # dongle is still free, which is what the caller actually needs.
+      echo "[update] dvb_usb_rtl28xxu detached from the dongle — it is free"
     else
-      echo "[update] dvb_usb_rtl28xxu blacklisted; unload failed — re-plug the dongle or reboot"
+      # Say REBOOT, not re-plug: a blacklist stops a module loading, not one
+      # already resident, so re-inserting the device just lets it re-bind.
+      echo "[update] dvb_usb_rtl28xxu blacklisted but still holding the dongle — reboot to clear it"
     fi
   else
     echo "[update] could not write $RTLSDR_BLACKLIST_PATH — the dongle stays claimed"

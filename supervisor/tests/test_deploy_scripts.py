@@ -1114,3 +1114,81 @@ def test_module_unload_reaches_the_host_from_the_container_path() -> None:
     assert "nsenter -t 1" in fn
     assert "--privileged" in fn and "--pid=host" in fn
     assert 'modprobe -r "$1"' in fn
+
+
+def _unbind(tmp_path: Path, entries: list[str]) -> str:
+    """Run host_driver_unbind's host branch against a fake driver directory.
+
+    Returns what landed in the driver's `unbind` file — the kernel's documented
+    detach is writing an interface name into it.
+    """
+    body = UPDATE.read_text()
+    start = body.index("host_driver_unbind() {")
+    fn = body[start : body.index("\n}", start) + 2]
+
+    drv = tmp_path / "dvb_usb_rtl28xxu"
+    drv.mkdir()
+    for name in entries:
+        (drv / name).write_text("")
+
+    call = f"HOST_UPDATE=1 SDR_DRIVER_DIR={drv} host_driver_unbind dvb_usb_rtl28xxu"
+    subprocess.run(["sh", "-c", f"{fn}\n{call}\n"], check=True)
+    return (drv / "unbind").read_text()
+
+
+def test_unbind_walks_past_the_first_interface(tmp_path: Path) -> None:
+    # Each write to sysfs `unbind` is its own detach ACTION, so `>` per write is
+    # correct; a plain file in a fake tree therefore only retains the last one.
+    # Seeing the SECOND interface there is what proves the loop did not stop at
+    # the first — which is the property that matters for a multi-interface device.
+    written = _unbind(tmp_path, ["bind", "unbind", "uevent", "1-1:1.0", "1-1:1.1"])
+
+    assert written.strip() == "1-1:1.1"
+
+
+def test_unbind_ignores_the_drivers_own_control_files(tmp_path: Path) -> None:
+    # Writing "bind" or "uevent" into unbind would be nonsense; only names that
+    # look like an interface (bus-port:config.interface) are devices.
+    written = _unbind(tmp_path, ["bind", "unbind", "uevent", "module", "1-1:1.0"])
+
+    assert written.strip() == "1-1:1.0"
+
+
+def test_unbind_is_a_no_op_when_the_driver_is_absent(tmp_path: Path) -> None:
+    body = UPDATE.read_text()
+    start = body.index("host_driver_unbind() {")
+    fn = body[start : body.index("\n}", start) + 2]
+    missing = tmp_path / "not-loaded"
+    script = f"{fn}\nHOST_UPDATE=1 SDR_DRIVER_DIR={missing} host_driver_unbind x\n"
+
+    assert subprocess.run(["sh", "-c", script], check=False).returncode == 0
+
+
+def test_unbind_runs_before_the_module_unload() -> None:
+    # modprobe -r REFUSES an in-use module and a bound device is use — which is
+    # exactly why the first on-box run left the dongle claimed after the drop-in
+    # had already been written. Order is the fix, so pin it.
+    body = UPDATE.read_text()
+    unbind_at = body.index("host_driver_unbind dvb_usb_rtl28xxu")
+    unload_at = body.index("host_module_unload dvb_usb_rtl28xxu")
+    assert unbind_at < unload_at
+
+
+def test_unbind_uses_a_privileged_container_for_the_sysfs_write() -> None:
+    # An ordinary container gets sysfs read-only; the write needs --privileged,
+    # the same property host_kernel_write relies on for /proc/sys.
+    body = UPDATE.read_text()
+    start = body.index("host_driver_unbind() {")
+    fn = body[start : body.index("\n}", start)]
+    assert "--privileged" in fn
+
+
+def test_the_stuck_message_says_reboot_not_replug() -> None:
+    # A blacklist stops a module being LOADED, not one already resident, so
+    # re-inserting the device just lets the loaded driver re-bind it. Telling a
+    # remote owner to re-plug is advice that both fails and needs hands on the box.
+    body = UPDATE.read_text()
+    stuck = [ln for ln in body.splitlines() if "still holding the dongle" in ln]
+    assert stuck, "the still-claimed branch should report what to do"
+    assert "reboot" in stuck[0].lower()
+    assert "re-plug" not in stuck[0].lower()
