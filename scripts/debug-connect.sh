@@ -413,6 +413,15 @@ PY
     [ -n "$G" ] && q="$q&gain=$G"
     _call POST "/api/debug/sdr/capture?$q" | _pp ;;
 
+  radio) # <MHz> [--mode M] — start live listening; no MHz releases the radio
+    if [ -n "${1:-}" ]; then
+      f="$1"; shift; M=wbfm
+      while [ $# -gt 0 ]; do case "$1" in --mode) M="$2"; shift 2 ;; *) shift ;; esac; done
+      _call POST "/api/debug/sdr/listen?frequency_mhz=$f&mode=$M" | _pp
+    else
+      _call POST /api/debug/sdr/stop | _pp
+    fi ;;
+
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"
     path="${2:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

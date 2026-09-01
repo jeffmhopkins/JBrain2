@@ -1686,6 +1686,48 @@ async def sdr_capture(
     )
 
 
+@router.post("/sdr/listen")
+async def sdr_listen_debug(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "wbfm",
+) -> dict[str, Any]:
+    """Take the radio and start listening — the debug twin of `POST /api/sdr/listen`.
+
+    The owner surface is `OwnerDep` and a capability token is deliberately on a
+    physically distinct path, so it cannot reach that route. Without this twin the
+    radio is undrivable from a handed-over token, which matters because starting a
+    session is what makes the composer's tuner icon appear at all: there would be no
+    way to exercise the surface except through the agent."""
+    request.state.debug_detail = f"sdr listen {frequency_mhz} MHz {mode}"
+    return await _sdr_post(
+        settings,
+        "/listen/start",
+        {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": None},
+    )
+
+
+@router.post("/sdr/stop")
+async def sdr_stop_debug(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, Any]:
+    """Release the radio. The composer's tuner icon disappears when it lands."""
+    request.state.debug_detail = "sdr stop"
+    return await _sdr_post(settings, "/listen/stop", {"session_id": None})
+
+
+async def _sdr_post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    if not settings.sdr_url:
+        raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
+    async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=30.0) as client:
+        resp = await client.post(path, json=body)
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="The radio is busy.")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"sdr sidecar: {resp.text[:300]}")
+    return cast(dict[str, Any], resp.json())
+
+
 @router.get("/update/status")
 async def update_status(
     request: Request,

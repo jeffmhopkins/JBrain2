@@ -108,6 +108,11 @@ OPTIONAL_IMAGE_TOOLS = frozenset({"analyze_image"})
 # jerv's on-box audio transcription sidecar, dropped from the registry when the
 # whisper gateway is unconfigured (graceful degrade, like the image tools).
 OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
+# jerv's radio tools, dropped from the registry on a box with no SDR — most boxes.
+# sdr_listen is load-bearing for the GUI as well as the chat: the composer's radio
+# icon exists only while a session holds the tuner, so dropping the tool on a
+# radio-less box also correctly means that surface can never appear.
+OPTIONAL_SDR_TOOLS = frozenset({"sdr_listen", "sdr_stop"})
 # jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
@@ -800,6 +805,7 @@ def build_registry(
     federal_register: "FederalRegisterClient | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
+    sdr_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
     stream_handlers: dict[str, ToolHandler] | None = None,
     grab_handlers: dict[str, ToolHandler] | None = None,
@@ -890,6 +896,10 @@ def build_registry(
             # jerv's local audio transcription (`web`-gated, on-box), present only when
             # the whisper gateway is configured; otherwise its sidecar is dropped below.
             **(transcribe_handlers or {}),
+            # jerv's radio tools, present only when the box has an SDR; otherwise
+            # their sidecars are dropped below. sdr_listen is what puts the tuner
+            # icon in the composer, so without it that surface is unreachable.
+            **(sdr_handlers or {}),
             # jerv's local video analysis (`web`-gated, on-box), present only when
             # ffmpeg is available; otherwise its sidecar is dropped below.
             **(video_handlers or {}),
@@ -983,6 +993,7 @@ def build_registry(
         optional=(
             OPTIONAL_IMAGE_TOOLS
             | OPTIONAL_TRANSCRIBE_TOOL
+            | OPTIONAL_SDR_TOOLS
             | OPTIONAL_VIDEO_TOOL
             | OPTIONAL_STREAM_TOOL
             | OPTIONAL_GRAB_TOOL

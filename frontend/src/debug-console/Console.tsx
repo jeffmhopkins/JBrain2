@@ -16,7 +16,16 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { type DebugToken, decodeToken } from "./payload";
 
-type CmdType = "complete" | "sql" | "logs" | "routing" | "switch" | "model" | "sdr" | "tune";
+type CmdType =
+  | "complete"
+  | "sql"
+  | "logs"
+  | "routing"
+  | "switch"
+  | "model"
+  | "sdr"
+  | "tune"
+  | "radio";
 type SessionState = "active" | "suspended" | "revoked";
 
 interface HistoryEntry {
@@ -77,6 +86,7 @@ const CMD_LABELS: Record<CmdType, string> = {
   model: "model — load / unload",
   sdr: "sdr — probe the USB radio",
   tune: "tune — capture + transcribe FM",
+  radio: "radio — start/stop live listening",
 };
 
 function pretty(text: string): string {
@@ -281,6 +291,17 @@ export function Console() {
       } else if (cmd === "routing") {
         path = "/api/debug/llm";
         summary = "show live routing table";
+      } else if (cmd === "radio") {
+        // Starts a live session, which is what puts the tuner icon in the composer.
+        // Empty frequency stops instead — one control for both halves of the lease.
+        method = "POST";
+        if (freqMhz.trim()) {
+          path = `/api/debug/sdr/listen?frequency_mhz=${encodeURIComponent(freqMhz)}&mode=wbfm`;
+          summary = `listen ${freqMhz} MHz`;
+        } else {
+          path = "/api/debug/sdr/stop";
+          summary = "release the radio";
+        }
       } else if (cmd === "tune") {
         // Frequency only — never a URL, so the SSRF guard is untouched. Defaults to
         // wide FM, which is what a broadcast station needs.
@@ -556,13 +577,17 @@ export function Console() {
                 />
               </div>
             )}
-            {cmd === "tune" && (
+            {(cmd === "tune" || cmd === "radio") && (
               <div className="dbg-row">
                 <input
                   className="dbg-input dbg-grow"
                   value={freqMhz}
                   onChange={(e) => setFreqMhz(e.currentTarget.value)}
-                  placeholder="frequency in MHz (e.g. 99.3)"
+                  placeholder={
+                    cmd === "radio"
+                      ? "MHz to listen (blank = release)"
+                      : "frequency in MHz (e.g. 99.3)"
+                  }
                   aria-label="Frequency MHz"
                   disabled={session !== "active"}
                 />

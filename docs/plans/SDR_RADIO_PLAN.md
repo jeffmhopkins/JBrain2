@@ -257,6 +257,14 @@ is nowhere near sufficient; it proves the *pipeline* has no defects of its own, 
 narrowband comes back as mush that will be the audio rather than the plumbing.
 Deliberately deferred — the owner chose to finish the tuner surface first.
 
+**A gap the first tuner deploy exposed.** Shipping the lease *viewer* without a lease
+*taker* made the surface unreachable: the icon appears only while a session holds the
+tuner, sessions start only through an `OwnerDep` route with no UI behind it, and the
+tool did not exist yet. "The icon is the lease" necessarily implies something else
+takes the lease first, and nothing did. `sdr_listen`/`sdr_stop` close it, and debug
+twins of listen/stop make the radio drivable from a handed-over token — the owner
+surface is owner-cookie-gated by design, so a capability token cannot reach it.
+
 ### S1 — the lease + the control API
 
 The lease state machine (§4.2) with its priority order and TTL. The control endpoints:

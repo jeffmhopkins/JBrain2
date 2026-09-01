@@ -137,6 +137,8 @@ const STEP_LABELS: Record<string, string> = {
   grab_frame: "Grabbed a video frame",
   ocr: "Read text off an image",
   transcribe: "Transcribed audio",
+  sdr_listen: "Tuned the radio",
+  sdr_stop: "Released the radio",
   external_video: "Checked saved videos",
   show_external_video: "Showed a video",
   remove_external_video: "Removed a saved video",
@@ -176,6 +178,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   web_fetch: ["url"],
   news_search: ["query"],
   news_feed: ["category"],
+  sdr_listen: ["frequency_mhz"],
   science_search: ["query"],
   public_records: ["name", "state"],
   portal_search: ["name", "jurisdiction"],
@@ -256,6 +259,8 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 // opt-out, not an omission: the roster gate requires each tool to appear in
 // exactly one of INLINE_ARGS / NO_INLINE.
 const NO_INLINE: ReadonlySet<string> = new Set([
+  // takes no arguments — there is only one radio to release
+  "sdr_stop",
   "read_note",
   "read_entity",
   "read_wiki",
