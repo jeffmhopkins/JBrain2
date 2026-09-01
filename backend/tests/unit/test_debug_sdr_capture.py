@@ -18,9 +18,11 @@ from jbrain.api import debug
 
 
 class _Settings:
-    def __init__(self, url: str = "http://sdr:8000") -> None:
+    def __init__(self, url: str = "http://sdr:8000", whisper: str = "http://whisper:8080") -> None:
         self.sdr_url = url
+        self.whisper_url = whisper
         self.whisper_model = "whisper"
+        self.whisper_timeout = 300.0
 
 
 def _request(app_state: dict[str, object] | None = None) -> Request:
@@ -31,7 +33,11 @@ def _request(app_state: dict[str, object] | None = None) -> Request:
 
 
 async def _capture(
-    *, url: str = "http://sdr:8000", state: dict[str, object] | None = None, **kwargs: Any
+    *,
+    url: str = "http://sdr:8000",
+    whisper: str = "http://whisper:8080",
+    state: dict[str, object] | None = None,
+    **kwargs: Any,
 ) -> debug.SdrCaptureOut:
     """Call the route with a fake Settings and principal.
 
@@ -39,7 +45,7 @@ async def _capture(
     dependency types, and a test double is exactly what those annotations are meant
     to exclude in production code."""
     return await debug.sdr_capture(
-        _request(state), cast(Any, _Settings(url)), cast(Any, None), **kwargs
+        _request(state), cast(Any, _Settings(url, whisper)), cast(Any, None), **kwargs
     )
 
 
@@ -192,3 +198,20 @@ async def test_the_frequency_reaching_the_sidecar_is_hz_never_a_url(
     body = cast(dict[str, Any], seen["body"])
     assert body["frequency_hz"] == 162_550_000
     assert not any(isinstance(v, str) and "://" in v for v in body.values() if v)
+
+
+async def test_a_box_without_whisper_still_returns_the_audio_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The whisper client is built from the setting, not read off app.state — reading it
+    # from app.state is exactly how the first on-box capture came back untranscribed
+    # while the radio itself worked.
+    _sidecar(
+        monkeypatch, lambda _p, _b: _wav_response({"mode": "wbfm", "seconds": 8.0, "peak": 0.42})
+    )
+
+    out = await _capture(whisper="", frequency_mhz=99.3, mode="wbfm")
+
+    assert out.heard_something is True
+    assert out.transcript is None
+    assert "whisper_url unset" in (out.transcript_error or "")
