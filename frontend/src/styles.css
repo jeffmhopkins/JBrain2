@@ -24869,6 +24869,50 @@ button.task-band:active {
 .sdr-livedot-on {
   background: var(--green);
 }
+/* Live captions, burned into the waveform like a subtitle over a picture, so they
+   cost no height of their own. Only the PLATE is translucent — the tape stays visible
+   through the box behind the words, while the words themselves are fully opaque and
+   keep their confidence colour. Text at 50% over a moving waveform would be unreadable
+   exactly when a transmission is loud enough to be worth reading. */
+.sdr-caption {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 7px;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+}
+.sdr-caption > span {
+  display: inline-block;
+  max-width: 100%;
+  background: rgb(0 0 0 / 50%);
+  color: var(--text-1);
+  font-size: var(--fs-note);
+  line-height: 1.4;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+/* The CC toggle. Off by default: captions hold a whisper model resident on the box's
+   GPU beside the chat model, which is a cost the owner should be choosing. */
+.sdr-cc {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.sdr-cc[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
 .sdr-livetag {
   font-size: var(--fs-micro);
   letter-spacing: 0.1em;

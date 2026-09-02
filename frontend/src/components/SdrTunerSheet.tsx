@@ -11,7 +11,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { isSdrPlaying, subscribeSdrAudio, toggleSdrAudio } from "../sdrAudio";
+import {
+  sdrCaptions,
+  startSdrCaptions,
+  stopSdrCaptions,
+  subscribeSdrCaptions,
+} from "../sdrCaptions";
 import type { SdrListening } from "../sdrSession";
+import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
 import { Sheet } from "./Sheet";
 
@@ -77,6 +84,15 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
     setPlaying(isSdrPlaying());
     return subscribeSdrAudio(setPlaying);
   }, []);
+
+  // Captions hold a whisper model resident on the box's GPU next to the chat model,
+  // so they are opt-in and stop with the sheet rather than running unattended.
+  const [captions, setCaptions] = useState(() => sdrCaptions());
+  useEffect(() => {
+    setCaptions(sdrCaptions());
+    return subscribeSdrCaptions(setCaptions);
+  }, []);
+  useEffect(() => () => stopSdrCaptions(), []);
 
   // The tap that opened the field asked for the keypad, so put the caret in it.
   // Keyed on `editing`, NOT on the draft text: re-selecting on every keystroke fights
@@ -272,6 +288,33 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
       <div className="sdr-face">
         <SdrTape />
         <span className="sdr-face-elapsed">{elapsed(listening.elapsed_s)}</span>
+        {captions.on && (
+          // Burned in over the waveform like a subtitle over a picture, so captions
+          // cost no height. The plate is half-transparent deliberately: the tape stays
+          // readable THROUGH the words, which is the point of putting them here.
+          <p className="sdr-caption">
+            <span>
+              {captions.error
+                ? captions.error
+                : captions.latest
+                  ? captions.latest.words.length > 0
+                    ? captions.latest.words.map((word, i) => (
+                        // Same rose-amber-green scale as the transcript viewer, from
+                        // the same exported function — narrowband voice degrades in a
+                        // patterned way, and numbers are both the least certain and
+                        // usually the payload.
+                        <span
+                          key={`${word.text}-${i}`}
+                          style={{ color: confidenceColor(word.confidence) }}
+                        >
+                          {word.text}{" "}
+                        </span>
+                      ))
+                    : captions.latest.text
+                  : "Listening…"}
+            </span>
+          </p>
+        )}
       </div>
       <div className="sdr-transport">
         <button
@@ -287,6 +330,15 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
         <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>
           {playing ? "LIVE" : "PAUSED"}
         </span>
+        <button
+          type="button"
+          className="sdr-cc"
+          aria-pressed={captions.on}
+          aria-label="Live captions"
+          onClick={() => (captions.on ? stopSdrCaptions() : startSdrCaptions())}
+        >
+          CC
+        </button>
       </div>
 
       {error && <p className="sdr-error">{error}</p>}

@@ -144,3 +144,25 @@ trusted was never on the table; removing it is the honest move.
 Elapsed time survives, inset on the tape, because it answers a question nothing else
 does: how long this session has been holding the one tuner.
 
+## Live captions (fourth gate, 2026-09-02)
+
+`f-live-captions.html` holds three ways to show whisper transcription of the live
+audio, with a CC toggle in the transport row.
+
+| Design | Thesis | Trade-off |
+|---|---|---|
+| **A · Caption bar** | Text wants a text-shaped place: two lines under the tape. | The most readable, and the only one that costs real height whenever CC is on. |
+| **B · Burned in** | A subtitle over a picture. | Costs nothing in height and puts the words where the eye already is — one line only, and it sits on the display it covers. |
+| **C · Transcript log** | Timestamped rows you can scroll back through. | The only one with scrollback, which on a scanner is usually what you want — but it reads as a log, and is the tallest. |
+
+> **Decided (owner, 2026-09-02): B — burned in**, with *"cc word background should be
+> like 50% alpha against the waveform"*, clarified as: the **plate** is translucent,
+> the **text is not**.
+
+**Feasibility was measured, not assumed.** Three timed captures on the box: 4.22 s of
+audio cost 10.73 s of whisper, 11.26 s cost 10.77 s. The cost is flat because almost
+all of it is loading and freeing the model — 7 extra seconds of audio added 0.04 s.
+So live captions are affordable if and only if the model stays resident, which the
+caption route ensures by never unloading. That also means whisper shares the GPU with
+the chat model while CC is on, which is what makes the toggle the right shape.
+

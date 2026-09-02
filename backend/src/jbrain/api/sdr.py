@@ -22,6 +22,7 @@ recordings library, which does have one, is a later wave.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, cast
 
 import httpx
@@ -30,6 +31,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from jbrain.api.deps import OwnerDep, SettingsDep
+from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
 
@@ -162,3 +164,115 @@ async def audio(request: Request, settings: SettingsDep, _owner: OwnerDep) -> St
             await client.aclose()
 
     return StreamingResponse(pump(), media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/captions")
+async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) -> StreamingResponse:
+    """Live captions for whatever the radio is playing, as server-sent events.
+
+    Whisper is not a streaming model — it transcribes a finished clip — so the sidecar
+    cuts the live audio into segments on the quiet gaps between transmissions, and each
+    one is transcribed and emitted as it lands. Words carry the per-token confidence the
+    client already asks for, so the caption tints on the same rose-amber-green scale as
+    the transcript viewer.
+
+    **The model is deliberately NOT freed between segments.** Measured on this box, a
+    transcription costs ~10.7 s whether the clip is 4 s or 11 s: almost all of it is
+    loading and unloading the model, and 7 extra seconds of audio added 0.04 s. The
+    capture route pays that every call because it unloads when it finishes; a captioner
+    that did the same would fall permanently behind. Holding the model resident is what
+    makes this affordable — and it is also why captions are an explicit toggle rather
+    than always-on, since a resident whisper shares the GPU with the chat model.
+
+    Segments arrive already squelched: the sidecar drops any whose loudest moment never
+    crossed the floor, because whisper answers an empty band with fluent invented
+    sentences rather than silence."""
+    base = _base(settings)
+    if not settings.whisper_url:
+        raise HTTPException(
+            status_code=503,
+            detail="no whisper gateway on this box, so live captions cannot run",
+        )
+    whisper = WhisperCppClient(
+        settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+    )
+
+    async def pump():
+        client = httpx.AsyncClient(base_url=base, timeout=None)
+        try:
+            async with client.stream("GET", "/listen/segments") as upstream:
+                if upstream.status_code != 200:
+                    yield _event({"error": "the radio is not listening"})
+                    return
+                async for started, wav in _segments(upstream):
+                    if await request.is_disconnected():
+                        break
+                    if wav is None:  # a keep-alive, so a quiet channel holds the socket
+                        yield ": keepalive\n\n"
+                        continue
+                    try:
+                        result = await whisper.transcribe(
+                            wav, filename="segment.wav", media_type="audio/wav"
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        # One bad segment must not end the caption stream; the next
+                        # transmission is a fresh chance and the owner keeps listening.
+                        yield _event({"error": str(exc)[:200], "started_at": started})
+                        continue
+                    text = result.text.strip()
+                    if not text:
+                        continue
+                    yield _event(
+                        {
+                            "started_at": started,
+                            "text": text,
+                            "words": [
+                                {"text": w.text, "confidence": round(w.confidence, 4)}
+                                for w in result.words
+                            ],
+                        }
+                    )
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(
+        pump(), media_type="text/event-stream", headers={"Cache-Control": "no-store"}
+    )
+
+
+def _event(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+async def _segments(upstream: httpx.Response):
+    """Split the sidecar's newline-framed stream into (started_at, wav) pairs.
+
+    The frame is a JSON header line then exactly `bytes` of WAV. Framing rather than a
+    request per segment because the gap between requests always lands mid-sentence."""
+    buffer = b""
+    async for block in upstream.aiter_bytes():
+        buffer += block
+        while True:
+            newline = buffer.find(b"\n")
+            if newline < 0:
+                break
+            try:
+                head = json.loads(buffer[:newline] or b"{}")
+            except json.JSONDecodeError:
+                buffer = buffer[newline + 1 :]
+                continue
+            if head.get("keepalive"):
+                buffer = buffer[newline + 1 :]
+                yield 0.0, None
+                continue
+            size = int(head.get("bytes", 0))
+            if size <= 0:
+                # Not a segment frame — a blank line, or a header that lost its size.
+                # Yielding it would hand whisper zero bytes of audio to describe.
+                buffer = buffer[newline + 1 :]
+                continue
+            if len(buffer) < newline + 1 + size:
+                break  # the WAV has not all arrived yet
+            wav = buffer[newline + 1 : newline + 1 + size]
+            buffer = buffer[newline + 1 + size :]
+            yield float(head.get("started_at", 0.0)), wav
