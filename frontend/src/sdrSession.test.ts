@@ -11,6 +11,7 @@ const LISTENING = {
   frequency_hz: 99_300_000,
   mode: "wbfm",
   gain: null,
+  started_at: 1_700_000_000,
   elapsed_s: 4,
   peak: 0.42,
   listeners: 1,

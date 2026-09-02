@@ -11,6 +11,8 @@
 //
 // A module store rather than React context, matching sdrSession.ts and sdrAudio.ts.
 
+import { sdrHeardAt } from "./sdrAudio";
+
 export interface CaptionWord {
   text: string;
   confidence: number;
@@ -22,6 +24,13 @@ export interface Caption {
   text: string;
   words: CaptionWord[];
 }
+
+/** How long a segment covers, at most; a caption is shown from its START time plus a
+ *  little, so a long segment does not sit invisible until its final word is heard. */
+const SHOW_AFTER_S = 1.0;
+/** If the audio timeline cannot be anchored, fall back to showing captions on arrival
+ *  rather than never — early is worse than absent, but absent is worst. */
+const RELEASE_TICK_MS = 250;
 
 export type CaptionState = {
   /** True from the moment the owner turns CC on until it is turned off. */
@@ -39,10 +48,48 @@ const IDLE: CaptionState = { on: false, latest: null, error: null };
 let state: CaptionState = IDLE;
 let source: EventSource | null = null;
 const listeners = new Set<Listener>();
+// Captions arrive from the LIVE EDGE; the listener is seconds behind it. These wait
+// here until the audio they describe actually reaches the speaker (see release()).
+let pending: Caption[] = [];
+let releaser: ReturnType<typeof setInterval> | null = null;
 
 function publish(next: CaptionState): void {
   state = next;
   for (const listener of listeners) listener(next);
+}
+
+/**
+ * Show captions when their audio is heard, not when they arrive.
+ *
+ * The box transcribes the live edge, but playback is a long way behind it — measured
+ * against the real sidecar in Chromium, a constant ~8.3 s. Showing a caption on
+ * arrival therefore puts the words on screen BEFORE the speech, by three to eight
+ * seconds, which reads far worse than a caption that lags. `sdrHeardAt()` gives the
+ * box-clock time of the audio currently coming out of the speaker, so each caption
+ * simply waits for it.
+ *
+ * If the timeline cannot be anchored (no session clock yet), captions are released on
+ * arrival rather than held forever: mistimed is bad, missing is worse.
+ */
+function release(): void {
+  if (pending.length === 0) return;
+  const heard = sdrHeardAt();
+  if (heard === null) {
+    const latest = pending[pending.length - 1] ?? null;
+    pending = [];
+    if (latest) publish({ ...state, latest });
+    return;
+  }
+  let due: Caption | null = null;
+  const held: Caption[] = [];
+  for (const caption of pending) {
+    if (caption.startedAt + SHOW_AFTER_S <= heard) due = caption;
+    else held.push(caption);
+  }
+  pending = held;
+  // Only the newest DUE caption is shown: if several came due at once the older ones
+  // are already past being heard, and flashing through them helps nobody.
+  if (due) publish({ ...state, latest: due });
 }
 
 function parse(raw: string): Caption | { error: string } | null {
@@ -76,6 +123,10 @@ export function startSdrCaptions(): void {
     return;
   }
   publish({ on: true, latest: null, error: null });
+  pending = [];
+  if (releaser === null && typeof setInterval !== "undefined") {
+    releaser = setInterval(release, RELEASE_TICK_MS);
+  }
   const stream = new EventSource("/api/sdr/captions");
   source = stream;
   stream.onmessage = (event: MessageEvent<string>) => {
@@ -85,7 +136,11 @@ export function startSdrCaptions(): void {
       publish({ ...state, on: true, error: parsed.error });
       return;
     }
-    publish({ on: true, latest: parsed, error: null });
+    pending.push(parsed);
+    // Bound the wait: a caption whose audio never arrives (a stalled element) must not
+    // pile up. Twelve entries is far more than the ear can be behind.
+    if (pending.length > 12) pending = pending.slice(-12);
+    publish({ ...state, on: true, error: null });
   };
   stream.onerror = () => {
     // EventSource reconnects on its own, so a blip is not worth reporting. What is
@@ -101,6 +156,11 @@ export function startSdrCaptions(): void {
 export function stopSdrCaptions(): void {
   source?.close();
   source = null;
+  if (releaser !== null) {
+    clearInterval(releaser);
+    releaser = null;
+  }
+  pending = [];
   publish(IDLE);
 }
 
@@ -121,6 +181,11 @@ export function subscribeSdrCaptions(listener: Listener): () => void {
 export function resetSdrCaptions(): void {
   source?.close();
   source = null;
+  if (releaser !== null) {
+    clearInterval(releaser);
+    releaser = null;
+  }
+  pending = [];
   listeners.clear();
   state = IDLE;
 }

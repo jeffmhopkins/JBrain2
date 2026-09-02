@@ -248,3 +248,25 @@ def test_releasing_the_last_captioner_drops_the_held_audio(tuner) -> None:
     # Turning captions off must not leave a half-segment in memory to be prepended to
     # whatever the next captioner hears, minutes later and on another frequency.
     assert session._seg == []
+
+
+def test_a_backed_up_captioner_loses_the_oldest_segment_not_the_newest(tuner) -> None:
+    session = _session(tuner)
+    sub = session.subscribe_segments()
+
+    # Fill past the queue's depth. `put_nowait` on a full queue discards what you are
+    # ADDING, which would leave a captioner grinding through stale audio forever while
+    # every fresh segment was dropped — the lag would never close.
+    for i in range(listen.SEGMENT_QUEUE + 3):
+        session._seg = [_loud(4.0)]
+        session._seg_peak_seen = 0.5
+        session._seg_started = float(i)
+        session._cut()
+
+    held = []
+    while not sub.empty():
+        held.append(sub.get_nowait()[0])
+
+    assert len(held) == listen.SEGMENT_QUEUE
+    # The NEWEST cut must have survived; the oldest are the ones given up.
+    assert held[-1] == float(listen.SEGMENT_QUEUE + 2)

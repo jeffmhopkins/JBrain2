@@ -265,10 +265,20 @@ class Session:
         with self._lock:
             queues = list(self._segments)
         for queue_ in queues:
-            try:
-                queue_.put_nowait((started, pcm))
-            except queue.Full:
-                pass  # a listener that cannot keep up loses the oldest, not the newest
+            # Drop the OLDEST to make room, never the newest. `put_nowait` on a full
+            # queue raises and discards what you were adding, which is exactly backwards
+            # for live captions: a captioner that fell behind would then work forever
+            # through stale audio while every fresh segment was thrown away, and the lag
+            # would never close. Captions are worthless late, so the backlog gives way.
+            while True:
+                try:
+                    queue_.put_nowait((started, pcm))
+                    break
+                except queue.Full:
+                    try:
+                        queue_.get_nowait()
+                    except queue.Empty:
+                        break
 
     def _accumulate(self, chunk: bytes, level: float) -> None:
         """Grow the open segment, and close it on a gap or at the ceiling.
