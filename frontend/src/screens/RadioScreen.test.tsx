@@ -347,3 +347,68 @@ describe("the Tuner tab", () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith(false));
   });
 });
+
+describe("the screen's shell", () => {
+  it("covers the launcher rather than letting it show through", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("GATE 7K2M9");
+
+    // The launcher deliberately stays open BENEATH a card — dismissing the card
+    // reveals it again — so a card that is only a padded section shows the tiles
+    // through it. `subscreen` is the shared fixed-inset layer every sibling uses.
+    expect(container.querySelector(".subscreen")).not.toBeNull();
+  });
+
+  it("uses the house segmented control, not a bespoke tab bar", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("GATE 7K2M9");
+
+    // The same control the session list uses for Today / Older / Archived. This screen
+    // had invented an underline tab bar — a second answer to a settled question.
+    expect(container.querySelector(".seg-tabs")).not.toBeNull();
+    expect(container.querySelectorAll(".seg-tab")).toHaveLength(3);
+    expect(container.querySelector(".radio-tabs")).toBeNull();
+  });
+});
+
+describe("the Tuner tab", () => {
+  it("mounts the real transport, not a description of it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(
+      log({ logging: false, packets: [] }) as never,
+    );
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("listen") as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Tuner" }));
+
+    // The one screen called "Radio" used to be the one place you could not work the
+    // radio: it printed frequency and mode and pointed at the composer's icon. These
+    // are the omnibox sheet's own controls, mounted here.
+    expect(screen.getByRole("button", { name: /Tap to enter a frequency/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
+  });
+
+  it("still hands the radio back when APRS is holding it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
+    const set = vi
+      .spyOn(api, "setAprsLogging")
+      .mockResolvedValue({ logging: false, changed: true });
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("GATE 7K2M9");
+    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
+
+    // A logging session is not audible, so the transport would be meaningless here —
+    // the handoff is the only useful control.
+    expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Release & listen/ }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith(false));
+  });
+});
