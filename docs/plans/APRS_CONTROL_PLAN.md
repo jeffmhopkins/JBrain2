@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1◻️ P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -100,6 +100,20 @@ Two consequences to build deliberately rather than discover:
   the same rule that deleted the tuner's signal meter. Auto-enabling logging when a task
   is armed is **rejected**: silently seizing the tuner is how a radio starts to feel
   possessed. The warning offers the switch; it never throws it.
+
+**Landed (sidecar + tool + client):** `SessionInfo.purpose`, validated in `Session`
+itself rather than only in `Tuner.start`; a 409 that names the holder and degrades to
+"in use" rather than raising inside the tuner lock; a retune REFUSED on a logging
+session (it would otherwise move the packet channel while the lease went on claiming to
+log, then refuse the next caller with a reason that had become false); `/healthz`
+advertising `purposes` so a caller can tell an un-updated sidecar from a working one
+instead of trusting a 200; `sdr_listen` passing the sidecar's reason through instead of
+overwriting it with a hardcoded "already listening"; and audio that follows the JOB, so
+a logging session no longer plays 1200-baud squawk through the owner's speakers.
+
+Still open here: no route above the sidecar can *start* an APRS session — that is P1a's
+`sdr_aprs_logging`, and until it lands the capability is reachable only from inside the
+`radio` network.
 
 **GUI gate closed 2026-09-02: a switch in the APRS tab.** "Enable APRS logging" lives
 in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the handoff

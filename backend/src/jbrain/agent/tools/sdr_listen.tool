@@ -1,6 +1,6 @@
 ---
 name: sdr_listen
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -17,8 +17,9 @@ Tune the owner's radio and start listening. Use this when they ask to listen to 
 station, a frequency, or a band — "put on 99.3", "listen to the weather radio",
 "what's on the air band".
 
-The box has ONE tuner, so this takes it: if something else is already listening you
-get a plain "the radio is busy" back, and the owner has to release it first. That is
+The box has ONE tuner, so this takes it. If something else already holds it you get
+back what it is doing — listening, or logging APRS — and the owner has to release it
+first. Say which job has it, because the two need different answers from them. That is
 not an error to retry — say so and let them decide.
 
 Starting a session puts a RADIO ICON in the owner's composer. That icon is the whole

@@ -108,3 +108,45 @@ describe("the shared radio reading", () => {
     expect(seen.at(-1)?.listening).toEqual(LISTENING);
   });
 });
+
+describe("audio follows the job, not just the lease", () => {
+  // A logging session holds the SAME lease and arrives here looking identical to a
+  // listening one. Playing it would put 1200-baud packet squawk through the owner's
+  // speakers the moment APRS logging started — the lease says the radio is held, not
+  // that there is anything worth hearing (docs/plans/APRS_CONTROL_PLAN.md P0).
+
+  it("plays a listening session", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: LISTENING });
+
+    subscribeSdr(() => {});
+    await settle();
+
+    expect(document.querySelector("audio")?.getAttribute("src")).toBe("/api/sdr/audio");
+  });
+
+  it("stays silent for a session that is logging APRS", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({
+      available: true,
+      listening: { ...LISTENING, purpose: "aprs", frequency_hz: 144_390_000 },
+    });
+
+    subscribeSdr(() => {});
+    await settle();
+
+    expect(document.querySelector("audio")?.getAttribute("src") ?? null).toBeNull();
+  });
+
+  it("still plays for a sidecar too old to say what it is doing", async () => {
+    // No `purpose` means a sidecar that predates them, and those only ever listened.
+    vi.useFakeTimers();
+    const { purpose: _drop, ...old } = { ...LISTENING, purpose: undefined };
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: old });
+
+    subscribeSdr(() => {});
+    await settle();
+
+    expect(document.querySelector("audio")?.getAttribute("src")).toBe("/api/sdr/audio");
+  });
+});

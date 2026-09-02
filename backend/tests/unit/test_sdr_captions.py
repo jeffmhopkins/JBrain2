@@ -197,3 +197,4 @@ def test_a_truncated_clip_does_not_poison_the_batch() -> None:
     # One unreadable clip must not cost the transmission around it: the caption stream
     # is live, and there is no second chance at the audio.
     assert _clip_seconds(taken[1]) == pytest.approx(4.0, abs=0.01)
+

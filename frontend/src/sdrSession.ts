@@ -20,6 +20,10 @@ export interface SdrListening {
   frequency_hz: number;
   mode: string;
   gain: string | null;
+  /** What the session is holding the tuner for — `listen` or `aprs`
+   *  (deploy/sdr/listen.py). Absent on a sidecar older than purposes, which only ever
+   *  listened. */
+  purpose?: string;
   /** The box's clock when this session started. With `elapsed_s` it gives the box's
    *  clock NOW, which is what anchors the audio timeline for caption timing. */
   started_at: number;
@@ -34,6 +38,13 @@ export interface SdrState {
   available: boolean;
   /** Null when the radio is idle. Non-null is precisely the icon's condition. */
   listening: SdrListening | null;
+}
+
+/** Whether a held radio is one there is any point hearing. A session whose purpose is
+ *  anything but `listen` is decoding, not playing. Absent means a sidecar older than
+ *  purposes, which only ever listened. */
+export function isAudible(session: SdrListening): boolean {
+  return (session.purpose ?? "listen") === "listen";
 }
 
 type Listener = (state: SdrState) => void;
@@ -57,10 +68,13 @@ function publish(next: SdrState): void {
   // A retune keeps the session id, so this deliberately does not fire on one — the
   // stream survives the sidecar relaunching its encoder underneath it.
   if (now !== was) {
-    if (now) {
+    // Audio follows a LISTENING session only. A logging session holds the same lease
+    // and appears here identically, but it exists to decode packets — playing it would
+    // put 1200-baud squawk through the owner's speakers the moment logging started.
+    const listening = next.listening;
+    if (now && listening && isAudible(listening)) {
       // started_at + elapsed_s IS the box's clock, already arriving every second.
-      const listening = next.listening;
-      playSdrAudio(listening ? listening.started_at + listening.elapsed_s : undefined);
+      playSdrAudio(listening.started_at + listening.elapsed_s);
     } else stopSdrAudio();
   }
   for (const listener of listeners) listener(next);

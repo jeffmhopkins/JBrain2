@@ -69,9 +69,16 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             {"frequency_hz": int(round(mhz * 1_000_000)), "mode": mode, "gain": None},
         )
         if status == 409:
+            # PASS THE SIDECAR'S REASON THROUGH. It names which job holds the tuner,
+            # and the two jobs need opposite advice — "release it to listen" against
+            # "release it to log". A hardcoded "already listening" here was worse than
+            # generic: while the radio was logging APRS it was simply false, and it
+            # overwrote the only answer that told the owner which switch to throw
+            # (docs/plans/APRS_CONTROL_PLAN.md P0).
+            held = str(body.get("detail") or "the radio is already in use")
             return (
-                "The radio is already listening to something else. The owner can "
-                "release it from the tuner in the composer, then ask again."
+                f"{held[:1].upper()}{held[1:]}. The owner can release it from the "
+                "radio icon in the composer, then ask again."
             )
         if status != 200:
             return f"The radio didn't start: {body.get('detail', 'unknown error')}"

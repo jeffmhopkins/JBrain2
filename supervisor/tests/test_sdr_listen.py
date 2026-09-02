@@ -270,3 +270,86 @@ def test_a_backed_up_captioner_loses_the_oldest_segment_not_the_newest(tuner) ->
     assert len(held) == listen.SEGMENT_QUEUE
     # The NEWEST cut must have survived; the oldest are the ones given up.
     assert held[-1] == float(listen.SEGMENT_QUEUE + 2)
+
+
+# --- the lease's purpose ------------------------------------------------------------
+# APRS logging is not a background daemon but a SESSION holding the same one-tuner
+# lease with a different job. What makes that usable rather than merely correct is that
+# a refusal NAMES the holder — see deploy/sdr/listen.py for why.
+
+
+def test_a_session_says_what_it_is_holding_the_radio_for(tuner) -> None:
+    info = tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+    assert info.purpose == listen.PURPOSE_APRS
+    assert info.as_dict()["purpose"] == listen.PURPOSE_APRS
+
+
+def test_listening_is_what_a_caller_that_says_nothing_means(tuner) -> None:
+    # Every caller predating purposes meant listening, so the default keeps them
+    # byte-identical rather than making them declare something they never knew about.
+    info = tuner.start(99_300_000, "wbfm", None)
+
+    assert info.purpose == listen.PURPOSE_LISTEN
+
+
+def test_logging_refuses_a_listener_by_name(tuner) -> None:
+    tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+    with pytest.raises(listen.SdrBusy) as busy:
+        tuner.start(162_550_000, "fm", None)
+
+    # The owner has to learn WHICH switch to throw. "Busy" does not tell them.
+    assert "logging APRS" in str(busy.value)
+
+
+def test_listening_refuses_a_logger_by_name(tuner) -> None:
+    tuner.start(162_550_000, "fm", None)
+
+    with pytest.raises(listen.SdrBusy) as busy:
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+    assert "listening" in str(busy.value)
+
+
+def test_an_unknown_purpose_is_refused(tuner) -> None:
+    # A typo'd purpose must not silently become a listening session that produces
+    # audio nobody asked for, on a radio somebody wanted for packets.
+    with pytest.raises(listen.SdrError):
+        tuner.start(144_390_000, "fm", None, purpose="transmit")
+
+
+def test_releasing_a_logging_session_frees_the_radio(tuner) -> None:
+    tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+    assert tuner.stop() is True
+    assert tuner.start(99_300_000, "wbfm", None).purpose == listen.PURPOSE_LISTEN
+
+
+def test_a_session_bounds_its_own_purpose(tuner) -> None:
+    # Not only Tuner.start. This module's own rule is that a bound living in the caller
+    # is not a bound once there is a second caller, and `mode` is validated here for
+    # exactly that reason — `purpose` has to be too.
+    with pytest.raises(listen.SdrError):
+        listen.Session(144_390_000, "fm", None, "sweep")
+
+
+def test_a_purpose_with_no_phrase_cannot_turn_a_refusal_into_a_crash(
+    tuner, monkeypatch
+) -> None:
+    # The label map is read while HOLDING the tuner lock, on the contention path. A
+    # purpose added without a phrase used to raise KeyError there — a 500 with a
+    # traceback where the caller needed a 409 telling them the radio was busy.
+    monkeypatch.setattr(listen, "PURPOSES", (*listen.PURPOSES, "sweep"))
+    tuner.start(144_390_000, "fm", None, purpose="sweep")
+
+    with pytest.raises(listen.SdrBusy) as busy:
+        tuner.start(99_300_000, "wbfm", None)
+
+    assert "in use" in str(busy.value)
+
+
+def test_every_purpose_has_a_phrase_to_explain_itself(tuner) -> None:
+    # The runtime degrades safely (above), but a purpose shipped without a phrase would
+    # tell the owner "in use" and nothing more — the generic P0 exists to delete.
+    assert set(listen.PURPOSES) == set(listen.PURPOSE_LABEL)

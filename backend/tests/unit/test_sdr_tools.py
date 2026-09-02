@@ -86,13 +86,42 @@ async def test_an_explicit_mode_wins_over_the_default(tools) -> None:
 
 async def test_a_busy_radio_is_explained_not_retried(tools) -> None:
     busy = httpx.Response(
-        409, json={"detail": "busy"}, request=httpx.Request("POST", "http://sdr:8000/x")
+        409,
+        json={"detail": "the radio is already listening"},
+        request=httpx.Request("POST", "http://sdr:8000/x"),
     )
 
     out = await tools(lambda _p, _b: busy)["sdr_listen"]({"frequency_mhz": 99.3}, None)
 
     # One tuner: this is a state to report, not an error to retry into.
     assert "already listening" in out
+    assert "release" in out.lower()
+
+
+async def test_a_busy_radio_says_WHICH_job_is_holding_it(tools) -> None:
+    # The sidecar names the holder because the two jobs need opposite advice. This tool
+    # used to overwrite that with a hardcoded "already listening", which while the radio
+    # was logging APRS was not merely generic but FALSE — and it deleted the one fact
+    # that told the owner which switch to throw (APRS_CONTROL_PLAN.md P0).
+    busy = httpx.Response(
+        409,
+        json={"detail": "the radio is already logging APRS"},
+        request=httpx.Request("POST", "http://sdr:8000/x"),
+    )
+
+    out = await tools(lambda _p, _b: busy)["sdr_listen"]({"frequency_mhz": 99.3}, None)
+
+    assert "logging APRS" in out
+    assert "listening" not in out
+
+
+async def test_a_busy_radio_with_no_reason_still_gets_a_usable_answer(tools) -> None:
+    busy = httpx.Response(409, json={}, request=httpx.Request("POST", "http://sdr:8000/x"))
+
+    out = await tools(lambda _p, _b: busy)["sdr_listen"]({"frequency_mhz": 99.3}, None)
+
+    # A sidecar that says nothing must not produce an empty sentence at the owner.
+    assert "in use" in out
     assert "release" in out.lower()
 
 

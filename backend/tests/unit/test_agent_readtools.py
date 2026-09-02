@@ -979,8 +979,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
     pins = {
         "sdr_listen.tool": (
             "sdr_listen",
-            2,
-            "78e56ff853820b5ea1189cf1a6e96aceac52d07e7d1815ad61f911b96d740692",
+            3,
+            "e41eda2c0ca9628ad23be21288288a9a6faffe2246371ea830a6f5b3807d9237",
         ),
         "sdr_stop.tool": (
             "sdr_stop",

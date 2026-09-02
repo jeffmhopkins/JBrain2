@@ -52,6 +52,18 @@ MIN_HZ = 24_000_000
 MAX_HZ = 1_766_000_000
 MODES = {"fm": "fm", "nfm": "fm", "wbfm": "wbfm", "am": "am", "usb": "usb", "lsb": "lsb"}
 
+# What a session is HOLDING the tuner for. One radio, so the lease is the only arbiter,
+# and which job holds it decides what the loser is told: "release it to listen" and
+# "release it to log" are opposite advice (docs/plans/APRS_CONTROL_PLAN.md P0).
+# `listen` produces audio; `aprs` decodes packets and produces none.
+PURPOSE_LISTEN = "listen"
+PURPOSE_APRS = "aprs"
+# Every purpose maps to the phrase a refusal uses. `.get` rather than `[]` because this
+# is read while holding the tuner lock on the contention path: a purpose added without a
+# label would otherwise raise KeyError there and turn a 409 into a 500 with a traceback.
+PURPOSE_LABEL = {PURPOSE_LISTEN: "listening", PURPOSE_APRS: "logging APRS"}
+PURPOSES = tuple(PURPOSE_LABEL)
+
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
 AUDIO_BITRATE = "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
@@ -108,6 +120,17 @@ def validate(frequency_hz: int, mode: str) -> str:
     return key
 
 
+def validate_purpose(purpose: str) -> str:
+    """Bound the job a session may hold the tuner for.
+
+    Here as well as in the caller for the same reason `validate` bounds frequency and
+    mode here: a bound that lives only in the caller is not a bound once there is a
+    second caller."""
+    if purpose not in PURPOSES:
+        raise SdrError(f"unknown purpose {purpose!r} (want one of {sorted(PURPOSES)})")
+    return purpose
+
+
 def _peak(pcm: bytes) -> float:
     """Loudest sample in a chunk, as a 0..1 fraction of full scale."""
     count = len(pcm) // 2
@@ -127,6 +150,7 @@ class SessionInfo:
     started_at: float
     peak: float
     listeners: int
+    purpose: str = PURPOSE_LISTEN
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -134,6 +158,7 @@ class SessionInfo:
             "frequency_hz": self.frequency_hz,
             "mode": self.mode,
             "gain": self.gain,
+            "purpose": self.purpose,
             "started_at": self.started_at,
             "elapsed_s": round(time.time() - self.started_at, 1),
             "peak": round(self.peak, 4),
@@ -144,10 +169,17 @@ class SessionInfo:
 class Session:
     """One tuned radio, running until stopped."""
 
-    def __init__(self, frequency_hz: int, mode: str, gain: str | None) -> None:
+    def __init__(
+        self,
+        frequency_hz: int,
+        mode: str,
+        gain: str | None,
+        purpose: str = PURPOSE_LISTEN,
+    ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.started_at = time.time()
         self.gain = gain
+        self.purpose = validate_purpose(purpose)
         self.frequency_hz = frequency_hz
         self.mode = validate(frequency_hz, mode)
         self.peak = 0.0
@@ -448,6 +480,7 @@ class Session:
             started_at=self.started_at,
             peak=self.peak,
             listeners=listeners,
+            purpose=self.purpose,
         )
 
 
@@ -458,13 +491,21 @@ class Tuner:
         self._session: Session | None = None
         self._lock = threading.Lock()
 
-    def start(self, frequency_hz: int, mode: str, gain: str | None) -> SessionInfo:
+    def start(
+        self,
+        frequency_hz: int,
+        mode: str,
+        gain: str | None,
+        purpose: str = PURPOSE_LISTEN,
+    ) -> SessionInfo:
+        validate_purpose(purpose)
         with self._lock:
             if self._session is not None and self._session.alive:
-                raise SdrBusy("the radio is already listening")
+                held = PURPOSE_LABEL.get(self._session.purpose, "in use")
+                raise SdrBusy(f"the radio is already {held}")
             if self._session is not None:
                 self._session.stop()  # a dead session must not block a new one
-            self._session = Session(frequency_hz, mode, gain)
+            self._session = Session(frequency_hz, mode, gain, purpose)
             return self._session.info()
 
     def current(self) -> Session | None:

@@ -45,6 +45,11 @@ jobs:
               - '.github/workflows/ci.yml'
             supervisor:
               - 'supervisor/**'
+              # The sdr sidecar lives under deploy/ but is TESTED by the supervisor
+              # suite, which loads deploy/sdr/*.py by path. Without this a PR touching
+              # only the sidecar ran no test that covers it — which is exactly how a
+              # change to the tuner lease could reach main uncovered.
+              - 'deploy/sdr/**'
               - '.github/workflows/ci.yml'
             jcode:
               - 'jcode/**'
