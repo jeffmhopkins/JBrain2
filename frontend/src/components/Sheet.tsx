@@ -23,8 +23,21 @@ export function Sheet({ title, onClose, children }: SheetProps) {
   // Back gesture pops this sheet before the screen under it (App reads the stack).
   useBackLayer(onClose);
 
+  // Focus the panel when the sheet OPENS — once, and never again.
+  //
+  // This used to live in the effect below, keyed on `onClose`. Callers pass an inline
+  // arrow (`onClose={() => setSheet(false)}`), which is a new identity on every render
+  // of the screen, so the effect re-ran on every render and stole focus back from
+  // whatever the owner was typing into. On a screen that repaints on a timer — the
+  // tuner repaints every second off the radio poll — that yanked the caret out of the
+  // frequency field about a second after it opened and dismissed the phone's keypad,
+  // which reads exactly like the field closing by itself. Any sheet with an input has
+  // the same exposure.
   useEffect(() => {
     panelRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };

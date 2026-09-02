@@ -34,6 +34,66 @@ const listeners = new Set<Listener>();
 let audioCtx: AudioContext | null = null;
 let analyserNode: AnalyserNode | null = null;
 let tapped = false;
+let armed = false;
+
+// The tape's history, kept HERE rather than in the component that draws it, because
+// the owner wants to open the tuner and see what already happened — not start a
+// recording by looking at it. Sampling therefore runs for as long as the radio is
+// playing, and the sheet only ever reads this buffer.
+//
+// A timer rather than an animation frame: rAF is throttled hard in a background tab
+// and stops entirely when nothing is being painted, which is exactly the case this
+// buffer exists to cover. 20 Hz over 12 s is 240 columns — more than a phone-width
+// canvas can show — and costs one array pass per 50ms.
+const SAMPLE_HZ = 20;
+export const TAPE_WINDOW_S = 12;
+const TAPE_LEN = SAMPLE_HZ * TAPE_WINDOW_S;
+// Demodulated speech sits low in the range; this lifts a normal signal to most of the
+// height without flattening a loud one against the top.
+const TAPE_GAIN = 2.6;
+
+const levels = new Float32Array(TAPE_LEN);
+let levelAt = 0;
+let sampler: ReturnType<typeof setInterval> | null = null;
+let samples: Uint8Array<ArrayBuffer> | null = null;
+
+/** The rolling level history: oldest-to-newest is `at` forward, wrapping. */
+export function sdrLevels(): { levels: Float32Array; at: number; length: number } {
+  return { levels, at: levelAt, length: TAPE_LEN };
+}
+
+function sample(): void {
+  const node = analyserNode;
+  if (!node || !isSdrPlaying()) return;
+  if (!samples || samples.length !== node.fftSize) {
+    samples = new Uint8Array(new ArrayBuffer(node.fftSize));
+  }
+  node.getByteTimeDomainData(samples);
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const centred = ((samples[i] ?? 128) - 128) / 128;
+    sum += centred * centred;
+  }
+  levels[levelAt] = Math.min(1, Math.sqrt(sum / samples.length) * TAPE_GAIN);
+  levelAt = (levelAt + 1) % TAPE_LEN;
+}
+
+function startSampling(): void {
+  if (sampler !== null || typeof setInterval === "undefined") return;
+  sampler = setInterval(sample, 1000 / SAMPLE_HZ);
+}
+
+function stopSampling(): void {
+  // Clearing is NOT conditional on a timer having run. Returning early when there was
+  // no sampler left the previous station's audio in the buffer, so the next session
+  // opened its tuner showing history that belonged to a different frequency.
+  if (sampler !== null) {
+    clearInterval(sampler);
+    sampler = null;
+  }
+  levels.fill(0);
+  levelAt = 0;
+}
 
 function announce(): void {
   const playing = isSdrPlaying();
@@ -84,6 +144,8 @@ export function playSdrAudio(): void {
   // the suffix test rather than equality.
   if (!el.src.endsWith(SDR_AUDIO_SRC)) el.src = SDR_AUDIO_SRC;
   if (el.paused) attempt(el);
+  armAnalyser();
+  if (analyserNode) startSampling();
 }
 
 /** Release the stream. Called when the lease ends, never when the sheet closes. */
@@ -98,6 +160,7 @@ export function stopSdrAudio(): void {
   }
   element.remove();
   element = null;
+  stopSampling();
   announce();
 }
 
@@ -174,10 +237,32 @@ export function sdrAnalyser(): AnalyserNode | null {
     // Without this the graph is a dead end and the radio goes silent.
     node.connect(audioCtx.destination);
     analyserNode = node;
+    startSampling();
     return node;
   } catch {
     return null; // no visualiser; the radio is unaffected
   }
+}
+
+/**
+ * Try to take the tap at the next touch anywhere in the app.
+ *
+ * Without this the analyser is only built when the tuner sheet opens, so the FIRST
+ * open after a session starts always shows an empty tape — the one time the owner is
+ * most likely to be looking for what they just missed. Any tap will do, and the
+ * listener removes itself once the tap lands.
+ */
+function armAnalyser(): void {
+  if (armed || tapped || typeof document === "undefined") return;
+  armed = true;
+  const attempt = () => {
+    if (sdrAnalyser()) {
+      document.removeEventListener("pointerdown", attempt, true);
+      document.removeEventListener("keydown", attempt, true);
+    }
+  };
+  document.addEventListener("pointerdown", attempt, true);
+  document.addEventListener("keydown", attempt, true);
 }
 
 /** Test seam: drop the element so each test starts from nothing. */
@@ -195,4 +280,7 @@ export function resetSdrAudio(): void {
   audioCtx = null;
   analyserNode = null;
   tapped = false;
+  armed = false;
+  stopSampling();
+  samples = null;
 }

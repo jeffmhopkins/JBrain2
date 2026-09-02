@@ -137,16 +137,26 @@ describe("the tuner sheet", () => {
     expect(screen.getByText(/^(LIVE|PAUSED)$/)).toBeInTheDocument();
   });
 
-  it("puts the tape in the transport row, not above it", () => {
+  it("shows no signal meter — the tape is the level display", () => {
+    render(<SdrTunerSheet listening={{ ...LISTENING, peak: 0.42 }} onClose={() => {}} />);
+
+    // The meter reported `peak`, which is the loudest sample of the DEMODULATED AUDIO,
+    // not reception strength: on an empty FM channel rtl_fm emits loud hiss, so it read
+    // high on nothing at all. The tape shows that same quantity honestly and with
+    // history, so the meter is gone rather than relabelled.
+    expect(screen.queryByText("Signal")).not.toBeInTheDocument();
+    expect(screen.queryByText("42%")).not.toBeInTheDocument();
+  });
+
+  it("insets the elapsed time on the tape rather than giving it a row", () => {
     render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
 
-    // The owner's constraint on this display was that it must not eat vertical space,
-    // so it rides in the row the play button already sized rather than stacking above
-    // it (docs/mocks/sdr-tuner/d-waveform-tape.html).
+    // Layout B: the tape is the panel and the one reading worth keeping sits in the
+    // quiet band at its top, costing no height of its own.
     const tape = screen.getByRole("img", { name: /Audio level over the last 12 seconds/ });
-    expect(tape.parentElement).toBe(
-      screen.getByRole("button", { name: /^(Play|Pause)$/ }).parentElement,
-    );
+    const face = tape.parentElement;
+    expect(face).toHaveClass("sdr-face");
+    expect(face?.textContent).toContain("1:12");
   });
 
   it("abandons the edit on Escape without retuning", () => {

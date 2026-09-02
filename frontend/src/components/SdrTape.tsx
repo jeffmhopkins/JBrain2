@@ -9,35 +9,17 @@
 // It sits INSIDE the transport row rather than above it, so it costs no vertical space
 // of its own on a phone — the row was already as tall as the play button.
 //
-// It draws only while mounted, i.e. only while the sheet is open, so a closed tuner
-// costs nothing. That means the tape starts empty and fills from the right; there is
-// no attempt to keep history while nobody is looking at it.
+// It DRAWS only while mounted, but it does not SAMPLE: the history lives in
+// sdrAudio.ts and is recorded for as long as the radio plays, sheet open or not.
+// Opening the tuner should show what already happened — the owner asked for exactly
+// that, and a tape that starts recording when you look at it answers the wrong
+// question on a channel whose traffic arrives in bursts.
 
 import { useEffect, useRef } from "react";
-import { sdrAnalyser } from "../sdrAudio";
+import { TAPE_WINDOW_S, sdrLevels } from "../sdrAudio";
 
-// Seconds of history at roughly one column per animation frame. Long enough that a
-// transmission you glanced away from is still on screen, short enough that the
-// columns stay wide enough to read on a phone.
-const WINDOW_S = 12;
-const COLUMNS = WINDOW_S * 60;
-// Peak-normalised RMS is very quiet for speech; this lifts a normal signal to most of
-// the height without clipping a loud one, matching what the mock was tuned against.
-const GAIN = 2.6;
-
-interface Props {
-  /** Paused radio freezes the tape rather than scrolling silence past. */
-  playing: boolean;
-}
-
-export function SdrTape({ playing }: Props) {
+export function SdrTape() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const historyRef = useRef<Float32Array>(new Float32Array(COLUMNS));
-  const atRef = useRef(0);
-  // Read inside the animation frame instead of closing over it, so toggling play does
-  // not restart the loop and lose the history already on screen.
-  const playingRef = useRef(playing);
-  playingRef.current = playing;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -45,8 +27,6 @@ export function SdrTape({ playing }: Props) {
     const ctx2d = canvas.getContext("2d");
     if (!ctx2d) return;
 
-    const history = historyRef.current;
-    let samples: Uint8Array<ArrayBuffer> | null = null;
     let frame = 0;
     let width = 0;
     let height = 0;
@@ -70,21 +50,7 @@ export function SdrTape({ playing }: Props) {
 
     const draw = () => {
       frame = requestAnimationFrame(draw);
-      const analyser = sdrAnalyser();
-
-      if (analyser && playingRef.current) {
-        if (!samples || samples.length !== analyser.fftSize) {
-          samples = new Uint8Array(new ArrayBuffer(analyser.fftSize));
-        }
-        analyser.getByteTimeDomainData(samples);
-        let sum = 0;
-        for (let i = 0; i < samples.length; i += 1) {
-          const centred = ((samples[i] ?? 128) - 128) / 128;
-          sum += centred * centred;
-        }
-        history[atRef.current] = Math.min(1, Math.sqrt(sum / samples.length) * GAIN);
-        atRef.current = (atRef.current + 1) % COLUMNS;
-      }
+      const { levels, at, length } = sdrLevels();
 
       ctx2d.clearRect(0, 0, width, height);
       const mid = height / 2;
@@ -95,16 +61,18 @@ export function SdrTape({ playing }: Props) {
       ctx2d.lineTo(width, mid + 0.5);
       ctx2d.stroke();
 
-      const shown = Math.min(COLUMNS, Math.max(1, Math.floor(width)));
+      // One column per sample rather than per pixel: at 20 Hz the whole window is a
+      // few hundred columns, so each gets real width instead of a hairline.
+      const shown = Math.min(length, Math.max(1, Math.floor(width / 3)));
       const step = width / shown;
       ctx2d.fillStyle = ink;
       for (let i = 0; i < shown; i += 1) {
         // Newest at the right edge, so the tape reads the way time does.
-        const index = (atRef.current - 1 - (shown - 1 - i) + COLUMNS * 2) % COLUMNS;
-        const level = history[index] || 0;
-        const bar = Math.max(1, level * (height - 4));
+        const index = (at - 1 - (shown - 1 - i) + length * 2) % length;
+        const level = levels[index] || 0;
+        const bar = Math.max(1, level * (height - 8));
         ctx2d.globalAlpha = 0.35 + Math.min(0.65, level * 2.2);
-        ctx2d.fillRect(i * step, mid - bar / 2, Math.max(1, step - 0.4), bar);
+        ctx2d.fillRect(i * step, mid - bar / 2, Math.max(1, step - 0.8), bar);
       }
       ctx2d.globalAlpha = 1;
     };
@@ -121,7 +89,7 @@ export function SdrTape({ playing }: Props) {
       ref={canvasRef}
       className="sdr-tape"
       role="img"
-      aria-label={`Audio level over the last ${WINDOW_S} seconds`}
+      aria-label={`Audio level over the last ${TAPE_WINDOW_S} seconds`}
     />
   );
 }
