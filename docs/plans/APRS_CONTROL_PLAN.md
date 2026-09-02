@@ -204,6 +204,13 @@ owner started; and refuses outright against a sidecar too old to understand `pur
 which would otherwise return 200 with a plain listening session and let the tool report
 success while logging nothing.
 
+**Corrected after review.** Those four guarantees were true of the TOOL and not of the
+ROUTE, which had no tests at all — gutting both route bodies passed the whole backend
+suite. The route ignored `purposes`, both callers discarded `stopped` (so a stop that
+stopped nothing reported success, which for a timed "turn logging off" leaves the tuner
+held all day), and an unreachable sidecar read as "not logging". All four now hold on
+both paths, and the route tests fail against that gutted-body mutant.
+
 ### P1 · Decode and log
 
 Direwolf (the reference soft-TNC — bit sync, NRZI, HDLC, CRC) joins `rtl-sdr` and
