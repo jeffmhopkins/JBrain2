@@ -25147,10 +25147,15 @@ button.task-band:active {
   flex: 0 0 auto;
   background: var(--text-3);
 }
+/* Green / grey / amber for live / quiet / stale (docs/mocks/aprs/a-launcher-shape.html).
+   Quiet and stale used to share the amber dot, which put a permanent warning on a
+   normal quiet channel and — worse — made a dead receiver look identical to one at a
+   glance, in the control whose entire job is that distinction. Quiet takes the neutral
+   dot the base rule already gives; amber is reserved for "this should have heard
+   something by now". */
 .aprs-health-live .aprs-dot {
   background: var(--ok);
 }
-.aprs-health-quiet .aprs-dot,
 .aprs-health-stale .aprs-dot {
   background: var(--warn);
 }

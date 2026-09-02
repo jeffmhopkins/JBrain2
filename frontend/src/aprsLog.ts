@@ -24,6 +24,10 @@ export interface AprsPacket {
 export interface AprsLogState {
   /** True only while a session is holding the tuner to LOG. Not "there are rows". */
   logging: boolean;
+  /** Whether the box could reach the radio at all. `logging: false` alone cannot say
+   * whether the receiver is off or unreachable, and a dead receiver reading as a
+   * switched-off one is exactly the confusion this surface exists to prevent. */
+  reachable: boolean;
   frequency_hz: number | null;
   packets: AprsPacket[];
 }
@@ -42,12 +46,25 @@ export const STALE_AFTER_MS = 40 * 60 * 1000;
 
 /** Health as the tab shows it: never a signal bar, only last-decode and rate. */
 export function receiverHealth(state: AprsLogState, now: number = Date.now()) {
+  // Unreachable outranks everything: with the box unable to ask, every other answer
+  // here would be a guess dressed as a reading.
+  if (!state.reachable) return { tone: "stale" as const, text: "the radio isn't reachable" };
   if (!state.logging) return { tone: "off" as const, text: "not logging" };
   const newest = state.packets[0];
   if (!newest) return { tone: "quiet" as const, text: "listening — nothing heard yet" };
   const age = now - new Date(newest.heard_at).getTime();
+  if (!Number.isFinite(age)) {
+    // An unparseable timestamp used to fall through to `live` with "heard NaNs ago" —
+    // the most reassuring tone for the one state we understand least. In a control
+    // whose entire job is telling a dead receiver from a quiet channel, the unknown
+    // case belongs on the suspect side.
+    return { tone: "stale" as const, text: "last decode unreadable" };
+  }
   if (age > STALE_AFTER_MS) {
-    return { tone: "stale" as const, text: `nothing for ${Math.round(age / 60000)} min` };
+    return {
+      tone: "stale" as const,
+      text: `nothing for ${Math.round(age / 60000)} min`,
+    };
   }
   return { tone: "live" as const, text: `heard ${relative(age)}` };
 }
@@ -58,11 +75,20 @@ function relative(ms: number): string {
   return `${Math.round(s / 60)}m ago`;
 }
 
-/** Packets per hour over what is loaded — the honest second half of "is it alive". */
+/** Packets per hour over what is loaded — the honest second half of "is it alive".
+ *
+ * Measured over the SAME window that decides staleness, and that shared threshold is
+ * the point. Spanning oldest-to-now made the rate decay without ever reaching zero, so
+ * a receiver that had heard nothing for 41 minutes read "26 pkt/hr" — busy — beside a
+ * health line saying "nothing for 41 min": the two halves of one control contradicting
+ * each other. Sharing the threshold makes that disagreement unrepresentable. */
 export function decodeRate(state: AprsLogState, now: number = Date.now()): string {
-  const oldest = state.packets.at(-1);
-  if (!state.logging || !oldest || state.packets.length < 2) return "—";
-  const spanMs = now - new Date(oldest.heard_at).getTime();
-  if (spanMs <= 0) return "—";
-  return `${Math.round((state.packets.length / spanMs) * 3_600_000)} pkt/hr`;
+  if (!state.logging || !state.reachable) return "—";
+  const cutoff = now - STALE_AFTER_MS;
+  const recent = state.packets.filter((p) => {
+    const at = new Date(p.heard_at).getTime();
+    return Number.isFinite(at) && at >= cutoff;
+  });
+  if (recent.length === 0) return "0 pkt/hr";
+  return `${Math.round((recent.length / STALE_AFTER_MS) * 3_600_000)} pkt/hr`;
 }

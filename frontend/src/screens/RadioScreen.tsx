@@ -20,7 +20,7 @@
 // that forges trivially. Rows are rendered as quoted content, badged, and nothing here
 // is ever put in front of a model as an instruction.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { type AprsLogState, type AprsPacket, decodeRate, receiverHealth } from "../aprsLog";
 import { useSdrSession } from "../sdrSession";
@@ -35,12 +35,26 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const sdr = useSdrSession();
+  // ONE reading of who holds the tuner, from the 1 s lease poll — not the 5 s log poll.
+  // They are the same sidecar field arriving by two routes at two cadences, and mixing
+  // them let the Tuner tab say "in use by APRS" for five seconds after the lease was
+  // gone. The shared session store exists precisely so those two can never disagree.
+  const holder = sdr.listening?.purpose ?? (sdr.listening ? "listen" : null);
+
+  // A poll in flight when the next tick fires, or when a toggle finishes, can land out
+  // of order and paint a state the box has already left. The sequence number makes a
+  // stale answer discardable rather than merely unlikely.
+  const seq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mine = ++seq.current;
     try {
-      setLog(await api.getAprsPackets());
+      const next = await api.getAprsPackets();
+      if (mine !== seq.current) return;
+      setLog(next);
       setError(null);
     } catch (err) {
+      if (mine !== seq.current) return;
       setError(err instanceof ApiError ? err.message : "Couldn't read the APRS log.");
     }
   }, []);
@@ -87,11 +101,21 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
         ))}
       </div>
 
-      {tab === "aprs" && <AprsTab log={log} error={error} busy={busy} onToggle={toggle} />}
+      {tab === "aprs" && (
+        <AprsTab
+          log={log}
+          error={error}
+          busy={busy}
+          holder={holder}
+          heldFor={sdr.listening?.elapsed_s ?? null}
+          onToggle={toggle}
+        />
+      )}
       {tab === "tuner" && (
         <TunerTab
-          logging={log?.logging === true}
+          logging={holder === "aprs"}
           listening={sdr.listening}
+          busy={busy}
           onFree={() => toggle(false)}
         />
       )}
@@ -106,14 +130,32 @@ function AprsTab({
   log,
   error,
   busy,
+  holder,
+  heldFor,
   onToggle,
 }: {
   log: AprsLogState | null;
   error: string | null;
   busy: boolean;
+  /** What is holding the one tuner right now: "listen", "aprs", or nothing. */
+  holder: string | null;
+  /** Seconds the current session has held it, for the logging state's elapsed time. */
+  heldFor: number | null;
   onToggle: (enabled: boolean) => void;
 }) {
-  if (!log) return <p className="radio-empty">Reading the log…</p>;
+  // The error has to come BEFORE the loading return. It used to sit after it, so a
+  // first load that failed left this tab on "Reading the log…" for ever with the
+  // message swallowed — and that is the DEFAULT experience on a box with no radio,
+  // because the launcher offers the Radio tile unconditionally.
+  if (!log) {
+    return error ? (
+      <p className="radio-error" role="alert">
+        {error}
+      </p>
+    ) : (
+      <p className="radio-empty">Reading the log…</p>
+    );
+  }
   const health = receiverHealth(log);
   const freq = log.frequency_hz ? (log.frequency_hz / 1_000_000).toFixed(3) : null;
 
@@ -127,31 +169,61 @@ function AprsTab({
         <span className="aprs-rate">{decodeRate(log)}</span>
       </div>
 
-      {error && <p className="radio-error">{error}</p>}
-
-      {log.logging ? (
-        <button
-          type="button"
-          className="aprs-toggle aprs-toggle-on"
-          disabled={busy}
-          onClick={() => onToggle(false)}
-        >
-          Stop APRS logging
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="aprs-toggle"
-          disabled={busy}
-          onClick={() => onToggle(true)}
-        >
-          Enable APRS logging
-        </button>
-      )}
-      {!log.logging && (
-        <p className="radio-hint">
-          Reserves the tuner until released — while it runs, the Tuner tab can't listen.
+      {error && (
+        <p className="radio-error" role="alert">
+          {error}
         </p>
+      )}
+
+      {holder === "listen" ? (
+        // CONTENTION (docs/mocks/aprs/c-single-dongle.html, shape A). One dongle, one
+        // job: with a listening session holding it, "Enable APRS logging" is a button
+        // that can only fail — and failing produced a raw lowercase 409 string. Say what
+        // holds the radio BEFORE the tap, and offer the one act that resolves it. One
+        // CTA, because round 3's own review killed a duplicate here.
+        <div className="aprs-held" role="alert">
+          <b>The radio is listening.</b> One dongle, one job — release the listening session to log
+          APRS, or add a second dongle to do both.
+          <button
+            type="button"
+            className="aprs-take"
+            disabled={busy}
+            onClick={() => onToggle(true)}
+          >
+            Release &amp; log APRS
+          </button>
+        </div>
+      ) : log.logging ? (
+        <>
+          <button
+            type="button"
+            className="aprs-toggle aprs-toggle-on"
+            disabled={busy}
+            onClick={() => onToggle(false)}
+          >
+            Stop APRS logging
+          </button>
+          {heldFor !== null && (
+            <p className="radio-hint">
+              Holding the tuner for {held(heldFor)} — nothing else can use the radio until this is
+              released.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="aprs-toggle"
+            disabled={busy}
+            onClick={() => onToggle(true)}
+          >
+            Enable APRS logging
+          </button>
+          <p className="radio-hint">
+            Reserves the tuner until released — while it runs, the Tuner tab can't listen.
+          </p>
+        </>
       )}
 
       <div className="aprs-sec">Heard</div>
@@ -189,21 +261,32 @@ function PacketRow({ packet }: { packet: AprsPacket }) {
   );
 }
 
+/** An elapsed hold, as the mock states it: "held 1h 12m". */
+function held(seconds: number): string {
+  const mins = Math.max(0, Math.round(seconds / 60));
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
 function TunerTab({
   logging,
   listening,
+  busy,
   onFree,
 }: {
   logging: boolean;
-  listening: { frequency_hz: number; mode: string } | null;
+  listening: { frequency_hz: number; mode: string; elapsed_s?: number } | null;
+  busy: boolean;
   onFree: () => void;
 }) {
   if (logging) {
     return (
-      <div className="aprs-held">
+      <div className="aprs-held" role="alert">
         <b>In use by APRS logging.</b> One dongle, one job — release the logging session to listen
         here.
-        <button type="button" className="aprs-take" onClick={onFree}>
+        {listening?.elapsed_s !== undefined && <> Held for {held(listening.elapsed_s)}.</>}
+        {/* Disabled while busy: without it a double tap fires two releases, and the
+            second lands on a session that is already gone. */}
+        <button type="button" className="aprs-take" disabled={busy} onClick={onFree}>
           Release &amp; listen
         </button>
       </div>
