@@ -30,7 +30,8 @@ import {
   decodeRate,
   receiverHealth,
 } from "../aprsLog";
-import { useSdrSession } from "../sdrSession";
+import { SdrTunerControls } from "../components/SdrTunerSheet";
+import { type SdrListening, useSdrSession } from "../sdrSession";
 
 type Tab = "tuner" | "aprs" | "recordings";
 
@@ -94,49 +95,63 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <section className="radio-screen">
+    // `subscreen` is what makes this a full-screen layer OVER the launcher. The
+    // launcher deliberately stays open beneath a card — dismissing the card reveals it
+    // again — so a screen that is merely a padded section lets the tiles show through,
+    // which is what this one did.
+    <section className="subscreen radio-screen">
       <div className="radio-top">
         <button type="button" className="radio-back" onClick={onClose} aria-label="Back">
           ‹
         </button>
         <h1 className="radio-title">Radio</h1>
       </div>
-      <div className="radio-tabs" role="tablist">
-        {(["tuner", "aprs", "recordings"] as Tab[]).map((id) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-          >
-            {id === "tuner" ? "Tuner" : id === "aprs" ? "APRS" : "Recordings"}
-          </button>
-        ))}
-      </div>
+      <div className="radio-body">
+        {/* The house segmented control — the same one the session list uses for
+            Today / Older / Archived. This screen had invented an underline tab bar
+            instead, which is a second answer to a question the design system had
+            already settled. */}
+        <div className="seg-tabs" role="tablist" aria-label="Radio">
+          {(["tuner", "aprs", "recordings"] as Tab[]).map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={`seg-tab${tab === id ? " on" : ""}`}
+              onClick={() => setTab(id)}
+            >
+              {id === "tuner" ? "Tuner" : id === "aprs" ? "APRS" : "Recordings"}
+            </button>
+          ))}
+        </div>
 
-      {tab === "aprs" && (
-        <AprsTab
-          log={log}
-          commands={commands}
-          error={error}
-          busy={busy}
-          holder={holder}
-          heldFor={sdr.listening?.elapsed_s ?? null}
-          onToggle={toggle}
-        />
-      )}
-      {tab === "tuner" && (
-        <TunerTab
-          logging={holder === "aprs"}
-          listening={sdr.listening}
-          busy={busy}
-          onFree={() => toggle(false)}
-        />
-      )}
-      {tab === "recordings" && (
-        <p className="radio-empty">Recordings arrive in a later wave. Nothing is stored yet.</p>
-      )}
+        {tab === "aprs" && (
+          <AprsTab
+            log={log}
+            commands={commands}
+            error={error}
+            busy={busy}
+            holder={holder}
+            heldFor={sdr.listening?.elapsed_s ?? null}
+            onToggle={toggle}
+          />
+        )}
+        {tab === "tuner" && (
+          <TunerTab
+            logging={holder === "aprs"}
+            listening={sdr.listening}
+            busy={busy}
+            onFree={() => toggle(false)}
+            // Releasing from here leaves the tab on its idle state; the lease poll
+            // publishes the change, so nothing local needs clearing.
+            onReleased={() => void refresh()}
+          />
+        )}
+        {tab === "recordings" && (
+          <p className="radio-empty">Recordings arrive in a later wave. Nothing is stored yet.</p>
+        )}
+      </div>
     </section>
   );
 }
@@ -374,11 +389,13 @@ function TunerTab({
   listening,
   busy,
   onFree,
+  onReleased,
 }: {
   logging: boolean;
-  listening: { frequency_hz: number; mode: string; elapsed_s?: number } | null;
+  listening: SdrListening | null;
   busy: boolean;
   onFree: () => void;
+  onReleased: () => void;
 }) {
   if (logging) {
     return (
@@ -395,14 +412,11 @@ function TunerTab({
     );
   }
   if (listening) {
-    return (
-      <div className="radio-tuner">
-        <div className="radio-tuner-freq">{(listening.frequency_hz / 1_000_000).toFixed(3)}</div>
-        <div className="radio-tuner-sub">
-          {listening.mode.toUpperCase()} · listening — the radio icon in the composer tunes it
-        </div>
-      </div>
-    );
+    // The REAL transport, not a description of it. This tab used to render frequency
+    // and mode as text and point at the composer's icon, which meant the one screen
+    // named "Radio" was the one place you could not work the radio. Same component the
+    // omnibox icon opens, so the two can never drift apart.
+    return <SdrTunerControls listening={listening} onReleased={onReleased} />;
   }
   return (
     <div className="radio-tuner">

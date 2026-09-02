@@ -20385,6 +20385,7 @@ button.task-band:active {
 }
 
 /* buckets */
+.seg-tabs,
 .jcode-buckets {
   display: flex;
   border: 1px solid var(--border);
@@ -20392,6 +20393,7 @@ button.task-band:active {
   overflow: hidden;
   margin-bottom: 11px;
 }
+.seg-tab,
 .jcode-bk {
   flex: 1;
   display: flex;
@@ -20406,9 +20408,11 @@ button.task-band:active {
   border: none;
   cursor: pointer;
 }
+.seg-tab + .seg-tab,
 .jcode-bk + .jcode-bk {
   border-left: 1px solid var(--border);
 }
+.seg-tab.on,
 .jcode-bk.on {
   color: var(--text);
   background: var(--steel-tint);
@@ -25052,14 +25056,11 @@ button.task-band:active {
 /* The health line is deliberately NOT a meter: last decode and rate only. A signal bar
    here would repeat the mistake the tuner's deleted `peak` meter made — reading high on
    an empty channel full of hiss. */
-.radio-screen {
-  padding: 12px 14px 28px;
-}
 .radio-top {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 2px 0 10px;
+  padding: 10px 14px;
 }
 .radio-back {
   appearance: none;
@@ -25076,27 +25077,14 @@ button.task-band:active {
   font-weight: 640;
   margin: 0;
 }
-.radio-tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 14px;
-}
-.radio-tabs button {
-  appearance: none;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 14px;
-  padding: 9px 12px;
-  cursor: pointer;
-}
-.radio-tabs button[aria-selected="true"] {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
+/* The tab strip is the shared `.seg-tabs` control (see the session list); what is left
+   here is only the screen's own scroll body — `.subscreen` is a fixed flex column, so
+   the content pane is what scrolls, never the shell. */
+.radio-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 14px 28px;
 }
 .radio-empty,
 .radio-hint {
