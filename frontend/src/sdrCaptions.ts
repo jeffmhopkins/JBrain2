@@ -25,11 +25,15 @@ export interface Caption {
   words: CaptionWord[];
 }
 
-/** How long a segment covers, at most; a caption is shown from its START time plus a
- *  little, so a long segment does not sit invisible until its final word is heard. */
-const SHOW_AFTER_S = 1.0;
-/** If the audio timeline cannot be anchored, fall back to showing captions on arrival
- *  rather than never — early is worse than absent, but absent is worst. */
+/** Offset from a segment's START to when its caption is shown. Zero is the subtitle
+ *  convention: the words appear as the first of them is heard, and stand until the next
+ *  caption is due. It was briefly 1 s, on the theory that a long segment should not sit
+ *  invisible — but that reasoning applies to showing a caption at its END, not its
+ *  start, and all the second bought was a second of lag. Raise it to hold captions back,
+ *  lower it (negative is fine) to lead the audio. */
+const SHOW_AFTER_S = 0;
+/** How often held captions are checked against the ear. Half the interval is the worst
+ *  extra lateness this adds, so it is well under the length of a spoken word. */
 const RELEASE_TICK_MS = 250;
 
 export type CaptionState = {

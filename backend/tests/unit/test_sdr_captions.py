@@ -8,12 +8,14 @@ of the whole route — that the model is NOT freed between segments.
 
 from __future__ import annotations
 
+import io
 import json
+import wave
 from typing import Any
 
 import pytest
 
-from jbrain.api.sdr import _event, _segments
+from jbrain.api.sdr import _Backlog, _clip_seconds, _event, _segments
 
 
 class _Upstream:
@@ -108,3 +110,88 @@ def test_the_route_never_frees_the_model_between_segments() -> None:
     # trip its own guard.
     assert ".unload(" not in body
     assert "free_model" not in body
+
+
+# --- the backlog -------------------------------------------------------------------
+# Reading the sidecar in step with transcribing is what put captions permanently behind
+# the audio: every whisper call stalled the reader, the queue filled behind it, and the
+# captioner never caught up. These pin the shape that fixed it — read freely, and
+# transcribe whatever has piled up as one clip.
+
+
+def _wav(seconds: float, rate: int = 16_000, fill: bytes = b"\x01\x00") -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(fill * int(seconds * rate))
+    return buf.getvalue()
+
+
+def test_an_empty_backlog_has_nothing_to_transcribe() -> None:
+    assert _Backlog().take() is None
+
+
+def test_one_waiting_segment_is_handed_over_untouched() -> None:
+    backlog = _Backlog()
+    clip = _wav(4)
+    backlog.add(11.0, clip)
+
+    # Byte-identical, not merely equivalent: the common case must not pay a re-encode.
+    assert backlog.take() == (11.0, clip)
+
+
+def test_segments_that_piled_up_are_transcribed_as_one_clip() -> None:
+    backlog = _Backlog()
+    backlog.add(100.0, _wav(4))
+    backlog.add(104.0, _wav(3))
+    backlog.add(107.0, _wav(5))
+
+    taken = backlog.take()
+    assert taken is not None
+    started, wav = taken
+
+    # Whisper costs the same for 4 s as for 12 s on this box, so merging is free — and
+    # unlike taking only the newest it drops no words. The stamp is the FIRST segment's
+    # start, because that is when the audio the caption describes begins.
+    assert started == 100.0
+    assert _clip_seconds(wav) == pytest.approx(12.0, abs=0.01)
+
+
+def test_taking_clears_what_was_taken() -> None:
+    backlog = _Backlog()
+    backlog.add(1.0, _wav(2))
+    backlog.take()
+
+    assert backlog.take() is None
+
+
+def test_the_backlog_gives_up_its_oldest_rather_than_growing() -> None:
+    backlog = _Backlog(max_seconds=10.0)
+    for i in range(6):
+        backlog.add(float(i * 4), _wav(4))
+
+    taken = backlog.take()
+    assert taken is not None
+    started, wav = taken
+
+    # A caption for something said half a minute ago is not a live caption. What gives
+    # way is the OLDEST audio — dropping the newest instead would leave the captioner
+    # reading history while the live edge went past unseen.
+    assert _clip_seconds(wav) <= 12.0
+    assert started >= 12.0
+
+
+def test_a_truncated_clip_does_not_poison_the_batch() -> None:
+    backlog = _Backlog()
+    backlog.add(1.0, _wav(2))
+    backlog.add(3.0, b"RIFF truncated")
+    backlog.add(4.0, _wav(2))
+
+    taken = backlog.take()
+    assert taken is not None
+
+    # One unreadable clip must not cost the transmission around it: the caption stream
+    # is live, and there is no second chance at the audio.
+    assert _clip_seconds(taken[1]) == pytest.approx(4.0, abs=0.01)
