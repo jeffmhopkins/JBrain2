@@ -95,6 +95,48 @@ describe("the tuner sheet", () => {
     expect(tune).not.toHaveBeenCalled();
   });
 
+  it("keeps the frequency field open when something steals focus", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    const { rerender } = render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "93.3" } });
+    fireEvent.blur(field);
+    // The status poll repaints this sheet once a second while the owner is typing.
+    rerender(<SdrTunerSheet listening={{ ...LISTENING, elapsed_s: 73 }} onClose={() => {}} />);
+
+    // Committing on blur meant anything that took focus — a repaint, the keyboard
+    // closing — read as the field vanishing mid-entry. The edit ends when the owner
+    // says it does, and not before.
+    expect(screen.getByRole("textbox", { name: "Frequency in MHz" })).toHaveValue("93.3");
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("commits the typed frequency from the Go button", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Frequency in MHz" }), {
+      target: { value: "93.3" },
+    });
+    // A number pad does not reliably offer Enter, so the commit has a real control.
+    fireEvent.click(screen.getByRole("button", { name: "Tune to this frequency" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(93.3, undefined, "abc123"));
+  });
+
+  it("offers play/pause rather than a scrubber over a live stream", () => {
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    // Live radio has no timeline: the native transport rendered a seek bar reading
+    // 0:00 / 0:00 forever. It is playing or it is not.
+    const transport = screen.getByRole("button", { name: /^(Play|Pause)$/ });
+    expect(transport).toBeInTheDocument();
+    expect(screen.getByText(/^(LIVE|PAUSED)$/)).toBeInTheDocument();
+  });
+
   it("abandons the edit on Escape without retuning", () => {
     const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
     render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);

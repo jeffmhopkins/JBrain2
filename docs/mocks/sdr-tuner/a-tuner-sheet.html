@@ -19,12 +19,22 @@
     (play/pause, waveform, elapsed) · record + release actions.
   · The readout is TAPPABLE: it swaps for a numeric field (inputMode="decimal", so
     the phone raises a number pad with a decimal point) to type a frequency
-    outright. Enter or blur commits, Escape abandons without retuning. Stepping
-    reaches a neighbour; typing is how you leave the band entirely.
+    outright. Enter or the Go button commits; Escape or ✕ abandons without
+    retuning. Blur does NOT commit — anything that takes focus mid-entry (a
+    once-a-second status repaint, the keyboard closing) would otherwise read as the
+    field vanishing on its own. Stepping reaches a neighbour; typing is how you
+    leave the band entirely.
   · The step size is TAPPABLE too, opening a list of the real channel spacings
     (1 / 5 / 9 / 10 / 12.5 / 25 / 50 / 100 / 200 kHz). It opens on a step that suits
     the mode — 100 kHz for wbfm, 10 kHz for am, 25 kHz otherwise — because a fixed
     25 kHz made a broadcast-FM station eight taps away. An explicit pick wins.
+  · The transport is PLAY/PAUSE ONLY, with a LIVE / PAUSED tag. There is no
+    scrubber, elapsed time or duration: the stream has no timeline, and a native
+    <audio controls> over it renders a seek bar stuck at 0:00 / 0:00. Pausing drops
+    the connection; resuming rejoins the broadcast as it is NOW rather than playing
+    out a backlog. The element itself lives hidden in <body> for the life of the
+    lease and is never moved — a media element removed from a document is paused by
+    the user agent, so it cannot be lent to the sheet and back.
   · Record is ARM-THEN-CONFIRM (tap, "Tap again", 2.6s window), per the
     destructive-action doctrine in ../../reference/DESIGN.md.
   · Release is a first-class action in the sheet, and it makes the icon disappear.

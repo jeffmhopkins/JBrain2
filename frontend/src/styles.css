@@ -24808,10 +24808,54 @@ button.task-band:active {
   color: var(--accent);
   background: var(--accent-tint);
 }
-/* The audio element is moved in and out of this slot as the sheet mounts, so the
-   slot styles the child rather than itself (sdrAudio.ts). */
-.sdr-audio-slot {
-  display: block;
+/* The audio element itself is hidden in <body> (sdrAudio.ts); this is the transport
+   the sheet draws for it. Live radio is on or off, so there is no scrubber. */
+.sdr-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+.sdr-play {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sdr-play[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sdr-livetag {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+}
+/* The live tag earns the accent only when sound is actually coming out — it reports
+   state, it does not decorate. */
+.sdr-livetag-on {
+  color: var(--accent);
+}
+.sdr-freq-ok,
+.sdr-freq-cancel {
+  font-size: var(--fs-micro);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 6px 10px;
+  cursor: pointer;
+  align-self: center;
+}
+.sdr-freq-ok {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 /* --mode is unset inside a sheet, so the segmented row is rebound to the accent
    the same way the model sheet's reasoning pills are. */
