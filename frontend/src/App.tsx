@@ -34,6 +34,7 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { RadioScreen } from "./screens/RadioScreen";
 import { ResearchDetailScreen } from "./screens/ResearchDetailScreen";
 import { type ResearchKind, ResearchScreen } from "./screens/ResearchScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
@@ -69,6 +70,7 @@ type Card =
   | "location"
   | "wiki"
   | "image"
+  | "radio"
   | "intake"
   | "petcontrol"
   | "jcode"
@@ -76,11 +78,11 @@ type Card =
   | "jmolt"
   | "vitals";
 
-// Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
-// bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
-// no entry here. Every Card that uses the wrapper needs a title.
+// Automations, Tasks, Image, Radio and jcode bring their own full-screen overlay (own
+// back bar + slide-in), so they render outside the shared subscreen TopBar wrapper —
+// hence no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "jlaunch" | "petcontrol">,
+  Exclude<Card, "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol">,
   string
 > = {
   ops: "Ops",
@@ -534,6 +536,7 @@ export function App() {
         card !== "automations" &&
         card !== "tasks" &&
         card !== "image" &&
+        card !== "radio" &&
         card !== "petcontrol" &&
         card !== "jcode" &&
         card !== "jlaunch" && (
@@ -614,6 +617,7 @@ export function App() {
           bespoke top bar — gallery shortcut + residency dot — that the shared
           TopBar can't carry), so it renders outside the shared subscreen wrapper. */}
       {card === "image" && <ImageScreen onClose={() => setCard(null)} />}
+      {card === "radio" && <RadioScreen onClose={() => setCard(null)} />}
 
       {/* Tasks is a self-contained full-screen overlay (its own back bar), like
           Automations — so it renders outside the shared subscreen TopBar wrapper. */}

@@ -23,6 +23,7 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
+import type { AprsLogState, AprsToggleResult } from "../aprsLog";
 import type {
   IntakeConfig,
   IntakeConfigPatch,
@@ -2677,6 +2678,18 @@ export const api = {
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
     const response = await request(`/api/sdr/tune?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
+  },
+
+  async getAprsPackets(limit = 50): Promise<AprsLogState> {
+    const response = await request(`/api/sdr/packets?limit=${encodeURIComponent(limit)}`);
+    return (await response.json()) as AprsLogState;
+  },
+
+  async setAprsLogging(enabled: boolean, frequencyMhz?: number): Promise<AprsToggleResult> {
+    let query = `enabled=${enabled ? "true" : "false"}`;
+    if (frequencyMhz !== undefined) query += `&frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
+    const response = await request(`/api/sdr/aprs?${query}`, { method: "POST" });
+    return (await response.json()) as AprsToggleResult;
   },
 
   async sdrStop(sessionId?: string): Promise<void> {

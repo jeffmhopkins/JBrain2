@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1🟡(built; on-box run pending) P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1🟡(built; on-box run pending) P1a✅ P3🟡(built; logging window pending) P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -283,6 +283,16 @@ event the phone produces — with no second geofence code path in existence.
 
 **GUI gate closed 2026-09-02: shape A**, a tab of the Radio launcher (Tuner / APRS /
 Recordings). Binding spec `../mocks/aprs/a-launcher-shape.html`.
+
+**Landed.** A Radio launcher tile and screen with Tuner / APRS / Recordings tabs. The
+APRS tab shows the heard log, the health line, and the logging switch; the Tuner tab
+reads *in use by APRS logging* and offers the handoff back. Packets render badged as
+**heard** — a stranger's transmission with a forgeable callsign — which is where the
+trust-tier rule stops being a line in a plan and meets the owner's eye.
+
+The Tuner tab reflects state rather than duplicating the composer's tuner sheet, which
+is the approved surface for tuning (`../mocks/sdr-tuner/`). Recordings is a later wave
+and says so.
 
 Observability is the point, not decoration: a watch that silently died is worse than no
 watch. `last_heard_at` and a decode rate are load-bearing, for the same reason the

@@ -35,6 +35,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from jbrain.api.deps import OwnerDep, SettingsDep
+from jbrain.api.notes import SessionMakerDep, ctx_for
+from jbrain.sdr.aprslog import AprsReader
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -130,6 +132,40 @@ async def listen(
         "/listen/start",
         {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": gain},
     )
+
+
+@router.get("/packets")
+async def packets(
+    settings: SettingsDep,
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """The heard log, newest first, plus whether anything is receiving right now.
+
+    `logging` is what separates a quiet channel from a dead one, and the tab shows the
+    two differently — a watch that silently died is worse than no watch
+    (docs/mocks/aprs/README.md). Rows carry text transmitted by strangers; the client
+    renders them as untrusted."""
+    base = _base(settings)
+    health = await _health(base)
+    session = (health.get("listening") or {}) if health else {}
+    rows = await AprsReader(maker).recent(ctx_for(owner), limit=limit)
+    return {
+        "logging": session.get("purpose") == APRS_PURPOSE,
+        "frequency_hz": session.get("frequency_hz") if session else None,
+        "packets": [
+            {
+                "heard_at": row["heard_at"].isoformat(),
+                "frequency_hz": row["frequency_hz"],
+                "source": row["source"],
+                "destination": row["destination"],
+                "path": row["path"],
+                "info": row["info"],
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.post("/aprs")
