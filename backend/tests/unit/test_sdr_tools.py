@@ -24,6 +24,11 @@ def _client(handler) -> Any:
         async def post(self, path: str, json: dict[str, Any] | None = None):
             return handler(path, json or {})
 
+        async def get(self, path: str):
+            # sdr_aprs_logging reads /healthz before acting — it must know what the
+            # sidecar understands rather than trusting a 200 from an older one.
+            return handler(path, None)
+
     return Fake
 
 
@@ -161,3 +166,127 @@ def test_a_box_with_no_radio_gets_no_tools() -> None:
     # The same graceful degrade the image and transcription tools use — and it means
     # the tuner surface can never appear on a box that has no radio.
     assert build_sdr_handlers("") == {}
+
+
+# --- turning APRS logging on and off -------------------------------------------------
+# The rules this tool exists to keep (APRS_CONTROL_PLAN.md P1a): it is idempotent, it
+# reports the state it ACTUALLY reached rather than "ok", it stops the APRS session
+# specifically and never a listening one, and it refuses against a sidecar too old to
+# understand the request instead of succeeding at nothing.
+
+
+def _sidecar(purpose: str | None = None, *, purposes: list[str] | None = None, session_id: str = "s1"):
+    """A sidecar whose /healthz answer the test chooses; POSTs are recorded."""
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        if path == "/healthz":
+            listening = (
+                {"purpose": purpose, "session_id": session_id, "frequency_hz": 144_390_000}
+                if purpose
+                else None
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "purposes": ["listen", "aprs"] if purposes is None else purposes,
+                    "listening": listening,
+                },
+                request=req,
+            )
+        posts.append((path, body or {}))
+        return httpx.Response(200, json={"stopped": True, "session_id": "new"}, request=req)
+
+    return route, posts
+
+
+async def test_turning_logging_on_starts_an_aprs_session(tools) -> None:
+    route, posts = _sidecar(purpose=None)
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": True}, None)
+
+    assert posts[0][0] == "/listen/start"
+    assert posts[0][1]["purpose"] == "aprs"
+    assert posts[0][1]["mode"] == "fm"  # 1200-baud AFSK is narrowband FM, always
+    assert "144.39" in out
+
+
+async def test_turning_it_on_when_it_is_already_on_succeeds_and_changes_nothing(tools) -> None:
+    route, posts = _sidecar(purpose="aprs")
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": True}, None)
+
+    # Idempotent, because a scheduled retry of "turn it on" must not be a failure.
+    assert posts == []
+    assert "already on" in out
+
+
+async def test_turning_it_off_stops_THIS_session_by_id(tools) -> None:
+    route, posts = _sidecar(purpose="aprs", session_id="abc123")
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": False}, None)
+
+    # By id, so it cannot release a session that changed under it.
+    assert posts[0] == ("/listen/stop", {"session_id": "abc123"})
+    assert "off" in out
+
+
+async def test_turning_it_off_never_releases_a_listening_session(tools) -> None:
+    route, posts = _sidecar(purpose="listen")
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": False}, None)
+
+    # One tuner: "stop logging" reaching a listening session would silence the radio
+    # the owner was actually using.
+    assert posts == []
+    assert "already off" in out
+
+
+async def test_it_refuses_a_sidecar_too_old_to_log_rather_than_succeeding_at_nothing(
+    tools,
+) -> None:
+    route, posts = _sidecar(purpose=None, purposes=["listen"])
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": True}, None)
+
+    # An older sidecar ignores an unknown `purpose` and returns 200 with a plain
+    # LISTENING session — so this would otherwise report success while logging nothing.
+    assert posts == []
+    assert "too old" in out
+    assert "Nothing was changed" in out
+
+
+async def test_a_busy_radio_names_the_job_holding_it(tools) -> None:
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        if path == "/healthz":
+            return httpx.Response(200, json={"purposes": ["listen", "aprs"]}, request=req)
+        return httpx.Response(
+            409, json={"detail": "the radio is already listening"}, request=req
+        )
+
+    out = await tools(route)["sdr_aprs_logging"]({"enabled": True}, None)
+
+    assert "already listening" in out
+    assert "release" in out.lower()
+
+
+async def test_a_missing_enabled_flag_is_asked_for_not_guessed(tools) -> None:
+    route, posts = _sidecar(purpose=None)
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({}, None)
+
+    # Guessing a default would either seize the radio or silence it.
+    assert posts == []
+    assert "on or off" in out
+
+
+async def test_an_unreachable_radio_does_not_claim_success(tools) -> None:
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        return httpx.Response(502, json={}, request=req)
+
+    out = await tools(route)["sdr_aprs_logging"]({"enabled": True}, None)
+
+    assert "isn't reachable" in out

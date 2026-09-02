@@ -45,6 +45,12 @@ MIN_MHZ = 0.024
 MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
+# The lease purpose a logging session holds, and where APRS lives in North America
+# when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
+# command frequency open).
+APRS_PURPOSE = "aprs"
+APRS_DEFAULT_MHZ = 144.39
+
 # How far back a single caption may reach. Segments that pile up behind a busy whisper
 # are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
 # much audio one merged clip may carry: past it the oldest is given up, because a caption
@@ -124,6 +130,55 @@ async def listen(
         "/listen/start",
         {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": gain},
     )
+
+
+@router.post("/aprs")
+async def aprs_logging(
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    enabled: Annotated[bool, Query()],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)] = APRS_DEFAULT_MHZ,
+) -> dict[str, Any]:
+    """Turn APRS logging on or off. 409 when something else holds the radio.
+
+    The PWA's switch (`docs/mocks/aprs/c-single-dongle.html`, shape A). Idempotent in
+    both directions, and turning it OFF stops the APRS session by id — never a
+    listening session the owner started, which on a one-tuner box would silence the
+    radio they were actually using."""
+    base = _base(settings)
+    health = await _health(base)
+    session = (health.get("listening") or {}) if health else {}
+    logging_now = session.get("purpose") == APRS_PURPOSE
+
+    if not enabled:
+        if not logging_now:
+            return {"logging": False, "changed": False}
+        await _post(settings, "/listen/stop", {"session_id": session.get("session_id")})
+        return {"logging": False, "changed": True}
+
+    if logging_now:
+        return {"logging": True, "changed": False, "frequency_hz": session.get("frequency_hz")}
+    body = await _post(
+        settings,
+        "/listen/start",
+        {
+            "frequency_hz": int(round(frequency_mhz * 1_000_000)),
+            # 1200-baud AFSK is narrowband FM; nothing else can carry it.
+            "mode": "fm",
+            "gain": None,
+            "purpose": APRS_PURPOSE,
+        },
+    )
+    return {"logging": True, "changed": True, "frequency_hz": body.get("frequency_hz")}
+
+
+async def _health(base: str) -> dict[str, Any] | None:
+    try:
+        async with httpx.AsyncClient(base_url=base, timeout=5.0) as client:
+            resp = await client.get("/healthz")
+        return cast(dict[str, Any], resp.json())
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 @router.post("/tune")

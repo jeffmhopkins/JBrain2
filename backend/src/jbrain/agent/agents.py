@@ -136,6 +136,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # boxes), so naming them here is harmless without one.
         "sdr_listen",
         "sdr_stop",
+        # Start/stop APRS packet logging. Same `web` gate and same reasoning as the
+        # pair above — it reserves the one tuner, so it is a lease operation, not a
+        # data one (APRS_CONTROL_PLAN.md P1a).
+        "sdr_aprs_logging",
         # The APRS heard log. `read` rather than `web` — it reads a table, not the
         # sidecar — but what it reads is UNTRUSTED: packets are transmissions from
         # anyone in range and a callsign forges trivially, so the tool's own prose

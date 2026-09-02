@@ -172,7 +172,18 @@ when it was wanted. So the scheduled path gets a **registered action** as well
 | Path | Use | Why |
 |---|---|---|
 | `sdr_aprs_logging` tool | conversational — "turn APRS logging on" | jerv needs to do it when asked |
-| `sdr_aprs_set` action | the timed window | a clock must not route through a model to flip a switch |
+| a logging **window** on the session | the timed case | a clock must not route through a model to flip a switch |
+
+**Correction, found while building (2026-09-02).** The timed path was specified as a
+registered `sdr_aprs_set` action fired by the Automations scheduler. That does not work:
+a seeded automation carries its schedule in a **migration**, and the Automations screen
+can enable, retime and run automations but cannot *create* one — so the owner could
+never set their own hours without a code change. The remaining alternative, a scheduled
+agent task, is the unreliable path this very section warns against.
+
+So the timed case becomes an owner-set **logging window** on the APRS surface itself,
+enforced by the api rather than by a model — which is where the switch already lives
+(round 3, shape A) and needs no scheduler at all. Built in P3.
 
 The owner-visible truth stays the backstop either way: the APRS tab reads last decode
 and rate, so a toggle that silently did not happen is visible rather than assumed.
@@ -185,6 +196,13 @@ in favour of a logging schedule would widen the command surface, not narrow it.
 
 **Sequencing:** this lands *with* P1, never before it. A toggle for a capability that
 does not yet exist toggles nothing.
+
+**Landed.** `sdr_aprs_logging` (jerv, `web`, closed allowlist) and `POST /api/sdr/aprs`
+for the PWA. Idempotent both ways; reports the state it actually reached rather than
+"ok"; stops the APRS session **by id**, so it can never release a listening session the
+owner started; and refuses outright against a sidecar too old to understand `purpose`,
+which would otherwise return 200 with a plain listening session and let the tool report
+success while logging nothing.
 
 ### P1 · Decode and log
 

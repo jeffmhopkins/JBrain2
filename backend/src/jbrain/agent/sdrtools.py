@@ -32,6 +32,13 @@ MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 # below 108 defaults to wide FM unless the caller says otherwise.
 _BROADCAST_FM = (88.0, 108.0)
 
+# What a purpose is called on the wire, and where APRS lives in North America when
+# the owner does not say. 144.390 is the national channel — deliberately the default
+# only because it is where traffic actually is; a private command frequency is an
+# owner decision the plan holds open (APRS_CONTROL_PLAN.md §7).
+PURPOSE_APRS = "aprs"
+APRS_DEFAULT_MHZ = 144.39
+
 
 def _default_mode(mhz: float) -> str:
     return "wbfm" if _BROADCAST_FM[0] <= mhz < _BROADCAST_FM[1] else "fm"
@@ -50,6 +57,15 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             body = resp.json()
         except ValueError:
             body = {"detail": resp.text[:300]}
+        return resp.status_code, body
+
+    async def _get(path: str) -> tuple[int, dict[str, Any]]:
+        async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
+            resp = await client.get(path)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
         return resp.status_code, body
 
     async def sdr_listen(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
@@ -90,10 +106,80 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             "composer — tap it to tune, hear it, or release the radio."
         )
 
+    async def sdr_aprs_logging(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
+        enabled = arguments.get("enabled")
+        if not isinstance(enabled, bool):
+            return "Say whether to turn APRS logging on or off (enabled: true or false)."
+
+        status, health = await _get("/healthz")
+        if status != 200:
+            return "The radio isn't reachable, so I can't change APRS logging."
+        # An OLDER sidecar ignores an unknown `purpose` and returns 200 with a plain
+        # LISTENING session, so "turn logging on" would appear to succeed while logging
+        # nothing. Ask what it understands rather than trusting a 200.
+        if PURPOSE_APRS not in (health.get("purposes") or []):
+            return (
+                "This box's radio service is too old to log APRS — it needs the update "
+                "that adds packet decoding. Nothing was changed."
+            )
+        session = health.get("listening") or {}
+        already = session.get("purpose") == PURPOSE_APRS
+
+        if not enabled:
+            if not already:
+                return "APRS logging is already off."
+            # Stop THIS session by id. Without that, "turn logging off" would release a
+            # listening session the owner had started, on a box with one tuner.
+            status, body = await _call("/listen/stop", {"session_id": session.get("session_id")})
+            if status != 200:
+                return f"Couldn't stop APRS logging: {body.get('detail', 'unknown error')}"
+            return "APRS logging is off. The radio is free."
+
+        if already:
+            # Idempotent: a re-run of "turn it on" is a no-op that SUCCEEDS, or a
+            # scheduled retry becomes a failure.
+            mhz = float(session.get("frequency_hz") or 0) / 1_000_000
+            return f"APRS logging is already on, on {mhz:g} MHz."
+
+        try:
+            mhz = float(arguments.get("frequency_mhz") or APRS_DEFAULT_MHZ)
+        except (TypeError, ValueError):
+            return "That frequency isn't a number — give it in MHz, like 144.39."
+        if not MIN_MHZ < mhz < MAX_MHZ:
+            return f"{mhz} MHz is outside what this radio can tune ({MIN_MHZ}-{MAX_MHZ} MHz)."
+
+        status, body = await _call(
+            "/listen/start",
+            {
+                "frequency_hz": int(round(mhz * 1_000_000)),
+                "mode": "fm",
+                "gain": None,
+                "purpose": PURPOSE_APRS,
+            },
+        )
+        if status == 409:
+            held = str(body.get("detail") or "the radio is already in use")
+            return (
+                f"{held[:1].upper()}{held[1:]}. APRS logging needs the radio to itself, "
+                "so the owner has to release it first."
+            )
+        if status != 200:
+            return f"APRS logging didn't start: {body.get('detail', 'unknown error')}"
+        # The RESULTING state, never "ok": a caller must not be able to report a
+        # success it did not achieve.
+        return (
+            f"APRS logging is on, on {mhz:g} MHz. The radio is held for packets, so it "
+            "can't be listened to until logging is turned off."
+        )
+
     async def sdr_stop(_arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
         status, body = await _call("/listen/stop", {"session_id": None})
         if status != 200:
             return f"Couldn't release the radio: {body.get('detail', 'unknown error')}"
         return "Radio released." if body.get("stopped") else "The radio wasn't listening."
 
-    return {"sdr_listen": sdr_listen, "sdr_stop": sdr_stop}
+    return {
+        "sdr_listen": sdr_listen,
+        "sdr_stop": sdr_stop,
+        "sdr_aprs_logging": sdr_aprs_logging,
+    }
