@@ -25274,3 +25274,94 @@ button.task-band:active {
   padding: 7px 14px;
   cursor: pointer;
 }
+
+/* ---- radio commands: the fourth trigger kind (APRS_CONTROL_PLAN.md P4) ----
+   Nothing bespoke here: the editor reuses the segment / days / time controls the three
+   existing kinds use, and these are the two pieces that have no equivalent — the tier
+   note that says what "verified" means, and the amber warning the scope picker raises
+   when a firewalled domain is reachable over the air. */
+.ted-tier {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.ted-warn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-input);
+  background: var(--amber-tint);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.ted-input.mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* The card's command line: what was heard, and whether it has locked itself. The lock
+   is the only thing here the owner has to act on, so it gets the warning colour and its
+   own line rather than being a clause in a status list. */
+.task-cmd {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.task-cmdline {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.task-cmdlock {
+  font-size: var(--fs-secondary);
+  color: var(--warn);
+}
+/* The one-time key reveal. Big, monospaced and selectable: it is read off a phone and
+   typed into a radio or a sender app, and a key that cannot be read is a key that gets
+   written down somewhere worse. */
+.cks-lead,
+.cks-note {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.cks-note {
+  margin: 12px 0 0;
+}
+.cks-key {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  user-select: all;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.cks-copy {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  border-radius: var(--r-input);
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}

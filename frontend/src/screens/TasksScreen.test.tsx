@@ -42,6 +42,15 @@ const GROUPED: Task = {
   enabled: true,
   notify_push: true,
   home_card: true,
+  command_word: null,
+  command_callsign: null,
+  command_days: [],
+  command_from: null,
+  command_until: null,
+  command_counter: 0,
+  command_failures: 0,
+  command_locked: false,
+  command_last_at: null,
   next_run_at: FUTURE,
   last_run_at: LATEST_T1.started_at,
   latest_run: LATEST_T1,
@@ -171,7 +180,9 @@ describe("TasksScreen", () => {
     await screen.findByText("Alpha");
     fireEvent.click(screen.getByRole("button", { name: "Organize groups and order" }));
     // Nudge Alpha down past Beta with the arrow key on its grip handle.
-    fireEvent.keyDown(screen.getByRole("button", { name: /Reorder Alpha/ }), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("button", { name: /Reorder Alpha/ }), {
+      key: "ArrowDown",
+    });
     await waitFor(() => expect(reorder).toHaveBeenCalledWith("g-money", ["t3", "t1"]));
   });
 
@@ -221,7 +232,9 @@ describe("TasksScreen", () => {
 
   it("shows the latest result on the collapsed card and opens its session in one tap", async () => {
     const { onOpenSession } = mount();
-    const band = await screen.findByRole("button", { name: /Open latest session/ });
+    const band = await screen.findByRole("button", {
+      name: /Open latest session/,
+    });
     expect(screen.getByText("Daily Action Brief — 3 items need a reply")).toBeInTheDocument();
     fireEvent.click(band);
     expect(onOpenSession).toHaveBeenCalledWith("sess-latest", "jerv");
@@ -229,7 +242,9 @@ describe("TasksScreen", () => {
 
   it("hides the band once its latest session is opened (no unviewed result left)", async () => {
     mount();
-    const band = await screen.findByRole("button", { name: /Open latest session/ });
+    const band = await screen.findByRole("button", {
+      name: /Open latest session/,
+    });
     expect(screen.getByText("NEW")).toBeInTheDocument();
     fireEvent.click(band);
     await waitFor(() =>
@@ -294,7 +309,9 @@ describe("TasksScreen", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
-    fireEvent.change(prompt, { target: { value: "Label everything from chase.com." } });
+    fireEvent.change(prompt, {
+      target: { value: "Label everything from chase.com." },
+    });
     fireEvent.click(screen.getByRole("button", { name: /Archivist/ }));
     fireEvent.click(screen.getByText("Save task"));
     await waitFor(() => expect(createTask).toHaveBeenCalled());
@@ -310,7 +327,9 @@ describe("TasksScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
     fireEvent.change(prompt, {
-      target: { value: "Review last night and compare what jmolt did to what it planned." },
+      target: {
+        value: "Review last night and compare what jmolt did to what it planned.",
+      },
     });
     fireEvent.click(screen.getByRole("button", { name: /jmolt observer/ }));
     fireEvent.click(screen.getByText("Save task"));
@@ -330,5 +349,119 @@ describe("TasksScreen", () => {
     await screen.findByText("Morning brief");
     fireEvent.click(screen.getByLabelText("Back to launcher"));
     expect(onClose).toHaveBeenCalled();
+  });
+  // ---- radio commands: the fourth trigger kind (docs/plans/APRS_CONTROL_PLAN.md P4) ----
+
+  const COMMAND_TASK: Task = {
+    ...GROUPED,
+    id: "t3",
+    group_id: null,
+    name: "Open the gate",
+    schedule_kind: "on_command",
+    schedule_freq: null,
+    schedule_time: null,
+    command_word: "GATE",
+    command_callsign: "KE8XYZ",
+    command_counter: 4,
+    next_run_at: null,
+    latest_run: null,
+  };
+
+  it("heads a command task with the word rather than a clock", async () => {
+    mount([COMMAND_TASK]);
+    // The word is what the owner keys into a radio, so it is the headline; "armed"
+    // replaces the next-run time a scheduled task shows, because there isn't one.
+    expect(await screen.findByText(/On command · GATE/)).toBeInTheDocument();
+    expect(screen.getByText(/armed/)).toBeInTheDocument();
+  });
+
+  it("says a locked command is stopped, and offers the way out", async () => {
+    const unlock = vi.spyOn(api, "unlockCommand").mockResolvedValue(COMMAND_TASK);
+    mount([{ ...COMMAND_TASK, command_failures: 5, command_locked: true }]);
+    fireEvent.click(await screen.findByText("Open the gate"));
+
+    // The owner runs this box with no terminal, so the way out of a lockout is a button.
+    expect(screen.getByText(/Nothing will fire until you unlock it/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await waitFor(() => expect(unlock).toHaveBeenCalledWith("t3"));
+  });
+
+  it("sends the word, the callsign and the window when a command is saved", async () => {
+    const createTask = vi.spyOn(api, "createTask").mockResolvedValue(COMMAND_TASK);
+    vi.spyOn(api, "rotateCommandKey").mockResolvedValue({
+      word: "GATE",
+      key: "AAAA",
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText(/Tell the agent/), {
+      target: { value: "Open the gate." },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+    fireEvent.change(screen.getByLabelText("Command word"), {
+      target: { value: "gate" },
+    });
+    fireEvent.change(screen.getByLabelText("Callsign"), {
+      target: { value: "ke8xyz" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Armed in a window" }));
+    fireEvent.click(screen.getByText("Save task"));
+
+    await waitFor(() => expect(createTask).toHaveBeenCalled());
+    const body = createTask.mock.calls[0]?.[0];
+    expect(body?.command_word).toBe("GATE");
+    expect(body?.command_callsign).toBe("KE8XYZ");
+    // The window is only sent when the owner asked for one — the default is armed
+    // whenever the task is enabled.
+    expect(body?.command_from).toBe("06:00");
+    expect(body?.command_days?.length).toBeGreaterThan(0);
+  });
+
+  it("shows the new command's key once, and only after it exists", async () => {
+    const rotate = vi.spyOn(api, "rotateCommandKey").mockResolvedValue({
+      word: "GATE",
+      key: "MFRGGZDFMZTWQ2LKNNWG23TP",
+    });
+    vi.spyOn(api, "createTask").mockResolvedValue(COMMAND_TASK);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText(/Tell the agent/), {
+      target: { value: "Open the gate." },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+    fireEvent.change(screen.getByLabelText("Command word"), {
+      target: { value: "GATE" },
+    });
+    fireEvent.click(screen.getByText("Save task"));
+
+    // The box generates the secret; this is the one moment it can be read.
+    expect(await screen.findByText("MFRGGZDFMZTWQ2LKNNWG23TP")).toBeInTheDocument();
+    expect(rotate).toHaveBeenCalledWith("t3");
+  });
+
+  it("will not save a command with no word", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText(/Tell the agent/), {
+      target: { value: "Open the gate." },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+
+    // A command with no word is armed against nothing while looking, in the list,
+    // exactly like one that works.
+    expect(screen.getByText("Save task")).toBeDisabled();
+  });
+
+  it("warns when a command can reach a firewalled domain", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+    expect(screen.queryByText(/reads a firewalled domain/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /curator/i }));
+
+    // The default preset carries every scope, so switching to the KB agent is what
+    // makes the reach real — and the warning is the mock's cap, not a block.
+    expect(screen.getByText(/reads a firewalled domain/)).toBeInTheDocument();
   });
 });

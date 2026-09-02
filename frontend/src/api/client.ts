@@ -1773,7 +1773,9 @@ export interface AutomationsResponse {
 // ===== Tasks: saved prompts that spawn an agent session (docs/mocks/tasks-launcher) =====
 
 export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist" | "jmolt_observer";
-export type ScheduleKind = "on_demand" | "once" | "repeat";
+/** The fourth kind, `on_command`, is fired by a verified radio packet rather than the
+ * clock (docs/plans/APRS_CONTROL_PLAN.md P4) — so it never carries a next-run time. */
+export type ScheduleKind = "on_demand" | "once" | "repeat" | "on_command";
 export type ScheduleFreq = "daily" | "weekdays" | "weekly";
 
 /** A saved task — a prompt + persona + schedule + delivery. `next_run_at`/`last_run_at`
@@ -1809,6 +1811,23 @@ export interface Task {
   enabled: boolean;
   notify_push: boolean;
   home_card: boolean;
+  /** The word a radio command is fired by (`on_command` only), upper-cased. */
+  command_word: string | null;
+  /** A filter on who may fire it, never an authenticator — a callsign is plain bytes
+   * in a frame and forges trivially. Bare call = any SSID of that operator. */
+  command_callsign: string | null;
+  /** The arming window: when the command is LISTENING (not when it runs). Empty days
+   * plus no times means always, while the task is enabled. */
+  command_days: number[];
+  command_from: string | null;
+  command_until: string | null;
+  /** How many codes have been spent, and how many attempts have failed since the last
+   * success. The KEY is never sent to the client — a rotate returns it once. */
+  command_counter: number;
+  command_failures: number;
+  /** Too many failures: the command accepts nothing until the owner unlocks it. */
+  command_locked: boolean;
+  command_last_at: string | null;
   next_run_at: string | null;
   last_run_at: string | null;
   /** The most recent run, embedded by the server so the card's "latest result" band
@@ -1831,6 +1850,20 @@ export interface TaskInput {
   enabled: boolean;
   notify_push: boolean;
   home_card: boolean;
+  /** The radio command (`on_command` only). There is deliberately no key field: the
+   * box generates the secret, so one never travels in a request body. */
+  command_word: string | null;
+  command_callsign: string | null;
+  command_days: number[];
+  command_from: string | null;
+  command_until: string | null;
+}
+
+/** A freshly generated command key, returned exactly once by a rotate. The box keeps
+ * no copy the owner can read back — losing it means rotating again. */
+export interface CommandKey {
+  word: string;
+  key: string;
 }
 
 /** One execution of a task — links to the agent session it produced. */
@@ -1839,7 +1872,7 @@ export interface TaskRun {
   task_id: string;
   session_id: string | null;
   status: RunStatus;
-  trigger: "schedule" | "manual";
+  trigger: "schedule" | "manual" | "command";
   /** A short excerpt of the answer (owner-only). */
   summary: string;
   error: string | null;
@@ -3653,6 +3686,24 @@ export const api = {
   async runTask(id: string): Promise<TaskRun> {
     const response = await request(`/api/tasks/${encodeURIComponent(id)}/run`, { method: "POST" });
     return (await response.json()) as TaskRun;
+  },
+
+  // Generate a new shared secret for a radio command and show it ONCE — this is both
+  // "set up the sender" and "revoke the old one" (docs/plans/APRS_CONTROL_PLAN.md P4).
+  async rotateCommandKey(id: string): Promise<CommandKey> {
+    const response = await request(`/api/tasks/${encodeURIComponent(id)}/command-key`, {
+      method: "POST",
+    });
+    return (await response.json()) as CommandKey;
+  },
+
+  // Clear a lockout without touching the key: most lockouts are a mis-keyed digit, and
+  // making the owner re-key their truck for one is how a safety feature gets switched off.
+  async unlockCommand(id: string): Promise<Task> {
+    const response = await request(`/api/tasks/${encodeURIComponent(id)}/command-unlock`, {
+      method: "POST",
+    });
+    return (await response.json()) as Task;
   },
 
   async taskRuns(id: string): Promise<TaskRun[]> {
