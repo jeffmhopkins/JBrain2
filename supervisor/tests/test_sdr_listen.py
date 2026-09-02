@@ -54,6 +54,12 @@ class _Empty:
     def read(self, _n: int = 0) -> bytes:
         return b""
 
+    def __iter__(self):
+        # rtl_fm's stderr is ITERATED by the log drain, not read: an unread pipe fills
+        # at 64 KB and blocks the tuner mid-session. The fake has to be iterable or it
+        # only pretends to cover that path.
+        return iter(())
+
 
 class _Sink:
     def write(self, _b: bytes) -> int:
@@ -160,3 +166,85 @@ def test_peak_measures_the_loudest_sample() -> None:
     assert listen._peak(quiet) < 0.01
     assert listen._peak(loud) == pytest.approx(1.0)
     assert listen._peak(b"") == 0.0
+
+
+# --- live-caption segmenting ----------------------------------------------------
+# Whisper is not a streaming model, so captions are chunks of live audio. What must
+# hold is that a chunk is worth sending: cut between words, and never over noise.
+
+
+def _loud(seconds: float) -> bytes:
+    """PCM at roughly half scale — a talking channel."""
+    return b"\x00\x40" * int(listen.AUDIO_RATE * seconds)
+
+
+def _quiet(seconds: float) -> bytes:
+    """PCM near the floor — an empty channel's hiss."""
+    return b"\x00\x01" * int(listen.AUDIO_RATE * seconds)
+
+
+def _session(tuner):
+    tuner.start(frequency_hz=162_550_000, mode="fm", gain=None)
+    return tuner.current()
+
+
+def test_nothing_is_segmented_until_someone_is_captioning(tuner) -> None:
+    session = _session(tuner)
+
+    session._accumulate(_loud(1.0), 0.5)
+
+    # Captioning is opt-in and costs a resident model, so a session nobody is
+    # captioning must do no extra work and hold no extra audio.
+    assert session._seg == []
+
+
+def test_a_segment_is_cut_on_the_gap_after_speech(tuner) -> None:
+    session = _session(tuner)
+    sub = session.subscribe_segments()
+
+    session._accumulate(_loud(3.5), 0.5)
+    for _ in range(listen.SEGMENT_GAP_CHUNKS):
+        session._accumulate(_quiet(0.1), 0.01)
+
+    # Cutting on a quiet gap rather than a clock is what keeps words whole: a boundary
+    # through the middle of a word garbles the audio on both sides of it.
+    started, pcm = sub.get_nowait()
+    assert started > 0
+    assert len(pcm) > listen.AUDIO_RATE
+
+
+def test_a_quiet_segment_is_never_sent(tuner) -> None:
+    session = _session(tuner)
+    sub = session.subscribe_segments()
+
+    # An empty channel: rtl_fm emits loud hiss into it, and whisper answers noise with
+    # fluent invented sentences. The squelch lives at the audio so noise never leaves
+    # this process — the alternative is captions that confidently make things up.
+    session._accumulate(_quiet(4.0), 0.02)
+    for _ in range(listen.SEGMENT_GAP_CHUNKS):
+        session._accumulate(_quiet(0.1), 0.01)
+
+    assert sub.empty()
+
+
+def test_a_segment_is_cut_at_the_ceiling_when_nobody_pauses(tuner) -> None:
+    session = _session(tuner)
+    sub = session.subscribe_segments()
+
+    # A continuous talker never hands us a gap, so the ceiling has to end the segment
+    # or captions would never appear at all.
+    session._accumulate(_loud(listen.SEGMENT_MAX_S + 0.5), 0.5)
+
+    assert not sub.empty()
+
+
+def test_releasing_the_last_captioner_drops_the_held_audio(tuner) -> None:
+    session = _session(tuner)
+    sub = session.subscribe_segments()
+    session._accumulate(_loud(1.0), 0.5)
+
+    session.unsubscribe_segments(sub)
+
+    # Turning captions off must not leave a half-segment in memory to be prepended to
+    # whatever the next captioner hears, minutes later and on another frequency.
+    assert session._seg == []

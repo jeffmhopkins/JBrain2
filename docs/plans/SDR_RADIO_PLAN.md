@@ -322,6 +322,7 @@ waterfall and the recordings library.
 | `sdr_status` | `read` | cheap | What the radio is doing, who holds the lease, current tuning |
 | `sdr_listen` | `web` | expensive | Tune the radio and take the lease → puts the tuner icon in the composer (shipped) |
 | `sdr_stop` | `web` | cheap | Release the radio → the icon disappears (shipped) |
+| — | — | — | **Live captions** are not a tool: `GET /api/sdr/captions` (SSE) streams whisper transcription of the live audio to the tuner sheet's CC toggle (shipped) |
 | `spectrum_sweep` | `external` | expensive | `rtl_power` across a band → chart card + detected-activity list. Deferred job |
 | `sdr_recordings` | `read` | cheap | Query the library by frequency, time, or transcript text |
 | `sdr_watch` / `sdr_unwatch` | `mutate` | cheap | Arm/disarm auto-record (**registered in Phase 2**, specified here so the lease design accounts for it) |
@@ -348,7 +349,19 @@ model input.
 
 `GET /api/sdr/status` · `POST /api/sdr/tune` · `POST /api/sdr/listen` (start/stop) ·
 `POST /api/sdr/record` (start/stop) · `GET /api/sdr/audio` (chunked MP3, D6) ·
-`WS /api/sdr/waterfall` (binary power bins, D5) · `GET /api/sdr/recordings`.
+`WS /api/sdr/waterfall` (binary power bins, D5) · `GET /api/sdr/recordings` ·
+`GET /api/sdr/captions` (SSE live transcription, opt-in).
+
+**Live captions (2026-09-02).** Whisper is not a streaming model, so the sidecar cuts
+the live PCM it already holds into segments on the quiet gaps between transmissions
+and serves them newline-framed at `GET /listen/segments`; the api transcribes each and
+emits words with per-token confidence. Measured on the box, a transcription costs
+~10.7 s whether the clip is 4 s or 11 s — almost entirely model load and unload — so
+the caption route deliberately never frees the model, and CC is an explicit toggle
+because a resident whisper shares the GPU with the chat model. Segments are squelched
+in the sidecar: below a level floor nothing is sent, because whisper answers an empty
+band with fluent invented sentences. Binding spec:
+`../mocks/sdr-tuner/f-live-captions.html`.
 
 ## 7. Open decisions (deferred, not dropped)
 

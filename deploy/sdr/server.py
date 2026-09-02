@@ -27,6 +27,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import queue
 import shutil
 import struct
 import subprocess
@@ -37,7 +38,7 @@ from typing import Any, cast
 
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
-from listen import AUDIO_CONTENT_TYPE, Tuner
+from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
 
 # The R820T2 tuner's real range. Anything outside it cannot be tuned, so it is
 # rejected here rather than handed to rtl_fm to fail on. HF below 24 MHz needs
@@ -170,6 +171,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/listen/audio":
             self._stream_audio()
             return
+        if route == "/listen/segments":
+            self._stream_segments()
+            return
         if route != "/healthz":
             self._json(404, {"detail": "not found"})
             return
@@ -222,6 +226,47 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the listener closed the tab; entirely normal
         finally:
             session.unsubscribe(sub)
+
+    def _stream_segments(self) -> None:
+        """Hand one captioner a stream of WAV segments, newline-framed.
+
+        Each frame is a JSON header line then that many bytes of WAV, so a caller can
+        read segments without a second connection or a polling loop. Segments are cut
+        on quiet gaps and squelched at the source, so what arrives here is audio that
+        actually had someone talking in it (deploy/sdr/listen.py).
+
+        Framing rather than one-WAV-per-request because the interesting property is
+        CONTINUITY: a captioner that has to re-request loses the audio between calls,
+        and the gap always lands mid-sentence."""
+        session = TUNER.current()
+        if session is None:
+            self._json(409, {"detail": "nothing is listening"})
+            return
+        sub = session.subscribe_segments()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    started, pcm = sub.get(timeout=30)
+                except queue.Empty:
+                    # A keep-alive: a silent channel must not look like a dead socket.
+                    self.wfile.write(b'{"keepalive":true}\n')
+                    self.wfile.flush()
+                    continue
+                wav = _wav(pcm, AUDIO_RATE)
+                head = json.dumps(
+                    {"started_at": started, "bytes": len(wav), "seconds": round(len(pcm) / 2 / AUDIO_RATE, 2)}
+                )
+                self.wfile.write(head.encode() + b"\n")
+                self.wfile.write(wav)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # the captioner hung up; entirely normal
+        finally:
+            session.unsubscribe_segments(sub)
 
     def _listen(self, body: dict[str, Any]) -> None:
         try:

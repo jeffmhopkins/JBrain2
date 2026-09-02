@@ -58,6 +58,25 @@ WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
 AUDIO_CONTENT_TYPE = "audio/mpeg"
 _CHUNK = 4096
 
+# --- live captioning ------------------------------------------------------------
+# Segments are cut for whisper, which is not a streaming model: it transcribes a
+# finished clip, so captions are chunks of live audio sent one after another.
+#
+# Chunk length is a LATENCY choice, not a throughput one. Measured on the box: the
+# cost of a transcription is flat at ~10.7 s whether the clip is 4 s or 11 s, because
+# almost all of it is loading and freeing the model — 7 extra seconds of audio added
+# 0.04 s. A captioner that keeps the model resident therefore pays that once, and each
+# additional second of audio is close to free. Short segments buy responsiveness at
+# no real cost; the floor is what makes a sentence long enough to transcribe well.
+SEGMENT_MIN_S = 3.0
+SEGMENT_MAX_S = 8.0
+# A segment ends on a quiet gap rather than a clock, so cuts fall between words.
+SEGMENT_GAP_LEVEL = 0.06
+SEGMENT_GAP_CHUNKS = 3
+# The squelch: below this, a segment is noise and is never sent (see Session._cut).
+SEGMENT_SQUELCH = 0.12
+SEGMENT_QUEUE = 8
+
 # A subscriber that stops reading (a closed tab, a stalled phone) must not wedge the
 # pump or grow without bound. Its queue is small and we DROP for that subscriber
 # rather than block everyone — live audio is worthless late, so dropping is the
@@ -131,6 +150,14 @@ class Session:
         self.mode = validate(frequency_hz, mode)
         self.peak = 0.0
         self._subs: set[queue.Queue[bytes | None]] = set()
+        # Captioning subscribers. Segmenting only runs while at least one is attached,
+        # so a session nobody is captioning does no extra work at all.
+        self._segments: set[queue.Queue[tuple[float, bytes]]] = set()
+        self._seg: list[bytes] = []
+        self._seg_started = time.time()
+        self._seg_peak = 0.0
+        self._seg_peak_seen = 0.0
+        self._quiet_for = 0
         self._lock = threading.Lock()
         self._stopping = False
         # A retune replaces the pipeline under listeners who are still attached. It
@@ -211,6 +238,78 @@ class Session:
         except (ValueError, OSError):
             pass  # the process went away; teardown handles it
 
+    def _seg_seconds(self) -> float:
+        """Seconds of audio held in the open segment (16-bit mono)."""
+        return sum(len(part) for part in self._seg) / 2 / AUDIO_RATE
+
+    def _cut(self, force: bool = False) -> None:
+        """Close the open segment and queue it, if it is worth transcribing.
+
+        The SQUELCH lives here, at the audio, rather than in the caller: rtl_fm with no
+        squelch emits loud hiss into an empty channel, and whisper answers noise with
+        fluent invented sentences (the capture route already warns about exactly this).
+        A segment whose loudest moment never crosses the floor is dropped and never
+        leaves this process, so a quiet frequency produces no captions instead of
+        confident fiction."""
+        pcm = b"".join(self._seg)
+        self._seg.clear()
+        self._seg_peak = 0.0
+        started = self._seg_started
+        self._seg_started = time.time()
+        if not pcm or len(pcm) < AUDIO_RATE:  # under half a second is not speech
+            return
+        if not force and self._seg_peak_seen < SEGMENT_SQUELCH:
+            self._seg_peak_seen = 0.0
+            return
+        self._seg_peak_seen = 0.0
+        with self._lock:
+            queues = list(self._segments)
+        for queue_ in queues:
+            try:
+                queue_.put_nowait((started, pcm))
+            except queue.Full:
+                pass  # a listener that cannot keep up loses the oldest, not the newest
+
+    def _accumulate(self, chunk: bytes, level: float) -> None:
+        """Grow the open segment, and close it on a gap or at the ceiling.
+
+        Cutting on a QUIET GAP rather than a fixed clock is what keeps words whole:
+        a boundary through the middle of a word garbles both sides of it, and a voice
+        channel hands us natural gaps between transmissions to cut on instead."""
+        if not self._segments:
+            return  # nobody is captioning; do not accumulate audio nobody will read
+        self._seg.append(chunk)
+        self._seg_peak_seen = max(self._seg_peak_seen, level)
+        # Measured in AUDIO, not wall clock. They coincide while the pipeline runs in
+        # real time, but the length that matters to whisper is how much sound the
+        # segment holds — and a stalled or bursting pipeline makes the clock lie.
+        held = self._seg_seconds()
+        if held >= SEGMENT_MAX_S:
+            self._cut()
+            return
+        # A gap only ends a segment once there is enough audio to be worth sending.
+        if held >= SEGMENT_MIN_S and level < SEGMENT_GAP_LEVEL:
+            self._quiet_for += 1
+            if self._quiet_for >= SEGMENT_GAP_CHUNKS:
+                self._cut()
+        else:
+            self._quiet_for = 0
+
+    def subscribe_segments(self) -> queue.Queue[tuple[float, bytes]]:
+        """Start segmenting for one captioner. Accumulation only runs while subscribed."""
+        sub: queue.Queue[tuple[float, bytes]] = queue.Queue(maxsize=SEGMENT_QUEUE)
+        with self._lock:
+            self._segments.add(sub)
+        return sub
+
+    def unsubscribe_segments(self, sub: queue.Queue[tuple[float, bytes]]) -> None:
+        with self._lock:
+            self._segments.discard(sub)
+            idle = not self._segments
+        if idle:
+            self._seg.clear()
+            self._seg_peak_seen = 0.0
+
     def _pump_pcm(self) -> None:
         """rtl_fm -> (measure) -> ffmpeg. The tap that makes the level meter honest."""
         rtl, enc = self._rtl, self._enc
@@ -221,7 +320,9 @@ class Session:
                 chunk = rtl.stdout.read(_CHUNK)
                 if not chunk:
                     break
-                self.peak = _peak(chunk)
+                level = _peak(chunk)
+                self.peak = level
+                self._accumulate(chunk, level)
                 enc.stdin.write(chunk)
                 enc.stdin.flush()
         except (BrokenPipeError, ValueError, OSError):

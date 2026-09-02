@@ -3,11 +3,34 @@
 // composes the shared Sheet, that Release actually hands the tuner back, and that a
 // retune carries the session id so it cannot move someone else's radio.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import type { SdrListening } from "../sdrSession";
+import { resetSdrCaptions } from "../sdrCaptions";
 import { SdrTunerSheet } from "./SdrTunerSheet";
+
+// The caption stream, faked at the EventSource seam so a test can deliver a segment.
+class FakeEventSource {
+  static last: FakeEventSource | null = null;
+  static CLOSED = 2;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = 1;
+  constructor(readonly url: string) {
+    FakeEventSource.last = this;
+  }
+  close() {
+    this.readyState = FakeEventSource.CLOSED;
+  }
+  send(payload: unknown) {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent<string>);
+  }
+}
+function captionStream(): FakeEventSource | null {
+  return FakeEventSource.last;
+}
+vi.stubGlobal("EventSource", FakeEventSource);
 
 const LISTENING: SdrListening = {
   session_id: "abc123",
@@ -19,7 +42,10 @@ const LISTENING: SdrListening = {
   listeners: 1,
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  resetSdrCaptions();
+});
 
 describe("the tuner sheet", () => {
   it("shows the tuned frequency, mode and elapsed time", () => {
@@ -213,5 +239,40 @@ describe("the tuner sheet", () => {
     render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
 
     expect(screen.getByRole("button", { name: "Record" })).toBeDisabled();
+  });
+});
+
+describe("live captions in the tuner", () => {
+  it("offers CC off by default, since captions hold a model on the GPU", () => {
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    const cc = screen.getByRole("button", { name: "Live captions" });
+    expect(cc).toHaveAttribute("aria-pressed", "false");
+    // Nothing is burned over the waveform until the owner asks for it.
+    expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+  });
+
+  it("burns the caption over the waveform, tinted by confidence", () => {
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Live captions" }));
+
+    act(() => {
+      captionStream()?.send({
+        started_at: 4,
+        text: "winds south southeast",
+        words: [
+          { text: "winds", confidence: 0.95 },
+          { text: "southeast", confidence: 0.4 },
+        ],
+      });
+    });
+
+    // A confident word and a shaky one must not render the same: the colour is the
+    // whole reason the words carry confidence at all.
+    const sure = screen.getByText("winds", { exact: false });
+    const shaky = screen.getByText("southeast", { exact: false });
+    expect(sure.getAttribute("style")).not.toBe(shaky.getAttribute("style"));
+    // The caption sits on the tape's face, not in a row of its own.
+    expect(sure.closest(".sdr-face")).not.toBeNull();
   });
 });
