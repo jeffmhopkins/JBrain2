@@ -1,48 +1,51 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>APRS trigger editor - three shapes</title>
+<title>APRS command task - three shapes</title>
 <!--
-  MOCK ROUND 2 for the APRS surface (docs/plans/APRS_CONTROL_PLAN.md, P3). Round 1
-  settled the LIST (shape A, a tab of the Radio launcher, triggers rendered as the
-  Ops Workflow automation cards). This round settles ADD and EDIT.
+  MOCK ROUND 2, REFRAMED 2026-09-02 (docs/plans/APRS_CONTROL_PLAN.md, P3/P4).
 
-  A NEW SURFACE, so it takes its own round rather than riding round 1: an editor is
-  not "a chip state or a button on an existing card" (DESIGN.md's exemption).
+  The first pass of this round asked how to edit a general APRS trigger - any event,
+  any pipeline from the action registry. The owner then cut the scope to what is
+  actually being built:
 
-  WHY THIS IS NOT OBVIOUS. Two established paradigms point in opposite directions,
-  and the owner asked for "like tasks ... in a new modal":
-    - TASKS, the thing being copied, does NOT use a modal. Its editor is a FULL-SCREEN
-      LAYER over the list with a back chevron (TasksScreen.Editor, useBackLayer).
-    - DESIGN.md's paradigm table sends "contextual quick forms & actions" to the
-      BOTTOM SHEET, the workhorse modal on phone - and a trigger is a small object,
-      much smaller than a task's prompt + scopes + schedule.
-  So the round decides the container as well as the form language.
+      * the GATE only - the authenticated command path. No geofence, no position.
+      * ONE action type - an AGENT TASK. Not a pipeline picker.
+      * "duplicate the time based system"
 
-  ALSO NEW HERE, AND WHY: automations are SEEDED system config - the Ops screen can
-  enable, retime and run them, but never CREATE one. An APRS trigger is owner-created,
-  which is exactly the capability the automations paradigm does not have. Hence: list
-  like Automations, edit like Tasks.
+  That cut changes the question. If the only thing a verified command can do is run an
+  agent task, then an APRS task IS a task: same name, prompt, agent, scopes, push,
+  enabled (TasksScreen.Draft). The only thing that differs is what fires it - a
+  verified radio command instead of a clock. So this round is no longer about form
+  language. It is about ONE structural decision:
 
-  A - TASK-EDITOR LAYER. Full screen, back chevron, stacked sections. Literally the
-      Tasks editor's shape. Most room, zero new paradigm, heaviest for a small object.
-  B - SENTENCE SHEET. Bottom sheet; the trigger reads as ONE SENTENCE with inline
-      pickers, so the editor and the card headline ("When <ev> -> run <pipeline>") are
-      the same object seen twice. Lightest; unusual, and long values must wrap.
-  C - SECTIONED SHEET. Bottom sheet with conventional field groups. Sheet ergonomics
-      with a familiar form; the least distinctive.
+      Is "on command" a fourth TRIGGER KIND of the existing task system,
+      or a parallel task system that lives in the Radio tab?
 
-  LOAD-BEARING CONTENT, not decoration:
-  - The TRUST TIER is shown, not implied. A command trigger is authenticated (HMAC +
-    counter) and says so; a geo or message trigger is not, and says THAT - because an
-    unauthenticated trigger may never reach a model as instructions, and the editor is
-    where the owner meets that rule.
-  - The action picker shows each action's PERMISSION CLASS, with `sensitive` visibly
-    unavailable. An over-the-air trigger is capped, and a cap you cannot see is a cap
-    you will be surprised by.
-  - Arming is the TASK SCHEDULE SPEC (on demand / once / repeat), answering "when is
-    it listening". `once` disarms after firing; `repeat` means the command does not
-    exist outside its window.
+  A - FOURTH KIND. ScheduleKind gains `on_command` beside on_demand / once / repeat.
+      One list, one editor, one runs history, one row in the schema. The Radio tab
+      shows a read-only summary that links into Tasks. Smallest build by a distance.
+  B - PARALLEL LIST. APRS tasks are their own collection in Radio > APRS, rendered
+      with the same components. Radio-adjacent and self-contained - and a second
+      place tasks live, with a second thing to keep in step.
+  C - ONE COLLECTION, TWO DOORS. Tasks own the data; the Radio tab is a filtered
+      view of the same tasks and opens the same editor. Same object either way.
+
+  A NOTE ON "DUPLICATE". Taken literally that is B. Worth weighing before choosing:
+  this plan has twice avoided exactly that shape - P2 feeds the existing location
+  core rather than writing a second geofence evaluator, and round 1 dropped a bespoke
+  armed-list for the automation cards that already exist. A parallel task system would
+  be the third instance of the same decision, and the first time it was taken the
+  other way. A is the same instinct applied once more.
+
+  STILL LOAD-BEARING, NARROWER SCOPE
+  - Only a VERIFIED command reaches a task. Authentication is not optional here and
+    the editor says so, because this tier can act.
+  - The task's SCOPES are the real cap now, not a permission class on a pipeline: a
+    radio-triggered task should not be scoped to health or finance, and the editor
+    warns rather than silently allowing it.
+  - Arming stays the task schedule spec: once / repeat / on demand, answering "when is
+    it listening". `once` disarms after firing.
 -->
 <style>
   :root{
@@ -60,7 +63,7 @@
   .wrap{max-width:1120px;margin:0 auto;padding:26px 20px 60px;}
   header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
   h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
-  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:70ch;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:72ch;}
   .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
   .controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:20px 0 26px;}
   .field{display:flex;flex-direction:column;gap:7px;}
@@ -73,244 +76,252 @@
   .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
 
   .stage{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;}
-  .phone{width:390px;height:720px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
-    position:relative;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.45);}
-  .note{flex:1;min-width:290px;max-width:420px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
+  .phone{width:390px;min-height:700px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
+    padding:14px 13px 20px;box-shadow:0 18px 50px rgba(0,0,0,.45);}
+  .note{flex:1;min-width:290px;max-width:430px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
   .note h3{color:var(--text);font-size:14px;margin:0 0 8px;font-weight:620;}
   .note p{margin:0 0 12px;}
   .note strong{color:var(--text);font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
 
-  /* the list behind the editor, so the container's cost is visible */
-  .behind{position:absolute;inset:0;padding:14px 13px;}
-  .bh{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:640;padding:4px 2px 12px;}
-  .bcard{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:11px 12px;margin-bottom:8px;}
-  .bcard .bt{font-size:12.5px;line-height:1.45;}
-  .bcard .bm{font-size:11px;color:var(--text-3);margin-top:3px;}
-  .ev{font-family:var(--mono);font-size:11px;color:var(--steel);}
-  .pl{font-family:var(--mono);font-size:11px;color:var(--green);}
-
-  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);}
-  .layer{position:absolute;inset:0;background:var(--bg);padding:14px 13px;overflow:auto;}
-  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border:1px solid var(--border);
-    border-bottom:0;border-top-left-radius:20px;border-top-right-radius:20px;padding:10px 14px 16px;
-    max-height:86%;overflow:auto;}
-  .grab{width:34px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 12px;}
-  .etop{display:flex;align-items:center;gap:10px;padding:2px 0 14px;}
-  .etitle{font-size:16px;font-weight:640;}
-  .chev{color:var(--text-2);font-size:19px;line-height:1;cursor:pointer;}
-  .save{margin-left:auto;appearance:none;border:1px solid var(--steel);border-radius:999px;
+  .scr-top{display:flex;align-items:center;gap:10px;padding:2px 2px 12px;}
+  .chev{color:var(--text-2);font-size:19px;line-height:1;}
+  .scr-title{font-size:17px;font-weight:640;}
+  .add{margin-left:auto;appearance:none;border:1px solid var(--steel);border-radius:999px;
     background:var(--steel-tint);color:var(--steel);font:inherit;font-size:12.5px;font-weight:600;
-    padding:7px 14px;cursor:pointer;}
-  .cancel{appearance:none;border:0;background:none;color:var(--text-3);font:inherit;font-size:12.5px;cursor:pointer;}
+    padding:6px 13px;cursor:pointer;}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:0 0 14px;}
+  .tabs button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--text-3);font:inherit;font-size:13.5px;padding:9px 12px;cursor:pointer;}
+  .tabs button[aria-selected="true"]{color:var(--steel);border-bottom-color:var(--steel);font-weight:600;}
 
-  .grp{margin-bottom:16px;}
+  .health{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:14px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto;}
+  .health .who{font-size:12.5px;color:var(--text-2);}
+  .health .who b{color:var(--text);font-weight:600;}
+  .health .rate{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--text-3);}
+
+  .trow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:8px;cursor:pointer;}
+  .trow:hover{border-color:#31343a;}
+  .trow .tn{font-size:14px;font-weight:600;}
+  .trow .tw{font-size:11.5px;color:var(--text-3);margin-top:3px;line-height:1.5;}
+  .trow .tw .cmd{font-family:var(--mono);color:var(--steel);}
+  .trow .tw .arm{color:var(--amber);}
+  .trow .tw .arm.once{color:var(--rose);}
+  .sw{width:40px;height:23px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);
+    position:relative;cursor:pointer;flex:0 0 auto;appearance:none;margin-left:auto;}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;
+    background:var(--text-3);transition:transform .16s,background .16s;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:var(--green);}
+  .sw[aria-checked="true"]::after{transform:translateX(17px);background:var(--green);}
+
+  .link{display:flex;align-items:center;gap:8px;padding:12px;border:1px dashed var(--border);
+    border-radius:12px;color:var(--text-2);font-size:12.5px;cursor:pointer;margin-top:4px;line-height:1.5;}
+  .link b{color:var(--steel);font-weight:600;}
+  .sec{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:16px 0 8px;}
+
+  .grp{margin-bottom:15px;}
   .glbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:7px;}
-  .fseg{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);}
-  .fseg button{flex:1;appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12.5px;
-    padding:9px 6px;cursor:pointer;border-right:1px solid var(--border);}
-  .fseg button:last-child{border-right:0;}
-  .fseg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
   .inp{width:100%;border:1px solid var(--border);border-radius:11px;background:var(--surface);color:var(--text);
     font:inherit;font-size:13.5px;padding:10px 12px;}
   .inp.mono{font-family:var(--mono);font-size:13px;}
+  textarea.inp{min-height:76px;resize:vertical;line-height:1.5;}
+  .fseg{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface);}
+  .fseg button{flex:1;appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12px;
+    padding:9px 4px;cursor:pointer;border-right:1px solid var(--border);}
+  .fseg button:last-child{border-right:0;}
+  .fseg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
   .two{display:flex;gap:8px;}
   .two > *{flex:1;min-width:0;}
   .hint{font-size:11.5px;color:var(--text-3);line-height:1.5;margin-top:6px;}
   .hint b{color:var(--text-2);font-weight:600;}
-
-  .tier{display:flex;align-items:flex-start;gap:8px;padding:9px 11px;border-radius:11px;font-size:11.5px;
-    line-height:1.5;margin-top:8px;}
-  .tier.auth{background:var(--green-tint);color:var(--green);}
-  .tier.open{background:var(--amber-tint);color:var(--amber);}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{appearance:none;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+    color:var(--text-2);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer;}
+  .chip[aria-pressed="true"]{border-color:var(--steel);background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .chip.risk[aria-pressed="true"]{border-color:var(--rose);background:var(--rose-tint);color:var(--rose);}
+  .warn{display:none;padding:9px 11px;border-radius:11px;background:var(--rose-tint);color:var(--rose);
+    font-size:11.5px;line-height:1.5;margin-top:8px;}
+  .warn.on{display:block;}
+  .tier{padding:9px 11px;border-radius:11px;background:var(--green-tint);color:var(--green);
+    font-size:11.5px;line-height:1.5;margin-top:8px;}
   .tier b{font-weight:700;}
-
-  .act{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid var(--border);
-    border-radius:11px;background:var(--surface);margin-bottom:6px;cursor:pointer;}
-  .act[aria-checked="true"]{border-color:var(--steel);background:var(--steel-tint);}
-  .act[aria-disabled="true"]{opacity:.5;cursor:not-allowed;}
-  .act .an{font-family:var(--mono);font-size:12.5px;flex:1;min-width:0;}
-  .cls{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px;font-weight:700;}
-  .cls-read{background:var(--steel-tint);color:var(--steel);}
-  .cls-mutate{background:var(--amber-tint);color:var(--amber);}
-  .cls-sensitive{background:var(--rose-tint);color:var(--rose);}
-
-  .sent{font-size:16px;line-height:2.05;}
-  .tok{display:inline-block;border-bottom:1.5px dashed var(--steel);color:var(--steel);cursor:pointer;
-    padding:0 2px;font-weight:600;}
-  .tok.mono{font-family:var(--mono);font-size:14px;}
-  .tok.arm{border-color:var(--amber);color:var(--amber);}
-  .tok:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
-  .step{display:flex;gap:8px;margin-bottom:12px;}
-  .stepn{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);color:var(--text-3);
-    font-size:11px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;margin-top:1px;}
-  .stepn.on{border-color:var(--steel);color:var(--steel);}
+  .erow{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);
+    border-radius:11px;background:var(--surface);margin-bottom:8px;}
+  .erow .en{font-size:13px;flex:1;}
+  .etop{display:flex;align-items:center;gap:10px;padding:2px 0 14px;}
+  .etitle{font-size:16px;font-weight:640;}
+  .save{margin-left:auto;appearance:none;border:1px solid var(--steel);border-radius:999px;
+    background:var(--steel-tint);color:var(--steel);font:inherit;font-size:12.5px;font-weight:600;
+    padding:7px 14px;cursor:pointer;}
   .v{display:none;}
   .v.on{display:block;}
 </style>
 </head><body>
 <div class="wrap">
 <header>
-  <h1>APRS trigger editor — three shapes</h1>
-  <p class="sub">Round 2 for <code>docs/plans/APRS_CONTROL_PLAN.md</code> P3. Round 1 settled the
-  <strong>list</strong>; this settles <strong>add and edit</strong>. Two established paradigms disagree
-  here: Tasks — the thing being copied — uses a <strong>full-screen layer</strong>, while DESIGN.md sends
-  contextual quick forms to the <strong>bottom sheet</strong>. So the round decides the container as well
-  as the form language.</p>
+  <h1>APRS command task — three shapes</h1>
+  <p class="sub">Reframed round for <code>docs/plans/APRS_CONTROL_PLAN.md</code>. Scope is now the
+  <strong>gate only</strong> — the authenticated command path, no geofence — and the only thing a
+  verified command can do is <strong>run an agent task</strong>. That makes an APRS task <em>a task</em>:
+  same name, prompt, scopes, push, enabled. Only the trigger differs. So one structural question is left:
+  <strong>is “on command” a fourth trigger kind of the task system, or a parallel one?</strong></p>
 </header>
 <div class="controls">
   <div class="field"><span class="lbl">Shape</span>
     <div class="seg" id="pick" role="group" aria-label="Shape">
-      <button aria-pressed="true" data-v="A">A · Task layer</button>
-      <button aria-pressed="false" data-v="B">B · Sentence sheet</button>
-      <button aria-pressed="false" data-v="C">C · Sectioned sheet</button>
+      <button aria-pressed="true" data-v="A">A · Fourth kind</button>
+      <button aria-pressed="false" data-v="B">B · Parallel list</button>
+      <button aria-pressed="false" data-v="C">C · Two doors</button>
     </div>
   </div>
-  <div class="field"><span class="lbl">Trigger type</span>
-    <div class="seg" id="kind" role="group" aria-label="Trigger type">
-      <button aria-pressed="true" data-k="cmd">Command</button>
-      <button aria-pressed="false" data-k="geo">Geofence</button>
+  <div class="field"><span class="lbl">View</span>
+    <div class="seg" id="view" role="group" aria-label="View">
+      <button aria-pressed="true" data-w="list">List</button>
+      <button aria-pressed="false" data-w="edit">Editor</button>
     </div>
   </div>
 </div>
 <div class="stage">
-  <div class="phone">
-    <div class="behind">
-      <div class="bh"><span class="chev">‹</span>Radio · APRS</div>
-      <div class="bcard"><div class="bt">When <span class="ev">aprs.command_verified</span> → run <span class="pl">open-gate</span></div>
-        <div class="bm">last run ok · armed weekdays 06:00–09:00</div></div>
-      <div class="bcard"><div class="bt">When <span class="ev">location.geofence_transition</span> → run <span class="pl">arrive-home-chat</span></div>
-        <div class="bm">last run ok · armed always</div></div>
-    </div>
-    <div class="scrim" data-scrim></div>
-
-    <!-- A · full-screen task-editor layer -->
-    <div class="v on layer" data-view="A">
-      <div class="etop"><span class="chev">‹</span><span class="etitle">New trigger</span>
-        <button class="save">Save</button></div>
-      <div data-form="A"></div>
-    </div>
-
-    <!-- B · sentence sheet -->
-    <div class="v sheet" data-view="B">
-      <div class="grab"></div>
-      <div class="etop"><span class="etitle">New trigger</span><button class="save">Save</button></div>
-      <div data-form="B"></div>
-    </div>
-
-    <!-- C · sectioned sheet -->
-    <div class="v sheet" data-view="C">
-      <div class="grab"></div>
-      <div class="etop"><button class="cancel">Cancel</button><span class="etitle" style="margin:0 auto">New trigger</span>
-        <button class="save">Save</button></div>
-      <div data-form="C"></div>
-    </div>
-  </div>
+  <div class="phone" id="phone"></div>
   <div class="note" id="note"></div>
 </div>
 </div>
 <script>
-var K = {
-  cmd: {
-    ev: "aprs.command_verified", from: "KE8XYZ-9", match: "GATE", pipeline: "open-gate",
-    tier: '<div class="tier auth"><b>Authenticated.</b> Verified by HMAC over a monotonic counter, so a replay is a spent code and a forged callsign fails. This tier may fire actions.</div>',
-    matchLabel: "Command word", matchHint: 'Sent as <b>GATE 7K2M9</b> — the word, then the one-time code. Five base32 characters is enough: every guess has to be transmitted, against a five-attempt lockout.'
+function taskRow(name, when, on){
+  return '<div class="trow"><div style="flex:1;min-width:0"><div class="tn">'+name+'</div>'+
+    '<div class="tw">'+when+'</div></div>'+
+    '<button class="sw" role="switch" aria-checked="'+on+'"></button></div>';
+}
+var CMD_ROWS =
+  taskRow("Open the gate", 'On <span class="cmd">GATE</span> from <span class="cmd">KE8XYZ-9</span> · <span class="arm">armed weekdays 06:00–09:00</span> · last run ok', "true") +
+  taskRow("Shop door, one shot", 'On <span class="cmd">SHOP</span> from <span class="cmd">KE8XYZ-9</span> · <span class="arm once">armed once — disarms after firing</span>', "true");
+var TIME_ROWS =
+  taskRow("Morning brief", "Weekdays 06:30 · last run ok", "true") +
+  taskRow("Weekly finance sweep", "Sun 09:00 · last run ok", "false");
+
+function health(){
+  return '<div class="health"><span class="dot"></span><span class="who"><b>432.100</b> · heard 12s ago</span>'+
+    '<span class="rate">6 pkt/hr</span></div>';
+}
+function radioTop(){
+  return '<div class="scr-top"><span class="chev">‹</span><span class="scr-title">Radio</span></div>'+
+    '<div class="tabs" role="tablist"><button role="tab" aria-selected="false">Tuner</button>'+
+    '<button role="tab" aria-selected="true">APRS</button>'+
+    '<button role="tab" aria-selected="false">Recordings</button></div>';
+}
+var LIST = {
+  A: function(){
+    return '<div class="scr-top"><span class="chev">‹</span><span class="scr-title">Tasks</span>'+
+      '<button class="add">+ New</button></div>'+
+      '<div class="sec">On command</div>' + CMD_ROWS +
+      '<div class="sec">Scheduled</div>' + TIME_ROWS +
+      '<p class="hint" style="margin-top:14px">One list. A command task is a task whose trigger kind is '+
+      '<b>on command</b> instead of a clock — same row, same editor, same run history. '+
+      'Radio → APRS shows a read-only summary that links here.</p>';
   },
-  geo: {
-    ev: "location.geofence_transition", from: "KE8XYZ-9", match: "HOME · enter", pipeline: "arrive-home-chat",
-    tier: '<div class="tier open"><b>Not authenticated.</b> A callsign is plain bytes and can be forged, so this tier is data only — it can start a chat from a fixed prompt, never from anything heard over the air.</div>',
-    matchLabel: "Fence and direction", matchHint: 'Fed by the same location core the phone uses, so this fires identically whichever source reported the fix.'
+  B: function(){
+    return radioTop() + health() +
+      '<div class="scr-top" style="padding-top:0"><span class="scr-title" style="font-size:15px">Command tasks</span>'+
+      '<button class="add">+ New</button></div>' + CMD_ROWS +
+      '<p class="hint" style="margin-top:14px">A separate collection living in the Radio tab, rendered with the '+
+      'Tasks components. Self-contained and radio-adjacent — and a <b>second place tasks live</b>.</p>';
+  },
+  C: function(){
+    return radioTop() + health() +
+      '<div class="scr-top" style="padding-top:0"><span class="scr-title" style="font-size:15px">Command tasks</span>'+
+      '<button class="add">+ New</button></div>' + CMD_ROWS +
+      '<div class="link">These are <b>Tasks</b>, filtered to radio triggers. Editing one opens the same editor, '+
+      'and it appears in Tasks alongside the scheduled ones. <b>Open in Tasks →</b></div>';
   }
 };
-var ACTIONS = [
-  {n:"open-gate", c:"mutate", on:true}, {n:"arrive-home-chat", c:"mutate", on:false},
-  {n:"push-notify", c:"read", on:false}, {n:"log-note", c:"read", on:false},
-  {n:"export-finances", c:"sensitive", off:true}
-];
-function actionsHtml(sel){
-  return ACTIONS.map(function(a){
-    var dis = a.off ? ' aria-disabled="true"' : "";
-    return '<div class="act" role="radio" aria-checked="'+(a.n===sel)+'"'+dis+'>'+
-      '<span class="an">'+a.n+'</span><span class="cls cls-'+a.c+'">'+a.c+'</span></div>';
-  }).join("") + '<p class="hint"><b>sensitive</b> actions are never reachable from the air — the cap is shown rather than silently applied.</p>';
+
+function editor(shape){
+  var titleBar = (shape === "A")
+    ? '<div class="etop"><span class="chev">‹</span><span class="etitle">Open the gate</span><button class="save">Save</button></div>'
+    : radioTop() + '<div class="etop"><span class="chev">‹</span><span class="etitle">Open the gate</span><button class="save">Save</button></div>';
+  var kinds = (shape === "A")
+    ? '<div class="fseg" data-kind><button aria-pressed="false">On demand</button><button aria-pressed="false">Once</button>'+
+      '<button aria-pressed="false">Repeat</button><button aria-pressed="true">On command</button></div>'+
+      '<p class="hint">A fourth kind beside the three the task system already has. Everything below is unchanged.</p>'
+    : '<div class="fseg" data-kind><button aria-pressed="true">On command</button></div>'+
+      '<p class="hint">This collection is command-only, so the kind is fixed — the schedule kinds do not appear.</p>';
+  return titleBar +
+    '<div class="grp"><div class="glbl">Name</div><input class="inp" value="Open the gate"></div>'+
+    '<div class="grp"><div class="glbl">Trigger</div>'+kinds+
+      '<div class="two" style="margin-top:8px"><input class="inp mono" value="GATE"><input class="inp mono" value="KE8XYZ-9"></div>'+
+      '<div class="tier"><b>Verified only.</b> The command carries an HMAC over a monotonic counter, so a '+
+      'replay is a spent code and a forged callsign fails. Nothing unverified reaches this task.</div>'+
+      '<p class="hint">Sent as <b>GATE 7K2M9</b> — the word, then the one-time code.</p></div>'+
+    '<div class="grp"><div class="glbl">Armed</div>'+
+      '<div class="fseg" data-arm><button aria-pressed="false">Always</button>'+
+      '<button aria-pressed="false">Once</button><button aria-pressed="true">Window</button></div>'+
+      '<div class="two" style="margin-top:8px"><input class="inp" value="Weekdays"><input class="inp mono" value="06:00–09:00"></div>'+
+      '<p class="hint"><b>Once</b> disarms after it fires. <b>Window</b> means the command does not exist outside '+
+      'those hours — a security control, not a convenience.</p></div>'+
+    '<div class="grp"><div class="glbl">Prompt</div>'+
+      '<textarea class="inp">Open the driveway gate and tell me it is done.</textarea>'+
+      '<p class="hint">A fixed prompt. Nothing heard over the air is ever put into it.</p></div>'+
+    '<div class="grp"><div class="glbl">Scopes</div>'+
+      '<div class="chips" data-scopes><button class="chip" aria-pressed="true">General</button>'+
+      '<button class="chip risk" aria-pressed="false">Medical</button>'+
+      '<button class="chip risk" aria-pressed="false">Financial</button>'+
+      '<button class="chip risk" aria-pressed="false">Location</button></div>'+
+      '<div class="warn" data-warn>A radio-triggered task reaches this domain on a command sent over the air. '+
+      'The scopes are the cap here — there is no pipeline permission class behind them.</div>'+
+      '<p class="hint">Same scope picker as a scheduled task.</p></div>'+
+    '<div class="erow"><span class="en">Push me the result</span>'+
+      '<button class="sw" role="switch" aria-checked="true"></button></div>'+
+    '<div class="erow"><span class="en">Enabled</span>'+
+      '<button class="sw" role="switch" aria-checked="true"></button></div>';
 }
-function armHtml(){
-  return '<div class="fseg" data-arm><button aria-pressed="false">On demand</button>'+
-    '<button aria-pressed="false">Once</button><button aria-pressed="true">Repeat</button></div>'+
-    '<div class="two" style="margin-top:8px"><input class="inp" value="Weekdays"><input class="inp mono" value="06:00–09:00"></div>'+
-    '<p class="hint">The task schedule spec, answering <b>when is it listening</b>. <b>Once</b> disarms after it fires; <b>Repeat</b> means the command does not exist outside its window.</p>';
-}
-function stacked(k){
-  return '<div class="grp"><div class="glbl">Listen for</div>'+
-      '<div class="fseg"><button aria-pressed="'+(k==="cmd")+'">Command</button><button aria-pressed="'+(k==="geo")+'">Geofence</button><button aria-pressed="false">Message</button></div>'+
-      K[k].tier+'</div>'+
-    '<div class="grp"><div class="glbl">From</div><input class="inp mono" value="'+K[k].from+'"></div>'+
-    '<div class="grp"><div class="glbl">'+K[k].matchLabel+'</div><input class="inp mono" value="'+K[k].match+'">'+
-      '<p class="hint">'+K[k].matchHint+'</p></div>'+
-    '<div class="grp"><div class="glbl">Then run</div>'+actionsHtml(K[k].pipeline)+'</div>'+
-    '<div class="grp"><div class="glbl">Armed</div>'+armHtml()+'</div>';
-}
-function sentence(k){
-  return '<div class="grp"><p class="sent">When <span class="tok mono" tabindex="0">'+K[k].from+'</span> '+
-    (k==="cmd" ? 'sends <span class="tok mono" tabindex="0">'+K[k].match+'</span>'
-               : 'crosses <span class="tok mono" tabindex="0">'+K[k].match+'</span>')+
-    ' → run <span class="tok mono" tabindex="0">'+K[k].pipeline+'</span>, armed '+
-    '<span class="tok arm" tabindex="0">weekdays 06:00–09:00</span>.</p>'+
-    K[k].tier+
-    '<p class="hint">Every underlined value opens its own picker. The sentence is the card headline — '+
-    '<b>When ‹ev› → run ‹pipeline›</b> — so the editor and the row are one object seen twice.</p></div>'+
-    '<div class="grp"><div class="glbl">Then run</div>'+actionsHtml(K[k].pipeline)+'</div>';
-}
-function stepped(k){
-  var s = stacked(k).replace(/<div class="grp">/g, '<div class="grp step-in">');
-  return '<div class="step"><span class="stepn on">1</span><div style="flex:1;min-width:0">'+
-    '<div class="glbl">Listen for</div><div class="fseg"><button aria-pressed="'+(k==="cmd")+'">Command</button>'+
-    '<button aria-pressed="'+(k==="geo")+'">Geofence</button><button aria-pressed="false">Message</button></div>'+
-    K[k].tier+'<div style="margin-top:10px"><input class="inp mono" value="'+K[k].from+'"></div>'+
-    '<div style="margin-top:8px"><input class="inp mono" value="'+K[k].match+'"></div>'+
-    '<p class="hint">'+K[k].matchHint+'</p></div></div>'+
-    '<div class="step"><span class="stepn">2</span><div style="flex:1;min-width:0">'+
-    '<div class="glbl">Then run</div>'+actionsHtml(K[k].pipeline)+'</div></div>'+
-    '<div class="step"><span class="stepn">3</span><div style="flex:1;min-width:0">'+
-    '<div class="glbl">Armed</div>'+armHtml()+'</div></div>';
-}
+
 var NOTES = {
-  A:{h:"A · Task-editor layer (full screen)",p:[
-    "<strong>Literally the Tasks editor's shape</strong> — full screen over the list, back chevron, stacked sections, closed by the back gesture. Zero new paradigm, and the one the owner named when he said “like tasks”.",
-    "Worth being exact: Tasks is <em>not</em> a modal in this codebase. Its editor is a full-screen layer (<code style='font-family:var(--mono);font-size:12px'>useBackLayer</code>), which is what DESIGN.md sends primary tasks to.",
-    "Costs: the heaviest container for a small object. A trigger is four fields; a task carries a prompt, scopes and a schedule. It also hides the list completely, so you cannot see the trigger you are duplicating."]},
-  B:{h:"B · Sentence sheet",p:[
-    "<strong>The trigger reads as one sentence</strong>, every value an inline picker. The sentence <em>is</em> the card headline, so the editor and the row are the same object seen twice — which is the strongest argument for it: nothing to translate between reading and editing.",
-    "A bottom sheet keeps the list visible behind the scrim, which matters when most edits are small (retime an arming window, swap a pipeline).",
-    "Costs: the least conventional, and long values have to wrap gracefully — a sentence that reflows badly reads worse than a form. The action picker still needs a real list, so it sits below rather than inline."]},
-  C:{h:"C · Sectioned sheet",p:[
-    "<strong>Sheet ergonomics, familiar form.</strong> DESIGN.md's paradigm table sends “contextual quick forms & actions” to the bottom sheet, and a trigger is squarely that — smaller than anything Tasks holds.",
-    "Numbered steps carry real information here: the order is a genuine dependency chain, since what you listen for decides which fields and which trust tier apply. That is the test for numbering — not decoration.",
-    "Costs: the least distinctive of the three, and a tall sheet on a small phone scrolls about as much as a full screen would, which weakens its main advantage."]}
+  A:{h:"A · A fourth trigger kind",p:[
+    "<strong><code>ScheduleKind</code> gains <code>on_command</code></strong> beside on demand / once / repeat. One list, one editor, one run history, one table. The Radio → APRS tab shows a read-only summary linking into Tasks.",
+    "Smallest build by a distance: <code>Draft</code>, the editor, the row, the runs log and the push already exist and are untouched. What is new is a trigger kind and the verify path behind it.",
+    "It is also the third time this plan has faced this choice and the first two went the same way — P2 feeds the existing location core rather than a second geofence evaluator, and round 1 dropped a bespoke armed-list for the automation cards. <strong>This is that instinct once more.</strong>",
+    "Costs: command tasks sit in a general Tasks list, so the radio screen is not where you manage them; and a task list now mixes two quite different trigger stories."]},
+  B:{h:"B · A parallel list in the Radio tab",p:[
+    "<strong>Its own collection</strong>, rendered with the Tasks components but stored and managed separately. This is what “duplicate the time based system” says literally.",
+    "Self-contained and radio-adjacent: everything about the radio is in one place, and the editor never shows schedule kinds that cannot apply.",
+    "Costs, and they are the real ones: <strong>a second place tasks live.</strong> Two lists, two editors to keep in step, two runs histories, and every later task feature has to be built twice or silently diverge. The parallel geofence evaluator this plan already refused is the same shape of mistake."]},
+  C:{h:"C · One collection, two doors",p:[
+    "<strong>Tasks own the data; the Radio tab is a filtered view</strong> of the same rows and opens the same editor. One object, reachable from wherever you happen to be.",
+    "Gets B's discoverability without B's duplication — the radio screen manages radio tasks, and they are still ordinary tasks.",
+    "Costs: two entry points to one object need care so they cannot disagree (a task retyped to a schedule in Tasks has to leave the Radio list cleanly), and it is more work than A for a benefit that is navigational rather than structural."]}
 };
+
 function paint(){
   var v = document.querySelector("#pick button[aria-pressed='true']").dataset.v;
-  var k = document.querySelector("#kind button[aria-pressed='true']").dataset.k;
-  document.querySelectorAll(".v").forEach(function(el){ el.classList.toggle("on", el.dataset.view === v); });
-  document.querySelector('[data-form="A"]').innerHTML = stacked(k);
-  document.querySelector('[data-form="B"]').innerHTML = sentence(k);
-  document.querySelector('[data-form="C"]').innerHTML = stepped(k);
-  document.querySelector("[data-scrim]").style.display = v === "A" ? "none" : "block";
+  var w = document.querySelector("#view button[aria-pressed='true']").dataset.w;
+  document.getElementById("phone").innerHTML = w === "list" ? LIST[v]() : editor(v);
   var n = NOTES[v];
   document.getElementById("note").innerHTML = "<h3>"+n.h+"</h3>"+n.p.map(function(x){return "<p>"+x+"</p>";}).join("");
 }
-document.querySelectorAll("#pick button, #kind button").forEach(function(b){
+document.querySelectorAll("#pick button, #view button").forEach(function(b){
   b.addEventListener("click", function(){
     b.parentNode.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", String(x === b)); });
     paint();
   });
 });
 document.addEventListener("click", function(e){
+  var sw = e.target.closest(".sw");
+  if (sw){ sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true"); return; }
   var seg = e.target.closest(".fseg button");
   if (seg){ seg.parentNode.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", String(x === seg)); }); return; }
-  var act = e.target.closest(".act");
-  if (act && act.getAttribute("aria-disabled") !== "true"){
-    act.parentNode.querySelectorAll(".act").forEach(function(x){ x.setAttribute("aria-checked", String(x === act)); });
+  var chip = e.target.closest(".chip");
+  if (chip){
+    chip.setAttribute("aria-pressed", chip.getAttribute("aria-pressed") === "true" ? "false" : "true");
+    var box = chip.closest("[data-scopes]");
+    var risky = box.querySelectorAll('.chip.risk[aria-pressed="true"]').length > 0;
+    box.parentNode.querySelector("[data-warn]").classList.toggle("on", risky);
+    return;
   }
+  var tab = e.target.closest(".tabs button");
+  if (tab){ tab.parentNode.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-selected", String(x === tab)); }); }
 });
 paint();
 </script>

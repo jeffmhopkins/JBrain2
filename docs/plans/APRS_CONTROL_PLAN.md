@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P2◻️ P3◻️ P4◻️ (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P3◻️ P4◻️ P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -172,6 +172,25 @@ answering a different question: not *when does it run* but **when is it listenin
 command does not exist, which shrinks the attack surface to the hours the owner would
 actually use it. `once` means an armed command cannot be re-fired even if the counter
 logic were ever wrong — defence in depth against P4's own credential.
+
+#### Scope cut 2026-09-02: the gate, and one action type
+
+The first build is **the authenticated command path only** — no geofence and no position
+triggers — and the only thing a verified command may do is **run an agent task**. P2
+(position as a location transport) is therefore deferred behind P4 rather than preceding
+it; nothing in it changes, it simply is not the first thing built.
+
+That cut is larger than it sounds, because it makes an APRS task **a task**: same name,
+prompt, agent, scopes, push and enabled as `TasksScreen.Draft`, with only the trigger
+differing. The action registry, the pipeline picker and the permission-class cap all
+leave the design with it — and the cap leaves with them, so **the task's scopes become
+the cap**. A radio-triggered task scoped to health, finance or location reaches a
+firewalled domain on a command sent over the air, and the editor is where that gets
+said out loud.
+
+The open question is now structural rather than visual, and round 2 asks it:
+`on_command` as a fourth `ScheduleKind`, a parallel task collection in the Radio tab, or
+one collection behind two doors. See `../mocks/aprs/README.md`.
 
 #### Add and edit — a second round, because automations cannot be created
 

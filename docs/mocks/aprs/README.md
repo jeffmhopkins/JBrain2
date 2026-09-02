@@ -87,59 +87,58 @@ Frequency choice (commands want a private simplex channel; position wants the
 digipeated network), sender hardware, and packet retention. Those are the plan's §7.
 
 
-## Round 2 — add and edit a trigger · `b-trigger-editor.html` · **awaiting decision**
+## Round 2 — the command task · `b-trigger-editor.html` · **awaiting decision**
 
-Round 1 settled the list. This settles **creating and editing** one, which is a new
-surface and so takes its own round — an editor is not "a chip state or a button on an
-existing card" (`../../reference/DESIGN.md`'s exemption).
+Reframed 2026-09-02 before any decision, because the scope changed under it. The first
+pass asked how to edit a *general* APRS trigger — any event, any pipeline from the
+action registry. The owner then cut it to what is actually being built:
 
-### Why this needed a round rather than a decision
+- **the gate only** — the authenticated command path; no geofence, no position
+- **one action type — an agent task**, not a pipeline picker
+- *"duplicate the time based system"*
 
-The owner asked for it "like tasks … in a new modal", and two established paradigms
-point in opposite directions:
+That cut dissolves most of the original question. If the only thing a verified command
+can do is run an agent task, then **an APRS task is a task**: same name, prompt, agent,
+scopes, push, enabled (`TasksScreen.Draft`). Only the trigger differs — a verified radio
+command instead of a clock. Container and form language stop being interesting, because
+Tasks already answers both.
 
-- **Tasks, the thing being copied, is not a modal.** `TasksScreen.Editor` is a
-  **full-screen layer** over the list with a back chevron (`useBackLayer`), which is
-  where DESIGN.md's paradigm table sends *primary tasks*.
-- **DESIGN.md sends "contextual quick forms & actions" to the bottom sheet**, "the
-  workhorse modal on phone" — and a trigger is squarely that, far smaller than a task's
-  prompt + scopes + schedule.
+What is left is one structural decision:
 
-So the round decides the container as much as the form language.
+> **Is "on command" a fourth trigger kind of the task system, or a parallel task
+> system living in the Radio tab?**
 
 | | Shape | Costs |
 |---|---|---|
-| **A** | **Task-editor layer** — full screen, back chevron, stacked sections | Heaviest container for a four-field object; hides the list you may be copying from |
-| **B** | **Sentence sheet** — the trigger reads as one sentence, every value an inline picker | Least conventional; long values must wrap gracefully |
-| **C** | **Sectioned sheet** — bottom sheet, conventional numbered field groups | Least distinctive; a tall sheet scrolls about as much as a full screen |
+| **A** | **Fourth kind** — `ScheduleKind` gains `on_command`; one list, one editor, one runs history | Command tasks sit in a general Tasks list, so the radio screen is not where you manage them |
+| **B** | **Parallel list** — its own collection in Radio → APRS, same components | **A second place tasks live**: two editors to keep in step, and every later task feature built twice or silently diverging |
+| **C** | **Two doors** — Tasks own the data; the Radio tab is a filtered view opening the same editor | Two entry points to one object need care so they cannot disagree; more work than A for a navigational benefit |
 
-B's argument is that the sentence **is** the card headline (`When ‹ev› → run
-‹pipeline›`), so the editor and the row become one object seen twice, with nothing to
-translate between reading and editing. C's numbering is not decoration: what you listen
-for decides which fields and which trust tier apply, so the order is a real dependency
-chain — which is the test for whether numbering earns its place.
+### A note on "duplicate"
 
-### Why add/edit is new at all
+Taken literally, that is **B** — and it is worth weighing before choosing, because this
+plan has already faced the same shape of decision twice and gone the other way both
+times: P2 feeds the existing location core rather than writing a second geofence
+evaluator, and round 1 dropped a bespoke armed-list for the automation cards that
+already exist. A parallel task system would be the third instance and the first taken
+the other way. **A is that instinct applied once more**; C is the compromise that keeps
+the radio screen as the place you manage radio tasks.
 
-Automations are **seeded system config**: the Ops screen can enable, retime and run
-them, but never *create* one. An APRS trigger is owner-created — precisely the
-capability the automations paradigm lacks. Hence the split settled across the two
-rounds: **list like Automations, edit like Tasks.**
+### What the narrower scope changed about the safety story
 
-### Load-bearing content in the mock
+Dropping the pipeline picker removes the permission-class cap with it, so **the task's
+scopes are now the cap**. The editor says so: selecting Medical, Financial or Location
+raises a warning, because a radio-triggered task reaching a firewalled domain on a
+command sent over the air is the thing to be deliberate about, and there is no longer a
+pipeline class behind it. The prompt is fixed and the mock says plainly that nothing
+heard over the air is ever put into it.
 
-- **The trust tier is shown, not implied.** Switch *Trigger type* between Command and
-  Geofence: a command trigger says it is authenticated by HMAC and counter; a geofence
-  trigger says it is *not*, and that it may start a chat only from a fixed prompt,
-  never from anything heard over the air. The editor is where the owner meets that
-  rule, so it cannot live only in a plan.
-- **The permission-class cap is visible.** Each action carries its class, and
-  `sensitive` renders unavailable rather than being silently filtered out — a cap you
-  cannot see is a cap that surprises you.
-- **Arming is the task schedule spec**, on demand / once / repeat.
+The trust tier also stops being a choice: only a verified command reaches a task at all,
+so the editor states the guarantee rather than offering tiers.
 
 ### Verified, not assumed
 
-Driven in Chromium: all six shape × trigger-type combinations render, the trust-tier
-panel switches with the type, the `sensitive` action stays unselectable even when the
-click is forced past its disabled state, no console errors, no horizontal scroll.
+Driven in Chromium: all six shape × view combinations render, A's editor offers the
+fourth kind while B and C are command-only, A's list correctly shows command *and*
+scheduled tasks together while B and C show command only, the scope warning appears only
+once a firewalled domain is selected, no console errors, no horizontal scroll.
