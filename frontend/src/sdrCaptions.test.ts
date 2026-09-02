@@ -173,8 +173,20 @@ describe("caption timing", () => {
 
     tick();
 
-    // startedAt 1001 + the small lead-in is at or before the ear's 1005.
     expect(sdrCaptions().latest?.text).toBe("audible now");
+  });
+
+  it("shows a caption the moment its first word is heard, not a beat later", () => {
+    earAt(1000, 5); // the ear is exactly at box-clock 1005
+    const stream = open();
+    stream.send({ started_at: 1005, text: "right now", words: [] });
+
+    tick();
+
+    // Subtitle convention: the line appears as the first word of it is spoken, and
+    // stands until the next is due. Holding it back past its start time is pure lag —
+    // an earlier version waited a second here for no gain.
+    expect(sdrCaptions().latest?.text).toBe("right now");
   });
 
   it("skips straight to the newest caption that has come due", () => {

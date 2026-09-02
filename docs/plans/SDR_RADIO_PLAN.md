@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-01 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
+> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -362,6 +362,29 @@ because a resident whisper shares the GPU with the chat model. Segments are sque
 in the sidecar: below a level floor nothing is sent, because whisper answers an empty
 band with fluent invented sentences. Binding spec:
 `../mocks/sdr-tuner/f-live-captions.html`.
+
+**Caption timing (2026-09-02).** Two lags decide whether a caption lines up with the
+speech, and they point opposite ways. Playback sits a constant ~8.3 s behind the live
+edge (measured in Chromium against the real sidecar over 130 s — stable, not drifting),
+so a caption shown when it *arrives* lands seconds before the words are heard; the
+client therefore holds each one until `sdrHeardAt()` — the box-clock time of the audio
+at the speaker, anchored on `started_at + elapsed_s` — reaches its start. Against that,
+the api must produce captions in less than those 8.3 s or holding cannot help: read in
+step with whisper, each ~9.8 s call stalled the reader, the sidecar's 8-deep queue
+filled behind it and the captioner settled *permanently* ~40 s back. So reading runs on
+its own task and whatever has piled up is transcribed as ONE merged clip — free,
+because whisper's cost here is flat in clip length, and unlike keeping only the newest
+it drops no words. What remains is the floor: a caption cannot exist before its segment
+ends, so segment length plus transcription is how far behind the words it can be — with
+`large-v3-turbo` at ~9.8 s that floor is ~20 s, well past the ear's 8.3 s, so captions
+still trail the speech. Closing the rest needs a deliberately delayed audio path (prime
+each listener with a rolling MP3 backlog so playback starts further back) or a smaller
+model; both are owner decisions and neither is taken here.
+
+The ~9.8 s is INFERENCE, measured across 26 consecutive calls with the model resident.
+An earlier reading of the same flat-in-clip-length number blamed model load/unload; it
+is flat because whisper.cpp pads every clip to a 30 s window. Residency is still right
+— unloading adds the load on top — but for that reason, not the one first written down.
 
 ## 7. Open decisions (deferred, not dropped)
 

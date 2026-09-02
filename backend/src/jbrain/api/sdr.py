@@ -22,7 +22,11 @@ recordings library, which does have one, is a later wave.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import io
 import json
+import wave
 from typing import Annotated, Any, cast
 
 import httpx
@@ -40,6 +44,15 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 MIN_MHZ = 0.024
 MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
+
+# How far back a single caption may reach. Segments that pile up behind a busy whisper
+# are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
+# much audio one merged clip may carry: past it the oldest is given up, because a caption
+# for something said half a minute ago is not a live caption any more.
+CAPTION_BACKLOG_S = 24.0
+# How long the caption stream waits with nothing to say before sending a comment to hold
+# the socket open. Proxies close an idle event stream, and a quiet band is normal.
+CAPTION_IDLE_S = 15.0
 
 # Long enough for a slow tuner open, short enough that a wedged sidecar surfaces as
 # an error rather than a hung composer.
@@ -176,13 +189,23 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
     client already asks for, so the caption tints on the same rose-amber-green scale as
     the transcript viewer.
 
-    **The model is deliberately NOT freed between segments.** Measured on this box, a
-    transcription costs ~10.7 s whether the clip is 4 s or 11 s: almost all of it is
-    loading and unloading the model, and 7 extra seconds of audio added 0.04 s. The
-    capture route pays that every call because it unloads when it finishes; a captioner
-    that did the same would fall permanently behind. Holding the model resident is what
-    makes this affordable — and it is also why captions are an explicit toggle rather
-    than always-on, since a resident whisper shares the GPU with the chat model.
+    **Reading and transcribing run apart.** The reader drains the sidecar as fast as it
+    sends; whatever is waiting when whisper comes free is transcribed as ONE merged clip
+    (`_Backlog`). Done in step instead, each whisper call stalls the reader, the
+    sidecar's queue fills behind it, and the captioner settles permanently a backlog
+    behind the live edge — which the client cannot correct for, because a caption that
+    arrives after its audio was heard can only be shown late.
+
+    **The model is deliberately NOT freed between segments.** Measured on this box
+    (26 consecutive calls, model resident throughout): a transcription costs ~9.8 s
+    whatever the clip holds. That is INFERENCE, not model loading — an earlier reading
+    of the same flat number blamed load/unload, and the residency rule was written on
+    that mistake. The rule survives being right for a different reason: unloading would
+    add the load back on top of the 9.8 s, and the capture route pays exactly that
+    because it unloads when it finishes. The cost is flat because whisper.cpp pads every
+    clip to a 30 s window, which is also what makes merging a backlog free (`_Backlog`).
+    It is why captions are an explicit toggle rather than always-on, too, since a
+    resident whisper shares the GPU with the chat model.
 
     Segments arrive already squelched: the sidecar drops any whose loudest moment never
     crossed the floor, because whisper answers an empty band with fluent invented
@@ -199,39 +222,69 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     async def pump():
         client = httpx.AsyncClient(base_url=base, timeout=None)
+        backlog = _Backlog()
+        arrived = asyncio.Event()
+        ended = asyncio.Event()
+
+        async def read(upstream: httpx.Response) -> None:
+            """Drain the sidecar as fast as it sends, whatever whisper is doing."""
+            try:
+                async for started, wav in _segments(upstream):
+                    if wav is None:
+                        continue  # a keep-alive; the loop below sends its own
+                    backlog.add(started, wav)
+                    arrived.set()
+            finally:
+                ended.set()
+                arrived.set()
+
         try:
             async with client.stream("GET", "/listen/segments") as upstream:
                 if upstream.status_code != 200:
                     yield _event({"error": "the radio is not listening"})
                     return
-                async for started, wav in _segments(upstream):
-                    if await request.is_disconnected():
-                        break
-                    if wav is None:  # a keep-alive, so a quiet channel holds the socket
-                        yield ": keepalive\n\n"
-                        continue
-                    try:
-                        result = await whisper.transcribe(
-                            wav, filename="segment.wav", media_type="audio/wav"
+                reader = asyncio.create_task(read(upstream))
+                try:
+                    while not await request.is_disconnected():
+                        # Cleared BEFORE looking, so a segment that lands between the
+                        # look and the wait still wakes us rather than being slept on.
+                        arrived.clear()
+                        batch = backlog.take()
+                        if batch is None:
+                            if ended.is_set():
+                                break
+                            try:
+                                await asyncio.wait_for(arrived.wait(), CAPTION_IDLE_S)
+                            except TimeoutError:
+                                yield ": keepalive\n\n"
+                            continue
+                        started, wav = batch
+                        try:
+                            result = await whisper.transcribe(
+                                wav, filename="segment.wav", media_type="audio/wav"
+                            )
+                        except (httpx.HTTPError, ValueError) as exc:
+                            # One bad segment must not end the caption stream; the next
+                            # transmission is a fresh chance and the owner keeps listening.
+                            yield _event({"error": str(exc)[:200], "started_at": started})
+                            continue
+                        text = result.text.strip()
+                        if not text:
+                            continue
+                        yield _event(
+                            {
+                                "started_at": started,
+                                "text": text,
+                                "words": [
+                                    {"text": w.text, "confidence": round(w.confidence, 4)}
+                                    for w in result.words
+                                ],
+                            }
                         )
-                    except (httpx.HTTPError, ValueError) as exc:
-                        # One bad segment must not end the caption stream; the next
-                        # transmission is a fresh chance and the owner keeps listening.
-                        yield _event({"error": str(exc)[:200], "started_at": started})
-                        continue
-                    text = result.text.strip()
-                    if not text:
-                        continue
-                    yield _event(
-                        {
-                            "started_at": started,
-                            "text": text,
-                            "words": [
-                                {"text": w.text, "confidence": round(w.confidence, 4)}
-                                for w in result.words
-                            ],
-                        }
-                    )
+                finally:
+                    reader.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await reader
         finally:
             await client.aclose()
 
@@ -276,3 +329,75 @@ async def _segments(upstream: httpx.Response):
             wav = buffer[newline + 1 : newline + 1 + size]
             buffer = buffer[newline + 1 + size :]
             yield float(head.get("started_at", 0.0)), wav
+
+
+def _clip_seconds(wav: bytes) -> float:
+    """How much audio a WAV clip holds, without reading its samples."""
+    try:
+        with wave.open(io.BytesIO(wav), "rb") as src:
+            return src.getnframes() / (src.getframerate() or 1)
+    except (wave.Error, EOFError, OSError):
+        return 0.0
+
+
+def _merge(clips: list[bytes]) -> bytes:
+    """Join consecutive WAV clips into one.
+
+    The clips are contiguous slices of the same live capture, so concatenating their
+    frames reproduces the audio exactly as it was on the air — there is no crossfade or
+    resample to get wrong."""
+    frames: list[bytes] = []
+    rate = 0
+    for clip in clips:
+        try:
+            with wave.open(io.BytesIO(clip), "rb") as src:
+                frames.append(src.readframes(src.getnframes()))
+                rate = src.getframerate() or rate
+        except (wave.Error, EOFError, OSError):
+            continue  # a truncated clip is dropped, not allowed to poison the batch
+    if not frames or not rate:
+        return clips[0] if clips else b""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as dst:
+        dst.setnchannels(1)
+        dst.setsampwidth(2)
+        dst.setframerate(rate)
+        dst.writeframes(b"".join(frames))
+    return out.getvalue()
+
+
+class _Backlog:
+    """Segments waiting for whisper, so that READING never waits on TRANSCRIBING.
+
+    Read in step with transcription — the shape this route had first — the reader stalls
+    for the whole of every whisper call, the sidecar's queue fills behind it, and the
+    captioner ends up working through audio that was on the air a minute ago. Because it
+    never catches up, that lag is permanent: captions arrive long after the listener has
+    heard the words, which is the one failure the client cannot correct for.
+
+    What waits here is transcribed TOGETHER rather than one clip at a time. Whisper's
+    cost on this box is flat in clip length (~10.7 s for 4 s of audio and for 11 s
+    alike), so a merged clip costs what a single one does and loses no words — where
+    taking only the newest would silently drop whole sentences. The cap is what keeps a
+    merge from reaching back further than a live caption sensibly can.
+    """
+
+    def __init__(self, max_seconds: float = CAPTION_BACKLOG_S) -> None:
+        self._max = max_seconds
+        self._held: list[tuple[float, bytes, float]] = []
+
+    def add(self, started: float, wav: bytes) -> None:
+        self._held.append((started, wav, _clip_seconds(wav)))
+        # Give up the OLDEST past the cap. Dropping the newest instead would leave the
+        # captioner reading history while the live edge went by unseen.
+        while len(self._held) > 1 and sum(c[2] for c in self._held) > self._max:
+            self._held.pop(0)
+
+    def take(self) -> tuple[float, bytes] | None:
+        """Everything waiting, as one clip stamped with the first segment's start."""
+        if not self._held:
+            return None
+        held, self._held = self._held, []
+        if len(held) == 1:
+            return held[0][0], held[0][1]
+        return held[0][0], _merge([wav for _, wav, _ in held])

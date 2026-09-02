@@ -62,12 +62,14 @@ _CHUNK = 4096
 # Segments are cut for whisper, which is not a streaming model: it transcribes a
 # finished clip, so captions are chunks of live audio sent one after another.
 #
-# Chunk length is a LATENCY choice, not a throughput one. Measured on the box: the
-# cost of a transcription is flat at ~10.7 s whether the clip is 4 s or 11 s, because
-# almost all of it is loading and freeing the model — 7 extra seconds of audio added
-# 0.04 s. A captioner that keeps the model resident therefore pays that once, and each
-# additional second of audio is close to free. Short segments buy responsiveness at
-# no real cost; the floor is what makes a sentence long enough to transcribe well.
+# Chunk length is a LATENCY choice, not a throughput one. Measured on the box across 26
+# consecutive calls with the model resident: ~9.8 s per transcription whatever the clip
+# holds. Flat because whisper.cpp pads every clip to a 30 s window — NOT because the
+# time is model loading, which is what an earlier reading of the same number concluded.
+# So a second of extra audio really is close to free, and the api merges whatever has
+# piled up into one clip rather than transcribing segments one at a time. Short segments
+# buy responsiveness at no real cost; the floor is what makes a sentence long enough to
+# transcribe well.
 SEGMENT_MIN_S = 3.0
 SEGMENT_MAX_S = 8.0
 # A segment ends on a quiet gap rather than a clock, so cuts fall between words.
