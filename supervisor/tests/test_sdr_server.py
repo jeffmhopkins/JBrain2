@@ -16,6 +16,7 @@ import importlib.util
 import json
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -219,3 +220,80 @@ def test_healthz_advertises_the_jobs_this_sidecar_understands(sidecar: str) -> N
     # listening session — so "turn logging on" would succeed, log nothing, and report
     # success. This is how a caller tells the difference without trusting a 200.
     assert "aprs" in body["purposes"]
+
+
+# --- the packet stream --------------------------------------------------------------
+
+
+def test_packets_are_refused_when_the_radio_is_not_logging(sidecar: str) -> None:
+    _post(sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"})
+
+    status, body = _get(sidecar, "/listen/packets")
+
+    # A listening session decodes nothing, so this is not "no packets yet" — it is the
+    # wrong job, and saying so is the difference between a quiet channel and a mistake.
+    assert status == 409
+    assert "not logging" in body["detail"]
+
+
+def test_packets_are_refused_when_the_radio_is_idle(sidecar: str) -> None:
+    status, _ = _get(sidecar, "/listen/packets")
+
+    assert status == 409
+
+
+def test_a_decoded_frame_reaches_a_reader_as_a_row(sidecar: str) -> None:
+    """The point of the wave: a frame direwolf decoded becomes a storable row.
+
+    The frame is the REAL captured one (the same fixture `test_sdr_packets.py` parses),
+    pushed in at the seam where the KISS reader would have put it — so this exercises
+    the fan-out, the framing and the stamping without needing direwolf or a radio."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs"},
+    )
+    session = server.TUNER.current()
+    assert session is not None
+
+    rows: list[dict[str, Any]] = []
+    reader = threading.Thread(
+        target=lambda: rows.extend(_ndjson(sidecar, 1)), daemon=True
+    )
+    reader.start()
+    for _ in range(50):  # let the reader subscribe before anything is published
+        if session._packets:
+            break
+        time.sleep(0.05)
+    session._publish_packet(_captured_packet())
+    reader.join(timeout=10)
+
+    assert rows, "no packet reached the reader"
+    assert rows[0]["source"] == "KE8XYZ-9"
+    assert rows[0]["info"] == "GATE 7K2M9"
+    # Stamped with what the radio was tuned to: the log is read long after, and "which
+    # channel was this?" is not recoverable from the frame itself.
+    assert rows[0]["frequency_hz"] == 144_390_000
+
+
+def _captured_packet():
+    """The first real KISS frame from the committed direwolf capture."""
+    fixture = Path(__file__).parent / "fixtures/aprs_kiss_frames.hex"
+    line = next(
+        ln for ln in fixture.read_text().splitlines() if ln and not ln.startswith("#")
+    )
+    return sys.modules["packets"].parse_kiss(bytes.fromhex(line))
+
+
+def _ndjson(base: str, count: int) -> list[dict[str, Any]]:
+    """Read `count` non-keepalive rows off the packet stream, then stop."""
+    out: list[dict[str, Any]] = []
+    with urllib.request.urlopen(base + "/listen/packets", timeout=10) as resp:
+        for raw in resp:
+            row = json.loads(raw)
+            if row.get("keepalive"):
+                continue
+            out.append(row)
+            if len(out) >= count:
+                return out
+    return out

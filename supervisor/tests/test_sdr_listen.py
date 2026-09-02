@@ -18,6 +18,10 @@ DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
 
 def _load():
+    # The sidecar's modules import each other by bare name, which is how they resolve
+    # in the image (all copied to one WORKDIR). Loading one by path here needs the same
+    # directory importable, or `import packets` inside listen.py fails.
+    sys.path.insert(0, str(DEPLOY / "sdr"))
     spec = importlib.util.spec_from_file_location(
         "sdr_listen", DEPLOY / "sdr/listen.py"
     )

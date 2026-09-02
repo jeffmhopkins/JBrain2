@@ -44,6 +44,26 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   fi
 fi
 
+# --- direwolf (the APRS soft-TNC the sdr sidecar decodes with) ---
+# Only needed to REGENERATE the captured KISS fixture
+# (supervisor/tests/fixtures/aprs_kiss_frames.hex): the tests themselves parse that
+# capture and need no radio and no direwolf, which is the point of capturing it. It
+# ships `gen_packets` too, so the whole round trip — synthesize APRS audio, decode it,
+# compare frames — can be re-run on a workstation when the parser changes.
+# Never fatal: without it the fixture simply cannot be rebuilt.
+if ! command -v direwolf >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    log "installing direwolf (regenerating the APRS KISS fixture)"
+    apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+    # shellcheck disable=SC2086  # apt_opts is a deliberate list of flags to split
+    sudo apt-get $apt_opts update -qq >/dev/null 2>&1 \
+      && sudo apt-get $apt_opts install -y -qq --no-install-recommends direwolf >/dev/null 2>&1 \
+      || log "WARNING: could not install direwolf — the APRS fixture cannot be regenerated"
+  else
+    log "direwolf not installed and no apt/sudo — the APRS fixture cannot be regenerated"
+  fi
+fi
+
 # --- Python (backend + supervisor: FastAPI, pytest, ruff, pyright) ---
 # backend/.python-version pins 3.13 so coverage's sys.monitoring core
 # (COVERAGE_CORE=sysmon) is available — it cuts the pytest coverage overhead from

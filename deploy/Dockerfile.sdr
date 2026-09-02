@@ -26,13 +26,19 @@ FROM python:3.12-slim
 # opens, long after the session started (deploy/sdr/listen.py explains why that rules
 # out a header-bearing container like WebM). It is a real ~150 MB dependency on an
 # opt-in profile, taken rather than hand-rolling an MP3 muxer.
+# direwolf is the reference soft-TNC: bit sync, NRZI, HDLC and the CRC for AX.25, which
+# is the half of APRS worth nobody's reimplementation. It hands whole frames over a KISS
+# socket and this sidecar does only the unwrapping (deploy/sdr/packets.py). Pulled in for
+# the same reason ffmpeg is — a real dependency on an opt-in profile, taken rather than
+# hand-rolling a demodulator.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends rtl-sdr ffmpeg \
+    && apt-get install -y --no-install-recommends rtl-sdr ffmpeg direwolf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY deploy/sdr/server.py ./server.py
 COPY deploy/sdr/listen.py ./listen.py
+COPY deploy/sdr/packets.py ./packets.py
 
 # Fail the BUILD, not the first capture: this is the check that would have caught a
 # sidecar shipping without its radio tools, whose only on-box symptom is a capture
@@ -40,6 +46,7 @@ COPY deploy/sdr/listen.py ./listen.py
 # hard way — see its Dockerfile).
 RUN python -c "import server" && command -v rtl_fm >/dev/null \
     && command -v ffmpeg >/dev/null \
+    && command -v direwolf >/dev/null \
     && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3lame
 
 EXPOSE 8000

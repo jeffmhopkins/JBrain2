@@ -36,7 +36,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
-from listen import PURPOSE_LABEL, PURPOSE_LISTEN, PURPOSES
+from listen import PURPOSE_APRS, PURPOSE_LABEL, PURPOSE_LISTEN, PURPOSES
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
 from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
@@ -184,6 +184,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/listen/segments":
             self._stream_segments()
             return
+        if route == "/listen/packets":
+            self._stream_packets()
+            return
         if route != "/healthz":
             self._json(404, {"detail": "not found"})
             return
@@ -287,6 +290,39 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the captioner hung up; entirely normal
         finally:
             session.unsubscribe_segments(sub)
+
+    def _stream_packets(self) -> None:
+        """Hand one reader a stream of decoded APRS frames, newline-framed JSON.
+
+        Same shape as `/listen/segments`: one JSON object per line, plus keep-alives
+        so a quiet channel does not look like a dead socket. A quiet channel is the
+        NORMAL case here — a packet frequency can go minutes between frames — which is
+        why the keep-alive matters more on this route than on the audio one."""
+        session = TUNER.current()
+        if session is None or session.purpose != PURPOSE_APRS:
+            self._json(409, {"detail": "the radio is not logging APRS"})
+            return
+        sub = session.subscribe_packets()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    packet = sub.get(timeout=20)
+                except queue.Empty:
+                    self.wfile.write(b'{"keepalive":true}\n')
+                    self.wfile.flush()
+                    continue
+                row = packet.as_dict()
+                row["frequency_hz"] = session.frequency_hz
+                self.wfile.write(json.dumps(row).encode() + b"\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # the reader hung up; entirely normal
+        finally:
+            session.unsubscribe_packets(sub)
 
     def _listen(self, body: dict[str, Any]) -> None:
         try:

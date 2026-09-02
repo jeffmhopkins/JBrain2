@@ -38,8 +38,11 @@ that looks like a dead radio several seconds after the thing that actually cause
 
 from __future__ import annotations
 
+import contextlib
+import os
 import queue
 import shutil
+import socket
 import struct
 import subprocess
 import threading
@@ -47,6 +50,8 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+import packets
 
 MIN_HZ = 24_000_000
 MAX_HZ = 1_766_000_000
@@ -90,6 +95,14 @@ SEGMENT_GAP_CHUNKS = 3
 # The squelch: below this, a segment is noise and is never sent (see Session._cut).
 SEGMENT_SQUELCH = 0.12
 SEGMENT_QUEUE = 8
+
+# Decoded frames waiting for a reader. Small: a packet channel is quiet, and a reader
+# that has stopped reading is gone rather than briefly behind.
+PACKET_QUEUE = 32
+# Direwolf's KISS port, chosen per session from its id so a relaunch cannot land on a
+# port the previous process has not finished releasing.
+KISS_PORT_BASE = 8200
+KISS_PORT_SPAN = 100
 
 # A subscriber that stops reading (a closed tab, a stalled phone) must not wedge the
 # pump or grow without bound. Its queue is small and we DROP for that subscriber
@@ -187,6 +200,10 @@ class Session:
         # Captioning subscribers. Segmenting only runs while at least one is attached,
         # so a session nobody is captioning does no extra work at all.
         self._segments: set[queue.Queue[tuple[float, bytes]]] = set()
+        # Decoded APRS frames, for a purpose=aprs session. Empty on a listening one.
+        self._packets: set[queue.Queue[packets.Packet]] = set()
+        # Per session so two sidecars, or a relaunch, cannot collide on one port.
+        self.kiss_port = KISS_PORT_BASE + (int(self.id[:4], 16) % KISS_PORT_SPAN)
         self._seg: list[bytes] = []
         self._seg_started = time.time()
         self._seg_peak = 0.0
@@ -227,6 +244,9 @@ class Session:
         ]  # fmt: skip
 
     def _start_pipeline(self) -> None:
+        if self.purpose == PURPOSE_APRS:
+            self._start_packet_pipeline()
+            return
         if shutil.which("rtl_fm") is None:
             raise SdrError("rtl_fm is not installed in this image")
         if shutil.which("ffmpeg") is None:
@@ -252,6 +272,143 @@ class Session:
         ]
         for thread in self._threads:
             thread.start()
+
+    def _start_packet_pipeline(self) -> None:
+        """rtl_fm -> direwolf. No encoder, because there is no audio to serve.
+
+        Direwolf does the hard half — bit sync, NRZI, HDLC, the CRC — and hands whole
+        frames over a KISS socket, which `packets.py` unwraps. It reads audio on stdin
+        and must NEVER see EOF: end of input ends its session, so the pipe stays open
+        for the life of the lease exactly as rtl_fm keeps it fed.
+
+        The KISS reader attaches once and stays attached. Measured against a real
+        capture: direwolf forwards frames only to clients ALREADY connected, so a
+        reader that reconnects loses whatever arrived in the gap — a hole in the log
+        rather than something that can be backfilled."""
+        if shutil.which("rtl_fm") is None:
+            raise SdrError("rtl_fm is not installed in this image")
+        if shutil.which("direwolf") is None:
+            raise SdrError("direwolf is not installed in this image")
+        try:
+            self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                self._rtl_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            self._enc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                self._direwolf_cmd(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as exc:
+            self._kill()
+            raise SdrError(f"could not start the packet pipeline: {exc}") from exc
+
+        self._threads = [
+            threading.Thread(target=self._pump_pcm, daemon=True),
+            threading.Thread(target=self._read_packets, daemon=True),
+            threading.Thread(target=self._drain_tuner_log, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _direwolf_cmd(self) -> list[str]:
+        """Direwolf reading raw PCM on stdin at the tuner's rate, KISS on a local port.
+
+        `-t 0` kills the ANSI colour it otherwise writes into the container log, and
+        `-q d` drops the per-packet decode chatter — the frames themselves arrive over
+        KISS, so printing them twice only makes `docker logs` harder to read."""
+        return [
+            "direwolf",
+            "-c",
+            self._direwolf_conf(),
+            "-t",
+            "0",
+            "-q",
+            "d",
+            "-r",
+            str(AUDIO_RATE),
+            "-B",
+            "1200",
+            "-",
+        ]
+
+    def _direwolf_conf(self) -> str:
+        """Write direwolf's config beside the session and return its path.
+
+        A file rather than flags because ADEVICE/KISSPORT have no command-line form.
+        Written per session so a retune or a restart cannot inherit a stale port."""
+        conf = f"""ADEVICE stdin null
+ACHANNELS 1
+CHANNEL 0
+MODEM 1200
+AGWPORT 0
+KISSPORT {self.kiss_port}
+"""
+        path = f"/tmp/direwolf-{self.id}.conf"  # noqa: S108 - container-local, per session
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(conf)
+        return path
+
+    def _read_packets(self) -> None:
+        """Hold one KISS connection for the life of the session and fan frames out.
+
+        Retries the connect because direwolf binds its port a moment after launch;
+        after that a drop is not retried in a loop, since reconnecting cannot recover
+        what was missed and a tight loop against a dead process is just noise."""
+        stream = packets.KissStream()
+        sock = None
+        for _ in range(40):
+            if self._stopping:
+                return
+            try:
+                sock = socket.create_connection(("127.0.0.1", self.kiss_port), timeout=2)
+                break
+            except OSError:
+                time.sleep(0.25)
+        if sock is None:
+            print(f"[direwolf] no KISS connection on {self.kiss_port}", flush=True)  # noqa: T201
+            return
+        try:
+            sock.settimeout(1.0)
+            while not self._stopping:
+                try:
+                    chunk = sock.recv(4096)
+                except TimeoutError:
+                    continue
+                if not chunk:
+                    return
+                for packet in stream.feed(chunk):
+                    self._publish_packet(packet)
+        except OSError:
+            return
+        finally:
+            sock.close()
+
+    def _publish_packet(self, packet: packets.Packet) -> None:
+        """Hand one decoded frame to every attached reader, dropping for a slow one.
+
+        Same backpressure rule as the audio subscribers: a reader that stopped reading
+        must not wedge the decoder for everyone else."""
+        with self._lock:
+            queues = list(self._packets)
+        for queue_ in queues:
+            try:
+                queue_.put_nowait(packet)
+            except queue.Full:
+                try:
+                    queue_.get_nowait()
+                except queue.Empty:
+                    pass
+
+    def subscribe_packets(self) -> queue.Queue[packets.Packet]:
+        sub: queue.Queue[packets.Packet] = queue.Queue(maxsize=PACKET_QUEUE)
+        with self._lock:
+            self._packets.add(sub)
+        return sub
+
+    def unsubscribe_packets(self, sub: queue.Queue[packets.Packet]) -> None:
+        with self._lock:
+            self._packets.discard(sub)
 
     def _drain_tuner_log(self) -> None:
         """Read rtl_fm's stderr, forever, into the container log.
@@ -420,6 +577,10 @@ class Session:
             except (OSError, subprocess.TimeoutExpired):
                 pass
         self._rtl = self._enc = None
+        # The per-session direwolf config would otherwise accumulate in /tmp for the
+        # life of the container, one file per lease taken.
+        with contextlib.suppress(OSError):
+            os.unlink(f"/tmp/direwolf-{self.id}.conf")  # noqa: S108 - written by this session
 
     # ---- public surface -------------------------------------------------------
 
