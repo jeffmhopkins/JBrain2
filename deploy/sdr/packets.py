@@ -30,10 +30,15 @@ forge trivially (docs/plans/APRS_CONTROL_PLAN.md, the two trust tiers).
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
 # KISS framing (the protocol is tiny and has no library worth the dependency).
+# An AX.25 frame maxes out near 330 bytes; this is generous headroom for one plus its
+# escaping, and the ceiling on a partial frame the deframer will hold.
+MAX_BUFFER = 4096
+
 FEND = 0xC0
 FESC = 0xDB
 TFEND = 0xDC
@@ -50,6 +55,8 @@ _LAST_ADDR_BIT = 0x01
 _REPEATED_BIT = 0x80
 # Source, destination, and at most 8 digipeaters.
 _MAX_ADDRS = 10
+# What AX.25 v2.2 permits in an address field. Anything else is a crafted frame.
+_ADDR_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,9 +68,14 @@ class Packet:
     path: list[str]
     info: str
     raw: str
+    # When the frame was DECODED, not when a reader got round to storing it. A queue
+    # backlog or a slow consumer would otherwise put insert time in the log, and "when
+    # was this heard" is the one question a heard log has to answer.
+    heard_at: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "heard_at": self.heard_at,
             "source": self.source,
             "destination": self.destination,
             "path": self.path,
@@ -90,12 +102,24 @@ def unescape(payload: bytes) -> bytes:
     return bytes(out)
 
 
-def _address(chunk: bytes) -> tuple[str, bool, bool]:
+def _address(chunk: bytes) -> tuple[str, bool, bool] | None:
     """One AX.25 address: callsign-SSID, whether the chain ends, whether it repeated.
 
     Callsign characters are shifted left one bit so the low bit can carry the
-    end-of-chain flag, which is why every byte is masked back down before use."""
-    call = "".join(chr((b >> 1) & 0x7F) for b in chunk[:6]).strip()
+    end-of-chain flag, which is why every byte is masked back down before use.
+
+    The character set is ENFORCED, not assumed. AX.25 v2.2 allows only upper-case
+    alphanumerics and space in an address, and a frame carrying anything else is
+    crafted rather than merely odd — anyone with a TNC can transmit one with a valid
+    CRC. Letting it through put control bytes into the heard log and the PWA, and a
+    NUL into a Postgres `text` column, which cannot hold U+0000 at all: one crafted
+    frame would have made the insert raise on receipt."""
+    call = "".join(chr((b >> 1) & 0x7F) for b in chunk[:6])
+    if any(c not in _ADDR_CHARS for c in call):
+        return None
+    call = call.rstrip()
+    if not call:
+        return None
     ssid_byte = chunk[6]
     ssid = (ssid_byte >> 1) & 0x0F
     name = f"{call}-{ssid}" if ssid else call
@@ -114,14 +138,18 @@ def parse_ax25(frame: bytes) -> Packet | None:
     at = 0
     while at + _ADDR_LEN <= len(frame) and len(addrs) < _MAX_ADDRS:
         addr = _address(frame[at : at + _ADDR_LEN])
+        if addr is None:
+            return None  # an address that is not one; the whole frame is suspect
         addrs.append(addr)
         at += _ADDR_LEN
         if addr[1]:  # end-of-chain bit
             break
     else:
         return None
-    if len(addrs) < 2 or not addrs[-1][1]:
-        return None  # never found the end of the address chain
+    # Only `< 2` is reachable: the loop either breaks on the end-of-chain bit or falls
+    # into its `else` and returns, so the last address always has that bit set.
+    if len(addrs) < 2:
+        return None  # a frame with no source is not attributable to anyone
     if at + 2 > len(frame):
         return None
     if frame[at] != _CONTROL_UI or frame[at + 1] != _PID_NO_L3:
@@ -138,6 +166,7 @@ def parse_ax25(frame: bytes) -> Packet | None:
         path=path,
         info=info,
         raw=frame.hex(),
+        heard_at=time.time(),
     )
 
 
@@ -167,6 +196,12 @@ class KissStream:
     def feed(self, chunk: bytes) -> list[Packet]:
         """Append bytes; return whatever completed. Never raises."""
         self._buf.extend(chunk)
+        if len(self._buf) > MAX_BUFFER:
+            # An opening FEND whose closing FEND never arrives — a truncated stream, or
+            # a sender that simply stops — would otherwise accumulate for ever. An AX.25
+            # frame tops out near 330 bytes, so anything past the cap is not a frame in
+            # progress and the partial is not worth keeping.
+            del self._buf[: len(self._buf) - MAX_BUFFER]
         out: list[Packet] = []
         while True:
             start = self._buf.find(FEND)
@@ -180,7 +215,11 @@ class KissStream:
                 del self._buf[:start]
                 return out
             payload = bytes(self._buf[start + 1 : end])
-            del self._buf[: end + 1]
+            # Keep the closing delimiter: `FEND a FEND b FEND` is legal KISS, and
+            # consuming the shared one left `b` with no opening FEND, silently dropping
+            # every second frame. Direwolf 1.7 sends both, but nothing here should
+            # depend on that.
+            del self._buf[:end]
             if not payload:
                 continue  # back-to-back FENDs are padding, which is legal
             packet = parse_kiss(payload)

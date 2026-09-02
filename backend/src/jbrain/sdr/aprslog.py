@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import httpx
@@ -91,8 +92,9 @@ class AprsLog:
                 await s.execute(
                     text(
                         "INSERT INTO app.aprs_packets"
-                        " (frequency_hz, source, destination, path, info, raw)"
-                        " VALUES (:hz, :src, :dst, :path, :info, :raw)"
+                        " (heard_at, frequency_hz, source, destination, path, info, raw)"
+                        " VALUES (to_timestamp(:heard_at), :hz, :src, :dst,"
+                        " :path, :info, :raw)"
                     ),
                     row,
                 )
@@ -126,7 +128,16 @@ def _parse(line: str) -> dict[str, Any] | None:
         # hostile frame stop the log until the session was restarted.
         return None
     path = payload.get("path")
+    try:
+        heard_at = float(payload.get("heard_at") or 0.0)
+    except (TypeError, ValueError):
+        heard_at = 0.0
+    if heard_at <= 0:
+        # A sidecar too old to stamp the frame, or a crafted one. Falling back to now is
+        # honest — it is when we learned of it — and far better than storing 1970.
+        heard_at = time.time()
     return {
+        "heard_at": heard_at,
         "hz": hz,
         "src": source[:16],
         "dst": str(payload.get("destination") or "")[:16],

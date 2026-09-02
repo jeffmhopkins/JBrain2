@@ -299,8 +299,14 @@ class Handler(BaseHTTPRequestHandler):
         NORMAL case here — a packet frequency can go minutes between frames — which is
         why the keep-alive matters more on this route than on the audio one."""
         session = TUNER.current()
-        if session is None or session.purpose != PURPOSE_APRS:
-            self._json(409, {"detail": "the radio is not logging APRS"})
+        if session is None:
+            self._json(409, {"detail": "the radio is idle — nothing is logging APRS"})
+            return
+        if session.purpose != PURPOSE_APRS:
+            # Name the holder, for the reason P0 exists: "not logging APRS" is true of
+            # an idle radio and of one busy listening, and those need opposite answers.
+            held = PURPOSE_LABEL.get(session.purpose, "in use")
+            self._json(409, {"detail": f"the radio is {held}, not logging APRS"})
             return
         sub = session.subscribe_packets()
         self.send_response(200)
@@ -315,6 +321,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b'{"keepalive":true}\n')
                     self.wfile.flush()
                     continue
+                if packet is None:
+                    return  # the session ended; the stream ends with it
                 row = packet.as_dict()
                 row["frequency_hz"] = session.frequency_hz
                 self.wfile.write(json.dumps(row).encode() + b"\n")

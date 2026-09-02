@@ -25,13 +25,16 @@ _ROW = {
     "info": "GATE 7K2M9",
     "raw": "deadbeef",
     "frequency_hz": 144_390_000,
+    "heard_at": 1_760_000_000.5,
 }
 
 
 def test_a_decoded_frame_becomes_a_row() -> None:
     row = _parse(json.dumps(_ROW))
 
-    assert row == {
+    assert row is not None
+    assert row["heard_at"] == 1_760_000_000.5
+    assert {k: v for k, v in row.items() if k != "heard_at"} == {
         "hz": 144_390_000,
         "src": "KE8XYZ-9",
         "dst": "APDW17",
@@ -55,6 +58,20 @@ def test_a_frame_with_no_sender_is_not_a_row() -> None:
     # A packet nobody can be attributed to is not evidence of anything, and the command
     # path reads this table.
     assert _parse(json.dumps({**_ROW, "source": ""})) is None
+
+
+def test_a_frame_with_no_decode_time_is_stamped_now_not_1970() -> None:
+    # A sidecar too old to stamp the frame, or a crafted one. `heard_at` is what the log
+    # is FOR, and an epoch-zero row is worse than an approximate one.
+    row = _parse(json.dumps({**_ROW, "heard_at": 0}))
+
+    assert row is not None and row["heard_at"] > 1_700_000_000
+
+
+def test_a_hostile_decode_time_does_not_end_the_drain() -> None:
+    row = _parse(json.dumps({**_ROW, "heard_at": "yesterday"}))
+
+    assert row is not None and row["heard_at"] > 1_700_000_000
 
 
 def test_a_hostile_info_field_cannot_write_an_unbounded_row() -> None:

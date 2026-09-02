@@ -133,6 +133,11 @@ def validate(frequency_hz: int, mode: str) -> str:
     return key
 
 
+# Narrowband FM is the only thing 1200-baud AFSK arrives on. Accepting `usb` or `wbfm`
+# for a logging session would start a radio that reports healthy and can never decode.
+APRS_MODES = ("fm", "nfm")
+
+
 def validate_purpose(purpose: str) -> str:
     """Bound the job a session may hold the tuner for.
 
@@ -193,6 +198,11 @@ class Session:
         self.started_at = time.time()
         self.gain = gain
         self.purpose = validate_purpose(purpose)
+        if self.purpose == PURPOSE_APRS and mode.lower() not in APRS_MODES:
+            raise SdrError(
+                f"APRS is 1200-baud AFSK on narrowband FM; {mode!r} cannot decode it "
+                f"(want one of {sorted(APRS_MODES)})"
+            )
         self.frequency_hz = frequency_hz
         self.mode = validate(frequency_hz, mode)
         self.peak = 0.0
@@ -201,7 +211,7 @@ class Session:
         # so a session nobody is captioning does no extra work at all.
         self._segments: set[queue.Queue[tuple[float, bytes]]] = set()
         # Decoded APRS frames, for a purpose=aprs session. Empty on a listening one.
-        self._packets: set[queue.Queue[packets.Packet]] = set()
+        self._packets: set[queue.Queue[packets.Packet | None]] = set()
         # Per session so two sidecars, or a relaunch, cannot collide on one port.
         self.kiss_port = KISS_PORT_BASE + (int(self.id[:4], 16) % KISS_PORT_SPAN)
         self._seg: list[bytes] = []
@@ -307,6 +317,11 @@ class Session:
             threading.Thread(target=self._pump_pcm, daemon=True),
             threading.Thread(target=self._read_packets, daemon=True),
             threading.Thread(target=self._drain_tuner_log, daemon=True),
+            # Direwolf's own stdout MUST be read. It writes ~64 lines at startup and
+            # more per packet, and an unread pipe blocks its writer at 64 KB — which
+            # would stop it decoding, for ever, with the session still reporting
+            # healthy. Exactly the hazard _drain_tuner_log documents for rtl_fm.
+            threading.Thread(target=self._drain_decoder_log, daemon=True),
         ]
         for thread in self._threads:
             thread.start()
@@ -314,9 +329,10 @@ class Session:
     def _direwolf_cmd(self) -> list[str]:
         """Direwolf reading raw PCM on stdin at the tuner's rate, KISS on a local port.
 
-        `-t 0` kills the ANSI colour it otherwise writes into the container log, and
-        `-q d` drops the per-packet decode chatter — the frames themselves arrive over
-        KISS, so printing them twice only makes `docker logs` harder to read."""
+        `-t 0` kills the ANSI colour it otherwise writes into the container log. `-q hd`
+        trims the heard line and some decode chatter, but MEASURED on direwolf 1.7 it
+        only takes 67 lines to 64 for three packets — it does not make the output small
+        and it is not why the pipe is safe. `_drain_decoder_log` is why."""
         return [
             "direwolf",
             "-c",
@@ -324,7 +340,7 @@ class Session:
             "-t",
             "0",
             "-q",
-            "d",
+            "hd",
             "-r",
             str(AUDIO_RATE),
             "-B",
@@ -366,7 +382,15 @@ KISSPORT {self.kiss_port}
             except OSError:
                 time.sleep(0.25)
         if sock is None:
-            print(f"[direwolf] no KISS connection on {self.kiss_port}", flush=True)  # noqa: T201
+            # Reporting healthy while decoding nothing is the failure mode this whole
+            # wave is meant not to have. Killing the pipeline makes `alive` false, so
+            # the tuner reaps the session and the radio reads as idle — visibly wrong
+            # rather than invisibly deaf.
+            print(  # noqa: T201
+                f"[direwolf] no KISS connection on {self.kiss_port}; ending the session",
+                flush=True,
+            )
+            self._kill()
             return
         try:
             sock.settimeout(1.0)
@@ -384,6 +408,24 @@ KISSPORT {self.kiss_port}
         finally:
             sock.close()
 
+    def _drain_decoder_log(self) -> None:
+        """Read direwolf's stdout forever, into the container log.
+
+        Not optional and not for diagnostics: an unread pipe blocks its writer at
+        64 KB. Direwolf writes ~64 lines before it decodes anything and more per packet,
+        so an undrained pipe stops it decoding permanently while the session goes on
+        reporting healthy — the same failure `_drain_tuner_log` exists to prevent."""
+        enc = self._enc
+        if enc is None or enc.stdout is None:
+            return
+        try:
+            for line in enc.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    print(f"[direwolf] {text}", flush=True)  # noqa: T201
+        except (ValueError, OSError):
+            pass  # the process went away; teardown handles it
+
     def _publish_packet(self, packet: packets.Packet) -> None:
         """Hand one decoded frame to every attached reader, dropping for a slow one.
 
@@ -392,21 +434,26 @@ KISSPORT {self.kiss_port}
         with self._lock:
             queues = list(self._packets)
         for queue_ in queues:
-            try:
-                queue_.put_nowait(packet)
-            except queue.Full:
+            # Make room and RETRY. Catching Full and dropping the oldest without
+            # retrying discards the packet being published — measured, that lost every
+            # other frame while a reader lagged. This is a LOG: late still counts.
+            while True:
                 try:
-                    queue_.get_nowait()
-                except queue.Empty:
-                    pass
+                    queue_.put_nowait(packet)
+                    break
+                except queue.Full:
+                    try:
+                        queue_.get_nowait()
+                    except queue.Empty:
+                        break
 
-    def subscribe_packets(self) -> queue.Queue[packets.Packet]:
-        sub: queue.Queue[packets.Packet] = queue.Queue(maxsize=PACKET_QUEUE)
+    def subscribe_packets(self) -> queue.Queue[packets.Packet | None]:
+        sub: queue.Queue[packets.Packet | None] = queue.Queue(maxsize=PACKET_QUEUE)
         with self._lock:
             self._packets.add(sub)
         return sub
 
-    def unsubscribe_packets(self, sub: queue.Queue[packets.Packet]) -> None:
+    def unsubscribe_packets(self, sub: queue.Queue[packets.Packet | None]) -> None:
         with self._lock:
             self._packets.discard(sub)
 
@@ -620,7 +667,18 @@ KISSPORT {self.kiss_port}
         with self._lock:
             subs = list(self._subs)
             self._subs.clear()
+            packet_subs = list(self._packets)
+            self._packets.clear()
         for sub in subs:
+            try:
+                sub.put_nowait(None)
+            except queue.Full:
+                pass
+        # Packet readers need the same end-of-stream sentinel the audio ones get.
+        # Without it a released session left every reader blocked for ever, still
+        # emitting keep-alives the api reads as "logging is healthy" — and pinning the
+        # dead Session and a server thread apiece.
+        for sub in packet_subs:
             try:
                 sub.put_nowait(None)
             except queue.Full:
@@ -628,7 +686,16 @@ KISSPORT {self.kiss_port}
 
     @property
     def alive(self) -> bool:
-        return self._rtl is not None and self._rtl.poll() is None
+        """Whether this session can still do its job.
+
+        BOTH processes, not just the tuner. A logging session whose direwolf died —
+        crashed, failed to bind, or wedged — was still reporting a healthy `aprs` lease
+        while decoding nothing, and the owner's only clue would have been a log that
+        stopped growing. `current()` reaps a dead session, so this is what turns a
+        silent death into an idle radio the owner can see."""
+        if self._rtl is None or self._rtl.poll() is not None:
+            return False
+        return self._enc is None or self._enc.poll() is None
 
     def info(self) -> SessionInfo:
         with self._lock:

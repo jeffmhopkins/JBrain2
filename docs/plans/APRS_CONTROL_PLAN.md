@@ -212,6 +212,27 @@ not have: direwolf forwards frames only to KISS clients ALREADY attached, so a l
 reconnecting reader gets a hole rather than history; and EOF on its audio stdin ends its
 session, so the pipe is held open for the life of the lease.
 
+An independent review mutation-tested this wave and found **13 of 26 mutants surviving**
+— including the one that defines it, an `aprs` session running the audio pipeline. What
+that turned up, and what now defends it:
+
+- Direwolf's stdout was never drained, so at 64 KB it would have **blocked and stopped
+  decoding for ever** while the session reported healthy — the same hazard
+  `_drain_tuner_log` was written for, reintroduced 150 lines later. (`-q d` was also
+  claimed to silence it: measured, 67 lines against 64 for `-q hd`. It does not.)
+- `_publish_packet` dropped the NEWEST frame, losing **every other packet** while a
+  reader lagged. This is a log; late still counts.
+- A released session left every `/listen/packets` reader blocked for ever, emitting
+  keep-alives the api reads as healthy.
+- `alive` did not know direwolf existed, so a dead decoder kept a lease claiming to log.
+- A failed KISS connect was a silent permanent no-op that still reported healthy.
+- Addresses were shifted but never validated, so a CRC-valid crafted frame could carry
+  NUL into a Postgres `text` column — which cannot hold U+0000, so the insert would
+  raise on receipt.
+- `FEND a FEND b FEND` is legal KISS and dropped every second frame; an unclosed frame
+  grew the deframer's buffer without bound.
+- A logging session accepted `usb`/`wbfm`, which can never carry 1200-baud AFSK.
+
 Still outstanding for the wave's real exit: the on-box run against live traffic.
 
 ### P2 · Position as a third location transport
