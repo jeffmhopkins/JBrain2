@@ -118,6 +118,57 @@ $30. USB passthrough is already `/dev/bus/usb`, so the container sees both.
 **Exit:** two dongles enumerated and independently tunable, PWA-visible, with the
 existing tuner unaffected.
 
+### P1a · Turning logging on and off — a tool, and an action
+
+Logging is a lease (P0), so starting and stopping it is the same kind of act
+`sdr_listen` already performs. Exposing that lets a **scheduled task** run the window —
+"weekdays 06:00, turn APRS logging on; 09:00, turn it off" — using the task scheduler
+that already exists, instead of a bespoke arming scheduler for the receiver.
+
+**A separate tool, not a flag on `sdr_listen`.** Extending `sdr_listen` was considered
+and is the smaller diff, but its description is entirely about *hearing* — "start
+listening", "hear the audio", "you cannot hear it" — and a mode that produces no audio
+contradicts the text the model selects on. So:
+
+```
+sdr_aprs_logging(enabled: bool, frequency_mhz?: number)   # one concept, both directions
+sdr_listen(frequency_mhz, mode)                           # unchanged
+sdr_stop()                                                # unchanged: release what is held
+```
+
+`enabled` as a boolean rather than start/stop tools keeps a scheduled task to one call
+either way, and makes it **idempotent** — "turn it on" when it is already on must be a
+no-op that succeeds, or a retry becomes a failure. It returns the **resulting state**,
+never "ok", so a model cannot report success it did not achieve. Turning it off stops
+the *APRS* session specifically; it must never fall through to releasing a listening
+session the owner started, which matters the moment there are two dongles.
+
+`web` permission and jerv's closed allowlist, exactly as the existing pair.
+
+**The trap: a clock-driven hardware toggle should not depend on a model.** An agent task
+can decline, mis-call, fail its turn, or report a success it never performed — and the
+cost lands on the one contended tuner. It leaves logging on all day so nothing can
+listen, or never turns it on so the gate command is deaf at 06:00, which is precisely
+when it was wanted. So the scheduled path gets a **registered action** as well
+(`ActionSpec`, deterministic, E3), which the Automations scheduler fires directly:
+
+| Path | Use | Why |
+|---|---|---|
+| `sdr_aprs_logging` tool | conversational — "turn APRS logging on" | jerv needs to do it when asked |
+| `sdr_aprs_set` action | the timed window | a clock must not route through a model to flip a switch |
+
+The owner-visible truth stays the backstop either way: the APRS tab reads last decode
+and rate, so a toggle that silently did not happen is visible rather than assumed.
+
+**This is a resource control, not a security control.** Scheduling logging frees the
+tuner; it does not narrow *which* commands are live. While logging runs, every armed
+task is armed. Per-task arming windows (P4) remain the thing that says "this command
+exists only on weekday mornings", and one does not replace the other — dropping arming
+in favour of a logging schedule would widen the command surface, not narrow it.
+
+**Sequencing:** this lands *with* P1, never before it. A toggle for a capability that
+does not yet exist toggles nothing.
+
 ### P1 · Decode and log
 
 Direwolf (the reference soft-TNC — bit sync, NRZI, HDLC, CRC) joins `rtl-sdr` and
