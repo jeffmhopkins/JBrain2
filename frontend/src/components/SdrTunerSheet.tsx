@@ -51,6 +51,13 @@ interface Props {
   onClose: () => void;
 }
 
+interface ControlsProps {
+  listening: SdrListening;
+  /** Called after Release succeeds. The sheet dismisses itself; the Radio screen's
+   * Tuner tab has nothing to dismiss and simply falls back to its idle state. */
+  onReleased: () => void;
+}
+
 function mhz(hz: number): string {
   return (hz / 1_000_000).toFixed(3);
 }
@@ -61,6 +68,19 @@ function elapsed(seconds: number): string {
 }
 
 export function SdrTunerSheet({ listening, onClose }: Props) {
+  return (
+    <Sheet title="Tuned station" onClose={onClose}>
+      <SdrTunerControls listening={listening} onReleased={onClose} />
+    </Sheet>
+  );
+}
+
+/** The transport itself — readout, steppers, mode, signal, play/pause, captions,
+ * Release. Extracted from the sheet so the Radio screen mounts the real controls
+ * instead of a second, read-only rendering of the same lease: the tab used to show
+ * frequency and mode as text while the only way to actually drive the radio was the
+ * composer's icon. One implementation, two mounts. */
+export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Record is arm-then-confirm per DESIGN.md's destructive-action doctrine; the
@@ -144,7 +164,7 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
   };
 
   return (
-    <Sheet title="Tuned station" onClose={onClose}>
+    <>
       <p className="sdr-note">
         The radio has one tuner, so this session holds it until you release it.
       </p>
@@ -355,13 +375,13 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
           onClick={() =>
             void act(async () => {
               await api.sdrStop(listening.session_id);
-              onClose();
+              onReleased();
             })
           }
         >
           Release
         </button>
       </div>
-    </Sheet>
+    </>
   );
 }
