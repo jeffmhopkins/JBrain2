@@ -87,7 +87,7 @@ Frequency choice (commands want a private simplex channel; position wants the
 digipeated network), sender hardware, and packet retention. Those are the plan's §7.
 
 
-## Round 2 — the command task · `b-trigger-editor.html` · **awaiting decision**
+## Round 2 — the command task · `b-trigger-editor.html` · **decided: A**
 
 Reframed 2026-09-02 before any decision, because the scope changed under it. The first
 pass asked how to edit a *general* APRS trigger — any event, any pipeline from the
@@ -107,6 +107,12 @@ What is left is one structural decision:
 
 > **Is "on command" a fourth trigger kind of the task system, or a parallel task
 > system living in the Radio tab?**
+
+> **Decided (owner, 2026-09-02): A — a fourth trigger kind.** `ScheduleKind` gains
+> `on_command`. One list, one editor, one runs history, one table; the Radio → APRS tab
+> shows a read-only summary linking into Tasks. The parallel collection is rejected for
+> the reason the round raised: it would be a second place tasks live, and the third time
+> this plan faced that shape — the first two went the other way.
 
 | | Shape | Costs |
 |---|---|---|
@@ -144,7 +150,7 @@ scheduled tasks together while B and C show command only, the scope warning appe
 once a firewalled domain is selected, no console errors, no horizontal scroll.
 
 
-## Round 3 — one radio, two jobs · `c-single-dongle.html` · **awaiting decision**
+## Round 3 — one radio, two jobs · `c-single-dongle.html` · **decided: A**
 
 There will not always be a dedicated APRS dongle. With one, APRS logging has to be
 something the owner **enables**, which **reserves the tuner until released**.
@@ -182,6 +188,12 @@ it never throws it.
 | **A** | **Switch in the APRS tab** — each job's control where that job lives | Two controls for one radio; "what is it doing" is read off whichever tab you are on |
 | **B** | **One radio-wide mode** — Idle / Listen / Log APRS in the header | A mode selector above tabs is two navigation systems stacked, and implies tabs are views of a mode when Recordings is not |
 | **C** | **Claim on use** — the tab you open is the job, with a handoff confirm | Navigation with side effects; a dialog every time you glance at APRS; no resting answer to "is logging on?" |
+
+> **Decided (owner, 2026-09-02): A — a switch in the APRS tab.** "Enable APRS logging"
+> lives in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the
+> handoff back. It also survives the second dongle unchanged — the contention simply
+> stops happening — where B would have had to grow a per-device selector and C's
+> claim-on-use has no meaning once there are two radios to claim.
 
 B's argument is that while there is one dongle the radio genuinely does one job, so one
 selector is the truest model — and it degrades well, becoming per-device rather than

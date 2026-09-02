@@ -101,7 +101,10 @@ Two consequences to build deliberately rather than discover:
   is armed is **rejected**: silently seizing the tuner is how a radio starts to feel
   possessed. The warning offers the switch; it never throws it.
 
-GUI gate: `../mocks/aprs/c-single-dongle.html` (awaiting decision).
+**GUI gate closed 2026-09-02: a switch in the APRS tab.** "Enable APRS logging" lives
+in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the handoff
+back. Binding spec `../mocks/aprs/c-single-dongle.html`. It also survives P0b unchanged —
+the contention stops happening rather than the control changing.
 
 ### P0b · Second tuner, addressable (later — it removes the contention, it is not a prerequisite)
 
@@ -260,9 +263,11 @@ the cap**. A radio-triggered task scoped to health, finance or location reaches 
 firewalled domain on a command sent over the air, and the editor is where that gets
 said out loud.
 
-The open question is now structural rather than visual, and round 2 asks it:
-`on_command` as a fourth `ScheduleKind`, a parallel task collection in the Radio tab, or
-one collection behind two doors. See `../mocks/aprs/README.md`.
+**GUI gate closed 2026-09-02: `on_command` becomes a fourth `ScheduleKind`**, beside
+`on_demand` / `once` / `repeat`. One list, one editor, one runs history, one table —
+`Draft`, the row, the runs log and the push are untouched, and what is new is a trigger
+kind plus the verify path behind it. The Radio → APRS tab shows a read-only summary that
+links into Tasks. A parallel collection was rejected as a second place tasks live.
 
 #### Add and edit — a second round, because automations cannot be created
 
