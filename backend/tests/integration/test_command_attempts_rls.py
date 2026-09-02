@@ -133,10 +133,12 @@ async def test_deleting_a_task_keeps_the_attempts_made_against_it(
                 text(
                     "INSERT INTO app.tasks (principal_id, name, prompt, agent, schedule_kind,"
                     " command_word, command_key)"
-                    " VALUES (:pid, 'Gate', 'open it', 'jerv', 'on_command', 'GATE', 'AAAA')"
+                    " VALUES (:pid, 'Gate', 'open it', 'jerv', 'on_command', 'GATE', :key)"
                     " RETURNING id"
                 ),
-                {"pid": principal},
+                # A real-length key: the CHECK requires one, because an empty or short
+                # key is not a broken credential but a publicly computable one.
+                {"pid": principal, "key": "A" * 52},
             )
         ).scalar()
         await s.execute(
