@@ -27,7 +27,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.notify import NotifyBus
 from jbrain.sdr.command import MAX_FAILURES, code_for, key_to_text, new_key
-from jbrain.sdr.gate import CommandGate, Heard
+from jbrain.sdr.gate import Attempt, CommandGate, Heard
 from jbrain.tasks.repo import TaskInfo, TaskRepo, TaskRunRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -155,6 +155,15 @@ def _gate(maker: async_sessionmaker) -> tuple[CommandGate, _Runner]:
     return gate, runner
 
 
+async def _offer(gate: CommandGate, frame: Heard) -> Attempt:
+    """`offer` answers None for a frame that is not a command — most of a packet
+    channel. Every test below transmits a real one, so a None here is a broken test, not
+    a result; the tests that check the not-a-command path call `offer` directly."""
+    attempt = await gate.offer(frame)
+    assert attempt is not None
+    return attempt
+
+
 async def _attempts(maker: async_sessionmaker) -> list[dict[str, Any]]:
     async with scoped_session(maker, OWNER) as s:
         rows = (
@@ -188,7 +197,7 @@ async def test_a_command_from_the_truck_fires_the_task(maker: async_sessionmaker
     task_id = await _command(maker)
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))
 
     assert attempt is not None and attempt.accepted
     assert runner.fired == [(task_id, "command")]
@@ -199,8 +208,8 @@ async def test_a_replay_does_nothing(maker: async_sessionmaker) -> None:
     gate, runner = _gate(maker)
     frame = _heard(f"GATE {code_for(KEY, 0)}")
 
-    first = await gate.offer(frame)
-    second = await gate.offer(frame)
+    first = await _offer(gate, frame)
+    second = await _offer(gate, frame)
 
     # Everyone in range heard that code. Hearing it again is not authorisation.
     assert first is not None and first.accepted
@@ -213,7 +222,7 @@ async def test_a_forged_callsign_does_nothing(maker: async_sessionmaker) -> None
     await _command(maker, callsign="KE8XYZ")
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}", source="N0BODY-1"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}", source="N0BODY-1"))
 
     # The code was RIGHT — this is the filter, and it is only a filter, doing its job
     # against someone who does not have the key anyway.
@@ -226,7 +235,7 @@ async def test_the_ssid_is_not_part_of_the_callsign_filter(maker: async_sessionm
     gate, runner = _gate(maker)
 
     # The truck is -9 and the HT is -7; an owner who typed the bare call meant both.
-    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}", source="KE8XYZ-7"))).accepted
+    assert (await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}", source="KE8XYZ-7"))).accepted
     assert runner.fired == [(task_id, "command")]
 
 
@@ -234,7 +243,7 @@ async def test_an_ssid_the_owner_typed_is_honoured_exactly(maker: async_sessionm
     await _command(maker, callsign="KE8XYZ-9")
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}", source="KE8XYZ-7"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}", source="KE8XYZ-7"))
 
     assert not attempt.accepted
     assert runner.fired == []
@@ -254,7 +263,7 @@ async def test_the_lockout_stops_accepting_even_the_right_code(maker: async_sess
     task_id = await _command(maker, failures=MAX_FAILURES)
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))
 
     # Deliberate: past the lockout the box stops deciding and waits for the owner. A
     # lockout that a valid code could clear would be worn down by whoever caused it.
@@ -278,7 +287,7 @@ async def test_a_disabled_command_is_off_not_merely_quiet(maker: async_sessionma
     task_id = await _command(maker, enabled=False)
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))
 
     assert not attempt.accepted
     assert runner.fired == []
@@ -292,7 +301,7 @@ async def test_a_command_outside_its_window_is_refused_not_queued(
     task_id = await _command(maker, **{"from": "07:00", "until": "09:00"})
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}", when=WHEN))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}", when=WHEN))
 
     assert not attempt.accepted and "window" in attempt.reason
     assert runner.fired == []
@@ -305,7 +314,7 @@ async def test_inside_its_window_the_same_command_works(maker: async_sessionmake
     task_id = await _command(maker, **{"from": "07:00", "until": "13:00"})
     gate, runner = _gate(maker)
 
-    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}", when=WHEN))).accepted
+    assert (await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}", when=WHEN))).accepted
     assert runner.fired == [(task_id, "command")]
 
 
@@ -346,7 +355,7 @@ async def test_a_sender_ahead_of_the_box_resyncs_rather_than_wedging(
     gate, _ = _gate(maker)
 
     # Three transmissions that never decoded: the truck is at 3, the box still at 0.
-    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 3)}"))).accepted
+    assert (await _offer(gate, _heard(f"GATE {code_for(KEY, 3)}"))).accepted
     assert (await _counters(maker, task_id))[0] == 4
 
 
@@ -354,7 +363,7 @@ async def test_a_code_from_behind_the_counter_is_dead(maker: async_sessionmaker)
     task_id = await _command(maker, counter=5)
     gate, runner = _gate(maker)
 
-    assert not (await gate.offer(_heard(f"GATE {code_for(KEY, 4)}"))).accepted
+    assert not (await _offer(gate, _heard(f"GATE {code_for(KEY, 4)}"))).accepted
     assert runner.fired == []
     assert (await _counters(maker, task_id))[0] == 5
 
@@ -371,7 +380,7 @@ async def test_an_unreadable_key_refuses_rather_than_crashing(maker: async_sessi
     await _command(maker, key="!" * 40)
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))
 
     # A bad key is the owner's mistake to fix, not a reason for the drain loop to die.
     assert not attempt.accepted
@@ -397,7 +406,7 @@ async def test_a_verified_command_actually_WRITES_a_run(maker: async_sessionmake
     await _command(maker)
     gate, runner = _gate(maker)
 
-    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+    attempt = await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))
 
     assert attempt.accepted
     assert runner.fired  # the call happened
@@ -423,7 +432,7 @@ async def test_a_digipeated_command_does_not_lock_the_owner_out(
     counter, failures = await _counters(maker, task_id)
     assert (counter, failures) == (1, 0)  # and burned NO lockout budget
     # The next genuine command still works, which is the property that actually matters.
-    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 1)}"))).accepted
+    assert (await _offer(gate, _heard(f"GATE {code_for(KEY, 1)}"))).accepted
 
 
 async def test_a_repeat_is_still_refused_even_though_it_is_forgiven(
@@ -436,7 +445,7 @@ async def test_a_repeat_is_still_refused_even_though_it_is_forgiven(
     frame = _heard(f"GATE {code_for(KEY, 0)}")
     await gate.offer(frame)
 
-    second = await gate.offer(frame)
+    second = await _offer(gate, frame)
 
     assert not second.accepted and second.reason == "code already used"
     assert runner.fired == [(task_id, "command")]
@@ -452,7 +461,7 @@ async def test_a_wrong_code_STILL_counts_after_all_that(maker: async_sessionmake
         await gate.offer(_heard("GATE AAAAA"))
 
     assert (await _counters(maker, task_id))[1] == 5
-    assert "locked out" in (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))).reason
+    assert "locked out" in (await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))).reason
 
 
 async def test_one_hostile_byte_cannot_erase_the_evidence(maker: async_sessionmaker) -> None:
@@ -528,7 +537,7 @@ async def test_a_one_shot_command_disarms_itself(maker: async_sessionmaker) -> N
     task_id = await _command(maker, once=True)
     gate, runner = _gate(maker)
 
-    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))).accepted
+    assert (await _offer(gate, _heard(f"GATE {code_for(KEY, 0)}"))).accepted
 
     async with scoped_session(maker, OWNER) as s:
         enabled = (
@@ -537,7 +546,7 @@ async def test_a_one_shot_command_disarms_itself(maker: async_sessionmaker) -> N
     assert enabled is False
     # And it stays off: the next code finds a disabled command, which is the outermost
     # gate and refuses before the credential is even consulted.
-    assert not (await gate.offer(_heard(f"GATE {code_for(KEY, 1)}"))).accepted
+    assert not (await _offer(gate, _heard(f"GATE {code_for(KEY, 1)}"))).accepted
     assert runner.fired == [(task_id, "command")]
 
 
