@@ -173,6 +173,21 @@ command does not exist, which shrinks the attack surface to the hours the owner 
 actually use it. `once` means an armed command cannot be re-fired even if the counter
 logic were ever wrong — defence in depth against P4's own credential.
 
+#### Add and edit — a second round, because automations cannot be created
+
+Automations are seeded system config: the Ops screen enables, retimes and runs them, but
+never *creates* one. An APRS trigger is owner-created, which is exactly the capability
+that paradigm lacks — so the split is **list like Automations, edit like Tasks**, and the
+editor takes its own mock round (`../mocks/aprs/b-trigger-editor.html`, awaiting
+decision). Note for whoever builds it: Tasks' editor is a **full-screen layer**
+(`useBackLayer`), not a `Sheet`, while DESIGN.md's paradigm table sends contextual quick
+forms to the bottom sheet — the round decides which.
+
+The editor is also where two invariants stop being prose: it names the **trust tier** of
+the trigger being built (authenticated command vs unauthenticated geofence or message),
+and it shows each action's **permission class**, with `sensitive` visibly unavailable
+rather than silently filtered.
+
 #### The trap: arming must gate at verify time, NOT as a precondition
 
 `ActionSpec.precondition` looks like the seam for this — it is described as the engine

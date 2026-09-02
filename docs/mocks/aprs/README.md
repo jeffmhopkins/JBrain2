@@ -85,3 +85,61 @@ console errors, the arm switch toggles, and the page does not scroll horizontall
 
 Frequency choice (commands want a private simplex channel; position wants the
 digipeated network), sender hardware, and packet retention. Those are the plan's §7.
+
+
+## Round 2 — add and edit a trigger · `b-trigger-editor.html` · **awaiting decision**
+
+Round 1 settled the list. This settles **creating and editing** one, which is a new
+surface and so takes its own round — an editor is not "a chip state or a button on an
+existing card" (`../../reference/DESIGN.md`'s exemption).
+
+### Why this needed a round rather than a decision
+
+The owner asked for it "like tasks … in a new modal", and two established paradigms
+point in opposite directions:
+
+- **Tasks, the thing being copied, is not a modal.** `TasksScreen.Editor` is a
+  **full-screen layer** over the list with a back chevron (`useBackLayer`), which is
+  where DESIGN.md's paradigm table sends *primary tasks*.
+- **DESIGN.md sends "contextual quick forms & actions" to the bottom sheet**, "the
+  workhorse modal on phone" — and a trigger is squarely that, far smaller than a task's
+  prompt + scopes + schedule.
+
+So the round decides the container as much as the form language.
+
+| | Shape | Costs |
+|---|---|---|
+| **A** | **Task-editor layer** — full screen, back chevron, stacked sections | Heaviest container for a four-field object; hides the list you may be copying from |
+| **B** | **Sentence sheet** — the trigger reads as one sentence, every value an inline picker | Least conventional; long values must wrap gracefully |
+| **C** | **Sectioned sheet** — bottom sheet, conventional numbered field groups | Least distinctive; a tall sheet scrolls about as much as a full screen |
+
+B's argument is that the sentence **is** the card headline (`When ‹ev› → run
+‹pipeline›`), so the editor and the row become one object seen twice, with nothing to
+translate between reading and editing. C's numbering is not decoration: what you listen
+for decides which fields and which trust tier apply, so the order is a real dependency
+chain — which is the test for whether numbering earns its place.
+
+### Why add/edit is new at all
+
+Automations are **seeded system config**: the Ops screen can enable, retime and run
+them, but never *create* one. An APRS trigger is owner-created — precisely the
+capability the automations paradigm lacks. Hence the split settled across the two
+rounds: **list like Automations, edit like Tasks.**
+
+### Load-bearing content in the mock
+
+- **The trust tier is shown, not implied.** Switch *Trigger type* between Command and
+  Geofence: a command trigger says it is authenticated by HMAC and counter; a geofence
+  trigger says it is *not*, and that it may start a chat only from a fixed prompt,
+  never from anything heard over the air. The editor is where the owner meets that
+  rule, so it cannot live only in a plan.
+- **The permission-class cap is visible.** Each action carries its class, and
+  `sensitive` renders unavailable rather than being silently filtered out — a cap you
+  cannot see is a cap that surprises you.
+- **Arming is the task schedule spec**, on demand / once / repeat.
+
+### Verified, not assumed
+
+Driven in Chromium: all six shape × trigger-type combinations render, the trust-tier
+panel switches with the type, the `sensitive` action stays unselectable even when the
+click is forced past its disabled state, no console errors, no horizontal scroll.
