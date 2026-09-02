@@ -94,12 +94,14 @@ async def test_a_garbled_header_is_skipped_not_fatal(bad: bytes) -> None:
 def test_the_route_never_frees_the_model_between_segments() -> None:
     """The residency rule, pinned as source because it is invisible at runtime.
 
-    Measured on the box: a transcription costs ~10.7 s whether the clip is 4 s or 11 s
-    — almost all of it loading and unloading the model, with 7 extra seconds of audio
-    adding 0.04 s. The capture route unloads when it finishes, which is right for a
-    one-shot; a captioner doing the same would pay that per segment and fall
-    permanently behind. If an `unload` ever appears in this route, captions are broken
-    in a way no test of the output would show.
+    Measured on the box across 26 consecutive calls with the model resident: ~9.8 s
+    each, whatever the clip holds. That is inference — whisper.cpp pads every clip to a
+    30 s window — and NOT the model loading, as an earlier reading of the same flat
+    number concluded. Unloading would therefore add the load on top of the 9.8 s rather
+    than being most of it. The capture route does unload, which is right for a one-shot;
+    a captioner doing the same falls further behind every segment. If an `unload` ever
+    appears in this route, captions are broken in a way no test of the output would
+    show.
     """
     from pathlib import Path
 

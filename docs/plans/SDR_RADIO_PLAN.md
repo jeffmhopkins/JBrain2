@@ -370,12 +370,21 @@ so a caption shown when it *arrives* lands seconds before the words are heard; t
 client therefore holds each one until `sdrHeardAt()` — the box-clock time of the audio
 at the speaker, anchored on `started_at + elapsed_s` — reaches its start. Against that,
 the api must produce captions in less than those 8.3 s or holding cannot help: read in
-step with whisper, each ~10.7 s call stalled the reader, the sidecar's 8-deep queue
+step with whisper, each ~9.8 s call stalled the reader, the sidecar's 8-deep queue
 filled behind it and the captioner settled *permanently* ~40 s back. So reading runs on
 its own task and whatever has piled up is transcribed as ONE merged clip — free,
 because whisper's cost here is flat in clip length, and unlike keeping only the newest
 it drops no words. What remains is the floor: a caption cannot exist before its segment
-ends, so segment length plus transcription is how far behind the words it can be.
+ends, so segment length plus transcription is how far behind the words it can be — with
+`large-v3-turbo` at ~9.8 s that floor is ~20 s, well past the ear's 8.3 s, so captions
+still trail the speech. Closing the rest needs a deliberately delayed audio path (prime
+each listener with a rolling MP3 backlog so playback starts further back) or a smaller
+model; both are owner decisions and neither is taken here.
+
+The ~9.8 s is INFERENCE, measured across 26 consecutive calls with the model resident.
+An earlier reading of the same flat-in-clip-length number blamed model load/unload; it
+is flat because whisper.cpp pads every clip to a 30 s window. Residency is still right
+— unloading adds the load on top — but for that reason, not the one first written down.
 
 ## 7. Open decisions (deferred, not dropped)
 

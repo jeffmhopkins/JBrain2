@@ -196,13 +196,16 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
     behind the live edge — which the client cannot correct for, because a caption that
     arrives after its audio was heard can only be shown late.
 
-    **The model is deliberately NOT freed between segments.** Measured on this box, a
-    transcription costs ~10.7 s whether the clip is 4 s or 11 s: almost all of it is
-    loading and unloading the model, and 7 extra seconds of audio added 0.04 s. The
-    capture route pays that every call because it unloads when it finishes; a captioner
-    that did the same would fall permanently behind. Holding the model resident is what
-    makes this affordable — and it is also why captions are an explicit toggle rather
-    than always-on, since a resident whisper shares the GPU with the chat model.
+    **The model is deliberately NOT freed between segments.** Measured on this box
+    (26 consecutive calls, model resident throughout): a transcription costs ~9.8 s
+    whatever the clip holds. That is INFERENCE, not model loading — an earlier reading
+    of the same flat number blamed load/unload, and the residency rule was written on
+    that mistake. The rule survives being right for a different reason: unloading would
+    add the load back on top of the 9.8 s, and the capture route pays exactly that
+    because it unloads when it finishes. The cost is flat because whisper.cpp pads every
+    clip to a 30 s window, which is also what makes merging a backlog free (`_Backlog`).
+    It is why captions are an explicit toggle rather than always-on, too, since a
+    resident whisper shares the GPU with the chat model.
 
     Segments arrive already squelched: the sidecar drops any whose loudest moment never
     crossed the floor, because whisper answers an empty band with fluent invented
