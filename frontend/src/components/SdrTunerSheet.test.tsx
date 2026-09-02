@@ -164,6 +164,20 @@ describe("the tuner sheet", () => {
     expect(screen.getByText(/^(LIVE|PAUSED)$/)).toBeInTheDocument();
   });
 
+  it("draws the transport as an icon, not a text glyph", () => {
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    const transport = screen.getByRole("button", { name: /^(Play|Pause)$/ });
+
+    // It rendered "▶"/"❚❚" as characters once. Wherever the platform substituted a font
+    // whose side-bearings were not symmetric — iOS did — the triangle sat visibly left
+    // of its circle, and no amount of text centring could correct it: the glyph is
+    // centred inside its own advance width, and the padding belongs to the font.
+    // DESIGN.md "Iconography" bars emoji in chrome for the same reason.
+    expect(transport.querySelector("svg")).not.toBeNull();
+    expect(transport.textContent).toBe("");
+  });
+
   it("shows no signal meter — the tape is the level display", () => {
     render(<SdrTunerSheet listening={{ ...LISTENING, peak: 0.42 }} onClose={() => {}} />);
 

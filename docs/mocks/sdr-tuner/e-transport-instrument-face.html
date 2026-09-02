@@ -13,6 +13,12 @@
   · Elapsed time is INSET on the tape, top right, in the quiet band the waveform
     rarely reaches. It costs no row of its own.
   · The transport sits BELOW the tape: play/pause, a live dot, then LIVE / PAUSED.
+  · Play/pause is an ICON in a flex-centred button, never a text glyph. This mock and
+    the build both drew "▶"/"❚❚" as characters first, and on iOS - which
+    substitutes a font whose side-bearings are not symmetric - the triangle sat visibly
+    left of its circle. Text centring cannot correct that: the glyph is centred inside
+    its own advance width, and the padding belongs to the font. DESIGN.md
+    "Iconography" bars emoji in chrome for this reason. Corrected 2026-09-02.
   · The SIGNAL meter is GONE - header, bars and percentage. See below.
   · The tape's history is recorded by the audio module for as long as the radio
     plays, NOT by the sheet. Opening the tuner shows what already happened; it does
@@ -115,7 +121,8 @@
   .tag.off{color:var(--text-3);}
 
   .play{width:52px;height:52px;border-radius:50%;border:1px solid var(--steel);background:var(--surface-2);
-    color:var(--steel);font-size:16px;line-height:1;cursor:pointer;flex:0 0 auto;}
+    color:var(--steel);cursor:pointer;flex:0 0 auto;
+    display:inline-flex;align-items:center;justify-content:center;}
   .play:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
   canvas{display:block;width:100%;}
   .tapebox{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;
@@ -224,7 +231,7 @@
 
         <!-- A -->
         <div class="vA" id="vA">
-          <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+          <button class="play tog" aria-pressed="true" aria-label="Pause"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button>
           <div class="stack">
             <div class="meta">
               <span class="bars" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
@@ -247,7 +254,7 @@
             <span class="inset r"><span class="num dim" id="bEla">0:55</span></span>
           </div>
           <div class="under">
-            <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+            <button class="play tog" aria-pressed="true" aria-label="Pause"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button>
             <span class="dot live-dot"></span><span class="tag live">LIVE</span>
             <span class="spacer"></span>
           </div>
@@ -255,7 +262,7 @@
 
         <!-- C -->
         <div class="vC" id="vC" hidden>
-          <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+          <button class="play tog" aria-pressed="true" aria-label="Pause"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button>
           <div class="tapebox"><canvas class="tape" height="76"></canvas></div>
           <span class="tag live" style="flex:0 0 auto;">LIVE</span>
         </div>
@@ -519,7 +526,7 @@
     var b = e.target.closest(".play.tog"); if (!b) return;
     playing = !playing;
     document.querySelectorAll(".play.tog").forEach(function(x){
-      x.textContent = playing ? "❚❚" : "▶";
+      x.innerHTML = playing ? '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l14 8-14 8V4z"/></svg>';
       x.setAttribute("aria-pressed", String(playing));
       x.setAttribute("aria-label", playing ? "Pause" : "Play");
     });

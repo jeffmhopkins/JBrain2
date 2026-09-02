@@ -21,6 +21,7 @@ import type { SdrListening } from "../sdrSession";
 import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
 import { Sheet } from "./Sheet";
+import { PauseIcon, PlayIcon } from "./icons";
 
 const MODES = ["wbfm", "fm", "am", "usb"] as const;
 
@@ -324,7 +325,7 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
           aria-pressed={playing}
           onClick={toggleSdrAudio}
         >
-          {playing ? "❚❚" : "▶"}
+          {playing ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
         </button>
         <span className={`sdr-livedot${playing ? " sdr-livedot-on" : ""}`} aria-hidden="true" />
         <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>

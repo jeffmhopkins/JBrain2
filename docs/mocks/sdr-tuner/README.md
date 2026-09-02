@@ -1,6 +1,6 @@
 # SDR tuner — the tuned-station control on the omnibox (GUI-gate mockups)
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-02
 
 The omnibox grows a **radio icon to the left of the attach clip**, shown *only*
 while a tool holds the SDR lease. Tapping it opens a control surface for the
@@ -143,6 +143,15 @@ trusted was never on the table; removing it is the honest move.
 
 Elapsed time survives, inset on the tape, because it answers a question nothing else
 does: how long this session has been holding the one tuner.
+
+**Play/pause is an icon, not a glyph (corrected 2026-09-02).** Both this mock and the
+build first drew `▶` / `❚❚` as text. On the owner's phone the triangle sat visibly left
+of its circle: iOS substitutes a font whose side-bearings are not symmetric, and text
+centring cannot correct that — the glyph is centred inside its own advance width, so the
+padding belongs to the font, not to the button. The mock has been corrected along with
+the code, because a mock that still specifies the glyph will seed the bug again the next
+time someone builds from it. `DESIGN.md` "Iconography" already barred emoji in chrome
+for exactly this class of reason.
 
 ## Live captions (fourth gate, 2026-09-02)
 
