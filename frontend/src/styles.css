@@ -24813,13 +24813,13 @@ button.task-band:active {
 .sdr-transport {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  gap: 10px;
   margin: 14px 0 4px;
 }
 .sdr-play {
-  width: 52px;
-  height: 52px;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -24832,10 +24832,22 @@ button.task-band:active {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* The tape takes the slack in the transport row, so showing live audio costs no
+   vertical space beyond the play button that was already there. */
+.sdr-tape {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
 .sdr-livetag {
   font-size: var(--fs-micro);
   letter-spacing: 0.1em;
   color: var(--text-3);
+  flex: 0 0 auto;
 }
 /* The live tag earns the accent only when sound is actually coming out — it reports
    state, it does not decorate. */

@@ -88,3 +88,31 @@ Still to gate: the **Radio launcher** (Spectrum + Recordings tabs) needs its own
 mock round; this decision covers the omnibox tuner only. The chosen pattern's
 reasoning lands in `../../reference/DESIGN.md` in the implementing PR, per that
 doc's UI-development process.
+
+## The waveform display (second gate, 2026-09-02)
+
+A separate GUI gate over the same sheet: what to show while audio is playing.
+`d-waveform-tape.html` holds all three variants live, driven by a real
+`AnalyserNode` so the shapes are the actual data rather than a canned animation.
+
+| Variant | Thesis | Trade-off |
+|---|---|---|
+| **A · Scope** | *Show the audio itself.* Time-domain trace; speech reads as syllable bursts, static fills edge to edge, a dead channel is flat. | The most honest and the loudest failure signal — but it only ever shows the present instant, and scanner traffic is bursty. |
+| **B · Spectrum** | *Show what kind of signal this is.* Frequency bars; voice piles into the low-mid, music spreads, static is flat. | Answers the tuning question directly and will sit naturally beside the waterfall — but it is the least literal, and overlaps the level meter's job. |
+| **C · Tape** | *Show what just happened.* Loudness over the last 12 s, scrolling right to left. | The only one with a memory, which is the shape of the question on a voice channel — at the cost of texture: voice and music look alike. |
+
+> **Decided (owner, 2026-09-02): C — the rolling tape**, with the explicit
+> constraint *"make sure it's not vertically taking up too much space"*.
+
+Why C: scanner traffic arrives in bursts, so the question being asked is almost
+always "did anything just come through", and A and B can only answer it if you
+happen to be looking at that exact moment. The owner watches this sheet while doing
+something else; a display with no memory is a display they will miss.
+
+How the height constraint is met: the tape rides **inside the transport row**,
+between the play button and the LIVE/PAUSED tag, taking the slack width. It is 38px
+inside a row already 46px tall, so the display costs **no vertical space of its
+own**. It also draws only while the sheet is mounted — a closed tuner spends
+nothing, and the tape fills in from the right over its first 12 seconds rather than
+pretending to remember what happened while nobody was watching.
+

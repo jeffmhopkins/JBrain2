@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { isSdrPlaying, subscribeSdrAudio, toggleSdrAudio } from "../sdrAudio";
 import type { SdrListening } from "../sdrSession";
+import { SdrTape } from "./SdrTape";
 import { Sheet } from "./Sheet";
 
 const MODES = ["wbfm", "fm", "am", "usb"] as const;
@@ -286,6 +287,9 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
         >
           {playing ? "❚❚" : "▶"}
         </button>
+        {/* The tape rides IN this row, so it adds no height of its own — the row was
+            already as tall as the play button. */}
+        <SdrTape playing={playing} />
         <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>
           {playing ? "LIVE" : "PAUSED"}
         </span>
