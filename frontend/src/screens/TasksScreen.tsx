@@ -92,9 +92,7 @@ function scheduleLabel(t: Task): string {
   if (t.schedule_kind === "on_demand") return "On demand";
   if (t.schedule_kind === "on_command") {
     // The word is the headline because it is what the owner actually keys into a radio.
-    const armed =
-      t.command_from && t.command_until ? ` · ${t.command_from}–${t.command_until}` : "";
-    return `On command · ${t.command_word ?? "—"}${armed}`;
+    return `On command · ${t.command_word ?? "—"} · ${commandArmed(t)}`;
   }
   if (t.schedule_kind === "once") {
     if (!t.run_at) return "Once";
@@ -106,6 +104,22 @@ function scheduleLabel(t: Task): string {
   if (t.schedule_freq === "weekdays") return `Weekdays · ${time}`;
   const days = t.schedule_days.map((d) => DAY_LABELS[d]).join("");
   return `Weekly ${days} · ${time}`;
+}
+
+/** When a command is LISTENING, in the words the mock uses. The days matter: a command
+ * armed Mon–Fri and one armed daily used to read identically here, which is the same
+ * class of omission as a health line that cannot tell quiet from dead. */
+function commandArmed(t: Task): string {
+  if (t.command_once) return "armed once";
+  if (!t.command_from || !t.command_until) return "armed always";
+  return `armed ${commandDaysLabel(t.command_days)} ${t.command_from}–${t.command_until}`;
+}
+
+function commandDaysLabel(days: number[]): string {
+  if (days.length === 0 || days.length === 7) return "daily";
+  const sorted = [...days].sort((a, b) => a - b);
+  if (sorted.join() === "1,2,3,4,5") return "weekdays";
+  return sorted.map((d) => DAY_LABELS[d]).join("");
 }
 
 /** The dim status + next-run meta under the headline. */
@@ -427,7 +441,7 @@ interface Draft {
   callsign: string;
   /** The arming window. "always" is the default; "window" adds days + a time range,
    * evaluated when a command arrives rather than when the task would run. */
-  armed: "always" | "window";
+  armed: "always" | "once" | "window";
   commandDays: number[];
   from: string;
   until: string;
@@ -478,7 +492,11 @@ function draftFrom(task: Task | null): Draft {
     enabled: task.enabled,
     word: task.command_word ?? "",
     callsign: task.command_callsign ?? "",
-    armed: task.command_from && task.command_until ? "window" : "always",
+    armed: task.command_once
+      ? "once"
+      : task.command_from && task.command_until
+        ? "window"
+        : "always",
     commandDays: task.command_days.length ? task.command_days : [1, 2, 3, 4, 5],
     from: task.command_from ?? "06:00",
     until: task.command_until ?? "09:00",
@@ -515,6 +533,7 @@ function draftToInput(d: Draft): TaskInput {
     command_days: [],
     command_from: null,
     command_until: null,
+    command_once: false,
   };
   if (d.kind === "repeat") {
     base.schedule_freq = d.freq;
@@ -526,8 +545,12 @@ function draftToInput(d: Draft): TaskInput {
   } else if (d.kind === "on_command") {
     base.command_word = d.word.trim().toUpperCase() || null;
     base.command_callsign = d.callsign.trim().toUpperCase() || null;
+    base.command_once = d.armed === "once";
     if (d.armed === "window") {
-      base.command_days = d.commandDays;
+      // An empty day set means EVERY day to the box, so a window with no chips selected
+      // would silently widen the very thing the owner was narrowing. Saving all seven
+      // makes the stored spec say what the screen showed.
+      base.command_days = d.commandDays.length > 0 ? d.commandDays : [0, 1, 2, 3, 4, 5, 6];
       base.command_from = d.from;
       base.command_until = d.until;
     }
@@ -780,7 +803,7 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                 ever put into the prompt.
               </div>
               <div className="ted-seg" style={{ marginTop: 10 }}>
-                {(["always", "window"] as const).map((a) => (
+                {(["always", "once", "window"] as const).map((a) => (
                   <button
                     type="button"
                     key={a}
@@ -788,10 +811,20 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                     aria-pressed={draft.armed === a}
                     onClick={() => set({ armed: a })}
                   >
-                    {a === "always" ? "Armed always" : "Armed in a window"}
+                    {a === "always"
+                      ? "Armed always"
+                      : a === "once"
+                        ? "Armed once"
+                        : "Armed in a window"}
                   </button>
                 ))}
               </div>
+              {draft.armed === "once" && (
+                <p className="ted-hint">
+                  Fires once and then disarms itself — hand out one code for one job. Arm it again
+                  from here when you need it.
+                </p>
+              )}
               {draft.armed === "window" && (
                 <>
                   <div className="ted-days">

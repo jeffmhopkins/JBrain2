@@ -1821,6 +1821,8 @@ export interface Task {
   command_days: number[];
   command_from: string | null;
   command_until: string | null;
+  /** Disarms itself after firing once — the delivery-driver command. */
+  command_once: boolean;
   /** How many codes have been spent, and how many attempts have failed since the last
    * success. The KEY is never sent to the client — a rotate returns it once. */
   command_counter: number;
@@ -1857,6 +1859,7 @@ export interface TaskInput {
   command_days: number[];
   command_from: string | null;
   command_until: string | null;
+  command_once: boolean;
 }
 
 /** A freshly generated command key, returned exactly once by a rotate. The box keeps

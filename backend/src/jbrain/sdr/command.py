@@ -37,7 +37,7 @@ import base64
 import hashlib
 import hmac
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Five base32 characters ~= 25 bits. See the module docstring for why that is enough
@@ -52,6 +52,20 @@ _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 LOOKAHEAD = 20
 # Failed attempts before the command stops accepting anything until the owner resets it.
 MAX_FAILURES = 5
+# How far BACK a spent code is still recognised as a spent code rather than a guess.
+#
+# This is not permissiveness — a code in this window is refused either way. It decides
+# whether the refusal counts toward the lockout, and getting it wrong locks the owner out
+# for succeeding: 144.390 is digipeated, so ONE transmission from the truck arrives
+# several times, and every copy after the first fails to verify (the counter has already
+# moved past it). Scored as guesses, five copies of a working command spend the whole
+# lockout budget and refuse the owner's next genuine code.
+LOOKBACK = 20
+# Shorter than a real key can be; anything at or under this cannot have come from
+# `new_key`. An EMPTY key is the case that matters: `hmac.new(b"", ...)` is valid, so it
+# would not raise — it would quietly verify codes anyone who has read this repo can
+# compute. Refusing is the only safe reading of "the key is missing".
+MIN_KEY_BYTES = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +78,11 @@ class Verdict:
     next_counter: int = 0
     # How far ahead of the box the sender was; a persistent drift is worth seeing.
     skipped: int = 0
+    # A refusal that is a code we have ALREADY SEEN rather than a wrong one. Recorded
+    # like any other refusal and deliberately NOT counted toward the lockout: a
+    # digipeated command arrives several times, and punishing the owner for the network
+    # repeating them is the lockout firing on success instead of on attack.
+    spent: bool = False
 
 
 def code_for(key: bytes, counter: int) -> str:
@@ -97,6 +116,8 @@ def verify(key: bytes, counter: int, offered: str, *, failures: int = 0) -> Verd
         # Locked out. Note this is checked BEFORE any comparison, so a lockout cannot be
         # worn down by continuing to guess.
         return Verdict(False, "locked out after too many failed attempts")
+    if len(key) < MIN_KEY_BYTES:
+        return Verdict(False, "the command has no usable key")
     candidate = normalise(offered)
     if len(candidate) != CODE_LENGTH:
         return Verdict(False, "not a code")
@@ -108,6 +129,13 @@ def verify(key: bytes, counter: int, offered: str, *, failures: int = 0) -> Verd
             # Forward-only: the counter moves PAST the match, so this code — which
             # everyone in range just heard — can never be accepted again.
             return Verdict(True, "verified", next_counter=counter + ahead + 1, skipped=ahead)
+    for back in range(1, min(LOOKBACK, counter) + 1):
+        if hmac.compare_digest(code_for(key, counter - back), candidate):
+            # A code from BEHIND the counter is one this box has already accepted and
+            # burned. Still refused — that is what forward-only means — but it is the
+            # network repeating a transmission, not somebody guessing, so it must not
+            # spend the lockout the owner depends on.
+            return Verdict(False, "code already used", spent=True)
     return Verdict(False, "code did not verify")
 
 
@@ -121,7 +149,11 @@ def parse_command(info: str) -> tuple[str, str] | None:
     if len(parts) != 2:
         return None
     word, code = parts
-    if not word.isalnum() or len(word) > 16:
+    # ASCII, because `str.isalnum()` and `.upper()` are Unicode-aware: without this the
+    # ligature "ﬅOP" upper-cases to "STOP" and would be recorded in the attempt log as a
+    # packet that said STOP when it did not. It cannot reach the code — that is a
+    # separate comparison — but the evidence has to say what was actually transmitted.
+    if not word.isascii() or not word.isalnum() or len(word) > 16:
         return None
     return word.upper(), code
 
@@ -181,7 +213,12 @@ def armed_at(window: Window, when: datetime) -> bool:
     try:
         local = when.astimezone(ZoneInfo(window.timezone))
     except (ZoneInfoNotFoundError, ValueError):
-        local = when.astimezone(UTC)
+        # Falling back to UTC and carrying on would narrow the window by up to twelve
+        # hours and refuse the owner's own code, blaming their configuration for a
+        # missing tzdata package. A window is a NARROWING, and one the box cannot read is
+        # not a reason to refuse — the code is still the credential. Same reasoning as a
+        # malformed time below: unreadable means unapplied, never "denied".
+        return True
     # Sunday=0..Saturday=6, matching the task editor's chip row.
     if window.days and ((local.weekday() + 1) % 7) not in window.days:
         return False

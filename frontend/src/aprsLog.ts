@@ -104,6 +104,8 @@ export interface AprsCommand {
   days: number[];
   from: string | null;
   until: string | null;
+  /** Disarms itself after firing once. */
+  once: boolean;
   /** Too many failed attempts: nothing fires until the owner clears it. */
   locked: boolean;
   last_at: string | null;
@@ -130,6 +132,7 @@ export interface AprsCommandState {
 export function armedLabel(command: AprsCommand): string {
   if (!command.enabled) return "paused";
   if (command.locked) return "locked — too many failed attempts";
+  if (command.once) return "armed once — disarms after firing";
   if (!command.from || !command.until) return "armed always";
   return `armed ${daysLabel(command.days)} ${command.from}–${command.until}`;
 }

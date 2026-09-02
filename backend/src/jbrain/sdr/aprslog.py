@@ -166,12 +166,27 @@ def _parse(line: str) -> dict[str, Any] | None:
     return {
         "heard_at": heard_at,
         "hz": hz,
-        "src": source[:16],
-        "dst": str(payload.get("destination") or "")[:16],
-        "path": [str(p)[:16] for p in path][:8] if isinstance(path, list) else [],
-        "info": info[:MAX_INFO],
-        "raw": str(payload.get("raw") or "")[:MAX_RAW],
+        "src": _clean(source)[:16],
+        "dst": _clean(str(payload.get("destination") or ""))[:16],
+        "path": [_clean(str(p))[:16] for p in path][:8] if isinstance(path, list) else [],
+        "info": _clean(info)[:MAX_INFO],
+        "raw": _clean(str(payload.get("raw") or ""))[:MAX_RAW],
     }
+
+
+def _clean(text: str) -> str:
+    """Drop what Postgres `text` cannot hold, and what a reader would be confused by.
+
+    A NUL is the one that matters. Postgres rejects it in a text column, both INSERTs on
+    this path swallow their errors so the log keeps running, and the code comparison
+    strips it before matching — so a NUL-suffixed code behaves exactly like the clean one
+    while leaving NO row in either table. Five of those lock the command with no packet
+    logged and no attempt recorded: one byte, and the evidence the whole design leans on
+    is gone.
+
+    Other control characters go with it. They mean nothing in an AX.25 info field, and
+    this text is quoted, rendered and read back by a person."""
+    return "".join(ch for ch in text if ch == "\t" or ch >= " ")
 
 
 async def run_aprs_log_loop(logger: AprsLog, *, interval: float = IDLE_POLL_SECONDS) -> None:

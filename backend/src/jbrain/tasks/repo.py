@@ -61,6 +61,7 @@ class TaskInfo:
     command_days: tuple[int, ...] = ()
     command_from: str | None = None
     command_until: str | None = None
+    command_once: bool = False
     command_counter: int = 0
     command_failures: int = 0
     command_last_at: datetime | None = None
@@ -110,6 +111,7 @@ def _info(row: Task) -> TaskInfo:
         command_days=tuple(row.command_days or ()),
         command_from=row.command_from,
         command_until=row.command_until,
+        command_once=bool(row.command_once),
         command_counter=int(row.command_counter or 0),
         command_failures=int(row.command_failures or 0),
         command_last_at=row.command_last_at,
@@ -243,6 +245,7 @@ class TaskRepo:
         command_days: Sequence[int] = (),
         command_from: str | None = None,
         command_until: str | None = None,
+        command_once: bool = False,
         now: datetime | None = None,
     ) -> TaskInfo:
         now = now or datetime.now(UTC)
@@ -267,6 +270,7 @@ class TaskRepo:
             command_days=list(command_days),
             command_from=command_from,
             command_until=command_until,
+            command_once=command_once,
         )
         row.next_run_at = _compute_next(_info(row), now=now) if enabled else None
         async with scoped_session(self._maker, ctx) as session:
@@ -353,6 +357,7 @@ class TaskRepo:
                 "command_days",
                 "command_from",
                 "command_until",
+                "command_once",
                 "command_counter",
                 "command_failures",
             )

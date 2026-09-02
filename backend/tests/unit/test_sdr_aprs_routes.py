@@ -328,6 +328,7 @@ async def test_the_radio_tab_can_see_what_is_armed_and_what_was_tried(
                 "command_days": [1, 2, 3, 4, 5],
                 "command_from": "06:00",
                 "command_until": "09:00",
+                "command_once": False,
                 "command_failures": 5,
                 "command_last_at": when,
             }

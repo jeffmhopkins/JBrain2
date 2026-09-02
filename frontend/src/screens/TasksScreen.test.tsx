@@ -47,6 +47,7 @@ const GROUPED: Task = {
   command_days: [],
   command_from: null,
   command_until: null,
+  command_once: false,
   command_counter: 0,
   command_failures: 0,
   command_locked: false,
@@ -371,8 +372,10 @@ describe("TasksScreen", () => {
     mount([COMMAND_TASK]);
     // The word is what the owner keys into a radio, so it is the headline; "armed"
     // replaces the next-run time a scheduled task shows, because there isn't one.
-    expect(await screen.findByText(/On command · GATE/)).toBeInTheDocument();
-    expect(screen.getByText(/armed/)).toBeInTheDocument();
+    // The window is part of the headline: a command armed Mon-Fri and one armed daily
+    // used to read identically here, which is the same omission as a health line that
+    // cannot tell a quiet channel from a dead one.
+    expect(await screen.findByText("On command · GATE · armed always")).toBeInTheDocument();
   });
 
   it("says a locked command is stopped, and offers the way out", async () => {
@@ -463,5 +466,64 @@ describe("TasksScreen", () => {
     // The default preset carries every scope, so switching to the KB agent is what
     // makes the reach real — and the warning is the mock's cap, not a block.
     expect(screen.getByText(/reads a firewalled domain/)).toBeInTheDocument();
+  });
+  it("offers the one-shot arming mode the mock specifies", async () => {
+    const createTask = vi.spyOn(api, "createTask").mockResolvedValue(COMMAND_TASK);
+    vi.spyOn(api, "rotateCommandKey").mockResolvedValue({ word: "GATE", key: "AAAA" });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText(/Tell the agent/), {
+      target: { value: "Let the driver in." },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+    fireEvent.change(screen.getByLabelText("Command word"), { target: { value: "DROP" } });
+
+    // The delivery-driver command: hand out one code for one job
+    // (docs/mocks/aprs/b-trigger-editor.html, shape A — "Once disarms after it fires").
+    fireEvent.click(screen.getByRole("button", { name: "Armed once" }));
+    fireEvent.click(screen.getByText("Save task"));
+
+    await waitFor(() => expect(createTask).toHaveBeenCalled());
+    expect(createTask.mock.calls[0]?.[0].command_once).toBe(true);
+  });
+
+  it("never sends a window with no days, which the box would read as every day", async () => {
+    const createTask = vi.spyOn(api, "createTask").mockResolvedValue(COMMAND_TASK);
+    vi.spyOn(api, "rotateCommandKey").mockResolvedValue({ word: "GATE", key: "AAAA" });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText(/Tell the agent/), {
+      target: { value: "Open the gate." },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "On command" }));
+    fireEvent.change(screen.getByLabelText("Command word"), { target: { value: "GATE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Armed in a window" }));
+
+    // Deselect every day: the screen then shows an empty selection, which reads as
+    // "never", while an empty day set means EVERY day to the box. A narrowing control
+    // that silently widens is the wrong direction for a security control.
+    for (const label of ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]) {
+      const chip = screen.queryByRole("button", { name: label, pressed: true });
+      if (chip) fireEvent.click(chip);
+    }
+    fireEvent.click(screen.getByText("Save task"));
+
+    await waitFor(() => expect(createTask).toHaveBeenCalled());
+    expect(createTask.mock.calls[0]?.[0].command_days).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("shows which days a command is armed on, not just the hours", async () => {
+    mount([
+      {
+        ...COMMAND_TASK,
+        command_days: [1, 2, 3, 4, 5],
+        command_from: "06:00",
+        command_until: "09:00",
+      },
+    ]);
+
+    expect(
+      await screen.findByText("On command · GATE · armed weekdays 06:00–09:00"),
+    ).toBeInTheDocument();
   });
 });

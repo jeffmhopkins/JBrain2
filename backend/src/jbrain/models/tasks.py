@@ -100,6 +100,10 @@ class Task(Base):
     )
     command_from: Mapped[str | None] = mapped_column(Text, nullable=True)
     command_until: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Disarm after firing once — the delivery-driver command. The disarm happens in the
+    # same statement that burns the counter, so a duplicate of that transmission cannot
+    # find it still armed.
+    command_once: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -53,9 +53,13 @@ fine.
 1. **LLM adapter** — the decode path touches no model at all. Where an authenticated
    command starts an agent chat (P4), it goes through the ordinary agent entrypoint.
 2. **Storage abstraction** — no file I/O in the decode path; frames are rows.
-3. **RLS** — `app.aprs_packets`, `app.aprs_commands` and `app.aprs_counters` are
-   owner-only, each with an isolation test. Position fixes inherit the **location**
-   domain firewall by going through the existing location core rather than around it.
+3. **RLS** — `app.aprs_packets` and `app.command_attempts` are owner-only, each with an
+   isolation test. (Written as three tables; built as two. A command's credential and
+   counter live on its own `app.tasks` row rather than in a separate table, because the
+   GUI gate chose a fourth trigger kind over a parallel command system — so revoking a
+   command is deleting one row, and the existing `tasks_owner` policy already covers it.)
+   Position fixes inherit the **location** domain firewall by going through the existing
+   location core rather than around it.
 4. **Tests with the code** — and here they are unusually good: AX.25 decoding is
    deterministic, so CI decodes fixture WAVs and asserts exact frames. No radio, no
    human, no flake.
@@ -448,6 +452,46 @@ Three decisions worth keeping, because each replaced something that looked right
   is not: location is exactly what a command from the truck wants, and the box never
   transmits, so a fired task cannot answer over the air. Only a verified command fires
   anything, and that is the cap that holds.
+
+**Corrected after review.** The first build did not work at all, and the reason it
+looked like it did is worth keeping:
+
+- **A verified command could not fire.** `app.task_runs.trigger` had allowed only
+  `schedule` and `manual` since the table was made, and the gate fires with `command`.
+  Everything upstream worked — code checked, counter burned, attempt recorded
+  `accepted`, the owner's phone told that it had run — and then the run insert violated
+  the CHECK and was swallowed to a log line. The worst shape a failure can take: told it
+  worked, credential spent, nothing done. The integration test missed it because it
+  faked the runner *in the Postgres suite*, so the one thing that had to be real was the
+  one thing stubbed. It now writes the run row for real (`0183`).
+- **A digipeated command locked the owner out.** 144.390 is digipeated, so one
+  transmission arrives several times; every copy after the first fails the forward-only
+  check, and counting those as guesses spent the whole lockout budget on the owner
+  SUCCEEDING. `verify` now names a spent code as spent, and only a code that was never
+  ours counts toward the lockout.
+- **One NUL byte erased the evidence.** Postgres rejects it in a `text` column, both
+  INSERTs swallow their errors so the log survives a bad row, and the comparison strips
+  control characters before matching — so a NUL-suffixed code behaved like a clean one
+  while leaving no packet row and no attempt row. Five of those locked a command with
+  nothing recorded anywhere. Scrubbed on the way in, and again on the evidence path.
+- **The atomic consume had no test.** Dropping its `AND command_counter = :seen` passed
+  every test in the repository. Sequential duplicates take the spent-code path, so the
+  branch is only reachable under real concurrency; the test now offers one frame four
+  times at once.
+- **An empty key was a public key** (`hmac.new(b"", …)` does not raise, so the codes
+  become computable by anyone who has read this repository). Unreachable through the
+  API, one column value away — now a CHECK, and a refusal in `verify` besides.
+- **An unreadable timezone failed CLOSED**, shifting every window by up to twelve hours
+  and refusing the owner's own code. A window is a narrowing; one the box cannot read is
+  unapplied, never "denied".
+- **The mock's one-shot arming mode was missing** (`Always | Once | Window`). Built, and
+  the disarm happens in the same statement as the consume — doing it afterwards leaves a
+  window in which a duplicate finds the command still armed.
+- **Heard text reached a model unframed.** `aprs_recent` now wraps the log in the same
+  `untrusted_external_data` boundary the research feed uses, with the sentinel
+  neutralised so a transmission cannot close the envelope it sits in, and jerv's prompt
+  carries the pinned clause naming that tag inert. The COMMAND path was already clean —
+  nothing from a packet reaches the executor — but the read-back path was not.
 
 **Not done:** an on-box run. The credential, the consume, the window and the lockout are
 covered against real Postgres; what no test can stand in for is a real transmission from

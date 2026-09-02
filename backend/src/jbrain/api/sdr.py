@@ -209,7 +209,8 @@ async def commands(
                 await session.execute(
                     text(
                         "SELECT id, name, enabled, command_word, command_callsign,"
-                        " command_days, command_from, command_until, command_failures,"
+                        " command_days, command_from, command_until, command_once,"
+                        " command_failures,"
                         " command_last_at"
                         " FROM app.tasks WHERE schedule_kind = 'on_command'"
                         " ORDER BY command_word"
@@ -243,6 +244,7 @@ async def commands(
                 "days": list(row["command_days"] or []),
                 "from": row["command_from"],
                 "until": row["command_until"],
+                "once": row["command_once"],
                 "locked": int(row["command_failures"] or 0) >= MAX_FAILURES,
                 "last_at": row["command_last_at"].isoformat() if row["command_last_at"] else None,
             }

@@ -192,3 +192,27 @@ async def test_an_unconfigured_box_does_nothing_at_all(
     # No radio configured is the common case on a box that has none; it must not even
     # reach for the sidecar.
     assert sidecar.streamed is False
+
+
+def test_a_nul_byte_cannot_make_a_frame_unstorable() -> None:
+    """Postgres `text` rejects a NUL, and both INSERTs on this path swallow their own
+    errors so one bad row cannot end the log. Together that means an unscrubbed NUL does
+    not fail loudly — it deletes the row silently.
+
+    The attack it enables: a code with a NUL appended still verifies or fails exactly
+    like the clean one (the comparison strips control characters), so five of them lock
+    the command while leaving NO packet row and NO attempt row. One byte against the
+    evidence the whole design leans on."""
+    row = _parse(json.dumps({**_ROW, "info": "GATE AAAAA\u0000", "source": "KE8\u0000XYZ"}))
+
+    assert row is not None
+    assert "\u0000" not in row["info"]
+    assert "\u0000" not in row["src"]
+
+
+def test_ordinary_text_survives_the_scrub() -> None:
+    # A tab is legal in a status message, and the scrub must not eat the content.
+    row = _parse(json.dumps({**_ROW, "info": "Op Jeff\tmobile — 73"}))
+
+    assert row is not None
+    assert row["info"] == "Op Jeff\tmobile — 73"

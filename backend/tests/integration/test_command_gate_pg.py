@@ -11,6 +11,7 @@ antenna, and a recording stub stands in for the task runner. What is exercised f
 is everything between them.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -25,7 +27,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.notify import NotifyBus
 from jbrain.sdr.command import MAX_FAILURES, code_for, key_to_text, new_key
 from jbrain.sdr.gate import CommandGate, Heard
-from jbrain.tasks.repo import TaskInfo, TaskRepo
+from jbrain.tasks.repo import TaskInfo, TaskRepo, TaskRunRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -40,11 +42,31 @@ WHEN = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)  # a Wednesday, midday UTC
 
 @dataclass
 class _Runner:
-    """Records what would have been run. The gate's job ends at "fire this task"."""
+    """Records what would have been run, and writes the run row FOR REAL.
+
+    The agent turn is faked; the row is not. That split matters more than it looks: the
+    original fake stopped at recording the call, and so the whole suite passed while a
+    verified command could not fire at all — `trigger="command"` violated a CHECK on
+    `app.task_runs` that had allowed only schedule and manual since the table was made.
+    Everything upstream worked, the counter burned, the owner's phone said it had run,
+    and the insert raised into a swallowed log line.
+
+    A fake that stops short of the database cannot catch that, and a Postgres suite whose
+    docstring claims it does not use fakes really must not use one HERE."""
 
     fired: list[tuple[str, str]]
+    runs: TaskRunRepo | None = None
 
     async def run(self, owner_ctx: SessionContext, task: TaskInfo, *, trigger: str) -> Any:
+        if self.runs is not None:
+            await self.runs.start(
+                owner_ctx,
+                task_id=task.id,
+                principal_id=owner_ctx.principal_id,
+                session_id=None,
+                run_id=None,
+                trigger=trigger,
+            )
         self.fired.append((task.id, trigger))
         return None
 
@@ -63,6 +85,7 @@ async def clean(maker: async_sessionmaker) -> AsyncIterator[None]:
     yield
     async with scoped_session(maker, OWNER) as s:
         await s.execute(text("DELETE FROM app.command_attempts"))
+        await s.execute(text("DELETE FROM app.task_runs"))
         await s.execute(text("DELETE FROM app.tasks"))
         await s.commit()
 
@@ -94,6 +117,7 @@ async def _command(maker: async_sessionmaker, **overrides: Any) -> str:
         "days": [],
         "from": None,
         "until": None,
+        "once": False,
         "enabled": True,
         "tz": "UTC",
         **overrides,
@@ -105,9 +129,10 @@ async def _command(maker: async_sessionmaker, **overrides: Any) -> str:
                     "INSERT INTO app.tasks (principal_id, name, prompt, agent, schedule_kind,"
                     " enabled, timezone, command_word, command_callsign, command_key,"
                     " command_counter, command_failures, command_days, command_from,"
-                    " command_until)"
+                    " command_until, command_once)"
                     " VALUES (:pid, 'Gate', 'open the gate', 'jerv', 'on_command', :enabled,"
-                    " :tz, :word, :callsign, :key, :counter, :failures, :days, :from, :until)"
+                    " :tz, :word, :callsign, :key, :counter, :failures, :days, :from,"
+                    " :until, :once)"
                     " RETURNING id"
                 ),
                 fields,
@@ -118,7 +143,7 @@ async def _command(maker: async_sessionmaker, **overrides: Any) -> str:
 
 
 def _gate(maker: async_sessionmaker) -> tuple[CommandGate, _Runner]:
-    runner = _Runner(fired=[])
+    runner = _Runner(fired=[], runs=TaskRunRepo(maker))
     gate = CommandGate(
         maker,
         repo=TaskRepo(maker),
@@ -341,7 +366,7 @@ async def test_a_command_word_with_no_task_is_silent(maker: async_sessionmaker) 
 
 
 async def test_an_unreadable_key_refuses_rather_than_crashing(maker: async_sessionmaker) -> None:
-    await _command(maker, key="not base32!!")
+    await _command(maker, key="!" * 40)
     gate, runner = _gate(maker)
 
     attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
@@ -349,3 +374,184 @@ async def test_an_unreadable_key_refuses_rather_than_crashing(maker: async_sessi
     # A bad key is the owner's mistake to fix, not a reason for the drain loop to die.
     assert not attempt.accepted
     assert runner.fired == []
+
+
+# --- what the first review of this wave found -----------------------------------------
+
+
+async def _runs(maker: async_sessionmaker) -> list[str]:
+    async with scoped_session(maker, OWNER) as s:
+        rows = (await s.execute(text("SELECT trigger FROM app.task_runs"))).all()
+        return [r.trigger for r in rows]
+
+
+async def test_a_verified_command_actually_WRITES_a_run(maker: async_sessionmaker) -> None:
+    """The whole point of the wave, and it did not work.
+
+    `app.task_runs.trigger` allowed only schedule and manual, so the run insert violated
+    a CHECK, the gate swallowed it, and the gate never opened — after telling the owner
+    it had. Everything else in this file passed throughout, because the runner was faked
+    all the way past the database."""
+    await _command(maker)
+    gate, runner = _gate(maker)
+
+    attempt = await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+
+    assert attempt.accepted
+    assert runner.fired  # the call happened
+    assert await _runs(maker) == ["command"]  # and the row survived the constraint
+
+
+async def test_a_digipeated_command_does_not_lock_the_owner_out(
+    maker: async_sessionmaker,
+) -> None:
+    """144.390 is digipeated: one transmission arrives several times.
+
+    Every copy after the first fails to verify — the counter has moved past it — so
+    scoring them as guesses spends the whole lockout budget on the owner SUCCEEDING, and
+    refuses their next genuine command. The lockout is supposed to fire on attack."""
+    task_id = await _command(maker)
+    gate, runner = _gate(maker)
+    frame = _heard(f"GATE {code_for(KEY, 0)}")
+
+    for _ in range(6):
+        await gate.offer(frame)
+
+    assert runner.fired == [(task_id, "command")]  # fired exactly once
+    counter, failures = await _counters(maker, task_id)
+    assert (counter, failures) == (1, 0)  # and burned NO lockout budget
+    # The next genuine command still works, which is the property that actually matters.
+    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 1)}"))).accepted
+
+
+async def test_a_repeat_is_still_refused_even_though_it_is_forgiven(
+    maker: async_sessionmaker,
+) -> None:
+    # Forgiving the lockout is not accepting the code. Forward-only is what makes it safe
+    # that everyone in range heard it.
+    task_id = await _command(maker)
+    gate, runner = _gate(maker)
+    frame = _heard(f"GATE {code_for(KEY, 0)}")
+    await gate.offer(frame)
+
+    second = await gate.offer(frame)
+
+    assert not second.accepted and second.reason == "code already used"
+    assert runner.fired == [(task_id, "command")]
+
+
+async def test_a_wrong_code_STILL_counts_after_all_that(maker: async_sessionmaker) -> None:
+    # The forgiveness must not have quietly disabled the lockout: a code that was never
+    # ours is a guess, and five of them stop the command.
+    task_id = await _command(maker)
+    gate, _ = _gate(maker)
+
+    for _ in range(5):
+        await gate.offer(_heard("GATE AAAAA"))
+
+    assert (await _counters(maker, task_id))[1] == 5
+    assert "locked out" in (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))).reason
+
+
+async def test_one_hostile_byte_cannot_erase_the_evidence(maker: async_sessionmaker) -> None:
+    """Postgres `text` cannot hold a NUL, `_record` swallows its own errors, and the code
+    comparison strips control characters before matching. So a NUL-suffixed code behaved
+    exactly like a clean one while leaving no row at all — five of them locked the command
+    with nothing recorded anywhere. One byte against the table the design leans on."""
+    await _command(maker)
+    gate, _ = _gate(maker)
+
+    await gate.offer(_heard("GATE AAAAA\x00"))
+
+    rows = await _attempts(maker)
+    assert len(rows) == 1
+    assert rows[0]["accepted"] is False
+    assert "\x00" not in rows[0]["code"]
+
+
+async def test_two_copies_arriving_at_once_fire_once(maker: async_sessionmaker) -> None:
+    """The atomic consume, which nothing tested.
+
+    Dropping `AND command_counter = :seen` from the UPDATE passed every test in this
+    repository — and it is the mechanism the plan names as what makes it safe that the
+    command travels in clear. Sequential duplicates take the spent-code path, so this
+    branch is only reachable under genuine concurrency: two receivers, or a digipeat
+    landing while the first copy is still being judged."""
+    task_id = await _command(maker)
+    gate, runner = _gate(maker)
+    frame = _heard(f"GATE {code_for(KEY, 0)}")
+
+    await asyncio.gather(*(gate.offer(frame) for _ in range(4)))
+
+    assert runner.fired == [(task_id, "command")]
+    assert (await _counters(maker, task_id))[0] == 1
+    assert await _runs(maker) == ["command"]
+
+
+async def test_the_database_refuses_an_empty_key_outright(maker: async_sessionmaker) -> None:
+    """`hmac.new(b"", ...)` does not raise — it produces codes anyone who has read this
+    repository can compute, so an empty key is not a broken credential but a public one.
+
+    The old CHECK only asked for NOT NULL, which `''` satisfies. No route could write one,
+    but "one column value away from total compromise" is the wrong distance. Now the
+    constraint makes the state unreachable, and `verify` refuses a short key besides
+    (tests/unit/test_sdr_command.py) — the two layers are deliberate."""
+    task_id = await _command(maker)
+
+    with pytest.raises((IntegrityError, DBAPIError)):
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text("UPDATE app.tasks SET command_key = '' WHERE id = :id"), {"id": task_id}
+            )
+            await s.commit()
+
+
+async def test_two_commands_cannot_share_a_word_when_neither_names_a_station(
+    maker: async_sessionmaker,
+) -> None:
+    """A blank callsign is the ENCOURAGED case — the editor says leaving it blank costs
+    nothing — and Postgres treats NULLs as distinct in a unique index unless told
+    otherwise. So the index meant to stop two tasks answering GATE did not, and which one
+    a transmission was judged against depended on row order: a valid code for the live
+    gate could be judged against a disabled twin, refused, and burn a failure."""
+    await _command(maker)
+
+    with pytest.raises(IntegrityError):
+        await _command(maker)
+
+
+async def test_a_one_shot_command_disarms_itself(maker: async_sessionmaker) -> None:
+    """The mock's third arming mode: hand out one code, it works once, then the command
+    is off until the owner arms it again (`b-trigger-editor.html`, shape A)."""
+    task_id = await _command(maker, once=True)
+    gate, runner = _gate(maker)
+
+    assert (await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))).accepted
+
+    async with scoped_session(maker, OWNER) as s:
+        enabled = (
+            await s.execute(text("SELECT enabled FROM app.tasks WHERE id = :id"), {"id": task_id})
+        ).scalar()
+    assert enabled is False
+    # And it stays off: the next code finds a disabled command, which is the outermost
+    # gate and refuses before the credential is even consulted.
+    assert not (await gate.offer(_heard(f"GATE {code_for(KEY, 1)}"))).accepted
+    assert runner.fired == [(task_id, "command")]
+
+
+async def test_a_one_shot_command_fires_once_even_under_a_digipeat_race(
+    maker: async_sessionmaker,
+) -> None:
+    """Why the disarm is in the same statement as the consume.
+
+    Turning the task off afterwards, as a second write, leaves a window in which a
+    duplicate of that same transmission — the normal case on a digipeated channel —
+    finds a command that is still armed."""
+    task_id = await _command(maker, once=True)
+    gate, runner = _gate(maker)
+    frame = _heard(f"GATE {code_for(KEY, 0)}")
+
+    await asyncio.gather(*(gate.offer(frame) for _ in range(4)))
+
+    assert runner.fired == [(task_id, "command")]
+    assert await _runs(maker) == ["command"]

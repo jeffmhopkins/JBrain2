@@ -39,6 +39,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.sdr.command import (
     MAX_FAILURES,
+    MIN_KEY_BYTES,
     Window,
     armed_at,
     key_from_text,
@@ -89,6 +90,11 @@ class Attempt:
     reason: str
     word: str
     task_id: str | None = None
+
+
+def _plain(text: str) -> str:
+    """Printable characters only — see `_record`."""
+    return "".join(ch for ch in text if ch >= " ")
 
 
 def _base_call(call: str) -> str:
@@ -152,7 +158,7 @@ class CommandGate:
                     text(
                         "SELECT id, principal_id, command_callsign, command_key,"
                         " command_counter, command_failures, command_days, command_from,"
-                        " command_until, timezone, name, enabled"
+                        " command_until, command_once, timezone, name, enabled"
                         " FROM app.tasks"
                         " WHERE schedule_kind = 'on_command' AND command_word = :word"
                         " LIMIT 1"
@@ -186,14 +192,29 @@ class CommandGate:
             key = key_from_text(str(row["command_key"] or ""))
         except Exception:  # noqa: BLE001 — a corrupt key is a refusal, not a crash
             return Attempt(False, "the command's key is unreadable", word, task_id)
+        # An EMPTY key does not raise: `hmac.new(b"", ...)` is valid, so without this the
+        # codes become ones anyone who has read this repository can compute. `verify`
+        # refuses a short key too; this is the same guard one layer out, where it can say
+        # so in the attempt log.
+        if len(key) < MIN_KEY_BYTES:
+            return Attempt(False, "the command has no usable key", word, task_id)
         counter = int(row["command_counter"] or 0)
         failures = int(row["command_failures"] or 0)
         verdict = verify(key, counter, code, failures=failures)
         if not verdict.accepted:
-            await self._count_failure(task_id, heard.heard_at)
+            if not verdict.spent:
+                # A SPENT code is the network repeating a transmission the owner already
+                # made — 144.390 is digipeated, so one command arrives several times.
+                # Counting those as guesses fires the lockout on success rather than on
+                # attack, and leaves the owner refused at their own gate.
+                await self._count_failure(task_id, heard.heard_at)
             return Attempt(False, verdict.reason, word, task_id)
         if not await self._consume(
-            task_id, seen=counter, nxt=verdict.next_counter, at=heard.heard_at
+            task_id,
+            seen=counter,
+            nxt=verdict.next_counter,
+            at=heard.heard_at,
+            once=bool(row.get("command_once")),
         ):
             # The row moved between verify and consume: the same transmission reached us
             # twice (a digipeat, a second receiver). The first one fired; this is a
@@ -201,14 +222,22 @@ class CommandGate:
             return Attempt(False, "code already used", word, task_id)
         return Attempt(True, "verified", word, task_id)
 
-    async def _consume(self, task_id: str, *, seen: int, nxt: int, at: datetime) -> bool:
+    async def _consume(
+        self, task_id: str, *, seen: int, nxt: int, at: datetime, once: bool = False
+    ) -> bool:
         """Move the counter past the match, but only if it still held what we verified
-        against. Returns whether this caller won the race."""
+        against. Returns whether this caller won the race.
+
+        A one-shot command disarms HERE, in the same statement. Doing it afterwards, as a
+        second write, leaves a window in which a duplicate of the same transmission —
+        normal on a digipeated channel — finds a command that is still armed."""
         async with scoped_session(self._maker, SessionContext(principal_kind="owner")) as session:
             result = await session.execute(
                 text(
                     "UPDATE app.tasks SET command_counter = :nxt, command_failures = 0,"
-                    " command_last_at = :at WHERE id = :id AND command_counter = :seen"
+                    " command_last_at = :at"
+                    + (", enabled = false" if once else "")
+                    + " WHERE id = :id AND command_counter = :seen"
                 ),
                 {"id": task_id, "seen": seen, "nxt": nxt, "at": at},
             )
@@ -242,9 +271,14 @@ class CommandGate:
                     {
                         "heard_at": heard.heard_at,
                         "task_id": attempt.task_id,
-                        "source": heard.source[:16],
-                        "word": attempt.word[:16],
-                        "code": code[:MAX_CODE],
+                        # Scrubbed again here, not only where the frame entered. Postgres
+                        # rejects a NUL in a text column and this INSERT swallows its own
+                        # errors, so an unscrubbed byte does not fail loudly — it deletes
+                        # the row silently, which is the one outcome this table exists to
+                        # prevent. Cheap insurance on the evidence path.
+                        "source": _plain(heard.source)[:16],
+                        "word": _plain(attempt.word)[:16],
+                        "code": _plain(code)[:MAX_CODE],
                         "ok": attempt.accepted,
                         "reason": attempt.reason[:120],
                     },

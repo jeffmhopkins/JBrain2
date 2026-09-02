@@ -233,3 +233,60 @@ def test_half_a_range_is_no_range() -> None:
     # An editor that saved a start and no end must not become an all-day refusal.
     assert armed_at(Window(start="07:00"), _at("2026-09-02T23:00"))
     assert armed_at(Window(end="09:00"), _at("2026-09-02T23:00"))
+
+
+# --- what the review of this wave found ----------------------------------------------
+
+
+def test_a_code_from_behind_the_counter_is_named_as_SPENT_not_wrong() -> None:
+    """The difference decides whether the owner gets locked out for succeeding.
+
+    144.390 is digipeated, so one transmission arrives several times. Every copy after
+    the first fails the forward-only check — and if that reads as a guess, five copies of
+    a WORKING command spend the whole lockout budget."""
+    verdict = verify(KEY, 5, code_for(KEY, 4))
+
+    assert not verdict.accepted  # still refused: forward-only is the whole point
+    assert verdict.spent  # but it is ours, so it must not count against the owner
+    assert verdict.reason == "code already used"
+
+
+def test_a_code_that_was_never_ours_is_not_forgiven() -> None:
+    # The forgiveness must not quietly disable the lockout.
+    assert not verify(KEY, 5, code_for(OTHER, 4)).spent
+    assert not verify(KEY, 5, "AAAAA").spent
+
+
+def test_a_code_from_before_the_lookback_is_treated_as_a_guess() -> None:
+    # Bounded, so an attacker cannot mine an old capture for something the box will
+    # forgive indefinitely.
+    ancient = code_for(KEY, 1)
+    assert not verify(KEY, 500, ancient).spent
+
+
+def test_an_empty_key_is_refused_rather_than_being_a_public_one() -> None:
+    """`hmac.new(b"", ...)` is perfectly valid, so an empty key does not raise — it makes
+    the codes computable by anyone who has read this repository. A missing key can only
+    safely mean refuse."""
+    assert not verify(b"", 0, code_for(b"", 0)).accepted
+    assert not verify(b"short", 0, code_for(b"short", 0)).accepted
+
+
+def test_a_unicode_lookalike_cannot_be_recorded_as_a_word_it_is_not() -> None:
+    # `str.upper()` is Unicode-aware: the ligature would upper-case into a word the
+    # packet never contained, and the attempt log has to say what was transmitted.
+    assert parse_command("\ufb05OP AAAAA") is None
+    assert parse_command("STOP AAAAA") == ("STOP", "AAAAA")
+
+
+def test_an_unreadable_timezone_widens_the_window_rather_than_narrowing_it() -> None:
+    """A window is a narrowing, and one the box cannot read is not a reason to refuse —
+    the code is still the credential.
+
+    Falling back to UTC and evaluating anyway shifts every window by up to twelve hours
+    and refuses the owner's own code, in a way that reads as their configuration error
+    rather than a missing tzdata package on the box."""
+    window = Window(start="08:00", end="09:00", timezone="Not/AZone")
+
+    # 12:30Z is 08:30 in New York — inside the window the owner meant, outside UTC's.
+    assert armed_at(window, datetime(2026, 9, 2, 12, 30, tzinfo=UTC))

@@ -80,6 +80,9 @@ class TaskBody(BaseModel):
     command_days: list[int] = Field(default_factory=list)
     command_from: str | None = None
     command_until: str | None = None
+    # Disarm after firing once — the delivery-driver command (the mock's third arming
+    # mode, `docs/mocks/aprs/b-trigger-editor.html`).
+    command_once: bool = False
 
     @field_validator("agent")
     @classmethod
@@ -203,6 +206,7 @@ class TaskBody(BaseModel):
             self.command_days = []
             self.command_from = None
             self.command_until = None
+            self.command_once = False
         return self
 
 
@@ -281,6 +285,7 @@ class TaskOut(BaseModel):
     command_days: list[int]
     command_from: str | None
     command_until: str | None
+    command_once: bool
     # The counter and the failure tally are shown, the KEY never is: a rotate is the
     # only way it leaves the box. What the owner needs from this screen is whether the
     # command is being tried and whether it has locked itself.
@@ -318,6 +323,7 @@ class TaskOut(BaseModel):
             command_days=list(t.command_days),
             command_from=t.command_from,
             command_until=t.command_until,
+            command_once=t.command_once,
             command_counter=t.command_counter,
             command_failures=t.command_failures,
             command_locked=t.command_failures >= MAX_FAILURES,
@@ -434,6 +440,7 @@ async def create_task(request: Request, principal: OwnerDep, body: TaskBody) -> 
         command_days=body.command_days,
         command_from=body.command_from,
         command_until=body.command_until,
+        command_once=body.command_once,
     )
     return TaskOut.of(created)
 
@@ -467,6 +474,7 @@ async def replace_task(
         command_days=body.command_days,
         command_from=body.command_from,
         command_until=body.command_until,
+        command_once=body.command_once,
         # An edit that turns an ordinary task INTO a command needs a key, and one that
         # already has a key keeps it — editing the window must not silently invalidate
         # the sender the owner set up months ago.

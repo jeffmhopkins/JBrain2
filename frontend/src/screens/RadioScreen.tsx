@@ -301,8 +301,20 @@ function CommandSummary({
               " from any station"
             )}{" "}
             ·{" "}
-            <span className={command.enabled && logging ? "aprs-armed" : "aprs-armed bad"}>
-              {command.enabled && !logging ? "armed — not listening" : armedLabel(command)}
+            <span
+              className={
+                command.enabled && logging && !command.locked ? "aprs-armed" : "aprs-armed bad"
+              }
+            >
+              {/* A LOCKED command outranks "not listening": both are reasons it will not
+                  fire, but only one of them is the owner's to clear, and hiding it behind
+                  the receiver's state is the same kind of lie this screen is written
+                  against. */}
+              {command.locked || !command.enabled
+                ? armedLabel(command)
+                : logging
+                  ? armedLabel(command)
+                  : "armed — not listening"}
             </span>
           </div>
         </div>
