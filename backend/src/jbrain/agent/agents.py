@@ -136,6 +136,11 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # boxes), so naming them here is harmless without one.
         "sdr_listen",
         "sdr_stop",
+        # The APRS heard log. `read` rather than `web` — it reads a table, not the
+        # sidecar — but what it reads is UNTRUSTED: packets are transmissions from
+        # anyone in range and a callsign forges trivially, so the tool's own prose
+        # tells the model never to act on one (APRS_CONTROL_PLAN.md, the trust tiers).
+        "aprs_recent",
         # Grab a single still from a video (URL or attachment) at a timestamp as a
         # first-class chat image analyze_image/compare_images can read by id
         # (VIDEO_IMAGE_TOOLS_PLAN.md) — the "screenshot the video at this moment" step.

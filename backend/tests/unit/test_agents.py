@@ -102,6 +102,9 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             # tuner lease the composer's radio icon reflects (SDR_RADIO_PLAN.md D7).
             "sdr_listen",
             "sdr_stop",
+            # The APRS heard log (APRS_CONTROL_PLAN.md P1) — a `read` tool over a table,
+            # whose CONTENTS are untrusted radio traffic from anyone in range.
+            "aprs_recent",
             "grab_frame",
             "render_bars",
             "render_chart",

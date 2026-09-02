@@ -88,6 +88,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.lists.service import ListsRepo
 from jbrain.locations import SqlLocationRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
+from jbrain.sdr.aprslog import RECENT_DEFAULT, AprsReader
 from jbrain.search.service import (
     SearchResponse,
     SearchResult,
@@ -112,7 +113,7 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 # sdr_listen is load-bearing for the GUI as well as the chat: the composer's radio
 # icon exists only while a session holds the tuner, so dropping the tool on a
 # radio-less box also correctly means that surface can never appear.
-OPTIONAL_SDR_TOOLS = frozenset({"sdr_listen", "sdr_stop"})
+OPTIONAL_SDR_TOOLS = frozenset({"sdr_listen", "sdr_stop", "aprs_recent"})
 # jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
@@ -515,8 +516,13 @@ def entity_view_ref(view: dict[str, Any]) -> EntityRef:
 
 
 def build_read_handlers(
-    search: SearchService, notes: NotesRepo, entities: EntityReader
+    search: SearchService,
+    notes: NotesRepo,
+    entities: EntityReader,
+    aprs: AprsReader | None = None,
 ) -> dict[str, ToolHandler]:
+    """`aprs` is None on a box with no radio, and the heard-log tool is then simply
+    absent — the same graceful degrade the image and transcription sidecars use."""
     async def search_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         query = str(arguments.get("query", "")).strip()
         if not query:
@@ -537,6 +543,24 @@ def build_read_handlers(
         analyte = await entities.analyte_currency(ctx.session, chunk_ids) if chunk_ids else {}
         return ToolOutput(format_search(resp, currency, analyte), search_sources(resp))
 
+    async def aprs_recent_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        if aprs is None:
+            return ToolOutput("This box has no radio, so there is no APRS log.")
+        rows = await aprs.recent(
+            ctx.session,
+            limit=int(arguments.get("limit") or RECENT_DEFAULT),
+            source=(str(arguments.get("source") or "").strip() or None),
+        )
+        if not rows:
+            return ToolOutput("Nothing heard — APRS logging has not been running.")
+        # Rendered as plain lines rather than JSON, and deliberately WITHOUT any framing
+        # that could read as a system message: every field below is a stranger's text.
+        lines = [
+            f"{row['heard_at']:%H:%M} {row['source']} -> {row['destination']}: {row['info']}"
+            for row in rows
+        ]
+        return ToolOutput("\n".join(lines))
+
     async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         note_id = str(arguments.get("note_id", "")).strip()
         if not note_id:
@@ -552,7 +576,14 @@ def build_read_handlers(
         source = NoteSource(note_id=note.id, domain=note.domain, snippet=_note_snippet(note.body))
         return ToolOutput(body, (source,))
 
-    return {"search": search_tool, "read_note": read_note_tool}
+    return {
+        "search": search_tool,
+        "read_note": read_note_tool,
+        # The APRS heard log. `read` because it only reads a table — but what it
+        # reads is UNTRUSTED: packets are transmissions from anyone in range, and a
+        # callsign forges trivially (APRS_CONTROL_PLAN.md, the two trust tiers).
+        **({"aprs_recent": aprs_recent_tool} if aprs is not None else {}),
+    }
 
 
 _ENTITY_LIMIT = 8
@@ -853,7 +884,11 @@ def build_registry(
     registry = load_registry(
         TOOLS_DIR,
         {
-            **build_read_handlers(search, notes, entities),
+            # The heard-log reader is built only when the box has a radio, so the
+            # tool is simply absent otherwise — the same degrade as the sidecars below.
+            **build_read_handlers(
+                search, notes, entities, AprsReader(maker) if sdr_handlers else None
+            ),
             # A clock read — no owner data, no domain — so every agent that holds it
             # (the curator by default; jerv by allowlist) can ground time-relative talk.
             **build_clock_handlers(),

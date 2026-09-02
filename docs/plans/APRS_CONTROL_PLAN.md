@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1◻️ P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1🟡(built; on-box run pending) P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -199,6 +199,20 @@ for a week against real traffic before anything is allowed to act on a packet.
 
 **Exit:** frames from a fixture WAV decode byte-identically in CI; real traffic
 accumulates on the box; `aprs_recent()` is readable by jerv (a `read` tool).
+
+**Landed.** The sidecar runs rtl_fm → direwolf for a logging session and serves decoded
+frames on `/listen/packets`; `jbrain/sdr/aprslog.py` drains them into `app.aprs_packets`
+from a background loop — a loop rather than a route because a log that only records
+while someone is looking at it is not a log. `aprs_recent` is in jerv's allowlist, and
+its own prose tells the model never to act on a packet.
+
+The fixture is a **capture**, not a construction (`scripts/regen-aprs-fixture.sh`
+rebuilds it byte-identically). Two constraints it surfaced, which reading the docs would
+not have: direwolf forwards frames only to KISS clients ALREADY attached, so a late or
+reconnecting reader gets a hole rather than history; and EOF on its audio stdin ends its
+session, so the pipe is held open for the life of the lease.
+
+Still outstanding for the wave's real exit: the on-box run against live traffic.
 
 ### P2 · Position as a third location transport
 

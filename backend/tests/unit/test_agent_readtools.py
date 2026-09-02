@@ -977,6 +977,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
 def test_sidecars_pinned_to_their_versions() -> None:
     """Editing a tool's behavior must be a deliberate version bump (the CI guard)."""
     pins = {
+        "aprs_recent.tool": (
+            "aprs_recent",
+            1,
+            "74ae775a79c065c0abcb0297a1955de6f72f7c794c77063c104a26f47706ecfa",
+        ),
         "sdr_listen.tool": (
             "sdr_listen",
             3,
