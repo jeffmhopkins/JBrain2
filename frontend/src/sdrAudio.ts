@@ -56,6 +56,24 @@ const levels = new Float32Array(TAPE_LEN);
 let levelAt = 0;
 let sampler: ReturnType<typeof setInterval> | null = null;
 let samples: Uint8Array<ArrayBuffer> | null = null;
+// The box's clock at the moment this stream was opened; see playSdrAudio.
+let anchor: number | null = null;
+
+/**
+ * The box-clock time of the audio coming out of the speaker RIGHT NOW, or null
+ * before the stream is anchored.
+ *
+ * This exists because the ear is a long way behind the air. Measured against the
+ * real sidecar in Chromium, playback sits a constant ~8.3 s behind the live edge —
+ * stable, not drifting, but large. Captions are produced from the live edge, so
+ * showing one the moment it arrives puts the words on screen three to eight seconds
+ * BEFORE they are heard, which reads far worse than lagging behind. Holding each
+ * caption until this clock reaches it is what lines them up.
+ */
+export function sdrHeardAt(): number | null {
+  if (anchor === null || element === null) return null;
+  return anchor + element.currentTime;
+}
 
 /** The rolling level history: oldest-to-newest is `at` forward, wrapping. */
 export function sdrLevels(): { levels: Float32Array; at: number; length: number } {
@@ -136,13 +154,21 @@ function attempt(el: HTMLAudioElement): void {
 }
 
 /** Point the element at the live stream and start it. Idempotent per session. */
-export function playSdrAudio(): void {
+export function playSdrAudio(serverNow?: number): void {
   const el = ensure();
   if (!el) return;
   // Re-pointing at the same src would restart the stream mid-listen, so only set it
   // when it is not already ours. The browser resolves src to an absolute URL, hence
   // the suffix test rather than equality.
-  if (!el.src.endsWith(SDR_AUDIO_SRC)) el.src = SDR_AUDIO_SRC;
+  if (!el.src.endsWith(SDR_AUDIO_SRC)) {
+    el.src = SDR_AUDIO_SRC;
+    // Anchor the stream's timeline to the BOX's clock at the instant we asked for it.
+    // The stream is live, so the first byte the sidecar sends is the air at this
+    // moment: media position 0 was on the air at `serverNow`, and media position t
+    // was on the air at `serverNow + t`. That mapping is what lets a caption be held
+    // until the listener actually reaches the audio it describes.
+    anchor = typeof serverNow === "number" ? serverNow : null;
+  }
   if (el.paused) attempt(el);
   armAnalyser();
   if (analyserNode) startSampling();
@@ -281,6 +307,7 @@ export function resetSdrAudio(): void {
   analyserNode = null;
   tapped = false;
   armed = false;
+  anchor = null;
   stopSampling();
   samples = null;
 }

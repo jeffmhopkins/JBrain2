@@ -37,6 +37,7 @@ const LISTENING: SdrListening = {
   frequency_hz: 99_300_000,
   mode: "wbfm",
   gain: null,
+  started_at: 1_700_000_000,
   elapsed_s: 72,
   peak: 0.42,
   listeners: 1,
@@ -253,6 +254,7 @@ describe("live captions in the tuner", () => {
   });
 
   it("burns the caption over the waveform, tinted by confidence", () => {
+    vi.useFakeTimers();
     render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Live captions" }));
 
@@ -266,6 +268,11 @@ describe("live captions in the tuner", () => {
         ],
       });
     });
+    // Captions are held until their audio is heard; with no anchored timeline here
+    // the release tick shows them anyway (sdrCaptions.ts).
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
 
     // A confident word and a shaky one must not render the same: the colour is the
     // whole reason the words carry confidence at all.
@@ -274,5 +281,6 @@ describe("live captions in the tuner", () => {
     expect(sure.getAttribute("style")).not.toBe(shaky.getAttribute("style"));
     // The caption sits on the tape's face, not in a row of its own.
     expect(sure.closest(".sdr-face")).not.toBeNull();
+    vi.useRealTimers();
   });
 });

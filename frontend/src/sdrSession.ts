@@ -20,6 +20,9 @@ export interface SdrListening {
   frequency_hz: number;
   mode: string;
   gain: string | null;
+  /** The box's clock when this session started. With `elapsed_s` it gives the box's
+   *  clock NOW, which is what anchors the audio timeline for caption timing. */
+  started_at: number;
   elapsed_s: number;
   peak: number;
   listeners: number;
@@ -54,8 +57,11 @@ function publish(next: SdrState): void {
   // A retune keeps the session id, so this deliberately does not fire on one — the
   // stream survives the sidecar relaunching its encoder underneath it.
   if (now !== was) {
-    if (now) playSdrAudio();
-    else stopSdrAudio();
+    if (now) {
+      // started_at + elapsed_s IS the box's clock, already arriving every second.
+      const listening = next.listening;
+      playSdrAudio(listening ? listening.started_at + listening.elapsed_s : undefined);
+    } else stopSdrAudio();
   }
   for (const listener of listeners) listener(next);
 }
