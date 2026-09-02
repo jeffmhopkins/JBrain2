@@ -275,3 +275,26 @@ def test_a_frame_arriving_after_a_truncated_one_still_decodes() -> None:
     got = stream.feed(bytes([packets.FEND]) + _captured()[0] + bytes([packets.FEND]))
 
     assert [p.info for p in got] == ["GATE 7K2M9"]
+
+
+def test_a_real_frame_carries_the_shape_the_verifier_expects() -> None:
+    """The seam between the decoder here and the verifier in the backend.
+
+    `backend/src/jbrain/sdr/command.py::parse_command` is deliberately strict — exactly
+    two whitespace-separated words — because a packet channel is full of other people's
+    traffic and anything looser would try to verify half of it. Nothing enforces that
+    the two halves agree, and they live in different packages with different test
+    suites, so this pins the agreement against a REAL captured frame.
+
+    What it would catch: this decoder starting to strip, pad, or prefix the info field.
+    A command would then never match, silently — the failure mode where the owner's
+    gate simply stops answering and nothing anywhere says why.
+    """
+    info = packets.parse_kiss(_captured()[0]).info  # type: ignore[union-attr]
+
+    word, code = info.split()
+    assert word.isalnum() and len(word) <= 16
+    assert len(code) == 5
+    # The alphabet the backend renders codes in: base32 minus the letters that misread
+    # when spoken or hand-copied.
+    assert set(code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
