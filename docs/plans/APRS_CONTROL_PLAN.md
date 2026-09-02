@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P2◻️ P3◻️ P4◻️ (nothing built; the GUI gate for P3 is open — see `../mocks/aprs/README.md`)
+> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P2◻️ P3◻️ P4◻️ (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -137,16 +137,58 @@ Two things this wave must decide rather than discover:
 **Exit:** a beacon from the truck produces a fix and, crossing a geofence, the same
 event the phone produces — with no second geofence code path in existence.
 
-### P3 · The launcher (GUI gate — three mocks first)
+### P3 · The launcher — an APRS tab, and triggers that are ordinary automations
 
-The surface: what was heard, where it came from, which triggers are armed, and whether
-the receiver is actually alive. **Blocked on the mock round** in
-`../mocks/aprs/README.md`, which also settles whether this is a tab of a Radio launcher
-or its own screen.
+**GUI gate closed 2026-09-02: shape A**, a tab of the Radio launcher (Tuner / APRS /
+Recordings). Binding spec `../mocks/aprs/a-launcher-shape.html`.
 
 Observability is the point, not decoration: a watch that silently died is worse than no
-watch. `last_heard_at` and a decode-rate reading are load-bearing, for the same reason
-the tuner's signal meter was deleted — a control that lies is worse than an absent one.
+watch. `last_heard_at` and a decode rate are load-bearing, for the same reason the
+tuner's signal meter was deleted — a control that lies is worse than an absent one. So
+the health reading is **last decode and rate**, never a signal bar.
+
+**Triggers are not a new list.** An APRS trigger is an `EventTrigger` — the shape
+`workflow/contracts.py` already models beside `ScheduleTrigger`, and which the Ops
+Workflow screen already renders (`whenLine`: "When \<ev\> → run \<pipeline\>"). The tab
+therefore shows the **same automation cards**, with the same enable switch, the same
+recent-run summary off the `runs` log, and the same run-now. Wiring is one field: the
+reader groups an automation by its pipeline's primary action's `category`
+(`ActionSpec.category`), explicitly "never a hardcoded id list", so declaring a `radio`
+category is the whole of it.
+
+**Arming windows reuse the task schedule spec.** A task is `on_demand | once | repeat`
+with freq/days/time in an IANA timezone (`tasks/schedule.py`), and `AutomationsScreen`
+already reuses that editor once — its `SchedDraft` is documented as "the task-style
+day/time/repeat surface, reused". An armed RF trigger wants exactly that vocabulary,
+answering a different question: not *when does it run* but **when is it listening**.
+
+| Kind | Meaning here |
+|---|---|
+| `on_demand` | armed whenever enabled — today's behaviour |
+| `once` | **disarms itself after firing** — the one-time-command semantic, for free |
+| `repeat` | armed only inside a window, e.g. weekdays 06:00–09:00 |
+
+`repeat` is a **security control, not a convenience**: outside its window the gate
+command does not exist, which shrinks the attack surface to the hours the owner would
+actually use it. `once` means an armed command cannot be re-fired even if the counter
+logic were ever wrong — defence in depth against P4's own credential.
+
+#### The trap: arming must gate at verify time, NOT as a precondition
+
+`ActionSpec.precondition` looks like the seam for this — it is described as the engine
+seam for "only run when X holds", and an `armed_now` check would drop in neatly. It is
+the wrong seam, and using it would build a badly broken system.
+
+A precondition **defers**: unmet means a fixed retry that "can wait indefinitely",
+because it was built for "the local model is not resident yet", where waiting is
+exactly right. Arming is the opposite. A command received at 03:00 outside its window
+must be **refused, logged and pushed** — not queued until 06:00 and then executed. A
+deferred gate command is a gate that opens hours later, for someone who is no longer
+there, in response to a transmission the owner may not have sent.
+
+So the arming window is evaluated at **dispatch/verify time** and produces a rejection,
+which lands in the feed and the push like any other rejected attempt. The precondition
+seam is left alone.
 
 ### P4 · Authenticated commands
 

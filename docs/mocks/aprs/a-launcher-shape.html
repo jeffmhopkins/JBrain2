@@ -3,9 +3,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>APRS launcher - three shapes (A radio tab / B feed / C map)</title>
 <!--
-  MOCK ROUND for the APRS surface (docs/plans/APRS_CONTROL_PLAN.md, P3). Three
-  DISTINCT shapes, not three skins - and the round exists to settle a scoping
-  question as much as a layout one:
+  BINDING SPEC for the APRS surface (docs/plans/APRS_CONTROL_PLAN.md, P3).
+
+  CHOSEN 2026-09-02: A - a tab of the Radio launcher. With it: the trigger list must
+  work "similar to existing tasks that are time based", which changed what variant A
+  draws. It no longer shows a bespoke armed-list of switches; it shows the SAME
+  automation cards the Ops Workflow screen renders, because an APRS trigger is not a
+  new kind of thing - it is an EventTrigger, which the engine already models beside
+  ScheduleTrigger and AutomationsScreen already renders ("When <ev> -> run <pipeline>").
+  Variants B and C are kept below as the rejected alternatives.
+
+  Three DISTINCT shapes, not three skins - the round settled a scoping question as
+  much as a layout one:
 
       Is APRS a TAB of a Radio launcher, or its own screen?
 
@@ -139,6 +148,13 @@
   .drawer{border:1px solid var(--border);border-top-left-radius:16px;border-top-right-radius:16px;
     background:var(--surface);margin-top:-14px;position:relative;padding:10px 12px 4px;}
   .grab{width:34px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 10px;}
+  .trig .ev{font-family:var(--mono);font-size:11.5px;color:var(--steel);}
+  .trig .pl{font-family:var(--mono);font-size:11.5px;color:var(--green);}
+  .trig .t-name{line-height:1.45;}
+  .arm{color:var(--amber);}
+  .arm.once{color:var(--rose);}
+  .foot{font-size:11.5px;line-height:1.55;color:var(--text-3);margin:10px 2px 0;}
+  .foot b{color:var(--text-2);font-weight:600;}
   .v{display:none;}
   .v.on{display:block;}
 </style>
@@ -181,13 +197,22 @@
         <span class="who"><b data-freq>144.390</b> · <span data-heard>heard 12s ago</span></span>
         <span class="rate" data-rate>38 pkt/hr</span></div>
       <div data-list></div>
-      <div class="sec">Armed</div>
-      <div class="trig"><div class="t-body"><div class="t-name">Home geofence → arrive</div>
-        <div class="t-when">Starts a chat · last fired 3d ago</div></div>
+      <div class="sec">Automations · radio</div>
+      <div class="trig"><div class="t-body">
+        <div class="t-name">When <span class="ev">aprs.command_verified</span> → run <span class="pl">open-gate</span></div>
+        <div class="t-when">last run ok · <span class="arm">armed weekdays 06:00–09:00</span></div></div>
         <button class="sw" role="switch" aria-checked="true"></button></div>
-      <div class="trig"><div class="t-body"><div class="t-name">GATE command</div>
-        <div class="t-when">Authenticated · counter 47</div></div>
+      <div class="trig"><div class="t-body">
+        <div class="t-name">When <span class="ev">location.geofence_transition</span> → run <span class="pl">arrive-home-chat</span></div>
+        <div class="t-when">last run ok · <span class="arm">armed always</span></div></div>
         <button class="sw" role="switch" aria-checked="true"></button></div>
+      <div class="trig"><div class="t-body">
+        <div class="t-name">When <span class="ev">aprs.command_verified</span> → run <span class="pl">unlock-shop</span></div>
+        <div class="t-when">idle · <span class="arm once">armed once — disarms after it fires</span></div></div>
+        <button class="sw" role="switch" aria-checked="true"></button></div>
+      <p class="foot">Same card, switch and run history as the Ops Workflow screen. The
+        arming phrase reuses the task schedule spec — <b>on&nbsp;demand</b> / <b>once</b> /
+        <b>repeat</b> — answering “when is it listening”, not “when does it run”.</p>
     </div>
 
     <!-- ============ B · FEED FIRST ============ -->
@@ -250,7 +275,9 @@ function rowHtml(r){
 var NOTES = {
   A:{h:"A · A tab of the Radio launcher",p:[
     "<strong>One piece of hardware, one mental model.</strong> Tuner, APRS and Recordings share a dongle and a lease, so they share a screen. Also one mock round for the whole radio family instead of two.",
-    "The health strip sits under the tabs, so it is on screen whenever APRS is. Triggers get a short armed list below the feed — enough to see what is live, not enough to manage many.",
+    "The health strip sits under the tabs, so it is on screen whenever APRS is.",
+    "<strong>Triggers are not a new list.</strong> An APRS trigger is an <em>EventTrigger</em> — the shape the engine already models beside ScheduleTrigger, and which the Ops Workflow screen already renders. So this tab shows the same automation cards, filtered to the radio category, and an action lands here just by declaring one.",
+    "<strong>Arming reuses the task schedule spec.</strong> on demand / once / repeat, but answering <em>when is it listening</em> rather than <em>when does it run</em>. <em>once</em> is exactly the one-time-command semantic for free; <em>repeat</em> means a gate command does not exist outside the hours you would use it, which is a security control, not a convenience.",
     "Costs: APRS gets a third of the attention, the feed is short, and the map has nowhere to go. If geo triggers become the main event this shape runs out of room first."]},
   B:{h:"B · Its own screen, feed first",p:[
     "<strong>The heard log is the spine</strong> — the omnibox stream paradigm pointed at packets. Answers “what has come in” the instant it opens, which is what a log is for.",

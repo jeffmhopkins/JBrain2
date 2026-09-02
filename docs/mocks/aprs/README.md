@@ -6,7 +6,7 @@ The GUI gate for `../../plans/APRS_CONTROL_PLAN.md` P3. Sibling of `../sdr-tuner
 which holds the interactive tuner's rounds — and whether these two stay siblings or
 become one screen is precisely what the first round asks.
 
-## Round 1 — the launcher's shape · `a-launcher-shape.html` · **awaiting decision**
+## Round 1 — the launcher's shape · `a-launcher-shape.html` · **decided**
 
 Three distinct shapes, not three skins. The round carries a **scoping** question as
 much as a layout one, because answering it by argument would have been guessing:
@@ -22,6 +22,32 @@ one mental model, so they plausibly share a screen — and it is one mock round 
 whole radio family rather than two. The argument for C is that if geo triggers are the
 point, it is the only shape where a trigger and its meaning are the same object. B is
 the middle: the log is what you open it for.
+
+> **Decided (owner, 2026-09-02): A — a tab of the Radio launcher.** With it: the trigger
+> list needs *"handling similar to existing tasks that are time based"*.
+
+### What that second half changed
+
+It changed what A draws. The mock's first pass gave the tab a **bespoke armed-list of
+switches**, which was a small parallel system nobody needed — the same mistake, one
+layer up, that P2 avoids by feeding the existing location core instead of writing a
+second geofence evaluator.
+
+An APRS trigger is an `EventTrigger`: the shape `workflow/contracts.py` already models
+beside `ScheduleTrigger`, and which the Ops Workflow screen already renders. So the tab
+shows the **same automation cards** — same switch, same run history, same run-now — and
+an action lands in the section just by declaring a `category`, which the reader is
+explicit about ("never a hardcoded id list").
+
+Arming then reuses the **task schedule spec** (`on_demand | once | repeat`), which
+`AutomationsScreen` already reuses once. The vocabulary transfers exactly, answering
+*when is it listening* rather than *when does it run* — and `once` turns out to be the
+one-time-command semantic for free, while `repeat` makes a gate command not exist
+outside the hours it would be used. That is a security control, not a convenience.
+
+The plan records the trap this opens: arming must be evaluated at **verify time**, never
+as an `ActionSpec.precondition`, because a precondition *defers* rather than refuses —
+and a deferred gate command is a gate that opens hours late.
 
 ### What else the round decides
 
