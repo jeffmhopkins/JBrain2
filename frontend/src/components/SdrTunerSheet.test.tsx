@@ -137,6 +137,18 @@ describe("the tuner sheet", () => {
     expect(screen.getByText(/^(LIVE|PAUSED)$/)).toBeInTheDocument();
   });
 
+  it("puts the tape in the transport row, not above it", () => {
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    // The owner's constraint on this display was that it must not eat vertical space,
+    // so it rides in the row the play button already sized rather than stacking above
+    // it (docs/mocks/sdr-tuner/d-waveform-tape.html).
+    const tape = screen.getByRole("img", { name: /Audio level over the last 12 seconds/ });
+    expect(tape.parentElement).toBe(
+      screen.getByRole("button", { name: /^(Play|Pause)$/ }).parentElement,
+    );
+  });
+
   it("abandons the edit on Escape without retuning", () => {
     const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
     render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);

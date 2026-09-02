@@ -14,6 +14,7 @@ import {
   isSdrPlaying,
   playSdrAudio,
   resetSdrAudio,
+  sdrAnalyser,
   stopSdrAudio,
   subscribeSdrAudio,
   toggleSdrAudio,
@@ -116,5 +117,82 @@ describe("the radio's audio element", () => {
     }
 
     expect(() => playSdrAudio()).not.toThrow();
+  });
+});
+
+describe("the analyser tap", () => {
+  it("refuses to take the element while the context is suspended", () => {
+    // The one-way door. createMediaElementSource routes the element's output through
+    // the graph permanently, so taking it while the context cannot run would trade a
+    // working radio for a picture of one — this file's oldest bug in a new costume.
+    const created = vi.fn();
+    class Suspended {
+      state = "suspended";
+      resume() {
+        return Promise.resolve();
+      }
+      createMediaElementSource = created;
+      createAnalyser = created;
+    }
+    vi.stubGlobal("AudioContext", Suspended);
+    playSdrAudio();
+
+    expect(sdrAnalyser()).toBeNull();
+    expect(created).not.toHaveBeenCalled();
+    // Still pointed at the stream and playable: the audio path is untouched.
+    expect(element()?.getAttribute("src")).toContain(SDR_AUDIO_SRC);
+    vi.unstubAllGlobals();
+  });
+
+  it("connects through to the destination once the context is running", () => {
+    // A graph that ends at the analyser is a dead end: the radio would go silent.
+    const connect = vi.fn();
+    const node = { fftSize: 0, smoothingTimeConstant: 0, connect };
+    class Running {
+      state = "running";
+      destination = { id: "speakers" };
+      resume() {
+        return Promise.resolve();
+      }
+      createMediaElementSource() {
+        return { connect };
+      }
+      createAnalyser() {
+        return node;
+      }
+    }
+    vi.stubGlobal("AudioContext", Running);
+    playSdrAudio();
+
+    expect(sdrAnalyser()).toBe(node);
+    expect(connect).toHaveBeenCalledWith(node);
+    expect(connect).toHaveBeenCalledWith({ id: "speakers" });
+    vi.unstubAllGlobals();
+  });
+
+  it("hands back the same analyser rather than tapping twice", () => {
+    // createMediaElementSource throws on a second call for the same element.
+    let taps = 0;
+    const node = { fftSize: 0, smoothingTimeConstant: 0, connect: vi.fn() };
+    class Running {
+      state = "running";
+      destination = {};
+      resume() {
+        return Promise.resolve();
+      }
+      createMediaElementSource() {
+        taps += 1;
+        return { connect: vi.fn() };
+      }
+      createAnalyser() {
+        return node;
+      }
+    }
+    vi.stubGlobal("AudioContext", Running);
+    playSdrAudio();
+
+    expect(sdrAnalyser()).toBe(sdrAnalyser());
+    expect(taps).toBe(1);
+    vi.unstubAllGlobals();
   });
 });

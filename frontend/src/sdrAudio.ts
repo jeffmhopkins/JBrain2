@@ -28,6 +28,13 @@ type Listener = (playing: boolean) => void;
 let element: HTMLAudioElement | null = null;
 const listeners = new Set<Listener>();
 
+// The Web Audio tap the tuner's tape display reads. Kept here rather than in the
+// component because `createMediaElementSource` may be called only ONCE per element,
+// and this module owns the only element there is.
+let audioCtx: AudioContext | null = null;
+let analyserNode: AnalyserNode | null = null;
+let tapped = false;
+
 function announce(): void {
   const playing = isSdrPlaying();
   for (const listener of listeners) listener(playing);
@@ -123,9 +130,69 @@ export function subscribeSdrAudio(listener: Listener): () => void {
   };
 }
 
+/**
+ * The analyser tapping the live stream, or null if one cannot safely be made.
+ *
+ * Routing the element through an AudioContext is a ONE-WAY door: once
+ * `createMediaElementSource` has taken it, its output only reaches the speakers
+ * through the graph, and a context that is not running means silence. Autoplay
+ * policy suspends a context created outside a user gesture, so tapping the element
+ * before checking would trade a working radio for a picture of one — the same
+ * failure this file has already been fixed for twice, in a new costume.
+ *
+ * So the order is load-bearing: make the context, get it running, and only THEN
+ * take the element. Called from a real tap (opening the tuner, or the play button),
+ * so by the time it matters the gesture has happened. Until it succeeds the radio
+ * plays untouched and the caller simply has no data to draw.
+ *
+ * This also depends on the stream being SAME-ORIGIN, which `/api/sdr/audio` is
+ * because it proxies rather than redirects. Cross-origin media taints the graph and
+ * the analyser reads pure silence while the audio plays on perfectly — measured, and
+ * a very quiet way to lose the display. If that proxy is ever replaced by a redirect
+ * to the sidecar, this stops returning data and nothing else breaks to say so.
+ */
+export function sdrAnalyser(): AnalyserNode | null {
+  if (analyserNode) return analyserNode;
+  const el = element;
+  if (!el || tapped) return analyserNode;
+  const Ctor: typeof AudioContext | undefined =
+    typeof AudioContext !== "undefined"
+      ? AudioContext
+      : (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    if (!audioCtx) audioCtx = new Ctor();
+    if (audioCtx.state === "suspended") void audioCtx.resume();
+    // Still not running — do NOT take the element. Try again on the next tap.
+    if (audioCtx.state !== "running") return null;
+    const source = audioCtx.createMediaElementSource(el);
+    tapped = true; // whatever happens next, this element can never be tapped again
+    const node = audioCtx.createAnalyser();
+    node.fftSize = 2048;
+    node.smoothingTimeConstant = 0.72;
+    source.connect(node);
+    // Without this the graph is a dead end and the radio goes silent.
+    node.connect(audioCtx.destination);
+    analyserNode = node;
+    return node;
+  } catch {
+    return null; // no visualiser; the radio is unaffected
+  }
+}
+
 /** Test seam: drop the element so each test starts from nothing. */
 export function resetSdrAudio(): void {
   element?.remove();
   element = null;
   listeners.clear();
+  // Guarded: a reset that throws leaves the tap half-torn-down, and every later
+  // caller inherits the wreckage.
+  try {
+    void audioCtx?.close()?.catch(() => {});
+  } catch {
+    // already closed, or never a real context
+  }
+  audioCtx = null;
+  analyserNode = null;
+  tapped = false;
 }

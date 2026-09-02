@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDR tuner - waveform (chosen: C, the rolling tape)</title>
+<!--
+  BINDING SPEC for the tuner sheet's live audio display. Chosen 2026-09-02 from three
+  variants presented to the owner (A scope / B spectrum / C tape); C won, with the
+  explicit constraint "make sure it's not vertically taking up too much space".
+
+  What is binding:
+  · The display is a ROLLING TAPE: audio loudness over the last 12 seconds, scrolling
+    right to left, newest at the RIGHT edge. Not a scope, not a spectrum.
+  · It sits INSIDE the transport row, between the play button and the LIVE/PAUSED tag,
+    taking the slack width. It adds NO vertical space of its own - the row was already
+    as tall as the play button. 38px canvas inside a 46px row.
+  · It draws only while the sheet is MOUNTED. A closed tuner costs nothing, and the
+    tape fills in from the right over its first 12 seconds rather than pretending to
+    remember what happened while nobody was looking.
+  · Paused radio freezes the tape rather than scrolling silence past it.
+  · Data comes from a Web Audio AnalyserNode tapping the parked <audio> element
+    (RMS per animation frame). No backend change: the level meter above it stays the
+    SERVER's measurement of the demodulated signal, which is a different fact and
+    keeps working while the audio is paused.
+
+  The one-way door, recorded here because it is easy to undo by accident:
+  createMediaElementSource permanently routes the element's output through the audio
+  graph. Taking the element while the AudioContext is suspended - which autoplay
+  policy does to any context made outside a user gesture - silences the radio. The
+  order is therefore load-bearing: make the context, get it RUNNING, and only then
+  tap the element; and always connect the analyser through to destination.
+
+  And the stream must be SAME-ORIGIN, which /api/sdr/audio is because it proxies
+  rather than redirects. Cross-origin media taints the graph: the analyser then reads
+  pure silence while the audio plays on perfectly. Measured in Chromium - an
+  about:blank page reading the sidecar directly gave rms 0.0000 throughout, the same
+  page served from the sidecar's own origin gave 0.246. Replacing that proxy with a
+  redirect would kill this display and break nothing else that says so.
+
+  This file keeps all three variants live so the decision stays inspectable, with C
+  shown at its shipped size in the sheet. Use the Design switcher to see the rejected
+  options and why they lost.
+-->
+
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A;
+    --steel-tint:rgba(127,167,201,.13);
+    --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 64px;}
+
+  header{border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:24px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;text-wrap:balance;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:64ch;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+
+  .controls{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;margin:22px 0 26px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;background:var(--surface);}
+  .seg button{
+    appearance:none;border:0;background:none;color:var(--text-2);
+    font:inherit;font-size:13px;padding:9px 14px;cursor:pointer;
+    border-right:1px solid var(--border);
+  }
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+  .start{
+    appearance:none;border:1px solid var(--steel);border-radius:var(--r-pill);
+    background:var(--steel-tint);color:var(--steel);font:inherit;font-size:13px;font-weight:600;
+    padding:10px 18px;cursor:pointer;
+  }
+  .start[disabled]{opacity:.45;cursor:default;}
+  .start:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  .stage{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:32px;align-items:start;}
+  @media (max-width:820px){ .stage{grid-template-columns:minmax(0,1fr);} }
+
+  /* ---- the phone / sheet, matching the shipped tuner ---- */
+  .phone{
+    background:var(--bg);border:1px solid var(--border);border-radius:26px;
+    padding:10px;box-shadow:0 18px 46px rgba(0,0,0,.45);
+  }
+  .sheet{background:var(--surface);border-radius:var(--r-card);padding:16px 16px 18px;}
+  .grab{width:34px;height:4px;border-radius:999px;background:var(--border);margin:2px auto 12px;}
+  .sheet h2{font-size:16px;font-weight:650;margin:0 0 8px;}
+  .note{font-size:12.5px;color:var(--text-2);line-height:1.5;margin:0 0 14px;}
+  .readout{border:1px solid var(--border);border-radius:var(--r-card);padding:14px 12px;text-align:center;}
+  .freq{font-family:var(--mono);font-size:32px;font-weight:600;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1;}
+  .freq .u{font-size:14px;color:var(--text-2);font-weight:400;margin-left:5px;}
+  .stn{font-size:11px;letter-spacing:.08em;color:var(--text-3);margin-top:4px;}
+  .tuner{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;}
+  .stepbtn{width:42px;height:42px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:19px;line-height:1;cursor:default;}
+  .stepsz{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);border:1px solid var(--border);border-radius:999px;background:var(--surface-2);padding:6px 10px;}
+  .flabel{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:16px 0 7px;}
+  .modes{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .modes span{flex:1;text-align:center;font-size:12px;padding:8px 0;color:var(--text-2);border-right:1px solid var(--border);}
+  .modes span:last-child{border-right:0;}
+  .modes span.on{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .meter{display:flex;align-items:center;gap:10px;}
+  .bars{display:flex;align-items:flex-end;gap:2px;height:16px;}
+  .bars i{width:3px;background:var(--border);border-radius:1px;display:block;}
+  .bars i.on{background:var(--green);}
+  .bars i:nth-child(1){height:5px;} .bars i:nth-child(2){height:7px;} .bars i:nth-child(3){height:9px;}
+  .bars i:nth-child(4){height:11px;} .bars i:nth-child(5){height:13px;} .bars i:nth-child(6){height:16px;}
+  .level{font-family:var(--mono);font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .elapsed{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+
+  /* ---- the slot under test ---- */
+  .viz{margin:14px 0 4px;}
+  .transport{display:flex;align-items:center;gap:10px;}
+  .tapeslot{flex:1;min-width:0;}
+  .livetag{flex:0 0 auto;}
+  .play{
+    width:46px;height:46px;border-radius:50%;border:1px solid var(--steel);
+    background:var(--surface-2);color:var(--steel);font-size:15px;line-height:1;cursor:pointer;flex:0 0 auto;
+  }
+  .play:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .livetag{font-size:10.5px;letter-spacing:.1em;color:var(--steel);}
+  .livetag.off{color:var(--text-3);}
+  canvas{display:block;width:100%;}
+  .canvasbox{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;}
+
+  .actions{display:flex;gap:10px;margin-top:16px;}
+  .act{flex:1;text-align:center;font-size:13px;padding:11px 0;border-radius:12px;border:1px solid var(--border);color:var(--text-3);}
+  .act.rel{border-color:rgba(127,167,201,.4);color:var(--steel);}
+
+  /* ---- the argument column ---- */
+  .pitch h3{font-size:17px;font-weight:650;margin:0 0 4px;letter-spacing:-.1px;}
+  .pitch .kicker{font-family:var(--mono);font-size:11px;color:var(--steel);letter-spacing:.08em;margin:0 0 10px;}
+  .pitch p{font-size:14px;line-height:1.62;color:var(--text-2);margin:0 0 13px;max-width:62ch;}
+  .pitch strong{color:var(--text);font-weight:600;}
+  dl.specs{display:grid;grid-template-columns:auto 1fr;gap:8px 18px;margin:18px 0 0;font-size:13px;border-top:1px solid var(--border);padding-top:16px;}
+  dl.specs dt{color:var(--text-3);}
+  dl.specs dd{margin:0;color:var(--text-2);}
+  dl.specs dd code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+
+  .compare{margin-top:40px;border-top:1px solid var(--border);padding-top:24px;}
+  .compare h3{font-size:15px;font-weight:650;margin:0 0 4px;}
+  .compare > p{font-size:13.5px;color:var(--text-2);margin:0 0 18px;line-height:1.55;max-width:66ch;}
+  .row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
+  @media (max-width:700px){ .row3{grid-template-columns:minmax(0,1fr);} }
+  .mini .cap{display:flex;align-items:baseline;gap:8px;margin-bottom:7px;}
+  .mini .cap b{font-size:12.5px;font-weight:600;}
+  .mini .cap em{font-style:normal;font-size:11px;color:var(--text-3);}
+
+  .hint{margin-top:26px;font-size:12.5px;color:var(--text-3);line-height:1.6;max-width:70ch;}
+  @media (prefers-reduced-motion:reduce){ .play{transition:none;} }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Waveform in the tuner sheet</h1>
+    <p class="sub">
+      Three ways to show live audio while the sheet is open. All three are driven by a real
+      <code>AnalyserNode</code> off a real <code>AudioContext</code> — the same path the PWA would use on the
+      parked <code>&lt;audio&gt;</code> element — so what you see here is the actual data shape, not a canned animation.
+      Start the signal, then switch bands to see how each design reads voice against music, static and a dead channel.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="field">
+      <span class="lbl">Signal</span>
+      <button class="start" id="start">▶ Start signal</button>
+    </div>
+    <div class="field">
+      <span class="lbl">What's on the air</span>
+      <div class="seg" id="src" role="group" aria-label="Signal type">
+        <button aria-pressed="true" data-src="voice">Voice</button>
+        <button aria-pressed="false" data-src="music">Music</button>
+        <button aria-pressed="false" data-src="static">Static</button>
+        <button aria-pressed="false" data-src="dead">Dead air</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="lbl">Design</span>
+      <div class="seg" id="pick" role="group" aria-label="Design">
+        <button aria-pressed="false" data-v="a">A · Scope</button>
+        <button aria-pressed="false" data-v="b">B · Spectrum</button>
+        <button aria-pressed="true" data-v="c">C · Tape (chosen)</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="phone">
+      <div class="sheet">
+        <div class="grab"></div>
+        <h2>Tuned station</h2>
+        <p class="note">The radio has one tuner, so this session holds it until you release it.</p>
+
+        <div class="readout">
+          <div class="freq">99.300<span class="u">MHz</span></div>
+          <div class="stn">WBFM</div>
+          <div class="tuner">
+            <span class="stepbtn">−</span>
+            <span class="stepsz">100 kHz</span>
+            <span class="stepbtn">+</span>
+          </div>
+        </div>
+
+        <div class="flabel">Mode</div>
+        <div class="modes"><span class="on">WBFM</span><span>FM</span><span>AM</span><span>USB</span></div>
+
+        <div class="flabel">Signal</div>
+        <div class="meter">
+          <span class="bars" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+          <span class="level" id="lvl">45%</span>
+          <span class="elapsed" id="ela">0:51</span>
+        </div>
+
+        <!-- BINDING: the tape rides INSIDE the transport row, taking the slack
+             between the play button and the tag. No vertical space of its own. -->
+        <div class="viz">
+          <div class="transport">
+            <button class="play" id="play" aria-pressed="true" aria-label="Pause">❚❚</button>
+            <div class="canvasbox tapeslot"><canvas id="big" height="38"></canvas></div>
+            <span class="livetag" id="tag">LIVE</span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="act">Record</span>
+          <span class="act rel">Release</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="pitch" id="pitch"></div>
+  </div>
+
+  <section class="compare">
+    <h3>All three, same signal</h3>
+    <p>Running simultaneously off one analyser, so the difference is the design and not the moment. Switch the band above and watch which one tells you fastest what kind of thing you are listening to.</p>
+    <div class="row3">
+      <div class="mini">
+        <div class="cap"><b>A · Scope</b><em>the instant</em></div>
+        <div class="canvasbox"><canvas class="m" data-v="a" height="88"></canvas></div>
+      </div>
+      <div class="mini">
+        <div class="cap"><b>B · Spectrum</b><em>the character</em></div>
+        <div class="canvasbox"><canvas class="m" data-v="b" height="88"></canvas></div>
+      </div>
+      <div class="mini">
+        <div class="cap"><b>C · Tape</b><em>the last 12 seconds</em></div>
+        <div class="canvasbox"><canvas class="m" data-v="c" height="88"></canvas></div>
+      </div>
+    </div>
+    <p class="hint">
+      Nothing here reaches the radio: the sound is synthesised in your browser so the mock works anywhere.
+      On the box the analyser taps the live MP3 stream instead, which needs no backend change — the audio
+      element is already parked in the page for the life of the lease.
+    </p>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var PITCH = {
+    a: {
+      kicker: "VARIANT A",
+      title: "Oscilloscope trace",
+      body: [
+        "The raw waveform, drawn as it arrives. This is the shape a radio operator already knows: speech is a run of tight bursts with gaps between syllables, music is dense and continuous, static is a solid band edge to edge, and a dead channel is a flat line.",
+        "<strong>Its argument:</strong> it is the most honest possible readout — one pixel column per slice of actual audio, no interpretation in between. It also fails loudly. When the tuner drifts off a station the trace goes flat or fills with noise, and you see that before you consciously hear it.",
+        "<strong>Its cost:</strong> it only shows the present instant. Look away for two seconds and you have missed a transmission entirely, which is the normal case on a scanner channel."
+      ],
+      specs: [["Data", "<code>getByteTimeDomainData</code>, 1024 samples"], ["Redraw", "one <code>requestAnimationFrame</code> per frame"], ["Reads best", "is there audio, and is it speech"]]
+    },
+    b: {
+      kicker: "VARIANT B",
+      title: "Spectrum bars",
+      body: [
+        "The frequency content of what is playing, low bands on the left. Voice piles up in the low and mid bars and leaves the top empty; music spreads the whole way across; static is flat and even; a dead channel barely lifts off the floor.",
+        "<strong>Its argument:</strong> it tells you what <em>kind</em> of signal you have, not merely that you have one. That is the question actually being asked while tuning — and it is the display an SDR conventionally offers, so it will read as familiar next to a waterfall when the launcher lands.",
+        "<strong>Its cost:</strong> it is the least literal of the three. Bars moving does not distinguish a strong clear station from a loud noisy one as directly as a trace does, and it shares the level meter's job without replacing it."
+      ],
+      specs: [["Data", "<code>getByteFrequencyData</code>, 32 bands"], ["Redraw", "per frame, with a decay on each bar"], ["Reads best", "what kind of signal this is"]]
+    },
+    c: {
+      kicker: "VARIANT C",
+      title: "Rolling tape",
+      body: [
+        "Loudness over the last twelve seconds, scrolling right to left — the newest audio at the right edge. Each transmission leaves a visible lump that drifts away over the following seconds.",
+        "<strong>Its argument:</strong> it is the only one of the three with a memory, and scanner traffic is bursty. Glance down after looking away and you can still see that something came through four seconds ago, how long it lasted, and whether the channel has been quiet since. That is the shape of the question on a voice channel.",
+        "<strong>Its cost:</strong> it throws away detail to buy history. It cannot show you the texture of the audio, so voice and music look much the same — a run of lumps against a flat floor."
+      ],
+      specs: [["Data", "RMS per frame into a ring buffer"], ["Window", "12 s, ~60 columns per second"], ["Reads best", "did anything just come through"]]
+    }
+  };
+
+  var variant = "c";   // the chosen variant
+  var source = "voice";
+  var running = false;
+  var playing = true;
+
+  var ctx = null, analyser = null, master = null, noiseBuf = null;
+  var nodes = { noise: null, gain: null, filter: null, osc: [] };
+  var timeData = null, freqData = null;
+  var TAPE_LEN = 720;               // 12 s at ~60 fps
+  var tape = new Float32Array(TAPE_LEN);
+  var tapeAt = 0;
+  var envTimer = null;
+
+  var big = document.getElementById("big");
+  var minis = Array.prototype.slice.call(document.querySelectorAll("canvas.m"));
+
+  function css(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function fit(cv) {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = cv.clientWidth || 300;
+    var h = parseInt(cv.getAttribute("height"), 10);
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    cv.style.height = h + "px";
+    var c2 = cv.getContext("2d");
+    c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g: c2, w: w, h: h };
+  }
+
+  var sized = new WeakMap();
+  function surface(cv) {
+    if (!sized.has(cv) || sized.get(cv).w !== cv.clientWidth) sized.set(cv, fit(cv));
+    return sized.get(cv);
+  }
+  window.addEventListener("resize", function () { sized = new WeakMap(); });
+
+  // ---- synthesis: a stand-in for the demodulated audio -------------------
+  function makeNoise() {
+    var len = ctx.sampleRate * 2;
+    var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  function teardown() {
+    if (envTimer) { clearInterval(envTimer); envTimer = null; }
+    nodes.osc.forEach(function (o) { try { o.stop(); } catch (e) {} });
+    nodes.osc = [];
+    if (nodes.noise) { try { nodes.noise.stop(); } catch (e) {} nodes.noise = null; }
+    if (nodes.gain) { try { nodes.gain.disconnect(); } catch (e) {} nodes.gain = null; }
+    if (nodes.filter) { try { nodes.filter.disconnect(); } catch (e) {} nodes.filter = null; }
+  }
+
+  function build() {
+    teardown();
+    var g = ctx.createGain();
+    var f = ctx.createBiquadFilter();
+    g.connect(f); f.connect(master);
+    nodes.gain = g; nodes.filter = f;
+
+    if (source === "dead") {
+      f.type = "lowpass"; f.frequency.value = 3000;
+      var n0 = ctx.createBufferSource();
+      n0.buffer = noiseBuf; n0.loop = true; n0.connect(g); n0.start();
+      nodes.noise = n0; g.gain.value = 0.012;      // a receiver's noise floor, not silence
+      return;
+    }
+    if (source === "static") {
+      f.type = "highpass"; f.frequency.value = 220;
+      var n1 = ctx.createBufferSource();
+      n1.buffer = noiseBuf; n1.loop = true; n1.connect(g); n1.start();
+      nodes.noise = n1; g.gain.value = 0.5;
+      return;
+    }
+    if (source === "voice") {
+      // Band-limited noise gated into syllables: the envelope is what makes speech
+      // legible on a scope, far more than its spectrum.
+      f.type = "bandpass"; f.frequency.value = 700; f.Q.value = 0.7;
+      var n2 = ctx.createBufferSource();
+      n2.buffer = noiseBuf; n2.loop = true; n2.connect(g); n2.start();
+      nodes.noise = n2;
+      g.gain.value = 0;
+      var speaking = true, until = 0;
+      envTimer = setInterval(function () {
+        var t = ctx.currentTime;
+        if (t < until) return;
+        if (speaking) {
+          var syl = 0.09 + Math.random() * 0.14;
+          g.gain.cancelScheduledValues(t);
+          g.gain.setTargetAtTime(0.45 + Math.random() * 0.35, t, 0.012);
+          g.gain.setTargetAtTime(0.02, t + syl * 0.7, 0.05);
+          f.frequency.setTargetAtTime(400 + Math.random() * 900, t, 0.03);
+          until = t + syl + 0.04;
+          if (Math.random() < 0.18) speaking = false;      // end of a phrase
+        } else {
+          g.gain.setTargetAtTime(0.0, t, 0.05);
+          until = t + 0.5 + Math.random() * 0.9;           // breath between phrases
+          speaking = true;
+        }
+      }, 30);
+      return;
+    }
+    // music: a sustained chord with vibrato and a moving top line
+    f.type = "lowpass"; f.frequency.value = 5200;
+    g.gain.value = 0.16;
+    [196, 246.94, 293.66].forEach(function (hz) {
+      var o = ctx.createOscillator();
+      o.type = "sawtooth"; o.frequency.value = hz;
+      var og = ctx.createGain(); og.gain.value = 0.5;
+      o.connect(og); og.connect(g); o.start();
+      nodes.osc.push(o);
+    });
+    var lead = ctx.createOscillator();
+    lead.type = "triangle"; lead.frequency.value = 587.33;
+    var lg = ctx.createGain(); lg.gain.value = 0.6;
+    lead.connect(lg); lg.connect(g); lead.start();
+    nodes.osc.push(lead);
+    var step = 0, scale = [587.33, 659.25, 698.46, 783.99, 880];
+    envTimer = setInterval(function () {
+      step = (step + 1) % scale.length;
+      lead.frequency.setTargetAtTime(scale[step], ctx.currentTime, 0.05);
+    }, 420);
+  }
+
+  function startAudio() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.28;                     // audible but not startling
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.72;
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+    timeData = new Uint8Array(analyser.fftSize);
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+    noiseBuf = makeNoise();
+    build();
+    return true;
+  }
+
+  // ---- drawing -----------------------------------------------------------
+  function drawScope(cv, live) {
+    var s = surface(cv), g = s.g, w = s.w, h = s.h;
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = css("--border"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, h / 2 + .5); g.lineTo(w, h / 2 + .5); g.stroke();
+    if (!live) return;
+    analyser.getByteTimeDomainData(timeData);
+    g.strokeStyle = css("--steel");
+    g.lineWidth = 1.6; g.lineJoin = "round";
+    g.beginPath();
+    var stepx = w / timeData.length;
+    for (var i = 0; i < timeData.length; i++) {
+      var y = h / 2 - ((timeData[i] - 128) / 128) * (h / 2 - 4);
+      if (i === 0) g.moveTo(0, y); else g.lineTo(i * stepx, y);
+    }
+    g.stroke();
+  }
+
+  var decay = null;
+  function drawSpectrum(cv, live) {
+    var s = surface(cv), g = s.g, w = s.w, h = s.h;
+    g.clearRect(0, 0, w, h);
+    var BANDS = 32, gap = 2;
+    var bw = (w - gap * (BANDS - 1)) / BANDS;
+    if (!decay || decay.length !== BANDS) decay = new Float32Array(BANDS);
+    if (live) analyser.getByteFrequencyData(freqData);
+    // Bins are linear in frequency; audio interest is not. Group them so the low
+    // end — where voice lives — gets the width it deserves.
+    var top = Math.floor(freqData ? freqData.length * 0.62 : 1);
+    for (var b = 0; b < BANDS; b++) {
+      var v = 0;
+      if (live) {
+        var lo = Math.floor(Math.pow(b / BANDS, 1.7) * top);
+        var hi = Math.max(lo + 1, Math.floor(Math.pow((b + 1) / BANDS, 1.7) * top));
+        var sum = 0;
+        for (var k = lo; k < hi; k++) sum += freqData[k];
+        v = (sum / (hi - lo)) / 255;
+      }
+      decay[b] = Math.max(v, decay[b] * 0.88);
+      var bh = Math.max(2, decay[b] * (h - 6));
+      var x = b * (bw + gap);
+      g.fillStyle = decay[b] > 0.02 ? css("--steel") : css("--border");
+      g.globalAlpha = decay[b] > 0.02 ? 0.35 + decay[b] * 0.65 : 1;
+      g.beginPath();
+      var r = Math.min(2, bw / 2);
+      g.roundRect(x, h - bh - 3, bw, bh, r);
+      g.fill();
+      g.globalAlpha = 1;
+    }
+  }
+
+  function drawTape(cv, live) {
+    var s = surface(cv), g = s.g, w = s.w, h = s.h;
+    g.clearRect(0, 0, w, h);
+    var mid = h / 2;
+    g.strokeStyle = css("--border"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, mid + .5); g.lineTo(w, mid + .5); g.stroke();
+    if (!live) return;
+    var cols = Math.min(TAPE_LEN, Math.floor(w));
+    g.fillStyle = css("--steel");
+    for (var i = 0; i < cols; i++) {
+      // newest at the right edge
+      var idx = (tapeAt - 1 - (cols - 1 - i) + TAPE_LEN * 2) % TAPE_LEN;
+      var a = tape[idx] || 0;
+      var bh = Math.max(1, a * (h - 8));
+      var x = (i / cols) * w;
+      g.globalAlpha = 0.4 + Math.min(0.6, a * 2.2);
+      g.fillRect(x, mid - bh / 2, Math.max(1, w / cols - 0.4), bh);
+    }
+    g.globalAlpha = 1;
+    // The right edge is now: mark it, or the scroll direction is ambiguous.
+    g.fillStyle = css("--green");
+    g.fillRect(w - 1.5, 4, 1.5, h - 8);
+  }
+
+  function drawInto(cv, v, live) {
+    if (v === "a") drawScope(cv, live);
+    else if (v === "b") drawSpectrum(cv, live);
+    else drawTape(cv, live);
+  }
+
+  function pushTape() {
+    analyser.getByteTimeDomainData(timeData);
+    var sum = 0;
+    for (var i = 0; i < timeData.length; i++) {
+      var d = (timeData[i] - 128) / 128;
+      sum += d * d;
+    }
+    tape[tapeAt] = Math.min(1, Math.sqrt(sum / timeData.length) * 2.6);
+    tapeAt = (tapeAt + 1) % TAPE_LEN;
+  }
+
+  var seconds = 51;
+  var lastSec = 0;
+  function frame(ts) {
+    var live = running && playing;
+    if (live) pushTape();
+    drawInto(big, variant, live);
+    for (var i = 0; i < minis.length; i++) drawInto(minis[i], minis[i].dataset.v, live);
+    if (live && ts - lastSec > 1000) {
+      lastSec = ts;
+      seconds++;
+      document.getElementById("ela").textContent =
+        Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+      var lv = Math.round(Math.min(1, tape[(tapeAt - 1 + TAPE_LEN) % TAPE_LEN] * 1.5) * 100);
+      document.getElementById("lvl").textContent = lv + "%";
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function renderPitch() {
+    var p = PITCH[variant];
+    document.getElementById("pitch").innerHTML =
+      '<p class="kicker">' + p.kicker + "</p><h3>" + p.title + "</h3>" +
+      p.body.map(function (t) { return "<p>" + t + "</p>"; }).join("") +
+      '<dl class="specs">' + p.specs.map(function (s) {
+        return "<dt>" + s[0] + "</dt><dd>" + s[1] + "</dd>";
+      }).join("") + "</dl>";
+  }
+
+  function press(group, attr, value) {
+    Array.prototype.forEach.call(group.children, function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset[attr] === value));
+    });
+  }
+
+  document.getElementById("pick").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    variant = b.dataset.v; press(this, "v", variant); renderPitch();
+  });
+
+  document.getElementById("src").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    source = b.dataset.src; press(this, "src", source);
+    if (running) build();
+  });
+
+  document.getElementById("start").addEventListener("click", function () {
+    if (running) return;
+    if (!startAudio()) { this.textContent = "No Web Audio here"; this.disabled = true; return; }
+    running = true;
+    this.textContent = "● Signal running";
+    this.disabled = true;
+  });
+
+  document.getElementById("play").addEventListener("click", function () {
+    playing = !playing;
+    this.textContent = playing ? "❚❚" : "▶";
+    this.setAttribute("aria-pressed", String(playing));
+    this.setAttribute("aria-label", playing ? "Pause" : "Play");
+    var tag = document.getElementById("tag");
+    tag.textContent = playing ? "LIVE" : "PAUSED";
+    tag.className = "livetag" + (playing ? "" : " off");
+    if (ctx) { if (playing) ctx.resume(); else ctx.suspend(); }
+  });
+
+  renderPitch();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
