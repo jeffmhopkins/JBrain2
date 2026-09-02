@@ -175,7 +175,9 @@ def test_a_box_with_no_radio_gets_no_tools() -> None:
 # understand the request instead of succeeding at nothing.
 
 
-def _sidecar(purpose: str | None = None, *, purposes: list[str] | None = None, session_id: str = "s1"):
+def _sidecar(
+    purpose: str | None = None, *, purposes: list[str] | None = None, session_id: str = "s1"
+):
     """A sidecar whose /healthz answer the test chooses; POSTs are recorded."""
     posts: list[tuple[str, dict[str, Any]]] = []
 
@@ -262,9 +264,7 @@ async def test_a_busy_radio_names_the_job_holding_it(tools) -> None:
         req = httpx.Request("POST", f"http://sdr:8000{path}")
         if path == "/healthz":
             return httpx.Response(200, json={"purposes": ["listen", "aprs"]}, request=req)
-        return httpx.Response(
-            409, json={"detail": "the radio is already listening"}, request=req
-        )
+        return httpx.Response(409, json={"detail": "the radio is already listening"}, request=req)
 
     out = await tools(route)["sdr_aprs_logging"]({"enabled": True}, None)
 
