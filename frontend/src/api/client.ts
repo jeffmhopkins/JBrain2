@@ -23,7 +23,7 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
-import type { AprsLogState, AprsToggleResult } from "../aprsLog";
+import type { AprsCommandState, AprsLogState, AprsToggleResult } from "../aprsLog";
 import type {
   IntakeConfig,
   IntakeConfigPatch,
@@ -2711,6 +2711,13 @@ export const api = {
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
     const response = await request(`/api/sdr/tune?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
+  },
+
+  // What is armed and what has been tried against it — the radio tab's read-only
+  // summary. Editing lives in Tasks; this is a view (docs/mocks/aprs/a-launcher-shape).
+  async getAprsCommands(): Promise<AprsCommandState> {
+    const response = await request("/api/sdr/commands");
+    return (await response.json()) as AprsCommandState;
   },
 
   async getAprsPackets(limit = 50): Promise<AprsLogState> {

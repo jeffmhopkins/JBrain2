@@ -33,10 +33,13 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.notes import SessionMakerDep, ctx_for
+from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.command import MAX_FAILURES
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -65,6 +68,10 @@ CAPTION_IDLE_S = 15.0
 # Long enough for a slow tuner open, short enough that a wedged sidecar surfaces as
 # an error rather than a hung composer.
 _TIMEOUT = 30.0
+
+# How many command attempts the radio tab shows. Enough to see a burst of failures at a
+# glance; the whole history stays in the table.
+ATTEMPTS_SHOWN = 20
 
 
 class SdrStatusOut(BaseModel):
@@ -169,6 +176,87 @@ async def packets(
                 "info": row["info"],
             }
             for row in rows
+        ],
+    }
+
+
+@router.get("/commands")
+async def commands(
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+) -> dict[str, Any]:
+    """The owner's radio commands and what has been tried against them.
+
+    The APRS tab's read-only summary (docs/mocks/aprs/a-launcher-shape.html, the
+    "Automations · radio" section, and c-single-dongle's "armed but deaf" block). Two
+    facts the owner cannot get anywhere else on this screen:
+
+    **What is armed**, so "armed while nothing is receiving" is visible as the pair it
+    is. Arming a command and enabling the receiver are separate switches on purpose,
+    and a task that says armed while the radio is deaf is the same lie a signal meter
+    on a dead channel tells.
+
+    **What has been TRIED.** A refusal is the row worth having — three attempts against
+    `GATE` from an unknown station last Tuesday is a fact the owner must be able to find
+    afterwards, and a push notification does not keep. It is read here rather than
+    pushed only (APRS_CONTROL_PLAN.md P4: "every attempt is visible").
+
+    Editing lives in Tasks; this is a view."""
+    ctx = ctx_for(owner)
+    async with scoped_session(maker, ctx) as session:
+        armed = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, name, enabled, command_word, command_callsign,"
+                        " command_days, command_from, command_until, command_failures,"
+                        " command_last_at"
+                        " FROM app.tasks WHERE schedule_kind = 'on_command'"
+                        " ORDER BY command_word"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        tried = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT heard_at, source, word, accepted, reason"
+                        " FROM app.command_attempts ORDER BY heard_at DESC LIMIT :n"
+                    ),
+                    {"n": ATTEMPTS_SHOWN},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return {
+        "commands": [
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "word": row["command_word"],
+                "callsign": row["command_callsign"],
+                "days": list(row["command_days"] or []),
+                "from": row["command_from"],
+                "until": row["command_until"],
+                "locked": int(row["command_failures"] or 0) >= MAX_FAILURES,
+                "last_at": row["command_last_at"].isoformat() if row["command_last_at"] else None,
+            }
+            for row in armed
+        ],
+        "attempts": [
+            {
+                "heard_at": row["heard_at"].isoformat(),
+                "source": row["source"],
+                "word": row["word"],
+                "accepted": row["accepted"],
+                "reason": row["reason"],
+            }
+            for row in tried
         ],
     }
 

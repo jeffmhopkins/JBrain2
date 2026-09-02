@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; no route above the sidecar starts one yet — P1a) P1🟡(built; on-box run pending) P1a✅ P3🟡(built; logging window pending) P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; the PWA switch starts one — P1a/P3) P1🟡(built; on-box run against live traffic pending) P1a✅ P3✅ P4🟡(built; on-box run pending) P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -294,6 +294,21 @@ The Tuner tab reflects state rather than duplicating the composer's tuner sheet,
 is the approved surface for tuning (`../mocks/sdr-tuner/`). Recordings is a later wave
 and says so.
 
+An independent review caught four ways this screen could be confidently wrong about the
+radio — a failed first load spinning on "Reading the log…" for ever with the error
+swallowed, the one-dongle contention state unbuilt so the switch could only fail, a
+decode rate that never reached zero (a receiver silent for 41 minutes read "26 pkt/hr"
+beside "nothing for 41 min"), and quiet and stale sharing an amber dot. All are fixed;
+the rate now shares the staleness threshold, which makes that disagreement
+unrepresentable rather than merely fixed. Who holds the tuner is read once, from the
+lease poll, so the two tabs cannot disagree.
+
+The mock's **command tasks** section is built as a read-only summary — what is armed,
+whether it is armed *and deaf*, and what has been tried against it. Editing lives in
+Tasks. The deaf warning is the pairing this screen exists for: arming a command and
+enabling the receiver are two switches on purpose, so "armed" while nothing is
+receiving is the same lie a signal meter on a dead channel tells.
+
 Observability is the point, not decoration: a watch that silently died is worse than no
 watch. `last_heard_at` and a decode rate are load-bearing, for the same reason the
 tuner's signal meter was deleted — a control that lies is worse than an absent one. So
@@ -405,6 +420,31 @@ Last, deliberately, on a decoder already proven by P1–P3.
 
 **Exit:** a command from the truck fires an allowlisted action; a replay does nothing; a
 forged callsign does nothing; every attempt is visible.
+
+**Landed.** `sdr/command.py` is the credential (HMAC over a counter, look-ahead resync,
+lockout checked before any comparison) and `sdr/gate.py` the verify path, riding on the
+P1 drain: a frame is stored, then offered to the owner's commands. `0181` adds the
+fourth kind and its columns; `0182` adds `app.command_attempts`. The editor is the
+fourth trigger kind (mock B, shape A); the key is generated on the box and shown once.
+
+Three decisions worth keeping, because each replaced something that looked right:
+
+- **The arming window is checked at VERIFY time, not as an `ActionSpec.precondition`.**
+  A precondition *defers* with a retry, and a deferred gate command is a gate that opens
+  hours later for someone who is no longer there.
+- **Every attempt is RECORDED, not only pushed.** A push is ephemeral, arrives only if a
+  device is registered, and is precisely what an attacker hopes goes unread. The push is
+  the alarm; the table is the evidence, and the radio tab reads it back. Pushes stop
+  once a command is locked out — otherwise an attacker turns the owner's phone into the
+  denial of service the lockout exists to prevent — and the rows keep accumulating.
+- **Firewalled scopes are warned, not blocked.** Blocking read like defence in depth and
+  is not: location is exactly what a command from the truck wants, and the box never
+  transmits, so a fired task cannot answer over the air. Only a verified command fires
+  anything, and that is the cap that holds.
+
+**Not done:** an on-box run. The credential, the consume, the window and the lockout are
+covered against real Postgres; what no test can stand in for is a real transmission from
+the truck decoding into a fired task.
 
 ## Open decisions (§7)
 

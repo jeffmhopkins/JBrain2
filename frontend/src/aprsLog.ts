@@ -92,3 +92,53 @@ export function decodeRate(state: AprsLogState, now: number = Date.now()): strin
   if (recent.length === 0) return "0 pkt/hr";
   return `${Math.round((recent.length / STALE_AFTER_MS) * 3_600_000)} pkt/hr`;
 }
+
+/** One of the owner's radio commands, as the tab summarises it. Read-only here: the
+ * editor lives in Tasks, and two doors onto one object need care they do not repay. */
+export interface AprsCommand {
+  id: string;
+  name: string;
+  enabled: boolean;
+  word: string | null;
+  callsign: string | null;
+  days: number[];
+  from: string | null;
+  until: string | null;
+  /** Too many failed attempts: nothing fires until the owner clears it. */
+  locked: boolean;
+  last_at: string | null;
+}
+
+/** One attempt heard on the air. A REFUSAL is the row worth having — three of these
+ * from an unknown station last Tuesday is a fact the owner needs to be able to find,
+ * and a push notification does not keep. */
+export interface AprsAttempt {
+  heard_at: string;
+  source: string;
+  word: string;
+  accepted: boolean;
+  reason: string;
+}
+
+export interface AprsCommandState {
+  commands: AprsCommand[];
+  attempts: AprsAttempt[];
+}
+
+/** How the arming window reads on a card: "armed weekdays 06:00–09:00" (the mock's
+ * phrasing). It answers "when is it LISTENING", never "when does it run". */
+export function armedLabel(command: AprsCommand): string {
+  if (!command.enabled) return "paused";
+  if (command.locked) return "locked — too many failed attempts";
+  if (!command.from || !command.until) return "armed always";
+  return `armed ${daysLabel(command.days)} ${command.from}–${command.until}`;
+}
+
+const DAY_LETTERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function daysLabel(days: number[]): string {
+  if (days.length === 0 || days.length === 7) return "daily";
+  const sorted = [...days].sort((a, b) => a - b);
+  if (sorted.join() === "1,2,3,4,5") return "weekdays";
+  return sorted.map((d) => DAY_LETTERS[d]).join(" ");
+}

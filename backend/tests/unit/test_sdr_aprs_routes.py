@@ -273,3 +273,106 @@ async def test_a_listening_session_is_not_logging(monkeypatch: pytest.MonkeyPatc
     out = await _packets(monkeypatch, _Sidecar(health=_listening("listen")), [])
 
     assert out["logging"] is False and out["reachable"] is True
+
+
+# --- what is armed, and what has been tried ------------------------------------------
+
+
+class _Rows:
+    """Two result sets in the order the route asks for them."""
+
+    def __init__(self, armed: list[dict[str, Any]], tried: list[dict[str, Any]]) -> None:
+        self._sets = [armed, tried]
+
+    async def execute(self, *_a: Any, **_k: Any) -> Any:
+        rows = self._sets.pop(0)
+
+        class Result:
+            def mappings(self) -> Any:
+                class M:
+                    def all(self) -> list[dict[str, Any]]:
+                        return rows
+
+                return M()
+
+        return Result()
+
+
+def _scoped(rows: _Rows):
+    class Ctx:
+        async def __aenter__(self) -> _Rows:
+            return rows
+
+        async def __aexit__(self, *_a: Any) -> None: ...
+
+    def scoped_session(_maker: Any, _ctx: Any) -> Ctx:
+        return Ctx()
+
+    return scoped_session
+
+
+async def test_the_radio_tab_can_see_what_is_armed_and_what_was_tried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    when = datetime(2026, 9, 2, 12, tzinfo=UTC)
+    rows = _Rows(
+        armed=[
+            {
+                "id": "t1",
+                "name": "Open the gate",
+                "enabled": True,
+                "command_word": "GATE",
+                "command_callsign": "KE8XYZ-9",
+                "command_days": [1, 2, 3, 4, 5],
+                "command_from": "06:00",
+                "command_until": "09:00",
+                "command_failures": 5,
+                "command_last_at": when,
+            }
+        ],
+        tried=[
+            {
+                "heard_at": when,
+                "source": "N0BODY-1",
+                "word": "GATE",
+                "accepted": False,
+                "reason": "code did not verify",
+            }
+        ],
+    )
+    monkeypatch.setattr(sdr_api, "scoped_session", _scoped(rows))
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _owner: object())
+
+    out = await sdr_api.commands(OWNER, object())  # type: ignore[arg-type]
+
+    assert out["commands"][0]["word"] == "GATE"
+    # Five failures is the lockout, and the tab has to say so — nothing fires until the
+    # owner clears it, and a command that silently stopped working is the failure this
+    # whole surface exists to prevent.
+    assert out["commands"][0]["locked"] is True
+    # A REFUSAL is the row worth keeping: three of these from an unknown station last
+    # Tuesday is a fact the owner must be able to find, and a push does not keep.
+    assert out["attempts"][0] == {
+        "heard_at": when.isoformat(),
+        "source": "N0BODY-1",
+        "word": "GATE",
+        "accepted": False,
+        "reason": "code did not verify",
+    }
+
+
+async def test_no_key_ever_leaves_the_box_through_this_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _Rows(armed=[], tried=[])
+    monkeypatch.setattr(sdr_api, "scoped_session", _scoped(rows))
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _owner: object())
+
+    out = await sdr_api.commands(OWNER, object())  # type: ignore[arg-type]
+
+    # Belt and braces on a read that runs beside the secret: the SELECT does not name
+    # `command_key`, and this asserts the shape rather than trusting the SQL to stay
+    # that way. An empty box is also a valid answer, not an error.
+    assert out == {"commands": [], "attempts": []}

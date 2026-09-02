@@ -25365,3 +25365,56 @@ button.task-band:active {
   gap: 6px;
   cursor: pointer;
 }
+
+/* ---- what is armed, and what was tried (docs/mocks/aprs/a-launcher-shape.html) ----
+   The deaf warning is deliberately NOT dimmed: round 3's review found `opacity:.55` on
+   it, which made the single most important sentence on the screen the least legible. */
+.aprs-deaf {
+  padding: 11px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  background: var(--danger-tint, var(--rose-tint));
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.aprs-cmd {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.aprs-cmd-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.aprs-cmd-when {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 3px;
+}
+.aprs-cmd-word {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.aprs-armed {
+  color: var(--steel);
+}
+.aprs-armed.bad {
+  color: var(--danger);
+}
+/* An attempt row reuses the heard row's shape — same three columns — because it is the
+   same kind of fact: somebody transmitted, and here is what came of it. */
+.aprs-try {
+  display: flex;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.aprs-try.bad .aprs-msg {
+  color: var(--danger);
+}

@@ -8,7 +8,7 @@
 // transmission, and the one-dongle handoff offered from both sides.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import { STALE_AFTER_MS } from "../aprsLog";
 import { resetSdrSession } from "../sdrSession";
@@ -52,6 +52,14 @@ function lease(purpose: string, elapsed_s = 4320) {
     },
   };
 }
+
+function noCommands() {
+  return vi.spyOn(api, "getAprsCommands").mockResolvedValue({ commands: [], attempts: [] });
+}
+
+beforeEach(() => {
+  noCommands();
+});
 
 afterEach(() => {
   resetSdrSession();
@@ -216,6 +224,103 @@ describe("the APRS tab", () => {
     render(<RadioScreen onClose={() => {}} />);
 
     expect(await screen.findByText(/pkt\/hr/)).toBeInTheDocument();
+  });
+
+  it("says a command is armed but deaf when nothing is receiving", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(
+      log({ logging: false, packets: [] }) as never,
+    );
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsCommands").mockResolvedValue({
+      commands: [
+        {
+          id: "t1",
+          name: "Open the gate",
+          enabled: true,
+          word: "GATE",
+          callsign: "KE8XYZ-9",
+          days: [1, 2, 3, 4, 5],
+          from: "06:00",
+          until: "09:00",
+          locked: false,
+          last_at: null,
+        },
+      ],
+      attempts: [],
+    });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    // Arming a task and enabling the receiver are two switches on purpose, so a task
+    // that says "armed" while nothing is receiving is the same lie a signal meter on a
+    // dead channel tells. Round 3's own review called this the thing most likely to be
+    // missed in the build.
+    expect(await screen.findByText(/Armed, but nothing is receiving/)).toBeInTheDocument();
+    expect(screen.getByText("armed — not listening")).toBeInTheDocument();
+  });
+
+  it("does not cry deaf while the receiver is up", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
+    vi.spyOn(api, "getAprsCommands").mockResolvedValue({
+      commands: [
+        {
+          id: "t1",
+          name: "Open the gate",
+          enabled: true,
+          word: "GATE",
+          callsign: null,
+          days: [1, 2, 3, 4, 5],
+          from: "06:00",
+          until: "09:00",
+          locked: false,
+          last_at: null,
+        },
+      ],
+      attempts: [],
+    });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    expect(await screen.findByText(/armed weekdays 06:00–09:00/)).toBeInTheDocument();
+    expect(screen.queryByText(/Armed, but nothing is receiving/)).not.toBeInTheDocument();
+  });
+
+  it("shows refused attempts, which are the ones worth keeping", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
+    vi.spyOn(api, "getAprsCommands").mockResolvedValue({
+      commands: [
+        {
+          id: "t1",
+          name: "Open the gate",
+          enabled: true,
+          word: "GATE",
+          callsign: null,
+          days: [],
+          from: null,
+          until: null,
+          locked: false,
+          last_at: null,
+        },
+      ],
+      attempts: [
+        {
+          heard_at: new Date().toISOString(),
+          source: "N0BODY-1",
+          word: "GATE",
+          accepted: false,
+          reason: "code did not verify",
+        },
+      ],
+    });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    // "Every attempt is visible" is a P4 exit criterion, and a push does not satisfy
+    // it: pushes are ephemeral and are exactly what an attacker hopes goes unread.
+    expect(await screen.findByText(/code did not verify/)).toBeInTheDocument();
+    expect(screen.getByText("N0BODY-1")).toBeInTheDocument();
   });
 });
 
