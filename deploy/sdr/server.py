@@ -36,6 +36,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
+from listen import PURPOSE_APRS, PURPOSE_LABEL, PURPOSE_LISTEN, PURPOSES
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
 from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
@@ -48,7 +49,14 @@ MAX_HZ = 1_766_000_000
 
 # rtl_fm's demodulators. Narrow FM for voice comms, wide FM for broadcast, AM for
 # air band. The values are passed to `-M`, so this doubles as the allowlist.
-MODES = {"fm": "fm", "nfm": "fm", "wbfm": "wbfm", "am": "am", "usb": "usb", "lsb": "lsb"}
+MODES = {
+    "fm": "fm",
+    "nfm": "fm",
+    "wbfm": "wbfm",
+    "am": "am",
+    "usb": "usb",
+    "lsb": "lsb",
+}
 
 # 16 kHz mono is whisper's native input AND rtl_fm's, for narrowband. Wide FM needs a
 # higher demodulation rate to sound right, so it is captured at 32 kHz and told to
@@ -98,7 +106,9 @@ def _peak(pcm: bytes) -> float:
     return round(peak / 32768.0, 4)
 
 
-def capture(freq_hz: int, seconds: float, mode: str, gain: str | None, serial: str | None) -> dict[str, Any]:
+def capture(
+    freq_hz: int, seconds: float, mode: str, gain: str | None, serial: str | None
+) -> dict[str, Any]:
     """Tune, record `seconds` of audio, return a WAV plus what was heard.
 
     Holds the single-tuner lock for the whole capture and refuses rather than queues:
@@ -111,8 +121,10 @@ def capture(freq_hz: int, seconds: float, mode: str, gain: str | None, serial: s
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
     seconds = max(0.5, min(float(seconds), MAX_SECONDS))
 
-    if TUNER.current() is not None:
-        raise SdrBusy("the radio is busy with a live listening session")
+    live = TUNER.current()
+    if live is not None:
+        held = PURPOSE_LABEL.get(live.purpose, "in use")
+        raise SdrBusy(f"the radio is busy — it is {held}")
     if not _LOCK.acquire(blocking=False):
         raise SdrBusy("the radio is busy with another capture")
     try:
@@ -132,9 +144,7 @@ def capture(freq_hz: int, seconds: float, mode: str, gain: str | None, serial: s
         # rtl_fm streams until killed, so the timeout IS the recording length. A
         # generous kill margin covers device open + tuner settle on a cold radio.
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, timeout=seconds, check=False
-            )
+            proc = subprocess.run(cmd, capture_output=True, timeout=seconds, check=False)
             pcm, err = proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as expired:
             pcm = expired.stdout or b""
@@ -174,6 +184,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/listen/segments":
             self._stream_segments()
             return
+        if route == "/listen/packets":
+            self._stream_packets()
+            return
         if route != "/healthz":
             self._json(404, {"detail": "not found"})
             return
@@ -187,6 +200,12 @@ class Handler(BaseHTTPRequestHandler):
                 "rtl_fm": shutil.which("rtl_fm") is not None,
                 "ffmpeg": shutil.which("ffmpeg") is not None,
                 "busy": _LOCK.locked(),
+                # What jobs this sidecar knows how to hold the tuner for. Advertised
+                # because an OLDER sidecar ignores an unknown `purpose` and returns 200
+                # with a plain listening session — so "turn APRS logging on" against a
+                # box that has not been updated would succeed, log nothing, and report
+                # success. A caller can check here instead of trusting a 200.
+                "purposes": list(PURPOSES),
                 "listening": session.info().as_dict() if session is not None else None,
             },
         )
@@ -258,7 +277,11 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 wav = _wav(pcm, AUDIO_RATE)
                 head = json.dumps(
-                    {"started_at": started, "bytes": len(wav), "seconds": round(len(pcm) / 2 / AUDIO_RATE, 2)}
+                    {
+                        "started_at": started,
+                        "bytes": len(wav),
+                        "seconds": round(len(pcm) / 2 / AUDIO_RATE, 2),
+                    }
                 )
                 self.wfile.write(head.encode() + b"\n")
                 self.wfile.write(wav)
@@ -268,12 +291,56 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             session.unsubscribe_segments(sub)
 
+    def _stream_packets(self) -> None:
+        """Hand one reader a stream of decoded APRS frames, newline-framed JSON.
+
+        Same shape as `/listen/segments`: one JSON object per line, plus keep-alives
+        so a quiet channel does not look like a dead socket. A quiet channel is the
+        NORMAL case here — a packet frequency can go minutes between frames — which is
+        why the keep-alive matters more on this route than on the audio one."""
+        session = TUNER.current()
+        if session is None:
+            self._json(409, {"detail": "the radio is idle — nothing is logging APRS"})
+            return
+        if session.purpose != PURPOSE_APRS:
+            # Name the holder, for the reason P0 exists: "not logging APRS" is true of
+            # an idle radio and of one busy listening, and those need opposite answers.
+            held = PURPOSE_LABEL.get(session.purpose, "in use")
+            self._json(409, {"detail": f"the radio is {held}, not logging APRS"})
+            return
+        sub = session.subscribe_packets()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    packet = sub.get(timeout=20)
+                except queue.Empty:
+                    self.wfile.write(b'{"keepalive":true}\n')
+                    self.wfile.flush()
+                    continue
+                if packet is None:
+                    return  # the session ended; the stream ends with it
+                row = packet.as_dict()
+                row["frequency_hz"] = session.frequency_hz
+                self.wfile.write(json.dumps(row).encode() + b"\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # the reader hung up; entirely normal
+        finally:
+            session.unsubscribe_packets(sub)
+
     def _listen(self, body: dict[str, Any]) -> None:
         try:
             info = TUNER.start(
                 frequency_hz=int(body.get("frequency_hz", 0)),
                 mode=str(body.get("mode", "fm")),
                 gain=body.get("gain"),
+                # Absent means listening: every existing caller predates purposes and
+                # means exactly that, so the default keeps them byte-identical.
+                purpose=str(body.get("purpose") or PURPOSE_LISTEN),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -285,6 +352,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _tune(self, body: dict[str, Any]) -> None:
         session = TUNER.current()
+        if session is not None and session.purpose != PURPOSE_LISTEN:
+            # Retuning a logging session would move the packet channel to wherever the
+            # tuner sheet asked for, leave the lease claiming to be logging APRS, and
+            # refuse the next caller with a reason that had become false. Releasing is
+            # the only honest way out of one job into another.
+            self._json(
+                409,
+                {"detail": f"the radio is {PURPOSE_LABEL.get(session.purpose, 'in use')}"},
+            )
+            return
         if session is None:
             self._json(409, {"detail": "nothing is listening"})
             return

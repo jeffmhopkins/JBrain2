@@ -33,8 +33,13 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
+from jbrain.api.notes import SessionMakerDep, ctx_for
+from jbrain.db.session import scoped_session
+from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.command import MAX_FAILURES
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -44,6 +49,12 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 MIN_MHZ = 0.024
 MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
+
+# The lease purpose a logging session holds, and where APRS lives in North America
+# when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
+# command frequency open).
+APRS_PURPOSE = "aprs"
+APRS_DEFAULT_MHZ = 144.39
 
 # How far back a single caption may reach. Segments that pile up behind a busy whisper
 # are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
@@ -57,6 +68,10 @@ CAPTION_IDLE_S = 15.0
 # Long enough for a slow tuner open, short enough that a wedged sidecar surfaces as
 # an error rather than a hung composer.
 _TIMEOUT = 30.0
+
+# How many command attempts the radio tab shows. Enough to see a burst of failures at a
+# glance; the whole history stays in the table.
+ATTEMPTS_SHOWN = 20
 
 
 class SdrStatusOut(BaseModel):
@@ -124,6 +139,201 @@ async def listen(
         "/listen/start",
         {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": gain},
     )
+
+
+@router.get("/packets")
+async def packets(
+    settings: SettingsDep,
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """The heard log, newest first, plus whether anything is receiving right now.
+
+    `logging` is what separates a quiet channel from a dead one, and the tab shows the
+    two differently — a watch that silently died is worse than no watch
+    (docs/mocks/aprs/README.md). Rows carry text transmitted by strangers; the client
+    renders them as untrusted."""
+    base = _base(settings)
+    health = await _health(base)
+    session = (health.get("listening") or {}) if health else {}
+    rows = await AprsReader(maker).recent(ctx_for(owner), limit=limit)
+    return {
+        # `logging` answers "is something receiving"; `reachable` answers "do we know".
+        # Collapsing the two would make an unreachable sidecar read as a switched-off
+        # one — a dead receiver looking exactly like a quiet channel, which is the
+        # confusion this whole surface exists to prevent.
+        "reachable": health is not None,
+        "logging": session.get("purpose") == APRS_PURPOSE,
+        "frequency_hz": session.get("frequency_hz") if session else None,
+        "packets": [
+            {
+                "heard_at": row["heard_at"].isoformat(),
+                "frequency_hz": row["frequency_hz"],
+                "source": row["source"],
+                "destination": row["destination"],
+                "path": row["path"],
+                "info": row["info"],
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/commands")
+async def commands(
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+) -> dict[str, Any]:
+    """The owner's radio commands and what has been tried against them.
+
+    The APRS tab's read-only summary (docs/mocks/aprs/a-launcher-shape.html, the
+    "Automations · radio" section, and c-single-dongle's "armed but deaf" block). Two
+    facts the owner cannot get anywhere else on this screen:
+
+    **What is armed**, so "armed while nothing is receiving" is visible as the pair it
+    is. Arming a command and enabling the receiver are separate switches on purpose,
+    and a task that says armed while the radio is deaf is the same lie a signal meter
+    on a dead channel tells.
+
+    **What has been TRIED.** A refusal is the row worth having — three attempts against
+    `GATE` from an unknown station last Tuesday is a fact the owner must be able to find
+    afterwards, and a push notification does not keep. It is read here rather than
+    pushed only (APRS_CONTROL_PLAN.md P4: "every attempt is visible").
+
+    Editing lives in Tasks; this is a view."""
+    ctx = ctx_for(owner)
+    async with scoped_session(maker, ctx) as session:
+        armed = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, name, enabled, command_word, command_callsign,"
+                        " command_days, command_from, command_until, command_once,"
+                        " command_failures,"
+                        " command_last_at"
+                        " FROM app.tasks WHERE schedule_kind = 'on_command'"
+                        " ORDER BY command_word"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        tried = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT heard_at, source, word, accepted, reason"
+                        " FROM app.command_attempts ORDER BY heard_at DESC LIMIT :n"
+                    ),
+                    {"n": ATTEMPTS_SHOWN},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return {
+        "commands": [
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "enabled": row["enabled"],
+                "word": row["command_word"],
+                "callsign": row["command_callsign"],
+                "days": list(row["command_days"] or []),
+                "from": row["command_from"],
+                "until": row["command_until"],
+                "once": row["command_once"],
+                "locked": int(row["command_failures"] or 0) >= MAX_FAILURES,
+                "last_at": row["command_last_at"].isoformat() if row["command_last_at"] else None,
+            }
+            for row in armed
+        ],
+        "attempts": [
+            {
+                "heard_at": row["heard_at"].isoformat(),
+                "source": row["source"],
+                "word": row["word"],
+                "accepted": row["accepted"],
+                "reason": row["reason"],
+            }
+            for row in tried
+        ],
+    }
+
+
+@router.post("/aprs")
+async def aprs_logging(
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    enabled: Annotated[bool, Query()],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)] = APRS_DEFAULT_MHZ,
+) -> dict[str, Any]:
+    """Turn APRS logging on or off. 409 when something else holds the radio.
+
+    The PWA's switch (`docs/mocks/aprs/c-single-dongle.html`, shape A). Idempotent in
+    both directions, and turning it OFF stops the APRS session by id — never a
+    listening session the owner started, which on a one-tuner box would silence the
+    radio they were actually using."""
+    base = _base(settings)
+    health = await _health(base)
+    if health is None:
+        # An unreachable sidecar is not "off". Answering `{"logging": false}` here would
+        # flip the switch to off in front of the owner while logging, if it is running,
+        # carries on — the switch lying in the direction that looks harmless.
+        raise HTTPException(status_code=502, detail="the radio isn't reachable")
+    session = health.get("listening") or {}
+    logging_now = session.get("purpose") == APRS_PURPOSE
+
+    if not enabled:
+        if not logging_now:
+            return {"logging": False, "changed": False}
+        stopped = await _post(settings, "/listen/stop", {"session_id": session.get("session_id")})
+        if not stopped.get("stopped"):
+            # The sidecar answers 200 `{"stopped": false}` when the id no longer matches
+            # — the session changed between the health read and the stop. Whether that
+            # matters depends on what is there NOW: if it ended on its own the owner has
+            # what they asked for, and if a new session took the tuner, reporting "off"
+            # is how a timed window leaves it held all day.
+            after = await _health(base)
+            still = ((after.get("listening") or {}) if after else {}).get("purpose")
+            if still == APRS_PURPOSE:
+                raise HTTPException(status_code=409, detail="the radio changed under us")
+            return {"logging": False, "changed": False}
+        return {"logging": False, "changed": True}
+
+    if logging_now:
+        return {"logging": True, "changed": False, "frequency_hz": session.get("frequency_hz")}
+    body = await _post(
+        settings,
+        "/listen/start",
+        {
+            "frequency_hz": int(round(frequency_mhz * 1_000_000)),
+            # 1200-baud AFSK is narrowband FM; nothing else can carry it.
+            "mode": "fm",
+            "gain": None,
+            "purpose": APRS_PURPOSE,
+        },
+    )
+    if body.get("purpose") != APRS_PURPOSE:
+        # A sidecar too old to understand `purpose` IGNORES it and returns 200 with a
+        # plain LISTENING session. Without this the switch says logging is on while
+        # nothing decodes and the one tuner sits held on 144.39.
+        raise HTTPException(
+            status_code=502,
+            detail="the radio software is too old to log APRS — nothing was changed",
+        )
+    return {"logging": True, "changed": True, "frequency_hz": body.get("frequency_hz")}
+
+
+async def _health(base: str) -> dict[str, Any] | None:
+    try:
+        async with httpx.AsyncClient(base_url=base, timeout=5.0) as client:
+            resp = await client.get("/healthz")
+        return cast(dict[str, Any], resp.json())
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 @router.post("/tune")

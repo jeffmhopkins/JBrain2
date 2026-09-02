@@ -102,6 +102,10 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             # tuner lease the composer's radio icon reflects (SDR_RADIO_PLAN.md D7).
             "sdr_listen",
             "sdr_stop",
+            "sdr_aprs_logging",
+            # The APRS heard log (APRS_CONTROL_PLAN.md P1) — a `read` tool over a table,
+            # whose CONTENTS are untrusted radio traffic from anyone in range.
+            "aprs_recent",
             "grab_frame",
             "render_bars",
             "render_chart",
@@ -426,8 +430,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v47",
-            "008aea105c0ae90c24bf2b0312c78bd186f85f8140656d48d6d44b70884f8971",
+            "agent-jerv-v48",
+            "47efedc798419f86b1d91e3cf30b8e8e5b8f5b13a2b89adcef48b5812d2164b9",
         ),
         "archivist": (
             "agent-archivist-v6",

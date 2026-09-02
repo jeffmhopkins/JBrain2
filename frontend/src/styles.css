@@ -1135,7 +1135,7 @@ button.vitals:focus-visible {
 /* A read-only settings value (e.g. the synced time zone). */
 .settings-value {
   font-size: var(--fs-secondary);
-  color: var(--text-1);
+  color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-seg);
@@ -9115,7 +9115,7 @@ button.small {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-2);
-  color: var(--text-1);
+  color: var(--text);
   font: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -11233,7 +11233,7 @@ button.small {
 }
 .fb-shell .tv-syn-open:hover {
   background: var(--surface);
-  color: var(--text-1);
+  color: var(--text);
 }
 .fb-shell .tv-syn-open svg {
   width: 14px;
@@ -11321,7 +11321,7 @@ button.small {
 .fb-shell .tv-dr-q {
   font-size: var(--fs-secondary);
   font-weight: 500;
-  color: var(--text-1);
+  color: var(--text);
 }
 /* Copy / download actions pinned to the right of the report header. */
 .fb-shell .tv-dr-actions {
@@ -11345,7 +11345,7 @@ button.small {
 }
 .fb-shell .tv-dr-act:hover {
   background: var(--surface-2);
-  color: var(--text-1);
+  color: var(--text);
 }
 .fb-shell .tv-dr-act.done {
   color: var(--green, #8fbc9a);
@@ -11383,7 +11383,7 @@ button.small {
 .fb-shell .tv-dr-report {
   font-size: var(--fs-secondary);
   line-height: 1.55;
-  color: var(--text-1);
+  color: var(--text);
 }
 .fb-shell .tv-dr-roster {
   margin-top: 8px;
@@ -23136,7 +23136,7 @@ button.task-band:active {
   cursor: pointer;
 }
 .rl-play:hover {
-  color: var(--text-1);
+  color: var(--text);
 }
 .rl-play.playing {
   color: var(--amber, #c9a36a);
@@ -23183,7 +23183,7 @@ button.task-band:active {
      identically in the library and in an assistant turn. */
   font-size: var(--fs-secondary);
   line-height: 1.55;
-  color: var(--text-1);
+  color: var(--text);
 }
 
 /* Research Library — the detail's ⋯ action bar (Wave R3). */
@@ -24831,7 +24831,7 @@ button.task-band:active {
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--text-1);
+  color: var(--text);
   cursor: pointer;
 }
 .sdr-play[aria-pressed="true"] {
@@ -24893,7 +24893,7 @@ button.task-band:active {
   display: inline-block;
   max-width: 100%;
   background: rgb(0 0 0 / 50%);
-  color: var(--text-1);
+  color: var(--text);
   font-size: var(--fs-note);
   line-height: 1.4;
   padding: 3px 8px;
@@ -25046,4 +25046,375 @@ button.task-band:active {
   .sdr-live {
     animation: none;
   }
+}
+
+/* --- Radio launcher (APRS_CONTROL_PLAN.md P3) ------------------------------------ */
+/* The health line is deliberately NOT a meter: last decode and rate only. A signal bar
+   here would repeat the mistake the tuner's deleted `peak` meter made — reading high on
+   an empty channel full of hiss. */
+.radio-screen {
+  padding: 12px 14px 28px;
+}
+.radio-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 10px;
+}
+.radio-back {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.radio-title {
+  font-size: 19px;
+  font-weight: 640;
+  margin: 0;
+}
+.radio-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.radio-tabs button {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.radio-tabs button[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.radio-empty,
+.radio-hint {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 10px 2px;
+}
+.radio-error {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 2px;
+}
+.radio-tuner {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 18px;
+  text-align: center;
+}
+.radio-tuner-freq {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.radio-tuner-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.aprs-health {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 12px;
+}
+.aprs-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-3);
+}
+/* Green / grey / amber for live / quiet / stale (docs/mocks/aprs/a-launcher-shape.html).
+   Quiet and stale used to share the amber dot, which put a permanent warning on a
+   normal quiet channel and — worse — made a dead receiver look identical to one at a
+   glance, in the control whose entire job is that distinction. Quiet takes the neutral
+   dot the base rule already gives; amber is reserved for "this should have heard
+   something by now". */
+.aprs-health-live .aprs-dot {
+  background: var(--ok);
+}
+.aprs-health-stale .aprs-dot {
+  background: var(--warn);
+}
+.aprs-who {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.aprs-who b {
+  color: var(--text);
+  font-weight: 600;
+}
+.aprs-rate {
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.aprs-toggle {
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px;
+  cursor: pointer;
+}
+.aprs-toggle[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+.aprs-toggle-on {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.aprs-sec {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin: 18px 0 8px;
+}
+.aprs-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.aprs-call {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.aprs-body {
+  flex: 1;
+  min-width: 0;
+}
+.aprs-msg {
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.aprs-badge {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+  margin-right: 6px;
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+}
+.aprs-meta {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 3px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.aprs-when {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+.aprs-held {
+  padding: 13px;
+  border: 1px solid var(--warn);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.aprs-take {
+  display: block;
+  margin-top: 10px;
+  appearance: none;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--warn);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+/* ---- radio commands: the fourth trigger kind (APRS_CONTROL_PLAN.md P4) ----
+   Nothing bespoke here: the editor reuses the segment / days / time controls the three
+   existing kinds use, and these are the two pieces that have no equivalent — the tier
+   note that says what "verified" means, and the amber warning the scope picker raises
+   when a firewalled domain is reachable over the air. */
+.ted-tier {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.ted-warn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-input);
+  background: var(--amber-tint);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.ted-input.mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* The card's command line: what was heard, and whether it has locked itself. The lock
+   is the only thing here the owner has to act on, so it gets the warning colour and its
+   own line rather than being a clause in a status list. */
+.task-cmd {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.task-cmdline {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.task-cmdlock {
+  font-size: var(--fs-secondary);
+  color: var(--warn);
+}
+/* The one-time key reveal. Big, monospaced and selectable: it is read off a phone and
+   typed into a radio or a sender app, and a key that cannot be read is a key that gets
+   written down somewhere worse. */
+.cks-lead,
+.cks-note {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.cks-note {
+  margin: 12px 0 0;
+}
+.cks-key {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  user-select: all;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.cks-copy {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  border-radius: var(--r-input);
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+/* ---- what is armed, and what was tried (docs/mocks/aprs/a-launcher-shape.html) ----
+   The deaf warning is deliberately NOT dimmed: round 3's review found `opacity:.55` on
+   it, which made the single most important sentence on the screen the least legible. */
+.aprs-deaf {
+  padding: 11px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  background: var(--danger-tint, var(--rose-tint));
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.aprs-cmd {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.aprs-cmd-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.aprs-cmd-when {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 3px;
+}
+.aprs-cmd-word {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.aprs-armed {
+  color: var(--steel);
+}
+.aprs-armed.bad {
+  color: var(--danger);
+}
+/* An attempt row reuses the heard row's shape — same three columns — because it is the
+   same kind of fact: somebody transmitted, and here is what came of it. */
+.aprs-try {
+  display: flex;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.aprs-try.bad .aprs-msg {
+  color: var(--danger);
 }

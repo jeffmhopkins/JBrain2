@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  type CommandKey,
   type ScheduleFreq,
   type ScheduleKind,
   type Task,
@@ -22,6 +23,7 @@ import {
   api,
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
+import { CommandKeySheet } from "../components/CommandKeySheet";
 import { MoveTaskSheet } from "../components/MoveTaskSheet";
 import {
   CheckIcon,
@@ -88,6 +90,10 @@ function fmtNext(iso: string): string {
 /** The schedule headline, e.g. "Weekdays · 7:00" or "Once · Jun 26, 9:00". */
 function scheduleLabel(t: Task): string {
   if (t.schedule_kind === "on_demand") return "On demand";
+  if (t.schedule_kind === "on_command") {
+    // The word is the headline because it is what the owner actually keys into a radio.
+    return `On command · ${t.command_word ?? "—"} · ${commandArmed(t)}`;
+  }
   if (t.schedule_kind === "once") {
     if (!t.run_at) return "Once";
     const d = new Date(t.run_at);
@@ -100,12 +106,32 @@ function scheduleLabel(t: Task): string {
   return `Weekly ${days} · ${time}`;
 }
 
+/** When a command is LISTENING, in the words the mock uses. The days matter: a command
+ * armed Mon–Fri and one armed daily used to read identically here, which is the same
+ * class of omission as a health line that cannot tell quiet from dead. */
+function commandArmed(t: Task): string {
+  if (t.command_once) return "armed once";
+  if (!t.command_from || !t.command_until) return "armed always";
+  return `armed ${commandDaysLabel(t.command_days)} ${t.command_from}–${t.command_until}`;
+}
+
+function commandDaysLabel(days: number[]): string {
+  if (days.length === 0 || days.length === 7) return "daily";
+  const sorted = [...days].sort((a, b) => a - b);
+  if (sorted.join() === "1,2,3,4,5") return "weekdays";
+  return sorted.map((d) => DAY_LABELS[d]).join("");
+}
+
 /** The dim status + next-run meta under the headline. */
 function metaLine(t: Task): string {
   const parts: string[] = [];
   if (!t.enabled) parts.push("paused");
   else if (t.schedule_kind === "on_demand") parts.push("run it any time");
-  else parts.push("scheduled");
+  else if (t.schedule_kind === "on_command") {
+    // A lockout is the one thing on this card the owner has to act on, so it displaces
+    // everything else rather than sitting third in a list of statuses.
+    parts.push(t.command_locked ? "locked — too many failed attempts" : "armed");
+  } else parts.push("scheduled");
   if (t.enabled && t.next_run_at) parts.push(`next ${fmtNext(t.next_run_at)}`);
   else if (t.last_run_at) parts.push(`last ran ${fmtAgo(t.last_run_at)}`);
   return parts.join(" · ");
@@ -186,6 +212,11 @@ interface CardProps {
   onRun: () => void;
   onEdit: () => void;
   onMove: () => void;
+  /** Radio commands only: make a new key (the old one stops working) and clear a
+   * lockout. Both are here rather than in the editor because they are ACTS, not
+   * settings — saving an edit must never silently re-key the truck. */
+  onNewKey: () => void;
+  onUnlock: () => void;
   onOpenRun: (run: TaskRun) => void;
   onDragStart: (e: React.PointerEvent) => void;
   onNudge: (dir: -1 | 1) => void;
@@ -203,6 +234,8 @@ function TaskCard({
   onRun,
   onEdit,
   onMove,
+  onNewKey,
+  onUnlock,
   onOpenRun,
   onDragStart,
   onNudge,
@@ -320,11 +353,37 @@ function TaskCard({
               ),
             )
           )}
+          {task.schedule_kind === "on_command" && (
+            <div className="task-cmd">
+              <span className="task-cmdline">
+                Heard <b>{task.command_word}</b>
+                {task.command_callsign ? ` from ${task.command_callsign}` : " from any station"} ·{" "}
+                {task.command_counter} code
+                {task.command_counter === 1 ? "" : "s"} used
+                {task.command_failures > 0 ? ` · ${task.command_failures} failed` : ""}
+              </span>
+              {task.command_locked && (
+                <span className="task-cmdlock">
+                  Locked after too many failed attempts. Nothing will fire until you unlock it.
+                </span>
+              )}
+            </div>
+          )}
           <div className="task-acts">
             <button type="button" onClick={onEdit}>
               <PencilIcon size={14} />
               Edit
             </button>
+            {task.schedule_kind === "on_command" && task.command_locked && (
+              <button type="button" onClick={onUnlock}>
+                Unlock
+              </button>
+            )}
+            {task.schedule_kind === "on_command" && (
+              <button type="button" onClick={onNewKey}>
+                New key
+              </button>
+            )}
             <button
               type="button"
               className={`task-runbtn${running ? " running" : ""}`}
@@ -345,7 +404,11 @@ function TaskCard({
 // ---- the editor ----
 
 const SCOPE_PRESETS: { id: string; label: string; set: string[] | null }[] = [
-  { id: "everything", label: "Everything", set: ["general", "health", "finance", "location"] },
+  {
+    id: "everything",
+    label: "Everything",
+    set: ["general", "health", "finance", "location"],
+  },
   { id: "general", label: "General", set: ["general"] },
   { id: "medical", label: "Medical", set: ["general", "health"] },
   { id: "financial", label: "Financial", set: ["general", "finance"] },
@@ -372,6 +435,16 @@ interface Draft {
   notifyPush: boolean;
   homeCard: boolean;
   enabled: boolean;
+  /** The radio command (kind `on_command`). `word` is what gets keyed into a mobile
+   * head; `callsign` narrows who is worth listening to and is not a credential. */
+  word: string;
+  callsign: string;
+  /** The arming window. "always" is the default; "window" adds days + a time range,
+   * evaluated when a command arrives rather than when the task would run. */
+  armed: "always" | "once" | "window";
+  commandDays: number[];
+  from: string;
+  until: string;
 }
 
 function tomorrowISODate(): string {
@@ -395,6 +468,12 @@ function draftFrom(task: Task | null): Draft {
       notifyPush: true,
       homeCard: true,
       enabled: true,
+      word: "",
+      callsign: "",
+      armed: "always",
+      commandDays: [1, 2, 3, 4, 5],
+      from: "06:00",
+      until: "09:00",
     };
   }
   return {
@@ -411,6 +490,16 @@ function draftFrom(task: Task | null): Draft {
     notifyPush: task.notify_push,
     homeCard: task.home_card,
     enabled: task.enabled,
+    word: task.command_word ?? "",
+    callsign: task.command_callsign ?? "",
+    armed: task.command_once
+      ? "once"
+      : task.command_from && task.command_until
+        ? "window"
+        : "always",
+    commandDays: task.command_days.length ? task.command_days : [1, 2, 3, 4, 5],
+    from: task.command_from ?? "06:00",
+    until: task.command_until ?? "09:00",
   };
 }
 
@@ -439,6 +528,12 @@ function draftToInput(d: Draft): TaskInput {
     enabled: d.enabled,
     notify_push: d.notifyPush,
     home_card: d.homeCard,
+    command_word: null,
+    command_callsign: null,
+    command_days: [],
+    command_from: null,
+    command_until: null,
+    command_once: false,
   };
   if (d.kind === "repeat") {
     base.schedule_freq = d.freq;
@@ -447,6 +542,18 @@ function draftToInput(d: Draft): TaskInput {
   } else if (d.kind === "once") {
     // Combine the local date + time into an absolute instant.
     base.run_at = new Date(`${d.date}T${d.time}`).toISOString();
+  } else if (d.kind === "on_command") {
+    base.command_word = d.word.trim().toUpperCase() || null;
+    base.command_callsign = d.callsign.trim().toUpperCase() || null;
+    base.command_once = d.armed === "once";
+    if (d.armed === "window") {
+      // An empty day set means EVERY day to the box, so a window with no chips selected
+      // would silently widen the very thing the owner was narrowing. Saving all seven
+      // makes the stored spec say what the screen showed.
+      base.command_days = d.commandDays.length > 0 ? d.commandDays : [0, 1, 2, 3, 4, 5, 6];
+      base.command_from = d.from;
+      base.command_until = d.until;
+    }
   }
   return base;
 }
@@ -466,7 +573,12 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
   useBackLayer(onClose);
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   const preset = presetForScopes(draft.scopes);
-  const canSave = draft.prompt.trim().length > 0 && !saving;
+  // A command with no word is armed against nothing while looking, in the list, exactly
+  // like one that works — so it cannot be saved.
+  const canSave =
+    draft.prompt.trim().length > 0 &&
+    !saving &&
+    (draft.kind !== "on_command" || draft.word.trim().length > 0);
 
   function pickScope(id: string): void {
     const found = SCOPE_PRESETS.find((p) => p.id === id);
@@ -475,11 +587,15 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
   }
   function toggleDomain(code: string): void {
     const has = draft.scopes.includes(code);
-    set({ scopes: has ? draft.scopes.filter((c) => c !== code) : [...draft.scopes, code] });
+    set({
+      scopes: has ? draft.scopes.filter((c) => c !== code) : [...draft.scopes, code],
+    });
   }
   function toggleDay(day: number): void {
     const has = draft.days.includes(day);
-    set({ days: has ? draft.days.filter((d) => d !== day) : [...draft.days, day].sort() });
+    set({
+      days: has ? draft.days.filter((d) => d !== day) : [...draft.days, day].sort(),
+    });
   }
 
   return (
@@ -566,6 +682,13 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                   ))}
                 </div>
               )}
+              {draft.kind === "on_command" && draft.scopes.some((c) => c !== "general") && (
+                <div className="ted-warn">
+                  This task reads a firewalled domain and something sent over the air can start it.
+                  Only a verified command can — the code is checked before anything runs — and the
+                  box never transmits, so the answer never goes back out. These scopes are the cap.
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -573,7 +696,7 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
         <div className="ted-field">
           <span className="ted-lab">Schedule</span>
           <div className="ted-seg" role="tablist">
-            {(["on_demand", "once", "repeat"] as ScheduleKind[]).map((k) => (
+            {(["on_demand", "once", "repeat", "on_command"] as ScheduleKind[]).map((k) => (
               <button
                 type="button"
                 key={k}
@@ -582,7 +705,13 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                 className={`ted-segbtn${draft.kind === k ? " on" : ""}`}
                 onClick={() => set({ kind: k })}
               >
-                {k === "on_demand" ? "On demand" : k === "once" ? "Once" : "Repeats"}
+                {k === "on_demand"
+                  ? "On demand"
+                  : k === "once"
+                    ? "Once"
+                    : k === "repeat"
+                      ? "Repeats"
+                      : "On command"}
               </button>
             ))}
           </div>
@@ -643,6 +772,103 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                 value={draft.time}
                 onChange={(e) => set({ time: e.target.value })}
               />
+            </>
+          )}
+          {draft.kind === "on_command" && (
+            <>
+              <div className="ted-row2" style={{ marginTop: 10 }}>
+                <input
+                  className="ted-input mono"
+                  placeholder="WORD"
+                  aria-label="Command word"
+                  value={draft.word}
+                  onChange={(e) => set({ word: e.target.value.toUpperCase() })}
+                />
+                <input
+                  className="ted-input mono"
+                  placeholder="Any callsign"
+                  aria-label="Callsign"
+                  value={draft.callsign}
+                  onChange={(e) => set({ callsign: e.target.value.toUpperCase() })}
+                />
+              </div>
+              <p className="ted-hint">
+                Sent as <b>{draft.word.trim() || "WORD"} 7K2M9</b> — the word, then the one-time
+                code. The callsign narrows who is worth listening to; it is not what proves the
+                sender, so leaving it blank costs nothing.
+              </p>
+              <div className="ted-tier">
+                <b>Verified only.</b> The code is an HMAC over a counter that only moves forward, so
+                a replay is a spent code and a forged callsign fails. Nothing heard over the air is
+                ever put into the prompt.
+              </div>
+              <div className="ted-seg" style={{ marginTop: 10 }}>
+                {(["always", "once", "window"] as const).map((a) => (
+                  <button
+                    type="button"
+                    key={a}
+                    className={`ted-segbtn${draft.armed === a ? " on" : ""}`}
+                    aria-pressed={draft.armed === a}
+                    onClick={() => set({ armed: a })}
+                  >
+                    {a === "always"
+                      ? "Armed always"
+                      : a === "once"
+                        ? "Armed once"
+                        : "Armed in a window"}
+                  </button>
+                ))}
+              </div>
+              {draft.armed === "once" && (
+                <p className="ted-hint">
+                  Fires once and then disarms itself — hand out one code for one job. Arm it again
+                  from here when you need it.
+                </p>
+              )}
+              {draft.armed === "window" && (
+                <>
+                  <div className="ted-days">
+                    {DAY_KEYS.map((dayKey, i) => (
+                      <button
+                        type="button"
+                        key={dayKey}
+                        className={`ted-day${draft.commandDays.includes(i) ? " on" : ""}`}
+                        aria-pressed={draft.commandDays.includes(i)}
+                        aria-label={dayKey}
+                        onClick={() =>
+                          set({
+                            commandDays: draft.commandDays.includes(i)
+                              ? draft.commandDays.filter((d) => d !== i)
+                              : [...draft.commandDays, i].sort(),
+                          })
+                        }
+                      >
+                        {DAY_LABELS[i]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="ted-row2" style={{ marginTop: 10 }}>
+                    <input
+                      className="ted-input"
+                      type="time"
+                      aria-label="Armed from"
+                      value={draft.from}
+                      onChange={(e) => set({ from: e.target.value })}
+                    />
+                    <input
+                      className="ted-input"
+                      type="time"
+                      aria-label="Armed until"
+                      value={draft.until}
+                      onChange={(e) => set({ until: e.target.value })}
+                    />
+                  </div>
+                  <p className="ted-hint">
+                    Outside these hours the command does not exist — it is refused, not held. A
+                    security control, not a convenience.
+                  </p>
+                </>
+              )}
             </>
           )}
         </div>
@@ -735,6 +961,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [viewed, setViewed] = useState<Record<string, string>>(loadViewed);
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [moveFor, setMoveFor] = useState<Task | null>(null);
+  // The one-time key reveal. Held in state rather than fetched by the sheet so the key
+  // exists in exactly one place and disappears with the sheet.
+  const [keyReveal, setKeyReveal] = useState<CommandKey | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
@@ -825,6 +1054,24 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     }
   }
 
+  async function showKey(task: Task): Promise<void> {
+    try {
+      setKeyReveal(await api.rotateCommandKey(task.id));
+    } catch (err) {
+      setToast(errorMessage(err));
+    }
+  }
+
+  async function unlock(task: Task): Promise<void> {
+    try {
+      await api.unlockCommand(task.id);
+      await refresh();
+      setToast("Command unlocked.");
+    } catch (err) {
+      setToast(errorMessage(err));
+    }
+  }
+
   async function remove(task: Task): Promise<void> {
     try {
       await api.deleteTask(task.id);
@@ -840,11 +1087,19 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     setSaving(true);
     try {
       const body = draftToInput(draft);
+      let created: Task | null = null;
       if (draft.id) await api.replaceTask(draft.id, body);
-      else await api.createTask(body);
+      else created = await api.createTask(body);
       setDraft(null);
       await refresh();
-      setToast(draft.id ? "Task saved." : "Task created.");
+      if (created && created.schedule_kind === "on_command") {
+        // The box generated the secret; this is the one moment the owner can read it.
+        // Shown by rotating so there is a single code path — the same one they use
+        // later to replace a key they think is compromised.
+        setKeyReveal(await api.rotateCommandKey(created.id));
+      } else {
+        setToast(draft.id ? "Task saved." : "Task created.");
+      }
     } catch (err) {
       setToast(errorMessage(err));
     } finally {
@@ -1078,6 +1333,8 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
               onRun={() => void runNow(task)}
               onEdit={() => setDraft(draftFrom(task))}
               onMove={() => setMoveFor(task)}
+              onNewKey={() => void showKey(task)}
+              onUnlock={() => void unlock(task)}
               onOpenRun={(run) => openRun(task, run)}
               onDragStart={(e) => startDrag(task, e)}
               onNudge={(dir) => nudge(task, dir)}
@@ -1218,6 +1475,10 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
           </div>
         )}
       </div>
+
+      {keyReveal !== null && (
+        <CommandKeySheet keyed={keyReveal} onClose={() => setKeyReveal(null)} />
+      )}
 
       {moveFor !== null && (
         <MoveTaskSheet

@@ -180,6 +180,8 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notify import NotifyBus
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
+from jbrain.sdr.aprslog import AprsLog, run_aprs_log_loop
+from jbrain.sdr.gate import CommandGate, heard_from_row
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
@@ -1235,6 +1237,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notify=app.state.notify_bus,
         )
         jmolt_sweep_loop_task = asyncio.create_task(run_jmolt_sweep_loop(app.state.jmolt_sweep))
+        # The APRS heard log (APRS_CONTROL_PLAN.md P1). Idle and nearly free unless a
+        # session is holding the tuner to LOG rather than listen; it exists as a loop
+        # rather than a route because a log that only records while someone is looking
+        # at it is not a log — the owner enables logging and drives away.
+        # The command gate (P4) rides on the same drain: a frame is stored, then offered
+        # to the owner's command tasks. Nothing heard reaches a model — the packet
+        # contributes a word matched against the owner's own list and a code matched
+        # against an HMAC, and the prompt that runs is the one the owner wrote.
+        app.state.command_gate = CommandGate(
+            maker,
+            repo=app.state.task_repo,
+            runner=app.state.task_runner,
+            notify=app.state.notify_bus,
+            push=app.state.push_notifier,
+        )
+
+        async def _offer_to_commands(row: dict[str, Any]) -> None:
+            await app.state.command_gate.offer(heard_from_row(row))
+
+        aprs_log_loop_task = asyncio.create_task(
+            run_aprs_log_loop(
+                AprsLog(
+                    maker=maker,
+                    base_url=settings.sdr_url,
+                    on_packet=_offer_to_commands,
+                )
+            )
+        )
         # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
         # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
         # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
@@ -1347,6 +1377,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task.cancel()
         jmolt_night_loop_task.cancel()
         jmolt_sweep_loop_task.cancel()
+        aprs_log_loop_task.cancel()
         jmolt_integrity_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()

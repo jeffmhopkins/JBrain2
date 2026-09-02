@@ -21,6 +21,7 @@ import {
   ListIcon,
   MessageIcon,
   PinIcon,
+  RadioIcon,
   SearchIcon,
   SettingsIcon,
   SigmaIcon,
@@ -45,6 +46,7 @@ export type LauncherTarget =
   | "location"
   | "wiki"
   | "image"
+  | "radio"
   | "intake"
   | "tasks"
   | "petcontrol"
@@ -90,6 +92,7 @@ const SECTIONS: Section[] = [
       { title: "Image", icon: <ImageIcon size={24} />, target: "image" },
       { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
       { title: "Math", icon: <SigmaIcon size={24} />, target: "jlaunch" },
+      { title: "Radio", icon: <RadioIcon size={24} />, target: "radio" },
     ],
   },
   {

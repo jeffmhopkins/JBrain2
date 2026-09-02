@@ -1,0 +1,12 @@
+# REAL KISS frames captured from direwolf 1.7, not hand-written.
+# Produced by: gen_packets -> WAV -> raw 16-bit 44.1k PCM -> direwolf (stdin) -> KISS TCP (the port scripts/regen-aprs-fixture.sh sets)
+# Source packets (docs/plans/APRS_CONTROL_PLAN.md P1):
+#   KE8XYZ-9>APDW17,WIDE1-1:GATE 7K2M9                          (a command)
+#   KE8XYZ-9>APDW17,WIDE1-1:!4129.96N/08141.66W>088/034 test    (a position beacon)
+#   W8ABC>APDW17::KE8XYZ-9 :net tonight 8pm{01                  (a third-party message)
+# Each line is one KISS frame: first byte is the KISS port/command nibble pair,
+# the rest is the raw AX.25 frame. Captured rather than constructed BECAUSE a
+# hand-written fixture only proves the parser agrees with whoever wrote it.
+0082a088ae626ee0968a70b0b2b4f2ae92888a62406303f04741544520374b324d390a
+0082a088ae626ee0968a70b0b2b4f2ae92888a62406303f021343132392e39364e2f30383134312e3636573e3038382f30333420746573740a
+0082a088ae626ee0ae7082848640e103f03a4b453858595a2d39203a6e657420746f6e696768742038706d7b30310a
