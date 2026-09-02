@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import { attachSdrAudio } from "../sdrAudio";
+import { isSdrPlaying, subscribeSdrAudio, toggleSdrAudio } from "../sdrAudio";
 import type { SdrListening } from "../sdrSession";
 import { Sheet } from "./Sheet";
 
@@ -57,7 +57,6 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
   // Record is arm-then-confirm per DESIGN.md's destructive-action doctrine; the
   // recording lane itself is a later wave, so the control states that plainly
   // rather than pretending to work.
-  const audioSlot = useRef<HTMLDivElement | null>(null);
   // Null until the owner picks one, so the mode's default can keep applying as they
   // switch bands; an explicit choice then sticks for the rest of the session.
   const [pickedStep, setPickedStep] = useState<number | null>(null);
@@ -69,17 +68,23 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
   const freqInput = useRef<HTMLInputElement | null>(null);
 
-  // Borrow the shared audio element while this sheet is mounted. It is NOT created or
-  // destroyed here: the stream belongs to the lease, so closing the sheet must not
-  // silence the radio (sdrAudio.ts explains why it can be moved without restarting).
-  useEffect(() => attachSdrAudio(audioSlot.current), []);
-
-  // The tap that opened the field asked for the keypad, so put the caret in it —
-  // done here rather than with autoFocus, which fires before the field is laid out
-  // and which the a11y lint rightly refuses.
+  // Reflect what the audio element is actually doing. The sheet does not own it —
+  // it is parked in <body> for the life of the lease — so the transport reads the
+  // element's state rather than any state of its own (sdrAudio.ts).
+  const [playing, setPlaying] = useState(() => isSdrPlaying());
   useEffect(() => {
-    if (draft !== null) freqInput.current?.select();
-  }, [draft]);
+    setPlaying(isSdrPlaying());
+    return subscribeSdrAudio(setPlaying);
+  }, []);
+
+  // The tap that opened the field asked for the keypad, so put the caret in it.
+  // Keyed on `editing`, NOT on the draft text: re-selecting on every keystroke fights
+  // the soft keyboard. Done in an effect rather than with autoFocus, which fires
+  // before layout and which the a11y lint rightly refuses.
+  const editing = draft !== null;
+  useEffect(() => {
+    if (editing) freqInput.current?.select();
+  }, [editing]);
 
   const act = async (run: () => Promise<unknown>) => {
     setBusy(true);
@@ -152,8 +157,6 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
               aria-label="Frequency in MHz"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              onFocus={(event) => event.target.select()}
-              onBlur={commitDraft}
               onKeyDown={(event) => {
                 if (event.key === "Enter") commitDraft();
                 // Escape abandons the edit — the sheet's own Escape handler would
@@ -165,6 +168,27 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
               }}
             />
             <span className="sdr-unit">MHz</span>
+            {/* Explicit commit and cancel. Committing on blur meant that anything
+                which stole focus — a re-render, the soft keyboard closing — read as
+                the field disappearing on its own, so the edit ends only when the
+                owner says it does. */}
+            <button
+              type="button"
+              className="sdr-freq-ok"
+              aria-label="Tune to this frequency"
+              disabled={busy}
+              onClick={commitDraft}
+            >
+              Go
+            </button>
+            <button
+              type="button"
+              className="sdr-freq-cancel"
+              aria-label="Cancel"
+              onClick={() => setDraft(null)}
+            >
+              ✕
+            </button>
           </div>
         )}
         <div className="sdr-station">{listening.mode.toUpperCase()}</div>
@@ -249,8 +273,23 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
         <span className="sdr-elapsed">{elapsed(listening.elapsed_s)}</span>
       </div>
 
-      {/* The shared audio element is moved in here while the sheet is open. */}
-      <div className="sdr-audio-slot" ref={audioSlot} />
+      {/* Live radio is playing or it is not: there is no timeline to scrub, which is
+          why the native transport sat at 0:00 / 0:00. Pausing drops the connection and
+          resuming rejoins the broadcast as it is now, rather than replaying a backlog. */}
+      <div className="sdr-transport">
+        <button
+          type="button"
+          className="sdr-play"
+          aria-label={playing ? "Pause" : "Play"}
+          aria-pressed={playing}
+          onClick={toggleSdrAudio}
+        >
+          {playing ? "❚❚" : "▶"}
+        </button>
+        <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>
+          {playing ? "LIVE" : "PAUSED"}
+        </span>
+      </div>
 
       {error && <p className="sdr-error">{error}</p>}
 

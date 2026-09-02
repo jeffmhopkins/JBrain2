@@ -1,37 +1,71 @@
-// The radio's audio element, owned by the LEASE rather than by the tuner sheet.
+// The radio's audio element, owned by the LEASE and parked in the document for its
+// whole life.
 //
-// It used to live inside SdrTunerSheet, which meant closing the sheet tore the
-// element down and silenced the radio: sound only existed while the owner was
-// looking at the controls. That is backwards. The session holds the tuner whether or
-// not the sheet is open — the composer icon says so — so the audio belongs to the
-// same lifetime, and the sheet is only somewhere to SHOW the transport.
+// Two earlier shapes of this were wrong, in the same direction. First the element
+// lived inside SdrTunerSheet and was destroyed on unmount, so sound existed only
+// while the owner had the controls open. Then it lived here but was LENT to the
+// sheet — appended while mounted, removed on unmount — on the assumption that a
+// media element with a live JS reference goes on playing once detached.
 //
-// The trick that makes this cheap: a media element removed from the document keeps
-// playing as long as a reference survives. So one element lives here for the life of
-// the lease, and the sheet borrows it into its own slot while it is mounted (see
-// `attach`). Moving it in the DOM does not restart it, so opening and closing the
-// sheet is silent to the listener — and the native transport controls still work,
-// because it really is the same element.
+// It does not. The HTML spec is explicit: when a media element is removed from a
+// document, the user agent runs the internal pause steps. Measured in Chromium,
+// `paused` flips false -> true on the very next tick after `.remove()`. jsdom does
+// not implement that step, which is why a passing unit test said otherwise.
+//
+// So the element is appended to <body> once and never moved. The sheet does not
+// borrow it; it renders its own transport and drives it through `toggleSdrAudio`.
+// Nothing about playback depends on any component being mounted.
 //
 // A module store rather than React context, matching sdrSession.ts: this codebase
-// has no context anywhere and a stream that survives unmounting cannot live in the
-// tree that unmounts it.
+// has no context anywhere, and audio that must outlive the tree cannot live in it.
 
 // The proxied live stream. Same-origin and owner-session-authed; the sidecar itself
 // sits on an internal network the browser has no route to.
 export const SDR_AUDIO_SRC = "/api/sdr/audio";
 
-let element: HTMLAudioElement | null = null;
+type Listener = (playing: boolean) => void;
 
-/** The element, made on first use. Null when the DOM is not available (SSR, tests). */
+let element: HTMLAudioElement | null = null;
+const listeners = new Set<Listener>();
+
+function announce(): void {
+  const playing = isSdrPlaying();
+  for (const listener of listeners) listener(playing);
+}
+
+/** The element, made and parked in <body> on first use. Null when there is no DOM. */
 function ensure(): HTMLAudioElement | null {
   if (element) return element;
-  if (typeof document === "undefined") return null;
-  element = document.createElement("audio");
-  element.controls = true;
-  element.className = "sdr-audio";
-  element.preload = "none";
-  return element;
+  if (typeof document?.body === "undefined" || !document.body) return null;
+  const el = document.createElement("audio");
+  // No `controls`: a live stream has no timeline, so the native transport offers a
+  // scrubber over nothing and reads 0:00 / 0:00 forever. The sheet draws play/pause.
+  el.className = "sdr-audio";
+  el.preload = "none";
+  // Present but not seen. Removing it from the document would pause it (see above),
+  // so it is hidden rather than detached.
+  el.setAttribute("aria-hidden", "true");
+  el.style.display = "none";
+  el.addEventListener("play", announce);
+  el.addEventListener("pause", announce);
+  document.body.appendChild(el);
+  element = el;
+  return el;
+}
+
+function attempt(el: HTMLAudioElement): void {
+  // play() returns a Promise in modern browsers but `undefined` in older ones (and in
+  // jsdom), so it cannot be chained blind — and it can throw outright rather than
+  // reject. Both are contained because callers include the session store's publish():
+  // an exception escaping would stop the poll notifying its listeners and freeze the
+  // composer icon on a stale reading. Autoplay refusal is normal besides; the sheet's
+  // play button is how the owner recovers from it.
+  try {
+    const started: unknown = el.play();
+    if (started instanceof Promise) started.catch(announce);
+  } catch {
+    announce();
+  }
 }
 
 /** Point the element at the live stream and start it. Idempotent per session. */
@@ -42,48 +76,50 @@ export function playSdrAudio(): void {
   // when it is not already ours. The browser resolves src to an absolute URL, hence
   // the suffix test rather than equality.
   if (!el.src.endsWith(SDR_AUDIO_SRC)) el.src = SDR_AUDIO_SRC;
-  if (!el.paused) return;
-  // play() returns a Promise in modern browsers but `undefined` in older ones (and
-  // in jsdom), so it cannot be chained blind — and it can throw outright rather than
-  // reject. Both are contained here because the caller is the session store's
-  // publish(): an exception escaping this would stop the poll notifying its
-  // listeners, and the composer icon would freeze on a stale reading. Autoplay
-  // refusal is normal besides, and not worth surfacing — the transport is right
-  // there in the sheet.
-  try {
-    const started: unknown = el.play();
-    if (started instanceof Promise) started.catch(() => {});
-  } catch {
-    // no sound this time; the owner can start it from the transport
-  }
+  if (el.paused) attempt(el);
 }
 
 /** Release the stream. Called when the lease ends, never when the sheet closes. */
 export function stopSdrAudio(): void {
   if (!element) return;
-  // Contained for the same reason as playSdrAudio: this runs inside the session
-  // store's publish(), and a throw here would strand every listener.
   try {
     element.pause();
     element.removeAttribute("src");
     element.load(); // drop the connection rather than leave it streaming unheard
   } catch {
-    // best effort; the element is going out of the document either way
+    // best effort; the element is being discarded either way
   }
   element.remove();
+  element = null;
+  announce();
 }
 
-/**
- * Lend the element to a container for as long as that container is mounted.
- * Returns the undo, which puts it back in no document at all — where it keeps
- * playing, because that is the whole point.
- */
-export function attachSdrAudio(host: HTMLElement | null): () => void {
+/** The sheet's play/pause. Resuming re-points at the stream to rejoin it live. */
+export function toggleSdrAudio(): void {
   const el = ensure();
-  if (!el || !host) return () => {};
-  host.appendChild(el);
+  if (!el) return;
+  if (el.paused) {
+    playSdrAudio();
+    return;
+  }
+  el.pause();
+  // Drop the connection while paused. This is live radio: resuming should rejoin the
+  // broadcast as it is NOW, not play out however many minutes queued up while the
+  // owner was not listening. `playSdrAudio` re-points at the src to reconnect.
+  el.removeAttribute("src");
+  announce();
+}
+
+/** Whether sound is actually coming out, for the transport to reflect. */
+export function isSdrPlaying(): boolean {
+  return element !== null && !element.paused && element.hasAttribute("src");
+}
+
+/** Subscribe to play/pause; returns an unsubscribe. */
+export function subscribeSdrAudio(listener: Listener): () => void {
+  listeners.add(listener);
   return () => {
-    el.remove();
+    listeners.delete(listener);
   };
 }
 
@@ -91,4 +127,5 @@ export function attachSdrAudio(host: HTMLElement | null): () => void {
 export function resetSdrAudio(): void {
   element?.remove();
   element = null;
+  listeners.clear();
 }
