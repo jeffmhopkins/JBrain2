@@ -195,15 +195,57 @@ Whether logging should auto-release after an idle period. The lease is already v
 elapsed time, a Release button, a lit omnibox icon — which is the argument for leaving it
 running until the owner says otherwise.
 
+### Rebuilt after independent review
+
+The first cut of this round was reviewed independently (PROCESS.md: the reviewer is
+never the builder) and **the two-dongle axis was broken**. The review's one-line root
+cause: *"the dongle count is a cosmetic filter on copy, not a second axis of the state
+model."*
+
+The harness had one global `idle | listening | logging` switch, so:
+
+- **Simultaneity was unreachable in all 18 combinations** — the entire point of a second
+  dongle, and the thing the README told the reader to flip the switch to see.
+- **Four combinations were byte-identical no-ops.** Clicking a control changed nothing.
+- **Armed-but-deaf asserted deafness at two dongles + listening**, the exact state the
+  second dongle exists to abolish — reading as "the second dongle doesn't fix this",
+  the opposite of the plan's P0b argument.
+- **Three pieces of prose promised two-dongle behaviour that was never rendered**,
+  including B's whole argument (a per-device selector) and A's ("both tabs work at
+  once").
+- C's handoff dialog **could not be declined** — "Keep listening" re-rendered it — and
+  its scrim covered a button that was still in the tab order.
+- A offered **two call-to-actions for one act**, one of which seized the radio with no
+  confirmation while the banner directly above framed the same act as a release. That
+  also corrupted the comparison, letting A skip the confirm C was being charged for.
+- The deaf task row was dimmed to `opacity:.55`, making **the most important sentence on
+  the screen the least legible text on it**.
+- The frequency (432.100) contradicted the **decided** round-1 spec's 144.390, silently
+  pre-answering the plan's open frequency question in a mock about something else.
+
+**The fix was the harness, not the copy.** Listening and Logging are now two independent
+switches, and the dongle count decides whether both can be on: at one, turning either on
+turns the other off — *that is the contention*; at two, they run together — *that is what
+the second dongle buys*. The difference is now demonstrated by the control rather than
+asserted in a hint. Also fixed: the per-device selector B argues for is rendered, A's
+Tuner tab is drawn and reads "in use by APRS logging", C's dialog can be declined (and
+by Escape), the duplicate CTA is gone, the deaf row is undimmed and outlined, warnings
+carry `role="alert"`, switches are labelled, dead CSS is deleted, and both this mock and
+`b-trigger-editor.html` now say 144.390.
+
+The mock depicts a bespoke dialog for layout only; the real build uses the shared
+`<Dialog>` (`DESIGN.md` "Modal system"), which owns focus trap, scroll lock and dismiss.
+
 ### Verified, not assumed
 
-Driven in Chromium across all 18 shape × radio-state × dongle-count combinations: the
-armed-but-deaf warning appears exactly when logging is off and never while it is on, the
-contention banner and the handoff dialog appear only in the single-dongle conflict, and
-the one-tap *Enable APRS logging* in the warning transitions to logging and clears it.
-No console errors, no horizontal scroll.
+Re-driven in Chromium after the rebuild: every shape × dongle × listening × logging
+combination renders, **no two states of the same shape are byte-identical**, tasks are
+live and unflagged in the two-dongle simultaneous state, the contention offers exactly
+one call-to-action, the Tuner tab reads "in use by APRS logging" and its handoff returns
+to listening, the dialog declines, the deaf row renders at full opacity, warnings carry
+alert roles and every switch is labelled. No console errors, no horizontal scroll.
 
-This round also caught a defect that no amount of reading would have: `function top()`
-collides with `window.top`, a read-only browser global, so the entire script died at
-parse and every panel rendered empty. A mock that is only looked at, rather than driven,
-ships that.
+The first cut also taught its own lesson twice over: it shipped with `function top()`
+colliding with `window.top`, a read-only browser global, which killed the whole script at
+parse — and then, once running, looked fine to a reader while being structurally wrong.
+Driving a mock is not optional.
