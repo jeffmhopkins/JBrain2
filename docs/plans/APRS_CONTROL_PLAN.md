@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P3◻️ P4◻️ P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
+> **Status:** Planned · **Last verified:** 2026-09-02 · **Waves:** P0◻️ P1◻️ P3◻️ P4◻️ P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build) (nothing built; the P3 GUI gate is **closed** — shape A, a tab of the Radio launcher, `../mocks/aprs/a-launcher-shape.html`)
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -82,7 +82,28 @@ narrows noise, it does not authenticate.
 
 ## Waves
 
-### P0 · Second tuner, addressable
+### P0 · One radio, two jobs — the lease grows a purpose
+
+**There will not always be a second dongle**, so the first build must work with one. APRS
+logging is something the owner *enables*, and it *reserves the tuner until released* —
+which is the lease that already exists. `SessionInfo` grows a **`purpose`** (`listen` |
+`aprs`); a logging session holds the radio, 409s the other job, shows its elapsed time
+and Release, and lights the omnibox icon, all through machinery that is already shipped.
+
+Two consequences to build deliberately rather than discover:
+
+- **Contention has to read honestly.** Tapping to listen while APRS holds the radio is a
+  409, and it must say *"the radio is logging APRS — release it to listen"*, never a
+  generic busy error. Same in reverse.
+- **Armed is not the same as listening.** A command task fires only while logging is on,
+  and with one dongle it often will not be. An armed-but-deaf task must announce itself —
+  the same rule that deleted the tuner's signal meter. Auto-enabling logging when a task
+  is armed is **rejected**: silently seizing the tuner is how a radio starts to feel
+  possessed. The warning offers the switch; it never throws it.
+
+GUI gate: `../mocks/aprs/c-single-dongle.html` (awaiting decision).
+
+### P0b · Second tuner, addressable (later — it removes the contention, it is not a prerequisite)
 
 The sidecar assumes one radio ("one tuner, one session"). It becomes **one session per
 device**: enumerate by USB serial (the supervisor's probe already reports it — a

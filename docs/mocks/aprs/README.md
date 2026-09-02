@@ -142,3 +142,68 @@ Driven in Chromium: all six shape × view combinations render, A's editor offers
 fourth kind while B and C are command-only, A's list correctly shows command *and*
 scheduled tasks together while B and C show command only, the scope warning appears only
 once a firewalled domain is selected, no console errors, no horizontal scroll.
+
+
+## Round 3 — one radio, two jobs · `c-single-dongle.html` · **awaiting decision**
+
+There will not always be a dedicated APRS dongle. With one, APRS logging has to be
+something the owner **enables**, which **reserves the tuner until released**.
+
+### That is the lease, already built
+
+The box has one tuner, one session, and everything else gets a 409 (`listen.py`
+`SdrBusy`, `api/sdr.py`). Enabling APRS logging is therefore not a background daemon and
+not new machinery: it is a **session whose purpose is `aprs` rather than `listen`**.
+`SessionInfo` grows a `purpose` field and the existing lease does the rest — including
+the omnibox icon, which is lit by a session *existing*, so a logging radio already reads
+as held without touching that rule.
+
+P0 changes accordingly: the two-dongle work ("one session per device") stops being a
+prerequisite and becomes the thing that removes the contention later. The single-dongle
+path is not throwaway — it is the same lease, contended.
+
+### The thing most likely to be missed
+
+**Arming a command task and enabling APRS logging are two different switches.** With one
+dongle, logging means giving up listening, so it will not always be on — which means
+armed tasks will regularly be armed **and deaf**. A task that says "armed" while nothing
+is receiving is precisely the failure this surface already refused once, when the tuner's
+signal meter was deleted for reading high on a dead channel.
+
+So every variant shows an **armed-but-deaf** state; they differ in how. Toggle
+*Radio is* between Logging APRS and anything else to see it appear and clear.
+
+Auto-enabling logging when a task is armed was **considered and rejected**: silently
+seizing the tuner is how a radio starts to feel possessed. The warning offers the switch;
+it never throws it.
+
+| | Shape | Costs |
+|---|---|---|
+| **A** | **Switch in the APRS tab** — each job's control where that job lives | Two controls for one radio; "what is it doing" is read off whichever tab you are on |
+| **B** | **One radio-wide mode** — Idle / Listen / Log APRS in the header | A mode selector above tabs is two navigation systems stacked, and implies tabs are views of a mode when Recordings is not |
+| **C** | **Claim on use** — the tab you open is the job, with a handoff confirm | Navigation with side effects; a dialog every time you glance at APRS; no resting answer to "is logging on?" |
+
+B's argument is that while there is one dongle the radio genuinely does one job, so one
+selector is the truest model — and it degrades well, becoming per-device rather than
+disappearing when the second dongle arrives. A's argument is that nothing about it
+changes when that happens: the contention message simply stops appearing. Flip the
+**Dongles** switch on any variant to see the two-dongle future.
+
+### Not decided here
+
+Whether logging should auto-release after an idle period. The lease is already visible —
+elapsed time, a Release button, a lit omnibox icon — which is the argument for leaving it
+running until the owner says otherwise.
+
+### Verified, not assumed
+
+Driven in Chromium across all 18 shape × radio-state × dongle-count combinations: the
+armed-but-deaf warning appears exactly when logging is off and never while it is on, the
+contention banner and the handoff dialog appear only in the single-dongle conflict, and
+the one-tap *Enable APRS logging* in the warning transitions to logging and clears it.
+No console errors, no horizontal scroll.
+
+This round also caught a defect that no amount of reading would have: `function top()`
+collides with `window.top`, a read-only browser global, so the entire script died at
+parse and every panel rendered empty. A mock that is only looked at, rather than driven,
+ships that.

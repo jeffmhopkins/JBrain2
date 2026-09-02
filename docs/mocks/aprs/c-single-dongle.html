@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One radio, two jobs - three shapes</title>
+<!--
+  MOCK ROUND 3 (docs/plans/APRS_CONTROL_PLAN.md, P0/P3).
+
+  THE INPUT. There will not always be a dedicated APRS dongle - one dongle for a
+  while. So APRS logging must be something the owner ENABLES, which RESERVES the
+  single tuner until released.
+
+  THAT IS THE LEASE, ALREADY BUILT. The box has one tuner, one session, and
+  everything else gets a 409 (deploy/sdr/listen.py SdrBusy, api/sdr.py). Enabling
+  APRS logging is therefore not a background daemon and not a new mechanism: it is a
+  SESSION whose purpose is `aprs` rather than `listen`. SessionInfo grows a `purpose`
+  and the existing lease does the rest - including the omnibox icon, which is lit by
+  a session EXISTING, so a logging radio already reads as held.
+
+  THE THING MOST LIKELY TO BE MISSED, and why this round exists: arming a command
+  task and enabling APRS logging are TWO DIFFERENT SWITCHES. With one dongle,
+  logging means giving up listening, so it will not always be on - which means armed
+  tasks will regularly be armed AND DEAF. A task that says "armed" while nothing is
+  receiving is exactly the failure this surface already refused once, when the tuner's
+  signal meter was deleted for reading high on a dead channel. Every variant below
+  must therefore show the armed-but-deaf state; they differ in how.
+
+  Auto-enabling logging when a task is armed was considered and rejected: silently
+  seizing the tuner is how a radio starts feeling possessed. The warning offers the
+  switch; it never throws it.
+
+  A - MODE SWITCH IN THE TAB. "Enable APRS logging" lives in the APRS tab; the Tuner
+      tab reads "in use by APRS logging". Two controls, each where its job is.
+  B - ONE RADIO-WIDE MODE. A single selector in the Radio header: Idle / Listening /
+      Logging APRS. One radio, one mode, one control - arguably the truest model
+      while there is one dongle, and it becomes per-device when there are two.
+  C - CLAIM ON USE. No mode control at all. Entering a tab claims the radio, and if
+      it is held you get an explicit handoff confirm. Fewest controls, most dialogs.
+
+  NOT decided here: whether logging should auto-release after some idle period. The
+  lease is already visible (elapsed time, Release, a lit omnibox icon), which is the
+  argument for leaving it running until the owner says otherwise.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1120px;margin:0 auto;padding:26px 20px 60px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:72ch;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+  .controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:20px 0 26px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surface);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:13px;
+    padding:9px 14px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+
+  .stage{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;}
+  .phone{width:390px;min-height:660px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
+    padding:14px 13px 20px;box-shadow:0 18px 50px rgba(0,0,0,.45);position:relative;overflow:hidden;}
+  .note{flex:1;min-width:290px;max-width:430px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
+  .note h3{color:var(--text);font-size:14px;margin:0 0 8px;font-weight:620;}
+  .note p{margin:0 0 12px;}
+  .note strong{color:var(--text);font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+
+  .scr-top{display:flex;align-items:center;gap:10px;padding:2px 2px 12px;}
+  .chev{color:var(--text-2);font-size:19px;line-height:1;}
+  .scr-title{font-size:17px;font-weight:640;}
+  .devs{margin-left:auto;font-size:10.5px;font-family:var(--mono);color:var(--text-3);}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:0 0 14px;}
+  .tabs button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--text-3);font:inherit;font-size:13.5px;padding:9px 12px;cursor:pointer;}
+  .tabs button[aria-selected="true"]{color:var(--steel);border-bottom-color:var(--steel);font-weight:600;}
+
+  .modes{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);margin-bottom:14px;}
+  .modes button{flex:1;appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:11px 6px;cursor:pointer;border-right:1px solid var(--border);}
+  .modes button:last-child{border-right:0;}
+  .modes button[aria-pressed="true"]{background:var(--green-tint);color:var(--green);font-weight:600;}
+
+  .state{display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:12px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto;}
+  .dot.off{background:var(--text-3);}
+  .state .who{font-size:12.5px;color:var(--text-2);line-height:1.45;}
+  .state .who b{color:var(--text);font-weight:600;}
+  .rel{margin-left:auto;appearance:none;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);
+    color:var(--text-2);font:inherit;font-size:11.5px;padding:6px 12px;cursor:pointer;flex:0 0 auto;}
+
+  .enable{width:100%;appearance:none;border:1px solid var(--steel);border-radius:12px;background:var(--steel-tint);
+    color:var(--steel);font:inherit;font-size:13.5px;font-weight:600;padding:12px;cursor:pointer;margin-bottom:12px;}
+  .enable.busy{border-color:var(--border);background:var(--surface);color:var(--text-3);cursor:not-allowed;}
+
+  .held{padding:12px;border:1px solid var(--amber);border-radius:12px;background:var(--amber-tint);
+    color:var(--amber);font-size:12.5px;line-height:1.55;margin-bottom:12px;}
+  .held b{font-weight:700;}
+  .held .take{display:inline-block;margin-top:9px;appearance:none;border:1px solid var(--amber);border-radius:999px;
+    background:transparent;color:var(--amber);font:inherit;font-size:11.5px;font-weight:600;padding:6px 13px;cursor:pointer;}
+
+  .deaf{padding:11px 12px;border:1px solid var(--rose);border-radius:12px;background:var(--rose-tint);
+    color:var(--rose);font-size:12px;line-height:1.55;margin-bottom:10px;}
+  .deaf b{font-weight:700;}
+  .deaf .fix{display:inline-block;margin-top:8px;appearance:none;border:1px solid var(--rose);border-radius:999px;
+    background:transparent;color:var(--rose);font:inherit;font-size:11.5px;font-weight:600;padding:6px 13px;cursor:pointer;}
+
+  .trow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:8px;}
+  .trow.mute{opacity:.55;}
+  .trow .tn{font-size:14px;font-weight:600;}
+  .trow .tw{font-size:11.5px;color:var(--text-3);margin-top:3px;line-height:1.5;}
+  .trow .tw .cmd{font-family:var(--mono);color:var(--steel);}
+  .trow .tw .arm{color:var(--amber);}
+  .trow .tw .bad{color:var(--rose);}
+  .sw{width:40px;height:23px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);
+    position:relative;cursor:pointer;flex:0 0 auto;appearance:none;margin-left:auto;}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;
+    background:var(--text-3);transition:transform .16s,background .16s;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:var(--green);}
+  .sw[aria-checked="true"]::after{transform:translateX(17px);background:var(--green);}
+  .sec{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:16px 0 8px;}
+  .hint{font-size:11.5px;color:var(--text-3);line-height:1.5;margin-top:10px;}
+  .hint b{color:var(--text-2);font-weight:600;}
+  .dlg{position:absolute;inset:0;background:rgba(14,15,17,.72);display:flex;align-items:center;justify-content:center;padding:22px;}
+  .dlgbox{border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:16px;max-width:300px;}
+  .dlgbox h4{margin:0 0 8px;font-size:14.5px;font-weight:640;}
+  .dlgbox p{margin:0 0 14px;font-size:12.5px;line-height:1.55;color:var(--text-2);}
+  .dlgrow{display:flex;gap:8px;}
+  .dlgrow button{flex:1;appearance:none;border-radius:999px;font:inherit;font-size:12.5px;padding:8px;cursor:pointer;}
+  .dlgrow .no{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .dlgrow .yes{border:1px solid var(--amber);background:var(--amber-tint);color:var(--amber);font-weight:600;}
+</style>
+</head><body>
+<div class="wrap">
+<header>
+  <h1>One radio, two jobs — three shapes</h1>
+  <p class="sub">Round 3 for <code>docs/plans/APRS_CONTROL_PLAN.md</code>. With a single dongle, APRS
+  logging must be <strong>enabled</strong> and <strong>reserve the tuner until released</strong> — which is
+  the lease that already exists, with a session whose purpose is <code>aprs</code> instead of
+  <code>listen</code>. The round decides how that contention reads, and how an
+  <strong>armed-but-deaf</strong> task announces itself.</p>
+</header>
+<div class="controls">
+  <div class="field"><span class="lbl">Shape</span>
+    <div class="seg" id="pick" role="group" aria-label="Shape">
+      <button aria-pressed="true" data-v="A">A · Switch in tab</button>
+      <button aria-pressed="false" data-v="B">B · One radio mode</button>
+      <button aria-pressed="false" data-v="C">C · Claim on use</button>
+    </div>
+  </div>
+  <div class="field"><span class="lbl">Radio is</span>
+    <div class="seg" id="mode" role="group" aria-label="Radio state">
+      <button aria-pressed="true" data-m="idle">Idle</button>
+      <button aria-pressed="false" data-m="aprs">Logging APRS</button>
+      <button aria-pressed="false" data-m="listen">Listening</button>
+    </div>
+  </div>
+  <div class="field"><span class="lbl">Dongles</span>
+    <div class="seg" id="dev" role="group" aria-label="Dongles">
+      <button aria-pressed="true" data-d="1">One</button>
+      <button aria-pressed="false" data-d="2">Two</button>
+    </div>
+  </div>
+</div>
+<div class="stage">
+  <div class="phone" id="phone"></div>
+  <div class="note" id="note"></div>
+</div>
+</div>
+<script>
+function radioTop(dev){
+  return '<div class="scr-top"><span class="chev">‹</span><span class="scr-title">Radio</span>'+
+    '<span class="devs">'+(dev==="2"?"2 dongles":"1 dongle")+'</span></div>'+
+    '<div class="tabs" role="tablist"><button role="tab" aria-selected="false">Tuner</button>'+
+    '<button role="tab" aria-selected="true">APRS</button>'+
+    '<button role="tab" aria-selected="false">Recordings</button></div>';
+}
+function tasks(listening){
+  var deaf = !listening
+    ? '<div class="deaf"><b>Armed, but nothing is receiving.</b> These fire on a verified command, '+
+      'and APRS logging is off — so no command can arrive. Arming a task and enabling the receiver '+
+      'are separate switches, on purpose.<button class="fix">Enable APRS logging</button></div>'
+    : "";
+  var cls = listening ? "trow" : "trow mute";
+  var state = listening
+    ? '<span class="arm">armed weekdays 06:00–09:00</span> · last run ok'
+    : '<span class="bad">armed — not listening</span>';
+  return '<div class="sec">Command tasks</div>' + deaf +
+    '<div class="'+cls+'"><div style="flex:1;min-width:0"><div class="tn">Open the gate</div>'+
+    '<div class="tw">On <span class="cmd">GATE</span> from <span class="cmd">KE8XYZ-9</span> · '+state+'</div></div>'+
+    '<button class="sw" role="switch" aria-checked="true"></button></div>';
+}
+function loggingState(){
+  return '<div class="state"><span class="dot"></span><span class="who"><b>Logging APRS</b> · 432.100 · '+
+    'held 1h 12m · 6 pkt/hr</span><button class="rel">Release</button></div>';
+}
+function heldByListen(dev){
+  if (dev === "2") return "";
+  return '<div class="held"><b>The radio is listening on 162.550.</b> One dongle, one job — release the '+
+    'listening session to log APRS, or add a second dongle to do both.<button class="take">Release &amp; log APRS</button></div>';
+}
+var SHAPES = {
+  A: function(m, dev){
+    var body;
+    if (m === "aprs") body = loggingState() + tasks(true);
+    else if (m === "listen" && dev === "1") body = heldByListen(dev) + tasks(false);
+    else body = '<button class="enable">Enable APRS logging</button>'+
+      '<p class="hint">Reserves the tuner until released'+(dev==="1"?" — while it runs, the Tuner tab cannot listen":"")+
+      '.</p>' + tasks(false);
+    return radioTop(dev) + body;
+  },
+  B: function(m, dev){
+    var sel = '<div class="modes" data-modes><button aria-pressed="'+(m==="idle")+'">Idle</button>'+
+      '<button aria-pressed="'+(m==="listen")+'">Listen</button>'+
+      '<button aria-pressed="'+(m==="aprs")+'">Log APRS</button></div>';
+    var body = m === "aprs" ? loggingState() + tasks(true)
+      : (m === "listen"
+          ? '<p class="hint" style="margin-top:0">The radio is listening. Switching to <b>Log APRS</b> ends that '+
+            'session'+(dev==="2"?" — or with two dongles, runs alongside it":"")+'.</p>' + tasks(false)
+          : '<p class="hint" style="margin-top:0">The radio is idle and holding nothing.</p>' + tasks(false));
+    return radioTop(dev) + sel + body;
+  },
+  C: function(m, dev){
+    var body, dlg = "";
+    if (m === "aprs") body = loggingState() + tasks(true);
+    else if (m === "listen" && dev === "1"){
+      body = tasks(false);
+      dlg = '<div class="dlg"><div class="dlgbox"><h4>Take the radio?</h4>'+
+        '<p>It is listening on 162.550. Logging APRS will end that session — there is one dongle, so only one job at a time.</p>'+
+        '<div class="dlgrow"><button class="no">Keep listening</button><button class="yes">Log APRS</button></div></div></div>';
+    } else body = '<p class="hint" style="margin-top:0">Opening this tab claims the radio for APRS. There is no separate '+
+      'switch — the tab you are on is the job the radio is doing.</p>' + tasks(false);
+    return radioTop(dev) + body + dlg;
+  }
+};
+var NOTES = {
+  A:{h:"A · A switch in the APRS tab",p:[
+    "<strong>Each job has its own control, where that job lives.</strong> The APRS tab enables logging; the Tuner tab tunes. When one holds the radio, the other says so plainly and offers the handoff.",
+    "Reads well with two dongles too: the contention message simply stops appearing, and both tabs work at once. Nothing about the control changes — flip <b>Dongles</b> to see it.",
+    "Costs: two controls for one radio, so “what is the radio doing” has to be read off whichever tab you are on rather than one place."]},
+  B:{h:"B · One radio, one mode",p:[
+    "<strong>A single selector: Idle / Listen / Log APRS.</strong> While there is one dongle this is the truest model — the radio genuinely does one job — and the answer to “what is it doing” is always in the same spot.",
+    "It degrades well: with two dongles the selector becomes per-device rather than disappearing, so the mental model survives the hardware change instead of being replaced by it.",
+    "Costs: a mode selector above tabs is two navigation systems stacked, and it implies the tabs are views of a mode when Recordings is not. Idle also becomes a state the owner has to think about."]},
+  C:{h:"C · Claim on use",p:[
+    "<strong>No mode control at all.</strong> The tab you open is the job the radio does; if it is busy you get an explicit handoff confirm — set <b>Radio is: Listening</b> with one dongle to see it.",
+    "Fewest controls, and the confirm is honest about the cost at the moment it is paid rather than in a hint you read earlier.",
+    "Costs: navigation with side effects. Opening a tab to look at it should not seize hardware, and a dialog every time you glance at APRS gets old fast. It also has no resting place to answer “is logging on right now?”"]}
+};
+function paint(){
+  var v = document.querySelector("#pick button[aria-pressed='true']").dataset.v;
+  var m = document.querySelector("#mode button[aria-pressed='true']").dataset.m;
+  var d = document.querySelector("#dev button[aria-pressed='true']").dataset.d;
+  document.getElementById("phone").innerHTML = SHAPES[v](m, d);
+  var n = NOTES[v];
+  document.getElementById("note").innerHTML = "<h3>"+n.h+"</h3>"+n.p.map(function(x){return "<p>"+x+"</p>";}).join("");
+}
+document.querySelectorAll("#pick button, #mode button, #dev button").forEach(function(b){
+  b.addEventListener("click", function(){
+    b.parentNode.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", String(x === b)); });
+    paint();
+  });
+});
+function setMode(m){
+  document.querySelectorAll("#mode button").forEach(function(x){ x.setAttribute("aria-pressed", String(x.dataset.m === m)); });
+  paint();
+}
+document.addEventListener("click", function(e){
+  if (e.target.closest(".enable:not(.busy)") || e.target.closest(".fix") ||
+      e.target.closest(".take") || e.target.closest(".dlgrow .yes")) return setMode("aprs");
+  if (e.target.closest(".rel")) return setMode("idle");
+  if (e.target.closest(".dlgrow .no")) return setMode("listen");
+  var md = e.target.closest("[data-modes] button");
+  if (md) return setMode(["idle","listen","aprs"][[].indexOf.call(md.parentNode.children, md)]);
+  var sw = e.target.closest(".sw");
+  if (sw){ sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true"); return; }
+  var tab = e.target.closest(".tabs button");
+  if (tab){ tab.parentNode.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-selected", String(x === tab)); }); }
+});
+paint();
+</script>
+</body></html>
