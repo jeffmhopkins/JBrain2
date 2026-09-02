@@ -443,6 +443,10 @@ Three decisions worth keeping, because each replaced something that looked right
 - **The arming window is checked at VERIFY time, not as an `ActionSpec.precondition`.**
   A precondition *defers* with a retry, and a deferred gate command is a gate that opens
   hours later for someone who is no longer there.
+- **"Push" here is the box's own notification stream**, not a third-party push service:
+  `NotifyBus` → SSE → the owner's phone. No FCM notifier is configured on this box, so
+  the plan's "push on every attempt" is delivered by that path, and by the attempt log
+  the Radio tab reads back.
 - **Every attempt is RECORDED, not only pushed.** A push is ephemeral, arrives only if a
   device is registered, and is precisely what an attacker hopes goes unread. The push is
   the alarm; the table is the evidence, and the radio tab reads it back. Pushes stop

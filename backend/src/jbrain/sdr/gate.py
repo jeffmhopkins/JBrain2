@@ -145,9 +145,14 @@ class CommandGate:
             # words long. Logging those would bury the attempts that matter.
             return None
         attempt = await self._judge(row, heard, word, code)
-        await self._record(attempt, heard, code)
+        attempt_id = await self._record(attempt, heard, code)
         if attempt.accepted and attempt.task_id:
-            await self._fire(attempt.task_id)
+            # Recorded FIRST, then linked: the evidence must survive a run that fails, and
+            # the run id does not exist until the run starts. The link is what turns "a
+            # command was accepted at 06:14" into "and here is what it did".
+            run_id = await self._fire(attempt.task_id)
+            if attempt_id and run_id:
+                await self._link(attempt_id, run_id)
         await self._announce(attempt, heard, row)
         return attempt
 
@@ -255,52 +260,74 @@ class CommandGate:
             )
             await session.commit()
 
-    async def _record(self, attempt: Attempt, heard: Heard, code: str) -> None:
+    async def _record(self, attempt: Attempt, heard: Heard, code: str) -> str | None:
         """The durable record, written whatever happens next. A push can be missed; this
-        is what the owner can still find on Tuesday."""
+        is what the owner can still find on Tuesday. Returns the row's id so an accepted
+        attempt can be linked to the run it caused."""
         try:
             async with scoped_session(
                 self._maker, SessionContext(principal_kind="owner")
             ) as session:
-                await session.execute(
-                    text(
-                        "INSERT INTO app.command_attempts"
-                        " (heard_at, task_id, source, word, code, accepted, reason)"
-                        " VALUES (:heard_at, :task_id, :source, :word, :code, :ok, :reason)"
-                    ),
-                    {
-                        "heard_at": heard.heard_at,
-                        "task_id": attempt.task_id,
-                        # Scrubbed again here, not only where the frame entered. Postgres
-                        # rejects a NUL in a text column and this INSERT swallows its own
-                        # errors, so an unscrubbed byte does not fail loudly — it deletes
-                        # the row silently, which is the one outcome this table exists to
-                        # prevent. Cheap insurance on the evidence path.
-                        "source": _plain(heard.source)[:16],
-                        "word": _plain(attempt.word)[:16],
-                        "code": _plain(code)[:MAX_CODE],
-                        "ok": attempt.accepted,
-                        "reason": attempt.reason[:120],
-                    },
-                )
+                row_id = (
+                    await session.execute(
+                        text(
+                            "INSERT INTO app.command_attempts"
+                            " (heard_at, task_id, source, word, code, accepted, reason)"
+                            " VALUES (:heard_at, :task_id, :source, :word, :code, :ok, :reason)"
+                            " RETURNING id"
+                        ),
+                        {
+                            "heard_at": heard.heard_at,
+                            "task_id": attempt.task_id,
+                            # Scrubbed again here, not only where the frame entered. Postgres
+                            # rejects a NUL in a text column and this INSERT swallows its own
+                            # errors, so an unscrubbed byte does not fail loudly — it deletes
+                            # the row silently, which is the one outcome this table exists to
+                            # prevent. Cheap insurance on the evidence path.
+                            "source": _plain(heard.source)[:16],
+                            "word": _plain(attempt.word)[:16],
+                            "code": _plain(code)[:MAX_CODE],
+                            "ok": attempt.accepted,
+                            "reason": attempt.reason[:120],
+                        },
+                    )
+                ).scalar()
                 await session.commit()
+                return str(row_id) if row_id else None
         except Exception as exc:  # noqa: BLE001 — never let bookkeeping eat the command
             log.warning("command_gate.record_failed", error=repr(exc))
+        return None
 
-    async def _fire(self, task_id: str) -> None:
-        """Run the task the owner attached to this word, exactly as the scheduler would."""
+    async def _link(self, attempt_id: str, run_id: str) -> None:
+        """Point an accepted attempt at the run it started."""
+        with contextlib.suppress(Exception):
+            async with scoped_session(
+                self._maker, SessionContext(principal_kind="owner")
+            ) as session:
+                await session.execute(
+                    text("UPDATE app.command_attempts SET run_id = :run WHERE id = :id"),
+                    {"run": run_id, "id": attempt_id},
+                )
+                await session.commit()
+
+    async def _fire(self, task_id: str) -> str | None:
+        """Run the task the owner attached to this word, exactly as the scheduler would.
+
+        Returns the run's id so the attempt can point at it."""
         owner = SessionContext(principal_kind="owner")
         task: TaskInfo | None = None
         with contextlib.suppress(Exception):
             task = await self._repo.get(owner, task_id)
         if task is None:
             log.warning("command_gate.task_missing", task_id=task_id)
-            return
+            return None
         ctx = SessionContext(principal_id=task.principal_id, principal_kind="owner")
         try:
-            await self._runner.run(ctx, task, trigger="command")
+            info = await self._runner.run(ctx, task, trigger="command")
         except Exception as exc:  # noqa: BLE001 — the runner records its own failures
             log.warning("command_gate.run_failed", error=repr(exc))
+            return None
+        return str(getattr(info, "id", "")) or None
 
     async def _announce(self, attempt: Attempt, heard: Heard, row: dict[str, Any]) -> None:
         """Tell the owner. An accepted command always; a refusal too, EXCEPT while the

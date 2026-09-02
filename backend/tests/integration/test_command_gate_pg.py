@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -58,8 +59,9 @@ class _Runner:
     runs: TaskRunRepo | None = None
 
     async def run(self, owner_ctx: SessionContext, task: TaskInfo, *, trigger: str) -> Any:
+        run_id = None
         if self.runs is not None:
-            await self.runs.start(
+            run_id = await self.runs.start(
                 owner_ctx,
                 task_id=task.id,
                 principal_id=owner_ctx.principal_id,
@@ -68,7 +70,7 @@ class _Runner:
                 trigger=trigger,
             )
         self.fired.append((task.id, trigger))
-        return None
+        return SimpleNamespace(id=run_id) if run_id else None
 
 
 @pytest.fixture
@@ -555,3 +557,25 @@ async def test_a_one_shot_command_fires_once_even_under_a_digipeat_race(
 
     assert runner.fired == [(task_id, "command")]
     assert await _runs(maker) == ["command"]
+
+
+async def test_an_accepted_attempt_points_at_the_run_it_started(
+    maker: async_sessionmaker,
+) -> None:
+    # The join the owner would actually want: "a command was accepted at 06:14" is only
+    # half a fact without "and here is what it did".
+    await _command(maker)
+    gate, _ = _gate(maker)
+
+    await gate.offer(_heard(f"GATE {code_for(KEY, 0)}"))
+
+    async with scoped_session(maker, OWNER) as s:
+        linked = (
+            await s.execute(
+                text(
+                    "SELECT a.run_id, r.id FROM app.command_attempts a"
+                    " JOIN app.task_runs r ON r.id = a.run_id"
+                )
+            )
+        ).all()
+    assert len(linked) == 1
