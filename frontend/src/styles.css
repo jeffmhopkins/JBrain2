@@ -24816,16 +24816,22 @@ button.task-band:active {
   gap: 10px;
   margin: 12px 0 4px;
 }
+/* Centres its ICON, not a glyph. This drew "▶"/"❚❚" as text once, and where the
+   platform substituted a font whose side-bearings were not symmetric — iOS did — the
+   triangle sat visibly left of the circle. Text centring cannot fix that, because the
+   glyph is centred correctly inside its own advance width; the padding is in the font.
+   Also what DESIGN.md "Iconography" asks for: no emoji in UI chrome. */
 .sdr-play {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 46px;
   height: 46px;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-1);
-  font-size: 17px;
-  line-height: 1;
   cursor: pointer;
 }
 .sdr-play[aria-pressed="true"] {
