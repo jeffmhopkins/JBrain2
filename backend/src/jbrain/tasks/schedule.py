@@ -14,7 +14,10 @@ from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Kinds and frequencies — the closed sets the API and DB CHECKs share.
-KINDS = frozenset({"on_demand", "once", "repeat"})
+# `on_command` never auto-fires: a verified radio packet fires it, not the clock, so
+# `next_run_after` returns None for it exactly as it does for `on_demand`
+# (docs/plans/APRS_CONTROL_PLAN.md P4).
+KINDS = frozenset({"on_demand", "once", "repeat", "on_command"})
 FREQS = frozenset({"daily", "weekdays", "weekly"})
 
 # Monday..Friday in the Sunday=0 convention.

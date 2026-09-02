@@ -62,6 +62,10 @@ def upgrade() -> None:
         USING (app.is_owner()) WITH CHECK (app.is_owner())
         """
     )
+    # RLS decides WHICH rows; the grant decides whether the app role may reach the table
+    # at all. Without this every query is `permission denied` before a policy is ever
+    # consulted — the log would be write-only in the sense that it never writes.
+    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.aprs_packets TO jbrain_app")
 
 
 def downgrade() -> None:

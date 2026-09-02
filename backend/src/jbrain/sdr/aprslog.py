@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -46,9 +47,19 @@ MAX_RAW = 2048
 class AprsLog:
     """Drains one logging session's packets into the table, then waits for the next."""
 
-    def __init__(self, maker: async_sessionmaker[AsyncSession], base_url: str) -> None:
+    def __init__(
+        self,
+        maker: async_sessionmaker[AsyncSession],
+        base_url: str,
+        *,
+        on_packet: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
         self._maker = maker
         self._base = base_url
+        # The command gate, when one is wired. It is a callback rather than an import so
+        # the log keeps knowing nothing about tasks: storing what was heard and acting on
+        # it are the plan's two trust tiers, and they stay separable here too.
+        self._on_packet = on_packet
 
     async def tick(self) -> None:
         """Attach to a logging session if there is one, and drain it until it ends."""
@@ -83,8 +94,24 @@ class AprsLog:
                     if row is None:
                         continue
                     await self._store(row)
+                    await self._offer(row)
         except (httpx.HTTPError, ValueError) as exc:
             log.info("aprs_log.stream_ended", error=repr(exc))
+
+    async def _offer(self, row: dict[str, Any]) -> None:
+        """Hand the frame to the command gate, if any.
+
+        After the store and never instead of it: a frame that could not be logged is
+        still a frame that was heard, and a bookkeeping failure must not decide whether
+        the owner's gate opens. Errors stay here — a gate that raises would otherwise
+        end the drain, which is the failure mode where the radio goes quiet and nothing
+        says so."""
+        if self._on_packet is None:
+            return
+        try:
+            await self._on_packet(row)
+        except Exception as exc:  # noqa: BLE001 — one frame must not end the drain
+            log.warning("aprs_log.gate_failed", error=repr(exc))
 
     async def _store(self, row: dict[str, Any]) -> None:
         try:
