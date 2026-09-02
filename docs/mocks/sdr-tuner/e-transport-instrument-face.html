@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDR tuner - transport layout (chosen: B, the instrument face)</title>
+<!--
+  BINDING SPEC for the tuner sheet's transport area. Chosen 2026-09-02 from three
+  layouts presented to the owner (A meter rail / B instrument face / C split by
+  meaning); B won.
+
+  What is binding:
+  · The tape is the PANEL: full width, 88px - double the first pass, which read as a
+    strip rather than a display.
+  · Elapsed time is INSET on the tape, top right, in the quiet band the waveform
+    rarely reaches. It costs no row of its own.
+  · The transport sits BELOW the tape: play/pause, a live dot, then LIVE / PAUSED.
+  · The SIGNAL meter is GONE - header, bars and percentage. See below.
+  · The tape's history is recorded by the audio module for as long as the radio
+    plays, NOT by the sheet. Opening the tuner shows what already happened; it does
+    not start a recording by being looked at.
+
+  Why the signal meter was deleted rather than moved or relabelled. It displayed
+  `peak`, which listen.py measures on rtl_fm's DEMODULATED AUDIO output - the loudest
+  sample of the sound, not the strength of the reception. Two problems follow. It is
+  the same quantity the tape already shows, with less detail and no history. And it
+  is actively backwards on an empty FM channel: rtl_fm with no squelch emits loud
+  hiss into silence, so the meter read HIGH on nothing at all. True RSSI is not
+  available while listening - rtl_fm does not report it, librtlsdr exposes no such
+  call, and rtl_power needs the raw I/Q the single tuner is already demodulating. A
+  real signal reading means demodulating in-process, which is a much larger change
+  and is NOT what this element was.
+
+  The sampler that keeps the history is a TIMER, not an animation frame: rAF is
+  throttled in a background tab and stops entirely when nothing is painted, which is
+  exactly the case this buffer exists to cover. 20 Hz over 12 s.
+
+  One honest limit: the analyser can only attach once a user gesture has let an
+  AudioContext run, so the module arms a one-shot listener and takes the tap at the
+  first touch anywhere in the app. Before that first touch there is no history.
+-->
+
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A;
+    --steel-tint:rgba(127,167,201,.13);
+    --r-seg:14px; --r-card:16px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1120px;margin:0 auto;padding:26px 20px 60px;}
+
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;text-wrap:balance;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:66ch;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+
+  .controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:20px 0 24px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;background:var(--surface);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:13px;
+    padding:9px 14px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+  .pill{appearance:none;border:1px solid var(--steel);border-radius:999px;background:var(--steel-tint);
+    color:var(--steel);font:inherit;font-size:13px;font-weight:600;padding:10px 16px;cursor:pointer;}
+  .pill[disabled]{opacity:.45;cursor:default;}
+  .pill.ghost{border-color:var(--border);background:var(--surface);color:var(--text-2);font-weight:500;}
+
+  .stage{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:30px;align-items:start;}
+  @media (max-width:860px){ .stage{grid-template-columns:minmax(0,1fr);} }
+
+  .phone{background:var(--bg);border:1px solid var(--border);border-radius:26px;padding:10px;
+    box-shadow:0 18px 46px rgba(0,0,0,.45);}
+  .sheet{background:var(--surface);border-radius:var(--r-card);padding:16px 16px 18px;}
+  .grab{width:34px;height:4px;border-radius:999px;background:var(--border);margin:2px auto 12px;}
+  .sheet h2{font-size:16px;font-weight:650;margin:0 0 8px;}
+  .note{font-size:12.5px;color:var(--text-2);line-height:1.5;margin:0 0 14px;}
+  .closed{padding:38px 12px;text-align:center;color:var(--text-3);font-size:13px;line-height:1.6;}
+  .closed b{display:block;color:var(--text-2);font-weight:600;margin-bottom:4px;}
+
+  .readout{border:1px solid var(--border);border-radius:var(--r-card);padding:14px 12px;text-align:center;}
+  .freq{font-family:var(--mono);font-size:32px;font-weight:600;letter-spacing:-.5px;
+    font-variant-numeric:tabular-nums;line-height:1.1;}
+  .freq .u{font-size:14px;color:var(--text-2);font-weight:400;margin-left:5px;}
+  .stn{font-size:11px;letter-spacing:.08em;color:var(--text-3);margin-top:4px;}
+  .tuner{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;}
+  .stepbtn{width:42px;height:42px;border-radius:12px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-2);font-size:19px;line-height:1;}
+  .stepsz{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+    border:1px solid var(--border);border-radius:999px;background:var(--surface-2);padding:6px 10px;}
+  /* C moves the station's own status inside this card. */
+  .cardstats{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px;
+    padding-top:11px;border-top:1px solid var(--border);}
+  .flabel{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:16px 0 7px;}
+  .modes{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .modes span{flex:1;text-align:center;font-size:12px;padding:8px 0;color:var(--text-2);border-right:1px solid var(--border);}
+  .modes span:last-child{border-right:0;}
+  .modes span.on{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .bars{display:inline-flex;align-items:flex-end;gap:2px;height:14px;vertical-align:middle;}
+  .bars i{width:3px;background:var(--border);border-radius:1px;display:block;}
+  .bars i.on{background:var(--green);}
+  .bars i:nth-child(1){height:4px;} .bars i:nth-child(2){height:6px;} .bars i:nth-child(3){height:8px;}
+  .bars i:nth-child(4){height:10px;} .bars i:nth-child(5){height:12px;} .bars i:nth-child(6){height:14px;}
+  .num{font-family:var(--mono);font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .dim{color:var(--text-3);}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;}
+  .tag{font-size:10.5px;letter-spacing:.1em;color:var(--steel);}
+  .tag.off{color:var(--text-3);}
+
+  .play{width:52px;height:52px;border-radius:50%;border:1px solid var(--steel);background:var(--surface-2);
+    color:var(--steel);font-size:16px;line-height:1;cursor:pointer;flex:0 0 auto;}
+  .play:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  canvas{display:block;width:100%;}
+  .tapebox{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;
+    flex:1;min-width:0;position:relative;}
+
+  /* --- A: meter rail --- */
+  .vA{display:flex;align-items:center;gap:12px;margin:16px 0 4px;}
+  .vA .stack{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;}
+  .vA .meta{display:flex;align-items:center;gap:8px;font-size:11px;}
+  .vA .meta .right{margin-left:auto;}
+
+  /* --- B: instrument face --- */
+  .vB{margin:16px 0 4px;}
+  .vB .face{position:relative;}
+  .vB .inset{position:absolute;left:9px;top:7px;display:flex;align-items:center;gap:7px;
+    font-size:11px;pointer-events:none;}
+  .vB .inset.r{left:auto;right:9px;}
+  .vB .under{display:flex;align-items:center;gap:12px;margin-top:10px;}
+  .vB .under .spacer{flex:1;}
+
+  /* --- C: split by meaning --- */
+  .vC{display:flex;align-items:center;gap:12px;margin:16px 0 4px;}
+
+  .actions{display:flex;gap:10px;margin-top:16px;}
+  .act{flex:1;text-align:center;font-size:13px;padding:11px 0;border-radius:12px;
+    border:1px solid var(--border);color:var(--text-3);}
+  .act.rel{border-color:rgba(127,167,201,.4);color:var(--steel);}
+
+  .pitch .kicker{font-family:var(--mono);font-size:11px;color:var(--steel);letter-spacing:.08em;margin:0 0 8px;}
+  .pitch h3{font-size:17px;font-weight:650;margin:0 0 10px;letter-spacing:-.1px;}
+  .pitch p{font-size:14px;line-height:1.62;color:var(--text-2);margin:0 0 13px;max-width:62ch;}
+  .pitch strong{color:var(--text);font-weight:600;}
+  .moves{border-top:1px solid var(--border);padding-top:15px;margin-top:16px;}
+  .moves h4{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:0 0 9px;font-weight:600;}
+  .moves ul{margin:0;padding-left:17px;}
+  .moves li{font-size:13.5px;line-height:1.6;color:var(--text-2);margin-bottom:6px;}
+  .moves code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+
+  .hint{margin-top:26px;padding-top:18px;border-top:1px solid var(--border);
+    font-size:12.5px;color:var(--text-3);line-height:1.65;max-width:74ch;}
+  .hint b{color:var(--text-2);}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Tuner transport, rearranged</h1>
+    <p class="sub">
+      Three ways to lay out the signal reading, elapsed time, play toggle and LIVE tag around a
+      <strong>double-height</strong> tape. Every one is driven by a real <code>AnalyserNode</code>, and the tape
+      keeps recording while the sheet is <em>closed</em> — use <strong>Close the sheet</strong> to leave it running,
+      then reopen and see the history that was captured while you were away.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="field">
+      <span class="lbl">Signal</span>
+      <button class="pill" id="start">▶ Start signal</button>
+    </div>
+    <div class="field">
+      <span class="lbl">What's on the air</span>
+      <div class="seg" id="src" role="group" aria-label="Signal type">
+        <button aria-pressed="true" data-src="voice">Voice</button>
+        <button aria-pressed="false" data-src="music">Music</button>
+        <button aria-pressed="false" data-src="static">Static</button>
+        <button aria-pressed="false" data-src="dead">Dead air</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="lbl">Layout</span>
+      <div class="seg" id="pick" role="group" aria-label="Layout">
+        <button aria-pressed="false" data-v="a">A · Meter rail</button>
+        <button aria-pressed="true" data-v="b">B · Instrument face (chosen)</button>
+        <button aria-pressed="false" data-v="c">C · Split by meaning</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="lbl">Sheet</span>
+      <button class="pill ghost" id="sheetToggle">Close the sheet</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="phone">
+      <div class="sheet" id="sheetOpen">
+        <div class="grab"></div>
+        <h2>Tuned station</h2>
+        <p class="note">The radio has one tuner, so this session holds it until you release it.</p>
+
+        <div class="readout">
+          <div class="freq">162.550<span class="u">MHz</span></div>
+          <div class="stn">NFM</div>
+          <div class="tuner">
+            <span class="stepbtn">−</span><span class="stepsz">25 kHz</span><span class="stepbtn">+</span>
+          </div>
+          <div class="cardstats" id="cardstats" hidden>
+            <span class="bars" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+            <span class="num" id="cSig">45%</span>
+            <span class="num dim">·</span>
+            <span class="num dim" id="cEla">0:55</span>
+          </div>
+        </div>
+
+        <div class="flabel">Mode</div>
+        <div class="modes"><span>WBFM</span><span class="on">FM</span><span>AM</span><span>USB</span></div>
+
+        <!-- A -->
+        <div class="vA" id="vA">
+          <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+          <div class="stack">
+            <div class="meta">
+              <span class="bars" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+              <span class="num" id="aSig">45%</span>
+              <span class="tag live">LIVE</span>
+              <span class="num dim right" id="aEla">0:55</span>
+            </div>
+            <div class="tapebox"><canvas class="tape" height="76"></canvas></div>
+          </div>
+        </div>
+
+        <!-- B -->
+        <div class="vB" id="vB" hidden>
+          <div class="tapebox face">
+            <canvas class="tape" height="88"></canvas>
+            <span class="inset">
+              <span class="bars" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+              <span class="num" id="bSig">45%</span>
+            </span>
+            <span class="inset r"><span class="num dim" id="bEla">0:55</span></span>
+          </div>
+          <div class="under">
+            <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+            <span class="dot live-dot"></span><span class="tag live">LIVE</span>
+            <span class="spacer"></span>
+          </div>
+        </div>
+
+        <!-- C -->
+        <div class="vC" id="vC" hidden>
+          <button class="play tog" aria-pressed="true" aria-label="Pause">❚❚</button>
+          <div class="tapebox"><canvas class="tape" height="76"></canvas></div>
+          <span class="tag live" style="flex:0 0 auto;">LIVE</span>
+        </div>
+
+        <div class="actions">
+          <span class="act">Record</span><span class="act rel">Release</span>
+        </div>
+      </div>
+
+      <div class="sheet" id="sheetClosed" hidden>
+        <div class="closed">
+          <b>Sheet closed — radio still held</b>
+          The tape is still recording. Reopen and the last 12 seconds will already be there.
+          <div style="margin-top:14px;"><span class="dot"></span> <span class="tag">LIVE · <span id="closedEla">0:55</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pitch" id="pitch"></div>
+  </div>
+
+  <p class="hint">
+    <b>What changes underneath, for all three.</b> Sampling moves out of the sheet and into the audio module, so
+    the tape records whenever the radio is playing rather than only while you are looking at it. That costs a
+    small timer instead of an animation frame — drawing still happens only while the sheet is open. One honest
+    limit: the analyser can only be attached after a tap somewhere in the app, so the very first open after a
+    session starts may still come up empty. Every open after that has history.
+  </p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var PITCH = {
+    a: {
+      kicker: "LAYOUT A", title: "Meter rail",
+      body: [
+        "The play button keeps the left edge; everything else stacks to its right — one thin line of readings above, the tape below. The <strong>SIGNAL</strong> section header disappears entirely, and with it a whole row that existed to label a single number.",
+        "<strong>Its argument:</strong> it reads left to right in the order you ask the questions — is it playing, how strong is it, is it live, how long have I held it — and the tape sits directly under the numbers describing it, so they read as one instrument rather than three parts."
+      ],
+      moves: [
+        "<code>SIGNAL</code> header and its row: <strong>deleted</strong>",
+        "Signal bars + % → meta line, left",
+        "LIVE → meta line, middle (beside the reading it qualifies)",
+        "Elapsed → meta line, right",
+        "Tape → 76px, full width under the meta line"
+      ]
+    },
+    b: {
+      kicker: "LAYOUT B", title: "Instrument face",
+      body: [
+        "The tape becomes the panel and the readings sit <em>on</em> it — signal inset top-left, elapsed top-right, the way a scope prints its own scale in the corner. The transport drops to a line beneath, with a live dot next to the button.",
+        "<strong>Its argument:</strong> it is the most economical use of height on the page. The readings cost nothing at all, because they sit in space the tape already occupies but rarely fills — the quiet band at the top."
+      ],
+      moves: [
+        "<code>SIGNAL</code> header and its row: <strong>deleted</strong>",
+        "Signal bars + % → inset on the canvas, top-left",
+        "Elapsed → inset on the canvas, top-right",
+        "LIVE → a dot + tag beside the play button",
+        "Tape → 88px, the tallest of the three"
+      ]
+    },
+    c: {
+      kicker: "LAYOUT C", title: "Split by meaning",
+      body: [
+        "Signal strength and elapsed time move <em>up into the station card</em>, under the frequency and mode. The transport row is then purely about audio: play, tape, LIVE.",
+        "<strong>Its argument:</strong> it is the only one that sorts by what the numbers are <em>about</em>. Signal strength and how long you have held the tuner describe the RADIO; the tape and the play button describe the AUDIO. Grouping them that way also means the signal reading stays visible and truthful while the audio is paused — which it is, because the box measures it server-side and the tape cannot."
+      ],
+      moves: [
+        "<code>SIGNAL</code> header and its row: <strong>deleted</strong>",
+        "Signal bars + % → into the station card, under the steppers",
+        "Elapsed → into the station card, beside the signal",
+        "LIVE → stays with the transport, right of the tape",
+        "Tape → 76px, between the play button and the tag"
+      ]
+    }
+  };
+
+  var variant = "b", source   // the chosen layout = "voice", running = false, playing = true, open = true;
+  var ctx = null, analyser = null, master = null, noiseBuf = null;
+  var nodes = { noise: null, gain: null, filter: null, osc: [] };
+  var timeData = null, envTimer = null;
+
+  // 12 s of history at 20 Hz. A timer, not an animation frame: it has to keep running
+  // with the sheet shut, and rAF stops when nothing is being drawn.
+  var HZ = 20, WINDOW_S = 12, LEN = HZ * WINDOW_S;
+  var tape = new Float32Array(LEN), at = 0;
+
+  function css(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  var sized = new WeakMap();
+  function surface(cv){
+    var prev = sized.get(cv);
+    if (prev && prev.w === cv.clientWidth) return prev;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = cv.clientWidth || 300, h = parseInt(cv.getAttribute("height"), 10);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.height = h + "px";
+    var g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var s = { g: g, w: w, h: h }; sized.set(cv, s); return s;
+  }
+  window.addEventListener("resize", function(){ sized = new WeakMap(); });
+
+  function makeNoise(){
+    var len = ctx.sampleRate * 2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+  function teardown(){
+    if (envTimer) { clearInterval(envTimer); envTimer = null; }
+    nodes.osc.forEach(function(o){ try { o.stop(); } catch(e){} }); nodes.osc = [];
+    if (nodes.noise) { try { nodes.noise.stop(); } catch(e){} nodes.noise = null; }
+    [nodes.gain, nodes.filter].forEach(function(n){ if (n) { try { n.disconnect(); } catch(e){} } });
+    nodes.gain = nodes.filter = null;
+  }
+  function build(){
+    teardown();
+    var g = ctx.createGain(), f = ctx.createBiquadFilter();
+    g.connect(f); f.connect(master); nodes.gain = g; nodes.filter = f;
+    if (source === "dead" || source === "static") {
+      var quiet = source === "dead";
+      f.type = quiet ? "lowpass" : "highpass"; f.frequency.value = quiet ? 3000 : 220;
+      var n = ctx.createBufferSource(); n.buffer = noiseBuf; n.loop = true; n.connect(g); n.start();
+      nodes.noise = n; g.gain.value = quiet ? 0.012 : 0.5; return;
+    }
+    if (source === "voice") {
+      f.type = "bandpass"; f.frequency.value = 700; f.Q.value = 0.7;
+      var nv = ctx.createBufferSource(); nv.buffer = noiseBuf; nv.loop = true; nv.connect(g); nv.start();
+      nodes.noise = nv; g.gain.value = 0;
+      var speaking = true, until = 0;
+      envTimer = setInterval(function(){
+        var t = ctx.currentTime; if (t < until) return;
+        if (speaking) {
+          var syl = 0.09 + Math.random() * 0.14;
+          g.gain.cancelScheduledValues(t);
+          g.gain.setTargetAtTime(0.45 + Math.random() * 0.35, t, 0.012);
+          g.gain.setTargetAtTime(0.02, t + syl * 0.7, 0.05);
+          f.frequency.setTargetAtTime(400 + Math.random() * 900, t, 0.03);
+          until = t + syl + 0.04;
+          if (Math.random() < 0.18) speaking = false;
+        } else {
+          g.gain.setTargetAtTime(0, t, 0.05);
+          until = t + 0.5 + Math.random() * 0.9; speaking = true;
+        }
+      }, 30);
+      return;
+    }
+    f.type = "lowpass"; f.frequency.value = 5200; g.gain.value = 0.16;
+    [196, 246.94, 293.66].forEach(function(hz){
+      var o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = hz;
+      var og = ctx.createGain(); og.gain.value = 0.5; o.connect(og); og.connect(g); o.start(); nodes.osc.push(o);
+    });
+    var lead = ctx.createOscillator(); lead.type = "triangle"; lead.frequency.value = 587.33;
+    var lg = ctx.createGain(); lg.gain.value = 0.6; lead.connect(lg); lg.connect(g); lead.start(); nodes.osc.push(lead);
+    var step = 0, scale = [587.33, 659.25, 698.46, 783.99, 880];
+    envTimer = setInterval(function(){
+      step = (step + 1) % scale.length;
+      lead.frequency.setTargetAtTime(scale[step], ctx.currentTime, 0.05);
+    }, 420);
+  }
+
+  function startAudio(){
+    var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return false;
+    ctx = new AC();
+    master = ctx.createGain(); master.gain.value = 0.28;
+    analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.72;
+    master.connect(analyser); analyser.connect(ctx.destination);
+    timeData = new Uint8Array(analyser.fftSize);
+    noiseBuf = makeNoise(); build();
+    // The sampler that keeps running with the sheet shut — this is the whole point.
+    setInterval(function(){
+      if (!running || !playing) return;
+      analyser.getByteTimeDomainData(timeData);
+      var sum = 0;
+      for (var i = 0; i < timeData.length; i++) { var d = (timeData[i] - 128) / 128; sum += d * d; }
+      tape[at] = Math.min(1, Math.sqrt(sum / timeData.length) * 2.6);
+      at = (at + 1) % LEN;
+    }, 1000 / HZ);
+    return true;
+  }
+
+  function drawTape(cv){
+    var s = surface(cv), g = s.g, w = s.w, h = s.h, mid = h / 2;
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = css("--border"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, mid + .5); g.lineTo(w, mid + .5); g.stroke();
+    var cols = Math.min(LEN, Math.max(1, Math.floor(w / 3)));
+    var step = w / cols;
+    g.fillStyle = css("--steel");
+    for (var i = 0; i < cols; i++) {
+      var idx = (at - 1 - (cols - 1 - i) + LEN * 2) % LEN;
+      var a = tape[idx] || 0;
+      var bh = Math.max(1, a * (h - 8));
+      g.globalAlpha = 0.35 + Math.min(0.65, a * 2.2);
+      g.fillRect(i * step, mid - bh / 2, Math.max(1, step - 0.8), bh);
+    }
+    g.globalAlpha = 1;
+  }
+
+  var seconds = 55, lastSec = 0;
+  function frame(ts){
+    requestAnimationFrame(frame);
+    if (open) {
+      var box = document.getElementById("v" + variant.toUpperCase());
+      if (box) { var cv = box.querySelector("canvas.tape"); if (cv) drawTape(cv); }
+    }
+    if (running && playing && ts - lastSec > 1000) {
+      lastSec = ts; seconds++;
+      var t = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+      ["aEla","bEla","cEla","closedEla"].forEach(function(id){
+        var el = document.getElementById(id); if (el) el.textContent = t;
+      });
+      var lv = Math.round(Math.min(1, tape[(at - 1 + LEN) % LEN] * 1.5) * 100);
+      ["aSig","bSig","cSig"].forEach(function(id){
+        var el = document.getElementById(id); if (el) el.textContent = lv + "%";
+      });
+    }
+  }
+
+  function show(){
+    ["a","b","c"].forEach(function(v){
+      var el = document.getElementById("v" + v.toUpperCase());
+      if (el) el.hidden = v !== variant;
+    });
+    document.getElementById("cardstats").hidden = variant !== "c";
+    var p = PITCH[variant];
+    document.getElementById("pitch").innerHTML =
+      '<p class="kicker">' + p.kicker + '</p><h3>' + p.title + '</h3>' +
+      p.body.map(function(t){ return "<p>" + t + "</p>"; }).join("") +
+      '<div class="moves"><h4>What moves</h4><ul>' +
+      p.moves.map(function(m){ return "<li>" + m + "</li>"; }).join("") + "</ul></div>";
+  }
+
+  function press(group, attr, value){
+    Array.prototype.forEach.call(group.children, function(b){
+      b.setAttribute("aria-pressed", String(b.dataset[attr] === value));
+    });
+  }
+
+  document.getElementById("pick").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if (!b) return;
+    variant = b.dataset.v; press(this, "v", variant); show();
+  });
+  document.getElementById("src").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if (!b) return;
+    source = b.dataset.src; press(this, "src", source); if (running) build();
+  });
+  document.getElementById("start").addEventListener("click", function(){
+    if (running) return;
+    if (!startAudio()) { this.textContent = "No Web Audio here"; this.disabled = true; return; }
+    running = true; this.textContent = "● Signal running"; this.disabled = true;
+  });
+  document.getElementById("sheetToggle").addEventListener("click", function(){
+    open = !open;
+    document.getElementById("sheetOpen").hidden = !open;
+    document.getElementById("sheetClosed").hidden = open;
+    this.textContent = open ? "Close the sheet" : "Reopen the sheet";
+    sized = new WeakMap();   // widths were measured while hidden
+  });
+  document.addEventListener("click", function(e){
+    var b = e.target.closest(".play.tog"); if (!b) return;
+    playing = !playing;
+    document.querySelectorAll(".play.tog").forEach(function(x){
+      x.textContent = playing ? "❚❚" : "▶";
+      x.setAttribute("aria-pressed", String(playing));
+      x.setAttribute("aria-label", playing ? "Pause" : "Play");
+    });
+    document.querySelectorAll(".tag.live").forEach(function(t){
+      t.textContent = playing ? "LIVE" : "PAUSED";
+      t.className = "tag live" + (playing ? "" : " off");
+    });
+    document.querySelectorAll(".live-dot").forEach(function(d){
+      d.style.background = playing ? css("--green") : css("--text-3");
+    });
+    if (ctx) { if (playing) ctx.resume(); else ctx.suspend(); }
+  });
+
+  show();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>

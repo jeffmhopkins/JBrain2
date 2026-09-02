@@ -116,3 +116,31 @@ own**. It also draws only while the sheet is mounted — a closed tuner spends
 nothing, and the tape fills in from the right over its first 12 seconds rather than
 pretending to remember what happened while nobody was watching.
 
+## The transport layout (third gate, 2026-09-02)
+
+After the tape shipped, the sheet had three separate bands of status — a `SIGNAL`
+header with bars and a percentage, an elapsed time, and a transport row — and the
+tape was too short to read. `e-transport-instrument-face.html` holds three
+rearrangements, all with a double-height tape that keeps recording while the sheet
+is closed.
+
+| Layout | Thesis | Trade-off |
+|---|---|---|
+| **A · Meter rail** | Play on the left, one thin line of readings above the tape. | Reads in the order the questions come — but keeps every number, including one that was lying. |
+| **B · Instrument face** | The tape is the panel; readings sit inset on it. | Cheapest on height, so the tape gets the most of it — at the cost of putting text over a live drawing. |
+| **C · Split by meaning** | Signal and elapsed move up into the station card; the transport row becomes purely audio. | The tidiest grouping — but it preserves the signal meter, and the signal meter was the problem. |
+
+> **Decided (owner, 2026-09-02): B — the instrument face.** With it: *"remove the
+> signal then altogether, the waveform covers it."*
+
+**The signal meter is deleted, not relabelled.** The owner asked whether it showed
+reception strength or volume after decode. It was the latter: `listen.py` measures
+`peak` on rtl_fm's demodulated audio output. That makes it the same quantity the tape
+already draws, with less detail and no history — and worse, backwards on a dead FM
+channel, where rtl_fm's unsquelched hiss drove it high on nothing at all. Real RSSI
+is not reachable while listening (see the mock's header), so a meter that could be
+trusted was never on the table; removing it is the honest move.
+
+Elapsed time survives, inset on the tape, because it answers a question nothing else
+does: how long this session has been holding the one tuner.
+

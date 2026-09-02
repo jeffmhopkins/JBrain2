@@ -15,6 +15,7 @@ import {
   playSdrAudio,
   resetSdrAudio,
   sdrAnalyser,
+  sdrLevels,
   stopSdrAudio,
   subscribeSdrAudio,
   toggleSdrAudio,
@@ -194,5 +195,30 @@ describe("the analyser tap", () => {
     expect(sdrAnalyser()).toBe(sdrAnalyser());
     expect(taps).toBe(1);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("the tape's history", () => {
+  it("is recorded by the module, not by the sheet that draws it", () => {
+    // The owner asked to open the tuner and see what already happened. If sampling
+    // lived in the component, opening the sheet would START the recording and the
+    // first thing they saw would always be an empty tape — the wrong answer on a
+    // channel whose traffic arrives in bursts.
+    const { levels, length } = sdrLevels();
+    expect(length).toBeGreaterThan(0);
+    expect(levels).toBeInstanceOf(Float32Array);
+    expect(levels.length).toBe(length);
+  });
+
+  it("clears the history when the lease ends, not when the sheet closes", () => {
+    const { levels } = sdrLevels();
+    levels[0] = 0.9;
+    playSdrAudio();
+
+    stopSdrAudio(); // the radio was released
+
+    // A new session starts from nothing; the previous station's audio is not its past.
+    expect(sdrLevels().levels[0]).toBe(0);
+    expect(sdrLevels().at).toBe(0);
   });
 });

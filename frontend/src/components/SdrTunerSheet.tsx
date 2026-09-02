@@ -126,8 +126,6 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
     void act(() => api.sdrTune(value, undefined, listening.session_id));
   };
 
-  const bars = Math.min(6, Math.round(listening.peak * 12));
-
   return (
     <Sheet title="Tuned station" onClose={onClose}>
       <p className="sdr-note">
@@ -262,21 +260,19 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
         ))}
       </div>
 
-      <p className="sdr-label">Signal</p>
-      <div className="sdr-meter">
-        <span className="sdr-bars" aria-hidden="true">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <i key={i} className={i < bars ? "on" : ""} />
-          ))}
-        </span>
-        {/* The level, not the transcript, is what says a signal is really there. */}
-        <span className="sdr-level">{Math.round(listening.peak * 100)}%</span>
-        <span className="sdr-elapsed">{elapsed(listening.elapsed_s)}</span>
-      </div>
-
       {/* Live radio is playing or it is not: there is no timeline to scrub, which is
           why the native transport sat at 0:00 / 0:00. Pausing drops the connection and
           resuming rejoins the broadcast as it is now, rather than replaying a backlog. */}
+      {/* Layout B, the instrument face: the tape IS the panel and the one reading
+          worth keeping — how long this session has held the tuner — is inset on it,
+          in the quiet band the waveform rarely reaches. The signal meter that used to
+          sit above is gone: it measured demodulated AUDIO level, not reception
+          strength, so it read high on an empty FM channel's hiss, and the tape shows
+          that same quantity far better. */}
+      <div className="sdr-face">
+        <SdrTape />
+        <span className="sdr-face-elapsed">{elapsed(listening.elapsed_s)}</span>
+      </div>
       <div className="sdr-transport">
         <button
           type="button"
@@ -287,9 +283,7 @@ export function SdrTunerSheet({ listening, onClose }: Props) {
         >
           {playing ? "❚❚" : "▶"}
         </button>
-        {/* The tape rides IN this row, so it adds no height of its own — the row was
-            already as tall as the play button. */}
-        <SdrTape playing={playing} />
+        <span className={`sdr-livedot${playing ? " sdr-livedot-on" : ""}`} aria-hidden="true" />
         <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>
           {playing ? "LIVE" : "PAUSED"}
         </span>
