@@ -6,8 +6,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import type { SdrListening } from "../sdrSession";
 import { resetSdrCaptions } from "../sdrCaptions";
+import type { SdrListening } from "../sdrSession";
 import { SdrTunerSheet } from "./SdrTunerSheet";
 
 // The caption stream, faked at the EventSource seam so a test can deliver a segment.
