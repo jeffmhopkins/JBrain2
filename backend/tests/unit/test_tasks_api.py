@@ -288,3 +288,173 @@ async def test_reorder_sets_group_and_position() -> None:
     back = ReorderBody(group_id=None, task_ids=["task-1"])
     ungrouped = await tasks_api.reorder_tasks(req, PRINCIPAL, back)  # type: ignore[arg-type]
     assert ungrouped[0].group_id is None
+
+
+# ---- radio commands (APRS_CONTROL_PLAN.md P4) ----------------------------------------
+# The fourth kind carries a credential, so the validation here is a security boundary
+# rather than a convenience: what the owner may configure, what the wire may not carry,
+# and what an edit does to a key that a truck is already set up with.
+
+
+def _command_body(**over: object) -> TaskBody:
+    fields: dict[str, object] = {
+        "prompt": "open the gate",
+        "schedule_kind": "on_command",
+        "command_word": "gate",
+        **over,
+    }
+    return TaskBody(**fields)  # type: ignore[arg-type]
+
+
+def test_a_command_needs_a_word() -> None:
+    # Without one there is nothing to match, so the task would be armed against nothing
+    # while looking, in the list, exactly like a command that works.
+    with pytest.raises(ValidationError):
+        TaskBody(prompt="x", schedule_kind="on_command")
+
+
+def test_the_word_is_normalised_to_what_a_radio_head_can_send() -> None:
+    assert _command_body(command_word=" gate ").command_word == "GATE"
+    for bad in ("ga te", "gate!", "gaté"):
+        with pytest.raises(ValidationError):
+            _command_body(command_word=bad)
+
+
+def test_a_callsign_is_accepted_with_or_without_an_ssid() -> None:
+    assert _command_body(command_callsign="ke8xyz-9").command_callsign == "KE8XYZ-9"
+    assert _command_body(command_callsign="  ").command_callsign is None
+    with pytest.raises(ValidationError):
+        _command_body(command_callsign="KE8 XYZ")
+
+
+def test_a_window_needs_both_ends() -> None:
+    # One end alone reads as a narrowing the box does not actually apply — the owner
+    # would believe the command was armed for two hours a day when it is armed always.
+    with pytest.raises(ValidationError):
+        _command_body(command_from="07:00")
+    ok = _command_body(command_from="7:00", command_until="09:00")
+    assert (ok.command_from, ok.command_until) == ("07:00", "09:00")
+
+
+def test_a_malformed_window_time_is_refused() -> None:
+    for bad in ("25:00", "07:60", "seven", "07:00:00"):
+        with pytest.raises(ValidationError):
+            _command_body(command_from=bad, command_until="09:00")
+
+
+def test_a_radio_command_may_hold_a_firewalled_scope_with_a_warning() -> None:
+    """The decided mock warns rather than blocks, and that is right.
+
+    Blocking reads like defence in depth and is not: location is exactly the domain a
+    radio command wants — "what am I due at next" asked from the truck — and the box
+    never transmits, so a fired task cannot answer over the air. Only a VERIFIED command
+    fires anything, which is the cap that actually holds. The editor carries the warning
+    (docs/mocks/aprs/b-trigger-editor.html)."""
+    for scope in ("health", "finance", "location"):
+        assert _command_body(agent="curator", domain_scopes=[scope]).domain_scopes == [scope]
+
+
+def test_a_key_can_never_arrive_over_the_wire() -> None:
+    # Not a field at all: the box generates the secret, so a weak or shared one cannot
+    # be chosen, and a key in a request body cannot end up in a log or a proxy trace.
+    body = _command_body(command_key="AAAAAAAA")  # type: ignore[call-arg]
+    assert not hasattr(body, "command_key")
+
+
+def test_changing_the_kind_disarms_the_command() -> None:
+    # The word is what the verify path matches on, so clearing it is what actually
+    # disarms it — a task flipped to on-demand must not still answer the radio.
+    body = TaskBody(prompt="x", schedule_kind="on_demand", command_word="GATE")
+    assert body.command_word is None
+
+
+def test_command_state_is_visible_but_the_key_is_not() -> None:
+    out = tasks_api.TaskOut.of(
+        _task(
+            schedule_kind="on_command",
+            command_word="GATE",
+            command_counter=7,
+            command_failures=5,
+        )
+    )
+
+    assert (out.command_word, out.command_counter) == ("GATE", 7)
+    assert out.command_locked is True  # five failures is the lockout
+    assert "command_key" not in out.model_dump()
+
+
+def test_a_command_that_stays_a_command_keeps_its_key() -> None:
+    # Editing the window months later must not re-key the truck. This is the case that
+    # decides whether the feature is usable at all.
+    kept = tasks_api._key_for_edit(_task(schedule_kind="on_command"), _command_body())
+
+    assert kept == {}
+
+
+def test_a_task_becoming_a_command_gets_a_fresh_key() -> None:
+    made = tasks_api._key_for_edit(_task(schedule_kind="on_demand"), _command_body())
+
+    assert made["command_key"]
+    assert made["command_counter"] == 0
+
+
+def test_a_command_that_stops_being_one_loses_its_key() -> None:
+    # So switching it back on cannot resurrect a credential that may have been copied
+    # while the command was off.
+    dropped = tasks_api._key_for_edit(
+        _task(schedule_kind="on_command"), TaskBody(prompt="x", schedule_kind="on_demand")
+    )
+
+    assert dropped == {"command_key": None, "command_counter": 0, "command_failures": 0}
+
+
+class _CommandRepo(FakeRepo):
+    """A repo that remembers what was written, which is what the key routes are about."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tasks = {"task-1": _task(schedule_kind="on_command", command_word="GATE")}
+        self.wrote: dict[str, object] = {}
+
+    async def update(self, ctx, task_id, **fields):  # type: ignore[no-untyped-def]
+        if task_id not in self.tasks:
+            return None
+        self.wrote = dict(fields)
+        # `command_key` never reaches a DTO — TaskInfo does not carry the secret — so
+        # the fake drops it here exactly as the real repo's row-to-info mapping does.
+        shown = {k: v for k, v in fields.items() if k != "command_key"}
+        return _task(id=task_id, schedule_kind="on_command", command_word="GATE", **shown)
+
+
+@pytest.mark.asyncio
+async def test_rotating_shows_the_key_once_and_resets_the_counter() -> None:
+    repo = _CommandRepo()
+
+    out = await tasks_api.rotate_command_key(_request(repo), PRINCIPAL, "task-1")  # type: ignore[arg-type]
+
+    assert out.word == "GATE"
+    assert len(out.key) >= 32  # a 32-byte secret in base32; the CODE is what is short
+    # Rotating is also revoking: the old key stops verifying, and a counter is
+    # meaningless against a different key.
+    assert repo.wrote["command_key"] == out.key
+    assert repo.wrote["command_counter"] == 0 and repo.wrote["command_failures"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rotating_a_task_that_is_not_a_command_is_a_404() -> None:
+    repo = _CommandRepo()
+    repo.tasks = {"task-1": _task(schedule_kind="repeat")}
+
+    with pytest.raises(HTTPException):
+        await tasks_api.rotate_command_key(_request(repo), PRINCIPAL, "task-1")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_unlocking_clears_the_failures_and_nothing_else() -> None:
+    # The owner runs this box with no terminal, so the way out of a lockout is a button.
+    # It must not re-key the truck: most lockouts are a mis-keyed digit.
+    repo = _CommandRepo()
+
+    await tasks_api.unlock_command(_request(repo), PRINCIPAL, "task-1")  # type: ignore[arg-type]
+
+    assert repo.wrote == {"command_failures": 0}

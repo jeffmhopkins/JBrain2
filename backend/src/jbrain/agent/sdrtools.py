@@ -133,6 +133,15 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             status, body = await _call("/listen/stop", {"session_id": session.get("session_id")})
             if status != 200:
                 return f"Couldn't stop APRS logging: {body.get('detail', 'unknown error')}"
+            if not body.get("stopped"):
+                # 200 with `stopped: false` means the id no longer matched — the session
+                # changed between the health read and the stop. Saying "off" here is how
+                # a 09:00 "turn logging off" leaves the tuner held for the rest of the
+                # day: nothing was stopped and the owner was told otherwise.
+                return (
+                    "The radio changed while I was stopping it, so APRS logging may "
+                    "still be on. Ask me again and I'll re-check."
+                )
             return "APRS logging is off. The radio is free."
 
         if already:

@@ -290,3 +290,31 @@ async def test_an_unreachable_radio_does_not_claim_success(tools) -> None:
     out = await tools(route)["sdr_aprs_logging"]({"enabled": True}, None)
 
     assert "isn't reachable" in out
+
+
+async def test_a_stop_that_stopped_nothing_is_not_reported_as_off(tools) -> None:
+    """The sidecar answers 200 `{"stopped": false}` when the id no longer matched.
+
+    This tool used to read any 200 as done and say "APRS logging is off. The radio is
+    free." For the timed window it exists to serve — a 09:00 "turn logging off" whose
+    session restarted at 08:59 — that is nothing stopped, the owner told otherwise, and
+    the tuner held for the rest of the day. `sdr_stop`, fourteen lines below, checks
+    this; this path did not."""
+
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        if path == "/healthz":
+            return httpx.Response(
+                200,
+                json={
+                    "purposes": ["listen", "aprs"],
+                    "listening": {"purpose": "aprs", "session_id": "gone"},
+                },
+                request=req,
+            )
+        return httpx.Response(200, json={"stopped": False}, request=req)
+
+    out = await tools(route)["sdr_aprs_logging"]({"enabled": False}, None)
+
+    assert "may still be on" in out
+    assert "is off" not in out

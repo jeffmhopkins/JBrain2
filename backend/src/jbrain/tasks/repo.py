@@ -52,6 +52,18 @@ class TaskInfo:
     last_run_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # The radio command, when `schedule_kind == "on_command"` (APRS_CONTROL_PLAN.md P4).
+    # `command_key` is deliberately ABSENT: the secret has no reader outside the verify
+    # path, which reads the table directly, so it never travels through a DTO the API
+    # serialises.
+    command_word: str | None = None
+    command_callsign: str | None = None
+    command_days: tuple[int, ...] = ()
+    command_from: str | None = None
+    command_until: str | None = None
+    command_counter: int = 0
+    command_failures: int = 0
+    command_last_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +105,14 @@ def _info(row: Task) -> TaskInfo:
         last_run_at=row.last_run_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        command_word=row.command_word,
+        command_callsign=row.command_callsign,
+        command_days=tuple(row.command_days or ()),
+        command_from=row.command_from,
+        command_until=row.command_until,
+        command_counter=int(row.command_counter or 0),
+        command_failures=int(row.command_failures or 0),
+        command_last_at=row.command_last_at,
     )
 
 
@@ -217,6 +237,12 @@ class TaskRepo:
         enabled: bool = True,
         notify_push: bool = True,
         home_card: bool = True,
+        command_word: str | None = None,
+        command_callsign: str | None = None,
+        command_key: str | None = None,
+        command_days: Sequence[int] = (),
+        command_from: str | None = None,
+        command_until: str | None = None,
         now: datetime | None = None,
     ) -> TaskInfo:
         now = now or datetime.now(UTC)
@@ -235,6 +261,12 @@ class TaskRepo:
             enabled=enabled,
             notify_push=notify_push,
             home_card=home_card,
+            command_word=command_word,
+            command_callsign=command_callsign,
+            command_key=command_key,
+            command_days=list(command_days),
+            command_from=command_from,
+            command_until=command_until,
         )
         row.next_run_at = _compute_next(_info(row), now=now) if enabled else None
         async with scoped_session(self._maker, ctx) as session:
@@ -313,6 +345,16 @@ class TaskRepo:
                 "enabled",
                 "notify_push",
                 "home_card",
+                "command_word",
+                "command_callsign",
+                # `command_key` is here so a ROTATE can write it; nothing reads it back
+                # out through this path, and the API never accepts one from a client.
+                "command_key",
+                "command_days",
+                "command_from",
+                "command_until",
+                "command_counter",
+                "command_failures",
             )
             if k in fields
         }

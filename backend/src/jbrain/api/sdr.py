@@ -152,6 +152,11 @@ async def packets(
     session = (health.get("listening") or {}) if health else {}
     rows = await AprsReader(maker).recent(ctx_for(owner), limit=limit)
     return {
+        # `logging` answers "is something receiving"; `reachable` answers "do we know".
+        # Collapsing the two would make an unreachable sidecar read as a switched-off
+        # one — a dead receiver looking exactly like a quiet channel, which is the
+        # confusion this whole surface exists to prevent.
+        "reachable": health is not None,
         "logging": session.get("purpose") == APRS_PURPOSE,
         "frequency_hz": session.get("frequency_hz") if session else None,
         "packets": [
@@ -183,13 +188,29 @@ async def aprs_logging(
     radio they were actually using."""
     base = _base(settings)
     health = await _health(base)
-    session = (health.get("listening") or {}) if health else {}
+    if health is None:
+        # An unreachable sidecar is not "off". Answering `{"logging": false}` here would
+        # flip the switch to off in front of the owner while logging, if it is running,
+        # carries on — the switch lying in the direction that looks harmless.
+        raise HTTPException(status_code=502, detail="the radio isn't reachable")
+    session = health.get("listening") or {}
     logging_now = session.get("purpose") == APRS_PURPOSE
 
     if not enabled:
         if not logging_now:
             return {"logging": False, "changed": False}
-        await _post(settings, "/listen/stop", {"session_id": session.get("session_id")})
+        stopped = await _post(settings, "/listen/stop", {"session_id": session.get("session_id")})
+        if not stopped.get("stopped"):
+            # The sidecar answers 200 `{"stopped": false}` when the id no longer matches
+            # — the session changed between the health read and the stop. Whether that
+            # matters depends on what is there NOW: if it ended on its own the owner has
+            # what they asked for, and if a new session took the tuner, reporting "off"
+            # is how a timed window leaves it held all day.
+            after = await _health(base)
+            still = ((after.get("listening") or {}) if after else {}).get("purpose")
+            if still == APRS_PURPOSE:
+                raise HTTPException(status_code=409, detail="the radio changed under us")
+            return {"logging": False, "changed": False}
         return {"logging": False, "changed": True}
 
     if logging_now:
@@ -205,6 +226,14 @@ async def aprs_logging(
             "purpose": APRS_PURPOSE,
         },
     )
+    if body.get("purpose") != APRS_PURPOSE:
+        # A sidecar too old to understand `purpose` IGNORES it and returns 200 with a
+        # plain LISTENING session. Without this the switch says logging is on while
+        # nothing decodes and the one tuner sits held on 144.39.
+        raise HTTPException(
+            status_code=502,
+            detail="the radio software is too old to log APRS — nothing was changed",
+        )
     return {"logging": True, "changed": True, "frequency_hz": body.get("frequency_hz")}
 
 

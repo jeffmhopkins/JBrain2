@@ -10,7 +10,7 @@ agent's *reads* during a run still go through the session's narrowed firewall.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -78,6 +78,28 @@ class Task(Base):
     # Delivery (the run's result is always saved to history; these are the extras).
     notify_push: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     home_card: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # The radio command that fires this task, when `schedule_kind == "on_command"`
+    # (docs/plans/APRS_CONTROL_PLAN.md P4). The credential is PER COMMAND: burning one
+    # command's codes cannot touch another's, and revoking one is deleting one row.
+    command_word: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A filter, never an authenticator: a callsign is plain bytes in a frame.
+    command_callsign: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The shared secret, base32 as the owner copies it to the sending side once. Never
+    # leaves the box after that — the API returns it only from a rotate, never a read.
+    command_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Monotonic and forward-only: a match moves it PAST the matched value, which is what
+    # makes it safe that everyone in range heard the code.
+    command_counter: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    # Checked before any comparison, so a lockout cannot be worn down by guessing.
+    command_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    command_last_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The arming window — when the command is LISTENING, not when it runs. Empty means
+    # always, while the task is enabled.
+    command_days: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), default=list, server_default="{}"
+    )
+    command_from: Mapped[str | None] = mapped_column(Text, nullable=True)
+    command_until: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
