@@ -116,6 +116,20 @@ class Heard:
     text: str
     """The effective info field — the inner one for a wrapped frame."""
 
+    dest: str
+    """The effective AX.25 destination. Not bookkeeping: HALF A MIC-E LATITUDE LIVES HERE,
+    along with the N/S and E/W flags and the message bits, so a Mic-E frame cannot be read
+    without it. For a relayed frame it is the INNER destination — the one inside the
+    wrapper, which is the sender's, not the relay's."""
+
+    payload: bytes
+    """The effective info field as BYTES, before the control-character scrub.
+
+    Two Mic-E course bytes are legitimately control characters — 0x1C and 0x7F both occur
+    on this channel — and `text` has had them deleted on the way to the database. Every
+    byte after a deleted one shifts, which moves the symbol and the speed. Anything
+    reading a fixed-offset binary payload must use this and not `text`."""
+
 
 def _storable_dti(char: str) -> str:
     """A data-type identifier we are willing to put in a text column, or "".
@@ -144,6 +158,33 @@ def looks_like_station(call: str) -> bool:
     return not dash or (0 < len(ssid) <= _SSID_MAX and ssid.isascii() and ssid.isalnum())
 
 
+def split_ax25(raw_hex: str) -> tuple[str, bytes] | None:
+    """`(destination, info bytes)` from a stored frame, or None if it cannot be read.
+
+    The one place the AX.25 header is walked. Both callers need the same two answers and
+    both would otherwise get the offsets subtly differently."""
+    try:
+        frame = bytes.fromhex(raw_hex)
+    except ValueError:
+        return None
+    # Addresses are 7 bytes each, shifted left one bit, and the last one is flagged by
+    # bit 0 of its final byte. Then control and PID, then the info field.
+    i = 0
+    while i + 7 <= len(frame):
+        last = frame[i + 6] & 0x01
+        i += 7
+        if last:
+            break
+    else:
+        return None
+    if i + 2 > len(frame):
+        return None
+    dest = "".join(chr(b >> 1) for b in frame[:6]).strip() if len(frame) >= 6 else ""
+    # A real trailing CR is on the wire. It is not part of the payload, and leaving it on
+    # breaks any suffix test — the Mic-E device identifier is the last two bytes.
+    return dest, frame[i + 2 :].rstrip(b"\r\n\x00")
+
+
 def dti_from_raw(raw_hex: str, info: str) -> str:
     """The data-type identifier, taken from the untouched frame when possible.
 
@@ -154,27 +195,18 @@ def dti_from_raw(raw_hex: str, info: str) -> str:
 
     Falls back to `info` when `raw` is unusable: a missing identifier is a classification
     problem, never a reason to lose the row."""
-    try:
-        frame = bytes.fromhex(raw_hex)
-    except ValueError:
+    split = split_ax25(raw_hex)
+    if split is None or not split[1]:
         return _storable_dti(info[:1])
-    # AX.25 UI: addresses (7 bytes each, last flagged by bit 0 of its final byte), then
-    # control and PID, then the info field.
-    i = 0
-    while i + 7 <= len(frame):
-        last = frame[i + 6] & 0x01
-        i += 7
-        if last:
-            break
-    else:
-        return _storable_dti(info[:1])
-    if i + 2 >= len(frame):
-        return _storable_dti(info[:1])
-    return _storable_dti(chr(frame[i + 2])) or _storable_dti(info[:1])
+    return _storable_dti(chr(split[1][0])) or _storable_dti(info[:1])
 
 
-def _split_third_party(info: str) -> tuple[str, list[str], str] | None:
-    """`}SRC>DEST,path:payload` → (origin, path, payload), or None if it is not one.
+def _split_third_party(info: str) -> tuple[str, list[str], str, str] | None:
+    """`}SRC>DEST,path:payload` → (origin, path, payload, destination), or None.
+
+    The destination is carried out because a Mic-E frame keeps half its latitude there,
+    and for a relayed frame the one that matters is this INNER destination — the sender's
+    — not the relay's on the outer AX.25 header.
 
     The header cannot contain a colon — it is callsigns, `>`, `,` and `*` — so the first
     colon ends it unambiguously."""
@@ -189,7 +221,7 @@ def _split_third_party(info: str) -> tuple[str, list[str], str] | None:
     if arrow < 0:
         return None
     rest = head[arrow + 1 :].split(",")
-    return head[:arrow], rest[1:], payload
+    return head[:arrow], rest[1:], payload, rest[0]
 
 
 def _addressee(info: str) -> str | None:
@@ -228,7 +260,12 @@ def _symbol_code(dti: str, info: str) -> str:
     underscore in a station's comment would otherwise turn every one of its positions into
     a weather report. Reading it at the RIGHT offset for both layouts is why this is not
     just a lookup table — a compressed weather station is invisible to one that assumes
-    the uncompressed layout, and the measured capture has compressed traffic on it."""
+    the uncompressed layout.
+
+    NOT because the capture demanded it: an earlier version of this comment claimed the
+    measured traffic had compressed reports on it, and it does not — zero of 254 frames,
+    with all twelve type combinations present. This is defensive work against a format
+    every APRS client emits, and saying otherwise dressed a guess up as a measurement."""
     stamp = _TIMESTAMP_LEN.get(dti)
     if stamp is None:
         return ""
@@ -267,12 +304,14 @@ def _kind(dti: str, info: str) -> str:
 def classify(source: str, info: str, path: list[str], raw_hex: str = "") -> Heard:
     """Derive what a stored frame is. Total: every input yields a Heard."""
     origin, relay, effective, eff_path = source, None, info, list(path)
+    inner_dest = ""
     for _ in range(_MAX_DEPTH):
         inner = _split_third_party(effective)
         if inner is None:
             break
         relay = relay or source
         origin, eff_path, effective = inner[0], inner[1], inner[2]
+        inner_dest = inner[3]
 
     wrapped = relay is not None
     # Nesting past the cap leaves a wrapper we never opened. Its `}` is a transport, never
@@ -305,7 +344,34 @@ def classify(source: str, info: str, path: list[str], raw_hex: str = "") -> Hear
         direct=not wrapped and not any("*" in e for e in path),
         addressee=_addressee(effective),
         text=effective,
+        dest=inner_dest if wrapped else _outer_dest(raw_hex),
+        payload=_payload(raw_hex, effective, wrapped=wrapped),
     )
+
+
+def _outer_dest(raw_hex: str) -> str:
+    split = split_ax25(raw_hex)
+    return split[0] if split else ""
+
+
+def _payload(raw_hex: str, effective: str, *, wrapped: bool) -> bytes:
+    """The effective info field as bytes, taken from `raw` wherever that is possible.
+
+    A RELAYED frame's payload is still in `raw` — inside the wrapper — so it is found by
+    skipping past the third-party header's colon rather than falling back to the scrubbed
+    text. That distinction is not academic: the same Mic-E frame arrives here both direct
+    and re-injected through the IGate, and reading the relayed copy from `text` decodes it
+    to a different symbol than the direct one."""
+    split = split_ax25(raw_hex)
+    if split is None:
+        return effective.encode("latin-1", "replace")
+    payload = split[1]
+    if wrapped:
+        colon = payload.find(b":")
+        if colon < 0:
+            return effective.encode("latin-1", "replace")
+        payload = payload[colon + 1 :]
+    return payload
 
 
 def base_call(call: str) -> str:
