@@ -24,6 +24,11 @@ without needing to know where the artifacts are.
 **Occupancy is a percentage of the window, not a peak in dB.** A one-off burst and a
 channel busy half the hour have the same peak; only one of them is a busy channel.
 
+**Anything held constant is invisible to that, so it is found by comparison with its
+NEIGHBOURS instead.** A carrier up the whole window becomes its own floor and reads as
+0% occupied — see `Reduced.steady`, and the neighbours rather than the whole sweep
+because rtl_power's retune blocks measured 1.76x apart on real hardware.
+
 Pure and total: it parses text and returns numbers. No I/O, no radio, no clock.
 """
 
@@ -39,9 +44,18 @@ from dataclasses import dataclass, field
 DEFAULT_SNR_DB = 8.0
 # Which percentile of a bin's own history counts as its noise floor.
 FLOOR_PERCENTILE = 0.25
-# How far a bin's own floor must sit above the sweep's before it counts as never having
-# gone quiet. Generous, because the alternative to reporting these is dropping them.
-STEADY_DB = 12.0
+# How far a bin's own floor must sit above ITS NEIGHBOURS' before it counts as never
+# having gone quiet. Small, because the comparison is local: 6 dB over the couple of
+# hundred kHz either side is a lot, where 6 dB over a whole band is nothing.
+STEADY_DB = 6.0
+# How much neighbouring spectrum makes up a bin's local floor. In Hz rather than bins
+# because a bin is 7812 Hz on one sweep and 1000 Hz on the next, and what this wants is
+# "enough band that no one channel moves the median" — a fact about band plans, not FFTs.
+BASELINE_SPAN_HZ = 400_000
+# Fewest bins a local baseline may ever be built from. It binds at coarse resolution —
+# a 100 kHz bin (the route's limit) puts only four bins in 400 kHz, and a signal three
+# bins wide is then most of its own baseline, so it hides itself.
+BASELINE_MIN_BINS = 11
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,14 +81,29 @@ class Reduced:
     busy: list[Bin] = field(default_factory=list)
     """Bins that were occupied at all, busiest first."""
     steady: list[Bin] = field(default_factory=list)
-    """Bins sitting far above the sweep's own floor ALL the time.
+    """Bins sitting far above their NEIGHBOURS' floor ALL the time.
 
     A per-bin floor makes a constant emitter invisible — it becomes its own floor, which
     is exactly right for the tuner's DC spike and its spurs, and exactly wrong for a
     repeater holding a carrier for the whole window. Occupancy statistics cannot tell
     those two apart, because they are the same measurement. So they are reported here
     rather than silently dropped, and naming which is which needs a second look at the
-    channel — not more arithmetic on this sweep."""
+    channel — not more arithmetic on this sweep.
+
+    Compared against the local floor, not the sweep's. A measured 2m sweep of this box
+    put six repeater outputs on the waterfall and reported NONE of them, because the two
+    retune halves had floors 1.76x apart: against a median that averages two unrelated
+    populations a carrier 15 dB over its own neighbourhood does not clear the bar. A
+    repeater is obvious next to 146.655 and invisible next to a whole band."""
+    uncovered: list[tuple[int, int]] = field(default_factory=list)
+    """Half-open Hz spans this sweep did not measure, low to high.
+
+    Not a defect report — a coverage statement, and the difference matters when the
+    reader is deciding whether "nothing at 146.1" means quiet or unlooked-at. This box's
+    144-148 run came back with 145.872-146.206 missing, a 342 kHz hole sitting straight
+    across live repeater channels, and nothing in the response said so. Silence there
+    was never evidence. (That particular hole was this module's own doing — see the
+    block width above — but the reader still needs to be told when one exists.)"""
     grid: list[list[float]] = field(default_factory=list)
     """dB per bin per interval, oldest first — what the waterfall draws."""
     bins: int = 0
@@ -90,6 +119,57 @@ def _percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     at = min(len(ordered) - 1, max(0, int(round(fraction * (len(ordered) - 1)))))
     return ordered[at]
+
+
+def _local_floors(floors: list[float], bin_hz: int) -> list[float]:
+    """Each bin's neighbourhood floor: the median of the floors around it.
+
+    The whole point of `steady` is "higher than it has any business being", and that
+    question only has an answer relative to somewhere. A sweep-wide median is the wrong
+    somewhere: rtl_power's retune blocks do not share a floor (measured 1.76x apart on
+    this box), band-edge rolloff drags the ends down, and a single number splits the
+    difference between all of it. A rolling median tracks the floor the receiver
+    actually had at each frequency.
+
+    A sweep narrower than one window needs no special case: every bin's window is then
+    the whole sweep, which is exactly the one-figure fallback, and the slicing already
+    does it. The window is counted in bins that MEASURED something, so a sweep with
+    unmeasured holes in it reaches a little further in Hz than asked; a median does not
+    care, and the alternative is no baseline across a gap."""
+    width = max(int(BASELINE_SPAN_HZ // bin_hz) if bin_hz > 0 else 0, BASELINE_MIN_BINS)
+    half = width // 2
+    return [_percentile(floors[max(0, i - half) : i + half + 1], 0.5) for i in range(len(floors))]
+
+
+def _uncovered(columns: list[tuple[int, list[float]]], bin_hz: int) -> list[tuple[int, int]]:
+    """The Hz spans between the bins that exist, plus the bins that hold nothing.
+
+    Two ways a sweep misses spectrum and one way to say so: rtl_power's blocks can leave
+    a gap between them, and a block can hand back a bin of non-finite values. Both mean
+    the same thing to a reader — this sweep is not evidence about that frequency.
+
+    Walks in FREQUENCY order, which `columns` is not: its bins are grouped by retune
+    block, and two blocks that overlap hand back a sequence that steps backwards at the
+    seam. Sorted, the running edge is a high-water mark for free and adjacent spans
+    merge into one; unsorted, an overlap invents a hole and the merge misfires."""
+    spans: list[tuple[int, int]] = []
+
+    def mark(low: int, high: int) -> None:
+        if high <= low:
+            return
+        if spans and spans[-1][1] >= low:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], high))
+        else:
+            spans.append((low, high))
+
+    expect: int | None = None
+    for hz, series in sorted(columns, key=lambda column: column[0]):
+        if expect is not None and hz > expect:
+            mark(expect, hz)
+        if not any(math.isfinite(db) for db in series):
+            mark(hz, hz + bin_hz)
+        expect = hz + bin_hz
+    return spans
 
 
 def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
@@ -132,29 +212,49 @@ def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
     columns: list[tuple[int, list[float]]] = []
     for low, _high, block_step in ordered_blocks:
         series = blocks[(low, _high, block_step)][:intervals]
-        width = min(len(vals) for _t, vals in series)
+        # A block is as wide as its WIDEST row, and a short row is a missing reading for
+        # the bins it stops before — not proof those bins do not exist. Trimming every
+        # row to the shortest one instead deletes real bins from the whole sweep because
+        # one interval was cut off, which is a normal thing for an exit timer to do: the
+        # 342 kHz "hole" measured mid-band on this box is that shape and that size.
+        width = max(len(vals) for _t, vals in series)
         for index in range(width):
-            columns.append((low + index * block_step, [vals[index] for _t, vals in series]))
+            columns.append(
+                (
+                    low + index * block_step,
+                    [vals[index] if index < len(vals) else math.nan for _t, vals in series],
+                )
+            )
 
+    # Bins that measured SOMETHING, and their floors. A bin of non-finite values is not
+    # a quiet bin: rtl_power writes those where a block handed back nothing, and letting
+    # one through poisons every comparison downstream — a floor of -inf is under every
+    # sample in the column, so the bin reports 100% occupancy at a peak of -inf. They
+    # leave here and reappear in `uncovered`, which is what they actually are.
     busy: list[Bin] = []
+    measured: list[tuple[int, list[float]]] = []
     floors: list[float] = []
     for hz, series in columns:
-        floor = _percentile(series, FLOOR_PERCENTILE)
+        finite = [db for db in series if math.isfinite(db)]
+        if not finite:
+            continue
+        floor = _percentile(finite, FLOOR_PERCENTILE)
+        measured.append((hz, finite))
         floors.append(floor)
-        over = sum(1 for db in series if db >= floor + snr_db)
+        over = sum(1 for db in finite if db >= floor + snr_db)
         if over:
             busy.append(
                 Bin(
                     hz=hz,
                     floor_db=round(floor, 1),
-                    peak_db=round(max(series), 1),
-                    occupancy=round(over / len(series), 4),
+                    peak_db=round(max(finite), 1),
+                    occupancy=round(over / len(finite), 4),
                 )
             )
     busy.sort(key=lambda b: (-b.occupancy, -b.peak_db))
 
-    # A bin whose own floor sits well above the sweep's is one that never went quiet.
-    median_floor = _percentile(floors, 0.5)
+    # A bin whose own floor sits well above its neighbours' never went quiet.
+    local = _local_floors(floors, step)
     steady = [
         Bin(
             hz=hz,
@@ -162,8 +262,8 @@ def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
             peak_db=round(max(series), 1),
             occupancy=1.0,
         )
-        for (hz, series), floor in zip(columns, floors, strict=True)
-        if floor >= median_floor + STEADY_DB
+        for (hz, series), floor, near in zip(measured, floors, local, strict=True)
+        if floor >= near + STEADY_DB
     ]
     steady.sort(key=lambda b: -b.peak_db)
 
@@ -176,6 +276,7 @@ def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
         floor_db=round(_percentile(floors, 0.5), 1),
         busy=busy,
         steady=steady,
+        uncovered=_uncovered(columns, step),
         grid=grid,
         bins=len(columns),
     )
@@ -198,11 +299,24 @@ def channels(reduced: Reduced, spacing_hz: int) -> list[Bin]:
     a full spacing apart are two channels. It is
     the caller's, because it is a band-plan fact and regionally variable: parts of the
     US use 20 kHz on 2m, and 12.5 kHz narrowband exists. Zero leaves the bins alone."""
-    if spacing_hz <= 0 or not reduced.busy:
-        return reduced.busy
+    return _group(reduced.busy, spacing_hz)
+
+
+def steady_channels(reduced: Reduced, spacing_hz: int) -> list[Bin]:
+    """The steady bins grouped into signals, on the same rule as `channels`.
+
+    A held carrier is as many bins wide as a keyed-up one, so reporting it bin by bin
+    lists one repeater three times — and a list of what never went quiet is read by
+    eye, where three lines that are one transmitter is the failure that matters."""
+    return _group(reduced.steady, spacing_hz)
+
+
+def _group(entries: list[Bin], spacing_hz: int) -> list[Bin]:
+    if spacing_hz <= 0 or not entries:
+        return entries
     grouped: list[Bin] = []
     cluster: list[Bin] = []
-    for entry in sorted(reduced.busy, key=lambda b: b.hz):
+    for entry in sorted(entries, key=lambda b: b.hz):
         if cluster and entry.hz - cluster[-1].hz >= spacing_hz:
             grouped.append(_strongest(cluster))
             cluster = []

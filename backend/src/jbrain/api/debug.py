@@ -73,7 +73,7 @@ from jbrain.llm.types import (
 from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
-from jbrain.sdr.sweep import channels, reduce_csv, waterfall_png
+from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -960,6 +960,12 @@ class SweepBinOut(BaseModel):
     occupancy: float
 
 
+class SweepGapOut(BaseModel):
+    start_mhz: float
+    stop_mhz: float
+    khz: float
+
+
 class SdrSweepOut(BaseModel):
     start_hz: int
     stop_hz: int
@@ -974,8 +980,17 @@ class SdrSweepOut(BaseModel):
     """Bins that never went quiet. A spur and a carrier held for the whole window are
     the same measurement, so these are reported rather than dropped — naming which is
     which needs a second look at the channel, not more arithmetic on this sweep."""
+    uncovered: list[SweepGapOut]
+    """Spans the sweep did not measure. rtl_power retunes in blocks and crops their
+    edges, so a wide sweep has seams: this box's 144-148 run left a 342 kHz hole across
+    live repeater channels. Without this the reader cannot tell quiet from unlooked-at."""
     png_base64: str
     csv_chars: int
+    csv: str | None = None
+    """The raw rtl_power CSV, when asked for. Off by default because it is megabytes and
+    dwarfs everything else here — but a calibration instrument that will not hand back
+    its measurements is not one, and inferring a floor from PNG pixel brightness (which
+    is what the absence of this forced) is not calibration."""
 
 
 _MAX_JOBS = 256
@@ -1642,6 +1657,7 @@ async def sdr_sweep(
     seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
     gain: Annotated[str | None, Query()] = None,
     channel_khz: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+    include_csv: Annotated[bool, Query()] = False,
 ) -> JobSubmitOut:
     """Sweep a band and report what was busy in it. A BACKGROUND JOB — poll `/jobs/{id}`.
 
@@ -1661,7 +1677,12 @@ async def sdr_sweep(
 
     `channel_khz` folds the busy bins onto a channel grid (15 for 2m, 25 for 70cm): a
     16 kHz signal in a 5 kHz sweep lights several adjacent bins and reads as several
-    stations otherwise. Zero leaves the bins alone."""
+    stations otherwise. Zero leaves the bins alone.
+
+    `include_csv` returns rtl_power's own numbers alongside the reduction. Off by
+    default because it is megabytes; worth having because calibrating a detector against
+    a summary the detector produced is circular, and the first round of this was done by
+    reading brightness off the PNG."""
     request.state.debug_detail = f"sdr sweep {start_mhz}-{stop_mhz} MHz for {seconds}s"
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
@@ -1699,7 +1720,8 @@ async def sdr_sweep(
             payload = resp.json()
             csv_text = str(payload.get("csv") or "")
             reduced = reduce_csv(csv_text)
-            busy = channels(reduced, int(round(channel_khz * 1_000)))
+            spacing = int(round(channel_khz * 1_000))
+            busy = channels(reduced, spacing)
             out = SdrSweepOut(
                 start_hz=reduced.start_hz or body["start_hz"],
                 stop_hz=reduced.stop_hz or body["stop_hz"],
@@ -1729,13 +1751,21 @@ async def sdr_sweep(
                         peak_db=b.peak_db,
                         occupancy=b.occupancy,
                     )
-                    for b in reduced.steady[:64]
+                    for b in steady_channels(reduced, spacing)[:64]
+                ],
+                uncovered=[
+                    SweepGapOut(
+                        start_mhz=round(lo / 1_000_000, 6),
+                        stop_mhz=round(hi / 1_000_000, 6),
+                        khz=round((hi - lo) / 1_000, 1),
+                    )
+                    for lo, hi in reduced.uncovered[:64]
                 ],
                 png_base64=base64.b64encode(waterfall_png(reduced)).decode(),
-                # The CSV is NOT returned. It is the largest part of the payload and the
-                # part a reader cannot use; the size is here so a caller can tell an
-                # empty sweep from an unparsed one.
+                # The size is always here so a caller can tell an empty sweep from an
+                # unparsed one without paying for the whole CSV.
                 csv_chars=len(csv_text),
+                csv=csv_text if include_csv else None,
             )
             jobs[job_id] = {"status": "done", "result": out, "error": None}
         except Exception as exc:  # noqa: BLE001 - a debug job must surface, not crash the loop

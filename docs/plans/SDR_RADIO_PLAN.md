@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -344,6 +344,32 @@ A sweep returns numbers; numbers alone are not interpretable. `spectrum_sweep` t
 joins detected activity against a **band-plan table** so the model can say "462.5625 —
 FRS channel 1" rather than reciting frequencies. The band plan is reference data, not
 model input.
+
+**Calibrating the detector, measured on the box (2026-09-03).** `POST /api/debug/sdr/sweep`
+exists to establish this box's numbers before `spectrum_sweep` is designed against them,
+and the first real runs paid for themselves:
+
+- A transient IS found: APRS turned up at 144.3906 MHz, peak +10.2 dB, occupancy 6.7%.
+- A **held carrier is not** found by occupancy, by construction — it becomes its own
+  floor. Six repeater outputs (146.660, 146.720, 146.910, 147.030, 147.210) sat lit on
+  the waterfall while the table said `busy: []`, `steady: []`. `steady` had compared each
+  bin to the sweep's median floor; rtl_power's two retune halves measured **1.76x apart**
+  (84.5 vs 48.1 mean brightness), so one median across two populations sat above the
+  quiet half's carriers. It now compares against a rolling **local** floor.
+- A 342 kHz span (145.872-146.206) came back missing, straight across live repeater
+  channels, with nothing in the response saying so. `reduce_csv` had trimmed each retune
+  block to its SHORTEST row, so one truncated interval deleted that block's tail from the
+  whole window. Fixed; and `uncovered` now reports any span the sweep did not measure,
+  because "nothing there" and "never looked" are not the same answer.
+- `rtl_power` reports **relative dB, not dBm** (floor -2.8 with AGC, -24.5 at gain 30),
+  and `bin_hz` is a hint: asking 10 kHz got 7812 Hz, the nearest power-of-2 FFT.
+- Fixed gain cut row-to-row floor spread only 3.39x -> 2.91x, so most of the drift is
+  not AGC.
+
+None of that was readable from the response as first built, which returned `csv_chars`
+and no CSV — the numbers above were inferred from PNG pixel brightness. `include_csv=true`
+now returns rtl_power's own output: a detector calibrated against its own summary is
+calibrated against nothing.
 
 ### Control API (owner-only, launcher-facing)
 

@@ -208,3 +208,56 @@ async def test_a_bin_that_never_goes_quiet_is_reported_not_dropped(
     out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
     assert out.busy == []
     assert [b.hz for b in out.steady] == [144_005_000]
+
+
+async def test_the_raw_numbers_are_retrievable_but_not_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Calibrating a detector against the summary that detector produced is circular.
+
+    The first pass of thresholds here was set by reading brightness off the waterfall
+    PNG, because the route returned `csv_chars` and not the CSV. That is not a
+    measurement. It stays off by default — it is megabytes, and it dwarfs the eight
+    lines that are the reading — but it has to be gettable."""
+    request, job_id = await _sweep(monkeypatch)
+    out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    assert out.csv is None and out.csv_chars > 0
+
+    request, job_id = await _sweep(monkeypatch, include_csv=True)
+    out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    assert out.csv == QUIET_CSV
+
+
+async def test_a_retune_seam_is_reported_as_unmeasured_not_as_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEASURED 2026-09-03: a 144-148 sweep of this box left 145.872-146.206 unswept —
+    a 342 kHz hole at the retune seam, sitting straight across live repeater channels.
+    Reported as "nothing busy there" it reads as a quiet band, which inverts what it
+    means. Silence is only evidence where the receiver was listening."""
+    csv = "\n".join(
+        [
+            *(
+                f"2026-09-03, 15:00:0{i}, 144000000, 144010000, 5000, 12, -98.0, -98.0"
+                for i in range(4)
+            ),
+            *(
+                f"2026-09-03, 15:00:0{i}, 144100000, 144110000, 5000, 12, -98.0, -98.0"
+                for i in range(4)
+            ),
+        ]
+    )
+
+    request, job_id = await _sweep(monkeypatch, payload={"csv": csv, "complete": True})
+
+    out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    assert out.busy == []
+    assert [(g.start_mhz, g.stop_mhz) for g in out.uncovered] == [(144.01, 144.1)]
+    assert out.uncovered[0].khz == pytest.approx(90.0)
+
+
+async def test_a_sweep_with_no_seams_claims_no_holes(monkeypatch: pytest.MonkeyPatch) -> None:
+    request, job_id = await _sweep(monkeypatch)
+
+    out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    assert out.uncovered == []
