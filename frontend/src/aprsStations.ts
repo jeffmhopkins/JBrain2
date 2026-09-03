@@ -97,6 +97,12 @@ export interface AprsStationPacket {
   warnings: string[];
   /** Who put it on the air, when that is not who wrote it. */
   relay: string | null;
+  /** Direwolf's own 0-100 reading of how strong the transmission was, or null where
+   *  nothing was measured. NULL IS NOT ZERO — a frame logged before the level was
+   *  captured, or one whose reading could not be paired, has no measurement, and
+   *  showing it as weak would invent the one fact on this row that is not
+   *  self-declared. */
+  audio_level: number | null;
   /** The frame as heard — the only place a "gated via N4TDX" claim becomes checkable,
    *  because the row deliberately shows the inner payload rather than the wrapper. */
   frame: { source: string; destination: string; path: string[] };

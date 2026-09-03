@@ -437,6 +437,7 @@ function PacketRow({
           <span className="aprs-packet-meta">
             <span className={`aprs-badge b-${provenance}`}>{provenance}</span>
             {packet.relay ? `relayed by ${packet.relay}` : "heard on the air"}
+            <Signal level={packet.audio_level} />
           </span>
         </span>
         <span className="aprs-when">{ago(packet.heard_at)}</span>
@@ -471,6 +472,22 @@ function PacketRow({
         </div>
       )}
     </div>
+  );
+}
+
+/** How strong the transmission was — and NOTHING at all when nobody measured it.
+ *
+ * Null is not zero. Every other fact on this row is self-declared by a stranger; this
+ * one is the box's own measurement of the radio link, which is exactly why inventing it
+ * would be the most misleading thing on the screen. A frame logged before the level was
+ * captured simply says nothing. */
+function Signal({ level }: { level: number | null }) {
+  if (level === null || Number.isNaN(level)) return null;
+  const label = level >= 60 ? "strong" : level >= 25 ? "ok" : "weak";
+  return (
+    <span className={`aprs-sig s-${label}`} title={`Audio level ${level} of 100`}>
+      {label}
+    </span>
   );
 }
 

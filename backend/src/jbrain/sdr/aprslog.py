@@ -24,6 +24,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -51,9 +52,9 @@ DERIVED = ("origin_call", "data_type", "kind", "gated", "heard_direct", "address
 INSERT_SQL = (
     "INSERT INTO app.aprs_packets"
     " (heard_at, frequency_hz, source, destination, path, info, raw,"
-    " origin_call, data_type, kind, gated, heard_direct, addressee)"
+    " origin_call, data_type, kind, gated, heard_direct, addressee, audio_level)"
     " VALUES (to_timestamp(:heard_at), :hz, :src, :dst, :path, :info, :raw,"
-    " :origin_call, :data_type, :kind, :gated, :heard_direct, :addressee)"
+    " :origin_call, :data_type, :kind, :gated, :heard_direct, :addressee, :audio_level)"
 )
 
 # The sweep's claim, as a constant so a test can EXPLAIN the STATEMENT THE SWEEP RUNS
@@ -258,8 +259,29 @@ def _parse(line: str) -> dict[str, Any] | None:
         "path": [_clean(str(p))[:16] for p in path][:8] if isinstance(path, list) else [],
         "info": _clean(info)[:MAX_INFO],
         "raw": _clean(str(payload.get("raw") or ""))[:MAX_RAW],
+        "audio_level": _level(payload.get("audio_level")),
     }
     return row | derive(row)
+
+
+def _level(raw: Any) -> int | None:
+    """How strong the transmission was, or None where nothing was measured.
+
+    Unlike every other column here this one CANNOT be recovered from `raw` later — the
+    reading exists only at decode time — so a sidecar too old to send it, or a frame
+    whose level could not be paired, leaves NULL for ever. NULL therefore has to mean
+    "not measured" and never "weak"; 0 is a real reading and stays one.
+
+    Out-of-range is dropped rather than clamped. The sidecar already clamps what
+    direwolf says, so a value outside 0-100 arriving here means the two are out of step,
+    and a made-up number is worse than a blank."""
+    if raw is None:
+        return None
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return level if 0 <= level <= 100 else None
 
 
 def derive(row: dict[str, Any]) -> dict[str, Any]:
@@ -342,6 +364,9 @@ async def run_aprs_backfill_loop(
 # channel produces a lot of rows and a turn does not need most of them.
 RECENT_DEFAULT = 20
 RECENT_MAX = 100
+# Stations in a digest. A busy channel has tens, not hundreds, and a turn that needs
+# more than this wants the frames rather than the summary.
+DIGEST_MAX = 40
 
 
 class AprsReader:
@@ -356,20 +381,114 @@ class AprsReader:
         self._maker = maker
 
     async def recent(
-        self, ctx: SessionContext, *, limit: int = RECENT_DEFAULT, source: str | None = None
+        self,
+        ctx: SessionContext,
+        *,
+        limit: int = RECENT_DEFAULT,
+        source: str | None = None,
+        station: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """The most recently heard packets, newest first."""
+        """The most recently heard packets, newest first.
+
+        `station` and `source` are NOT the same question, and the difference is the
+        whole reason F1 exists. `source` is the AX.25 sender — for three quarters of
+        this channel that is the IGate, not whoever wrote the packet. `station` matches
+        `origin_call`, the true sender, so "has KD4WLE been heard" finally answers about
+        KD4WLE. `source` is kept because "what has this RELAY put on the air" is a real
+        question too, just a different one.
+
+        Selects `raw` and `path` as well, because the caller renders the frame into
+        something readable rather than pasting the info field at a model."""
         bounded = max(1, min(int(limit), RECENT_MAX))
-        where = "WHERE source = :source" if source else ""
+        clauses: list[str] = []
+        params: dict[str, Any] = {"limit": bounded}
+        if source:
+            clauses.append("source = :source")
+            params["source"] = source
+        if station:
+            # An unclassified row (the sweep has not reached it) has a NULL
+            # `origin_call`, and for a DIRECT frame the sender IS `source` — so falling
+            # back keeps a station's own traffic findable while the backlog fills in,
+            # rather than reporting it as never heard.
+            clauses.append("COALESCE(origin_call, source) = :station")
+            params["station"] = station
+        if kind:
+            clauses.append("kind = :kind")
+            params["kind"] = kind
+        if since is not None:
+            clauses.append("heard_at >= :since")
+            params["since"] = since
+        if until is not None:
+            clauses.append("heard_at <= :until")
+            params["until"] = until
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT heard_at, frequency_hz, source, destination, path, info"
+                        "SELECT heard_at, frequency_hz, source, destination, path, info,"
+                        " raw, origin_call, kind, gated, heard_direct, audio_level"
                         f" FROM app.aprs_packets {where}"
                         " ORDER BY heard_at DESC LIMIT :limit"
                     ),
-                    {"limit": bounded, **({"source": source} if source else {})},
+                    params,
+                )
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    async def digest(
+        self,
+        ctx: SessionContext,
+        *,
+        station: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Who was heard and how much, one row per station, busiest first.
+
+        "Who is around" is a question about STATIONS, and answering it with a list of
+        frames makes a model read fifty lines to count six callsigns — on this channel
+        one relay would fill the whole window on its own. Grouped on `origin_call` for
+        the same reason `recent` filters on it.
+
+        The count is over the whole window, not over a page of it, so it does not change
+        meaning when a limit truncates the frames."""
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        if station:
+            clauses.append("COALESCE(origin_call, source) = :station")
+            params["station"] = station
+        if kind:
+            clauses.append("kind = :kind")
+            params["kind"] = kind
+        if since is not None:
+            clauses.append("heard_at >= :since")
+            params["since"] = since
+        if until is not None:
+            clauses.append("heard_at <= :until")
+            params["until"] = until
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(origin_call, source) AS station,"
+                        " count(*) AS packets,"
+                        " max(heard_at) AS last_heard_at,"
+                        " bool_or(heard_direct) AS direct,"
+                        " bool_and(gated) AS gated,"
+                        " max(audio_level) AS best_level,"
+                        " array_agg(DISTINCT kind) FILTER (WHERE kind IS NOT NULL)"
+                        " AS kinds"
+                        f" FROM app.aprs_packets {where}"
+                        " GROUP BY 1 ORDER BY packets DESC, last_heard_at DESC"
+                        f" LIMIT {DIGEST_MAX}"
+                    ),
+                    params,
                 )
             ).mappings()
             return [dict(row) for row in rows]

@@ -52,6 +52,9 @@ def test_a_decoded_frame_becomes_a_row() -> None:
         "gated": False,
         "heard_direct": True,
         "addressee": None,
+        # No level in `_ROW`, and the sidecar is the only thing that can ever supply
+        # one — so this stays null rather than becoming a zero.
+        "audio_level": None,
     }
 
 
@@ -264,3 +267,49 @@ def test_a_classifier_that_blows_up_costs_a_label_and_never_a_frame(
     assert all(row[column] is None for column in DERIVED)
     # And it still binds the full statement, so the insert itself does not fail.
     assert set(re.findall(r":(\w+)", INSERT_SQL)) == set(row)
+
+
+class TestAudioLevel:
+    """How strong the transmission was, as the drain stores it.
+
+    This is the one column that CANNOT be recovered from `raw` later — the reading
+    exists only at decode time — so the rules about what NULL means are load-bearing in
+    a way the derived columns' are not."""
+
+    def test_the_level_the_sidecar_measured_reaches_the_row(self) -> None:
+        row = _parse(json.dumps({**_ROW, "audio_level": 50}))
+
+        assert row is not None
+        assert row["audio_level"] == 50
+
+    def test_a_sidecar_too_old_to_send_one_leaves_it_unmeasured(self) -> None:
+        # Not zero. A rolling restart runs the new api against the old sidecar, and a
+        # log claiming every station was inaudible for an hour would be worse than one
+        # admitting it did not know.
+        row = _parse(json.dumps({k: v for k, v in _ROW.items()}))
+
+        assert row is not None
+        assert row["audio_level"] is None
+
+    def test_zero_is_kept_because_it_is_a_real_reading(self) -> None:
+        row = _parse(json.dumps({**_ROW, "audio_level": 0}))
+
+        assert row is not None
+        assert row["audio_level"] == 0
+
+    @pytest.mark.parametrize("bad", [101, -1, 5000, "loud", None, [50], {}])
+    def test_a_level_out_of_range_or_the_wrong_shape_is_dropped_not_guessed(self, bad: Any) -> None:
+        """The sidecar already clamps what direwolf says, so anything outside 0-100
+        arriving here means the two are out of step. A made-up number is worse than a
+        blank, and a crafted one must not cost the row — the CHECK constraint would
+        reject the insert and the whole frame would vanish."""
+        row = _parse(json.dumps({**_ROW, "audio_level": bad}))
+
+        assert row is not None
+        assert row["audio_level"] is None
+
+    def test_the_insert_carries_it(self) -> None:
+        # A column the row computes but the statement omits is a silent data loss that
+        # no other test in this file would notice.
+        assert "audio_level" in INSERT_SQL
+        assert ":audio_level" in INSERT_SQL

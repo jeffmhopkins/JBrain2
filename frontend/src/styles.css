@@ -25453,6 +25453,24 @@ button.task-band:active {
   color: var(--text-3);
   background: color-mix(in srgb, var(--text-3) 10%, transparent);
 }
+/* Measured, not claimed — so it is tinted by what it says rather than kept neutral
+   like the provenance badge beside it. */
+.aprs-sig {
+  margin-left: 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.aprs-sig.s-strong {
+  color: var(--ok, #4ade80);
+}
+.aprs-sig.s-ok {
+  color: var(--text-2);
+}
+.aprs-sig.s-weak {
+  color: var(--warn);
+}
+
 .aprs-packet-panel {
   padding: 0 12px 12px;
 }

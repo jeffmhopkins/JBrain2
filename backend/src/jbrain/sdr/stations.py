@@ -115,6 +115,10 @@ def _packet(row: Any, definitions: dict[str, list[str]]) -> dict[str, Any]:
         # Who put it on the air, when that is not who wrote it. The row says "relayed by
         # N4TDX" rather than repeating a callsign the header already carries.
         "relay": _relay(str(row["source"] or ""), heard.origin),
+        # Direwolf's own 0-100 reading, or null where nothing was measured — a frame
+        # logged before the level was captured, or one whose reading could not be
+        # paired. Null is NOT zero: the screen must say "not measured", never "weak".
+        "audio_level": row["audio_level"],
         "frame": {
             "source": str(row["source"] or ""),
             "destination": str(row["destination"] or ""),
@@ -379,7 +383,8 @@ class StationsReader:
                     await s.execute(
                         text(
                             "SELECT id, heard_at, source, destination, path, info, raw,"
-                            " kind, gated, heard_direct FROM app.aprs_packets"
+                            " kind, gated, heard_direct, audio_level"
+                            " FROM app.aprs_packets"
                             f" WHERE origin_call = :call AND {predicate}{wanted_sql}"
                             " ORDER BY heard_at DESC LIMIT :limit"
                         ),

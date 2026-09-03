@@ -26,7 +26,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import scoped_session
 from jbrain.sdr import aprslog as aprslog_module
-from jbrain.sdr.aprslog import BACKFILL_CLAIM_SQL, AprsLog, _parse
+from jbrain.sdr.aprslog import BACKFILL_CLAIM_SQL, AprsLog, AprsReader, _parse
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -334,3 +334,121 @@ async def test_a_frame_whose_info_begins_with_a_nul_is_still_recorded(
     (stored,) = await _rows(maker)
     assert stored["origin_call"] == "N0CALL"
     assert stored["kind"] == "Position"
+
+
+async def _store(maker: async_sessionmaker, payload: dict[str, Any]) -> None:
+    row = _parse(json.dumps({"frequency_hz": 144_390_000, "raw": "", **payload}))
+    assert row is not None
+    await AprsLog(maker=maker, base_url="")._store(row)
+
+
+class TestReadingTheLogBack:
+    """`AprsReader`, against real SQL.
+
+    The unit tests fake the reader, so nothing there can catch a WHERE clause that
+    selects the wrong rows — and two deliberate mutations survived the whole unit suite
+    for exactly that reason. These are the ones that need Postgres."""
+
+    async def test_station_finds_the_sender_inside_a_relayed_frame(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        """The question the tool exists to answer. `GATED`'s AX.25 source is the IGate,
+        so a filter on `source` reports N1MPR-C as never heard."""
+        await _store(maker, {"source": "N4TDX", "destination": "APRS", "info": GATED})
+
+        heard = await AprsReader(maker).recent(OWNER, station="N1MPR-C")
+        by_source = await AprsReader(maker).recent(OWNER, source="N1MPR-C")
+
+        assert len(heard) == 1
+        assert by_source == []
+
+    async def test_station_still_finds_a_row_the_sweep_has_not_reached(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        """`origin_call` is NULL until the sweep fills it in, and for a DIRECT frame the
+        sender IS the AX.25 source — so without the COALESCE a station's own traffic
+        reads as never heard while the backlog works. This mutation survived the unit
+        suite."""
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.aprs_packets"
+                    " (frequency_hz, source, destination, path, info, raw)"
+                    " VALUES (144390000, 'K4KSC-1', 'APRS', '{}', :info, '')"
+                ),
+                {"info": DIRECT},
+            )
+            await s.commit()
+
+        heard = await AprsReader(maker).recent(OWNER, station="K4KSC-1")
+
+        assert len(heard) == 1
+        assert heard[0]["origin_call"] is None  # genuinely unclassified
+
+    async def test_the_digest_counts_per_station_and_honours_its_filters(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        """A digest ignoring `station` returns the whole channel under the heading the
+        caller asked about — the other mutation the unit suite could not see."""
+        await _store(maker, {"source": "N4TDX", "destination": "APRS", "info": GATED})
+        await _store(maker, {"source": "N4TDX", "destination": "APRS", "info": GATED})
+        await _store(maker, {"source": "K4KSC-1", "destination": "APRS", "info": DIRECT})
+
+        everyone = await AprsReader(maker).digest(OWNER)
+        just_one = await AprsReader(maker).digest(OWNER, station="N1MPR-C")
+
+        # Grouped on the true sender, busiest first.
+        assert [(r["station"], r["packets"]) for r in everyone] == [
+            ("N1MPR-C", 2),
+            ("K4KSC-1", 1),
+        ]
+        assert [(r["station"], r["packets"]) for r in just_one] == [("N1MPR-C", 2)]
+
+    async def test_the_window_and_the_kind_narrow_what_comes_back(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        await _store(
+            maker,
+            {
+                "source": "K4KSC-1",
+                "destination": "APRS",
+                "info": DIRECT,
+                "heard_at": (datetime.now(UTC) - timedelta(days=3)).timestamp(),
+            },
+        )
+        await _store(maker, {"source": "N4TDX", "destination": "APRS", "info": GATED})
+
+        recent = await AprsReader(maker).recent(OWNER, since=datetime.now(UTC) - timedelta(hours=1))
+        weather = await AprsReader(maker).recent(OWNER, kind="Weather")
+
+        assert [r["origin_call"] for r in recent] == ["N1MPR-C"]
+        assert weather == []
+
+    async def test_the_measured_signal_comes_back_with_the_row(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        await _store(
+            maker,
+            {"source": "K4KSC-1", "destination": "APRS", "info": DIRECT, "audio_level": 72},
+        )
+
+        (heard,) = await AprsReader(maker).recent(OWNER)
+
+        assert heard["audio_level"] == 72
+
+    async def test_a_level_outside_direwolf_s_range_never_reaches_the_table(
+        self, maker: async_sessionmaker, clean: None
+    ) -> None:
+        """The CHECK constraint is the backstop, but the parser has to drop it FIRST:
+        `_store` swallows its errors to keep the drain alive, so a rejected insert would
+        cost the whole packet — the frame, the raw bytes, everything — over a bad
+        number in one column."""
+        await _store(
+            maker,
+            {"source": "K4KSC-1", "destination": "APRS", "info": DIRECT, "audio_level": 9999},
+        )
+
+        (heard,) = await AprsReader(maker).recent(OWNER)
+
+        assert heard["audio_level"] is None
+        assert heard["info"] == DIRECT  # the row survived

@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** Shipped · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -99,7 +99,7 @@ Leaving a station drops the chip selection deliberately: inside a station "Weath
 *this station's weather*, and at the roster it means *stations that send weather at all*.
 Carrying a selection across that change would silently rewrite what was asked for.
 
-**F4 ◻️ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
+**F4 ✅ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
 summarize (tool `version` bump + digest re-pin at `tests/unit/test_agent_readtools.py`),
 keeping its `<untrusted_external_data source="heard-over-the-air">` wrapper — the two
 trust tiers are unchanged, and a station roster does not make a callsign an identity.
@@ -224,6 +224,39 @@ Two API fields carry the distinctions the screen leans on. A packet has **`kind`
 `bucket`** — the row's title says "Telemetry", the chip filters "Other", and one field
 serving both would force the row to lie or the chip row to sprawl. And it has **`relay`**,
 so the row can say *how* it reached us without repeating the callsign the header carries.
+
+### F4 as built
+
+**The tool's real defect was the column it filtered on.** `source` is the AX.25 sender,
+which on this channel is the IGate for three quarters of the traffic — so "has KD4WLE
+been heard" searched the wrong column and answered wrong. v2 adds `station`, matching
+`origin_call` with a COALESCE onto `source` so a row the sweep has not reached is still
+findable. `source` stays, because "what has this RELAY put on the air" is a real
+question, just a different one.
+
+Also: `kind`, `since`/`until` (an ISO instant *or* a duration back from now — a model
+writes "6h" reliably and computes a timestamp unreliably), and `summarize`, which
+answers "who is around" with one line per station instead of making a model count
+callsigns across a hundred frames. An unreadable time or an unknown kind is an ERROR
+returned to the model, never a silently-ignored filter: a window that quietly did not
+apply reports a whole day's traffic as the last hour's and nothing looks wrong. Lines
+now go through `explain`, so a position reads "Car (28.6212, -80.8237; 317° at 2 knots)"
+rather than `!2837.27N/08049.42W>317/002`. Untrusted-envelope unchanged, in both modes.
+
+**Signal level was a flag, and the claim that it was unrecoverable was wrong.** `-q h`
+means precisely "suppress the heard line with the audio level"; we shipped `hd`. Now
+`-q d`. Measuring it on the real pipeline changed the design twice:
+
+- The heard line does **not** always name the sender — a digipeated frame reports
+  `Digipeater TCPIP audio level = 50`. Pairing by callsign would have attached almost
+  nothing on this channel, and sometimes the relay's level to the wrong station.
+- The lines are flushed per decode and arrive in the **same millisecond** as their own
+  KISS frame, 1:1 and in order, and a failed decode prints no level at all. That is what
+  makes pairing by ORDER sound: one slot, claimed once, expiring in 2 s.
+
+`audio_level` is the one column that **cannot be backfilled** — the reading exists only
+at decode time — so NULL means "not measured", never "weak", all the way up to the row
+on screen, which shows nothing rather than a tint it did not earn.
 
 ## What is stored, honestly
 

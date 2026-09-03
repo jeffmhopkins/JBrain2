@@ -111,6 +111,7 @@ function packet(over: Record<string, unknown> = {}) {
     symbol: "/>",
     warnings: [],
     relay: "N4TDX",
+    audio_level: null,
     frame: { source: "N4TDX", destination: "APDG02", path: ["WIDE1-1"] },
     ...over,
   };
@@ -398,6 +399,42 @@ describe("the APRS tab", () => {
     expect(screen.getByRole("button", { expanded: true, name: /52 knots/ })).toBeInTheDocument();
     expect(document.activeElement).toHaveTextContent("52 knots");
     expect(document.activeElement).not.toHaveTextContent("12 knots");
+  });
+
+  it("says how strong a transmission was, where that was measured", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("N1MPR-C", {
+        packets: [packet({ id: "loud", audio_level: 72 })],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+
+    // Measured by the box, unlike every other fact on the row — so it is tinted rather
+    // than left neutral, and it carries the raw number for anyone who wants it.
+    const signal = await screen.findByText("strong");
+    expect(signal).toHaveClass("aprs-sig");
+    expect(signal).toHaveAttribute("title", "Audio level 72 of 100");
+  });
+
+  it("says nothing about signal for a frame nobody measured", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // Every row logged before the level was captured looks like this, for ever — the
+    // reading only ever existed at decode time. Null is not zero, and "weak" here would
+    // invent the one fact on the row that is not self-declared by a stranger.
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("N1MPR-C", { packets: [packet({ audio_level: null })] }) as never,
+    );
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    await screen.findByRole("button", { expanded: false, name: /52 knots/ });
+
+    expect(container.querySelector(".aprs-sig")).toBeNull();
   });
 
   it("keeps a way out when a station fails to load", async () => {
