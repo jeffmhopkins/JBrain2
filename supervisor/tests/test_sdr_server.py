@@ -45,7 +45,12 @@ class _FakeProc:
         self.stdin = _Sink()
         self.returncode = None
 
-    def poll(self) -> None:
+    def poll(self) -> int | None:
+        """Alive until killed, which models rtl_fm streaming.
+
+        Typed as `int | None` like `Popen.poll` rather than the bare `None` this used
+        to return: a sweep is the one process that ENDS on its own, so `_DeadProc`
+        below has a real exit code to report."""
         return None
 
     def terminate(self) -> None:
