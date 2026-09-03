@@ -251,6 +251,16 @@ Three label corrections the tables forced, all live on this channel: `/$` is **P
 Bank/ATM — that is `\$` on the alternate table), `/r` is **Repeater** (renamed from Antenna
 in 2007), `/[` is **Person** (renamed from Jogger in 2015).
 
+**A row's title is `CALLSIGN — Type`**, not the symbol's name. The symbol is a detail of
+the packet, not its headline: on a list where most rows are positions, "Space shuttle" told
+you nothing about whose it was. The symbol name moves into the reading line and the detail.
+
+Every row carries a glyph so the left edge is not ragged — but the two kinds of glyph are
+told apart by tint. An **APRS symbol** is the station's own choice of icon and takes the
+accent tint; a **kind glyph** (telemetry, message, status, a plain beacon — packets that
+carry no symbol at all) is our inference about the packet and takes the neutral one. They
+should not look like the same claim.
+
 Two consequences that shape the build:
 
 - **Two voices, told apart by typeface.** The derived sentence is the app's, in the system
