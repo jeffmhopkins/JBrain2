@@ -413,6 +413,39 @@ PY
     [ -n "$G" ] && q="$q&gain=$G"
     _call POST "/api/debug/sdr/capture?$q" | _pp ;;
 
+  sweep) # <startMHz> <stopMHz> [--seconds N] [--bin-khz K] [--gain G] [--channel-khz C] [--no-wait]
+    # A band sweep. TAKES THE RADIO for the duration, as a real lease — so it is refused
+    # with a 409 while APRS is logging, and the omnibox shows it while it runs.
+    a="${1:?usage: debug-connect.sh sweep <startMHz> <stopMHz> [--seconds N] [--bin-khz K]}"
+    b="${2:?usage: debug-connect.sh sweep <startMHz> <stopMHz> [--seconds N] [--bin-khz K]}"
+    shift 2
+    SECS=60; BINK=5; G=; CHK=0; WAIT=1
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --seconds) SECS="$2"; shift 2 ;;
+        --bin-khz) BINK="$2"; shift 2 ;;
+        --gain) G="$2"; shift 2 ;;
+        --channel-khz) CHK="$2"; shift 2 ;;
+        --no-wait) WAIT=0; shift ;;
+        *) shift ;;
+      esac
+    done
+    q="start_mhz=$a&stop_mhz=$b&seconds=$SECS&bin_khz=$BINK&channel_khz=$CHK"
+    [ -n "$G" ] && q="$q&gain=$G"
+    JOB=$(_call POST "/api/debug/sdr/sweep?$q" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
+    [ -n "$JOB" ] || { echo "no job id — the sweep was refused" >&2; exit 1; }
+    if [ "$WAIT" = "0" ]; then echo "$JOB"; exit 0; fi
+    # Poll until it lands. The sweep holds the radio for `seconds`, so the deadline is
+    # that plus slack for the retune settle before the first row.
+    DEADLINE=$(( $(date +%s) + SECS + 90 ))
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      OUT=$(_call GET "/api/debug/jobs/$JOB")
+      ST=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+      [ "$ST" = "pending" ] || { printf '%s' "$OUT" | _pp; exit 0; }
+      sleep 5
+    done
+    echo "sweep $JOB still pending after $((SECS + 90))s" >&2; exit 1 ;;
+
   radio) # <MHz> [--mode M] — start live listening; no MHz releases the radio
     if [ -n "${1:-}" ]; then
       f="$1"; shift; M=wbfm

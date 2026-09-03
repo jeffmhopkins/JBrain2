@@ -31,9 +31,20 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _respond(self) -> None:
         status = 422 if "refuse" in self.path else 200
-        body = json.dumps(
-            {"detail": "unknown provider: local:x"} if status == 422 else {"git_sha": "abc123"}
-        ).encode()
+        if "/sdr/sweep" in self.path:
+            payload: dict[str, object] = {"job_id": "sweep-1"}
+        elif "/jobs/" in self.path:
+            # Done on the first poll, so the test does not sit through a sleep.
+            payload = {
+                "job_id": "sweep-1",
+                "status": "done",
+                "result": {"rows": 8, "busy": [], "floor_db": -98.0},
+            }
+        elif status == 422:
+            payload = {"detail": "unknown provider: local:x"}
+        else:
+            payload = {"git_sha": "abc123"}
+        body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -42,6 +53,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     do_GET = _respond
     do_PUT = _respond
+    do_POST = _respond
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 — base signature
         """Silenced: the handler's default writes a line per request to stderr, which would
@@ -100,3 +112,26 @@ def test_an_unreachable_box_exits_non_zero(box: str) -> None:
     # bad premises to keep working from.
     result = _run("http://127.0.0.1:1", "raw", "GET", "/api/debug/version")
     assert result.returncode != 0
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_sweep_submits_and_then_polls_to_the_result(box: str) -> None:
+    """The sweep verb is two calls, not one.
+
+    A five-minute sweep cannot be held open through the tunnel, so the route returns a
+    job id and the CLI has to poll. A verb that printed the id and stopped would leave
+    the operator — who has no terminal — holding a handle with no way to redeem it."""
+    result = _run(box, "sweep", "144", "148", "--seconds", "2")
+
+    assert result.returncode == 0, result.stderr
+    # What comes back is the RESULT, not the submission receipt.
+    assert json.loads(result.stdout)["status"] == "done"
+    assert json.loads(result.stdout)["result"]["rows"] == 8
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_sweep_can_hand_back_the_job_id_without_waiting(box: str) -> None:
+    result = _run(box, "sweep", "144", "148", "--no-wait")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "sweep-1"
