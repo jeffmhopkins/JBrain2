@@ -251,9 +251,17 @@ Three label corrections the tables forced, all live on this channel: `/$` is **P
 Bank/ATM — that is `\$` on the alternate table), `/r` is **Repeater** (renamed from Antenna
 in 2007), `/[` is **Person** (renamed from Jogger in 2015).
 
-**A row's title is `CALLSIGN — Type`**, not the symbol's name. The symbol is a detail of
-the packet, not its headline: on a list where most rows are positions, "Space shuttle" told
-you nothing about whose it was. The symbol name moves into the reading line and the detail.
+**A row's title is the TYPE, and the callsign only where it is not already known.** The
+symbol's name is not a headline — on a list where most rows are positions, "Space shuttle"
+told you nothing about whose it was. And inside a station, where the header already names the
+sender, a callsign in every title is forty copies of a fact on screen crowding out the type;
+in a mixed list nothing else says who sent it, so the callsign leads. One row component, two
+mounts, one flag.
+
+**The icon is not restated as text.** When the whole reading is the symbol's name the row
+already says it — in the glyph, and in that glyph's accessible label. The name stays in the
+detail panel, where the reader is asking what the packet contains, and the line is spent on
+something else.
 
 Every row carries a glyph so the left edge is not ragged — but the two kinds of glyph are
 told apart by tint. An **APRS symbol** is the station's own choice of icon and takes the
