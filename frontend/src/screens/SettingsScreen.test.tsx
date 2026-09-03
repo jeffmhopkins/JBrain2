@@ -32,6 +32,7 @@ function stubSettingsFetch(
     lexicon: opts.lexicon ?? {},
     tavilyEnabled: true,
     tavilyKeySet: false,
+    callsign: null as string | null,
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
@@ -161,6 +162,7 @@ function stubSettingsFetch(
     return new Response(
       JSON.stringify({
         image_analysis_mode: state.mode,
+        owner_callsign: state.callsign,
         brain_llm_stream: state.brainStream,
         brain_read_aloud: state.brainReadAloud,
         brain_answer_voice: state.brainAnswerVoice,
@@ -785,5 +787,31 @@ describe("SettingsScreen Gmail (Archivist)", () => {
 
     expect(await screen.findByText("Credentials saved — not connected yet")).toBeInTheDocument();
     expect(connect()).toBeEnabled(); // ready to launch the OAuth consent
+  });
+});
+
+describe("SettingsScreen amateur callsign", () => {
+  it("saves a callsign upper-cased", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+
+    const field = (await screen.findByLabelText("Callsign")) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "ke8xyz-9" } });
+    // Upper-cased in the field as it is typed: it is how a callsign travels on the air,
+    // and seeing it that way is the confirmation the value is understood.
+    expect(field.value).toBe("KE8XYZ-9");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save callsign" }));
+    await waitFor(() => expect(puts).toContainEqual({ owner_callsign: "KE8XYZ-9" }));
+  });
+
+  it("cannot save until the value changes", async () => {
+    stubSettingsFetch();
+    setup();
+    await screen.findByLabelText("Callsign");
+
+    // Unset and untouched: Save is inert rather than writing an empty value over an
+    // empty value and reporting success.
+    expect(screen.getByRole("button", { name: "Save callsign" })).toBeDisabled();
   });
 });

@@ -53,6 +53,7 @@ def test_get_settings_defaults_to_full_analysis(
     assert c.get("/api/settings").json() == {
         "image_analysis_mode": "full",
         "owner_timezone": None,
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -74,6 +75,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
     assert resp.json() == {
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -90,6 +92,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
     assert c.get("/api/settings").json() == {
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -106,6 +109,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
         "image_analysis_mode": "full",
         "owner_timezone": None,
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -129,6 +133,7 @@ def test_put_settings_round_trips_the_timezone(
     assert resp.json() == {
         "image_analysis_mode": "full",
         "owner_timezone": "America/New_York",
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -344,6 +349,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
     assert c.put("/api/settings", json={}).json() == {
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
+        "owner_callsign": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -391,3 +397,37 @@ def test_gateway_patch_restore_defaults_off_and_can_be_turned_on(
     assert patched.status_code == 200
     assert patched.json()["local_llm_patch_restore_checkpoint"] is True
     assert c.get("/api/settings").json()["local_llm_patch_restore_checkpoint"] is True
+
+
+def test_a_callsign_is_stored_upper_cased(client: tuple[TestClient, FakeSettingsStore]) -> None:
+    c, store = client
+
+    out = c.put("/api/settings", json={"owner_callsign": " ke8xyz-9 "})
+
+    # Upper case is how it travels on the air; storing it as typed would make every
+    # later comparison a case-folding question. It lives here rather than on the Radio
+    # screen because it is the owner's identity, not a property of the radio.
+    assert out.status_code == 200
+    assert out.json()["owner_callsign"] == "KE8XYZ-9"
+
+
+def test_an_empty_callsign_clears_it(client: tuple[TestClient, FakeSettingsStore]) -> None:
+    c, _ = client
+    c.put("/api/settings", json={"owner_callsign": "KE8XYZ"})
+
+    out = c.put("/api/settings", json={"owner_callsign": ""})
+
+    # Unset is a real state with a real consequence: "my traffic" becomes uncomputable
+    # and the radio screen has to say so rather than quietly matching nothing.
+    assert out.json()["owner_callsign"] is None
+
+
+@pytest.mark.parametrize("bad", ["KE8 XYZ", "KE8XYZ!", "KE8XYZ\u00e9", "X" * 17])
+def test_a_mangled_callsign_is_refused_not_cleaned(
+    client: tuple[TestClient, FakeSettingsStore], bad: str
+) -> None:
+    c, _ = client
+
+    # Refused rather than stripped: a callsign that quietly lost a character filters for
+    # a station that does not exist, and an empty heard log reads as a deaf radio.
+    assert c.put("/api/settings", json={"owner_callsign": bad}).status_code == 422

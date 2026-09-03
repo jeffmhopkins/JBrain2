@@ -12,6 +12,7 @@ happy path is the easy half and the half that was already obviously working.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -238,11 +239,36 @@ def _row() -> dict[str, Any]:
     }
 
 
-async def _packets(monkeypatch: pytest.MonkeyPatch, box: _Sidecar, rows: list[dict[str, Any]]):
+class _Request:
+    """Just enough request for the route: `app.state` is where the running drain hangs.
+
+    Its `store_failures` is how a heard log that has silently stopped recording becomes
+    visible from the PWA — `_store` swallows its own errors so one bad frame cannot end
+    the drain, which means a broken INSERT stops the log with no symptom otherwise."""
+
+    def __init__(self, failures: int | None = 0) -> None:
+        state = SimpleNamespace()
+        if failures is not None:
+            state.aprs_logger = SimpleNamespace(store_failures=failures)
+        self.app = SimpleNamespace(state=state)
+
+
+async def _packets(
+    monkeypatch: pytest.MonkeyPatch,
+    box: _Sidecar,
+    rows: list[dict[str, Any]],
+    request: _Request | None = None,
+):
     box.install(monkeypatch)
     monkeypatch.setattr(sdr_api, "AprsReader", _Reader(rows))
     monkeypatch.setattr(sdr_api, "ctx_for", lambda _owner: object())
-    return await sdr_api.packets(_Settings(), OWNER, object(), 50)  # type: ignore[arg-type]
+    return await sdr_api.packets(
+        request or _Request(),  # type: ignore[arg-type]
+        _Settings(),  # type: ignore[arg-type]
+        OWNER,  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        50,
+    )
 
 
 async def test_the_log_says_whether_anything_is_receiving(
@@ -377,3 +403,67 @@ async def test_no_key_ever_leaves_the_box_through_this_route(
     # `command_key`, and this asserts the shape rather than trusting the SQL to stay
     # that way. An empty box is also a valid answer, not an error.
     assert out == {"commands": [], "attempts": []}
+
+
+# --- the stations roster's chip parsing (F2) -------------------------------------------
+
+
+def test_only_the_five_known_kinds_reach_the_query() -> None:
+    """The chip selection arrives as text in a URL and leaves as a whitelist.
+
+    Not because a bound parameter would be unsafe — it would not — but because the five
+    buckets are a closed set, and anything else in that parameter is either a stale
+    client or someone probing. Neither should reach the database as a value."""
+    assert sdr_api._kinds("Position,Weather") == ["Position", "Weather"]
+    assert sdr_api._kinds(" Object , Message ") == ["Object", "Message"]
+    assert sdr_api._kinds("Position'; DROP TABLE app.aprs_packets --") == []
+
+
+def test_an_unknown_chip_shows_everything_rather_than_erroring() -> None:
+    """A PWA cached from before a rename asks for a kind we no longer have.
+
+    The owner opens the radio tab and gets the unfiltered roster, which is the screen
+    they wanted, instead of an error page they cannot act on from a phone."""
+    assert sdr_api._kinds("Telemetry") == []
+    assert sdr_api._kinds("") == []
+    assert sdr_api._kinds(None) == []
+    # And a mixed list keeps the half that still means something.
+    assert sdr_api._kinds("Telemetry,Weather") == ["Weather"]
+
+
+async def test_the_log_says_when_packets_are_being_heard_and_LOST(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A third way this surface can lie, alongside `reachable` and `logging`.
+
+    The radio decodes, the drain runs, and every row fails to store. `_store` swallows
+    its errors so one bad frame cannot end the log — which means a broken INSERT, the
+    real case being new code against an un-migrated schema, stops the log with no
+    symptom whatsoever. The owner has no terminal (CLAUDE.md rule 10), so the count has
+    to reach the screen or it does not exist."""
+    heard = _Sidecar(health=_listening("aprs"))
+
+    out = await _packets(monkeypatch, heard, [_row()], _Request(failures=7))
+
+    assert out["store_failures"] == 7
+
+
+async def test_a_log_that_is_recording_fine_reports_no_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = await _packets(monkeypatch, _Sidecar(health=_listening("aprs")), [_row()])
+
+    assert out["store_failures"] == 0
+
+
+async def test_the_tab_still_loads_before_the_drain_has_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No logger on app.state yet — during startup, and in any process that never runs a
+    # drain. Reading zero is right; raising would take the whole APRS tab down over a
+    # diagnostic field.
+    out = await _packets(
+        monkeypatch, _Sidecar(health=_listening("aprs")), [_row()], _Request(failures=None)
+    )
+
+    assert out["store_failures"] == 0

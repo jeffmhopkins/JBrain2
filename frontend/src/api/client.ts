@@ -24,6 +24,7 @@ import type {
   TranscriptTurn,
 } from "../agent/types";
 import type { AprsCommandState, AprsLogState, AprsToggleResult } from "../aprsLog";
+import type { AprsRoster, AprsStationDetail } from "../aprsStations";
 import type {
   IntakeConfig,
   IntakeConfigPatch,
@@ -542,6 +543,10 @@ export interface AppSettings {
   // unset. Server-rendered times (the agent's appointment prose) localize to it
   // so they match the cards the client localizes to the browser zone.
   owner_timezone: string | null;
+  /** The owner's amateur callsign, upper-cased, or null when unset. It is what makes
+   * "my traffic" mean anything in an APRS log that is mostly other people. A filter,
+   * never an identity — a callsign is plain bytes on the air and forges trivially. */
+  owner_callsign: string | null;
   // Stream real prompt/answer text to the on-box wall display (:8800). OFF by
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.
@@ -2726,6 +2731,36 @@ export const api = {
   async getAprsPackets(limit = 50): Promise<AprsLogState> {
     const response = await request(`/api/sdr/packets?limit=${encodeURIComponent(limit)}`);
     return (await response.json()) as AprsLogState;
+  },
+
+  // The station roster and one station's traffic (docs/mocks/aprs/e-stations.html).
+  // Filtering is the SERVER's job: a year of this channel is ~1.2M rows and the roster
+  // is sixteen lines, so the range and the chips are query params rather than a client
+  // that downloads the log and narrows it in the browser.
+  async getAprsStations(
+    window: string,
+    kinds: readonly string[] = [],
+    mine: string | null = null,
+  ): Promise<AprsRoster> {
+    let query = `window=${encodeURIComponent(window)}`;
+    if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    // The owner's callsign pins his own stations BEFORE the server caps the list — the
+    // client cannot pin what it was never sent. It is a sort key on his own request, not
+    // a permission, and the server already knows who is asking.
+    if (mine) query += `&mine=${encodeURIComponent(mine)}`;
+    const response = await request(`/api/sdr/stations?${query}`);
+    return (await response.json()) as AprsRoster;
+  },
+
+  async getAprsStation(
+    call: string,
+    window: string,
+    kinds: readonly string[] = [],
+  ): Promise<AprsStationDetail> {
+    let query = `window=${encodeURIComponent(window)}`;
+    if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    const response = await request(`/api/sdr/stations/${encodeURIComponent(call)}?${query}`);
+    return (await response.json()) as AprsStationDetail;
   },
 
   async setAprsLogging(enabled: boolean, frequencyMhz?: number): Promise<AprsToggleResult> {

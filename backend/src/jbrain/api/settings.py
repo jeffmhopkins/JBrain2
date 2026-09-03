@@ -34,6 +34,7 @@ from jbrain.settings_store import (
     LOCAL_LLM_AUTO_UPDATE_KEY,
     LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
     LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
+    OWNER_CALLSIGN_KEY,
     OWNER_TIMEZONE_KEY,
     SqlSettingsStore,
     is_valid_timezone,
@@ -53,6 +54,7 @@ class SettingsOut(BaseModel):
     image_analysis_mode: Literal["full", "ocr"]
     # The owner's IANA display timezone, or null when unset (server times = UTC).
     owner_timezone: str | None = None
+    owner_callsign: str | None = None
     # Stream real prompt/answer text to the on-box wall display (:8800). OFF by
     # default — see BRAIN_LLM_STREAM_KEY: it puts owner text on the unauthenticated
     # display, so only enable it for a localhost-bound / box-monitor-only display.
@@ -89,12 +91,32 @@ class SettingsOut(BaseModel):
     pronunciation_lexicon: dict[str, str] = {}
 
 
+# A callsign is letters, digits and an optional -SSID, upper-cased because that is how it
+# travels on the air. Bounded at 16 to match the width the AX.25 decoder already caps at.
+_CALLSIGN_MAX = 16
+
+
+def _clean_callsign(raw: str) -> str | None:
+    """What gets stored, or None to clear."""
+    call = raw.strip().upper()
+    if not call:
+        return None
+    if len(call) > _CALLSIGN_MAX or not call.isascii():
+        raise HTTPException(status_code=422, detail="that is not a callsign")
+    if not all(ch.isalnum() or ch == "-" for ch in call):
+        raise HTTPException(
+            status_code=422, detail="a callsign is letters, digits and an optional -SSID"
+        )
+    return call
+
+
 class SettingsPatch(BaseModel):
     # Unknown keys are a client bug, not a forward-compat case: reject them.
     model_config = ConfigDict(extra="forbid")
 
     image_analysis_mode: Literal["full", "ocr"] | None = None
     owner_timezone: str | None = None
+    owner_callsign: str | None = None
     brain_llm_stream: bool | None = None
     brain_read_aloud: bool | None = None
     # A voice id from the live installed picker; bounded so a junk value can't bloat the
@@ -122,6 +144,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
     return SettingsOut(
         image_analysis_mode=await store.image_analysis_mode(ctx),
         owner_timezone=await store.owner_timezone(ctx),
+        owner_callsign=await store.owner_callsign(ctx),
         brain_llm_stream=await store.brain_llm_stream(ctx),
         brain_read_aloud=await store.brain_read_aloud(ctx),
         brain_answer_voice=await store.brain_answer_voice(ctx),
@@ -153,6 +176,12 @@ async def update_settings(
         if not is_valid_timezone(body.owner_timezone):
             raise HTTPException(status_code=422, detail="unknown timezone")
         await store.upsert(ctx, OWNER_TIMEZONE_KEY, body.owner_timezone)
+    if body.owner_callsign is not None:
+        # Refused rather than cleaned: a callsign that quietly lost a character filters
+        # for a station that does not exist, and an empty heard log reads as a deaf
+        # radio rather than as a typo. Empty clears it, which is a real state — "my
+        # traffic" is then uncomputable and the radio screen says so.
+        await store.upsert(ctx, OWNER_CALLSIGN_KEY, _clean_callsign(body.owner_callsign) or "")
     if body.brain_llm_stream is not None:
         await store.upsert(ctx, BRAIN_LLM_STREAM_KEY, body.brain_llm_stream)
     if body.brain_read_aloud is not None:

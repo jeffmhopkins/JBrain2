@@ -1,0 +1,484 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APRS filtering - three shapes</title>
+<!--
+  ROUND 4 of the APRS GUI gate: how the owner filters and reads a heard log.
+
+  EVERY PACKET IN THIS MOCK IS REAL - 60 frames pulled from the owner's own box on
+  144.390 near Titusville FL, 2026-09-03. Nothing here is invented, which is the point:
+  the first three rounds were argued from a spec, and the spec did not predict what the
+  channel actually looks like.
+
+  What the real data says, and what forces the design:
+
+  - 4 distinct values in the `source` column. FIFTEEN true originators. Three quarters
+    of the log is one IGate (N4TDX) relaying internet traffic onto RF as third-party
+    `}` frames, and the AX.25 source names the RELAY, not the sender. Filtering by
+    `source` today is wrong for 74% of rows.
+  - The effective type mix, after unwrapping `}`: 27 objects, 20 positions, 7 telemetry,
+    3 status. NOT what the raw first character suggests.
+  - 44 of 60 are gated from the internet. They were genuinely transmitted on 144.390 by
+    N4TDX and genuinely heard - "gated" is not "fake", it is local RF whose payload came
+    from elsewhere.
+
+  THE TRAP, and the reason this round exists: an IGate gates a message to RF only when
+  the addressee has been heard nearby. The owner's HT sits next to the box. So HIS
+  INCOMING MAIL ARRIVES AS `}` THIRD-PARTY FROM N4TDX. Any design that hides `}` by
+  default hides his messages. Every shape below must answer that.
+
+  DECIDED BEFORE THIS ROUND (do not relitigate): the tab strip is the house segmented
+  control; the screen is a full-screen layer over the launcher; the Tuner tab mounts the
+  real transport. All three shipped in #1275.
+
+  NOT decided here: retention. Nothing prunes, ~3k rows/day at the measured rate.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:76ch;}
+  .sub code,.sub b{font-family:var(--mono);font-size:12.5px;color:var(--steel);font-weight:400;}
+  .sub strong{color:var(--text);font-weight:600;font-family:inherit;font-size:inherit;}
+  .controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:20px 0 6px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surface);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:13px;
+    padding:9px 14px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+  .datanote{font-size:12px;color:var(--text-3);margin:0 0 20px;font-family:var(--mono);}
+
+  .stage{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;}
+  .phone{width:392px;min-height:700px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
+    padding:14px 13px 20px;box-shadow:0 18px 50px rgba(0,0,0,.45);position:relative;overflow:hidden;}
+  .note{flex:1;min-width:300px;max-width:440px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
+  .note h3{color:var(--text);font-size:14px;margin:0 0 8px;font-weight:620;}
+  .note h4{color:var(--text);font-size:12.5px;margin:16px 0 6px;font-weight:620;
+    text-transform:uppercase;letter-spacing:.06em;}
+  .note p{margin:0 0 12px;}
+  .note strong{color:var(--text);font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+  .note ul{margin:0 0 12px;padding-left:18px;}
+  .note li{margin-bottom:6px;}
+  .cost{border-left:2px solid var(--amber);padding-left:11px;color:var(--text-2);}
+  .cost b{color:var(--amber);font-weight:600;}
+
+  /* ---- phone chrome ---- */
+  .scr-top{display:flex;align-items:center;gap:10px;padding:2px 2px 10px;}
+  .chev{color:var(--text-2);font-size:19px;line-height:1;}
+  .scr-title{font-size:17px;font-weight:640;}
+  .segtabs{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;margin-bottom:11px;}
+  .segtabs button{flex:1;appearance:none;background:none;border:0;color:var(--text-2);font:inherit;
+    font-size:13px;font-weight:500;padding:.6em 0;cursor:pointer;}
+  .segtabs button + button{border-left:1px solid var(--border);}
+  .segtabs button[aria-selected="true"]{background:var(--steel-tint);color:var(--text);}
+
+  .health{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:11px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto;}
+  .who{font-size:13px;color:var(--text-2);}
+  .who b{color:var(--text);font-weight:600;}
+  .rate{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--text-2);}
+
+  .callsign{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:11px;font-size:12.5px;color:var(--text-2);}
+  .callsign input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12.5px;padding:6px 8px;
+    text-transform:uppercase;letter-spacing:.06em;}
+  .callsign input:focus-visible{outline:2px solid var(--steel);outline-offset:-1px;}
+
+  .sec{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3);
+    margin:15px 0 8px;display:flex;align-items:center;gap:8px;}
+  .sec .count{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transform:none;font-size:11px;}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:11px;}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--text-2);
+    font:inherit;font-size:11.5px;padding:5px 10px;border-radius:999px;cursor:pointer;
+    display:flex;align-items:center;gap:5px;}
+  .chip[aria-pressed="true"]{background:var(--steel-tint);border-color:var(--steel);color:var(--steel);font-weight:600;}
+  .chip .n{font-family:var(--mono);font-size:10px;opacity:.75;}
+  .chip:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+
+  .hidden-line{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--amber);
+    background:var(--amber-tint);border:1px solid rgba(210,169,106,.3);border-radius:10px;
+    padding:8px 11px;margin-bottom:11px;}
+  .hidden-line button{margin-left:auto;appearance:none;background:none;border:1px solid var(--amber);
+    color:var(--amber);font:inherit;font-size:11px;padding:3px 9px;border-radius:7px;cursor:pointer;}
+
+  .row{display:flex;gap:9px;padding:9px 2px;border-bottom:1px solid var(--border);font-size:12.5px;}
+  .row:last-child{border-bottom:0;}
+  .call{font-family:var(--mono);color:var(--steel);flex:0 0 auto;font-size:12px;}
+  .call.mine{color:var(--green);}
+  .body{flex:1;min-width:0;}
+  .msg{color:var(--text);line-height:1.42;overflow-wrap:anywhere;}
+  .meta{color:var(--text-3);font-size:11px;margin-top:3px;font-family:var(--mono);}
+  .when{color:var(--text-3);font-size:11px;font-family:var(--mono);flex:0 0 auto;}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    padding:1px 5px;border-radius:5px;margin-right:6px;vertical-align:1px;font-weight:600;}
+  .b-rf{background:var(--green-tint);color:var(--green);}
+  .b-gated{background:var(--surface-2);color:var(--text-3);}
+  .b-mine{background:var(--steel-tint);color:var(--steel);}
+  .b-direct{background:var(--amber-tint);color:var(--amber);}
+
+  .station{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:11px;background:var(--surface);margin-bottom:7px;cursor:pointer;width:100%;
+    text-align:left;font:inherit;color:inherit;}
+  .station:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+  .station .sc{font-family:var(--mono);font-size:13px;color:var(--steel);}
+  .station .sc.mine{color:var(--green);}
+  .station .sm{font-size:11px;color:var(--text-3);margin-top:2px;}
+  .station .sn{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-2);
+    background:var(--surface-2);padding:2px 7px;border-radius:999px;}
+  .empty{color:var(--text-3);font-size:12.5px;line-height:1.55;padding:10px 2px;}
+  .feed{max-height:330px;overflow-y:auto;}
+  .backlink{appearance:none;background:none;border:0;color:var(--steel);font:inherit;font-size:12.5px;
+    padding:0 0 9px;cursor:pointer;}
+  .v{display:none;}
+  .v.on{display:block;}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>APRS filtering &mdash; three shapes</h1>
+  <p class="sub">Round 4 of the APRS GUI gate. <strong>Every packet below is real</strong> &mdash; 60 frames
+  from the owner&rsquo;s box on 144.390, Titusville FL. The raw log shows <code>4</code> stations;
+  unwrapping third&#8209;party frames reveals <code>15</code>. <strong>44 of 60 are gated from the
+  internet</strong> by one IGate.
+  <br><br>The question each shape answers: <strong>an IGate relays a message to RF only when the
+  addressee was heard nearby &mdash; so the owner&rsquo;s own mail arrives wrapped as third&#8209;party
+  noise.</strong> Hide the noise naively and you hide his messages.</p>
+
+  <div class="controls">
+    <div class="field">
+      <span class="lbl">Shape</span>
+      <div class="seg" role="tablist" id="shapes">
+        <button role="tab" aria-pressed="true" data-shape="A">A &middot; Provenance first</button>
+        <button role="tab" aria-pressed="false" data-shape="B">B &middot; For me first</button>
+        <button role="tab" aria-pressed="false" data-shape="C">C &middot; Stations first</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="lbl">Pretend my callsign is</span>
+      <div class="seg" role="group" id="whoami">
+        <button aria-pressed="true" data-me="">unset</button>
+        <button aria-pressed="false" data-me="KD4WLE">KD4WLE</button>
+        <button aria-pressed="false" data-me="N1KSC">N1KSC</button>
+      </div>
+    </div>
+  </div>
+  <p class="datanote">60 real packets &middot; 15 true originators &middot; 44 gated &middot; 16 heard on RF
+  &middot; captured 2026-09-03 00:0713 UTC</p>
+</header>
+
+<div class="stage">
+  <div class="phone" id="phone"></div>
+  <div class="note" id="note"></div>
+</div>
+</div>
+
+<script>
+const PACKETS = [{"t":"00:13:11","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030013z2837.27N/08049.42W_324/000g000t081r000p063P063h94b10152L000AmbientCWOP.com"},{"t":"00:13:10","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"t":"00:12:31","src":"N4TDX-15","dst":"BEACON","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida"},{"t":"00:12:28","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"<IGATE,MSG_CNT=102,LOC_CNT=111"},{"t":"00:12:22","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"t":"00:12:22","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"t":"00:12:08","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}WINLINK>APWL2K,TCPIP,N4TDX*:;N4TDX-8  *031211z2838.  NW08052.  Wa144.990MHz Winlink VARA FM Wide Gateway"},{"t":"00:11:55","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}WINLINK>APWL2K,TCPIP,N4TDX*:;N4TDX-10 *031211z2838.  NW08047.  Wa145.090MHz Winlink Packet Gateway"},{"t":"00:11:46","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#243,190,083,011,070,000,00000000"},{"t":"00:10:42","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281648z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"t":"00:10:10","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030010z2837.85N/08050.21W_142/008g008t082r000p020P000h86b10139 W4EDL WX Station"},{"t":"00:08:34","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030008z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"00:08:32","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030008z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"t":"00:08:30","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030008z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"t":"00:08:29","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030008z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"t":"00:08:15","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-C>APDG02,TCPIP,N4TDX*:!2835.05ND08049.00W&RNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"t":"00:08:06","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *030007z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"t":"00:06:42","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#242,190,083,011,070,000,00000000"},{"t":"00:04:24","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"t":"00:04:23","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:!2837.32N/08049.42W[/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"t":"00:04:22","src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":"T#292,53.2,-0.8,93,0,16,11000000"},{"t":"00:03:29","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030003z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"00:03:28","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030003z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"00:03:26","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030003z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"t":"00:03:25","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030003z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"t":"00:03:24","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030003z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"t":"00:03:00","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030002z2837.27N/08049.42W_317/002g002t082r000p063P063h94b10153L000AmbientCWOP.com"},{"t":"00:01:37","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#241,190,083,011,070,000,00000000"},{"t":"00:00:09","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030000z2837.85N/08050.21W_161/004g006t082r000p020P000h88b10136 W4EDL WX Station"},{"t":"23:58:24","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022358z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"23:58:22","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022358z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"23:58:21","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022358z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"t":"23:58:20","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022358z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"t":"23:58:19","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022358z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"t":"23:58:02","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"t":"23:58:01","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022357z2837.27N/08049.42W_012/000g000t082r000p063P063h94b10149L000AmbientCWOP.com"},{"t":"23:56:36","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#240,190,084,011,070,000,00000000"},{"t":"23:55:42","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281633z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"t":"23:55:06","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"t":"23:54:56","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *022354z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"t":"23:53:18","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022353z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"23:53:17","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022353z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"23:53:16","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022353z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"t":"23:53:14","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022353z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"t":"23:52:51","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022352z2837.27N/08049.42W_359/000g001t082r000p063P063h94b10149L000AmbientCWOP.com"},{"t":"23:52:22","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"t":"23:52:22","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"t":"23:51:43","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#239,190,086,011,070,000,00000000"},{"t":"23:50:57","src":"WD4VID-9","dst":"R8PW0T","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"`lF@qIhv/`\"3v}APMAIL WINLINK_4"},{"t":"23:50:41","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281628z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"t":"23:50:32","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT>APIN22,TCPIP,N4TDX*:!2835.81N/08050.93W?442.850 PL107.2 RX/TX  n4tdx.org"},{"t":"23:48:20","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022348z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"t":"23:48:18","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022348z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"t":"23:48:16","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022347z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"t":"23:48:15","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022347z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"t":"23:47:53","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022347z2837.27N/08049.42W_330/002g002t082r000p063P063h95b10151L001AmbientCWOP.com"},{"t":"23:47:44","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-C>APDG02,TCPIP,N4TDX*:!2835.05ND08049.00W&RNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"t":"23:47:38","src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *022347z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"t":"23:46:40","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#238,190,087,010,071,000,00000000"},{"t":"23:45:41","src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281622z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"}];
+
+/* ---------------------------------------------------------------------------
+   The classifier. This is the load-bearing piece of the whole feature, and the
+   mock runs the REAL one so the numbers on screen are not wishful.
+
+   A third-party frame wraps a complete packet: `}SRC>DEST,path:payload`. The
+   originator and the meaningful type both live INSIDE. Classify by the inner
+   DTI, attribute to the inner originator - otherwise 74% of this log is filed
+   under one IGate's name and typed as "third party", which is not a type.
+--------------------------------------------------------------------------- */
+function unwrap(info){
+  if(!info.startsWith('}')) return null;
+  const body = info.slice(1);
+  const colon = body.indexOf(':');            // header cannot contain ':'
+  if(colon < 0) return null;
+  const head = body.slice(0, colon), inner = body.slice(colon + 1);
+  const gt = head.indexOf('>');
+  if(gt < 0) return null;
+  const rest = head.slice(gt + 1).split(',');
+  return {
+    origin: head.slice(0, gt),
+    dest: rest[0] || '',
+    path: rest.slice(1),
+    info: inner,
+  };
+}
+
+/* Five buckets, not fifteen. APRS defines ~25 data-type identifiers; a phone
+   filter with 15 equal chips is worse than one with 5 that matter. Mic-E folds
+   into Position - a ham does not care that a D710 encodes differently. */
+const KIND = {
+  '!':'Position','=':'Position','/':'Position','@':'Position','`':'Position',"'":'Position','$':'Position',
+  ':':'Message',
+  '_':'Weather','#':'Weather','*':'Weather',
+  ';':'Object',')':'Object',
+};
+function kindOf(dti){ return KIND[dti] || 'Other'; }
+
+function classify(p){
+  const inner = unwrap(p.info);
+  const eff   = inner ? inner.info : p.info;
+  const path  = inner ? inner.path : (p.path||'').replace(/[{}]/g,'').split(',').filter(Boolean);
+  // Gated means: third-party AND the inner path carries TCPIP/TCPXX. A `}` frame
+  // WITHOUT TCPIP is an RF-to-RF relay - genuinely heard, and it belongs in the RF
+  // view. Filtering on the `}` character alone would wrongly discard those.
+  const gated = !!inner && path.some(e => /^TCP(IP|XX)/.test(e));
+  return {
+    ...p,
+    origin: inner ? inner.origin : p.src,
+    relay:  inner ? p.src : null,
+    dti:    eff.slice(0,1),
+    kind:   kindOf(eff.slice(0,1)),
+    text:   eff,
+    gated,
+    // No '*' anywhere in the path means nobody repeated it: we heard the
+    // originator's own transmission. The single most interesting fact a ham
+    // wants per packet, and it is already in the stored data.
+    direct: !gated && !path.some(e => e.includes('*')),
+  };
+}
+
+const ROWS = PACKETS.map(classify);
+const base = c => (c||'').split('-')[0].toUpperCase();
+let SHAPE = 'A', ME = '', STATION = null;
+let PROV = 'rf', KINDS = new Set(), SHOWALL = false;
+
+const isMine = r => ME && base(r.origin) === base(ME);
+function counts(list){
+  const m = {};
+  for(const r of list) m[r.kind] = (m[r.kind]||0)+1;
+  return m;
+}
+const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function visible(){
+  let list = ROWS;
+  if(SHAPE === 'A'){
+    if(PROV === 'rf')    list = list.filter(r => !r.gated || isMine(r));
+    if(PROV === 'gated') list = list.filter(r =>  r.gated);
+  }
+  if(KINDS.size) list = list.filter(r => KINDS.has(r.kind));
+  if(STATION)    list = list.filter(r => base(r.origin) === base(STATION));
+  return list;
+}
+
+function packetRow(r){
+  const badge = r.direct ? '<span class="badge b-direct">direct</span>'
+              : r.gated  ? '<span class="badge b-gated">gated</span>'
+                         : '<span class="badge b-rf">rf</span>';
+  const mine = isMine(r) ? '<span class="badge b-mine">mine</span>' : '';
+  const via  = r.relay ? ` &middot; via ${esc(r.relay)}` : '';
+  return `<div class="row">
+    <span class="call${isMine(r)?' mine':''}">${esc(r.origin)}</span>
+    <div class="body">
+      <div class="msg">${mine}${badge}${esc(r.text.slice(0,96))}</div>
+      <div class="meta">${r.kind}${via}</div>
+    </div>
+    <span class="when">${esc(r.t.slice(0,5))}</span>
+  </div>`;
+}
+
+function chipRow(list){
+  const c = counts(ROWS);
+  return `<div class="chips">` + ['Position','Message','Weather','Object','Other'].map(k =>
+    `<button class="chip" aria-pressed="${KINDS.has(k)}" data-kind="${k}">${k}<span class="n">${c[k]||0}</span></button>`
+  ).join('') + `</div>`;
+}
+
+function callsignField(){
+  return `<div class="callsign">
+    <span>My callsign</span>
+    <input id="mycall" value="${esc(ME)}" placeholder="not set" aria-label="My callsign">
+  </div>`;
+}
+
+function header(tab){
+  return `<div class="scr-top"><span class="chev">&lsaquo;</span><span class="scr-title">Radio</span></div>
+  <div class="segtabs" role="tablist">
+    <button role="tab" aria-selected="false">Tuner</button>
+    <button role="tab" aria-selected="true">APRS</button>
+    <button role="tab" aria-selected="false">Recordings</button>
+  </div>
+  <div class="health"><span class="dot"></span>
+    <span class="who"><b>144.390</b> &middot; heard 24s ago</span>
+    <span class="rate">130 pkt/hr</span></div>`;
+}
+
+/* ---- A - provenance first (Xastir's Mine / TNC / Net axis) ---- */
+function shapeA(){
+  const list = visible();
+  const hiddenCount = ROWS.filter(r => r.gated && !isMine(r)).length;
+  const seg = `<div class="segtabs" style="margin-bottom:10px">
+    ${['rf','gated','all'].map(p => `<button data-prov="${p}" aria-selected="${PROV===p}">
+      ${p==='rf'?'Heard on RF':p==='gated'?'Gated':'All'}</button>`).join('')}
+  </div>`;
+  const hidden = (PROV==='rf' && hiddenCount)
+    ? `<div class="hidden-line">${hiddenCount} gated packets hidden
+       <button data-prov="all">Show all</button></div>` : '';
+  const mineNote = (PROV==='rf' && ME)
+    ? `<div class="sec">Your traffic is never hidden by this filter</div>` : '';
+  return header() + callsignField() + seg + hidden + chipRow(list) + mineNote +
+    `<div class="sec">Heard<span class="count">${list.length} of ${ROWS.length}</span></div>
+     <div class="feed">${list.length ? list.map(packetRow).join('')
+      : '<p class="empty">Nothing matches. The channel is busy - this is a filter, not a dead radio.</p>'}</div>`;
+}
+
+/* ---- B - for me first ---- */
+function shapeB(){
+  const mine = ROWS.filter(isMine);
+  const rest = ROWS.filter(r => !isMine(r));
+  const shown = SHOWALL ? rest : rest.slice(0, 8);
+  const forMe = ME
+    ? (mine.length
+        ? mine.map(packetRow).join('')
+        : `<p class="empty"><b>Nothing heard for ${esc(ME)}.</b> This box only receives - a message
+           reaches you here only if a station in earshot transmitted it. An empty list means
+           not heard, never &ldquo;nobody wrote&rdquo;.</p>`)
+    : `<p class="empty">Set your callsign above and this becomes your own traffic and any message
+       addressed to you - pulled out of the channel regardless of how it arrived.</p>`;
+  return header() + callsignField() +
+    `<div class="sec">Heard for me<span class="count">${ME? mine.length : '&mdash;'}</span></div>
+     ${forMe}
+     <div class="sec">Channel<span class="count">${rest.length} packets</span></div>
+     ${chipRow(rest)}
+     <div class="feed">${shown.filter(r=>!KINDS.size||KINDS.has(r.kind)).map(packetRow).join('')}</div>
+     ${!SHOWALL && rest.length>8 ? `<button class="backlink" data-showall="1">Show all ${rest.length} &rsaquo;</button>`:''}`;
+}
+
+/* ---- C - stations first ---- */
+function shapeC(){
+  if(STATION){
+    const list = visible();
+    const s = ROWS.find(r => base(r.origin)===base(STATION));
+    return header() +
+      `<button class="backlink" data-back="1">&lsaquo; All stations</button>
+       <div class="sec">${esc(STATION)}<span class="count">${list.length} packets</span></div>
+       <div class="feed">${list.map(packetRow).join('')}</div>`;
+  }
+  const byStation = {};
+  for(const r of ROWS){
+    const k = r.origin;
+    (byStation[k] = byStation[k] || {n:0, last:r.t, gated:r.gated, kind:r.kind}).n++;
+  }
+  const stations = Object.entries(byStation).sort((a,b)=>b[1].n-a[1].n);
+  return header() + callsignField() +
+    `<div class="sec">Stations heard<span class="count">${stations.length} in 24 min</span></div>` +
+    stations.map(([call,d]) => `<button class="station" data-station="${esc(call)}">
+      <div><div class="sc${ME&&base(call)===base(ME)?' mine':''}">${esc(call)}</div>
+      <div class="sm">${d.gated?'gated':'heard on RF'} &middot; ${d.kind} &middot; last ${esc(d.last.slice(0,5))}</div></div>
+      <span class="sn">${d.n}</span></button>`).join('');
+}
+
+const NOTES = {
+A:`<h3>A &middot; Provenance first</h3>
+<p>The top control is <strong>where the packet came from</strong>, not what it is. Default is
+<strong>Heard on RF</strong>: what your antenna actually pulled out of the air.</p>
+<p>This is <strong>Xastir&rsquo;s axis</strong> &mdash; its filter menu leads with Mine / TNC / Net, and
+YAAC has the same idea as &ldquo;Packet Source&rdquo;. Every client that touches RF has this control;
+the two that only see the internet (aprs.fi, APRS&#8209;IS) do not. Three independent arrivals at
+the same answer is the strongest evidence available.</p>
+<h4>The trap it has to survive</h4>
+<p>Your mail arrives gated. So <strong>&ldquo;mine&rdquo; is exempt from the filter</strong> &mdash; set a
+callsign above and watch your traffic stay visible on the RF tab even though it came through
+N4TDX. Without that exemption this shape is actively harmful.</p>
+<h4>Why the hidden-count line</h4>
+<p>aprs.fi resets its filters every time the map opens, explicitly &ldquo;so that you&rsquo;ll see
+something if you get lost with the filters&rdquo;. A hidden filter on a receive&#8209;only log is
+indistinguishable from a dead antenna, and that misdiagnosis costs an afternoon. The count is
+always visible and always one tap from off.</p>
+<p class="cost"><b>Costs.</b> Two filter rows stacked above the feed on a phone. And provenance is
+a concept you have to learn once &mdash; &ldquo;gated&rdquo; is not obvious until someone explains that
+74% of your log never touched your antenna as original traffic.</p>`,
+
+B:`<h3>B &middot; For me first</h3>
+<p>Inverts the question. The screen opens with <strong>what has a human waiting on it</strong> &mdash;
+messages addressed to you, and your own stations getting out &mdash; and the channel becomes a
+secondary feed underneath, capped at 8 rows.</p>
+<p>Relevance beats provenance: you do not care whether your mail arrived via RF or via the IGate,
+only that it arrived. This shape never has to explain what &ldquo;gated&rdquo; means.</p>
+<h4>The honest empty state</h4>
+<p>Set a callsign and, on this real capture, <strong>you get nothing</strong> &mdash; which is the
+truth, and the reason the empty text is written the way it is. The box cannot transmit and cannot
+ack. A message reaches you only if a station in earshot sent it. <strong>&ldquo;Heard for me&rdquo;,
+never &ldquo;Inbox&rdquo;</strong>: an empty mailbox reads as &ldquo;nobody wrote&rdquo;, and that
+would be a lie.</p>
+<p class="cost"><b>Costs.</b> On a channel where nobody is messaging you, the top third of the
+screen is permanently empty &mdash; and an empty region trains you to scroll past it. It also
+hides the thing this box is genuinely good at: hearing a busy channel. Watching traffic is the
+common case; getting mail is the rare one.</p>`,
+
+C:`<h3>C &middot; Stations first</h3>
+<p>Makes the <strong>station</strong> the object, not the packet. The log becomes a roster of who is
+out there, with counts and last&#8209;heard; tap one to read its traffic.</p>
+<p>This is the shape that most directly answers the measured problem. The raw log shows
+<strong>4 callsigns</strong>; this shows the <strong>15 real ones</strong>, because the roster is
+built on the unwrapped originator. Filtering becomes navigation &mdash; no chips, no segments, no
+concepts to learn.</p>
+<h4>What it is quietly good at</h4>
+<p>Telemetry was 9% of the sample from essentially one station. In A and B that argues for a
+Telemetry chip nobody wants; here it is simply one row you never tap. <strong>The right control for
+a chatty station is muting the station, not filtering the type.</strong></p>
+<p class="cost"><b>Costs.</b> The chronological feed is the thing a ham actually watches &mdash;
+&ldquo;what just came in&rdquo; &mdash; and this buries it one tap down. It also answers
+&ldquo;who&rdquo; well and &ldquo;what kind&rdquo; badly: finding every weather report means
+visiting stations one at a time.</p>`
+};
+
+function render(){
+  document.getElementById('phone').innerHTML =
+    SHAPE==='A' ? shapeA() : SHAPE==='B' ? shapeB() : shapeC();
+  document.getElementById('note').innerHTML = NOTES[SHAPE];
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b) return;
+  if(b.dataset.shape){
+    SHAPE = b.dataset.shape; STATION = null;
+    document.querySelectorAll('#shapes button').forEach(x =>
+      x.setAttribute('aria-pressed', String(x.dataset.shape===SHAPE)));
+    return render();
+  }
+  if(b.dataset.me !== undefined && b.closest('#whoami')){
+    ME = b.dataset.me;
+    document.querySelectorAll('#whoami button').forEach(x =>
+      x.setAttribute('aria-pressed', String(x.dataset.me===ME)));
+    return render();
+  }
+  if(b.dataset.prov){ PROV = b.dataset.prov; return render(); }
+  if(b.dataset.kind){
+    KINDS.has(b.dataset.kind) ? KINDS.delete(b.dataset.kind) : KINDS.add(b.dataset.kind);
+    return render();
+  }
+  if(b.dataset.station){ STATION = b.dataset.station; return render(); }
+  if(b.dataset.back){ STATION = null; return render(); }
+  if(b.dataset.showall){ SHOWALL = true; return render(); }
+});
+document.addEventListener('input', e => {
+  if(e.target.id === 'mycall'){
+    ME = e.target.value.trim().toUpperCase();
+    const p = e.target.selectionStart;
+    render();
+    const f = document.getElementById('mycall');
+    if(f){ f.focus(); f.setSelectionRange(p,p); }
+  }
+});
+render();
+</script>

@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-02 · **Waves:** P0🟡(lease purpose landed; the PWA switch starts one — P1a/P3) P1🟡(built; on-box run against live traffic pending) P1a✅ P3✅ P4🟡(built; on-box run pending) P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -9,6 +9,11 @@ core the box already has, and **authenticated one-time commands** that can act.
 
 Companion to `SDR_RADIO_PLAN.md`, which owns the interactive tuner and the first
 dongle. This plan owns the second dongle and everything packet.
+
+Once P1 was on the air, what it recorded turned out not to look like the spec — 5 values
+in `source` over 15 actual stations, because 71% of the channel was one IGate relaying
+APRS-IS. Making the log readable in the face of that is its own plan:
+`APRS_FILTERING_PLAN.md`.
 
 ## Why this shape
 

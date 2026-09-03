@@ -11,12 +11,13 @@ covered through `tick()` against a faked sidecar.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
 import pytest
 
-from jbrain.sdr.aprslog import MAX_INFO, MAX_RAW, AprsLog, _parse
+from jbrain.sdr.aprslog import DERIVED, INSERT_SQL, MAX_INFO, MAX_RAW, AprsLog, _parse
 
 _ROW = {
     "source": "KE8XYZ-9",
@@ -34,6 +35,9 @@ def test_a_decoded_frame_becomes_a_row() -> None:
 
     assert row is not None
     assert row["heard_at"] == 1_760_000_000.5
+    # Exact rather than a subset, deliberately: this dict IS the INSERT's bind
+    # parameters, so a column added to the statement without a value here fails the
+    # test rather than every insert at runtime.
     assert {k: v for k, v in row.items() if k != "heard_at"} == {
         "hz": 144_390_000,
         "src": "KE8XYZ-9",
@@ -41,7 +45,28 @@ def test_a_decoded_frame_becomes_a_row() -> None:
         "path": ["WIDE1-1"],
         "info": "GATE 7K2M9",
         "raw": "deadbeef",
+        # Derived on the way in, so the log is filterable without waiting for a sweep.
+        "origin_call": "KE8XYZ-9",
+        "data_type": "G",  # `raw` here is not a frame, so the identifier comes from info
+        "kind": "Other",
+        "gated": False,
+        "heard_direct": True,
+        "addressee": None,
     }
+
+
+def test_the_insert_binds_every_column_the_parser_produces() -> None:
+    """The parsed row and the INSERT are one contract.
+
+    Both halves are hand-written strings; if they drift, every insert fails at runtime
+    inside a handler that swallows the error to a log line — the log silently stops
+    recording and nothing on the screen says so."""
+    row = _parse(json.dumps(_ROW))
+    assert row is not None
+
+    bound = set(re.findall(r":(\w+)", INSERT_SQL))
+
+    assert bound == set(row)
 
 
 @pytest.mark.parametrize(
@@ -216,3 +241,26 @@ def test_ordinary_text_survives_the_scrub() -> None:
 
     assert row is not None
     assert row["info"] == "Op Jeff\tmobile — 73"
+
+
+def test_a_classifier_that_blows_up_costs_a_label_and_never_a_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The derived columns are a cache over `raw`, and this is what that buys.
+
+    `classify` is total by construction, so reaching this is a bug in it — but the frame
+    was still heard, and losing it would be unrecoverable while losing its label costs a
+    re-run. The row goes in with NULLs and the sweep re-claims it later, which is the
+    same mechanism that upgrades the whole table when the classifier improves."""
+    monkeypatch.setattr(
+        "jbrain.sdr.aprslog.classify",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    row = _parse(json.dumps(_ROW))
+
+    assert row is not None
+    assert row["info"] == "GATE 7K2M9"  # the frame is intact
+    assert all(row[column] is None for column in DERIVED)
+    # And it still binds the full statement, so the insert itself does not fail.
+    assert set(re.findall(r":(\w+)", INSERT_SQL)) == set(row)

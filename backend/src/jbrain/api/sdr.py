@@ -30,7 +30,7 @@ import wave
 from typing import Annotated, Any, cast
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -39,7 +39,9 @@ from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
+from jbrain.sdr.stations import WINDOWS, StationsReader
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -143,6 +145,7 @@ async def listen(
 
 @router.get("/packets")
 async def packets(
+    request: Request,
     settings: SettingsDep,
     owner: OwnerDep,
     maker: SessionMakerDep,
@@ -166,6 +169,14 @@ async def packets(
         "reachable": health is not None,
         "logging": session.get("purpose") == APRS_PURPOSE,
         "frequency_hz": session.get("frequency_hz") if session else None,
+        # A third way this surface can lie, alongside `reachable` and `logging`: the radio
+        # decodes, the drain runs, and every row fails to store. `_store` swallows its
+        # errors so one bad frame cannot end the log, which means a broken INSERT — new
+        # code against an un-migrated schema is the real case — stops the log with no
+        # symptom at all. Non-zero here means packets are being HEARD and LOST.
+        "store_failures": getattr(
+            getattr(request.app.state, "aprs_logger", None), "store_failures", 0
+        ),
         "packets": [
             {
                 "heard_at": row["heard_at"].isoformat(),
@@ -261,6 +272,76 @@ async def commands(
             for row in tried
         ],
     }
+
+
+KINDS = ("Position", "Message", "Weather", "Object", "Other")
+_WINDOW_IDS = "|".join(WINDOWS)
+
+
+def _kinds(raw: str | None) -> list[str]:
+    """The chip selection, as a whitelist rather than as text.
+
+    Comma-separated because that is what a query string does naturally, and matched
+    against the five known buckets so nothing from the URL reaches the query as a value
+    the database has to be trusted to treat safely. An unknown chip is DROPPED rather
+    than 422'd: a stale PWA asking for a kind we have since renamed should show the
+    unfiltered roster, not an error page."""
+    if not raw:
+        return []
+    return [k for k in (part.strip() for part in raw.split(",")) if k in KINDS]
+
+
+@router.get("/stations")
+async def stations(
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+    window: Annotated[str, Query(pattern=f"^({_WINDOW_IDS})$")] = "1d",
+    kinds: Annotated[str | None, Query(max_length=120)] = None,
+    mine: Annotated[str | None, Query(max_length=16)] = None,
+) -> dict[str, Any]:
+    """Who has been heard, most recently heard first (`docs/mocks/aprs/e-stations.html`).
+
+    Grouped on the TRUE sender rather than the AX.25 source, which is the whole point:
+    measured on this box, `source` held 5 values while 15 stations were transmitting.
+
+    The `kinds` chips narrow the ROSTER — stations that send that kind at all — not the
+    packets. `kind_stations` therefore counts stations, because a chip reading 27 beside
+    a list of three stations would be lying about what pressing it does.
+
+    `mine` pins the owner's own stations to the top BEFORE the list is capped. The client
+    knows the callsign already (it is in Settings), so it travels as a parameter rather
+    than costing a settings read on every poll — and it is a sort key on the owner's own
+    request, not a permission."""
+    return await StationsReader(maker).roster(
+        ctx_for(owner), window=window, kinds=_kinds(kinds), mine=mine
+    )
+
+
+@router.get("/stations/{call}")
+async def station(
+    owner: OwnerDep,
+    maker: SessionMakerDep,
+    call: Annotated[str, Path(max_length=16)],
+    window: Annotated[str, Query(pattern=f"^({_WINDOW_IDS})$")] = "1d",
+    kinds: Annotated[str | None, Query(max_length=120)] = None,
+) -> dict[str, Any]:
+    """One station's traffic, newest first.
+
+    404 when nothing has ever been heard from that callsign — including when the sweep
+    has not classified it yet, which is why the roster reports `unclassified`."""
+    wanted = call.strip().upper()
+    # A callsign-shaped path or nothing. `Path(max_length=16)` alone lets a NUL through,
+    # which Postgres refuses in a text column — the query raises and the owner gets a 500
+    # from what is, at worst, a typo. Same guard the classifier files rows under, so a
+    # station that made it into the roster can always be opened.
+    if not looks_like_station(wanted):
+        raise HTTPException(status_code=404, detail="nothing heard from that station")
+    found = await StationsReader(maker).station(
+        ctx_for(owner), wanted, window=window, kinds=_kinds(kinds)
+    )
+    if found is None:
+        raise HTTPException(status_code=404, detail="nothing heard from that station")
+    return found
 
 
 @router.post("/aprs")
