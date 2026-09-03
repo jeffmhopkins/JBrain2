@@ -315,9 +315,36 @@ round asks what fills it, in the shipped layout, with layout held constant:
 | **J** | the Maidenhead grid, `EL98oo` | means nothing to a non-ham, and names a 3×4 mile box rather than a point |
 | **K** | range and bearing, `1.1 mi NW` | needs the box's own position, so it is really "K, falling back to H or J" |
 
-They compose: K falling back to J is one line of code and covers the unset case. Also open:
-whether altitude belongs on the row (interesting for a balloon, noise for a house at 0 ft),
-and the repeats question carried over from round 6.
+They compose: K falling back to J is one line of code and covers the unset case.
+
+**Round 8 — `../mocks/aprs/l-borrowed-structure.html` (open).** Three fixes and a survey.
+
+*The icons were fake in rounds 6 and 7* — a placeholder diamond stood in for every symbol,
+which is exactly why nothing looked different between a weather report and an object. Round
+8 pulls the real glyph data out of `aprsGlyphs.ts` and resolves it the way `aprsIcons.tsx`
+does, overlays included, so the phone, the thermometer and the `D`-overlaid D-STAR diamond
+are the drawings that actually ship. Symbol-less kinds take a house icon on the neutral tint,
+because that is OUR inference and not a claim the station made. *The frame is always visible*
+once a card is open, rather than behind a second disclosure.
+
+*What the other clients do*, and what is worth taking:
+
+- **aprs.fi** never shows a bare coordinate. Its info page gives the Maidenhead locator AND
+  nearby towns with distance and bearing from each — location relative to something a person
+  knows, and both forms rather than one. That is the strongest argument yet for round 7's
+  **K + J together**, and its panel order (where → when → motion → the station's own readings
+  → path) is now the expanded card's order. Not taken: town names need a gazetteer the box
+  does not carry, and distance from *your box* is the better anchor for a receiver log — it
+  states your own reception range, which is the question a heard log exists to answer.
+- **APRSdroid** puts the station's text in monospace under proportional metadata — the same
+  trust boundary this card draws with typeface, arrived at independently. Not taken: it shows
+  the body essentially raw, which is what the owner's screenshots argued against.
+- **None of them** surface how a packet reached you. They are internet-fed, so direct/gated/RF
+  is not a distinction they have to draw; on a box with an antenna it separates a station you
+  can work from one that arrived over the internet, so the badge stays.
+
+Still open: the location line (four options, live in the mock), whether altitude belongs on
+the row, and the repeats question carried from round 6.
 
 **The lesson worth keeping** is about mock data, not about rows: a sample drawn from real
 traffic is still a *sample*, and D's happened to exclude the empty case entirely. A mock
