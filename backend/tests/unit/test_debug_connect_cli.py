@@ -25,6 +25,12 @@ import pytest
 
 _SCRIPT = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "debug-connect.sh"
 
+# The smallest valid PNG: a 1x1 image, so the stub returns something a decoder accepts.
+_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
+    "DUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
 
 class _Handler(BaseHTTPRequestHandler):
     """Answers every path with the status encoded in it, so one server covers both cases."""
@@ -38,7 +44,15 @@ class _Handler(BaseHTTPRequestHandler):
             payload = {
                 "job_id": "sweep-1",
                 "status": "done",
-                "result": {"rows": 8, "busy": [], "floor_db": -98.0},
+                "result": {
+                    "rows": 8,
+                    "busy": [],
+                    "floor_db": -98.0,
+                    # A one-pixel PNG and two CSV lines stand in for the megabytes the
+                    # real route returns; what matters is that neither reaches stdout.
+                    "png_base64": _PNG_B64,
+                    "csv": "2026-09-03, 15:00:00, 144000000, 144005000, 5000, 12, -71.2\n",
+                },
             }
         elif status == 422:
             payload = {"detail": "unknown provider: local:x"}
@@ -127,6 +141,30 @@ def test_sweep_submits_and_then_polls_to_the_result(box: str) -> None:
     # What comes back is the RESULT, not the submission receipt.
     assert json.loads(result.stdout)["status"] == "done"
     assert json.loads(result.stdout)["result"]["rows"] == 8
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_sweep_writes_the_waterfall_and_the_raw_numbers_to_files(
+    box: str, tmp_path: pathlib.Path
+) -> None:
+    """The two big blobs go to disk; the reading goes to the screen.
+
+    A base64 PNG of a five-minute sweep is megabytes, and printed inline it buries the
+    eight lines that are the actual result. The CSV has to be RETRIEVABLE, though —
+    calibrating the detector against the detector's own summary is circular, and the
+    first pass of thresholds was set by eyeballing brightness off the PNG."""
+    result = _run(box, "sweep", "144", "148", "--seconds", "2", "--csv", "--out", str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)["result"]
+    # Named, not embedded.
+    assert "png_base64" not in doc
+    assert "csv" not in doc
+    png, csv = pathlib.Path(doc["png_file"]), pathlib.Path(doc["csv_file"])
+    assert png.read_bytes().startswith(b"\x89PNG")
+    assert "144000000" in csv.read_text()
+    # And the rest of the reading survived the split.
+    assert doc["rows"] == 8
 
 
 @pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")

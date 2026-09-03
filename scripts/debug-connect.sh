@@ -39,13 +39,18 @@
 #   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
 #   scripts/debug-connect.sh load gpt-oss-120b
 #   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
+#   scripts/debug-connect.sh sweep 144 148 --seconds 300 --channel-khz 15
+#     (TAKES THE RADIO; refused with 409 while APRS logs. Writes the waterfall PNG and,
+#      with --csv, rtl_power's raw numbers next to it; --out DIR picks where.)
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+  # The whole leading comment block, however long it grows — a hardcoded line range
+  # silently stopped showing the last seven verbs the day someone added an eighth.
+  awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
   exit "${1:-0}"
 }
 
@@ -110,6 +115,42 @@ _call() { # METHOD PATH [JSON_BODY]
     2*) return 0 ;;
     *)  echo >&2; echo "HTTP $code from $method $path" >&2; return 1 ;;
   esac
+}
+
+# Split a sweep result: the two big base64/text blobs go to files, the rest prints.
+# Falls back to plain pretty-printing for an error job or anything unparsable, so a
+# failed sweep still shows its message rather than a traceback about a missing key.
+_sweep_out() { # JOB OUTDIR — reads the job JSON on stdin
+  # `python3 -c`, not a heredoc: a heredoc IS the stdin of the script it feeds, so it
+  # would eat the piped JSON this exists to read.
+  JOB="$1" OUTDIR="$2" python3 -c '
+import base64, json, os, pathlib, sys
+
+raw = sys.stdin.read()
+try:
+    doc = json.loads(raw)
+except ValueError:
+    sys.stdout.write(raw)
+    raise SystemExit(0)
+result = doc.get("result")
+if not isinstance(result, dict):
+    print(json.dumps(doc, indent=2))
+    raise SystemExit(0)
+out = pathlib.Path(os.environ.get("OUTDIR") or ".")
+out.mkdir(parents=True, exist_ok=True)
+stem = "sweep-" + (os.environ.get("JOB") or "x")[:8]
+png = result.pop("png_base64", "") or ""
+if png:
+    path = out / (stem + ".png")
+    path.write_bytes(base64.b64decode(png))
+    result["png_file"] = str(path)
+csv = result.pop("csv", None)
+if csv:
+    path = out / (stem + ".csv")
+    path.write_text(csv)
+    result["csv_file"] = str(path)
+print(json.dumps(doc, indent=2))
+'
 }
 
 # Read the prompt/SQL text: remaining args if present, else stdin (for heredocs
@@ -413,25 +454,36 @@ PY
     [ -n "$G" ] && q="$q&gain=$G"
     _call POST "/api/debug/sdr/capture?$q" | _pp ;;
 
-  sweep) # <startMHz> <stopMHz> [--seconds N] [--bin-khz K] [--gain G] [--channel-khz C] [--no-wait]
+  sweep) # <startMHz> <stopMHz> [--seconds N] [--bin-khz K] [--gain G] [--channel-khz C]
+         #                        [--csv] [--out DIR] [--no-wait]
     # A band sweep. TAKES THE RADIO for the duration, as a real lease — so it is refused
     # with a 409 while APRS is logging, and the omnibox shows it while it runs.
+    #
+    # The PNG and (with --csv) rtl_power's raw numbers are written to files and the JSON
+    # names them, because both are megabytes of base64: printing them inline buries the
+    # eight lines that are the actual result, and a terminal is not a place to read a
+    # waterfall from. --csv exists because calibrating the detector against the
+    # detector's own summary is circular — the first round of thresholds was set by
+    # reading brightness off the PNG, which is not a measurement.
     a="${1:?usage: debug-connect.sh sweep <startMHz> <stopMHz> [--seconds N] [--bin-khz K]}"
     b="${2:?usage: debug-connect.sh sweep <startMHz> <stopMHz> [--seconds N] [--bin-khz K]}"
     shift 2
-    SECS=60; BINK=5; G=; CHK=0; WAIT=1
+    SECS=60; BINK=5; G=; CHK=0; WAIT=1; CSV=0; OUTDIR="${TMPDIR:-/tmp}"
     while [ $# -gt 0 ]; do
       case "$1" in
         --seconds) SECS="$2"; shift 2 ;;
         --bin-khz) BINK="$2"; shift 2 ;;
         --gain) G="$2"; shift 2 ;;
         --channel-khz) CHK="$2"; shift 2 ;;
+        --out) OUTDIR="$2"; shift 2 ;;
+        --csv) CSV=1; shift ;;
         --no-wait) WAIT=0; shift ;;
         *) shift ;;
       esac
     done
     q="start_mhz=$a&stop_mhz=$b&seconds=$SECS&bin_khz=$BINK&channel_khz=$CHK"
     [ -n "$G" ] && q="$q&gain=$G"
+    [ "$CSV" = "1" ] && q="$q&include_csv=true"
     JOB=$(_call POST "/api/debug/sdr/sweep?$q" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
     [ -n "$JOB" ] || { echo "no job id — the sweep was refused" >&2; exit 1; }
     if [ "$WAIT" = "0" ]; then echo "$JOB"; exit 0; fi
@@ -441,7 +493,7 @@ PY
     while [ "$(date +%s)" -lt "$DEADLINE" ]; do
       OUT=$(_call GET "/api/debug/jobs/$JOB")
       ST=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
-      [ "$ST" = "pending" ] || { printf '%s' "$OUT" | _pp; exit 0; }
+      [ "$ST" = "pending" ] || { printf '%s' "$OUT" | _sweep_out "$JOB" "$OUTDIR"; exit 0; }
       sleep 5
     done
     echo "sweep $JOB still pending after $((SECS + 90))s" >&2; exit 1 ;;
