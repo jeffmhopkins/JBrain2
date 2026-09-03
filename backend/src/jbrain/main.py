@@ -1261,6 +1261,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_url=settings.sdr_url,
             on_packet=_offer_to_commands,
         )
+        # Held on app.state so the APRS tab can read `store_failures`: a heard log that
+        # has silently stopped recording must be visible from the PWA, not only in a log
+        # file on a box the owner cannot open a terminal on.
+        app.state.aprs_logger = aprs_logger
         aprs_log_loop_task = asyncio.create_task(run_aprs_log_loop(aprs_logger))
         # The classifier sweep, on its own loop because the drain above stays attached for
         # as long as the owner is logging. It fills the derived columns on rows written

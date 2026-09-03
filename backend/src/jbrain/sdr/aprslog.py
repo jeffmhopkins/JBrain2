@@ -56,6 +56,17 @@ INSERT_SQL = (
     " :origin_call, :data_type, :kind, :gated, :heard_direct, :addressee)"
 )
 
+# The sweep's claim, as a constant so a test can EXPLAIN the STATEMENT THE SWEEP RUNS
+# rather than asserting that an index with a matching name happens to exist. Newest first
+# because the screen shows recent traffic: the owner watches the log become filterable
+# from the top down while an old backlog is still working.
+BACKFILL_CLAIM_SQL = (
+    "SELECT id, source AS src, info, path, raw"
+    " FROM app.aprs_packets WHERE kind IS NULL"
+    " ORDER BY heard_at DESC LIMIT :batch"
+    " FOR UPDATE SKIP LOCKED"
+)
+
 BACKFILL_SQL = (
     "UPDATE app.aprs_packets SET origin_call = :origin_call, data_type = :data_type,"
     " kind = :kind, gated = :gated, heard_direct = :heard_direct, addressee = :addressee"
@@ -80,6 +91,13 @@ class AprsLog:
     ) -> None:
         self._maker = maker
         self._base = base_url
+        # Consecutive failed stores. `_store` swallows its errors so one bad row cannot
+        # end the drain — correct for liveness, and it means a BROKEN INSERT stops the
+        # log silently: new code against an un-migrated schema fails every row, forever,
+        # with nothing on any screen saying so. The owner has no terminal (CLAUDE.md rule
+        # 10), so the count is surfaced on the APRS tab instead. Reset by any success,
+        # because the number that matters is "still failing", not "ever failed".
+        self.store_failures = 0
         # The command gate, when one is wired. It is a callback rather than an import so
         # the log keeps knowing nothing about tasks: storing what was heard and acting on
         # it are the plan's two trust tiers, and they stay separable here too.
@@ -145,40 +163,45 @@ class AprsLog:
         that has since been improved, are re-derived here rather than staying wrong.
         Re-deriving costs nothing but CPU because `raw` is stored losslessly.
 
-        Newest first because the screen shows recent traffic — the owner sees the log
-        become filterable from the top down while an old backlog is still working.
-
         Costs one index-only probe when there is nothing to do: the partial index this
         reads is EMPTY once the table is fully derived."""
         try:
             async with scoped_session(self._maker, SessionContext(principal_kind="owner")) as s:
                 rows = (
-                    await s.execute(
-                        text(
-                            "SELECT id, source AS src, info, path, raw"
-                            " FROM app.aprs_packets WHERE kind IS NULL"
-                            " ORDER BY heard_at DESC LIMIT :batch"
-                            " FOR UPDATE SKIP LOCKED"
-                        ),
-                        {"batch": max(1, int(batch))},
-                    )
+                    await s.execute(text(BACKFILL_CLAIM_SQL), {"batch": max(1, int(batch))})
                 ).mappings()
                 # A row the classifier cannot read is LEFT NULL rather than labelled
                 # wrong, which means a genuine classifier bug leaves that row for the
                 # next sweep. That is the intended failure: the batch shrinks to just
                 # the unreadable rows, they cost one bounded query per interval, and
                 # they heal the moment the classifier is fixed.
-                updates = [{"id": r["id"], **derive(dict(r))} for r in rows]
-                filled = [u for u in updates if u["kind"] is not None]
-                if filled:
-                    await s.execute(text(BACKFILL_SQL), filled)
+                filled = 0
+                for row in rows:
+                    values = derive(dict(row))
+                    if values["kind"] is None:
+                        continue
+                    # A SAVEPOINT per row, because the batch is claimed from a channel
+                    # anyone can transmit on. One row Postgres refuses — a byte that
+                    # cannot live in a text column is the reachable case — would
+                    # otherwise abort the whole statement, leave every row in the batch
+                    # unclassified, and be re-selected every minute forever. One bad
+                    # frame, once, would permanently stop the archive from ever being
+                    # classified, and the only trace is a log line the owner has no
+                    # terminal to read (CLAUDE.md rule 10).
+                    try:
+                        async with s.begin_nested():
+                            await s.execute(text(BACKFILL_SQL), {"id": row["id"], **values})
+                    except Exception as exc:  # noqa: BLE001 — one row, not the sweep
+                        log.warning("aprs_log.backfill_row_failed", error=repr(exc))
+                        continue
+                    filled += 1
                 await s.commit()
         except Exception as exc:  # noqa: BLE001 — the sweep retries; it never ends a loop
             log.warning("aprs_log.backfill_failed", error=repr(exc))
             return 0
         if filled:
-            log.info("aprs_log.backfilled", rows=len(filled))
-        return len(filled)
+            log.info("aprs_log.backfilled", rows=filled)
+        return filled
 
     async def _store(self, row: dict[str, Any]) -> None:
         try:
@@ -188,8 +211,10 @@ class AprsLog:
                     row,
                 )
                 await s.commit()
+            self.store_failures = 0
         except Exception as exc:  # noqa: BLE001 — one bad row must not end the log
-            log.warning("aprs_log.store_failed", error=repr(exc))
+            self.store_failures += 1
+            log.warning("aprs_log.store_failed", error=repr(exc), consecutive=self.store_failures)
 
 
 def _parse(line: str) -> dict[str, Any] | None:
@@ -256,12 +281,12 @@ def derive(row: dict[str, Any]) -> dict[str, Any]:
         log.warning("aprs_log.classify_failed", error=repr(exc))
         return dict.fromkeys(DERIVED)
     return {
-        "origin_call": heard.origin[:16],
-        "data_type": heard.dti[:8],
+        "origin_call": heard.origin,
+        "data_type": heard.dti,
         "kind": heard.kind,
         "gated": heard.gated,
         "heard_direct": heard.direct,
-        "addressee": heard.addressee[:16] if heard.addressee else None,
+        "addressee": heard.addressee,
     }
 
 

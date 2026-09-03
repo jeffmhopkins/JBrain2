@@ -16,6 +16,7 @@ Every frame quoted is real, captured on 144.390 near Titusville.
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -24,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import scoped_session
-from jbrain.sdr.aprslog import AprsLog, _parse
+from jbrain.sdr import aprslog as aprslog_module
+from jbrain.sdr.aprslog import BACKFILL_CLAIM_SQL, AprsLog, _parse
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -121,30 +123,103 @@ async def test_a_second_sweep_finds_nothing(maker: async_sessionmaker, clean: No
     assert await AprsLog(maker=maker, base_url="").backfill() == 0
 
 
-async def test_the_sweep_has_an_index_that_matches_its_own_predicate(
+async def test_the_sweep_actually_uses_its_partial_index(
     maker: async_sessionmaker, clean: None
 ) -> None:
     """Nothing to do is the steady state, and it has to stay cheap.
 
     The table grows by roughly 3,000 rows a day on the measured channel and the sweep
     asks its question every minute forever. The partial index is what keeps that free:
-    once every row is classified the index is EMPTY. The predicate here must match the
-    sweep's WHERE exactly — a partial index Postgres cannot prove applies is a partial
-    index it will not use."""
-    assert await AprsLog(maker=maker, base_url="").backfill() == 0
+    once every row is classified the index is EMPTY, so the sweep reads nothing at all.
 
+    This EXPLAINs the statement the sweep RUNS, not the index's own definition. An index
+    whose predicate merely looks similar is an index Postgres will decline to use, and a
+    test that greps `pg_indexes` would call that a pass."""
+    now = datetime.now(UTC)
     async with scoped_session(maker, OWNER) as s:
-        ddl = (
+        # Enough rows that a sequential scan is not simply the cheaper plan, with a few
+        # needles: the steady state this has to be free in is a big, fully-derived table.
+        await s.execute(
+            text(
+                "INSERT INTO app.aprs_packets (heard_at, frequency_hz, source,"
+                " destination, path, info, raw, origin_call, kind)"
+                " SELECT (:now)::timestamptz - (g || ' seconds')::interval, 144390000,"
+                " 'W4XYZ', 'APRS',"
+                " '{}', :info, '', 'W4XYZ', 'Position' FROM generate_series(1, 4000) g"
+            ),
+            {"now": now, "info": DIRECT},
+        )
+        await s.execute(_OLD_INSERT, _old_row("N4TDX", GATED, []))
+        await s.execute(text("ANALYZE app.aprs_packets"))
+        plan = " ".join(
+            (await s.execute(text("EXPLAIN " + BACKFILL_CLAIM_SQL), {"batch": 200})).scalars()
+        )
+
+    assert "aprs_packets_unclassified_idx" in plan, plan
+    assert "Seq Scan" not in plan, plan
+
+
+async def test_the_sweep_takes_the_newest_unclassified_rows_first(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """A backlog is worked from the top down, so the screen fills in where the owner is
+    looking. With a batch smaller than the backlog, the order is the whole behaviour."""
+    now = datetime.now(UTC)
+    async with scoped_session(maker, OWNER) as s:
+        for hours, info in ((5, GATED), (1, DIRECT)):
             await s.execute(
                 text(
-                    "SELECT indexdef FROM pg_indexes"
-                    " WHERE schemaname = 'app' AND indexname = 'aprs_packets_unclassified_idx'"
-                )
+                    "INSERT INTO app.aprs_packets (heard_at, frequency_hz, source,"
+                    " destination, path, info, raw) VALUES (:t, 144390000, :src,"
+                    " 'APRS', '{}', :info, '')"
+                ),
+                {"t": now - timedelta(hours=hours), "src": "N4TDX", "info": info},
             )
-        ).scalar_one()
+        await s.commit()
 
-    assert "(kind IS NULL)" in ddl
-    assert "heard_at DESC" in ddl
+    assert await AprsLog(maker=maker, base_url="").backfill(batch=1) == 1
+
+    classified = [r for r in await _rows(maker) if r["kind"]]
+    assert [r["origin_call"] for r in classified] == ["N4TDX"]  # the newer, direct one
+
+
+async def test_one_unstorable_row_does_not_stall_the_whole_sweep(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The batch is claimed from a channel anyone can transmit on.
+
+    Before the per-row savepoint, a single row Postgres refused aborted the entire
+    statement — every row in the batch stayed unclassified, and the sweep re-selected the
+    same poisoned batch every minute forever. One frame, once, would have permanently
+    stopped the archive from ever being classified, and the only trace is a log line on a
+    box the owner has no terminal for (CLAUDE.md rule 10)."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(_OLD_INSERT, _old_row("N4TDX", GATED, []))
+        await s.execute(_OLD_INSERT, _old_row("N1KSC-1", DIRECT, []))
+        await s.commit()
+
+    # A derivation that is fine in Python and unstorable in Postgres — the shape a
+    # crafted frame produces, forced here rather than hoping a byte still slips through.
+    real = aprslog_module.derive
+
+    def poison(row: dict[str, object]) -> dict[str, object]:
+        values = real(row)
+        if values["origin_call"] == "N1MPR-C":
+            values["data_type"] = "\x00"
+        return values
+
+    monkeypatched = pytest.MonkeyPatch()
+    monkeypatched.setattr(aprslog_module, "derive", poison)
+    try:
+        filled = await AprsLog(maker=maker, base_url="").backfill()
+    finally:
+        monkeypatched.undo()
+
+    # The good row landed; only the bad one was left behind.
+    assert filled == 1
+    by_kind = {r["origin_call"]: r["kind"] for r in await _rows(maker)}
+    assert by_kind["N1KSC-1"] == "Position"
+    assert by_kind[None] is None  # the poisoned row is still waiting, not lost
 
 
 async def test_a_freshly_stored_frame_is_already_classified(
@@ -221,3 +296,41 @@ async def test_a_row_the_classifier_cannot_read_is_left_for_the_next_sweep(
     monkeypatch.undo()
     assert await AprsLog(maker=maker, base_url="").backfill() == 1
     assert (await _rows(maker))[0]["origin_call"] == "N1MPR-C"
+
+
+async def test_a_frame_whose_info_begins_with_a_nul_is_still_recorded(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The whole promise, at the one point it was breakable.
+
+    `raw` is stored losslessly so a classifier bug costs a re-run and never a row — but
+    `data_type` is the one derived column read from `raw` rather than from the scrubbed
+    `info`, so a frame whose info field simply starts with 0x00 used to carry that byte
+    into a text column. Postgres refuses it, `_store` swallows the error to keep the
+    drain alive, and the packet vanishes with the `raw` that would have recovered it.
+    A NUL-first info field is a perfectly forwardable AX.25 UI frame: this is reachable
+    by anyone with a transmitter."""
+    dest = bytes([ord(c) << 1 for c in "APRS  "]) + bytes([0x60])
+    src = bytes([ord(c) << 1 for c in "N0CALL"]) + bytes([0x61])
+    frame = dest + src + bytes([0x03, 0xF0]) + b"\x00!2835.13N/08039.04W-"
+    row = _parse(
+        json.dumps(
+            {
+                "source": "N0CALL",
+                "destination": "APRS",
+                "path": [],
+                # As the scrub leaves it: the NUL is gone from `info` and still in `raw`.
+                "info": "!2835.13N/08039.04W-",
+                "raw": frame.hex(),
+                "frequency_hz": 144_390_000,
+                "heard_at": 1_760_000_000.5,
+            }
+        )
+    )
+    assert row is not None
+
+    await AprsLog(maker=maker, base_url="")._store(row)
+
+    (stored,) = await _rows(maker)
+    assert stored["origin_call"] == "N0CALL"
+    assert stored["kind"] == "Position"

@@ -23,7 +23,7 @@ from jbrain.sdr.classify import (
     base_call,
     classify,
     dti_from_raw,
-    is_path_flag,
+    looks_like_station,
 )
 
 # Real, from the box. An IGate relaying a D-STAR gateway's position onto RF.
@@ -185,13 +185,37 @@ def test_a_bare_callsign_covers_every_ssid() -> None:
     assert base_call("") == ""
 
 
-def test_path_directives_are_not_stations() -> None:
-    # TCPIP and friends occupy a path slot but are not callsigns. They must never reach a
-    # "digipeated by" line or a station roster.
-    assert is_path_flag("TCPIP") and is_path_flag("TCPIP*")
-    assert is_path_flag("NOGATE") and is_path_flag("RFONLY")
-    assert not is_path_flag("WIDE1-1")
-    assert not is_path_flag("N4TDX*")
+def test_an_invented_origin_does_not_become_a_station() -> None:
+    """The roster is one row per origin, and the origin comes out of ATTACKER TEXT.
+
+    The third-party header is plain characters inside `info` — not an AX.25 address the
+    sidecar validated — so one transmitter emitting invented origins puts invented
+    stations on the owner's screen. The `*` case is the sharp one: it shadows a real
+    callsign, so the roster shows `N4TDX` and `N4TDX*` and the owner cannot tell which
+    is theirs."""
+    shadow = classify("N4TDX", "}N4TDX*>APRS,TCPIP:!2835.13N/08039.04W-", [])
+    assert shadow.origin == "N4TDX"  # filed under the station that actually transmitted
+
+    assert classify("N4TDX", "}<b>x</b>>APRS:!2835.13N", []).origin == "N4TDX"
+    assert classify("N4TDX", "}A B C>APRS:!2835.13N", []).origin == "N4TDX"
+
+
+def test_the_shapes_a_real_station_takes_are_all_accepted() -> None:
+    """Looser than AX.25 on purpose — every one of these is in the owner's own capture.
+
+    A third-party header comes from APRS-IS, which carries things AX.25 addresses
+    cannot: alphanumeric SSIDs from D-STAR and DMR gateways, and service names longer
+    than six characters. Rejecting them would delete real stations from the roster to
+    stop a hypothetical one."""
+    assert looks_like_station("N1KSC-1")
+    assert looks_like_station("K4JTT-D")  # a D-STAR gateway
+    assert looks_like_station("WINLINK")  # seven characters, and a real originator
+    assert looks_like_station("N4TDX-15")
+
+    assert not looks_like_station("")
+    assert not looks_like_station("N4TDX*")
+    assert not looks_like_station("TOOLONGCALL-1")
+    assert not looks_like_station("N4TDX-")
 
 
 def test_hostile_input_never_raises() -> None:
@@ -199,3 +223,129 @@ def test_hostile_input_never_raises() -> None:
     # a frame it cannot understand becomes Other, never an exception that ends the drain.
     for bad in ["", "}", "}>", "}A>B", "}A>B:", ":", ":::", "\x00", "}" * 50]:
         assert classify("W4XYZ", bad, []).kind in {POSITION, MESSAGE, WEATHER, OBJECT, OTHER}
+
+
+def test_a_nul_data_type_never_reaches_a_text_column() -> None:
+    """One crafted byte would otherwise delete the whole row, `raw` included.
+
+    A frame whose info field begins with 0x00 is a perfectly forwardable AX.25 UI frame,
+    so this is reachable by anyone with a transmitter. Postgres rejects a NUL in a text
+    column, and the insert path swallows its own errors so the log keeps running — so
+    the packet would vanish with nothing recording that it had ever arrived. That
+    directly contradicts the property the whole design leans on: a wrong derivation must
+    cost a re-run, never a row."""
+    dest = bytes([ord(c) << 1 for c in "APRS  "]) + bytes([0x60])
+    src = bytes([ord(c) << 1 for c in "N0CALL"]) + bytes([0x61])
+    # The scrub has already removed the NUL from `info` on its way to the database; it
+    # survives only in `raw`, which is exactly where the classifier reads from.
+    hostile = (dest + src + bytes([0x03, 0xF0]) + b"\x00hello").hex()
+
+    # The identifier falls back to the scrubbed info rather than carrying the NUL out.
+    assert dti_from_raw(hostile, "hello") == "h"
+    # Nothing below space survives except the two legitimate Mic-E identifiers — and the
+    # test that matters is the general one, since a text column rejects every control
+    # byte's worth of trouble, not only NUL.
+    for byte in range(0x20):
+        char = chr(byte)
+        got = classify("W4XYZ", char + "payload", []).dti
+        assert got in {"", "\x1c", "\x1d"} or got >= " ", hex(byte)
+
+
+def test_the_data_type_is_recovered_through_classify_not_only_directly() -> None:
+    """The module's headline justification, tested where it is actually used.
+
+    `classify` preferring `raw` over `info` is the reason `raw` is read at all. Testing
+    `dti_from_raw` alone leaves that preference untested — the whole recovery can be
+    deleted from `classify` and a suite that only exercises the helper stays green."""
+    dest = bytes([ord(c) << 1 for c in "APRS  "]) + bytes([0x60])
+    src = bytes([ord(c) << 1 for c in "N0CALL"]) + bytes([0x61])
+    mic_e = (dest + src + bytes([0x03, 0xF0]) + b"\x1c'l!{" + b'/]"4}').hex()
+
+    # `info` has been scrubbed of the identifier; `raw` still has it.
+    heard = classify("N0CALL", "'l!{/]\"4}", [], mic_e)
+
+    assert heard.dti == "\x1c"
+    assert heard.kind == POSITION
+
+
+def test_the_shortest_real_info_field_is_read_and_the_empty_one_does_not_raise() -> None:
+    """The two frames either side of the bounds check, which is one byte wide.
+
+    A frame with exactly ONE info byte is the whole Mic-E recovery in miniature: read it
+    and the identifier survives the scrub, refuse it by one and the frame falls back to
+    the scrubbed `info` that no longer has it. A frame with NO info field at all is the
+    other side, and must fall back rather than raise inside the drain."""
+    dest = bytes([ord(c) << 1 for c in "APRS  "]) + bytes([0x60])
+    src = bytes([ord(c) << 1 for c in "N0CALL"]) + bytes([0x61])
+    header = dest + src + bytes([0x03, 0xF0])
+
+    assert dti_from_raw((header + b"\x1c").hex(), "'scrubbed") == "\x1c"
+    assert dti_from_raw(header.hex(), "@x") == "@"
+
+
+def test_a_relayed_frame_is_never_direct_however_clean_its_inner_path() -> None:
+    """`direct` is about how WE received it, so it is read from the OUTER path.
+
+    The inner path of a relayed frame describes somebody else's hop and is
+    attacker-authored besides. A transmitter that writes a clean inner path would
+    otherwise get a free "heard direct" attribution for any callsign it likes — which is
+    exactly the claim a signal-strength reading would hang off."""
+    clean_inner = "}W4ABC>APRS,WIDE1-1:!2835.06N/08048.98W-hi"
+
+    assert classify("N4TDX", clean_inner, ["WIDE2-1*"]).direct is False
+    # ...including when it is not gated at all.
+    assert classify("N4TDX", clean_inner, []).gated is False
+    assert classify("N4TDX", clean_inner, []).direct is False
+
+
+def test_tcpxx_gates_a_frame_as_surely_as_tcpip() -> None:
+    # TCPXX is the unverified-login form. A station gated through it was on the internet
+    # just as much, and testing only TCPIP leaves half the rule unpinned.
+    tcpxx = "}W4ABC>APRS,TCPXX,N4TDX*:!2835.06N/08048.98W-"
+
+    assert classify("N4TDX", tcpxx, []).gated is True
+
+
+def test_a_compressed_weather_station_is_still_weather() -> None:
+    """APRS101 ch.9 defines a SECOND position layout, and it is shorter.
+
+    Compressed: identifier, symbol TABLE, 4 of latitude, 4 of longitude, then the symbol
+    CODE — offset 10, not 19. Reading the uncompressed offset misses every compressed
+    weather station, which is the exact failure `_is_weather_position` exists to prevent,
+    and can find a `_` in a comment and invent one that is not there."""
+    assert classify("W4XYZ", "!/5L!!<*e7_7P[", []).kind == WEATHER
+    # A compressed position whose COMMENT contains an underscore is not weather.
+    assert classify("W4XYZ", "!/5L!!<*e7>7P[ wx_data here", []).kind == POSITION
+    # And the timestamped compressed form puts the code seven characters later.
+    assert classify("W4XYZ", "@092345z/5L!!<*e7_7P[", []).kind == WEATHER
+
+
+def test_every_uncompressed_position_identifier_reads_its_symbol_code() -> None:
+    # Four identifiers carry a position, and testing one leaves the other three free to
+    # be dropped from the table without a test noticing.
+    for dti, stamp in (("!", ""), ("=", ""), ("/", "092345z"), ("@", "092345z")):
+        wx = f"{dti}{stamp}2837.27N/08049.42W_317/002g002t082"
+        assert classify("W4XYZ", wx, []).kind == WEATHER, dti
+        pos = f"{dti}{stamp}2837.27N/08049.42W-no weather_here"
+        assert classify("W4XYZ", pos, []).kind == POSITION, dti
+
+
+def test_the_deferred_position_window_is_where_the_spec_puts_it() -> None:
+    # APRS101 ch.5 allows up to 40 characters of leading text. The boundary is the
+    # assertion — two cases at 12 and 45 leave every value between 13 and 44 passing.
+    assert classify("W4XYZ", "x" * 39 + "!2835.13N", []).kind == POSITION
+    assert classify("W4XYZ", "x" * 40 + "!2835.13N", []).kind == OTHER
+
+
+def test_nesting_stops_at_the_second_wrapper_and_says_it_did_not_read_further() -> None:
+    """Bounded on attacker-supplied text, and honest about where it stopped.
+
+    Past the cap the payload is still a wrapper, and `}` is a transport that the module
+    is explicit is never a type. Storing it as the data type would be recording a
+    reading we never took."""
+    nested = "}A-1>B,TCPIP,C*:}D-1>E,TCPIP,F*:}G-1>H,TCPIP,I*:!2835.13N/08039.04W-"
+
+    heard = classify("RELAY", nested, [])
+
+    assert heard.origin == "D-1"  # exactly two wrappers opened, not three
+    assert heard.dti == ""

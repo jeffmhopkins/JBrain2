@@ -144,6 +144,7 @@ async def listen(
 
 @router.get("/packets")
 async def packets(
+    request: Request,
     settings: SettingsDep,
     owner: OwnerDep,
     maker: SessionMakerDep,
@@ -167,6 +168,14 @@ async def packets(
         "reachable": health is not None,
         "logging": session.get("purpose") == APRS_PURPOSE,
         "frequency_hz": session.get("frequency_hz") if session else None,
+        # A third way this surface can lie, alongside `reachable` and `logging`: the radio
+        # decodes, the drain runs, and every row fails to store. `_store` swallows its
+        # errors so one bad frame cannot end the log, which means a broken INSERT — new
+        # code against an un-migrated schema is the real case — stops the log with no
+        # symptom at all. Non-zero here means packets are being HEARD and LOST.
+        "store_failures": getattr(
+            getattr(request.app.state, "aprs_logger", None), "store_failures", 0
+        ),
         "packets": [
             {
                 "heard_at": row["heard_at"].isoformat(),

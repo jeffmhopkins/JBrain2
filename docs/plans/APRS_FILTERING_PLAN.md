@@ -95,6 +95,51 @@ with `-q hd`, and `h` is precisely "suppress the Heard line with the audio level
 Measured with `-q d`: `N0CALL-9 audio level = 50(14/14)   _||||||__`. It is a flag
 choice and a parse, not an SDR limitation.
 
+## What the independent review found
+
+F1 was reviewed by someone who did not build it (`PROCESS.md`: the reviewer is never the
+builder), and it found four real defects. Recorded because each one is a lesson about
+where this kind of code goes wrong, not just a bug that got fixed.
+
+**A single crafted byte destroyed the row it was supposed to protect.** `data_type` is
+the one derived column read from `raw` rather than from the scrubbed `info` — and a frame
+whose info field begins with 0x00 is a perfectly forwardable AX.25 UI frame. Postgres
+rejects a NUL in a text column, `_store` swallows its errors to keep the drain alive, and
+the packet vanished along with the `raw` that was the whole reason a wrong derivation was
+supposed to be safe. Worse, one such row in the backfill's `executemany` aborted the
+entire batch, which the sweep then re-claimed every minute **forever** — one transmission
+would have permanently stopped the archive from ever being classified. Fixed by a storable-
+identifier guard and a SAVEPOINT per row. Both halves have a test that fails without them.
+
+**Relayed frames were reported `heard_direct`.** `direct` was computed from the *inner*
+path — somebody else's hop, written by whoever composed the frame — so a transmitter that
+wrote a clean inner path earned a "heard direct" attribution for any callsign it chose. It
+now reads the outer path, which is the only evidence about how *we* received it.
+
+**Compressed position reports were read at uncompressed offsets.** APRS101 ch.9 defines a
+second, shorter layout; the symbol code sits at offset 10, not 19. Every compressed weather
+station was invisible to the Weather filter — the exact failure the symbol check exists to
+prevent — and an underscore in a comment could invent one that was not there.
+
+**An origin was never checked for being callsign-shaped.** The third-party header is plain
+text inside `info`, so one transmitter could mint a hundred stations on the roster,
+including `N4TDX*` sitting next to the real `N4TDX`. The check is deliberately looser than
+AX.25 — `K4JTT-D`, `N1MPR-C` and `WINLINK` are all real originators in the owner's own
+capture, and rejecting them to stop a hypothetical attacker would delete real stations.
+
+The review also confirmed the things worth confirming: the command gate is untouched and
+consumes nothing classifier-derived; the sweep runs under RLS; the partial index is really
+used; and migration 0185 is rolling-restart safe. Its mutation matrix showed ten surviving
+mutants, including one that deleted the entire raw-recovery feature — the module's headline
+justification — with the suite still green. All ten are killed now, verified by applying
+each mutation and watching a test fail.
+
+One review point is a **gap this wave closes rather than a defect**: `_store` swallowing
+its errors means new code against an un-migrated schema stops the log with no symptom at
+all. `GET /sdr/packets` now reports `store_failures`, a third way this surface can lie
+alongside `reachable` and `logging` — packets being heard and lost is now visible from the
+PWA rather than only in a log file on a box with no terminal.
+
 ## What is stored, honestly
 
 The owner asked whether everything heard is being saved so jerv can be pointed at it
