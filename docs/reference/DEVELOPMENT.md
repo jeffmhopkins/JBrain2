@@ -131,6 +131,49 @@ and phase-aware (skips parts of the project that don't exist yet).
   test suite must skip those cleanly (pytest marker + docker availability
   check), never fail or hang.
 
+## Verifying a change — run what CI runs, from where CI runs it
+
+**This repo is five separately-configured packages, not one.** Each has its own
+toolchain config and its own CI job with its own `working-directory`. Running `ruff` or
+`pyright` from the wrong directory silently checks the wrong thing — or nothing — and
+the failure surfaces in CI rather than locally.
+
+| Package | CI runs, from that directory | ruff line length |
+|---|---|---|
+| `backend/` | `ruff check .` · `ruff format --check .` · `pyright` · `pytest` | **100** |
+| `supervisor/` | `ruff check .` · `ruff format --check .` · `pyright` · `pytest` | 88 (ruff default) |
+| `jcode/` | `ruff check .` · `ruff format --check .` · `pyright` · `pytest` | 88 (ruff default) |
+| `jlaunch/` | `ruff check .` · `ruff format --check .` · `pyright` · `pytest` | 88 (ruff default) |
+| `frontend/` | `npm run lint` · `npm run typecheck` · `npm run test` | — |
+
+Two consequences that have each cost a session real time:
+
+1. **`backend/` is 100 columns and every other Python package is 88.** Formatting a
+   supervisor file with the backend's config, or vice versa, reformats lines CI will
+   then reject — and the diff buries the actual change.
+2. **`deploy/sdr/` is linted and typechecked by NOTHING.** It is *tested* by
+   `supervisor`'s pytest, which loads `deploy/sdr/*.py` by path (that is why
+   `deploy/sdr/**` is in the `changes` filter for the supervisor job), but no job runs
+   ruff or pyright over it, and `supervisor`'s pyright `include` is `["src", "tests"]`.
+   So: run ruff there only with an explicit `--line-length` matching the file's existing
+   style, or not at all. Running it bare applies ruff's 88-column default to files
+   hand-kept near 96 and produces a large unrelated reformat.
+
+**A change to `deploy/sdr/` is verified by `supervisor`'s suite**, and typechecking it
+needs `pyright` pointed at it explicitly — its modules import each other by bare name
+(they share one WORKDIR in the image), so a bare run reports unresolved imports rather
+than real errors.
+
+### Shell discipline
+
+`cd` inside a compound command persists into later commands in this environment. A
+sequence that ends `cd backend && …` leaves the next command in `backend/`, where a
+relative path silently resolves somewhere else or fails. **Prefer an absolute path or a
+subshell** — `(cd supervisor && uv run pytest)` — over a bare `cd`. A session lost real
+work to this: relative-path edits during a mutation-testing run landed in the wrong
+place, several mutations stayed live in the file, and the "clean" backup was then taken
+*from the already-mutated file*.
+
 ## Testing requirements
 
 ### Tooling

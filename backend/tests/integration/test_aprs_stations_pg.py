@@ -485,3 +485,63 @@ async def test_a_station_that_never_said_what_it_measures_shows_raw_numbers(
     (packet,) = detail["packets"]
     assert dict(packet["fields"])["Channel 1"] == "053"
     assert any("has not published" in w for w in packet["warnings"])
+
+
+async def test_the_roster_says_what_each_station_last_sent(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The roster answered who and how many but never WHAT.
+
+    A LATERAL per row rather than another `array_agg(...)[1]`, so this is the test that a
+    join returning the WRONG station's frame would fail — the failure mode that matters,
+    because a plausible reading under the wrong callsign is invisible on screen."""
+    await _seed(
+        maker,
+        [
+            ("N4TDX", GATED_WEATHER, 0.3),
+            ("K4KSC-1", DIRECT_POSITION, 0.2),
+            ("N4TDX", GATED_WEATHER, 0.1),
+        ],
+    )
+
+    roster = await StationsReader(maker).roster(OWNER, window="1d")
+
+    by_call = {s["call"]: s for s in roster["stations"]}
+    assert "82 °F" in by_call["KD4WLE"]["last_summary"]
+    assert by_call["KD4WLE"]["last_kind"] == "Weather"
+    assert by_call["KD4WLE"]["last_symbol"] == "/_"
+    # The OTHER station's newest frame, not the busiest one's.
+    assert by_call["K4KSC-1"]["last_kind"] == "Position"
+    assert by_call["K4KSC-1"]["last_symbol"] != "/_"
+
+
+async def test_the_roster_row_carries_the_NEWEST_frame_not_the_first(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    # "Last heard" and "what it last said" have to name the same packet, or the row's
+    # time and its reading describe two different moments.
+    await _seed(
+        maker,
+        [
+            ("WX", "@031030z2837.27N/08049.42W_338/000g000t070", 0.4),
+            ("WX", "@031430z2837.27N/08049.42W_338/000g000t088", 0.1),
+        ],
+    )
+
+    roster = await StationsReader(maker).roster(OWNER, window="1d")
+
+    (station,) = [s for s in roster["stations"] if s["call"] == "WX"]
+    assert "88 °F" in station["last_summary"]
+    assert "70 °F" not in station["last_summary"]
+
+
+async def test_a_station_with_one_unreadable_frame_still_lists(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    # The decode is per row on READ, and `explain` is total — but a roster that raised on
+    # one bad frame would lose the whole list, not one line.
+    await _seed(maker, [("ODD", "\x01\x02 not a frame", 0.1)])
+
+    roster = await StationsReader(maker).roster(OWNER, window="1d")
+
+    assert any(s["call"] == "ODD" for s in roster["stations"])

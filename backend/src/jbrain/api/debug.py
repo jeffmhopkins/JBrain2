@@ -73,6 +73,7 @@ from jbrain.llm.types import (
 from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
+from jbrain.sdr.sweep import channels, reduce_csv, waterfall_png
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -950,6 +951,33 @@ async def vision(body: VisionRequest, request: Request, _p: DebugDep) -> VisionO
 # never held open across the wire. The store is in-memory and best-effort — a
 # process restart drops in-flight jobs, which is fine for a debug aid.
 
+
+class SweepBinOut(BaseModel):
+    hz: int
+    mhz: float
+    floor_db: float
+    peak_db: float
+    occupancy: float
+
+
+class SdrSweepOut(BaseModel):
+    start_hz: int
+    stop_hz: int
+    bin_hz: int
+    seconds: float
+    rows: int
+    bins: int
+    floor_db: float
+    complete: bool
+    busy: list[SweepBinOut]
+    steady: list[SweepBinOut]
+    """Bins that never went quiet. A spur and a carrier held for the whole window are
+    the same measurement, so these are reported rather than dropped — naming which is
+    which needs a second look at the channel, not more arithmetic on this sweep."""
+    png_base64: str
+    csv_chars: int
+
+
 _MAX_JOBS = 256
 
 
@@ -960,7 +988,7 @@ class JobSubmitOut(BaseModel):
 class JobStatusOut(BaseModel):
     job_id: str
     status: str  # "pending" | "done" | "error"
-    result: CompleteOut | None = None
+    result: CompleteOut | SdrSweepOut | None = None
     error: str | None = None
 
 
@@ -1601,6 +1629,122 @@ class SdrCaptureOut(BaseModel):
     transcript: str | None
     transcript_error: str | None
     device_log: str
+
+
+@router.post("/sdr/sweep", status_code=202)
+async def sdr_sweep(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    start_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    stop_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
+    seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
+    gain: Annotated[str | None, Query()] = None,
+    channel_khz: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+) -> JobSubmitOut:
+    """Sweep a band and report what was busy in it. A BACKGROUND JOB — poll `/jobs/{id}`.
+
+    Deferred because it has to be: a five-minute sweep will not survive the tunnel's
+    ~100 s edge limit, and this is the shape `/complete-async` already established for
+    exactly that reason.
+
+    A measuring instrument, not an agent tool, and deliberately so. The detector's
+    thresholds have to be calibrated against THIS box's noise floor and spur pattern —
+    per-box facts nothing documents, which is the same reason `/grounding` exists for a
+    vision model's coordinate base. Guessing them would ship a detector that reports the
+    tuner's own artifacts as stations. Once a few real sweeps say what the floor looks
+    like, the agent-facing tool can be designed against measurements instead of hopes.
+
+    **This takes the radio** for the length of the sweep, as a real lease with the
+    omnibox icon and Release — so it is refused, with a 409, while APRS is logging.
+
+    `channel_khz` folds the busy bins onto a channel grid (15 for 2m, 25 for 70cm): a
+    16 kHz signal in a 5 kHz sweep lights several adjacent bins and reads as several
+    stations otherwise. Zero leaves the bins alone."""
+    request.state.debug_detail = f"sdr sweep {start_mhz}-{stop_mhz} MHz for {seconds}s"
+    if not settings.sdr_url:
+        raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
+
+    body = {
+        "start_hz": int(round(start_mhz * 1_000_000)),
+        "stop_hz": int(round(stop_mhz * 1_000_000)),
+        "bin_hz": int(round(bin_khz * 1_000)),
+        "seconds": seconds,
+        "gain": gain,
+    }
+    jobs = request.app.state.debug_jobs
+    tasks = request.app.state.debug_job_tasks
+    job_id = uuid.uuid4().hex
+    jobs[job_id] = {"status": "pending", "result": None, "error": None}
+    if len(jobs) > _MAX_JOBS:
+        for jid, val in list(jobs.items())[:-_MAX_JOBS]:
+            if val["status"] != "pending":
+                jobs.pop(jid, None)
+
+    base_url = cast(str, settings.sdr_url)
+
+    async def _run() -> None:
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=seconds + 120) as client:
+                resp = await client.post("/sweep", json=body)
+            if resp.status_code != 200:
+                detail = resp.json().get("detail", "") if resp.content else resp.text[:400]
+                jobs[job_id] = {
+                    "status": "error",
+                    "result": None,
+                    "error": f"sdr sidecar: {detail}",
+                }
+                return
+            payload = resp.json()
+            csv_text = str(payload.get("csv") or "")
+            reduced = reduce_csv(csv_text)
+            busy = channels(reduced, int(round(channel_khz * 1_000)))
+            out = SdrSweepOut(
+                start_hz=reduced.start_hz or body["start_hz"],
+                stop_hz=reduced.stop_hz or body["stop_hz"],
+                bin_hz=reduced.bin_hz or body["bin_hz"],
+                seconds=seconds,
+                rows=reduced.rows,
+                bins=reduced.bins,
+                floor_db=reduced.floor_db,
+                complete=bool(payload.get("complete")),
+                busy=[
+                    SweepBinOut(
+                        hz=b.hz,
+                        mhz=round(b.hz / 1_000_000, 6),
+                        floor_db=b.floor_db,
+                        peak_db=b.peak_db,
+                        occupancy=b.occupancy,
+                    )
+                    # Bounded: a noisy sweep can light hundreds of bins, and a debug
+                    # response that large is one nobody reads.
+                    for b in busy[:200]
+                ],
+                steady=[
+                    SweepBinOut(
+                        hz=b.hz,
+                        mhz=round(b.hz / 1_000_000, 6),
+                        floor_db=b.floor_db,
+                        peak_db=b.peak_db,
+                        occupancy=b.occupancy,
+                    )
+                    for b in reduced.steady[:64]
+                ],
+                png_base64=base64.b64encode(waterfall_png(reduced)).decode(),
+                # The CSV is NOT returned. It is the largest part of the payload and the
+                # part a reader cannot use; the size is here so a caller can tell an
+                # empty sweep from an unparsed one.
+                csv_chars=len(csv_text),
+            )
+            jobs[job_id] = {"status": "done", "result": out, "error": None}
+        except Exception as exc:  # noqa: BLE001 - a debug job must surface, not crash the loop
+            jobs[job_id] = {"status": "error", "result": None, "error": str(exc)}
+
+    task = asyncio.create_task(_run())
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    return JobSubmitOut(job_id=job_id)
 
 
 @router.post("/sdr/capture")

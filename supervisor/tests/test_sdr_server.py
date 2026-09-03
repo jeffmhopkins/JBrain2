@@ -45,7 +45,12 @@ class _FakeProc:
         self.stdin = _Sink()
         self.returncode = None
 
-    def poll(self) -> None:
+    def poll(self) -> int | None:
+        """Alive until killed, which models rtl_fm streaming.
+
+        Typed as `int | None` like `Popen.poll` rather than the bare `None` this used
+        to return: a sweep is the one process that ENDS on its own, so `_DeadProc`
+        below has a real exit code to report."""
         return None
 
     def terminate(self) -> None:
@@ -297,3 +302,164 @@ def _ndjson(base: str, count: int) -> list[dict[str, Any]]:
             if len(out) >= count:
                 return out
     return out
+
+
+class _DeadProc(_FakeProc):
+    """A sweep that has already finished — rtl_power's exit timer fired.
+
+    Real `_FakeProc` stays alive until killed, which models rtl_fm streaming. A sweep
+    is the opposite and ENDS on its own, so `/sweep` would wait out its deadline."""
+
+    def poll(self) -> int | None:
+        return 0
+
+
+def _sweeping(monkeypatch, csv: str = "") -> None:
+    monkeypatch.setattr(listen.subprocess, "Popen", _DeadProc)
+    if csv:
+        real_open = open
+
+        def fake_open(path, *a, **k):
+            if str(path).startswith("/tmp/sweep-"):
+                import io as _io
+
+                return _io.StringIO(csv)
+            return real_open(path, *a, **k)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+
+
+def test_a_sweep_holds_the_radio_and_returns_its_rows(
+    sidecar: str, monkeypatch
+) -> None:
+    """The happy path, and the shape the api reduces.
+
+    The sidecar hands back the CSV rtl_power wrote and does NOT draw it: the image work
+    needs a plotting stack, `Dockerfile.sdr` forbids the pip install that would bring
+    one, and the api already carries Pillow."""
+    _sweeping(
+        monkeypatch, csv="2026-09-03, 15:00:00, 144000000, 144005000, 5000, 12, -71.2\n"
+    )
+
+    status, body = _post(
+        sidecar,
+        "/sweep",
+        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 2},
+    )
+
+    assert status == 200
+    assert "-71.2" in body["csv"]
+    assert (body["start_hz"], body["stop_hz"]) == (144_000_000, 148_000_000)
+    assert body["complete"] is True
+
+
+def test_a_sweep_frees_the_radio_when_it_ends(sidecar: str, monkeypatch) -> None:
+    # A survey ends on its own, so nothing should be holding the tuner afterwards — the
+    # next listener must not find the radio busy with a sweep that already finished.
+    _sweeping(monkeypatch)
+
+    _post(
+        sidecar,
+        "/sweep",
+        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 2},
+    )
+
+    status, _ = _post(
+        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
+    )
+    assert status == 200
+
+
+def test_a_sweep_is_refused_while_APRS_is_logging(sidecar: str, monkeypatch) -> None:
+    """The refusal that matters, over HTTP this time.
+
+    A sweep is the job an agent asks for on its own initiative, so the dangerous case is
+    a week-old APRS session being taken away to look at 70cm."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs"},
+    )
+    _sweeping(monkeypatch)
+
+    status, body = _post(
+        sidecar,
+        "/sweep",
+        {"start_hz": 440_000_000, "stop_hz": 450_000_000, "seconds": 2},
+    )
+
+    assert status == 409
+    assert "logging APRS" in body["detail"]
+
+
+def test_a_sweep_outside_the_tuner_s_range_is_refused(
+    sidecar: str, monkeypatch
+) -> None:
+    # The hardware tunes 24 MHz-1.766 GHz. Asking below it would sweep nothing and
+    # report the band as quiet.
+    _sweeping(monkeypatch)
+
+    status, body = _post(
+        sidecar, "/sweep", {"start_hz": 1_000_000, "stop_hz": 2_000_000}
+    )
+
+    assert status == 400
+    assert "range" in body["detail"]
+
+
+def test_a_sweep_with_no_range_is_refused_rather_than_run(
+    sidecar: str, monkeypatch
+) -> None:
+    _sweeping(monkeypatch)
+
+    status, _ = _post(
+        sidecar, "/sweep", {"start_hz": 144_000_000, "stop_hz": 144_000_000}
+    )
+
+    assert status == 400
+
+
+def test_a_range_whose_EDGE_is_out_of_band_is_refused(
+    sidecar: str, monkeypatch
+) -> None:
+    """The check `listen.py` cannot make for us.
+
+    It validates the CENTRE frequency, which for 20-70 MHz is 45 MHz — comfortably in
+    band, while the sweep's low edge is below anything the tuner can reach. A sweep that
+    silently started 4 MHz above where it was asked to would report the bottom of the
+    range as quiet."""
+    _sweeping(monkeypatch)
+
+    status, body = _post(
+        sidecar, "/sweep", {"start_hz": 20_000_000, "stop_hz": 70_000_000}
+    )
+
+    assert status == 400
+    assert "range" in body["detail"]
+
+
+def test_a_sweep_that_overruns_is_stopped_and_says_so(
+    sidecar: str, monkeypatch
+) -> None:
+    """rtl_power's exit timer is what normally ends a sweep, so this is the case where
+    it did NOT: the process is still running when the deadline passes.
+
+    Two things have to happen. The radio is released — otherwise a wedged rtl_power
+    holds the tuner until somebody notices — and the result says it is partial, because
+    a short window reported as a full one reads as a quiet band."""
+    monkeypatch.setattr(server, "SWEEP_SETTLE_S", 0)
+    # The default fake stays alive until killed, which IS the overrun case.
+
+    status, body = _post(
+        sidecar,
+        "/sweep",
+        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 1},
+    )
+
+    assert status == 200
+    assert body["complete"] is False
+    # And the next caller finds the radio free.
+    free, _ = _post(
+        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
+    )
+    assert free == 200

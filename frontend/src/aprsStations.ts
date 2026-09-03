@@ -41,6 +41,17 @@ export interface AprsStation {
   gated: boolean;
   /** Who put it on the air, when that is not who wrote it. */
   relay: string | null;
+  /** What this station LAST SAID, decoded — the roster used to answer who and how many
+   *  but never what, so a screen of weather stations showed four callsigns and no
+   *  weather. Same decode as a packet row, from the newest frame in the window. */
+  last_kind: string;
+  last_summary: string;
+  last_fields: [string, string][];
+  last_comment: string;
+  last_symbol: string;
+  last_lat: number | null;
+  last_lon: number | null;
+  last_level: number | null;
 }
 
 export interface AprsRoster {

@@ -687,3 +687,139 @@ class TestAudioLevelPairing:
 
         assert "h" not in flag
         assert "d" in flag
+
+
+class TestSurveySession:
+    """A band sweep, as a real lease.
+
+    The point of making this a `Session` at all is that the omnibox icon, the elapsed
+    clock, Release and the 409 semantics ALL read the session's existence. A sweep that
+    held the radio outside the lease would be a radio held by something invisible —
+    which is the failure `PURPOSE_APRS` was introduced to prevent, one purpose earlier.
+    """
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        tuner = listen.Tuner()
+        yield tuner
+        tuner.stop()
+
+    def _sweep(self) -> Any:
+        return listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300)
+
+    def test_a_sweep_holds_the_lease_like_any_other_session(self, tuner) -> None:
+        info = tuner.start(
+            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+
+        assert info.as_dict()["purpose"] == listen.PURPOSE_SURVEY
+        # The thing the omnibox reads. Without it there is no icon, and
+        # nothing for Release to target.
+        assert tuner.current() is not None
+
+    def test_a_second_session_is_refused_while_a_sweep_runs(self, tuner) -> None:
+        tuner.start(
+            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+
+        with pytest.raises(listen.SdrBusy) as refused:
+            tuner.start(99_300_000, "wbfm", None)
+
+        # And it says WHICH job has it, because the answer the owner needs differs.
+        assert "sweeping" in str(refused.value)
+
+    def test_a_sweep_cannot_STEAL_the_radio_from_APRS_logging(self, tuner) -> None:
+        """The direction that matters, and the one the first test missed.
+
+        A sweep is the newest purpose and the one an agent asks for on its own
+        initiative, so the dangerous case is not "a sweep is running, refuse a listen" —
+        it is "the box has been logging APRS for a week, and something quietly takes the
+        radio away to look at 70cm". The lease has to refuse a survey exactly as it
+        refuses everything else."""
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+        with pytest.raises(listen.SdrBusy) as refused:
+            tuner.start(
+                440_000_000,
+                "fm",
+                None,
+                purpose=listen.PURPOSE_SURVEY,
+                sweep=self._sweep(),
+            )
+
+        assert "logging APRS" in str(refused.value)
+        # And the APRS session is untouched: a refused sweep must not disturb it.
+        held = tuner.current()
+        assert held is not None and held.purpose == listen.PURPOSE_APRS
+
+    def test_the_owner_can_take_the_radio_back_mid_sweep(self, tuner) -> None:
+        tuner.start(
+            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+
+        assert tuner.stop() is True
+        assert tuner.current() is None
+
+    def test_a_survey_without_a_range_is_refused(self, tuner) -> None:
+        # A survey session with no sweep would start rtl_power with no arguments and
+        # hold the radio doing nothing.
+        with pytest.raises(listen.SdrError):
+            tuner.start(144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY)
+
+    def test_the_command_is_rtl_power_over_the_range(self, monkeypatch) -> None:
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        session = listen.Session(
+            144_000_000, "fm", "30", purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+        try:
+            cmd = session._sweep_cmd()
+        finally:
+            session.stop()
+
+        assert cmd[0] == "rtl_power"
+        assert "144000000:148000000:5000" in cmd
+        assert cmd[cmd.index("-e") + 1] == "300"
+        # Fixed gain, never AGC: a floor that moves with the signal makes dB values
+        # incomparable across the sweep, and every threshold built on them drifts.
+        assert cmd[cmd.index("-g") + 1] == "30"
+
+
+class TestSweepBounds:
+    """The caps, enforced where the sweep is BUILT rather than at each caller.
+
+    An agent will ask for an hour, because nothing in its training says the radio is
+    scarce — and a survey holds the tuner for every second of it."""
+
+    def test_a_long_request_is_clamped_not_refused(self) -> None:
+        # Clamped rather than refused: the caller gets a shorter sweep and a result,
+        # instead of an error and nothing.
+        assert (
+            listen.Sweep.of(144e6, 148e6, 5000, 99_999).seconds
+            == listen.MAX_SWEEP_SECONDS
+        )
+
+    def test_a_bin_finer_than_the_hardware_can_mean_is_clamped(self) -> None:
+        assert listen.Sweep.of(144e6, 148e6, 1, 60).bin_hz == listen.MIN_SWEEP_BIN_HZ
+
+    def test_a_span_wider_than_the_cap_is_refused(self) -> None:
+        # Refused rather than clamped: silently sweeping a different range than asked
+        # for would report the wrong band as quiet.
+        with pytest.raises(listen.SdrError):
+            listen.Sweep.of(24e6, 1_700e6, 25_000, 60)
+
+    def test_a_backwards_range_is_read_the_right_way_round(self) -> None:
+        swept = listen.Sweep.of(148_000_000, 144_000_000, 5_000, 60)
+
+        assert (swept.start_hz, swept.stop_hz) == (144_000_000, 148_000_000)
+
+    def test_a_single_frequency_is_not_a_sweep(self) -> None:
+        with pytest.raises(listen.SdrError):
+            listen.Sweep.of(144_390_000, 144_390_000, 5_000, 60)
+
+    def test_the_centre_is_what_the_omnibox_shows(self) -> None:
+        # A range has no one frequency, and showing the low edge would read as a tuner
+        # parked somewhere it is not.
+        assert listen.Sweep.of(144e6, 148e6, 5000, 60).centre_hz == 146_000_000

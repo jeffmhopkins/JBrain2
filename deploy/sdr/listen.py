@@ -56,7 +56,14 @@ import packets
 
 MIN_HZ = 24_000_000
 MAX_HZ = 1_766_000_000
-MODES = {"fm": "fm", "nfm": "fm", "wbfm": "wbfm", "am": "am", "usb": "usb", "lsb": "lsb"}
+MODES = {
+    "fm": "fm",
+    "nfm": "fm",
+    "wbfm": "wbfm",
+    "am": "am",
+    "usb": "usb",
+    "lsb": "lsb",
+}
 
 # What a session is HOLDING the tuner for. One radio, so the lease is the only arbiter,
 # and which job holds it decides what the loser is told: "release it to listen" and
@@ -64,17 +71,36 @@ MODES = {"fm": "fm", "nfm": "fm", "wbfm": "wbfm", "am": "am", "usb": "usb", "lsb
 # `listen` produces audio; `aprs` decodes packets and produces none.
 PURPOSE_LISTEN = "listen"
 PURPOSE_APRS = "aprs"
+# A band sweep. Unlike the other two it ENDS ON ITS OWN when rtl_power's exit timer
+# fires, so the radio frees itself — but it is still a real Session while it runs, which
+# is the whole point: the omnibox icon, the elapsed clock, Release and the 409 all read
+# the session's existence, so a sweep that held the radio outside the lease would be a
+# radio held by something invisible.
+PURPOSE_SURVEY = "survey"
 # Every purpose maps to the phrase a refusal uses. `.get` rather than `[]` because this
 # is read while holding the tuner lock on the contention path: a purpose added without a
 # label would otherwise raise KeyError there and turn a 409 into a 500 with a traceback.
-PURPOSE_LABEL = {PURPOSE_LISTEN: "listening", PURPOSE_APRS: "logging APRS"}
+PURPOSE_LABEL = {
+    PURPOSE_LISTEN: "listening",
+    PURPOSE_APRS: "logging APRS",
+    PURPOSE_SURVEY: "sweeping the band",
+}
 PURPOSES = tuple(PURPOSE_LABEL)
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
+# Sweep bounds, enforced HERE rather than at the caller. An agent will ask for an hour,
+# because nothing in its training says the radio is scarce — and a survey holds the
+# tuner for every second of it.
+MAX_SWEEP_SECONDS = 900
+MIN_SWEEP_BIN_HZ = 100
+MAX_SWEEP_BIN_HZ = 100_000
+MAX_SWEEP_SPAN_HZ = 60_000_000
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
-AUDIO_BITRATE = "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
+AUDIO_BITRATE = (
+    "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
+)
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
 AUDIO_CONTENT_TYPE = "audio/mpeg"
 _CHUNK = 4096
@@ -130,7 +156,9 @@ def validate(frequency_hz: int, mode: str) -> str:
     actually opens the device: a bound that lives only in the caller is a bound that
     a second caller does not have."""
     if not MIN_HZ <= frequency_hz <= MAX_HZ:
-        raise SdrError(f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)")
+        raise SdrError(
+            f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+        )
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
@@ -159,6 +187,42 @@ def _peak(pcm: bytes) -> float:
     if not count:
         return 0.0
     return max(abs(v) for v in struct.unpack(f"<{count}h", pcm[: count * 2])) / 32768.0
+
+
+@dataclass(frozen=True, slots=True)
+class Sweep:
+    """What a survey session is tuned to — a RANGE, where the others have a frequency.
+
+    Clamped on construction rather than trusted, so every path that builds one gets the
+    same bounds and no caller can widen them."""
+
+    start_hz: int
+    stop_hz: int
+    bin_hz: int
+    seconds: float
+
+    @staticmethod
+    def of(start_hz: int, stop_hz: int, bin_hz: int, seconds: float) -> "Sweep":
+        start, stop = int(min(start_hz, stop_hz)), int(max(start_hz, stop_hz))
+        if stop - start > MAX_SWEEP_SPAN_HZ:
+            raise SdrError(
+                f"a {(stop - start) / 1e6:.1f} MHz span is wider than this sweep allows "
+                f"({MAX_SWEEP_SPAN_HZ / 1e6:.0f} MHz)"
+            )
+        if stop - start < 1:
+            raise SdrError("a sweep needs a range, not a single frequency")
+        return Sweep(
+            start_hz=start,
+            stop_hz=stop,
+            bin_hz=max(MIN_SWEEP_BIN_HZ, min(int(bin_hz), MAX_SWEEP_BIN_HZ)),
+            seconds=max(1.0, min(float(seconds), MAX_SWEEP_SECONDS)),
+        )
+
+    @property
+    def centre_hz(self) -> int:
+        """What the omnibox shows. A range has no one frequency, and showing the low
+        edge would read as a tuner parked somewhere it is not."""
+        return (self.start_hz + self.stop_hz) // 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,11 +261,18 @@ class Session:
         mode: str,
         gain: str | None,
         purpose: str = PURPOSE_LISTEN,
+        sweep: Sweep | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
+        self.sweep = sweep
+        # The CSV rtl_power writes, read back once the sweep ends. Per session, so a
+        # retune or a restart cannot serve a stale file.
+        self.sweep_csv = f"/tmp/sweep-{self.id}.csv" if sweep else ""  # noqa: S108
         self.started_at = time.time()
         self.gain = gain
         self.purpose = validate_purpose(purpose)
+        if self.purpose == PURPOSE_SURVEY and sweep is None:
+            raise SdrError("a survey session needs a sweep range")
         if self.purpose == PURPOSE_APRS and mode.lower() not in APRS_MODES:
             raise SdrError(
                 f"APRS is 1200-baud AFSK on narrowband FM; {mode!r} cannot decode it "
@@ -264,6 +335,9 @@ class Session:
         if self.purpose == PURPOSE_APRS:
             self._start_packet_pipeline()
             return
+        if self.purpose == PURPOSE_SURVEY:
+            self._start_sweep_pipeline()
+            return
         if shutil.which("rtl_fm") is None:
             raise SdrError("rtl_fm is not installed in this image")
         if shutil.which("ffmpeg") is None:
@@ -287,6 +361,56 @@ class Session:
             threading.Thread(target=self._pump_audio, daemon=True),
             threading.Thread(target=self._drain_tuner_log, daemon=True),
         ]
+        for thread in self._threads:
+            thread.start()
+
+    def _sweep_cmd(self) -> list[str]:
+        """`rtl_power` over the range, one CSV row per bin-block per interval.
+
+        rtl_power ONLY, and deliberately: `Dockerfile.sdr` states the rule outright —
+        "No pip install at all: a radio sidecar that pulled a Python SDR stack would be
+        carrying a second implementation of what librtlsdr already does" — and rtl_power
+        is already in the image beside rtl_fm. The rewrites (`rtl_power_fftw`,
+        `soapy_power`) are a source build and a pip install respectively, and neither
+        has earned that against a measured shortfall yet.
+
+        `-i 1` is one second per row. Finer buys time resolution the retune cannot
+        honour anyway: a span wider than the tuner's ~2.4 MHz is swept in hops, so the
+        real revisit interval is one second times the number of hops."""
+        assert self.sweep is not None
+        span = self.sweep
+        cmd = [
+            "rtl_power",
+            "-f", f"{span.start_hz}:{span.stop_hz}:{span.bin_hz}",
+            "-i", "1",
+            "-e", str(int(span.seconds)),
+        ]  # fmt: skip
+        if self.gain:
+            # Fixed gain, never AGC. A floor that moves with the signal makes dB values
+            # incomparable across the sweep, and every threshold built on them drifts.
+            cmd += ["-g", str(self.gain)]
+        return [*cmd, self.sweep_csv]
+
+    def _start_sweep_pipeline(self) -> None:
+        """One process, no threads, and it ENDS ON ITS OWN.
+
+        rtl_power's `-e` is an exit timer, so the sweep terminates and `alive` goes
+        false, at which point the tuner reaps the session and the radio frees itself.
+        That is the difference from the other two purposes, and it is why a survey needs
+        no stop from the caller — though Release still works, because the session is
+        real and the Tuner owns it."""
+        if shutil.which("rtl_power") is None:
+            raise SdrError("rtl_power is not installed in this image")
+        try:
+            self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                self._sweep_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        except OSError as exc:
+            self._kill()
+            raise SdrError(f"could not start the sweep: {exc}") from exc
+        # Its stderr carries the retune plan and any device error, and an unread pipe
+        # blocks the writer at 64 KB — the same hazard `_drain_tuner_log` exists for.
+        self._threads = [threading.Thread(target=self._drain_tuner_log, daemon=True)]
         for thread in self._threads:
             thread.start()
 
@@ -388,7 +512,9 @@ KISSPORT {self.kiss_port}
             if self._stopping:
                 return
             try:
-                sock = socket.create_connection(("127.0.0.1", self.kiss_port), timeout=2)
+                sock = socket.create_connection(
+                    ("127.0.0.1", self.kiss_port), timeout=2
+                )
                 break
             except OSError:
                 time.sleep(0.25)
@@ -773,6 +899,7 @@ class Tuner:
         mode: str,
         gain: str | None,
         purpose: str = PURPOSE_LISTEN,
+        sweep: Sweep | None = None,
     ) -> SessionInfo:
         validate_purpose(purpose)
         with self._lock:
@@ -781,7 +908,7 @@ class Tuner:
                 raise SdrBusy(f"the radio is already {held}")
             if self._session is not None:
                 self._session.stop()  # a dead session must not block a new one
-            self._session = Session(frequency_hz, mode, gain, purpose)
+            self._session = Session(frequency_hz, mode, gain, purpose, sweep)
             return self._session.info()
 
     def current(self) -> Session | None:

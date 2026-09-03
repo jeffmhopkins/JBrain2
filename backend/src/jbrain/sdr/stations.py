@@ -131,6 +131,32 @@ def _packet(row: Any, definitions: dict[str, list[str]]) -> dict[str, Any]:
     }
 
 
+def _latest(row: Any) -> dict[str, Any]:
+    """The newest frame from one station, as the roster row needs it.
+
+    Deliberately the SAME `classify` + `explain` pair the packet row uses. The roster
+    could have got away with the stored `info`, but then the list and the detail would
+    describe the same frame two different ways, and the list's version would be the
+    unreadable one."""
+    heard = classify(
+        str(row["n_source"] or ""),
+        str(row["info"] or ""),
+        list(row["path"] or []),
+        str(row["raw"] or ""),
+    )
+    said = explain(heard)
+    return {
+        "last_kind": kind_label(heard),
+        "last_summary": said.summary,
+        "last_fields": [[f.name, f.value] for f in said.fields],
+        "last_comment": said.comment,
+        "last_symbol": said.symbol,
+        "last_lat": said.latitude,
+        "last_lon": said.longitude,
+        "last_level": row["audio_level"],
+    }
+
+
 def _relay(source: str, origin: str) -> str | None:
     """Who put it on the air, when that is not who wrote it."""
     return source if source and source != origin else None
@@ -227,6 +253,8 @@ class StationsReader:
                 (
                     await s.execute(
                         text(
+                            "SELECT g.*, n.info, n.raw, n.path, n.source AS n_source,"
+                            " n.audio_level FROM ("
                             "SELECT origin_call AS call, count(*) AS packets,"
                             " max(heard_at) AS last_heard_at,"
                             " array_agg(DISTINCT kind) AS kinds,"
@@ -235,6 +263,19 @@ class StationsReader:
                             f" FROM app.aprs_packets WHERE {_CLASSIFIED} AND {predicate}"
                             f" GROUP BY origin_call{having}"
                             f" ORDER BY{pin} max(heard_at) DESC LIMIT :limit"
+                            ") g"
+                            # The newest frame per station, for what the roster row SAYS.
+                            # A LATERAL rather than another `array_agg(...)[1]`: that
+                            # idiom materialises every value in the group before taking
+                            # one, which is cheap for a boolean and wasteful for `raw` —
+                            # on this box one station has 603 packets in a day. This is
+                            # an index seek per row of a list already capped at 30.
+                            " CROSS JOIN LATERAL ("
+                            "SELECT info, raw, path, source, audio_level"
+                            " FROM app.aprs_packets p"
+                            f" WHERE p.origin_call = g.call AND {predicate}"
+                            " ORDER BY p.heard_at DESC LIMIT 1"
+                            ") n"
                         ),
                         {
                             "limit": bounded,
@@ -275,6 +316,11 @@ class StationsReader:
                     "kinds": sorted(k for k in (r["kinds"] or []) if k),
                     "gated": bool(r["gated"]),
                     "relay": _relay(r["via"], r["call"]),
+                    # What this station last SAID, decoded. The roster answered who and
+                    # how many but never what — so a screen full of weather stations
+                    # showed four callsigns and no weather, with the readings one tap
+                    # down apiece. Same decode as the packet row, so the two cannot drift.
+                    **_latest(r),
                 }
                 for r in rows
             ],

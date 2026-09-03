@@ -25633,12 +25633,30 @@ button.task-band:active {
   font-size: 13px;
   color: var(--accent);
 }
+/* WHAT THE STATION LAST SAID. The line the roster was missing: it answered who and how
+   many, so a screen of weather stations showed four callsigns and no weather. Sits
+   between the callsign and the provenance because it is the reason to tap the row. */
+.aprs-st-said {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 .aprs-st-sub {
   display: block;
   font-size: 11px;
   color: var(--text-2);
-  margin-top: 2px;
+  margin-top: 3px;
   overflow-wrap: anywhere;
+}
+/* The roster's glyph is smaller than a packet row's — the row is a summary, and a
+   full-size icon would out-weigh the callsign it belongs to. */
+.aprs-sym-sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
 }
 .aprs-st-right {
   flex: 0 0 auto;
