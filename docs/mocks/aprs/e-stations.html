@@ -9,6 +9,11 @@
     1. Stations are ordered MOST RECENTLY HEARD first, not by packet count.
     2. Inside a station, filter by TYPE.
     3. Inside a station, filter by RECENCY: 1 day / 3 days / 1 week / older.
+    4. At the ROOT, the same type chips filter the STATION LIST - show only stations
+       that send that kind at all. Same control, different object: on the roster it
+       narrows who is listed, inside a station it narrows what they said. The chip
+       counts differ accordingly (stations vs packets), because a control that counts
+       one thing and filters another is a control that lies.
 
   Every packet here is real: 184 frames from the owner's box on 144.390, Titusville FL,
   spanning 90 minutes. 5 values in the `source` column; 15 true originators once
@@ -157,8 +162,8 @@
 <header>
   <h1>APRS stations &mdash; the chosen shape</h1>
   <p class="sub">Round 5, and the last: <strong>shape C refined</strong>. Stations ordered
-  <strong>most recently heard first</strong>; tap one to filter its traffic by <strong>type</strong>
-  and <strong>recency</strong>. <strong>184 real packets</strong> from the box on 144.390, spanning
+  <strong>most recently heard first</strong>, filtered by time and by the kinds a station sends;
+  tap one to filter its own traffic by <strong>type</strong> and <strong>recency</strong>. <strong>184 real packets</strong> from the box on 144.390, spanning
   90 minutes &mdash; <code>5</code> callsigns in the raw log, <code>15</code> once third&#8209;party
   frames are unwrapped.</p>
   <div class="controls">
@@ -263,15 +268,32 @@ function roster(){
      count. A roster sorted by volume is a roster led by whichever machine beacons
      most often; sorted by recency it answers "who is out there right now". */
   let stations = Object.values(by).sort((a,b) => a.ago - b.ago);
+  /* The chips do something DIFFERENT here than inside a station: at the root they
+     narrow the ROSTER to stations that send that kind at all, rather than narrowing a
+     packet list. "Show me who is putting out weather" is a question about stations. */
+  if(KINDS.size) stations = stations.filter(st => [...KINDS].some(k => st.kinds.has(k)));
   if(ME) stations = [...stations.filter(s => base(s.call)===base(ME)),
                      ...stations.filter(s => base(s.call)!==base(ME))];
   const mine = ME ? stations.filter(s => base(s.call)===base(ME)).length : 0;
 
+  /* Counts are STATIONS, not packets, because that is what the chip filters. A chip
+     reading 27 next to a list of 3 stations would be lying about what it does. */
+  const perKind = {};
+  for(const st of Object.values(by))
+    for(const k of st.kinds) perKind[k] = (perKind[k]||0) + 1;
+  const chipRow = Object.keys(perKind).length > 1
+    ? `<div class="chips">` + ['Position','Message','Weather','Object','Other']
+        .filter(k => perKind[k])
+        .map(k => `<button class="chip" aria-pressed="${KINDS.has(k)}" data-kind="${k}">${k}<span class="n">${perKind[k]}</span></button>`)
+        .join('') + `</div>`
+    : '';
+
   return header() +
     `<div class="callsign"><span>My callsign</span>
       <input id="mycall" value="${esc(ME)}" placeholder="not set" aria-label="My callsign"></div>` +
-    timeSeg() +
-    `<div class="sec">Stations heard<span class="count">${stations.length} &middot; ${list.length} packets</span></div>` +
+    timeSeg() + chipRow +
+    `<div class="sec">${KINDS.size ? 'Stations sending ' + [...KINDS].join(' or ') : 'Stations heard'}
+      <span class="count">${stations.length}${KINDS.size ? ' of ' + Object.keys(by).length : ''}</span></div>` +
     (stations.length ? stations.map(s => `
       <button class="station${ME && base(s.call)===base(ME) ? ' mine':''}" data-station="${esc(s.call)}">
         <div class="stwrap">
@@ -282,9 +304,12 @@ function roster(){
         <div class="sright"><div class="sago">${ago(s.ago)} ago</div>
           <div class="sn">${s.n} pkt</div></div>
       </button>`).join('')
-    : `<p class="empty"><b>No stations in this window.</b> The capture spans 90 minutes, so
-       everything sits in &ldquo;1 day&rdquo; and &ldquo;Older&rdquo; is genuinely empty &mdash;
-       that is the data, not a broken filter.</p>`) +
+    : KINDS.size
+      ? `<p class="empty"><b>No station sent ${[...KINDS].join(' or ')} in this window.</b>
+         Clear the type filter or widen the time range.</p>`
+      : `<p class="empty"><b>No stations in this window.</b> The capture spans 90 minutes, so
+         everything sits in &ldquo;1 day&rdquo; and &ldquo;Older&rdquo; is genuinely empty &mdash;
+         that is the data, not a broken filter.</p>`) +
     (mine ? `<p class="empty" style="padding-top:14px">Your stations are pinned to the top and
       tinted. They stay listed however they reached the box &mdash; an IGate relays your mail
       onto RF, so your own traffic often arrives wrapped as third&#8209;party.</p>` : '');
@@ -344,10 +369,16 @@ and they would disagree with each other.</p>
 <code>Older</code> is the one exclusive bucket. Each carries its real count, so an empty window
 is visibly empty rather than looking like a dead radio.</p>
 
-<h4>Type chips are per-station and earned</h4>
-<p>A station that only ever sends objects gets no chip row, just a line saying so. Five chips
-where four match nothing is four dead controls. Tap a station that sends more than one kind
-&mdash; <code>N1KSC-1</code> or <code>KD4WLE</code> &mdash; to see them appear.</p>
+<h4>The type chips mean two different things &mdash; deliberately</h4>
+<p><strong>On the roster they filter STATIONS</strong>: &ldquo;who is putting out weather&rdquo;.
+The count on each chip is a number of stations, because that is what the chip does &mdash; a chip
+reading <code>27</code> above a list of three stations would be lying about itself.</p>
+<p><strong>Inside a station they filter PACKETS</strong>, and the counts are packet counts. The
+selection carries across when you tap in, so filtering to Weather and opening a station lands you
+on that station&rsquo;s weather rather than resetting.</p>
+<p>Both rows only show kinds that actually exist in the current window. A station that only sends
+objects gets no chip row at all, just a line saying so &mdash; five chips where four match nothing
+is four dead controls.</p>
 
 <h4>What the capture cannot show you</h4>
 <p>90 minutes of data, so everything is in <code>1 day</code> and <code>Older</code> is empty.
