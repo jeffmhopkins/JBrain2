@@ -298,3 +298,49 @@ def test_a_real_frame_carries_the_shape_the_verifier_expects() -> None:
     # The alphabet the backend renders codes in: base32 minus the letters that misread
     # when spoken or hand-copied.
     assert set(code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+
+
+class TestAudioLevel:
+    """Direwolf's own report of how strong a transmission was.
+
+    Every string here was captured from direwolf 1.7 on this exact pipeline — raw PCM on
+    stdin, `-q d`, KISS out — rather than copied from its documentation."""
+
+    def test_reads_the_level_off_a_heard_line(self) -> None:
+        line = "N0CALL-9 audio level = 50(14/14)    _||||||__"
+
+        assert packets.parse_audio_level(line) == 50
+
+    def test_reads_a_relayed_frame_s_line_too(self) -> None:
+        """The trap that decides the whole design: on a digipeated frame direwolf names
+        the DIGIPEATER, not the sender. Three quarters of the owner's channel is
+        relayed, so a matcher keyed on the callsign would attach almost no levels and
+        would sometimes attach the relay's to the wrong station."""
+        line = "Digipeater TCPIP audio level = 50(14/14)    _|||||___"
+
+        assert packets.parse_audio_level(line) == 50
+
+    def test_ignores_the_rest_of_direwolf_s_chatter(self) -> None:
+        # ~64 lines of it before the first decode, all through the same pipe.
+        for line in (
+            "Dire Wolf version 1.7",
+            "Audio input device for receive: stdin  (channel 0)",
+            "[0] N0CALL-9>APDW17,WIDE1-1:!2837.27N/08049.42W_317",
+            "",
+        ):
+            assert packets.parse_audio_level(line) is None
+
+    def test_clamps_rather_than_discards_an_out_of_range_level(self) -> None:
+        # The number is direwolf's. A wider range in some later version should read as
+        # "very strong", not as "unknown".
+        assert packets.parse_audio_level("X audio level = 250(14/14)") == 100
+
+    def test_a_packet_reports_no_level_as_unknown_not_as_weak(self) -> None:
+        # Zero is a real reading and None is the absence of one; a log that conflates
+        # them says a station was inaudible when nothing was measured at all.
+        packet = packets.Packet(
+            source="N0CALL", destination="APRS", path=[], info="x", raw="x"
+        )
+
+        assert packet.audio_level is None
+        assert packet.as_dict()["audio_level"] is None

@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -568,9 +569,16 @@ def test_a_frame_on_the_KISS_socket_reaches_a_subscriber(monkeypatch) -> None:
     server.bind(("127.0.0.1", 8231))
     server.listen(1)
 
+    # The reader connects the moment the session starts, so without this gate the
+    # frame can be fanned out BEFORE `subscribe_packets` attaches — and a packet with
+    # no subscribers is dropped, by design. That race made this test fail about three
+    # runs in four while testing nothing about the code.
+    subscribed = _threading.Event()
+
     def serve() -> None:
         conn, _ = server.accept()
         with conn:
+            assert subscribed.wait(timeout=8)
             conn.sendall(
                 bytes([listen.packets.FEND]) + frame + bytes([listen.packets.FEND])
             )
@@ -583,6 +591,7 @@ def test_a_frame_on_the_KISS_socket_reaches_a_subscriber(monkeypatch) -> None:
         session = tuner.current()
         assert session is not None
         sub = session.subscribe_packets()
+        subscribed.set()
         got = sub.get(timeout=8)
     finally:
         tuner.stop()
@@ -590,3 +599,91 @@ def test_a_frame_on_the_KISS_socket_reaches_a_subscriber(monkeypatch) -> None:
 
     assert got is not None
     assert (got.source, got.info) == ("KE8XYZ-9", "GATE 7K2M9")
+
+
+class _Piped(_FakeProc):
+    """A fake process whose stdout yields the lines direwolf actually wrote.
+
+    Subclasses `_FakeProc` so it is still killable — the session's own teardown reaps
+    whatever is in `_enc`."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        super().__init__()
+        self.stdout = iter(lines)
+
+
+class TestAudioLevelPairing:
+    """Pairing direwolf's audio level to the frame it belongs to.
+
+    The level arrives on stdout and the frame over a KISS socket, so this is a
+    correlation between two streams, and the failure it has to rule out is a level from
+    an EARLIER transmission attaching to a later one. A plausible wrong number is worse
+    than a blank here: nothing else on screen would contradict it."""
+
+    @pytest.fixture
+    def session(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """A real Session over the faked subprocess seam, STOPPED afterwards.
+
+        The teardown is not tidiness. Constructing one starts a reader thread that dials
+        the KISS port in a retry loop, so a leaked session goes on to connect to the
+        fake direwolf that `test_a_frame_on_the_KISS_socket_reaches_a_subscriber` binds
+        — and consumes the single frame that test is waiting for."""
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        session = listen.Session(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+        yield session
+        session.stop()
+
+    def test_the_level_direwolf_announced_lands_on_the_next_frame(
+        self, session
+    ) -> None:
+        session._level = (time.monotonic(), 50)
+
+        assert session._take_audio_level() == 50
+
+    def test_a_level_is_claimed_once_and_not_by_the_frame_after(self, session) -> None:
+        """The off-by-one that would put one station's signal on the next station's row,
+        every row, for as long as the channel stayed busy."""
+        session._level = (time.monotonic(), 50)
+
+        assert session._take_audio_level() == 50
+        assert session._take_audio_level() is None
+
+    def test_a_stale_level_is_dropped_rather_than_attached(self, session) -> None:
+        # A frame whose own level line never arrived must not inherit the last one that
+        # did — that is how a strong station's number ends up on a marginal station.
+        session._level = (time.monotonic() - listen._LEVEL_WINDOW_S - 0.1, 50)
+
+        assert session._take_audio_level() is None
+
+    def test_a_frame_with_no_level_reports_unknown(self, session) -> None:
+        assert session._take_audio_level() is None
+
+    def test_the_decoder_log_still_reaches_the_container_log(self, session) -> None:
+        """Parsing the level must not turn the drain into a filter. An unread pipe
+        blocks direwolf at 64 KB and stops it decoding permanently, so every line still
+        has to be read AND printed — the reason this thread exists at all."""
+        printed: list[str] = []
+        session._enc = _Piped(
+            [
+                b"Dire Wolf version 1.7\n",
+                b"N0CALL-9 audio level = 50(14/14)    _||||||__\n",
+                b"[0] N0CALL-9>APDW17,WIDE1-1:!2837.27N\n",
+            ]
+        )
+
+        with mock.patch("builtins.print", lambda *a, **k: printed.append(str(a[0]))):
+            session._drain_decoder_log()
+
+        assert session._level is not None and session._level[1] == 50
+        # Every line, not just the ones that parsed.
+        assert len(printed) == 3
+
+    def test_the_heard_line_is_not_suppressed_by_the_quiet_flag(self, session) -> None:
+        """`-q h` means exactly "suppress the heard line with the audio level". Shipping
+        `hd` is what made signal level look unrecoverable for a whole wave."""
+        quiet = session._direwolf_cmd()
+        flag = quiet[quiet.index("-q") + 1]
+
+        assert "h" not in flag
+        assert "d" in flag

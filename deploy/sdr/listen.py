@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import dataclasses
 import queue
 import shutil
 import socket
@@ -70,6 +71,9 @@ PURPOSE_LABEL = {PURPOSE_LISTEN: "listening", PURPOSE_APRS: "logging APRS"}
 PURPOSES = tuple(PURPOSE_LABEL)
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
+# How long a parsed audio level stays claimable by an arriving frame. The measured
+# pairing is sub-millisecond; this is slack for a loaded box, not a guess.
+_LEVEL_WINDOW_S = 2.0
 AUDIO_BITRATE = "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
 AUDIO_CONTENT_TYPE = "audio/mpeg"
@@ -212,6 +216,9 @@ class Session:
         self._segments: set[queue.Queue[tuple[float, bytes]]] = set()
         # Decoded APRS frames, for a purpose=aprs session. Empty on a listening one.
         self._packets: set[queue.Queue[packets.Packet | None]] = set()
+        # The most recent audio level direwolf announced, and when. One slot
+        # rather than a queue — see `_take_audio_level`.
+        self._level: tuple[float, int] | None = None
         # Per session so two sidecars, or a relaunch, cannot collide on one port.
         self.kiss_port = KISS_PORT_BASE + (int(self.id[:4], 16) % KISS_PORT_SPAN)
         self._seg: list[bytes] = []
@@ -329,10 +336,14 @@ class Session:
     def _direwolf_cmd(self) -> list[str]:
         """Direwolf reading raw PCM on stdin at the tuner's rate, KISS on a local port.
 
-        `-t 0` kills the ANSI colour it otherwise writes into the container log. `-q hd`
-        trims the heard line and some decode chatter, but MEASURED on direwolf 1.7 it
-        only takes 67 lines to 64 for three packets — it does not make the output small
-        and it is not why the pipe is safe. `_drain_decoder_log` is why."""
+        `-t 0` kills the ANSI colour it otherwise writes into the container log.
+
+        `-q d`, NOT `-q hd`. `h` means precisely "suppress the heard line with the audio
+        level", and that line is the ONLY place direwolf reports how strong a
+        transmission was — suppressing it is what made signal level look unrecoverable.
+        `d` still drops the per-packet decode dump. MEASURED on direwolf 1.7, `hd` only
+        took 67 lines to 64 across three packets, so it was never what kept the output
+        small and never why the pipe is safe. `_drain_decoder_log` is why."""
         return [
             "direwolf",
             "-c",
@@ -340,7 +351,7 @@ class Session:
             "-t",
             "0",
             "-q",
-            "hd",
+            "d",
             "-r",
             str(AUDIO_RATE),
             "-B",
@@ -402,6 +413,11 @@ KISSPORT {self.kiss_port}
                 if not chunk:
                     return
                 for packet in stream.feed(chunk):
+                    # `replace` rather than assignment: a Packet is frozen, which is
+                    # what makes it safe to fan one out to every subscriber.
+                    level = self._take_audio_level()
+                    if level is not None:
+                        packet = dataclasses.replace(packet, audio_level=level)
                     self._publish_packet(packet)
         except OSError:
             return
@@ -421,10 +437,42 @@ KISSPORT {self.kiss_port}
         try:
             for line in enc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
-                if text:
-                    print(f"[direwolf] {text}", flush=True)  # noqa: T201
+                if not text:
+                    continue
+                level = packets.parse_audio_level(text)
+                if level is not None:
+                    with self._lock:
+                        self._level = (time.monotonic(), level)
+                # Still printed, every line. Parsing must not turn the drain into a
+                # filter: an unread pipe is what blocks direwolf at 64 KB.
+                print(f"[direwolf] {text}", flush=True)  # noqa: T201
         except (ValueError, OSError):
             pass  # the process went away; teardown handles it
+
+    def _take_audio_level(self) -> int | None:
+        """The level direwolf announced for THIS frame, or None.
+
+        Direwolf hands the level over on stdout and the frame over a KISS socket, so
+        this is a correlation between two streams rather than one field on one record.
+        What was measured (see `packets.parse_audio_level`) is that the two arrive in
+        the same millisecond, 1:1 and in order, and that a failed decode prints no level
+        at all — so pairing by ORDER holds, and pairing by callsign would not, because
+        the log line names the digipeater on a relayed frame.
+
+        Consumed once, and expired fast. The failure this rules out is a level from an
+        earlier transmission silently attaching to a later one: a plausible wrong number
+        is worse than a blank, because nothing else on screen would contradict it.
+
+        The frame thread can win the race against the log thread, so a frame may find
+        nothing waiting and report None. That costs the number on an occasional row; it
+        never puts the wrong number on any row."""
+        with self._lock:
+            pending = self._level
+            self._level = None
+        if pending is None:
+            return None
+        when, level = pending
+        return level if time.monotonic() - when <= _LEVEL_WINDOW_S else None
 
     def _publish_packet(self, packet: packets.Packet) -> None:
         """Hand one decoded frame to every attached reader, dropping for a slow one.
