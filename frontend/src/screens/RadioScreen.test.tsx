@@ -9,7 +9,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { STALE_AFTER_MS } from "../aprsLog";
 import { resetSdrSession } from "../sdrSession";
 import { RadioScreen } from "./RadioScreen";
@@ -63,7 +63,10 @@ function noCommands() {
 function roster(over: Record<string, unknown> = {}) {
   return {
     window: "1d",
-    window_packets: { "1d": 12, "3d": 12, "1w": 12, old: 0 },
+    window_packets: { "1d": 12, "3d": 12, "1w": 12 },
+    has_older: false,
+    older: null,
+    truncated: false,
     unclassified: 0,
     kind_stations: { Position: 2, Weather: 1 },
     stations_total: 2,
@@ -87,6 +90,37 @@ function roster(over: Record<string, unknown> = {}) {
     ],
     ...over,
   };
+}
+
+/** One station's traffic, as the detail view reads it. */
+function station(call: string, over: Record<string, unknown> = {}) {
+  return {
+    call,
+    packets_total: 4,
+    last_heard_at: new Date().toISOString(),
+    gated: call === "N1MPR-C",
+    relay: call === "N1MPR-C" ? "N4TDX" : null,
+    window: "1d",
+    window_packets: { "1d": 4, "3d": 4, "1w": 4 },
+    has_older: false,
+    older: 0,
+    kind_packets: { Position: 4 },
+    packets: [
+      {
+        heard_at: new Date().toISOString(),
+        kind: "Position",
+        gated: call === "N1MPR-C",
+        direct: call !== "N1MPR-C",
+        text: "!2835.06ND08048.98W&RNG0001 2m Voice",
+      },
+    ],
+    ...over,
+  };
+}
+
+/** Which station's detail is on screen, read from the header the roster does not have. */
+function openStation(container: HTMLElement): string | null {
+  return container.querySelector(".aprs-st-head .aprs-st-call")?.textContent ?? null;
 }
 
 function stations(over: Record<string, unknown> = {}) {
@@ -149,7 +183,9 @@ describe("the APRS tab", () => {
       gated: true,
       relay: "N4TDX",
       window: "1d",
-      window_packets: { "1d": 4, "3d": 4, "1w": 4, old: 0 },
+      window_packets: { "1d": 4, "3d": 4, "1w": 4 },
+      has_older: false,
+      older: 0,
       kind_packets: { Position: 4 },
       packets: [
         {
@@ -186,7 +222,142 @@ describe("the APRS tab", () => {
     // "Show me who is putting out weather" is a question about stations, and the
     // server answers it — a client that downloaded the log to narrow it here would
     // move a year of a 1.2M-row channel to render two lines.
-    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"]));
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"], null));
+  });
+
+  it("keeps a way out when a station fails to load", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockRejectedValue(new ApiError(404, "nothing heard"));
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+
+    // This screen has made the opposite mistake once already: the error render sat AFTER
+    // the loading return, so a failed load spun on "Reading…" for ever. One level down it
+    // would be worse — the only "All stations" button lived inside the detail that never
+    // arrived, so a 404 stranded the owner with no exit but leaving the tab.
+    expect(await screen.findByText(/nothing heard/)).toBeInTheDocument();
+    const out = screen.getByRole("button", { name: /All stations/ });
+    fireEvent.click(out);
+    expect(await screen.findByText("KE8XYZ-9")).toBeInTheDocument();
+  });
+
+  it("does not throw away a working roster when a later poll fails", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const asked = vi
+      .spyOn(api, "getAprsStations")
+      .mockResolvedValueOnce(roster() as never)
+      .mockRejectedValue(new ApiError(500, "the log is unreadable"));
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+    // Changing the range re-asks, and this time the server fails.
+    fireEvent.click(screen.getByRole("button", { name: /3 days/ }));
+
+    // The error is SAID — a list that silently freezes on stale rows under a healthy
+    // header is the same lie as a dead receiver reading as a quiet channel — and the
+    // stations already on screen stay, because throwing them away helps nobody.
+    expect(await screen.findByText(/the log is unreadable/)).toBeInTheDocument();
+    expect(screen.getByText("KE8XYZ-9")).toBeInTheDocument();
+    expect(asked).toHaveBeenCalledWith("3d", [], null);
+  });
+
+  it("ignores a slow response that a newer request has replaced", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    let releaseSlow: (value: unknown) => void = () => {};
+    const slow = new Promise((resolve) => {
+      releaseSlow = resolve;
+    });
+    vi.spyOn(api, "getAprsStation")
+      .mockImplementationOnce(async () => (await slow) as never)
+      .mockResolvedValue(station("KE8XYZ-9") as never);
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    // Open the slow station, go back, open the fast one.
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    fireEvent.click(screen.getByRole("button", { name: /All stations/ }));
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    await waitFor(() => expect(openStation(container)).toBe("KE8XYZ-9"));
+    // Now the first request finally lands.
+    releaseSlow(station("N1MPR-C"));
+
+    // Without a sequence guard it overwrites the screen: N1MPR-C's packets and counts
+    // under a header the owner never asked for, while the chips and range tabs go on
+    // issuing requests for KE8XYZ-9.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openStation(container)).toBe("KE8XYZ-9");
+  });
+
+  it("keeps a carried-in type filter visible so it can be cleared", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // KE8XYZ-9 sends only positions, so a Weather filter carried in matches nothing —
+    // the server answers with an empty list and no Weather in `kind_packets`.
+    const detail = vi
+      .spyOn(api, "getAprsStation")
+      .mockResolvedValue(station("KE8XYZ-9", { packets: [] }) as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Weather/, pressed: false }));
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    await waitFor(() => expect(detail).toHaveBeenCalledWith("KE8XYZ-9", "1d", ["Weather"]));
+
+    // The chip row is built from the kinds the STATION sends, so a zero-count selection
+    // used to vanish — leaving an empty list, a message saying "clear the type filter",
+    // and no filter on screen to clear.
+    fireEvent.click(await screen.findByRole("button", { name: /Weather/, pressed: true }));
+
+    await waitFor(() => expect(detail).toHaveBeenCalledWith("KE8XYZ-9", "1d", []));
+  });
+
+  it("offers the time range, and asks the server for it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const asked = stations();
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+    fireEvent.click(screen.getByRole("button", { name: /1 week/ }));
+
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1w", [], null));
+  });
+
+  it("says nothing about how much is older until it is worth the read", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    stations({ has_older: true, older: null });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    // Counting everything older than a week means reading the whole archive on every
+    // poll. The tab still exists — there IS older traffic — it just does not claim a
+    // number it did not count.
+    const older = await screen.findByRole("button", { name: "Older" });
+    expect(older.querySelector(".seg-count")).toBeNull();
+    expect(screen.getByRole("button", { name: /1 day, 12 packets/ })).toBeInTheDocument();
+  });
+
+  it("says when the list was capped rather than printing a confident total", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    stations({ truncated: true, stations_total: 412 });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    expect(await screen.findByText(/of 412, newest first/)).toBeInTheDocument();
+  });
+
+  it("does not cry unsorted when everything is sorted", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+
+    expect(screen.queryByText(/not sorted yet/)).toBeNull();
   });
 
   it("pins the owner's own stations, however they reached the box", async () => {
@@ -251,7 +422,6 @@ describe("the APRS tab", () => {
       available: true,
       listening: null,
     });
-    const { ApiError } = await import("../api/client");
     vi.spyOn(api, "setAprsLogging").mockRejectedValue(
       new ApiError(409, "The radio is already listening"),
     );
@@ -482,9 +652,16 @@ describe("the screen's shell", () => {
 
     // The same control the session list uses for Today / Older / Archived. This screen
     // had invented an underline tab bar — a second answer to a settled question.
-    expect(container.querySelector(".seg-tabs")).not.toBeNull();
-    expect(container.querySelectorAll(".seg-tab")).toHaveLength(3);
+    const tabbar = container.querySelector('[role="tablist"]');
+    expect(tabbar).not.toBeNull();
+    expect(tabbar?.classList.contains("seg-tabs")).toBe(true);
+    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(3);
     expect(container.querySelector(".radio-tabs")).toBeNull();
+    // And the roster's range control REUSES it rather than cloning it — the near-identical
+    // copy under a different class name is precisely what this test is written against,
+    // and it would have slipped past a count of the whole document.
+    expect(container.querySelectorAll(".seg-tabs")).toHaveLength(2);
+    expect(container.querySelector(".aprs-windows")).toBeNull();
   });
 });
 

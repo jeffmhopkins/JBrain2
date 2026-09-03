@@ -17,7 +17,7 @@
 // included. React escapes it, each row states how it reached us, and none of it is ever
 // put in front of a model as an instruction (the plan's two trust tiers).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import {
   type AprsRoster,
@@ -40,19 +40,30 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
   const [roster, setRoster] = useState<AprsRoster | null>(null);
   const [detail, setDetail] = useState<AprsStationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A poll in flight when the owner taps a chip, a range or a station can land after the
+  // request that replaced it and paint a state nobody asked for: one station's packets
+  // under another's callsign, or a pressed Weather chip above the unfiltered roster. The
+  // same guard the screen above this already uses for exactly the same reason.
+  const seq = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       if (station) {
-        setDetail(await api.getAprsStation(station, window_, kinds));
+        const next = await api.getAprsStation(station, window_, kinds);
+        if (mine !== seq.current) return;
+        setDetail(next);
       } else {
-        setRoster(await api.getAprsStations(window_, kinds));
+        const next = await api.getAprsStations(window_, kinds, owner);
+        if (mine !== seq.current) return;
+        setRoster(next);
       }
       setError(null);
     } catch (err) {
+      if (mine !== seq.current) return;
       setError(err instanceof ApiError ? err.message : "Couldn't read the stations.");
     }
-  }, [station, window_, kinds]);
+  }, [station, window_, kinds, owner]);
 
   // `tick` is the parent's poll counter, and depending on it IS the refresh — the
   // roster has to keep up with a live channel without owning a second timer that could
@@ -76,45 +87,65 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
     setStation(null);
     setKinds([]);
     setDetail(null);
+    setError(null);
   }
 
-  if (error && !roster && !detail) {
+  // Shown WHENEVER it is set, not only before the first load. Once the roster has
+  // arrived, an error that replaced the view would throw away a working screen — and an
+  // error that is not rendered at all leaves the list silently frozen on stale rows
+  // while the health line above it still reads healthy.
+  const banner = error ? (
+    <p className="radio-error" role="alert">
+      {error}
+    </p>
+  ) : null;
+
+  if (station) {
+    // The way out comes BEFORE the loading return. This screen has made the opposite
+    // mistake once already — the error render used to sit after it, so a failed first
+    // load spun on "Reading the log…" for ever — and here it would be worse: the only
+    // "All stations" button lived inside the detail that never arrived, so a 404 or a
+    // dropped connection stranded the owner on a screen with no exit.
     return (
-      <p className="radio-error" role="alert">
-        {error}
-      </p>
+      <>
+        <button type="button" className="aprs-back" onClick={back}>
+          ‹ All stations
+        </button>
+        {banner}
+        {detail ? (
+          <StationDetail
+            detail={detail}
+            window_={window_}
+            kinds={kinds}
+            owner={owner}
+            onWindow={setWindow}
+            onKind={toggleKind}
+          />
+        ) : (
+          !error && <p className="radio-empty">Reading {station}…</p>
+        )}
+      </>
     );
   }
 
-  if (station) {
-    if (!detail) return <p className="radio-empty">Reading {station}…</p>;
-    return (
-      <StationDetail
-        detail={detail}
+  if (!roster) return banner ?? <p className="radio-empty">Reading the log…</p>;
+  return (
+    <>
+      {banner}
+      <Roster
+        roster={roster}
         window_={window_}
         kinds={kinds}
         owner={owner}
         onWindow={setWindow}
         onKind={toggleKind}
-        onBack={back}
+        onOpen={(call) => {
+          setStation(call);
+          setDetail(null);
+          setError(null);
+        }}
       />
-    );
-  }
-
-  if (!roster) return <p className="radio-empty">Reading the log…</p>;
-  return (
-    <Roster
-      roster={roster}
-      window_={window_}
-      kinds={kinds}
-      owner={owner}
-      onWindow={setWindow}
-      onKind={toggleKind}
-      onOpen={(call) => {
-        setStation(call);
-        setDetail(null);
-      }}
-    />
+    </>
   );
 }
 
@@ -136,12 +167,19 @@ function Roster({
   onOpen: (call: string) => void;
 }) {
   const stations = pinMine(roster.stations, owner);
-  const chips = chipsFor(roster.kind_stations);
+  const chips = chipsFor(roster.kind_stations, kinds);
   const mine = stations.filter((s) => isMine(s.call, owner)).length;
 
   return (
     <>
-      <WindowTabs counts={roster.window_packets} chosen={window_} onWindow={onWindow} unit="pkt" />
+      <WindowTabs
+        counts={roster.window_packets}
+        older={roster.older}
+        hasOlder={roster.has_older}
+        chosen={window_}
+        onWindow={onWindow}
+        unit="packets"
+      />
       {chips.length > 0 && (
         // At the ROOT these narrow the roster to stations that send that kind at all —
         // "show me who is putting out weather" is a question about stations. So the
@@ -177,6 +215,9 @@ function Roster({
         {kinds.length > 0 ? `Stations sending ${kinds.join(" or ")}` : "Stations heard"}
         <span className="aprs-count">
           {shownLabel(stations.length, roster.stations_total, kinds.length > 0)}
+          {/* The list is capped. Printing a confident total it did not return would hide
+              a station — including, over a long range, the owner's own. */}
+          {roster.truncated && ` of ${roster.stations_total}, newest first`}
         </span>
       </div>
 
@@ -184,7 +225,7 @@ function Roster({
         <p className="radio-empty">
           {kinds.length > 0
             ? `No station sent ${kinds.join(" or ")} in this range. Clear the type filter or widen the range.`
-            : "No stations in this range. Widen it, or turn APRS logging on to start hearing the channel."}
+            : "No stations in this range. A quiet channel and a dead antenna look the same in an empty list, so the line above shows the last decode rather than a signal bar — widen the range to see whether anything has been heard at all."}
         </p>
       ) : (
         stations.map((s) => (
@@ -229,7 +270,6 @@ function StationDetail({
   owner,
   onWindow,
   onKind,
-  onBack,
 }: {
   detail: AprsStationDetail;
   window_: WindowId;
@@ -237,16 +277,12 @@ function StationDetail({
   owner: string | null;
   onWindow: (id: WindowId) => void;
   onKind: (kind: Kind) => void;
-  onBack: () => void;
 }) {
-  const chips = chipsFor(detail.kind_packets);
+  const chips = chipsFor(detail.kind_packets, kinds);
   const only = Object.keys(detail.kind_packets);
 
   return (
     <>
-      <button type="button" className="aprs-back" onClick={onBack}>
-        ‹ All stations
-      </button>
       <div className={`aprs-st-head${isMine(detail.call, owner) ? " mine" : ""}`}>
         <span className="aprs-st-call">{detail.call}</span>
         <span className="aprs-st-sub">{arrival(detail)}</span>
@@ -258,7 +294,14 @@ function StationDetail({
         {detail.packets_total === 1 ? "" : "s"} in the log
       </p>
 
-      <WindowTabs counts={detail.window_packets} chosen={window_} onWindow={onWindow} unit="pkt" />
+      <WindowTabs
+        counts={detail.window_packets}
+        older={detail.older}
+        hasOlder={detail.has_older}
+        chosen={window_}
+        onWindow={onWindow}
+        unit="packets"
+      />
 
       {chips.length > 0 ? (
         // Inside a station the chips narrow its PACKETS, so the counts are packets.
@@ -315,36 +358,50 @@ function StationDetail({
   );
 }
 
-/** The range control. Its counts are what widening WOULD reveal, so the owner can see
- *  there is nothing older before tapping "Older" and finding out. */
+/** The range control, on the house segmented control — the same `seg-tabs` the Radio
+ *  tabs and the session list use, rather than a fourth answer to a settled question.
+ *
+ *  Its counts are what widening WOULD reveal, so the owner can see there is nothing older
+ *  before tapping "Older" and finding out. `old` is the exception: counting the archive
+ *  on every poll is not worth a number nobody reads precisely, so that tab shows presence
+ *  until it is the range being read.
+ *
+ *  Plain buttons, not `role="tab"`. These are inside the APRS tab panel, and a nested
+ *  tablist makes a screen reader announce a filter as a tab. `aria-pressed` says what it
+ *  actually is. */
 function WindowTabs({
   counts,
+  older,
+  hasOlder,
   chosen,
   onWindow,
   unit,
 }: {
-  counts: Record<WindowId, number>;
+  counts: Record<string, number>;
+  older: number | null;
+  hasOlder: boolean;
   chosen: WindowId;
   onWindow: (id: WindowId) => void;
   unit: string;
 }) {
   return (
-    <div className="aprs-windows" role="tablist" aria-label="Time range">
-      {WINDOWS.map((w) => (
-        <button
-          type="button"
-          key={w.id}
-          role="tab"
-          aria-selected={chosen === w.id}
-          className={`aprs-window${chosen === w.id ? " on" : ""}`}
-          onClick={() => onWindow(w.id)}
-        >
-          {w.label}
-          <span className="aprs-window-n" aria-label={`${counts[w.id] ?? 0} ${unit}`}>
-            {counts[w.id] ?? 0}
-          </span>
-        </button>
-      ))}
+    <div className="seg-tabs aprs-ranges" aria-label="Time range">
+      {WINDOWS.map((w) => {
+        const count = w.id === "old" ? (older ?? (hasOlder ? null : 0)) : (counts[w.id] ?? 0);
+        return (
+          <button
+            type="button"
+            key={w.id}
+            aria-pressed={chosen === w.id}
+            aria-label={count === null ? w.label : `${w.label}, ${count} ${unit}`}
+            className={`seg-tab${chosen === w.id ? " on" : ""}`}
+            onClick={() => onWindow(w.id)}
+          >
+            {w.label}
+            {count !== null && <span className="seg-count">{count}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

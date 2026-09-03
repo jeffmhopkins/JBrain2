@@ -39,6 +39,7 @@ from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.stations import WINDOWS, StationsReader
 from jbrain.transcribe import WhisperCppClient
@@ -296,6 +297,7 @@ async def stations(
     maker: SessionMakerDep,
     window: Annotated[str, Query(pattern=f"^({_WINDOW_IDS})$")] = "1d",
     kinds: Annotated[str | None, Query(max_length=120)] = None,
+    mine: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
     """Who has been heard, most recently heard first (`docs/mocks/aprs/e-stations.html`).
 
@@ -304,8 +306,15 @@ async def stations(
 
     The `kinds` chips narrow the ROSTER — stations that send that kind at all — not the
     packets. `kind_stations` therefore counts stations, because a chip reading 27 beside
-    a list of three stations would be lying about what pressing it does."""
-    return await StationsReader(maker).roster(ctx_for(owner), window=window, kinds=_kinds(kinds))
+    a list of three stations would be lying about what pressing it does.
+
+    `mine` pins the owner's own stations to the top BEFORE the list is capped. The client
+    knows the callsign already (it is in Settings), so it travels as a parameter rather
+    than costing a settings read on every poll — and it is a sort key on the owner's own
+    request, not a permission."""
+    return await StationsReader(maker).roster(
+        ctx_for(owner), window=window, kinds=_kinds(kinds), mine=mine
+    )
 
 
 @router.get("/stations/{call}")
@@ -320,8 +329,15 @@ async def station(
 
     404 when nothing has ever been heard from that callsign — including when the sweep
     has not classified it yet, which is why the roster reports `unclassified`."""
+    wanted = call.strip().upper()
+    # A callsign-shaped path or nothing. `Path(max_length=16)` alone lets a NUL through,
+    # which Postgres refuses in a text column — the query raises and the owner gets a 500
+    # from what is, at worst, a typo. Same guard the classifier files rows under, so a
+    # station that made it into the roster can always be opened.
+    if not looks_like_station(wanted):
+        raise HTTPException(status_code=404, detail="nothing heard from that station")
     found = await StationsReader(maker).station(
-        ctx_for(owner), call.strip().upper(), window=window, kinds=_kinds(kinds)
+        ctx_for(owner), wanted, window=window, kinds=_kinds(kinds)
     )
     if found is None:
         raise HTTPException(status_code=404, detail="nothing heard from that station")

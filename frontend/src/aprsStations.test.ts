@@ -88,6 +88,18 @@ describe("the chip row", () => {
     expect(chipsFor({})).toEqual([]);
   });
 
+  it("keeps a SELECTED kind on screen even when nothing here sends it", () => {
+    // The dead end this closes: a Weather filter carried into a station that only sends
+    // positions has a count of zero, so the chip disappeared — leaving an empty list, a
+    // message saying "clear the type filter", and no filter on screen to clear.
+    expect(chipsFor({ Position: 4 }, ["Weather"])).toEqual([
+      { kind: "Position", count: 4 },
+      { kind: "Weather", count: 0 },
+    ]);
+    // Even when it is the only chip: one control that is ON is not a dead control.
+    expect(chipsFor({}, ["Object"])).toEqual([{ kind: "Object", count: 0 }]);
+  });
+
   it("keeps a fixed order rather than following the counts", () => {
     // A control that reorders itself as traffic changes is a control you cannot aim.
     expect(chipsFor({ Other: 99, Position: 1, Weather: 40 }).map((c) => c.kind)).toEqual([

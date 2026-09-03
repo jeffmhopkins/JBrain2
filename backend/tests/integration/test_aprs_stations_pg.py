@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsLog
-from jbrain.sdr.stations import StationsReader
+from jbrain.sdr.stations import MAX_STATIONS, StationsReader
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -150,6 +150,151 @@ async def test_the_chip_counts_are_stations_and_do_not_move_when_a_chip_is_press
     assert filtered["kind_stations"] == plain["kind_stations"]
 
 
+async def test_a_station_matching_a_chip_is_returned_WHOLE(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The wave's headline claim, tested where a `WHERE` would look identical.
+
+    Selecting Weather returns the station AND ALL ITS TRAFFIC — not its weather frames
+    with its positions stripped out. Every station in the main capture happens to match
+    either way; this one does not, so swapping the `HAVING` for a `WHERE` changes the
+    answer."""
+    # N1KSC-1 sends a position AND two telemetry frames. That MIX is what separates the
+    # two readings: a `WHERE` would return the station with only its matching frame.
+    await _seed(
+        maker,
+        [
+            ("N1KSC-1", DIRECT_POSITION, 0.1),
+            ("N1KSC-1", DIRECT_TELEMETRY, 0.2),
+            ("N1KSC-1", DIRECT_TELEMETRY, 0.3),
+            ("N4TDX", GATED_WEATHER, 0.4),
+        ],
+    )
+
+    position = await StationsReader(maker).roster(OWNER, window="1d", kinds=["Position"])
+
+    # Three packets, not one: "who is putting out positions" returns the station, and a
+    # station is all of its traffic. KD4WLE sends no position at all, so it is absent.
+    assert {s["call"]: s["packets"] for s in position["stations"]} == {"N1KSC-1": 3}
+    # The subtitle still names everything it sends, not just what was selected.
+    assert position["stations"][0]["kinds"] == ["Other", "Position"]
+
+
+async def test_a_station_reports_how_it_reached_us_MOST_RECENTLY(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """How a station arrives can change between packets, and the line is about now.
+
+    A station gated from the internet this morning and heard on the air this afternoon
+    reads "heard on RF"; reading its oldest frame instead would tell the owner a station
+    in range had never been on the air."""
+    now = datetime.now(UTC)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            _INSERT,
+            {"heard_at": now - timedelta(hours=5), "src": "N4TDX", "info": GATED_POSITION},
+        )
+        await s.execute(
+            _INSERT,
+            {"heard_at": now - timedelta(minutes=6), "src": "N1MPR-C", "info": DIRECT_POSITION},
+        )
+        await s.commit()
+    await AprsLog(maker=maker, base_url="").backfill()
+
+    (station,) = (await StationsReader(maker).roster(OWNER, window="1d"))["stations"]
+
+    assert station["call"] == "N1MPR-C"
+    assert (station["gated"], station["relay"]) == (False, None)
+
+
+async def test_a_station_lists_the_kinds_it_actually_sends(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    # The roster subtitle. Sorted rather than in insertion order, so the line does not
+    # reshuffle itself between polls.
+    await _seed(maker, _CAPTURE)
+
+    by_call = {s["call"]: s for s in (await StationsReader(maker).roster(OWNER))["stations"]}
+
+    assert by_call["N1KSC-1"]["kinds"] == ["Other", "Position"]
+    assert by_call["KD4WLE"]["kinds"] == ["Weather"]
+
+
+async def test_the_roster_is_capped_and_says_when_it_capped(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """A capped list that does not say so is a list that hides a station.
+
+    The cap is real — an archive can hold more stations than a phone can render — so
+    what matters is that the header can tell the truth about it."""
+    await _seed(maker, _CAPTURE)
+    reader = StationsReader(maker)
+
+    two = await reader.roster(OWNER, window="1d", limit=2)
+
+    assert len(two["stations"]) == 2
+    assert two["truncated"] is True
+    assert two["stations_total"] == 3  # the honest total survives the cap
+    assert (await reader.roster(OWNER, window="1d"))["truncated"] is False
+    # And a nonsense limit is clamped rather than trusted.
+    assert len((await reader.roster(OWNER, limit=0))["stations"]) == 1
+    assert len((await reader.roster(OWNER, limit=10_000))["stations"]) == 3
+
+
+async def test_a_caller_cannot_ask_for_more_stations_than_the_ceiling(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The ceiling is the ceiling, whatever the query string says.
+
+    A limit that is merely a default is not a bound — an unclamped one lets a request
+    ask the box to render every station it has ever heard, which on a year of this
+    channel is the whole archive grouped in one statement."""
+    now = datetime.now(UTC)
+    async with scoped_session(maker, OWNER) as s:
+        # Pre-classified, so this is a cheap seed rather than a sweep over 350 frames.
+        await s.execute(
+            text(
+                "INSERT INTO app.aprs_packets (heard_at, frequency_hz, source, destination,"
+                " path, info, raw, origin_call, kind, gated, heard_direct)"
+                " SELECT (:now)::timestamptz - (g || ' seconds')::interval, 144390000,"
+                " 'W4' || g, 'APRS', '{}', :info, '', 'W4' || g, 'Position', false, true"
+                " FROM generate_series(1, 350) g"
+            ),
+            {"now": now, "info": DIRECT_POSITION},
+        )
+        await s.commit()
+
+    asked = await StationsReader(maker).roster(OWNER, window="1d", limit=100_000)
+
+    assert len(asked["stations"]) == MAX_STATIONS
+    assert asked["truncated"] is True
+    assert asked["stations_total"] == 350
+
+
+async def test_the_owner_is_pinned_before_the_list_is_capped(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The one station this feature exists to surface, and the cap can eat it.
+
+    Pinning only in the client cannot pin what the client never received: over a year's
+    archive the owner's station falls outside the most-recently-heard cap, and the
+    screen then shows every station except his."""
+    await _seed(maker, _CAPTURE)
+    reader = StationsReader(maker)
+
+    # KD4WLE is the oldest-heard station in the window, so a cap of one drops it.
+    unpinned = await reader.roster(OWNER, window="1d", limit=1)
+    assert [s["call"] for s in unpinned["stations"]] == ["N1MPR-C"]
+
+    pinned = await reader.roster(OWNER, window="1d", limit=1, mine="KD4WLE")
+
+    assert [s["call"] for s in pinned["stations"]] == ["KD4WLE"]
+    # A bare callsign means every SSID of it, and NOTHING that merely starts with it —
+    # `N1` is not a station and must not pin `N1KSC-1`.
+    by_prefix = await reader.roster(OWNER, window="1d", limit=1, mine="N1")
+    assert [s["call"] for s in by_prefix["stations"]] == ["N1MPR-C"]  # unpinned order
+
+
 async def test_the_windows_nest_and_older_is_the_complement(
     maker: async_sessionmaker, clean: None
 ) -> None:
@@ -159,9 +304,16 @@ async def test_the_windows_nest_and_older_is_the_complement(
 
     roster = await StationsReader(maker).roster(OWNER, window="1d")
 
-    assert roster["window_packets"] == {"1d": 4, "3d": 5, "1w": 5, "old": 1}
+    assert roster["window_packets"] == {"1d": 4, "3d": 5, "1w": 5}
+    # `old` is PRESENCE here, not a count: counting it means reading everything the box
+    # has ever heard, on every poll, for a number nobody reads precisely.
+    assert (roster["has_older"], roster["older"]) == (True, None)
+
     older = await StationsReader(maker).roster(OWNER, window="old")
+
     assert [s["call"] for s in older["stations"]] == ["N1MPR-C"]
+    # Opening that range is when the exact count is worth the read.
+    assert older["older"] == 1
 
 
 async def test_an_unswept_row_is_reported_rather_than_silently_missing(
@@ -202,6 +354,9 @@ async def test_a_station_detail_shows_the_payload_not_the_wrapper(
 
     assert detail is not None
     assert detail["packets"][0]["text"].startswith("!2835.06ND")
+    # `direct` is the fact F1's review had to fix: a relayed frame is never the sender's
+    # own transmission as we received it, however clean its inner path.
+    assert detail["packets"][0]["direct"] is False
     assert detail["gated"] is True and detail["relay"] == "N4TDX"
     # All-time, not the window: it is what says whether an empty window means quiet or
     # means new.
@@ -219,7 +374,11 @@ async def test_a_station_detail_counts_only_its_own_traffic(
     detail = await StationsReader(maker).station(OWNER, "N1KSC-1", window="1d")
 
     assert detail is not None
-    assert detail["window_packets"] == {"1d": 2, "3d": 2, "1w": 2, "old": 0}
+    assert detail["window_packets"] == {"1d": 2, "3d": 2, "1w": 2}
+    # Inside a station the archive count IS cheap — the origin index bounds it to one
+    # station's rows — so it is always exact.
+    assert (detail["has_older"], detail["older"]) == (False, 0)
+    assert [p["direct"] for p in detail["packets"]] == [True, True]
     assert detail["kind_packets"] == {"Position": 1, "Other": 1}
     assert len(detail["packets"]) == 2
     only_other = await StationsReader(maker).station(OWNER, "N1KSC-1", window="1d", kinds=["Other"])

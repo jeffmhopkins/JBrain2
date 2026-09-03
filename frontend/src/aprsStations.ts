@@ -45,8 +45,16 @@ export interface AprsStation {
 
 export interface AprsRoster {
   window: WindowId;
-  /** Packets per range, so the tabs say what widening would reveal before you widen. */
-  window_packets: Record<WindowId, number>;
+  /** Packets per NESTED range (1d/3d/1w), so the tabs say what widening would reveal
+   *  before you widen. `old` is deliberately absent: counting the complement of a week
+   *  means reading everything the box has ever heard, on every poll. */
+  window_packets: Record<string, number>;
+  /** Whether the archive holds anything older than a week at all. */
+  has_older: boolean;
+  /** How much, but only when `old` is the range being read — see `window_packets`. */
+  older: number | null;
+  /** The list hit its ceiling. A capped list that does not say so hides a station. */
+  truncated: boolean;
   /** Rows in this range the classifier has not reached yet. Normally zero; non-zero
    *  means the roster is INCOMPLETE and has to say so rather than quietly listing
    *  fewer stations — the same rule this screen already follows for a dead receiver. */
@@ -78,7 +86,11 @@ export interface AprsStationDetail {
   gated: boolean;
   relay: string | null;
   window: WindowId;
-  window_packets: Record<WindowId, number>;
+  /** Scoped to this station, and exact for every range including `old`: the origin index
+   *  bounds it to one station's rows, so the archive count is cheap here. */
+  window_packets: Record<string, number>;
+  has_older: boolean;
+  older: number | null;
   /** PACKETS per kind here, unlike the roster's station counts — inside one station the
    *  chips narrow its traffic. */
   kind_packets: Record<string, number>;
@@ -130,16 +142,24 @@ export function ago(iso: string, now: number = Date.now()): string {
   return `${Math.round(s / 86400)}d`;
 }
 
-/** The chips to show, and their counts — only the kinds actually present.
+/** The chips to show, and their counts — the kinds present, plus any that are SELECTED.
  *
  * A chip row of five where the range only holds objects is four dead controls, and a
- * single chip is a control with nothing to choose between, so both collapse to nothing. */
-export function chipsFor(counts: Record<string, number>): { kind: Kind; count: number }[] {
-  const present = KINDS.filter((k) => (counts[k] || 0) > 0).map((k) => ({
+ * single chip is a control with nothing to choose between, so both collapse to nothing.
+ *
+ * The `selected` half is what keeps the row escapable. A kind carried into a station that
+ * the station never sends has a count of zero, so without this the chip vanishes — and
+ * the owner is left with an empty list, a message telling him to clear a type filter, and
+ * no filter on screen to clear. */
+export function chipsFor(
+  counts: Record<string, number>,
+  selected: readonly string[] = [],
+): { kind: Kind; count: number }[] {
+  const present = KINDS.filter((k) => (counts[k] || 0) > 0 || selected.includes(k)).map((k) => ({
     kind: k,
     count: counts[k] ?? 0,
   }));
-  return present.length > 1 ? present : [];
+  return present.length > 1 || selected.length > 0 ? present : [];
 }
 
 /** The list header's count: "4 of 16" while chips are narrowing it, "16" otherwise. */

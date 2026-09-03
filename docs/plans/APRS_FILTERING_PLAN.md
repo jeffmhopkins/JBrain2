@@ -153,6 +153,55 @@ all. `GET /sdr/packets` now reports `store_failures`, a third way this surface c
 alongside `reachable` and `logging` — packets being heard and lost is now visible from the
 PWA rather than only in a log file on a box with no terminal.
 
+### The second independent review (F2 + F3)
+
+A different reviewer, again not the builder. Everything below is fixed; the pattern worth
+keeping is that **five of the seven were the same mistake — a state the owner cannot get
+out of, or a screen that is wrong without saying so.**
+
+- **A failed station load was a permanent dead end.** The only "All stations" button lived
+  *inside* the detail that never arrived, so a 404 or a dropped connection left the owner
+  on "Reading N4TDX…" for ever with no exit but leaving the tab. This screen had already
+  learned the identical lesson one level up (its own test says so, in those words) and F3
+  reintroduced it one level down. The way out now renders *before* the loading state.
+- **An error after the first load was invisible.** Once the roster had arrived the error
+  branch was unreachable, so a failing `/sdr/stations` froze the list on stale rows under
+  a health line still reading green. Errors are a banner now, not a replacement.
+- **No stale-response guard.** Tapping a slow station, going back, tapping a fast one
+  painted the *first* station's packets under the second one's header — while the chips
+  went on querying the second. The sequence token `RadioScreen` already used sat one file
+  away and had not been applied.
+- **The window-counts query was a full sequential scan, every five seconds.** The only
+  statement with no `WHERE`, and `count(DISTINCT origin_call)` sorted every row in the
+  table: 45 ms over 40k rows, so ~1.3 s and ~140 MB of buffers per poll at the plan's own
+  ~1.2M rows/year, spilling to disk past `work_mem`. It is bounded to a week now — the
+  three nested ranges all live inside one — and `old` gets *presence* (an index answers it
+  by stopping at the first row) with an exact count only when that range is opened.
+- **The roster truncated silently, and could truncate away the owner's own station.**
+  Pinning happened client-side, over the already-capped list — and a client cannot pin
+  what it was never sent. Over a long range the owner's station falls outside the cap, and
+  the screen shows every station except his: exactly the one this feature exists for. The
+  pin is a `split_part` sort key in SQL now, applied before the cap, and `truncated` says
+  when the list was capped.
+- **A carried-in chip could become invisible and unclearable.** Selecting Weather then
+  opening a station that only sends positions gave an empty list, a message saying "clear
+  the type filter", and no filter on screen to clear. A selected kind now renders at count
+  zero.
+- **`store_failures` never reached the PWA** — this plan claimed it did. The backend field
+  existed and was tested; nothing consumed it. It is on `AprsLogState` now and outranks
+  every healthy reading in `receiverHealth`, because "heard 12s ago" beside a drain saving
+  nothing is precisely the lie the field exists to stop.
+
+Plus a NUL in the `{call}` path returning a 500 (now the classifier's own callsign guard),
+and a fourth copy of the house segmented control — on the screen whose own test forbids
+inventing one, and which the clone slipped past by using a different class name. That test
+now asserts the range control *reuses* `.seg-tabs`.
+
+Thirteen mutations the reviewer named as survivors are killed, each verified by applying
+the mutation and watching a specific test fail — including the one on the wave's headline
+claim, where swapping the roster's `HAVING` for a `WHERE` was indistinguishable under the
+old fixtures because no station in them sent a mix of kinds.
+
 ## What is stored, honestly
 
 The owner asked whether everything heard is being saved so jerv can be pointed at it

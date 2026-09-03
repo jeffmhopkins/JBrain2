@@ -30,7 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.sdr.classify import classify
+from jbrain.sdr.classify import base_call, classify
 
 # The four ranges from the mock's segmented control. Three NEST — "3 days" contains "1
 # day" — and `old` is the complement of a week, the one exclusive bucket and the only one
@@ -45,6 +45,10 @@ WINDOWS: dict[str, str] = {
     "old": "heard_at < now() - interval '7 days'",
 }
 DEFAULT_WINDOW = "1d"
+
+# The three that NEST, all inside a week. `old` is the complement, so counting it means
+# reading the archive — see the counts query.
+_BOUNDED_WINDOWS = ("1d", "3d", "1w")
 
 # Both lists are bounded. The roster's ceiling is generous because a station list IS the
 # answer and truncating it silently would hide a station; the packet list's is not,
@@ -86,35 +90,51 @@ class StationsReader:
         *,
         window: str | None = DEFAULT_WINDOW,
         kinds: list[str] | None = None,
+        mine: str | None = None,
         limit: int = MAX_STATIONS,
     ) -> dict[str, Any]:
         """Who has been heard in the window, most recently heard first."""
         chosen, predicate = _window(window)
         wanted = [k for k in (kinds or []) if k]
         bounded = max(1, min(int(limit), MAX_STATIONS))
+        # The owner's own callsign, bare. Pinning happens HERE rather than only in the
+        # client because the list is capped: over a year's archive the owner's station can
+        # fall outside the 300 most recently heard, and a client that pins what it was
+        # given cannot pin what it never received — losing exactly the station this
+        # feature exists to surface.
+        owner = base_call(mine or "") or None
         async with scoped_session(self._maker, ctx) as s:
-            # Per-window PACKET counts for the segmented control, all four in one pass so
-            # the tabs can show what widening the range would actually reveal.
-            counts = (
-                (
-                    await s.execute(
-                        text(
-                            "SELECT"
-                            + ", ".join(
-                                f" count(*) FILTER (WHERE {sql}) AS w_{wid}"
-                                for wid, sql in WINDOWS.items()
-                            )
-                            + f", count(*) FILTER (WHERE {predicate} AND origin_call IS NULL)"
-                            " AS unclassified"
-                            f", count(DISTINCT origin_call) FILTER (WHERE {predicate})"
-                            " AS stations"
-                            " FROM app.aprs_packets"
-                        )
-                    )
+            # Per-window PACKET counts for the segmented control, all in one pass so the
+            # tabs can show what widening the range would actually reveal.
+            #
+            # BOUNDED TO THE LAST WEEK, which is what makes it affordable. Unbounded this
+            # was the only statement here with no WHERE — a sequential scan plus a sort of
+            # every row in the table for `count(DISTINCT origin_call)`, measured at 45 ms
+            # over 40k rows. At the plan's own ~1.2M rows a year that is over a second and
+            # ~140 MB of buffers PER POLL, every five seconds the tab is open, with the
+            # DISTINCT sort spilling to disk past `work_mem`. The three nested ranges are
+            # all inside a week, so nothing on the screen needed that scan.
+            #
+            # `old` is the complement of a week and a query bounded to the week cannot see
+            # it. Counting it means reading everything the box has ever heard, so the tab
+            # gets PRESENCE — an index answers that by stopping at the first row — and an
+            # exact count only when the owner has actually opened that range.
+            older_count = f"count(*) FILTER (WHERE {WINDOWS['old']})" if chosen == "old" else "NULL"
+            counts_sql = (
+                "SELECT"
+                + ",".join(
+                    f" count(*) FILTER (WHERE {WINDOWS[wid]}) AS w_{wid}"
+                    for wid in _BOUNDED_WINDOWS
                 )
-                .mappings()
-                .one()
+                + f", count(*) FILTER (WHERE {predicate} AND origin_call IS NULL) AS unclassified"
+                + f", count(DISTINCT origin_call) FILTER (WHERE {predicate}) AS stations"
+                + f", EXISTS (SELECT 1 FROM app.aprs_packets WHERE {WINDOWS['old']}) AS has_older"
+                + f", {older_count}::bigint AS older"
+                + " FROM app.aprs_packets"
+                # Reading `old` needs the archive in scope; every other range is a week.
+                + ("" if chosen == "old" else f" WHERE {WINDOWS['1w']}")
             )
+            counts = (await s.execute(text(counts_sql))).mappings().one()
 
             # Station counts per kind, over the window UNFILTERED by the chips — a chip
             # has to keep showing what selecting it would give while another is selected,
@@ -137,6 +157,9 @@ class StationsReader:
             # frame: how it reached us can change between packets, and the line reads
             # "heard on RF" or "gated via X" about the station as it is now.
             having = " HAVING bool_or(kind = ANY(:kinds))" if wanted else ""
+            # `split_part` rather than a LIKE prefix: an owner who saved `KE8XYZ` means
+            # every SSID of it and nothing else, and `KE8XYZZ` is a different station.
+            pin = " split_part(origin_call, '-', 1) = :mine DESC," if owner else ""
             rows = (
                 (
                     await s.execute(
@@ -148,9 +171,13 @@ class StationsReader:
                             " (array_agg(source ORDER BY heard_at DESC))[1] AS via"
                             f" FROM app.aprs_packets WHERE {_CLASSIFIED} AND {predicate}"
                             f" GROUP BY origin_call{having}"
-                            " ORDER BY max(heard_at) DESC LIMIT :limit"
+                            f" ORDER BY{pin} max(heard_at) DESC LIMIT :limit"
                         ),
-                        {"limit": bounded, **({"kinds": wanted} if wanted else {})},
+                        {
+                            "limit": bounded,
+                            **({"kinds": wanted} if wanted else {}),
+                            **({"mine": owner} if owner else {}),
+                        },
                     )
                 )
                 .mappings()
@@ -159,7 +186,12 @@ class StationsReader:
 
         return {
             "window": chosen,
-            "window_packets": {wid: counts[f"w_{wid}"] for wid in WINDOWS},
+            "window_packets": {wid: counts[f"w_{wid}"] for wid in _BOUNDED_WINDOWS},
+            # Whether the archive holds anything at all older than a week, and how much
+            # when that is the range being read. Presence rather than a count, because
+            # the count is a scan of everything the box has ever heard.
+            "has_older": bool(counts["has_older"]),
+            "older": counts["older"],
             # How many rows in this window the classifier has not reached. Normally zero;
             # non-zero means the sweep is still working and the roster is INCOMPLETE, and
             # the screen is expected to say so rather than quietly showing fewer stations.
@@ -168,6 +200,10 @@ class StationsReader:
             # Stations in the window BEFORE the chips narrow it, so the header can read
             # "4 of 15" honestly.
             "stations_total": counts["stations"],
+            # The list is capped, and a capped list that does not say so is a list that
+            # hides a station. The header is expected to show this rather than printing a
+            # confident total it did not return.
+            "truncated": len(rows) >= bounded,
             "stations": [
                 {
                     "call": r["call"],
@@ -283,8 +319,11 @@ class StationsReader:
             "window": chosen,
             # Scoped to THIS station, unlike the roster's. A time tab showing the whole
             # band's traffic while you are looking at one station is a control that
-            # answers a question you did not ask.
-            "window_packets": {wid: overall[f"w_{wid}"] for wid in WINDOWS},
+            # answers a question you did not ask. Cheap at any table size because
+            # `aprs_packets_origin_idx` bounds it to one station's rows.
+            "window_packets": {wid: overall[f"w_{wid}"] for wid in _BOUNDED_WINDOWS},
+            "has_older": overall["w_old"] > 0,
+            "older": overall["w_old"],
             "kind_packets": {r["kind"]: r["packets"] for r in kind_rows if r["kind"]},
             "packets": [
                 {

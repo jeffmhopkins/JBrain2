@@ -2737,9 +2737,17 @@ export const api = {
   // Filtering is the SERVER's job: a year of this channel is ~1.2M rows and the roster
   // is sixteen lines, so the range and the chips are query params rather than a client
   // that downloads the log and narrows it in the browser.
-  async getAprsStations(window: string, kinds: readonly string[] = []): Promise<AprsRoster> {
+  async getAprsStations(
+    window: string,
+    kinds: readonly string[] = [],
+    mine: string | null = null,
+  ): Promise<AprsRoster> {
     let query = `window=${encodeURIComponent(window)}`;
     if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    // The owner's callsign pins his own stations BEFORE the server caps the list — the
+    // client cannot pin what it was never sent. It is a sort key on his own request, not
+    // a permission, and the server already knows who is asking.
+    if (mine) query += `&mine=${encodeURIComponent(mine)}`;
     const response = await request(`/api/sdr/stations?${query}`);
     return (await response.json()) as AprsRoster;
   },

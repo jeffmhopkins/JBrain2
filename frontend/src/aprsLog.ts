@@ -29,6 +29,12 @@ export interface AprsLogState {
    * switched-off one is exactly the confusion this surface exists to prevent. */
   reachable: boolean;
   frequency_hz: number | null;
+  /** Consecutive failed stores. The THIRD way this surface can lie: the radio decodes,
+   *  the drain runs, and every row fails to save. The backend swallows those errors so
+   *  one bad frame cannot end the log, which means a broken INSERT — new code against an
+   *  un-migrated schema is the real case — stops the log with no other symptom at all.
+   *  Optional because a box running older code does not send it. */
+  store_failures?: number;
   packets: AprsPacket[];
 }
 
@@ -49,6 +55,12 @@ export function receiverHealth(state: AprsLogState, now: number = Date.now()) {
   // Unreachable outranks everything: with the box unable to ask, every other answer
   // here would be a guess dressed as a reading.
   if (!state.reachable) return { tone: "stale" as const, text: "the radio isn't reachable" };
+  // Heard AND LOST outranks every healthy reading. "heard 12s ago" beside a drain that
+  // is storing nothing is precisely the lie this field exists to stop, and the owner has
+  // no terminal to find it any other way (CLAUDE.md rule 10).
+  if ((state.store_failures ?? 0) > 0) {
+    return { tone: "stale" as const, text: "hearing packets but not saving them" };
+  }
   if (!state.logging) return { tone: "off" as const, text: "not logging" };
   const newest = state.packets[0];
   if (!newest) return { tone: "quiet" as const, text: "listening — nothing heard yet" };

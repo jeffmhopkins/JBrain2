@@ -25359,41 +25359,27 @@ button.task-band:active {
    it, which made the single most important sentence on the screen the least legible. */
 /* --- the station roster (F3, docs/mocks/aprs/e-stations.html) --------------------- */
 
-/* The range control. Built on the house segmented control rather than beside it — the
-   same shape the session list and the Radio tabs use — with a count per range so the
-   owner can see there is nothing older BEFORE tapping "Older" and finding out. */
-.aprs-windows {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--r-seg);
-  overflow: hidden;
+/* The range control REUSES `.seg-tabs`/`.seg-tab` — the same segmented control the Radio
+   tabs and the session list use. This screen's own test forbids inventing another one
+   ("this screen had invented an underline tab bar — a second answer to a settled
+   question"), and a near-identical clone under a different class name would have slipped
+   past that test while being exactly what it was written against. Only the count pill and
+   the tighter spacing are new. */
+.aprs-ranges {
   margin-bottom: 9px;
 }
-.aprs-window {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 0.5em 0;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-2);
-  background: transparent;
-  border: none;
-  cursor: pointer;
+/* The house control is ~31px tall repo-wide; on this screen it is the primary filter and
+   sits next to the chips, so it gets the phone tap target rather than matching a
+   deviation. */
+.aprs-ranges .seg-tab {
+  min-height: 44px;
 }
-.aprs-window + .aprs-window {
-  border-left: 1px solid var(--border);
-}
-.aprs-window.on {
-  color: var(--text);
-  background: var(--steel-tint);
-}
-.aprs-window-n {
+.seg-count {
   font-size: 10.5px;
   color: var(--text-3);
+}
+.seg-tab.on .seg-count {
+  color: inherit;
 }
 
 .aprs-chips {
@@ -25406,7 +25392,10 @@ button.task-band:active {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 10px;
+  /* 44px of tap target on a phone (DESIGN.md), even though the pill reads smaller. A
+     filter you have to aim at twice is a filter you stop using. */
+  min-height: 44px;
+  padding: 5px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
@@ -25505,9 +25494,13 @@ button.task-band:active {
   margin-bottom: 6px;
 }
 .aprs-back {
-  display: block;
-  padding: 6px 0;
-  margin: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  /* The ONLY way out of a station detail, so it gets a full tap target — including on
+     the failed-load path, where it is the only control on the screen. */
+  min-height: 44px;
+  padding: 6px 2px;
+  margin: 0 0 4px;
   border: none;
   background: transparent;
   color: var(--text-2);
