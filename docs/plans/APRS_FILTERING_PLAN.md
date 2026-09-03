@@ -296,10 +296,28 @@ them the round could not have caught, because of how its sample was built:
 weather-station type become FIELDS, and nothing reaches the quoted slot unless it is free
 text a human typed. 3 is a question about the list, not the row.
 
-Round 6 puts three shapes on identical real traffic — **E** repairs D (the reading is never
-empty; it relaxes the icon rule only when the symbol name is the entire reading), **F**
-promotes the reading to the title and demotes the type to a chip, **G** goes to one line and
-moves provenance into the tap. Open, awaiting the owner.
+Round 6 (`j-what-a-row-shows.html`) put three layouts on real traffic. **Its E was
+rejected**, and on the one point it had got wrong: E proposed relaxing the icon rule for a
+bare position (`Phone at 28.6212, -80.8237`). The owner's answer was that the icon is
+already displayed and its name is not to be restated in the card, full stop. That is the
+right call — the relaxation would have written the icon's name on exactly the rows where
+the icon is the *only* thing identifying the station.
+
+**Round 7 — `../mocks/aprs/k-what-the-row-says.html` (open).** With the rule absolute, the
+symbol name comes out of **nine of nineteen** real rows, and everywhere except a bare
+position that is an improvement: objects become their own names (`N1MPR C`, `442.850`) and
+Mic-E rows open on the motion. A bare position's line, though, empties completely — so the
+round asks what fills it, in the shipped layout, with layout held constant:
+
+| | Fills the line with | Costs |
+|---|---|---|
+| **H** | the coordinates, `28.6212, -80.8237` | the least human line on the screen; two stations a mile apart look identical |
+| **J** | the Maidenhead grid, `EL98oo` | means nothing to a non-ham, and names a 3×4 mile box rather than a point |
+| **K** | range and bearing, `1.1 mi NW` | needs the box's own position, so it is really "K, falling back to H or J" |
+
+They compose: K falling back to J is one line of code and covers the unset case. Also open:
+whether altitude belongs on the row (interesting for a balloon, noise for a house at 0 ft),
+and the repeats question carried over from round 6.
 
 **The lesson worth keeping** is about mock data, not about rows: a sample drawn from real
 traffic is still a *sample*, and D's happened to exclude the empty case entirely. A mock
