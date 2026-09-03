@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.sdr.classify import classify
 
 log = structlog.get_logger(__name__)
 
@@ -42,6 +43,29 @@ IDLE_POLL_SECONDS = 5.0
 # hostile frame cannot write an unbounded row.
 MAX_INFO = 512
 MAX_RAW = 2048
+
+# The columns `classify` fills in. Cached derivations over `raw`, so every one is
+# nullable and a NULL `kind` is the sweep's claim check rather than a broken row.
+DERIVED = ("origin_call", "data_type", "kind", "gated", "heard_direct", "addressee")
+
+INSERT_SQL = (
+    "INSERT INTO app.aprs_packets"
+    " (heard_at, frequency_hz, source, destination, path, info, raw,"
+    " origin_call, data_type, kind, gated, heard_direct, addressee)"
+    " VALUES (to_timestamp(:heard_at), :hz, :src, :dst, :path, :info, :raw,"
+    " :origin_call, :data_type, :kind, :gated, :heard_direct, :addressee)"
+)
+
+BACKFILL_SQL = (
+    "UPDATE app.aprs_packets SET origin_call = :origin_call, data_type = :data_type,"
+    " kind = :kind, gated = :gated, heard_direct = :heard_direct, addressee = :addressee"
+    " WHERE id = :id"
+)
+
+# How many unclassified rows one sweep claims. Small on purpose: the sweep runs beside a
+# live drain, and a backlog cleared over several minutes is indistinguishable from one
+# cleared at once to anyone reading the screen.
+BACKFILL_BATCH = 200
 
 
 class AprsLog:
@@ -113,16 +137,54 @@ class AprsLog:
         except Exception as exc:  # noqa: BLE001 — one frame must not end the drain
             log.warning("aprs_log.gate_failed", error=repr(exc))
 
+    async def backfill(self, *, batch: int = BACKFILL_BATCH) -> int:
+        """Classify rows that have none yet, newest first. Returns how many it filled.
+
+        The derived columns are a cache over `raw`, and this is what makes that claim
+        true: rows written before the columns existed, and rows written by a classifier
+        that has since been improved, are re-derived here rather than staying wrong.
+        Re-deriving costs nothing but CPU because `raw` is stored losslessly.
+
+        Newest first because the screen shows recent traffic — the owner sees the log
+        become filterable from the top down while an old backlog is still working.
+
+        Costs one index-only probe when there is nothing to do: the partial index this
+        reads is EMPTY once the table is fully derived."""
+        try:
+            async with scoped_session(self._maker, SessionContext(principal_kind="owner")) as s:
+                rows = (
+                    await s.execute(
+                        text(
+                            "SELECT id, source AS src, info, path, raw"
+                            " FROM app.aprs_packets WHERE kind IS NULL"
+                            " ORDER BY heard_at DESC LIMIT :batch"
+                            " FOR UPDATE SKIP LOCKED"
+                        ),
+                        {"batch": max(1, int(batch))},
+                    )
+                ).mappings()
+                # A row the classifier cannot read is LEFT NULL rather than labelled
+                # wrong, which means a genuine classifier bug leaves that row for the
+                # next sweep. That is the intended failure: the batch shrinks to just
+                # the unreadable rows, they cost one bounded query per interval, and
+                # they heal the moment the classifier is fixed.
+                updates = [{"id": r["id"], **derive(dict(r))} for r in rows]
+                filled = [u for u in updates if u["kind"] is not None]
+                if filled:
+                    await s.execute(text(BACKFILL_SQL), filled)
+                await s.commit()
+        except Exception as exc:  # noqa: BLE001 — the sweep retries; it never ends a loop
+            log.warning("aprs_log.backfill_failed", error=repr(exc))
+            return 0
+        if filled:
+            log.info("aprs_log.backfilled", rows=len(filled))
+        return len(filled)
+
     async def _store(self, row: dict[str, Any]) -> None:
         try:
             async with scoped_session(self._maker, SessionContext(principal_kind="owner")) as s:
                 await s.execute(
-                    text(
-                        "INSERT INTO app.aprs_packets"
-                        " (heard_at, frequency_hz, source, destination, path, info, raw)"
-                        " VALUES (to_timestamp(:heard_at), :hz, :src, :dst,"
-                        " :path, :info, :raw)"
-                    ),
+                    text(INSERT_SQL),
                     row,
                 )
                 await s.commit()
@@ -163,7 +225,7 @@ def _parse(line: str) -> dict[str, Any] | None:
         # A sidecar too old to stamp the frame, or a crafted one. Falling back to now is
         # honest — it is when we learned of it — and far better than storing 1970.
         heard_at = time.time()
-    return {
+    row = {
         "heard_at": heard_at,
         "hz": hz,
         "src": _clean(source)[:16],
@@ -171,6 +233,35 @@ def _parse(line: str) -> dict[str, Any] | None:
         "path": [_clean(str(p))[:16] for p in path][:8] if isinstance(path, list) else [],
         "info": _clean(info)[:MAX_INFO],
         "raw": _clean(str(payload.get("raw") or ""))[:MAX_RAW],
+    }
+    return row | derive(row)
+
+
+def derive(row: dict[str, Any]) -> dict[str, Any]:
+    """The classifier's output as columns, or empty values if it cannot read the frame.
+
+    Deriving here rather than in SQL keeps one implementation for the live path and the
+    backfill, and keeps it testable without a database. It is wrapped because the whole
+    point of the derived columns being nullable is that a classification failure costs a
+    label and never a packet — `raw` is stored losslessly either way, so an unclassified
+    row is one the sweep picks up again after the classifier improves."""
+    try:
+        heard = classify(
+            str(row.get("src") or ""),
+            str(row.get("info") or ""),
+            list(row.get("path") or []),
+            str(row.get("raw") or ""),
+        )
+    except Exception as exc:  # noqa: BLE001 — a label is never worth losing a frame
+        log.warning("aprs_log.classify_failed", error=repr(exc))
+        return dict.fromkeys(DERIVED)
+    return {
+        "origin_call": heard.origin[:16],
+        "data_type": heard.dti[:8],
+        "kind": heard.kind,
+        "gated": heard.gated,
+        "heard_direct": heard.direct,
+        "addressee": heard.addressee[:16] if heard.addressee else None,
     }
 
 
@@ -196,6 +287,27 @@ async def run_aprs_log_loop(logger: AprsLog, *, interval: float = IDLE_POLL_SECO
             await logger.tick()
         except Exception as exc:  # noqa: BLE001 — the loop outlives every session
             log.warning("aprs_log.tick_error", error=repr(exc))
+        await asyncio.sleep(interval)
+
+
+# Slow on purpose. Nothing waits on the sweep: live frames are classified as they are
+# stored, so this only ever works a backlog, and a backlog is by definition old.
+BACKFILL_POLL_SECONDS = 60.0
+
+
+async def run_aprs_backfill_loop(
+    logger: AprsLog, *, interval: float = BACKFILL_POLL_SECONDS
+) -> None:
+    """Forever: fill in rows the classifier has not seen.
+
+    Its own loop rather than a step inside the drain, because `tick` stays attached for
+    as long as the owner is logging — which is the point of the log, and can be days. A
+    backlog must not wait on the radio being idle."""
+    while True:
+        try:
+            await logger.backfill()
+        except Exception as exc:  # noqa: BLE001 — the loop outlives every sweep
+            log.warning("aprs_log.backfill_error", error=repr(exc))
         await asyncio.sleep(interval)
 
 
