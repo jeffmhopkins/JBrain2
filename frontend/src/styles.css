@@ -25357,6 +25357,187 @@ button.task-band:active {
 /* ---- what is armed, and what was tried (docs/mocks/aprs/a-launcher-shape.html) ----
    The deaf warning is deliberately NOT dimmed: round 3's review found `opacity:.55` on
    it, which made the single most important sentence on the screen the least legible. */
+/* --- the station roster (F3, docs/mocks/aprs/e-stations.html) --------------------- */
+
+/* The range control. Built on the house segmented control rather than beside it — the
+   same shape the session list and the Radio tabs use — with a count per range so the
+   owner can see there is nothing older BEFORE tapping "Older" and finding out. */
+.aprs-windows {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  overflow: hidden;
+  margin-bottom: 9px;
+}
+.aprs-window {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0.5em 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.aprs-window + .aprs-window {
+  border-left: 1px solid var(--border);
+}
+.aprs-window.on {
+  color: var(--text);
+  background: var(--steel-tint);
+}
+.aprs-window-n {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.aprs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 11px;
+}
+.aprs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.aprs-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.aprs-chip-n {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.aprs-chip[aria-pressed="true"] .aprs-chip-n {
+  color: inherit;
+}
+
+.aprs-count {
+  float: right;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+}
+
+/* A station row is a BUTTON: the whole row opens that station, because a tap target
+   that is only the callsign is a tap target you miss on a phone. */
+.aprs-station {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+/* The owner's own stations, pinned and tinted. His traffic often arrives WRAPPED —
+   an IGate relays his mail to RF once he has been heard nearby — so without this it
+   reads as somebody else's noise. */
+.aprs-station.mine,
+.aprs-st-head.mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.aprs-st-main {
+  flex: 1;
+  min-width: 0;
+}
+.aprs-st-call {
+  display: block;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--accent);
+}
+.aprs-st-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.aprs-st-right {
+  flex: 0 0 auto;
+  text-align: right;
+}
+.aprs-st-ago {
+  display: block;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-2);
+}
+.aprs-st-n {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.aprs-st-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.aprs-back {
+  display: block;
+  padding: 6px 0;
+  margin: 4px 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.aprs-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+  margin: 0 0 11px;
+}
+
+/* Provenance per packet, and the badge is also where the untrusted rule meets the eye:
+   every one of these was transmitted by a stranger. `direct` is the fact a ham most
+   wants — nobody repeated it, so we heard the sender's own transmission. */
+.aprs-badge.b-direct {
+  background: color-mix(in srgb, var(--ok, var(--accent)) 15%, transparent);
+  color: var(--ok, var(--accent));
+}
+.aprs-badge.b-gated {
+  background: color-mix(in srgb, var(--text-3) 18%, transparent);
+  color: var(--text-2);
+}
+.aprs-badge.b-rf {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
 .aprs-deaf {
   padding: 11px 12px;
   border: 1px solid var(--danger);

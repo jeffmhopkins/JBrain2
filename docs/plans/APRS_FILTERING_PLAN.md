@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3◻️(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -84,7 +84,20 @@ tapping `N1MPR-C` (5 pkt) would list `N1MPR-S`'s traffic too and disagree with t
 just tapped — the API matches the exact `origin_call`. And the mock's time tabs inside a
 station show the whole band's packet counts; the API scopes them to that station.
 
-**F3 ◻️ — the stations screen.** `e-stations.html` is binding spec.
+**F3 ✅ — the stations screen.** `components/AprsStations.tsx` + `aprsStations.ts`,
+replacing the flat packet feed the APRS tab shipped with. The roster is the screen;
+tapping a station opens its own traffic with the same two controls narrowing it.
+
+It follows the tab's existing poll rather than owning a second timer, so the station list
+and the health line above it can never be reading the channel at two different moments.
+The owner's callsign comes from app Settings — his stations pin to the top and tint,
+which is what removes round 4's central trap: **his own mail arrives wrapped**, because an
+IGate relays a message to RF only once the addressee has been heard nearby, so filed under
+the relay it reads as somebody else's noise. Filed under the true sender it is simply him.
+
+Leaving a station drops the chip selection deliberately: inside a station "Weather" means
+*this station's weather*, and at the roster it means *stations that send weather at all*.
+Carrying a selection across that change would silently rewrite what was asked for.
 
 **F4 ◻️ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
 summarize (tool `version` bump + digest re-pin at `tests/unit/test_agent_readtools.py`),

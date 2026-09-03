@@ -25,11 +25,11 @@ import { ApiError, api } from "../api/client";
 import {
   type AprsCommandState,
   type AprsLogState,
-  type AprsPacket,
   armedLabel,
   decodeRate,
   receiverHealth,
 } from "../aprsLog";
+import { AprsStations } from "../components/AprsStations";
 import { SdrTunerControls } from "../components/SdrTunerSheet";
 import { type SdrListening, useSdrSession } from "../sdrSession";
 
@@ -43,6 +43,11 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
   const [commands, setCommands] = useState<AprsCommandState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // One timer for the whole tab. The roster follows this counter rather than owning a
+  // second interval, so the station list and the health line above it can never be
+  // reading the channel at two different moments.
+  const [tick, setTick] = useState(0);
+  const [owner, setOwner] = useState<string | null>(null);
   const sdr = useSdrSession();
   // ONE reading of who holds the tuner, from the 1 s lease poll — not the 5 s log poll.
   // They are the same sidecar field arriving by two routes at two cadences, and mixing
@@ -67,6 +72,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
       if (mine !== seq.current) return;
       setLog(next);
       setCommands(armed);
+      setTick((t) => t + 1);
       setError(null);
     } catch (err) {
       if (mine !== seq.current) return;
@@ -79,6 +85,20 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // The owner's callsign, so their own stations pin to the top of the roster. It lives
+  // in app Settings rather than on this screen: it is the operator's identity, not a
+  // property of the radio. Read once — it does not change while the tab is open — and a
+  // failure is silent, because not knowing which station is his costs a pin, not a list.
+  useEffect(() => {
+    void (async () => {
+      try {
+        setOwner((await api.getSettings()).owner_callsign);
+      } catch {
+        setOwner(null);
+      }
+    })();
+  }, []);
 
   async function toggle(enabled: boolean) {
     setBusy(true);
@@ -128,6 +148,8 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
 
         {tab === "aprs" && (
           <AprsTab
+            tick={tick}
+            owner={owner}
             log={log}
             commands={commands}
             error={error}
@@ -163,6 +185,8 @@ function AprsTab({
   busy,
   holder,
   heldFor,
+  tick,
+  owner,
   onToggle,
 }: {
   log: AprsLogState | null;
@@ -173,6 +197,10 @@ function AprsTab({
   holder: string | null;
   /** Seconds the current session has held it, for the logging state's elapsed time. */
   heldFor: number | null;
+  /** The tab's poll counter — the roster refreshes with the health line, not apart. */
+  tick: number;
+  /** The owner's callsign from Settings, for pinning their own stations. */
+  owner: string | null;
   onToggle: (enabled: boolean) => void;
 }) {
   // The error has to come BEFORE the loading return. It used to sit after it, so a
@@ -260,15 +288,17 @@ function AprsTab({
 
       <CommandSummary commands={commands} logging={log.logging} />
 
-      <div className="aprs-sec">Heard</div>
-      {log.packets.length === 0 ? (
+      {/* The roster replaces the flat feed this tab shipped with. On the owner's own
+          capture that feed showed 6 callsigns for 16 transmitting stations, because
+          three quarters of the channel was one IGate relaying internet traffic under
+          its own name — a list of frames cannot show that, and a list of stations
+          keyed on the true sender shows nothing else. */}
+      {log.packets.length === 0 && !log.logging ? (
         <p className="radio-empty">
-          {log.logging
-            ? "Nothing heard yet — a quiet channel and a dead antenna look the same here, so the line above shows the last decode rather than a signal bar."
-            : "Nothing logged. Turn APRS logging on to start hearing the channel."}
+          Nothing logged. Turn APRS logging on to start hearing the channel.
         </p>
       ) : (
-        log.packets.map((packet) => <PacketRow key={rowKey(packet)} packet={packet} />)
+        <AprsStations tick={tick} owner={owner} />
       )}
     </>
   );
@@ -357,27 +387,6 @@ function CommandSummary({
   );
 }
 
-function PacketRow({ packet }: { packet: AprsPacket }) {
-  return (
-    <div className="aprs-row">
-      <span className="aprs-call">{packet.source}</span>
-      <div className="aprs-body">
-        <div className="aprs-msg">
-          {/* Badged as heard rather than presented as content of ours: it is a
-              stranger's transmission, and the badge is where that rule meets the eye. */}
-          <span className="aprs-badge">heard</span>
-          {packet.info}
-        </div>
-        <div className="aprs-meta">
-          → {packet.destination}
-          {packet.path.length > 0 ? ` via ${packet.path.join(",")}` : ""}
-        </div>
-      </div>
-      <span className="aprs-when">{clock(packet.heard_at)}</span>
-    </div>
-  );
-}
-
 /** An elapsed hold, as the mock states it: "held 1h 12m". */
 function held(seconds: number): string {
   const mins = Math.max(0, Math.round(seconds / 60));
@@ -424,11 +433,6 @@ function TunerTab({
       <div className="radio-tuner-sub">Idle. Ask jerv to tune something, or use the composer.</div>
     </div>
   );
-}
-
-/** Stable per row: two stations can transmit in the same second. */
-function rowKey(packet: AprsPacket): string {
-  return `${packet.heard_at}-${packet.source}-${packet.info.slice(0, 24)}`;
 }
 
 function clock(iso: string): string {

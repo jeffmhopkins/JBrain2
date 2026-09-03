@@ -24,6 +24,7 @@ import type {
   TranscriptTurn,
 } from "../agent/types";
 import type { AprsCommandState, AprsLogState, AprsToggleResult } from "../aprsLog";
+import type { AprsRoster, AprsStationDetail } from "../aprsStations";
 import type {
   IntakeConfig,
   IntakeConfigPatch,
@@ -2730,6 +2731,28 @@ export const api = {
   async getAprsPackets(limit = 50): Promise<AprsLogState> {
     const response = await request(`/api/sdr/packets?limit=${encodeURIComponent(limit)}`);
     return (await response.json()) as AprsLogState;
+  },
+
+  // The station roster and one station's traffic (docs/mocks/aprs/e-stations.html).
+  // Filtering is the SERVER's job: a year of this channel is ~1.2M rows and the roster
+  // is sixteen lines, so the range and the chips are query params rather than a client
+  // that downloads the log and narrows it in the browser.
+  async getAprsStations(window: string, kinds: readonly string[] = []): Promise<AprsRoster> {
+    let query = `window=${encodeURIComponent(window)}`;
+    if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    const response = await request(`/api/sdr/stations?${query}`);
+    return (await response.json()) as AprsRoster;
+  },
+
+  async getAprsStation(
+    call: string,
+    window: string,
+    kinds: readonly string[] = [],
+  ): Promise<AprsStationDetail> {
+    let query = `window=${encodeURIComponent(window)}`;
+    if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    const response = await request(`/api/sdr/stations/${encodeURIComponent(call)}?${query}`);
+    return (await response.json()) as AprsStationDetail;
   },
 
   async setAprsLogging(enabled: boolean, frequencyMhz?: number): Promise<AprsToggleResult> {

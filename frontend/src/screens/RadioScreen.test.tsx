@@ -57,8 +57,48 @@ function noCommands() {
   return vi.spyOn(api, "getAprsCommands").mockResolvedValue({ commands: [], attempts: [] });
 }
 
+/** A roster as the server sends it. The two stations are the measured case in
+ * miniature: one heard directly, one that only exists because a relayed frame was
+ * unwrapped — its AX.25 source was the IGate, not N1MPR-C. */
+function roster(over: Record<string, unknown> = {}) {
+  return {
+    window: "1d",
+    window_packets: { "1d": 12, "3d": 12, "1w": 12, old: 0 },
+    unclassified: 0,
+    kind_stations: { Position: 2, Weather: 1 },
+    stations_total: 2,
+    stations: [
+      {
+        call: "KE8XYZ-9",
+        packets: 8,
+        last_heard_at: new Date().toISOString(),
+        kinds: ["Position"],
+        gated: false,
+        relay: null,
+      },
+      {
+        call: "N1MPR-C",
+        packets: 4,
+        last_heard_at: new Date(Date.now() - 600_000).toISOString(),
+        kinds: ["Position", "Weather"],
+        gated: true,
+        relay: "N4TDX",
+      },
+    ],
+    ...over,
+  };
+}
+
+function stations(over: Record<string, unknown> = {}) {
+  return vi.spyOn(api, "getAprsStations").mockResolvedValue(roster(over) as never);
+}
+
 beforeEach(() => {
   noCommands();
+  stations();
+  // The callsign lives in app Settings, not on this screen. Most tests do not care
+  // which station is the owner's; the ones that do override this.
+  vi.spyOn(api, "getSettings").mockResolvedValue({ owner_callsign: null } as never);
 });
 
 afterEach(() => {
@@ -67,7 +107,7 @@ afterEach(() => {
 });
 
 describe("the APRS tab", () => {
-  it("shows what was heard", async () => {
+  it("lists who was heard, and how each one reached the box", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
     vi.spyOn(api, "getSdrStatus").mockResolvedValue({
       available: true,
@@ -76,23 +116,94 @@ describe("the APRS tab", () => {
 
     render(<RadioScreen onClose={() => {}} />);
 
-    expect(await screen.findByText("GATE 7K2M9")).toBeInTheDocument();
-    expect(screen.getByText("KE8XYZ-9")).toBeInTheDocument();
+    // Stations, not frames. On the owner's own capture a flat feed showed 6 callsigns
+    // for 16 transmitting stations, because three quarters of the channel was one
+    // IGate relaying internet traffic under its own name.
+    expect(await screen.findByText("KE8XYZ-9")).toBeInTheDocument();
+    expect(screen.getByText("N1MPR-C")).toBeInTheDocument();
+    // And the difference between the two is stated, not implied: one was on the air,
+    // the other never was.
+    expect(screen.getByText(/heard on RF/)).toBeInTheDocument();
+    expect(screen.getByText(/gated via N4TDX/)).toBeInTheDocument();
   });
 
-  it("badges a packet as heard rather than presenting it as ours", async () => {
+  it("says the roster is incomplete rather than quietly listing fewer stations", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue({
-      available: true,
-      listening: null,
-    });
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    stations({ unclassified: 41 });
 
     render(<RadioScreen onClose={() => {}} />);
 
-    // A packet is a stranger's transmission with a forgeable callsign. The badge is
-    // where that rule stops being a line in a plan and meets the owner's eye.
-    await screen.findByText("GATE 7K2M9");
-    expect(screen.getByText("heard")).toBeInTheDocument();
+    // Same rule as the health line above it: a list still filling in must not look
+    // like a channel with fewer stations on it.
+    expect(await screen.findByText(/41 packets not sorted yet/)).toBeInTheDocument();
+  });
+
+  it("opens a station and shows the payload, not the wrapper it arrived in", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const detail = vi.spyOn(api, "getAprsStation").mockResolvedValue({
+      call: "N1MPR-C",
+      packets_total: 4,
+      last_heard_at: new Date().toISOString(),
+      gated: true,
+      relay: "N4TDX",
+      window: "1d",
+      window_packets: { "1d": 4, "3d": 4, "1w": 4, old: 0 },
+      kind_packets: { Position: 4 },
+      packets: [
+        {
+          heard_at: new Date().toISOString(),
+          kind: "Position",
+          gated: true,
+          direct: false,
+          text: "!2835.06ND08048.98W&RNG0001 2m Voice",
+        },
+      ],
+    } as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+
+    // The frame the station composed. Rendering the stored `info` would print the
+    // third-party transport in front of every relayed line instead of the content.
+    expect(await screen.findByText(/2m Voice/)).toBeInTheDocument();
+    expect(detail).toHaveBeenCalledWith("N1MPR-C", "1d", []);
+    // Provenance per packet, which is also where the untrusted rule meets the eye.
+    expect(screen.getByText("gated")).toBeInTheDocument();
+  });
+
+  it("narrows the ROSTER by type, not the packets", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const asked = stations();
+
+    render(<RadioScreen onClose={() => {}} />);
+    // `pressed` picks the chip out: a station row whose kinds include Weather matches
+    // the name too, and it is not a toggle.
+    fireEvent.click(await screen.findByRole("button", { name: /Weather/, pressed: false }));
+
+    // "Show me who is putting out weather" is a question about stations, and the
+    // server answers it — a client that downloaded the log to narrow it here would
+    // move a year of a 1.2M-row channel to render two lines.
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"]));
+  });
+
+  it("pins the owner's own stations, however they reached the box", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // The bare call in Settings, and the station is an SSID of it: the truck and the
+    // handheld are one operator.
+    vi.spyOn(api, "getSettings").mockResolvedValue({ owner_callsign: "N1MPR" } as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    // The trap this removes: his own mail arrives WRAPPED, because an IGate relays a
+    // message to RF only once the addressee has been heard nearby. Filed under the
+    // relay it reads as somebody else's noise.
+    const rows = await screen.findAllByRole("button", { name: /pkt/ });
+    expect(rows[0]).toHaveTextContent("N1MPR-C");
+    expect(rows[0]).toHaveClass("mine");
   });
 
   it("does not read a silent receiver as a quiet channel", async () => {
@@ -336,7 +447,7 @@ describe("the Tuner tab", () => {
       .mockResolvedValue({ logging: false, changed: true });
 
     render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("GATE 7K2M9");
+    await screen.findByText("KE8XYZ-9");
     fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
 
     expect(screen.getByText(/In use by APRS logging/)).toBeInTheDocument();
@@ -354,7 +465,7 @@ describe("the screen's shell", () => {
     vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
 
     const { container } = render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("GATE 7K2M9");
+    await screen.findByText("KE8XYZ-9");
 
     // The launcher deliberately stays open BENEATH a card — dismissing the card
     // reveals it again — so a card that is only a padded section shows the tiles
@@ -367,7 +478,7 @@ describe("the screen's shell", () => {
     vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
 
     const { container } = render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("GATE 7K2M9");
+    await screen.findByText("KE8XYZ-9");
 
     // The same control the session list uses for Today / Older / Archived. This screen
     // had invented an underline tab bar — a second answer to a settled question.
@@ -402,7 +513,7 @@ describe("the Tuner tab", () => {
       .mockResolvedValue({ logging: false, changed: true });
 
     render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("GATE 7K2M9");
+    await screen.findByText("KE8XYZ-9");
     fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
 
     // A logging session is not audible, so the transport would be meaningless here —
