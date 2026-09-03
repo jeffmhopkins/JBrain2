@@ -25,6 +25,7 @@ convenience of rtl_fm's native output rather than a coincidence.
 from __future__ import annotations
 
 import io
+import contextlib
 import json
 import os
 import queue
@@ -32,10 +33,12 @@ import shutil
 import struct
 import subprocess
 import threading
+import time
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
+import listen
 from listen import PURPOSE_APRS, PURPOSE_LABEL, PURPOSE_LISTEN, PURPOSES
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
@@ -44,6 +47,10 @@ from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
 # The R820T2 tuner's real range. Anything outside it cannot be tuned, so it is
 # rejected here rather than handed to rtl_fm to fail on. HF below 24 MHz needs
 # direct sampling and is deliberately out of scope for now (plan §9).
+# How long after rtl_power's own exit timer to keep waiting, for the retune settle it
+# does before the first row. Named so a test can shrink it.
+SWEEP_SETTLE_S = 30
+
 MIN_HZ = 24_000_000
 MAX_HZ = 1_766_000_000
 
@@ -115,7 +122,9 @@ def capture(
     a caller waiting an unknown time on a radio someone else is using is worse than a
     caller told plainly that it is busy."""
     if not MIN_HZ <= freq_hz <= MAX_HZ:
-        raise SdrError(f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)")
+        raise SdrError(
+            f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+        )
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
@@ -144,7 +153,9 @@ def capture(
         # rtl_fm streams until killed, so the timeout IS the recording length. A
         # generous kill margin covers device open + tuner settle on a cold radio.
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=seconds, check=False)
+            proc = subprocess.run(
+                cmd, capture_output=True, timeout=seconds, check=False
+            )
             pcm, err = proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as expired:
             pcm = expired.stdout or b""
@@ -152,7 +163,9 @@ def capture(
 
         text = err.decode("utf-8", "replace")
         if not pcm:
-            raise SdrError(f"rtl_fm produced no audio: {text.strip()[-400:] or 'no output'}")
+            raise SdrError(
+                f"rtl_fm produced no audio: {text.strip()[-400:] or 'no output'}"
+            )
 
         return {
             "frequency_hz": freq_hz,
@@ -332,6 +345,102 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             session.unsubscribe_packets(sub)
 
+    def _sweep(self) -> None:
+        """Run one band sweep and return the CSV rtl_power wrote.
+
+        The sidecar's whole job here is the RADIO: hold the lease, run the sweep, hand
+        back the numbers. It does not reduce them and it does not draw them, because
+        `Dockerfile.sdr` forbids the pip install a plotting stack would need — and the
+        api already carries Pillow for exactly this kind of work. Sending the raw CSV
+        also means a better reduction can be run over an old sweep later, the same
+        reasoning that keeps `raw` on every APRS row.
+
+        Synchronous: the request is held for the length of the sweep. That is the
+        caller's problem to solve (the debug route runs it as a background job), not a
+        reason for the sidecar to grow a job table of its own."""
+        body = self._body()
+        if body is None:
+            return
+        try:
+            sweep = listen.Sweep.of(
+                start_hz=int(body.get("start_hz", 0)),
+                stop_hz=int(body.get("stop_hz", 0)),
+                bin_hz=int(body.get("bin_hz", 25_000)),
+                seconds=float(body.get("seconds", 60)),
+            )
+        except (TypeError, ValueError) as bad:
+            self._json(400, {"detail": f"a sweep needs numbers: {bad}"})
+            return
+        except ListenError as refused:
+            self._json(400, {"detail": str(refused)})
+            return
+
+        if not (MIN_HZ <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
+            self._json(
+                400,
+                {
+                    "detail": f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the "
+                    f"tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+                },
+            )
+            return
+
+        try:
+            info = TUNER.start(
+                sweep.centre_hz,
+                "fm",
+                body.get("gain"),
+                purpose=listen.PURPOSE_SURVEY,
+                sweep=sweep,
+            )
+        except ListenBusy as busy:
+            self._json(409, {"detail": str(busy)})
+            return
+        except ListenError as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+
+        # The path is derived from the session id rather than read off the Session,
+        # because a sweep can finish before this line runs — `Tuner.current()` reaps a
+        # dead session, so holding the object is a race the fast case loses.
+        csv_path = f"/tmp/sweep-{info.session_id}.csv"  # noqa: S108 - container-local
+        # rtl_power's own exit timer ends it; the wait is bounded by that plus a margin
+        # for the retune settle it does before the first row. The tuner going idle IS
+        # the completion signal, since a survey frees the radio when it ends.
+        deadline = time.time() + sweep.seconds + SWEEP_SETTLE_S
+        stopped_early = True
+        while time.time() < deadline:
+            held = TUNER.current()
+            if held is None or held.id != info.session_id:
+                stopped_early = False
+                break
+            time.sleep(0.25)
+        TUNER.stop(info.session_id)
+
+        try:
+            with open(csv_path, encoding="utf-8", errors="replace") as handle:
+                csv_text = handle.read()
+        except OSError:
+            csv_text = ""
+        with contextlib.suppress(OSError):
+            os.unlink(csv_path)
+
+        self._json(
+            200,
+            {
+                "start_hz": sweep.start_hz,
+                "stop_hz": sweep.stop_hz,
+                "bin_hz": sweep.bin_hz,
+                "seconds": sweep.seconds,
+                "gain": body.get("gain"),
+                # A sweep that hit the deadline still returns its rows. A partial sweep
+                # is a real measurement of a shorter window, and throwing it away would
+                # cost the caller the whole run.
+                "complete": not stopped_early,
+                "csv": csv_text,
+            },
+        )
+
     def _listen(self, body: dict[str, Any]) -> None:
         try:
             info = TUNER.start(
@@ -359,7 +468,9 @@ class Handler(BaseHTTPRequestHandler):
             # the only honest way out of one job into another.
             self._json(
                 409,
-                {"detail": f"the radio is {PURPOSE_LABEL.get(session.purpose, 'in use')}"},
+                {
+                    "detail": f"the radio is {PURPOSE_LABEL.get(session.purpose, 'in use')}"
+                },
             )
             return
         if session is None:
@@ -391,6 +502,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 stopped = TUNER.stop(body.get("session_id"))
                 self._json(200, {"stopped": stopped})
+            return
+        if route == "/sweep":
+            self._sweep()
             return
         if route != "/capture":
             self._json(404, {"detail": "not found"})
