@@ -21,6 +21,7 @@ import { Fragment, type ReactElement, useCallback, useEffect, useRef, useState }
 import { ApiError, api } from "../api/client";
 import {
   type AprsRoster,
+  type AprsStation,
   type AprsStationDetail,
   type AprsStationPacket,
   type Kind,
@@ -178,6 +179,9 @@ function Roster({
   onKind: (kind: Kind) => void;
   onOpen: (call: string) => void;
 }) {
+  // The roster's rows now say where a station is, so they need the same fix the
+  // packet rows do. One ask per screen, shared by both lists.
+  const you = useWhereYouAre();
   const stations = pinMine(roster.stations, owner);
   const chips = chipsFor(roster.kind_stations, kinds);
   const mine = stations.filter((s) => isMine(s.call, owner)).length;
@@ -247,8 +251,10 @@ function Roster({
             className={`aprs-station${isMine(s.call, owner) ? " mine" : ""}`}
             onClick={() => onOpen(s.call)}
           >
+            <StationGlyph station={s} />
             <span className="aprs-st-main">
               <span className="aprs-st-call">{s.call}</span>
+              {latestOf(s, you) && <span className="aprs-st-said">{latestOf(s, you)}</span>}
               <span className="aprs-st-sub">
                 {arrival(s)} · {s.kinds.join(", ")}
               </span>
@@ -493,6 +499,46 @@ function PacketRow({
         </div>
       )}
     </div>
+  );
+}
+
+/** What a station last said, for the roster row.
+ *
+ * Runs the SAME two rules the packet row runs — the icon's name is never written, and a
+ * bare position falls through to where it is — by calling the same functions. A second
+ * implementation here would drift within a week, and the drift would be invisible: the
+ * list and the detail would describe one frame two different ways. */
+function latestOf(station: AprsStation, you: Fix | null): string {
+  const fields = new Map<string, string>(station.last_fields);
+  const symbolName = fields.get("Symbol") ?? "";
+  const derived = station.last_summary !== "" && station.last_summary !== station.last_comment;
+  const said =
+    (derived ? readingOf(station.last_summary, symbolName, station.last_symbol) : "") ||
+    placeOf({ lat: station.last_lat, lon: station.last_lon } as AprsStationPacket, fields, you);
+  return said || station.last_comment;
+}
+
+/** The station's own symbol, or our inference about its newest packet. Same two tints as
+ *  the packet row: the accent is a claim the STATION made, the neutral one is ours. */
+function StationGlyph({ station }: { station: AprsStation }) {
+  const label = new Map<string, string>(station.last_fields).get("Symbol") ?? station.last_kind;
+  if (station.last_symbol.length === 2) {
+    return (
+      <span className="aprs-sym aprs-sym-own aprs-sym-sm">
+        <AprsSymbol
+          table={station.last_symbol.slice(0, 1)}
+          code={station.last_symbol.slice(1, 2)}
+          label={label}
+          size={18}
+        />
+      </span>
+    );
+  }
+  const Glyph = KIND_ICONS[station.last_kind] ?? ThingIcon;
+  return (
+    <span className="aprs-sym aprs-sym-kind aprs-sym-sm" role="img" aria-label={station.last_kind}>
+      <Glyph size={18} />
+    </span>
   );
 }
 

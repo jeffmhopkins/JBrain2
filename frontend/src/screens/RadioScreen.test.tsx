@@ -78,6 +78,14 @@ function roster(over: Record<string, unknown> = {}) {
         kinds: ["Position"],
         gated: false,
         relay: null,
+        last_kind: "Position",
+        last_summary: "Car — 52 knots (60 mph) heading 242° (WSW)",
+        last_fields: [["Symbol", "Car"]],
+        last_comment: "",
+        last_symbol: "/>",
+        last_lat: 28.6212,
+        last_lon: -80.8237,
+        last_level: null,
       },
       {
         call: "N1MPR-C",
@@ -86,6 +94,14 @@ function roster(over: Record<string, unknown> = {}) {
         kinds: ["Position", "Weather"],
         gated: true,
         relay: "N4TDX",
+        last_kind: "Weather",
+        last_summary: "78 °F, from the NNW (338°) at 0 mph, 99 % humidity",
+        last_fields: [["Symbol", "Weather station"]],
+        last_comment: "AmbientCWOP.com",
+        last_symbol: "/_",
+        last_lat: 28.5855,
+        last_lon: -80.6507,
+        last_level: 62,
       },
     ],
     ...over,
@@ -178,6 +194,55 @@ describe("the APRS tab", () => {
     // the other never was.
     expect(screen.getByText(/heard on RF/)).toBeInTheDocument();
     expect(screen.getByText(/gated via N4TDX/)).toBeInTheDocument();
+  });
+
+  it("says what each station last sent, not just who and how many", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    // The roster answered who and how many but never WHAT — so a screen of weather
+    // stations showed four callsigns and no weather, with each reading one tap down.
+    expect(await screen.findByText(/78 °F, from the NNW/)).toBeInTheDocument();
+    expect(screen.getByText(/52 knots .* heading 242/)).toBeInTheDocument();
+  });
+
+  it("applies the icon rule to the roster too", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // A station whose whole last reading is its symbol name. The row must fall through
+    // to where it is, exactly as a packet row does — one implementation, not two.
+    stations({
+      stations: [
+        {
+          call: "KC3EFJ",
+          packets: 7,
+          last_heard_at: new Date().toISOString(),
+          kinds: ["Position"],
+          gated: false,
+          relay: null,
+          last_kind: "Position",
+          last_summary: "Phone",
+          last_fields: [
+            ["Symbol", "Phone"],
+            ["Grid square", "EL98oo"],
+          ],
+          last_comment: "",
+          last_symbol: "/$",
+          last_lat: 28.6212,
+          last_lon: -80.8237,
+          last_level: null,
+        },
+      ],
+    });
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KC3EFJ");
+
+    expect(container.querySelector(".aprs-st-said")?.textContent).toBe("EL98oo");
+    // The name still reaches a screen reader through the glyph, as on a packet row.
+    expect(container.querySelector(".aprs-station svg title")?.textContent).toBe("Phone");
   });
 
   it("says the roster is incomplete rather than quietly listing fewer stations", async () => {
