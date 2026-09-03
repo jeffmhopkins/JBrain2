@@ -1,0 +1,395 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APRS stations - the chosen shape</title>
+<!--
+  ROUND 5 of the APRS GUI gate, and the LAST: shape C from round 4 (d-filtering.html)
+  was chosen, with three refinements the owner asked for.
+
+    1. Stations are ordered MOST RECENTLY HEARD first, not by packet count.
+    2. Inside a station, filter by TYPE.
+    3. Inside a station, filter by RECENCY: 1 day / 3 days / 1 week / older.
+
+  Every packet here is real: 184 frames from the owner's box on 144.390, Titusville FL,
+  spanning 90 minutes. 5 values in the `source` column; 15 true originators once
+  third-party frames are unwrapped.
+
+  WHY THE TIME CONTROL IS GLOBAL, not per-station. The owner asked for recency inside a
+  station. It is the same control the ROSTER needs - "who has been active this week" is
+  the question a roster answers, and after a month of logging an all-time roster is
+  hundreds of stations of which a handful are live. One control that persists across
+  both levels is one concept to learn; two would be two, and they would disagree.
+
+  WHAT THE CAPTURE CANNOT SHOW. It spans 90 minutes, so every packet falls in "1 day"
+  and "older" is genuinely empty. That is the data, not the control - and the mock says
+  so on screen rather than inventing history to make a filter look busy.
+
+  THE TRAP CARRIED FORWARD FROM ROUND 4: an IGate gates a message to RF only when the
+  addressee was heard nearby, so the owner's own mail arrives wrapped as third-party
+  from N4TDX. This shape survives it by construction - a roster keyed on the true
+  originator lists him as himself, whatever relayed him. Nothing is hidden by default.
+
+  DECIDED, do not relitigate: the segmented tab strip; the full-screen layer; the Tuner
+  tab mounting the real transport (#1275); the callsign field on this tab.
+
+  NOT decided here: retention (nothing prunes, ~3k rows/day); whether a station can be
+  muted; signal level, which IS available - direwolf's heard line carries it and we
+  currently suppress it with `-q hd`.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:76ch;}
+  .sub strong{color:var(--text);font-weight:600;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+  .controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:20px 0 6px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surface);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:13px;
+    padding:9px 14px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+  .datanote{font-size:12px;color:var(--text-3);margin:0 0 20px;font-family:var(--mono);}
+
+  .stage{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;}
+  .phone{width:392px;min-height:720px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
+    padding:14px 13px 20px;box-shadow:0 18px 50px rgba(0,0,0,.45);position:relative;overflow:hidden;}
+  .note{flex:1;min-width:300px;max-width:450px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
+  .note h3{color:var(--text);font-size:14px;margin:0 0 8px;font-weight:620;}
+  .note h4{color:var(--text);font-size:12.5px;margin:17px 0 6px;font-weight:620;
+    text-transform:uppercase;letter-spacing:.06em;}
+  .note p{margin:0 0 12px;}
+  .note strong{color:var(--text);font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+  .cost{border-left:2px solid var(--amber);padding-left:11px;}
+  .cost b{color:var(--amber);font-weight:600;}
+  .ok{border-left:2px solid var(--green);padding-left:11px;}
+  .ok b{color:var(--green);font-weight:600;}
+
+  .scr-top{display:flex;align-items:center;gap:10px;padding:2px 2px 10px;}
+  .chev{color:var(--text-2);font-size:19px;line-height:1;}
+  .scr-title{font-size:17px;font-weight:640;}
+  .segtabs{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;margin-bottom:11px;}
+  .segtabs button{flex:1;appearance:none;background:none;border:0;color:var(--text-2);font:inherit;
+    font-size:13px;font-weight:500;padding:.6em 0;cursor:pointer;}
+  .segtabs button + button{border-left:1px solid var(--border);}
+  .segtabs button[aria-selected="true"]{background:var(--steel-tint);color:var(--text);}
+  .segtabs.small button{font-size:12px;padding:.5em 0;}
+  .segtabs .z{font-family:var(--mono);font-size:9.5px;opacity:.6;margin-left:4px;}
+
+  .health{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:10px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto;}
+  .who{font-size:13px;color:var(--text-2);} .who b{color:var(--text);font-weight:600;}
+  .rate{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--text-2);}
+
+  .callsign{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);margin-bottom:10px;font-size:12.5px;color:var(--text-2);}
+  .callsign input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12.5px;padding:6px 8px;
+    text-transform:uppercase;letter-spacing:.06em;}
+  .callsign input:focus-visible{outline:2px solid var(--steel);outline-offset:-1px;}
+
+  .sec{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3);
+    margin:14px 0 8px;display:flex;align-items:center;gap:8px;}
+  .sec .count{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transform:none;font-size:11px;}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--text-2);
+    font:inherit;font-size:11.5px;padding:5px 10px;border-radius:999px;cursor:pointer;
+    display:flex;align-items:center;gap:5px;}
+  .chip[aria-pressed="true"]{background:var(--steel-tint);border-color:var(--steel);color:var(--steel);font-weight:600;}
+  .chip .n{font-family:var(--mono);font-size:10px;opacity:.75;}
+  .chip:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+
+  .station{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid var(--border);
+    border-radius:11px;background:var(--surface);margin-bottom:7px;cursor:pointer;width:100%;
+    text-align:left;font:inherit;color:inherit;}
+  .station:hover{border-color:var(--text-3);}
+  .station:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+  .station.mine{border-color:var(--green);background:var(--green-tint);}
+  .stwrap{flex:1;min-width:0;}
+  .sc{font-family:var(--mono);font-size:13.5px;color:var(--steel);}
+  .station.mine .sc{color:var(--green);}
+  .sm{font-size:11px;color:var(--text-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sright{text-align:right;flex:0 0 auto;}
+  .sago{font-family:var(--mono);font-size:11.5px;color:var(--text-2);}
+  .sn{font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-top:3px;}
+
+  .row{display:flex;gap:9px;padding:9px 2px;border-bottom:1px solid var(--border);font-size:12.5px;}
+  .row:last-child{border-bottom:0;}
+  .body{flex:1;min-width:0;}
+  .msg{color:var(--text);line-height:1.42;overflow-wrap:anywhere;}
+  .meta{color:var(--text-3);font-size:11px;margin-top:3px;font-family:var(--mono);}
+  .when{color:var(--text-3);font-size:11px;font-family:var(--mono);flex:0 0 auto;}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    padding:1px 5px;border-radius:5px;margin-right:6px;vertical-align:1px;font-weight:600;}
+  .b-rf{background:var(--green-tint);color:var(--green);}
+  .b-gated{background:var(--surface-2);color:var(--text-3);}
+  .b-direct{background:var(--amber-tint);color:var(--amber);}
+  .empty{color:var(--text-3);font-size:12.5px;line-height:1.55;padding:12px 2px;}
+  .empty b{color:var(--text-2);}
+  .feed{max-height:300px;overflow-y:auto;}
+  .backlink{appearance:none;background:none;border:0;color:var(--steel);font:inherit;font-size:12.5px;
+    padding:2px 0 10px;cursor:pointer;}
+  .sthead{display:flex;align-items:baseline;gap:9px;margin-bottom:4px;}
+  .sthead .c{font-family:var(--mono);font-size:16px;color:var(--steel);}
+  .sthead .g{margin-left:auto;font-size:11px;color:var(--text-3);font-family:var(--mono);}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>APRS stations &mdash; the chosen shape</h1>
+  <p class="sub">Round 5, and the last: <strong>shape C refined</strong>. Stations ordered
+  <strong>most recently heard first</strong>; tap one to filter its traffic by <strong>type</strong>
+  and <strong>recency</strong>. <strong>184 real packets</strong> from the box on 144.390, spanning
+  90 minutes &mdash; <code>5</code> callsigns in the raw log, <code>15</code> once third&#8209;party
+  frames are unwrapped.</p>
+  <div class="controls">
+    <div class="field">
+      <span class="lbl">Pretend my callsign is</span>
+      <div class="seg" role="group" id="whoami">
+        <button aria-pressed="true" data-me="">unset</button>
+        <button aria-pressed="false" data-me="KD4WLE">KD4WLE</button>
+        <button aria-pressed="false" data-me="N1KSC">N1KSC</button>
+      </div>
+    </div>
+  </div>
+  <p class="datanote">184 packets &middot; 15 stations &middot; 90 minutes &middot; captured 2026-09-03 01:00 UTC</p>
+</header>
+<div class="stage">
+  <div class="phone" id="phone"></div>
+  <div class="note" id="note"></div>
+</div>
+</div>
+<script>
+const PACKETS = [{"ago":22,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281738z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":109,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030059z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":110,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030059z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":111,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030059z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":113,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030059z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":145,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030058z2837.27N/08049.42W_285/001g001t081r000p063P063h96b10155L000AmbientCWOP.com"},{"ago":187,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"ago":253,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":259,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *030056z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":267,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#252,190,072,011,066,000,00000000"},{"ago":324,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281733z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":407,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":"T#297,53.2,-1.0,92,0,16,11000000"},{"ago":411,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030054z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":412,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030054z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":414,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030054z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":415,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030054z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":447,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030053z2837.27N/08049.42W_310/001g002t081r000p063P063h96b10155L000AmbientCWOP.com"},{"ago":527,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":560,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#251,190,073,011,066,000,00000000"},{"ago":631,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT>APIN22,TCPIP,N4TDX*:!2835.81N/08050.93W?442.850 PL107.2 RX/TX  n4tdx.org"},{"ago":712,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *030049z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":715,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030048z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":717,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030048z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":718,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030048z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":720,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030048z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":754,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030048z2837.27N/08049.42W_288/004g004t081r000p063P063h96b10155L000AmbientCWOP.com"},{"ago":868,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#250,190,074,011,067,000,00000000"},{"ago":924,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281723z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":1005,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":1016,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030043z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1017,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030043z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1018,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030043z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":1020,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030043z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":1057,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030043z2837.27N/08049.42W_300/002g003t081r000p063P063h96b10154L000AmbientCWOP.com"},{"ago":1118,"src":"N4TDX-15","dst":"BEACON","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida"},{"ago":1168,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#249,190,076,011,068,000,00000000"},{"ago":1224,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281718z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":1255,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030040z2837.85N/08050.21W_163/006g010t081r000p020P000h88b10139 W4EDL WX Station"},{"ago":1326,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030038z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1327,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030038z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":1328,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030038z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":1329,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030038z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":1466,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#248,190,078,011,068,000,00000000"},{"ago":1493,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":1503,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *030035z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":1519,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281713z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":1608,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":"T#295,53.2,-0.8,92,0,17,11000000"},{"ago":1625,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":":K4KSC-12 :BITS.11111111,SMART (Solar Monitoring And Repeater Telemetry)"},{"ago":1629,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030033z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1630,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030033z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1632,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030033z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":1633,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030033z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":1634,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030033z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":1635,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":":K4KSC-12 :EQNS.0,1,0,0,1,0,0,1,0,0,1,0,0,1,0"},{"ago":1657,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":":K4KSC-12 :UNIT.V,A,%,W,W,OK,OK"},{"ago":1726,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":1726,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":1767,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#247,190,080,011,069,000,00000000"},{"ago":1825,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281708z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":1856,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030030z2837.85N/08050.21W_150/004g004t082r000p020P000h87b10136 W4EDL WX Station"},{"ago":1932,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030028z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":1933,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-C>APDG02,TCPIP,N4TDX*:!2835.05ND08049.00W&RNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":1935,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030028z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":1936,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030028z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":1954,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *030028z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":1969,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030028z2837.27N/08049.42W_321/002g003t081r000p063P063h93b10151L000AmbientCWOP.com"},{"ago":1988,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"ago":2066,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#246,190,080,011,069,000,00000000"},{"ago":2125,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281703z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":2203,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":2204,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:!2837.32N/08049.42W[/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":2205,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":"T#294,53.2,-0.9,93,0,17,11000000"},{"ago":2242,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030023z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":2245,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030023z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":2266,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030023z2837.27N/08049.42W_351/001g001t081r000p063P063h93b10151L000AmbientCWOP.com"},{"ago":2366,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#245,190,081,011,070,000,00000000"},{"ago":2425,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281658z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":2432,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT>APIN22,TCPIP,N4TDX*:!2835.81N/08050.93W?442.850 PL107.2 RX/TX  n4tdx.org"},{"ago":2458,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030020z2837.85N/08050.21W_172/000g002t082r000p020P000h87b10139 W4EDL WX Station"},{"ago":2545,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030018z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":2547,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030018z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":2548,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030018z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":2550,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030018z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":2678,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":":N1KSC-1  :BITS.11111111,Telemetry test"},{"ago":2678,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":":N1KSC-1  :EQNS.0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0"},{"ago":2679,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":":N1KSC-1  :UNIT.Volt,Pkt,Pkt,Pcnt,None,On,On,On,On,Hi,Hi,Hi,Hi"},{"ago":2679,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":":N1KSC-1  :PARM.Vin,Rx1h,Dg1h,Eff1h,A5,O1,O2,O3,O4,I1,I2,I3,I4"},{"ago":2725,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":2742,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *030015z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":2850,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030013z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":2853,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030013z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":2854,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030013z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":2877,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030013z2837.27N/08049.42W_324/000g000t081r000p063P063h94b10152L000AmbientCWOP.com"},{"ago":2878,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"ago":2918,"src":"N4TDX-15","dst":"BEACON","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida"},{"ago":2920,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"<IGATE,MSG_CNT=102,LOC_CNT=111"},{"ago":2926,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":2926,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":2941,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}WINLINK>APWL2K,TCPIP,N4TDX*:;N4TDX-8  *031211z2838.  NW08052.  Wa144.990MHz Winlink VARA FM Wide Gateway"},{"ago":2954,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}WINLINK>APWL2K,TCPIP,N4TDX*:;N4TDX-10 *031211z2838.  NW08047.  Wa145.090MHz Winlink Packet Gateway"},{"ago":2962,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#243,190,083,011,070,000,00000000"},{"ago":3026,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281648z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":3058,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030010z2837.85N/08050.21W_142/008g008t082r000p020P000h86b10139 W4EDL WX Station"},{"ago":3154,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030008z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":3157,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030008z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":3158,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030008z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":3159,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030008z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":3173,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-C>APDG02,TCPIP,N4TDX*:!2835.05ND08049.00W&RNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":3182,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *030007z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":3266,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#242,190,083,011,070,000,00000000"},{"ago":3404,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":3405,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:!2837.32N/08049.42W[/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":3406,"src":"K4KSC-12","dst":"APDW17","path":"{N1KSC-1*,WIDE1*}","info":"T#292,53.2,-0.8,93,0,16,11000000"},{"ago":3459,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *030003z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":3461,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *030003z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":3462,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *030003z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":3463,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *030003z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":3464,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *030003z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":3488,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@030002z2837.27N/08049.42W_317/002g002t082r000p063P063h94b10153L000AmbientCWOP.com"},{"ago":3571,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#241,190,083,011,070,000,00000000"},{"ago":3659,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@030000z2837.85N/08050.21W_161/004g006t082r000p020P000h88b10136 W4EDL WX Station"},{"ago":3765,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022358z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":3766,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022358z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":3767,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022358z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":3768,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022358z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":3769,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022358z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":3787,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"ago":3788,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022357z2837.27N/08049.42W_012/000g000t082r000p063P063h94b10149L000AmbientCWOP.com"},{"ago":3872,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#240,190,084,011,070,000,00000000"},{"ago":3926,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281633z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":3962,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":3972,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *022354z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":4070,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022353z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4071,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022353z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4073,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022353z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":4074,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022353z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":4097,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022352z2837.27N/08049.42W_359/000g001t082r000p063P063h94b10149L000AmbientCWOP.com"},{"ago":4126,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":4126,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":4165,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#239,190,086,011,070,000,00000000"},{"ago":4211,"src":"WD4VID-9","dst":"R8PW0T","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"`lF@qIhv/`\"3v}APMAIL WINLINK_4"},{"ago":4227,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281628z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":4236,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT>APIN22,TCPIP,N4TDX*:!2835.81N/08050.93W?442.850 PL107.2 RX/TX  n4tdx.org"},{"ago":4368,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022348z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4371,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022348z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":4372,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022347z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":4373,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022347z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":4395,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022347z2837.27N/08049.42W_330/002g002t082r000p063P063h95b10151L001AmbientCWOP.com"},{"ago":4404,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-C>APDG02,TCPIP,N4TDX*:!2835.05ND08049.00W&RNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":4410,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KM4OSL-S>APDG01,TCPIP,N4TDX*:;KM4OSL C *022347z2835.05ND08049.00WaRNG0001/A=000010 70cm Voice (D-Star) 435.50000MHz +0.0000MHz"},{"ago":4468,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#238,190,087,010,071,000,00000000"},{"ago":4528,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281622z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":4610,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":4611,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE-D>APCHP0,TCPIP,N4TDX*:!2837.32N/08049.42W[/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":4670,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022342z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4671,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022342z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4673,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"!2837.86NI08049.44W#PHG7460 BCAT1 NETROM Stack-IGate-Full Service BBS in Mims, Florida (EL98OP)"},{"ago":4673,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022342z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":4675,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022342z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":4676,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022342z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":4698,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022342z2837.27N/08049.42W_315/001g002t083r000p063P063h95b10150L001AmbientCWOP.com"},{"ago":4715,"src":"N4TDX-15","dst":"BEACON","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida"},{"ago":4771,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#237,190,086,011,071,000,00000000"},{"ago":4827,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281617z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":4858,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}W4EDL-13>APRS,TCPIP,N4TDX*:@022340z2837.85N/08050.21W_156/010g010t082r000p020P000h89b10132 W4EDL WX Station"},{"ago":4985,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022337z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":4986,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022337z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":4988,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022337z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":5003,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022337z2837.27N/08049.42W_313/000g001t083r000p063P063h95b10147L003AmbientCWOP.com"},{"ago":5072,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#236,190,084,011,071,000,00000000"},{"ago":5116,"src":"WD4VID-9","dst":"R8PX3T","path":"{N1KSC-1*,WIDE1*,WIDE2-1}","info":"`lD)l \"v/`\"3t}APMAIL WINLINK_4"},{"ago":5127,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281612z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"},{"ago":5194,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-C>APDG02,TCPIP,N4TDX*:!2835.06ND08048.98W&RNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":5201,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}N1MPR-S>APDG01,TCPIP,N4TDX*:;N1MPR  C *022334z2835.06ND08048.98WaRNG0001/A=000010 2m Voice (D-Star) 147.58500MHz +0.0000MHz"},{"ago":5288,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-2 *022332z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":5289,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-1 *022332z2836.67N/08048.38W`KD4WLE-TitusvilleTower-Sector pointing South, Channel 36/5Mhz - seanhaga@kd4wle.net for more info."},{"ago":5290,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;442.850  *022332z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)"},{"ago":5292,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;N4TDX-2  *022332z2839.95N/08050.77WzN4TDX Mims Auxcom https://n4tdx.org"},{"ago":5292,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:;FLMesh-0 *022332z2837.27N/08049.43W`KD4WLE-Titusville-NOC - #FLMesh Network Ops Center. seanhaga@kd4wle.net for more info."},{"ago":5309,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}KD4WLE>APRS,TCPIP,N4TDX*:@022332z2837.27N/08049.42W_005/001g001t082r000p063P063h94b10149L004AmbientCWOP.com"},{"ago":5337,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:>Powered by WPSD (https://wpsd.radio)"},{"ago":5338,"src":"N4TDX","dst":"APBPQ1","path":"{N1KSC-1*,WIDE1*}","info":"}K4JTT-D>APCHP0,TCPIP,N4TDX*:!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway"},{"ago":5374,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"T#235,190,083,011,070,000,00000000"},{"ago":5428,"src":"N1KSC-1","dst":"APMI03","path":"{}","info":"@281607z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club"}];
+
+/* The real classifier - see docs/mocks/aprs/d-filtering.html for why it must run on the
+   INNER frame. A third-party wrapper `}SRC>DEST,path:payload` hides both the true
+   originator and the meaningful type. */
+function unwrap(info){
+  if(!info.startsWith('}')) return null;
+  const body = info.slice(1), colon = body.indexOf(':');
+  if(colon < 0) return null;
+  const head = body.slice(0,colon), inner = body.slice(colon+1), gt = head.indexOf('>');
+  if(gt < 0) return null;
+  const rest = head.slice(gt+1).split(',');
+  return {origin: head.slice(0,gt), path: rest.slice(1), info: inner};
+}
+const KIND = {'!':'Position','=':'Position','/':'Position','@':'Position','`':'Position',
+  "'":'Position','$':'Position',':':'Message','_':'Weather','#':'Weather','*':'Weather',
+  ';':'Object',')':'Object'};
+
+function classify(p){
+  const inner = unwrap(p.info);
+  const eff = inner ? inner.info : p.info;
+  const path = inner ? inner.path : (p.path||'').replace(/[{}]/g,'').split(',').filter(Boolean);
+  const gated = !!inner && path.some(e => /^TCP(IP|XX)/.test(e));
+  return {...p, origin: inner ? inner.origin : p.src, relay: inner ? p.src : null,
+    kind: KIND[eff.slice(0,1)] || 'Other', text: eff, gated,
+    direct: !gated && !path.some(e => e.includes('*'))};
+}
+const ROWS = PACKETS.map(classify);
+
+/* Windows nest: "3 days" contains "1 day". "Older" is the complement of a week - the
+   one exclusive bucket, and the only one that can be empty while the others are full. */
+const WINDOWS = [
+  {id:'1d',  label:'1 day',  max: 86400},
+  {id:'3d',  label:'3 days', max: 3*86400},
+  {id:'1w',  label:'1 week', max: 7*86400},
+  {id:'old', label:'Older',  min: 7*86400},
+];
+const inWindow = (r,w) => w.min !== undefined ? r.ago >= w.min : r.ago <= w.max;
+
+let ME = '', STATION = null, WIN = '1d', KINDS = new Set();
+const base = c => (c||'').split('-')[0].toUpperCase();
+const isMine = r => ME && base(r.origin) === base(ME);
+const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function ago(s){
+  if(s < 60) return s + 's';
+  if(s < 3600) return Math.round(s/60) + 'm';
+  if(s < 86400) return Math.round(s/3600) + 'h';
+  return Math.round(s/86400) + 'd';
+}
+const win = () => WINDOWS.find(w => w.id === WIN);
+const windowed = () => ROWS.filter(r => inWindow(r, win()));
+
+function timeSeg(){
+  return `<div class="segtabs small">` + WINDOWS.map(w => {
+    const n = ROWS.filter(r => inWindow(r,w)).length;
+    return `<button data-win="${w.id}" aria-selected="${WIN===w.id}">${w.label}<span class="z">${n}</span></button>`;
+  }).join('') + `</div>`;
+}
+
+function header(){
+  return `<div class="scr-top"><span class="chev">&lsaquo;</span><span class="scr-title">Radio</span></div>
+  <div class="segtabs" role="tablist">
+    <button role="tab" aria-selected="false">Tuner</button>
+    <button role="tab" aria-selected="true">APRS</button>
+    <button role="tab" aria-selected="false">Recordings</button>
+  </div>
+  <div class="health"><span class="dot"></span>
+    <span class="who"><b>144.390</b> &middot; heard 12s ago</span>
+    <span class="rate">123 pkt/hr</span></div>`;
+}
+
+function roster(){
+  const list = windowed();
+  const by = {};
+  for(const r of list){
+    const k = r.origin;
+    const s = by[k] || (by[k] = {call:k, n:0, ago:r.ago, kinds:new Set(), gated:r.gated, relay:r.relay});
+    s.n++; s.kinds.add(r.kind);
+    if(r.ago < s.ago){ s.ago = r.ago; s.gated = r.gated; s.relay = r.relay; }
+  }
+  /* MOST RECENTLY HEARD FIRST - the owner's correction to round 4, which sorted by
+     count. A roster sorted by volume is a roster led by whichever machine beacons
+     most often; sorted by recency it answers "who is out there right now". */
+  let stations = Object.values(by).sort((a,b) => a.ago - b.ago);
+  if(ME) stations = [...stations.filter(s => base(s.call)===base(ME)),
+                     ...stations.filter(s => base(s.call)!==base(ME))];
+  const mine = ME ? stations.filter(s => base(s.call)===base(ME)).length : 0;
+
+  return header() +
+    `<div class="callsign"><span>My callsign</span>
+      <input id="mycall" value="${esc(ME)}" placeholder="not set" aria-label="My callsign"></div>` +
+    timeSeg() +
+    `<div class="sec">Stations heard<span class="count">${stations.length} &middot; ${list.length} packets</span></div>` +
+    (stations.length ? stations.map(s => `
+      <button class="station${ME && base(s.call)===base(ME) ? ' mine':''}" data-station="${esc(s.call)}">
+        <div class="stwrap">
+          <div class="sc">${esc(s.call)}</div>
+          <div class="sm">${s.gated ? 'gated via ' + esc(s.relay||'') : 'heard on RF'}
+            &middot; ${[...s.kinds].join(', ')}</div>
+        </div>
+        <div class="sright"><div class="sago">${ago(s.ago)} ago</div>
+          <div class="sn">${s.n} pkt</div></div>
+      </button>`).join('')
+    : `<p class="empty"><b>No stations in this window.</b> The capture spans 90 minutes, so
+       everything sits in &ldquo;1 day&rdquo; and &ldquo;Older&rdquo; is genuinely empty &mdash;
+       that is the data, not a broken filter.</p>`) +
+    (mine ? `<p class="empty" style="padding-top:14px">Your stations are pinned to the top and
+      tinted. They stay listed however they reached the box &mdash; an IGate relays your mail
+      onto RF, so your own traffic often arrives wrapped as third&#8209;party.</p>` : '');
+}
+
+function detail(){
+  const all = ROWS.filter(r => base(r.origin) === base(STATION));
+  const inWin = all.filter(r => inWindow(r, win()));
+  const list = KINDS.size ? inWin.filter(r => KINDS.has(r.kind)) : inWin;
+  const kindsHere = {};
+  for(const r of inWin) kindsHere[r.kind] = (kindsHere[r.kind]||0)+1;
+  const newest = all[0];
+
+  return header() +
+    `<button class="backlink" data-back="1">&lsaquo; All stations</button>
+     <div class="sthead"><span class="c">${esc(STATION)}</span>
+       <span class="g">${newest.gated ? 'gated via '+esc(newest.relay||'') : 'heard on RF'}</span></div>
+     <div class="sm" style="margin-bottom:11px">last heard ${ago(newest.ago)} ago
+       &middot; ${all.length} packets in the log</div>` +
+    timeSeg() +
+    /* Only the types this station actually sends. A chip row of five when the station
+       only ever sends objects is four dead controls. */
+    (Object.keys(kindsHere).length > 1
+      ? `<div class="chips">` + Object.entries(kindsHere).sort((a,b)=>b[1]-a[1]).map(([k,n]) =>
+          `<button class="chip" aria-pressed="${KINDS.has(k)}" data-kind="${k}">${k}<span class="n">${n}</span></button>`
+        ).join('') + `</div>`
+      : `<p class="sm" style="margin:0 0 10px">Only sends ${Object.keys(kindsHere)[0]||'nothing in this window'} &mdash; no type filter needed.</p>`) +
+    `<div class="sec">Packets<span class="count">${list.length} shown</span></div>
+     <div class="feed">${list.length ? list.map(r => `
+       <div class="row"><div class="body">
+         <div class="msg">${r.direct?'<span class="badge b-direct">direct</span>'
+            : r.gated?'<span class="badge b-gated">gated</span>':'<span class="badge b-rf">rf</span>'}
+           ${esc(r.text.slice(0,110))}</div>
+         <div class="meta">${r.kind}</div></div>
+         <span class="when">${ago(r.ago)}</span></div>`).join('')
+      : `<p class="empty"><b>Nothing from ${esc(STATION)} in this window.</b> Widen the time
+         range or clear the type filter.</p>`}</div>`;
+}
+
+const NOTE = `
+<h3>Stations first, most recent first</h3>
+<p>The roster answers <strong>&ldquo;who is out there right now&rdquo;</strong>. Ordering by
+recency rather than volume is the correction that makes it do that &mdash; sorted by count, the
+list is led by whichever machine beacons most often, which is never the interesting answer.</p>
+<p class="ok"><b>What this shape fixes by construction.</b> The roster is keyed on the
+<strong>true originator</strong>, so the log&rsquo;s 5 apparent callsigns become the 15 real ones
+without the owner ever learning what a third&#8209;party frame is. Round 4&rsquo;s central trap
+&mdash; that his own mail arrives wrapped as noise from an IGate &mdash; simply cannot bite here:
+he is listed as himself, whatever relayed him.</p>
+
+<h4>The time control is global</h4>
+<p>You asked for recency inside a station; it is the same control the roster needs. After a month
+of logging, an all&#8209;time roster is hundreds of stations of which a handful are live.
+<strong>One control that persists across both levels</strong> is one concept; two would be two,
+and they would disagree with each other.</p>
+<p>The windows nest &mdash; <code>3 days</code> contains <code>1 day</code> &mdash; and
+<code>Older</code> is the one exclusive bucket. Each carries its real count, so an empty window
+is visibly empty rather than looking like a dead radio.</p>
+
+<h4>Type chips are per-station and earned</h4>
+<p>A station that only ever sends objects gets no chip row, just a line saying so. Five chips
+where four match nothing is four dead controls. Tap a station that sends more than one kind
+&mdash; <code>N1KSC-1</code> or <code>KD4WLE</code> &mdash; to see them appear.</p>
+
+<h4>What the capture cannot show you</h4>
+<p>90 minutes of data, so everything is in <code>1 day</code> and <code>Older</code> is empty.
+The counts on the control are real. Nothing here is invented to make a filter look busy.</p>
+
+<p class="cost"><b>The cost, stated plainly.</b> This buries the chronological feed &mdash;
+&ldquo;what just came in&rdquo; is what a ham actually watches, and it is now one tap down. If
+that turns out to matter, the answer is a Recent tab beside Stations, not a filter bolted onto
+this roster.</p>
+<p class="cost"><b>And it answers &ldquo;who&rdquo; well, &ldquo;what kind&rdquo; badly.</b>
+Finding every weather report across the channel means visiting stations one at a time. That is
+the trade this shape makes deliberately.</p>`;
+
+function render(){
+  document.getElementById('phone').innerHTML = STATION ? detail() : roster();
+  document.getElementById('note').innerHTML = NOTE;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b) return;
+  if(b.dataset.me !== undefined && b.closest('#whoami')){
+    ME = b.dataset.me;
+    document.querySelectorAll('#whoami button').forEach(x =>
+      x.setAttribute('aria-pressed', String(x.dataset.me === ME)));
+    return render();
+  }
+  if(b.dataset.win){ WIN = b.dataset.win; return render(); }
+  if(b.dataset.station){ STATION = b.dataset.station; KINDS = new Set(); return render(); }
+  if(b.dataset.back){ STATION = null; KINDS = new Set(); return render(); }
+  if(b.dataset.kind){
+    KINDS.has(b.dataset.kind) ? KINDS.delete(b.dataset.kind) : KINDS.add(b.dataset.kind);
+    return render();
+  }
+});
+document.addEventListener('input', e => {
+  if(e.target.id === 'mycall'){
+    ME = e.target.value.trim().toUpperCase();
+    const p = e.target.selectionStart;
+    render();
+    const f = document.getElementById('mycall');
+    if(f){ f.focus(); f.setSelectionRange(p,p); }
+  }
+});
+render();
+</script>
