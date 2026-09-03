@@ -377,3 +377,29 @@ async def test_no_key_ever_leaves_the_box_through_this_route(
     # `command_key`, and this asserts the shape rather than trusting the SQL to stay
     # that way. An empty box is also a valid answer, not an error.
     assert out == {"commands": [], "attempts": []}
+
+
+# --- the stations roster's chip parsing (F2) -------------------------------------------
+
+
+def test_only_the_five_known_kinds_reach_the_query() -> None:
+    """The chip selection arrives as text in a URL and leaves as a whitelist.
+
+    Not because a bound parameter would be unsafe — it would not — but because the five
+    buckets are a closed set, and anything else in that parameter is either a stale
+    client or someone probing. Neither should reach the database as a value."""
+    assert sdr_api._kinds("Position,Weather") == ["Position", "Weather"]
+    assert sdr_api._kinds(" Object , Message ") == ["Object", "Message"]
+    assert sdr_api._kinds("Position'; DROP TABLE app.aprs_packets --") == []
+
+
+def test_an_unknown_chip_shows_everything_rather_than_erroring() -> None:
+    """A PWA cached from before a rename asks for a kind we no longer have.
+
+    The owner opens the radio tab and gets the unfiltered roster, which is the screen
+    they wanted, instead of an error page they cannot act on from a phone."""
+    assert sdr_api._kinds("Telemetry") == []
+    assert sdr_api._kinds("") == []
+    assert sdr_api._kinds(None) == []
+    # And a mixed list keeps the half that still means something.
+    assert sdr_api._kinds("Telemetry,Weather") == ["Weather"]

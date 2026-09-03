@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2◻️(roster + station detail API) F3◻️(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3◻️(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -60,11 +60,29 @@ empty once the table is derived — so it is free in the steady state, it brings
 already-recorded backlog forward with no terminal step (CLAUDE.md rule 10), and it is
 how a *better* classifier gets applied to history later.
 
-**F2 ◻️ — roster + station detail API.** Server-side filtering on the Runs-log
-precedent: GET query params, clamped limits, a bounded stats aggregate taking `since`.
-Two endpoints — the roster (one row per `origin_call`, last heard, count, kinds present)
-and one station's traffic. The kind chips filter the roster by *which stations have such
-traffic*, which is a `HAVING`, not a `WHERE`.
+**F2 ✅ — roster + station detail API.** `sdr/stations.py` + `GET /api/sdr/stations`
+and `/stations/{call}`. Server-side aggregation on the Runs-log precedent: query params,
+clamped limits, the grouping and the window in Postgres rather than in Python — a year of
+this channel is ~1.2M rows and the roster is fifteen lines.
+
+The chips are a `HAVING bool_or(...)`, not a `WHERE`: they narrow *which stations are
+listed*, and `kind_stations` counts stations, because a chip reading 27 beside a list of
+three would be lying about what pressing it does. Both count sets are computed over the
+window **unfiltered by the selection**, so the chip row does not rearrange itself as you
+use it. Every response carries `unclassified` — rows in the window the sweep has not
+reached — so a roster that is still filling in says so instead of quietly showing fewer
+stations, the same rule this screen already follows for a dead receiver.
+
+**Verified against the live box**, not only fixtures: 200 real packets pulled through the
+debug API and run through the real reader in real Postgres — **6 apparent stations in
+`source`, 16 in the roster**, nothing unclassified, and every chip count agreeing with the
+list it produces.
+
+*Two deliberate deviations from the mock, both because the mock contradicts itself.* Its
+detail view matches on the base callsign while its roster groups on the full one, so
+tapping `N1MPR-C` (5 pkt) would list `N1MPR-S`'s traffic too and disagree with the count
+just tapped — the API matches the exact `origin_call`. And the mock's time tabs inside a
+station show the whole band's packet counts; the API scopes them to that station.
 
 **F3 ◻️ — the stations screen.** `e-stations.html` is binding spec.
 
