@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** Shipped · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** Shipped, with the F5 row shape reopened for round 6 · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -274,7 +274,39 @@ qualifications on the record:
    liveness, but it means a broken INSERT stops the log *silently* — which is exactly
    why F1's live-path test writes through real Postgres.
 
-## F5 — what a packet SAYS (GUI gate open)
+## F5b — what the row SHOWS (GUI gate REOPENED, `../mocks/aprs/j-what-a-row-shows.html`)
+
+Shape D shipped, and the owner's own screen broke it three ways in the first hour. Two of
+them the round could not have caught, because of how its sample was built:
+
+1. **A position row rendered as the bare word "Position".** D's rule was *the icon is not
+   restated as text* — but a plain position's whole reading IS the symbol name, so the rule
+   stripped it to empty, and the coordinates are a `field`, one tap down. The row lost the
+   only fact it exists to carry. **Zero of D's 58 sample packets hit this**, because every
+   one of them happened to carry a comment. The sample hid the failure mode, and no
+   amount of looking at the mock would have shown it.
+2. **`/A=-00085` and `tU2k` in the quoted monospace slot**, which by D's own rule means
+   *the station's own words*. One is the APRS altitude extension, the other a
+   weather-software id. The row attributed protocol bytes to a person — the exact thing
+   the two-voice rule exists to prevent. `tU2k` was already in D's data, in 1 row of 58.
+3. **Twenty-five identical beacons**, three lines each: N1MPR-C re-announcing one D-STAR
+   object every twenty minutes.
+
+1 and 2 are decoder work and land whichever shape wins: the altitude extension and the
+weather-station type become FIELDS, and nothing reaches the quoted slot unless it is free
+text a human typed. 3 is a question about the list, not the row.
+
+Round 6 puts three shapes on identical real traffic — **E** repairs D (the reading is never
+empty; it relaxes the icon rule only when the symbol name is the entire reading), **F**
+promotes the reading to the title and demotes the type to a chip, **G** goes to one line and
+moves provenance into the tap. Open, awaiting the owner.
+
+**The lesson worth keeping** is about mock data, not about rows: a sample drawn from real
+traffic is still a *sample*, and D's happened to exclude the empty case entirely. A mock
+round should include the degenerate rows on purpose — the packet with no comment, the
+frame that decodes to nothing — because those are where a layout rule turns into a blank.
+
+## F5 — what a packet SAYS (round 5, shape D)
 
 Asked for after the roster shipped: tapping a packet card should turn it into plain
 English. Four mocks on real traffic — `../mocks/aprs/f-packet-inline.html` (expand in place),
