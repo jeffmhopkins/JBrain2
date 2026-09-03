@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5◻️(what a packet SAYS — GUI gate OPEN, three mocks up). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -217,6 +217,46 @@ qualifications on the record:
 3. **`_store` swallows its own errors** so one bad row cannot end the log. Correct for
    liveness, but it means a broken INSERT stops the log *silently* — which is exactly
    why F1's live-path test writes through real Postgres.
+
+## F5 — what a packet SAYS (GUI gate open)
+
+Asked for after the roster shipped: tapping a packet card should turn it into plain
+English. Three mocks are up on real traffic — `../mocks/aprs/f-packet-inline.html` (expand
+in place), `g-packet-flip.html` (turn the card over), `h-packet-sheet.html` (a sheet). The
+owner picks one and it becomes binding spec.
+
+Two research dossiers feed it: `../research/APRS_PAYLOAD_DECODING.md` (field-by-field, all
+twelve types actually on the air) and `../research/APRS_PACKET_DETAIL_UI.md` (the
+disclosure pattern under a live 5-second poll).
+
+**What the decode research settled, against the live box rather than the spec:**
+
+- The decoder must read `raw`, not `info`. Mic-E course bytes are legitimately control
+  characters — `0x1C` and `0x7F` both occur here — and the NUL scrub deletes them, which
+  shifts every later byte and yields the wrong symbol. Verified: the same KN1B frame heard
+  direct and re-injected through the IGate now decodes identically.
+- `Heard` needs `dest` and the raw `payload`. Half a Mic-E latitude lives in the AX.25
+  destination, and for a relayed frame it is the *inner* one.
+- Telemetry is decodable **here**: N1KSC-1 publishes all four companion messages, so
+  `T#110,190,088,011,068` becomes 14.25 V supply, 880 heard, 110 digipeated, 68% efficient
+  — cross-checked against that station's own beacon text `U=14.2V`. K4KSC-12 publishes
+  none, so its card can honestly show only raw numbers. Definitions are forgeable by
+  anyone, so only self-definitions are accepted and they are labelled as the station's
+  claim.
+- Three traps reproduced on real data: a greedy `/A=(\d+)` reads `/A=00000070cm` as
+  70 million feet (it is six characters, and a leading `-` is legal); a greedy weather
+  scanner reads the trailing software code `tU2k` as a second temperature and clobbers
+  `t078`; and `s` means wind speed in one position and snowfall in another.
+- **A correction to F1.** `classify.py` claims "the measured capture has compressed traffic
+  on it". It does not — zero of 254 frames, with all twelve type combinations present. The
+  compressed-layout handling is right as defensive work; the justification was invented and
+  is fixed in this wave.
+
+**What the UI research settled:** the shipped packet rows key on the array index, so every
+poll remounts the whole list — invisible today, fatal the moment a row holds state, and
+already costing a screen-reader user focus every five seconds. And the detail payload is
+already free: `stations.py` selects `source`, `path` and `raw` on every poll and discards
+them.
 
 ## Open
 
