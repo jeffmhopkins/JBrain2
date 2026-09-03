@@ -349,27 +349,55 @@ model input.
 exists to establish this box's numbers before `spectrum_sweep` is designed against them,
 and the first real runs paid for themselves:
 
-- A transient IS found: APRS turned up at 144.3906 MHz, peak +10.2 dB, occupancy 6.7%.
-- A **held carrier is not** found by occupancy, by construction — it becomes its own
-  floor. Six repeater outputs (146.660, 146.720, 146.910, 147.030, 147.210) sat lit on
-  the waterfall while the table said `busy: []`, `steady: []`. `steady` had compared each
-  bin to the sweep's median floor; rtl_power's two retune halves measured **1.76x apart**
-  (84.5 vs 48.1 mean brightness), so one median across two populations sat above the
-  quiet half's carriers. It now compares against a rolling **local** floor.
+- A transient IS found: APRS turned up at 144.3906 MHz (peak +10.2 dB, occupancy 6.7% on
+  the first run; -11.9 dB at 5% on a later gain-30 run). Occupancy works.
 - A 342 kHz span (145.872-146.206) came back missing, straight across live repeater
   channels, with nothing in the response saying so. `reduce_csv` had trimmed each retune
   block to its SHORTEST row, so one truncated interval deleted that block's tail from the
-  whole window. Fixed; and `uncovered` now reports any span the sweep did not measure,
-  because "nothing there" and "never looked" are not the same answer.
-- `rtl_power` reports **relative dB, not dBm** (floor -2.8 with AGC, -24.5 at gain 30),
-  and `bin_hz` is a hint: asking 10 kHz got 7812 Hz, the nearest power-of-2 FFT.
-- Fixed gain cut row-to-row floor spread only 3.39x -> 2.91x, so most of the drift is
-  not AGC.
+  whole window. **Fixed and confirmed on hardware**: the same 144-148 sweep now returns
+  1026 contiguous bins in two blocks (144.000-146.004, 146.000-148.004 — overlapping, not
+  gapped) with `uncovered: []`. And `uncovered` now reports any span a sweep did not
+  measure, because "nothing there" and "never looked" are not the same answer.
+- `rtl_power` reports **relative dB, not dBm** (floor -5.3 with AGC, -27.4 at gain 30),
+  and `bin_hz` is a hint: asking 5 kHz got 2734 Hz over 1.4 MHz and 3906 Hz over 4 MHz —
+  the nearest power-of-2 FFT for the span, so it changes with the span.
 
-None of that was readable from the response as first built, which returned `csv_chars`
-and no CSV — the numbers above were inferred from PNG pixel brightness. `include_csv=true`
-now returns rtl_power's own output: a detector calibrated against its own summary is
-calibrated against nothing.
+**A claim this plan carried, now retired.** An earlier entry here said the two retune
+halves measured "1.76x apart" and that six repeater outputs sat lit on the waterfall
+while the table reported none. Both came from reading PIXEL BRIGHTNESS off the returned
+PNG, and the waterfall palette is stretched between the 20th and 99.5th percentile of
+the data — so a few dB of spread fills the whole palette and any ratio taken off it
+means nothing in dB. Measured on the numbers: **the two blocks of one 144-148 sweep sit
+0.68 dB apart**, and nothing was lit.
+
+**What a quiet 2m band measures like on this box** (three sweeps, 2026-09-03 ~22:30 UTC,
+120 s each, AGC and gain 30):
+
+| | AGC 146-147.4 | gain 30 146-147.4 | gain 30 144-148 |
+|---|---|---|---|
+| floor median | -5.3 dB | -27.4 dB | -27.5 dB |
+| total floor spread | 7.2 dB | 6.9 dB | 6.7 dB |
+| excess over local floor, p50 / p90 / p99 | 0.0 / 0.5 / 2.0 | 0.0 / 0.4 / 0.8 | 0.0 / 0.3 / 1.4 |
+| strongest bin | 146.6616, +4.8 | 146.6616, +3.5 | 147.4569, +2.9 |
+
+Three things follow. **Fixed gain does not open the dynamic range** — it shifts the floor
+down ~22 dB and leaves the spread within 0.5 dB of AGC, so "AGC is compressing the band"
+is not the explanation for a flat sweep; the band is flat. **146.6616 is the one real
+candidate**, a repeater output that sits +3.5 to +4.8 dB over its neighbours in both
+sweeps of that span. And **`STEADY_DB` cannot be set from these sweeps**: at 6 dB it
+reports nothing, and at 3 dB it would also report the band edges and spurs the 4 MHz
+sweep put at +2.4 to +2.9. Setting it needs a sweep taken while something transmits.
+
+None of this was readable from the response as first built, which returned `csv_chars`
+and no CSV — which is exactly how the 1.76x claim survived. `include_csv=true` now
+returns rtl_power's own output: a detector calibrated against its own summary, or
+against a picture of its own summary, is calibrated against nothing.
+
+**A gap this exposed.** The debug token can STOP the radio (`POST /api/debug/sdr/stop`)
+but cannot restart APRS logging — `POST /api/sdr/aprs` is owner-session-only. So a
+calibration sweep leaves the owner's heard log off until they flip the switch in the PWA
+themselves. Per `CLAUDE.md` #10 that asymmetry is a gap to design out: whatever debug can
+take, debug should be able to give back.
 
 ### Control API (owner-only, launcher-facing)
 

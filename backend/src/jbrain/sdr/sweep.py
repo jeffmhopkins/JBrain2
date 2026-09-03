@@ -26,8 +26,9 @@ channel busy half the hour have the same peak; only one of them is a busy channe
 
 **Anything held constant is invisible to that, so it is found by comparison with its
 NEIGHBOURS instead.** A carrier up the whole window becomes its own floor and reads as
-0% occupied — see `Reduced.steady`, and the neighbours rather than the whole sweep
-because rtl_power's retune blocks measured 1.76x apart on real hardware.
+0% occupied — see `Reduced.steady`. Neighbours rather than the whole sweep because a
+floor is a local fact: band-edge rolloff, spurs and each retune block's own noise all
+vary across a sweep, and one median over the lot answers for none of them.
 
 Pure and total: it parses text and returns numbers. No I/O, no radio, no clock.
 """
@@ -90,11 +91,17 @@ class Reduced:
     rather than silently dropped, and naming which is which needs a second look at the
     channel — not more arithmetic on this sweep.
 
-    Compared against the local floor, not the sweep's. A measured 2m sweep of this box
-    put six repeater outputs on the waterfall and reported NONE of them, because the two
-    retune halves had floors 1.76x apart: against a median that averages two unrelated
-    populations a carrier 15 dB over its own neighbourhood does not clear the bar. A
-    repeater is obvious next to 146.655 and invisible next to a whole band."""
+    Compared against the local floor, not the sweep's, because "high" is a local claim:
+    a repeater is obvious next to 146.655 and unremarkable next to a whole band.
+
+    THE THRESHOLD IS NOT CALIBRATED. Three sweeps of 2m on this box (2026-09-03, gain
+    30 and AGC) found no steady carrier to calibrate against — the band was quiet, and
+    quiet measures like this: total floor spread 6.7-7.2 dB whatever the gain, excess
+    over the local floor p50 0.0 / p90 0.4 / p99 1.4 dB, and a single candidate at
+    146.6616 (a real repeater output) reaching +3.5 to +4.8 dB in both sweeps. Under
+    that, 6 dB reports nothing and 3 dB would also report the band edges and spurs the
+    4 MHz sweep put at +2.4 to +2.9. Setting this number needs a sweep taken while
+    something is actually transmitting."""
     uncovered: list[tuple[int, int]] = field(default_factory=list)
     """Half-open Hz spans this sweep did not measure, low to high.
 
@@ -102,8 +109,9 @@ class Reduced:
     reader is deciding whether "nothing at 146.1" means quiet or unlooked-at. This box's
     144-148 run came back with 145.872-146.206 missing, a 342 kHz hole sitting straight
     across live repeater channels, and nothing in the response said so. Silence there
-    was never evidence. (That particular hole was this module's own doing — see the
-    block width above — but the reader still needs to be told when one exists.)"""
+    was never evidence. (That hole was this module's own doing — see the block width
+    above — and the same sweep now returns 1026 contiguous bins with nothing missing;
+    the reader still needs to be told on the day one exists.)"""
     grid: list[list[float]] = field(default_factory=list)
     """dB per bin per interval, oldest first — what the waterfall draws."""
     bins: int = 0
@@ -126,10 +134,11 @@ def _local_floors(floors: list[float], bin_hz: int) -> list[float]:
 
     The whole point of `steady` is "higher than it has any business being", and that
     question only has an answer relative to somewhere. A sweep-wide median is the wrong
-    somewhere: rtl_power's retune blocks do not share a floor (measured 1.76x apart on
-    this box), band-edge rolloff drags the ends down, and a single number splits the
-    difference between all of it. A rolling median tracks the floor the receiver
-    actually had at each frequency.
+    somewhere: band-edge rolloff drags the ends down, spurs sit where the hardware puts
+    them, and each retune block has its own noise — measured on this box, two blocks of
+    one 144-148 sweep sat 0.68 dB apart, which is small but is not zero and is not
+    knowable in advance. A rolling median tracks the floor the receiver actually had at
+    each frequency; a single number answers for no part of it.
 
     A sweep narrower than one window needs no special case: every bin's window is then
     the whole sweep, which is exactly the one-figure fallback, and the slicing already
