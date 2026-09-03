@@ -31,6 +31,7 @@ forge trivially (docs/plans/APRS_CONTROL_PLAN.md, the two trust tiers).
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,6 +73,9 @@ class Packet:
     # backlog or a slow consumer would otherwise put insert time in the log, and "when
     # was this heard" is the one question a heard log has to answer.
     heard_at: float = 0.0
+    # How strong the transmission was, 0-100, or None when no level could be paired
+    # with this frame. None means "not measured", never "weak" — see `audio_level`.
+    audio_level: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -81,7 +85,37 @@ class Packet:
             "path": self.path,
             "info": self.info,
             "raw": self.raw,
+            "audio_level": self.audio_level,
         }
+
+
+# Direwolf announces each decode on its stdout before forwarding the frame over KISS:
+#
+#     N0CALL-9 audio level = 50(14/14)    _||||||__
+#     Digipeater TCPIP audio level = 50(14/14)    _|||||___
+#
+# MEASURED against direwolf 1.7 on this exact pipeline — raw PCM on stdin, `-q d`, KISS
+# out — rather than taken from its documentation. Three findings shape how it is used:
+#
+# 1. **The name is not always the sender.** On a digipeated frame direwolf names the
+#    DIGIPEATER. Three quarters of the owner's channel is relayed, so matching a level
+#    to a frame BY CALLSIGN would attach almost nothing, and would sometimes attach a
+#    relay's level to the wrong station. The name is parsed for the log, not for pairing.
+# 2. **The lines are flushed per decode, not block-buffered.** Each arrived in the same
+#    millisecond as its own KISS frame, 1:1 and in order, which is what makes pairing by
+#    ORDER sound where pairing by callsign is not.
+# 3. **A failed decode prints no level line** (checked by feeding noise), so the two
+#    streams do not drift apart under bad reception.
+_LEVEL_RE = re.compile(r"audio level\s*=\s*(\d{1,3})")
+
+
+def parse_audio_level(text: str) -> int | None:
+    """The 0-100 strength out of one direwolf log line, or None if it is not one.
+
+    Clamped rather than rejected above 100: the number is direwolf's own, and a wider
+    range in some later version should read as "very strong", not as "unknown"."""
+    found = _LEVEL_RE.search(text)
+    return min(int(found.group(1)), 100) if found else None
 
 
 def unescape(payload: bytes) -> bytes:

@@ -979,8 +979,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
     pins = {
         "aprs_recent.tool": (
             "aprs_recent",
-            1,
-            "74ae775a79c065c0abcb0297a1955de6f72f7c794c77063c104a26f47706ecfa",
+            2,
+            "afcf483d6b0e2ea93f578f1e2d2bd5324ef29e98f3e30a7bbcaea01d6bf987bb",
         ),
         "sdr_aprs_logging.tool": (
             "sdr_aprs_logging",

@@ -383,7 +383,11 @@ async def test_a_station_detail_counts_only_its_own_traffic(
     assert len(detail["packets"]) == 2
     only_other = await StationsReader(maker).station(OWNER, "N1KSC-1", window="1d", kinds=["Other"])
     assert only_other is not None
-    assert [p["kind"] for p in only_other["packets"]] == ["Other"]
+    # The chip filters on the stored BUCKET; the row's title says what it actually is.
+    # A chip row of five is a control you can aim, and "Other" as a title tells a reader
+    # nothing — so telemetry lives in the Other bucket and titles itself Telemetry.
+    assert [p["bucket"] for p in only_other["packets"]] == ["Other"]
+    assert [p["kind"] for p in only_other["packets"]] == ["Telemetry"]
     # The chip counts still describe the window, not the selection.
     assert only_other["kind_packets"] == detail["kind_packets"]
 
@@ -410,3 +414,74 @@ async def test_a_non_owner_sees_no_stations(maker: async_sessionmaker, clean: No
     assert roster["stations"] == []
     assert roster["stations_total"] == 0
     assert await StationsReader(maker).station(UNSCOPED, "N1MPR-C") is None
+
+
+async def test_a_packet_arrives_decoded_with_its_frame_and_its_id(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The row is a sentence, and the evidence for it is one tap below.
+
+    Both halves are checked here because both were previously thrown away: `stations.py`
+    already SELECTed source, path and raw on every poll and discarded them, and the row
+    id — which is what stops the client keying on an array index — was never sent."""
+    await _seed(maker, [("N4TDX", GATED_WEATHER, 0.1)])
+
+    detail = await StationsReader(maker).station(OWNER, "KD4WLE", window="1d")
+
+    assert detail is not None
+    (packet,) = detail["packets"]
+    assert packet["id"]  # a stable identity, not a position in a list
+    assert packet["kind"] == "Weather"
+    assert "82 °F" in packet["summary"]
+    assert packet["symbol"] == "/_"
+    values = dict(packet["fields"])
+    assert values["Wind"] == "from the NW (317°) at 2 mph"
+    # Hundredths of an inch. The raw `p063` means nothing as read.
+    assert values["Rain, last 24 hours"] == "0.63 in"
+    # The frame as heard — the only place "gated via N4TDX" becomes checkable, because
+    # the row itself deliberately shows the inner payload rather than the wrapper.
+    assert packet["frame"]["source"] == "N4TDX"
+
+
+async def test_a_station_s_own_telemetry_definitions_are_applied(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """Five raw numbers become volts and packet counts — but only because this station
+    published what its channels measure, in ordinary messages sitting in the same table.
+
+    The definitions are read per station, not per packet, and only self-definitions
+    count: anyone with a transmitter can send `:N1KSC-1 :EQNS.0,1000000,0`."""
+    await _seed(
+        maker,
+        [
+            ("N1KSC-1", ":N1KSC-1  :PARM.Vin,Rx1h,Dg1h,Eff1h,A5", 0.4),
+            ("N1KSC-1", ":N1KSC-1  :UNIT.Volt,Pkt,Pkt,Pcnt,None", 0.3),
+            ("N1KSC-1", ":N1KSC-1  :EQNS.0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0", 0.2),
+            ("N1KSC-1", "T#110,190,088,011,068,000,00000000", 0.1),
+        ],
+    )
+
+    detail = await StationsReader(maker).station(OWNER, "N1KSC-1", window="1d")
+
+    assert detail is not None
+    telemetry = next(p for p in detail["packets"] if p["kind"] == "Telemetry")
+    values = dict(telemetry["fields"])
+    assert values["Vin"] == "14.25 Volt"
+    assert values["Dg1h"] == "110 Pkt"
+    # And the row itself reads as a sentence rather than as five numbers.
+    assert telemetry["summary"].startswith("Vin 14.25 Volt")
+
+
+async def test_a_station_that_never_said_what_it_measures_shows_raw_numbers(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    # The honest answer. Inventing units for an undeclared channel would put a confident
+    # wrong reading on screen with nothing to contradict it.
+    await _seed(maker, [("K4KSC-12", "T#353,053,001,077,000,016,11000000", 0.1)])
+
+    detail = await StationsReader(maker).station(OWNER, "K4KSC-12", window="1d")
+
+    assert detail is not None
+    (packet,) = detail["packets"]
+    assert dict(packet["fields"])["Channel 1"] == "053"
+    assert any("has not published" in w for w in packet["warnings"])

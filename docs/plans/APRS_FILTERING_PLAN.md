@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** Shipped · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -99,7 +99,7 @@ Leaving a station drops the chip selection deliberately: inside a station "Weath
 *this station's weather*, and at the roster it means *stations that send weather at all*.
 Carrying a selection across that change would silently rewrite what was asked for.
 
-**F4 ◻️ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
+**F4 ✅ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
 summarize (tool `version` bump + digest re-pin at `tests/unit/test_agent_readtools.py`),
 keeping its `<untrusted_external_data source="heard-over-the-air">` wrapper — the two
 trust tiers are unchanged, and a station roster does not make a callsign an identity.
@@ -202,6 +202,62 @@ the mutation and watching a specific test fail — including the one on the wave
 claim, where swapping the roster's `HAVING` for a `WHERE` was indistinguishable under the
 old fixtures because no station in them sent a mix of kinds.
 
+### F5 as built
+
+Five pieces, all landed:
+
+- **`sdr/symbols.py`** — both tables and the 195 documented overlay combinations, from the
+  2015 master index. The overlay rule is the whole point: four of the fifteen symbols on
+  this channel are overlaid.
+- **`sdr/explain.py`** — the decoder. Pure, total, no I/O. Run over all 600 packets on the
+  box: **zero unreadable**. Eight deliberate mutations killed.
+- **`components/aprsGlyphs.ts` + `aprsIcons.tsx`** — 166 glyphs, every code with a standard
+  meaning. Stored as typed data rather than SVG strings, so nothing needs
+  `dangerouslySetInnerHTML` and a malformed shape is a type error rather than a blank icon.
+- **`sdr/stations.py`** — returns the reading, the frame, and the row `id`.
+- **`components/AprsStations.tsx`** — the row. Eight mutations killed, two of which needed
+  tests that did not exist: keying rows on the array index (which silently moves a
+  keyboard user's focus to a *different* packet when a poll prepends) and repeating the
+  callsign inside a station.
+
+Two API fields carry the distinctions the screen leans on. A packet has **`kind` and
+`bucket`** — the row's title says "Telemetry", the chip filters "Other", and one field
+serving both would force the row to lie or the chip row to sprawl. And it has **`relay`**,
+so the row can say *how* it reached us without repeating the callsign the header carries.
+
+### F4 as built
+
+**The tool's real defect was the column it filtered on.** `source` is the AX.25 sender,
+which on this channel is the IGate for three quarters of the traffic — so "has KD4WLE
+been heard" searched the wrong column and answered wrong. v2 adds `station`, matching
+`origin_call` with a COALESCE onto `source` so a row the sweep has not reached is still
+findable. `source` stays, because "what has this RELAY put on the air" is a real
+question, just a different one.
+
+Also: `kind`, `since`/`until` (an ISO instant *or* a duration back from now — a model
+writes "6h" reliably and computes a timestamp unreliably), and `summarize`, which
+answers "who is around" with one line per station instead of making a model count
+callsigns across a hundred frames. An unreadable time or an unknown kind is an ERROR
+returned to the model, never a silently-ignored filter: a window that quietly did not
+apply reports a whole day's traffic as the last hour's and nothing looks wrong. Lines
+now go through `explain`, so a position reads "Car (28.6212, -80.8237; 317° at 2 knots)"
+rather than `!2837.27N/08049.42W>317/002`. Untrusted-envelope unchanged, in both modes.
+
+**Signal level was a flag, and the claim that it was unrecoverable was wrong.** `-q h`
+means precisely "suppress the heard line with the audio level"; we shipped `hd`. Now
+`-q d`. Measuring it on the real pipeline changed the design twice:
+
+- The heard line does **not** always name the sender — a digipeated frame reports
+  `Digipeater TCPIP audio level = 50`. Pairing by callsign would have attached almost
+  nothing on this channel, and sometimes the relay's level to the wrong station.
+- The lines are flushed per decode and arrive in the **same millisecond** as their own
+  KISS frame, 1:1 and in order, and a failed decode prints no level at all. That is what
+  makes pairing by ORDER sound: one slot, claimed once, expiring in 2 s.
+
+`audio_level` is the one column that **cannot be backfilled** — the reading exists only
+at decode time — so NULL means "not measured", never "weak", all the way up to the row
+on screen, which shows nothing rather than a tint it did not earn.
+
 ## What is stored, honestly
 
 The owner asked whether everything heard is being saved so jerv can be pointed at it
@@ -217,6 +273,101 @@ qualifications on the record:
 3. **`_store` swallows its own errors** so one bad row cannot end the log. Correct for
    liveness, but it means a broken INSERT stops the log *silently* — which is exactly
    why F1's live-path test writes through real Postgres.
+
+## F5 — what a packet SAYS (GUI gate open)
+
+Asked for after the roster shipped: tapping a packet card should turn it into plain
+English. Four mocks on real traffic — `../mocks/aprs/f-packet-inline.html` (expand in place),
+`g-packet-flip.html` (turn the card over), `h-packet-sheet.html` (a sheet), and
+`i-packet-readable.html`, which is where the round landed.
+
+**The owner's decision after seeing the first three: human readable FIRST.** A, B and C all
+kept the frame on the row and put the meaning one tap away; D inverts it. On this channel
+that is plainly right — the resting list was `` `m3jq6F>/`On D-Star ``, `T#110,190,088` and
+`@031030z2837.27N/08049.42W_338/000g000`, three lines of which none can be read.
+
+**Icons.** The standard APRS symbol set is part of the ask, and measuring the channel found
+a gap: four of the fifteen symbols on the air are **overlaid** — `I#` is N4TDX identifying
+itself as an IGate, `Wa` is the Winlink gateway, `D&`/`Da` are the D-STAR pair — and the
+first cut of the decoder treated the overlay character as a table and gave up. The rule is
+that a table character which is neither `/` nor `\` selects the ALTERNATE table and is drawn
+*on* the icon.
+
+`../research/APRS_SYMBOLS.md` carries the tables and settles the rendering question. We
+**draw our own glyphs** rather than embed a set: `hessu/aprs-symbols` ships no LICENSE, marks
+69 entries "Licensing: Unknown", carries vendor logos its own copyright notice says to check
+for yourself, and is full-colour raster with drop shadows — illegible on `--bg #0E0F11`. The
+app already has the mechanism: `components/icons.tsx` is inlined Lucide-style outlines behind
+a shared `<Icon>` wrapper, and these are just more of its children. Adding a symbol later is
+one line in the label dict; the glyph is optional, because labels and drawings are decoupled.
+An unknown symbol renders as the international circle-and-slash, which is what the spec
+itself prescribes — honest, rather than blank or guessed.
+
+Three label corrections the tables forced, all live on this channel: `/$` is **Phone** (not
+Bank/ATM — that is `\$` on the alternate table), `/r` is **Repeater** (renamed from Antenna
+in 2007), `/[` is **Person** (renamed from Jogger in 2015).
+
+**A row's title is the TYPE, and the callsign only where it is not already known.** The
+symbol's name is not a headline — on a list where most rows are positions, "Space shuttle"
+told you nothing about whose it was. And inside a station, where the header already names the
+sender, a callsign in every title is forty copies of a fact on screen crowding out the type;
+in a mixed list nothing else says who sent it, so the callsign leads. One row component, two
+mounts, one flag.
+
+**The icon is not restated as text.** When the whole reading is the symbol's name the row
+already says it — in the glyph, and in that glyph's accessible label. The name stays in the
+detail panel, where the reader is asking what the packet contains, and the line is spent on
+something else.
+
+Every row carries a glyph so the left edge is not ragged — but the two kinds of glyph are
+told apart by tint. An **APRS symbol** is the station's own choice of icon and takes the
+accent tint; a **kind glyph** (telemetry, message, status, a plain beacon — packets that
+carry no symbol at all) is our inference about the packet and takes the neutral one. They
+should not look like the same claim.
+
+Two consequences that shape the build:
+
+- **Two voices, told apart by typeface.** The derived sentence is the app's, in the system
+  font; the station's own comment is quoted verbatim in monospace. Typography carries the
+  trust boundary so no badge has to. When the only content IS the station's text — a status,
+  a beacon — the app says nothing rather than reciting a stranger's sentence in its own
+  voice.
+- **A wrong decode now reads as a confident wrong sentence** rather than as obviously-raw
+  bytes. That is the cost of the inversion, and it is why the frame stays one tap below
+  every row and why anything undecodable says so instead of guessing.
+
+Two research dossiers feed it: `../research/APRS_PAYLOAD_DECODING.md` (field-by-field, all
+twelve types actually on the air) and `../research/APRS_PACKET_DETAIL_UI.md` (the
+disclosure pattern under a live 5-second poll).
+
+**What the decode research settled, against the live box rather than the spec:**
+
+- The decoder must read `raw`, not `info`. Mic-E course bytes are legitimately control
+  characters — `0x1C` and `0x7F` both occur here — and the NUL scrub deletes them, which
+  shifts every later byte and yields the wrong symbol. Verified: the same KN1B frame heard
+  direct and re-injected through the IGate now decodes identically.
+- `Heard` needs `dest` and the raw `payload`. Half a Mic-E latitude lives in the AX.25
+  destination, and for a relayed frame it is the *inner* one.
+- Telemetry is decodable **here**: N1KSC-1 publishes all four companion messages, so
+  `T#110,190,088,011,068` becomes 14.25 V supply, 880 heard, 110 digipeated, 68% efficient
+  — cross-checked against that station's own beacon text `U=14.2V`. K4KSC-12 publishes
+  none, so its card can honestly show only raw numbers. Definitions are forgeable by
+  anyone, so only self-definitions are accepted and they are labelled as the station's
+  claim.
+- Three traps reproduced on real data: a greedy `/A=(\d+)` reads `/A=00000070cm` as
+  70 million feet (it is six characters, and a leading `-` is legal); a greedy weather
+  scanner reads the trailing software code `tU2k` as a second temperature and clobbers
+  `t078`; and `s` means wind speed in one position and snowfall in another.
+- **A correction to F1.** `classify.py` claims "the measured capture has compressed traffic
+  on it". It does not — zero of 254 frames, with all twelve type combinations present. The
+  compressed-layout handling is right as defensive work; the justification was invented and
+  is fixed in this wave.
+
+**What the UI research settled:** the shipped packet rows key on the array index, so every
+poll remounts the whole list — invisible today, fatal the moment a row holds state, and
+already costing a screen-reader user focus every five seconds. And the detail payload is
+already free: `stations.py` selects `source`, `path` and `raw` on every poll and discards
+them.
 
 ## Open
 
