@@ -117,6 +117,14 @@ LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
 # syncs the browser's detected zone here. Stored as an IANA name, not an offset,
 # so a future instant reads correctly across a DST boundary.
 OWNER_TIMEZONE_KEY = "owner_timezone"
+# The owner's amateur callsign, set from the Radio screen's APRS tab. It is what makes
+# "my traffic" mean anything in a heard log that is mostly other people — and, because
+# an IGate gates a message to RF only when the addressee has been heard nearby, it is
+# also how a message addressed to him is told apart from the channel's noise.
+#
+# A FILTER, never an identity: a callsign is plain bytes in a frame and forges trivially
+# (deploy/sdr/packets.py). Nothing may gate an action on it.
+OWNER_CALLSIGN_KEY = "owner_callsign"
 # The archivist's Gmail OAuth credentials, set from the GUI settings panel
 # (docs/archive/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
 # refresh token is the durable credential. Stored values take precedence over the
@@ -515,6 +523,14 @@ class SqlSettingsStore:
         rather than trusted — a bad zone must never crash a render."""
         tz = await self.get(ctx, OWNER_TIMEZONE_KEY, None)
         return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
+
+    async def owner_callsign(self, ctx: SessionContext) -> str | None:
+        """The owner's amateur callsign, upper-cased, or None when unset.
+
+        Unset is a legitimate state with a real consequence — "my traffic" cannot be
+        computed — so callers say so rather than guessing or matching nothing."""
+        call = await self.get(ctx, OWNER_CALLSIGN_KEY, None)
+        return call.strip().upper() if isinstance(call, str) and call.strip() else None
 
     async def gmail_credentials(self, ctx: SessionContext) -> tuple[str, str, str]:
         """The stored (client_id, client_secret, refresh_token) — each "" when unset.

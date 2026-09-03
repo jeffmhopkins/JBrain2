@@ -32,7 +32,7 @@ from typing import Annotated, Any, cast
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
@@ -40,6 +40,7 @@ from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.command import MAX_FAILURES
+from jbrain.settings_store import OWNER_CALLSIGN_KEY
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -178,6 +179,60 @@ async def packets(
             for row in rows
         ],
     }
+
+
+# A callsign is letters, digits and an optional -SSID; upper-cased because that is how it
+# travels on the air. Bounded at 16 to match the width the frame decoder already caps at.
+_CALLSIGN_MAX = 16
+
+
+class CallsignBody(BaseModel):
+    """The owner's amateur callsign. Empty clears it."""
+
+    callsign: str = Field(default="", max_length=_CALLSIGN_MAX)
+
+
+class CallsignOut(BaseModel):
+    callsign: str | None
+
+
+def _clean_callsign(raw: str) -> str | None:
+    """What we store, or None to clear. Rejects rather than mangles: a callsign that
+    silently lost a character would filter for a station that does not exist."""
+    call = raw.strip().upper()
+    if not call:
+        return None
+    if len(call) > _CALLSIGN_MAX or not call.isascii():
+        raise HTTPException(status_code=422, detail="that is not a callsign")
+    if not all(ch.isalnum() or ch == "-" for ch in call):
+        raise HTTPException(
+            status_code=422, detail="a callsign is letters, digits and an optional -SSID"
+        )
+    return call
+
+
+@router.get("/callsign")
+async def read_callsign(request: Request, owner: OwnerDep) -> CallsignOut:
+    """The owner's callsign, as the APRS tab shows it.
+
+    It lives on the Radio screen rather than in Settings because it is meaningless
+    anywhere else on this box: its whole job is to divide a heard log into his traffic
+    and everyone else's."""
+    store = _settings_store(request)
+    return CallsignOut(callsign=await store.owner_callsign(ctx_for(owner)))
+
+
+@router.put("/callsign")
+async def write_callsign(request: Request, owner: OwnerDep, body: CallsignBody) -> CallsignOut:
+    call = _clean_callsign(body.callsign)
+    ctx = ctx_for(owner)
+    store = _settings_store(request)
+    await store.upsert(ctx, OWNER_CALLSIGN_KEY, call or "")
+    return CallsignOut(callsign=call)
+
+
+def _settings_store(request: Request) -> Any:
+    return request.app.state.settings_store
 
 
 @router.get("/commands")
