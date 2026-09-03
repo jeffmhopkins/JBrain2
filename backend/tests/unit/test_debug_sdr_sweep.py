@@ -261,3 +261,44 @@ async def test_a_sweep_with_no_seams_claims_no_holes(monkeypatch: pytest.MonkeyP
 
     out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
     assert out.uncovered == []
+
+
+async def test_the_channel_width_reaches_the_detector_not_just_the_folding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`channel_khz` answers one question — how wide is a signal here — and two things
+    need the answer. Folding was wired to it; the neighbourhood `steady` judges against
+    was not, so off the narrowband bands the route measured a wide carrier against a
+    window sitting inside it."""
+    # A carrier 9 bins wide in a sweep whose bins are 200 kHz: 1.8 MHz of signal against
+    # a default neighbourhood of 11 bins, so the carrier is most of its own window and
+    # the median it is judged against is itself.
+    values = ["-98.0"] * 40
+    for b in range(20, 29):
+        values[b] = "-70.0"
+    csv = "\n".join(
+        f"2026-09-03, 15:00:0{i}, 100000000, 108000000, 200000, 12, " + ", ".join(values)
+        for i in range(8)
+    )
+
+    request, job_id = await _sweep(monkeypatch, payload={"csv": csv, "complete": True})
+    unsized = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    request, job_id = await _sweep(
+        monkeypatch, payload={"csv": csv, "complete": True}, channel_khz=1_800.0
+    )
+    sized = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+
+    assert unsized.steady == []
+    # ...and told how wide a signal is, the same sweep reports it — once, folded.
+    assert [b.mhz for b in sized.steady] == [104.0]
+
+
+async def test_the_response_says_how_often_a_bin_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this, `occupancy: 0.05` is unreadable: five percent of a 1 s revisit is a
+    handful of seconds, and five percent of a minute-long one is most of an hour."""
+    request, job_id = await _sweep(monkeypatch)
+
+    out = cast(debug.SdrSweepOut, request.app.state.debug_jobs[job_id]["result"])
+    assert out.revisit_s == 1.0

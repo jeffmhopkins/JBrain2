@@ -974,6 +974,11 @@ class SdrSweepOut(BaseModel):
     rows: int
     bins: int
     floor_db: float
+    revisit_s: float
+    """Seconds between readings of one bin, measured off rtl_power's own timestamps —
+    the scale `occupancy` is a fraction of. A 10 s transmission is six intervals at 1 s
+    and rounding error at 60 s, and how often a bin is revisited depends on how many
+    retune hops the span needs, which is not otherwise visible from the response."""
     complete: bool
     busy: list[SweepBinOut]
     steady: list[SweepBinOut]
@@ -1656,7 +1661,7 @@ async def sdr_sweep(
     bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
     seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
     gain: Annotated[str | None, Query()] = None,
-    channel_khz: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+    channel_khz: Annotated[float, Query(ge=0.0, le=20_000.0)] = 0.0,
     include_csv: Annotated[bool, Query()] = False,
 ) -> JobSubmitOut:
     """Sweep a band and report what was busy in it. A BACKGROUND JOB — poll `/jobs/{id}`.
@@ -1675,9 +1680,13 @@ async def sdr_sweep(
     **This takes the radio** for the length of the sweep, as a real lease with the
     omnibox icon and Release — so it is refused, with a 409, while APRS is logging.
 
-    `channel_khz` folds the busy bins onto a channel grid (15 for 2m, 25 for 70cm): a
-    16 kHz signal in a 5 kHz sweep lights several adjacent bins and reads as several
-    stations otherwise. Zero leaves the bins alone.
+    `channel_khz` folds the busy bins onto a channel grid and sets how wide a
+    neighbourhood `steady` judges a bin against — one number, because both answer "how
+    wide is a signal here". 15 for 2m, 25 for 70cm and airband and marine, 200 for FM
+    broadcast, thousands for a cellular carrier. It matters twice over off the narrowband
+    bands: unfolded, a 200 kHz signal in a 5 kHz sweep reads as forty stations, and
+    unsized, `steady` measures a wide carrier against a window sitting inside it and sees
+    nothing. Zero leaves the bins alone and takes the narrowband default neighbourhood.
 
     `include_csv` returns rtl_power's own numbers alongside the reduction. Off by
     default because it is megabytes; worth having because calibrating a detector against
@@ -1719,8 +1728,8 @@ async def sdr_sweep(
                 return
             payload = resp.json()
             csv_text = str(payload.get("csv") or "")
-            reduced = reduce_csv(csv_text)
             spacing = int(round(channel_khz * 1_000))
+            reduced = reduce_csv(csv_text, channel_hz=spacing)
             busy = channels(reduced, spacing)
             out = SdrSweepOut(
                 start_hz=reduced.start_hz or body["start_hz"],
@@ -1730,6 +1739,7 @@ async def sdr_sweep(
                 rows=reduced.rows,
                 bins=reduced.bins,
                 floor_db=reduced.floor_db,
+                revisit_s=reduced.revisit_s,
                 complete=bool(payload.get("complete")),
                 busy=[
                     SweepBinOut(

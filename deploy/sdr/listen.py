@@ -374,9 +374,13 @@ class Session:
         `soapy_power`) are a source build and a pip install respectively, and neither
         has earned that against a measured shortfall yet.
 
-        `-i 1` is one second per row. Finer buys time resolution the retune cannot
-        honour anyway: a span wider than the tuner's ~2.4 MHz is swept in hops, so the
-        real revisit interval is one second times the number of hops."""
+        `-i 1` is one second per row, and MEASURED on this box that is also the real
+        revisit: 1.0 s between consecutive readings of the same block at 1, 2, 4, 8 and
+        22 hops alike, with every block carrying identical timestamps. rtl_power retunes
+        WITHIN the interval rather than multiplying it. (This docstring used to claim the
+        revisit was one second times the number of hops. It is not, anywhere in the range
+        `MAX_SWEEP_SPAN_HZ` allows — and that cap is what bounds it: 60 MHz is ~25 hops,
+        so 22 is close to the worst case a caller can ask for.)"""
         assert self.sweep is not None
         span = self.sweep
         cmd = [

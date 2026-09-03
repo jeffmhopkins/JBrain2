@@ -48,7 +48,11 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 
 # The R820T2's real range, and the demodulators rtl_fm offers. Bounded here as well
 # as in the sidecar because a bound that lives only in the caller is not a bound.
-MIN_MHZ = 0.024
+# The R820T's own tuning range, and the same numbers `deploy/sdr/*.py` enforce. This
+# read 0.024 — 24 kHz, a thousand times low — so a request for HF passed validation here
+# and came back as a 502 from the sidecar rather than a 422 naming the real limit. The
+# tuner reaches HF only with a direct-sampling mod this dongle does not have.
+MIN_MHZ = 24.0
 MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 

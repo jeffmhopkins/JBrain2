@@ -393,6 +393,48 @@ and no CSV — which is exactly how the 1.76x claim survived. `include_csv=true`
 returns rtl_power's own output: a detector calibrated against its own summary, or
 against a picture of its own summary, is calibrated against nothing.
 
+**Off 2m: what the full range actually costs (2026-09-03, second session).** The sweep
+was calibrated on 2m; five more sweeps say how far that travels.
+
+| span | hops | bin asked / got | revisit | result |
+|---|---|---|---|---|
+| 146.0-147.4 (1.4 MHz) | 1 | 5 / 2.7 kHz | 1.0 s | quiet band |
+| 144-148 (4 MHz) | 2 | 5 / 3.9 kHz | 1.0 s | APRS at 144.3906 |
+| 440-450 (10 MHz) | 4 | 5 / 4.9 kHz | 1.0 s | 5 signals, busiest 444.575 at 23% |
+| 88-108 (20 MHz) | 8 | 25 / 19.5 kHz | 1.0 s | 13 FM stations |
+| 440-500 (60 MHz) | 22 | 100 / 85.2 kHz | 1.0 s | the widest span allowed |
+
+Four things follow.
+
+**`MAX_SWEEP_SPAN_HZ` is 60 MHz** (`deploy/sdr/listen.py`), so the tuner's 24-1766 MHz is
+never one call — it is at least 29 sweeps. A 400 MHz request is refused outright. That cap
+is also what makes the next line safe.
+
+**Revisit is 1.0 s at every hop count, 1 through 22.** Every block carries identical
+timestamps: rtl_power retunes WITHIN its `-i` interval rather than multiplying it. The
+`_sweep_cmd` docstring claimed the opposite ("one second times the number of hops") and is
+corrected. Since 60 MHz is ~25 hops, occupancy is a fraction of one-second intervals
+everywhere a caller can reach — there is no wide-span regime where it quietly stops
+meaning anything. `revisit_s` is reported anyway, because that is a fact about this
+hardware and this cap, not about the arithmetic.
+
+**`bin_hz` coarsens with the span**, because rtl_power picks a power-of-2 FFT per hop:
+asking 5 kHz got 2.7 kHz over 1.4 MHz and 3.9 kHz over 4 MHz; asking 100 kHz over 60 MHz
+got 85.2 kHz. A caller cannot pick resolution independently of width.
+
+**The 400 kHz neighbourhood is a narrowband figure and it shows on FM broadcast.** A
+station is ~200 kHz, so it occupies HALF its own default window whatever the bin size
+(the window is fixed in Hz, and so is the station) — right at a median's breaking point.
+Measured on the 88-108 sweep: the default found 44 steady bins in 11 channels; told
+`channel_hz=200_000` (a 4.2 MHz window, where a station is under 5%) the same CSV gives 84
+bins in **13** channels. The two it had been hiding, 97.71 and 105.91 MHz, are the weak
+ones — exactly the failure mode. So `channel_khz` now sizes the detector's neighbourhood
+as well as the folding, and off the narrowband bands it is not optional.
+
+A cellular carrier is the same failure an order of magnitude worse — 5-20 MHz of signal
+against a 400 kHz window is a baseline computed entirely from inside the transmitter —
+but that is reasoned, not measured: nothing here has swept one.
+
 **A gap this exposed.** The debug token can STOP the radio (`POST /api/debug/sdr/stop`)
 but cannot restart APRS logging — `POST /api/sdr/aprs` is owner-session-only. So a
 calibration sweep leaves the owner's heard log off until they flip the switch in the PWA
