@@ -343,8 +343,32 @@ once a card is open, rather than behind a second disclosure.
   is not a distinction they have to draw; on a box with an antenna it separates a station you
   can work from one that arrived over the internet, so the badge stays.
 
-Still open: the location line (four options, live in the mock), whether altitude belongs on
-the row, and the repeats question carried from round 6.
+**Decided (owner, 2026-09-03): range and bearing from the PWA's own location; altitude on
+the row; collapse repeats.** All three are built.
+
+The location choice is better than the one this plan proposed. Anchoring to the PWA rather
+than to the box means the coordinate is the phone's, so **it never leaves the device** — the
+distance is computed in `whereYouAre.ts` from a fix the browser hands the page, and nothing
+about where the reader is reaches the server. It is also the honest anchor for a hand-held
+screen: it answers *how far is that from me*, which on a box at home is also its reception
+range. The cost is that it measures from the READER, so away from home a station the box
+heard next door reads as a hundred miles off — true rather than wrong, and why the panel
+spells out "from you" where the row's short form cannot.
+
+Geolocation is allowed to fail, and failing is the common case rather than the edge:
+refused, no GPS, a fix that never lands. Every path falls through to the **grid square**,
+which needs nothing but the frame. The prompt is asked on opening a station, not at app
+start — a permission request with no visible reason gets refused.
+
+Two decoder faults that fed the same rows are fixed with it. `/A=` carries **six
+characters**, and a leading minus is one of them, so the old `-?\d{6}` left `/A=-00085`
+in the comment on every KC3EFJ beacon to be quoted as if a person had typed it. A weather
+report's trailing software id (`tU2k` — an Ultimeter) is now a **Station type** field for
+the same reason, and only when it is the whole remainder, so a real comment survives.
+
+Repeats fold only when **consecutive and byte-identical**: two weather readings a degree
+apart are two facts, and collapsing them would hide the change that makes them worth
+having.
 
 **The lesson worth keeping** is about mock data, not about rows: a sample drawn from real
 traffic is still a *sample*, and D's happened to exclude the empty case entirely. A mock

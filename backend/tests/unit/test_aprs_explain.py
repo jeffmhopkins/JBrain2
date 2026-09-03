@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from jbrain.sdr.classify import classify
-from jbrain.sdr.explain import collect_definitions, explain, kind_label
+from jbrain.sdr.explain import _grid, collect_definitions, explain, kind_label
 
 # A Mic-E frame as it came off the air, hex and all — the payload has to be read from the
 # bytes rather than the scrubbed text, and only a real frame proves that.
@@ -120,7 +120,11 @@ def test_the_trailing_software_code_is_not_read_as_a_second_temperature() -> Non
     ex = _explain("WA4IKQ", POSITIONLESS_WX)
 
     assert _values(ex)["Temperature"] == "78 °F (25.6 °C)"
-    assert ex.comment == "tU2k"
+    # And it is not the operator's words either: it now lands as the station type. The
+    # comment slot means "a person typed this", so a unit code sitting in it was a
+    # smaller version of the same misattribution.
+    assert _values(ex)["Station type"] == "tU2k"
+    assert ex.comment == ""
 
 
 def test_a_positionless_weather_report_says_it_has_no_position() -> None:
@@ -275,3 +279,92 @@ def test_the_kind_label_names_what_the_row_shows() -> None:
     assert kind_label(classify("N4TDX", "<IGATE,MSG_CNT=1", [], "")) == "Capabilities"
     assert kind_label(classify("KD4WLE", WEATHER, [], "")) == "Weather"
     assert kind_label(classify("KD4WLE", OBJECT, [], "")) == "Object"
+
+
+class TestWhatIsNotAMessage:
+    """Protocol tokens that were reaching the comment.
+
+    The comment is rendered as THE STATION'S OWN WORDS — that is the trust boundary the
+    whole card is built on. Anything machine-generated that lands there attributes a
+    protocol byte to a person, which is the one thing the two-voice rule exists to stop.
+    Both of these were on the owner's screen."""
+
+    def test_a_negative_altitude_is_a_field_not_a_comment(self) -> None:
+        """`/A=` carries SIX CHARACTERS and a leading minus is one of them, so a negative
+        altitude has five digits. Requiring six left `/A=-00085` in the comment on every
+        KC3EFJ beacon, quoted as if someone had typed it."""
+        said = explain(classify("KC3EFJ", "!2837.27N/08049.42W$/A=-00085", [], ""))
+
+        assert dict((f.name, f.value) for f in said.fields)["Altitude"] == "-85 ft (-26 m)"
+        assert said.comment == ""
+
+    def test_a_positive_altitude_still_reads(self) -> None:
+        said = explain(classify("N0CALL", "!2837.27N/08049.42W$/A=001240", [], ""))
+
+        assert dict((f.name, f.value) for f in said.fields)["Altitude"] == "1,240 ft (378 m)"
+
+    def test_a_run_of_digits_after_the_altitude_is_not_swallowed(self) -> None:
+        # The opposite failure, and the reason the width is fixed at all: a greedy match
+        # reads this real frame as seventy million feet.
+        said = explain(classify("N0CALL", "!2837.27N/08049.42W$/A=00000070cm MMDVM", [], ""))
+
+        assert dict((f.name, f.value) for f in said.fields)["Altitude"] == "0 ft (0 m)"
+        assert "70cm MMDVM" in said.comment
+
+    def test_a_weather_station_s_software_id_is_a_field(self) -> None:
+        # `tU2k` is an Ultimeter identifying itself. It was being quoted as a message.
+        said = explain(
+            classify("WA4IKQ", "@031417z2837.27N/08049.42W_073/003g005t082h88b10141tU2k", [], "")
+        )
+
+        assert dict((f.name, f.value) for f in said.fields)["Station type"] == "tU2k"
+        assert said.comment == ""
+
+    def test_a_real_comment_on_a_weather_report_survives(self) -> None:
+        """The strip only fires when the tail is the WHOLE remainder. A weather station
+        that actually says something must not have it eaten."""
+        said = explain(
+            classify("KD4WLE", "@031030z2837.27N/08049.42W_338/000t078AmbientCWOP.com", [], "")
+        )
+
+        assert said.comment == "AmbientCWOP.com"
+        assert "Station type" not in {f.name for f in said.fields}
+
+
+class TestWhereItIs:
+    """The position as something to compute with, not only to print."""
+
+    def test_the_coordinates_come_back_as_numbers(self) -> None:
+        # A caller working out how far away a station is should not have to parse the
+        # display string back into floats.
+        said = explain(classify("N0CALL", "!2837.27N/08049.42W$", [], ""))
+
+        assert said.latitude is not None and said.longitude is not None
+        assert round(said.latitude, 4) == 28.6212
+        assert round(said.longitude, 4) == -80.8237
+
+    def test_a_frame_with_no_position_reports_none(self) -> None:
+        said = explain(classify("N1KSC-1", "T#110,190,088,011,068,000,00000000", [], ""))
+
+        assert said.latitude is None and said.longitude is None
+
+    def test_the_grid_square_rides_along(self) -> None:
+        """Free once the frame is parsed, needs nothing but the frame, and is the one
+        location form that works when the reader's own position is unknown."""
+        said = explain(classify("N0CALL", "!2837.27N/08049.42W$", [], ""))
+
+        assert dict((f.name, f.value) for f in said.fields)["Grid square"] == "EL98oo"
+
+    @pytest.mark.parametrize(
+        ("lat", "lon", "grid"),
+        [
+            (28.6212, -80.8237, "EL98oo"),  # the owner's channel
+            (0.0, 0.0, "JJ00aa"),  # the origin, where every sign flips
+            (-33.8688, 151.2093, "QF56od"),  # Sydney — southern AND eastern
+            (51.5074, -0.1278, "IO91wm"),  # London — just west of the meridian
+        ],
+    )
+    def test_the_locator_is_right_in_every_quadrant(
+        self, lat: float, lon: float, grid: str
+    ) -> None:
+        assert _grid(lat, lon) == grid

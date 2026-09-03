@@ -109,6 +109,10 @@ def _packet(row: Any, definitions: dict[str, list[str]]) -> dict[str, Any]:
         "comment": said.comment,
         "symbol": said.symbol,
         "warnings": said.warnings,
+        # As NUMBERS, so the client can work out how far away the station is without
+        # parsing a display string back into floats. Null for a frame with no position.
+        "lat": said.latitude,
+        "lon": said.longitude,
         # The frame as heard, so the sentence above it can always be checked. This is the
         # only place the "gated via N4TDX" claim becomes verifiable, because the row
         # deliberately shows the inner payload rather than the wrapper.
