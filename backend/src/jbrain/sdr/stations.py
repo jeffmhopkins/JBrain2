@@ -112,6 +112,9 @@ def _packet(row: Any, definitions: dict[str, list[str]]) -> dict[str, Any]:
         # The frame as heard, so the sentence above it can always be checked. This is the
         # only place the "gated via N4TDX" claim becomes verifiable, because the row
         # deliberately shows the inner payload rather than the wrapper.
+        # Who put it on the air, when that is not who wrote it. The row says "relayed by
+        # N4TDX" rather than repeating a callsign the header already carries.
+        "relay": _relay(str(row["source"] or ""), heard.origin),
         "frame": {
             "source": str(row["source"] or ""),
             "destination": str(row["destination"] or ""),

@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5◻️(what a packet SAYS — shape D chosen: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -201,6 +201,29 @@ Thirteen mutations the reviewer named as survivors are killed, each verified by 
 the mutation and watching a specific test fail — including the one on the wave's headline
 claim, where swapping the roster's `HAVING` for a `WHERE` was indistinguishable under the
 old fixtures because no station in them sent a mix of kinds.
+
+### F5 as built
+
+Five pieces, all landed:
+
+- **`sdr/symbols.py`** — both tables and the 195 documented overlay combinations, from the
+  2015 master index. The overlay rule is the whole point: four of the fifteen symbols on
+  this channel are overlaid.
+- **`sdr/explain.py`** — the decoder. Pure, total, no I/O. Run over all 600 packets on the
+  box: **zero unreadable**. Eight deliberate mutations killed.
+- **`components/aprsGlyphs.ts` + `aprsIcons.tsx`** — 166 glyphs, every code with a standard
+  meaning. Stored as typed data rather than SVG strings, so nothing needs
+  `dangerouslySetInnerHTML` and a malformed shape is a type error rather than a blank icon.
+- **`sdr/stations.py`** — returns the reading, the frame, and the row `id`.
+- **`components/AprsStations.tsx`** — the row. Eight mutations killed, two of which needed
+  tests that did not exist: keying rows on the array index (which silently moves a
+  keyboard user's focus to a *different* packet when a poll prepends) and repeating the
+  callsign inside a station.
+
+Two API fields carry the distinctions the screen leans on. A packet has **`kind` and
+`bucket`** — the row's title says "Telemetry", the chip filters "Other", and one field
+serving both would force the row to lie or the chip row to sprawl. And it has **`relay`**,
+so the row can say *how* it reached us without repeating the callsign the header carries.
 
 ## What is stored, honestly
 

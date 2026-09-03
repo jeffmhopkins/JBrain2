@@ -25357,6 +25357,149 @@ button.task-band:active {
 /* ---- what is armed, and what was tried (docs/mocks/aprs/a-launcher-shape.html) ----
    The deaf warning is deliberately NOT dimmed: round 3's review found `opacity:.55` on
    it, which made the single most important sentence on the screen the least legible. */
+/* --- one heard packet (F5, docs/mocks/aprs/i-packet-readable.html) ---------------- */
+
+.aprs-packet {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.aprs-packet.open {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.aprs-packet-btn {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 11px 12px;
+  min-height: 56px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.aprs-packet-body {
+  flex: 1;
+  min-width: 0;
+}
+.aprs-packet-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.aprs-call {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 500;
+  color: var(--accent);
+}
+.aprs-dash {
+  color: var(--text-3);
+  font-weight: 400;
+  margin: 0 5px;
+}
+/* THE APP'S WORDS: system font, normal weight. */
+.aprs-said {
+  display: block;
+  margin-top: 2px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* THE STATION'S OWN WORDS: monospace and quoted. The typeface carries the trust
+   boundary, so no badge has to — and `unicode-bidi: isolate` because the scrub keeps
+   everything at or above U+0020, which includes the right-to-left override. */
+.aprs-theirs {
+  display: block;
+  margin-top: 5px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.aprs-packet-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* A station's OWN symbol takes the accent; a kind glyph is our inference and takes the
+   neutral tint. They are different claims and must not look like the same one. */
+.aprs-sym {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+}
+.aprs-sym-own {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.aprs-sym-kind {
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text-3) 10%, transparent);
+}
+.aprs-packet-panel {
+  padding: 0 12px 12px;
+}
+.aprs-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  margin: 2px 0 0;
+  font-size: 12.5px;
+}
+.aprs-fields dt {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.aprs-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.aprs-warn {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--warn);
+}
+.aprs-raw {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+.aprs-raw summary {
+  font-size: 11.5px;
+  color: var(--text-3);
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.aprs-raw pre {
+  margin: 2px 0 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
 /* --- the station roster (F3, docs/mocks/aprs/e-stations.html) --------------------- */
 
 /* The range control REUSES `.seg-tabs`/`.seg-tab` — the same segmented control the Radio

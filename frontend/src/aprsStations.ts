@@ -68,13 +68,38 @@ export interface AprsRoster {
 }
 
 export interface AprsStationPacket {
+  /** The row's own identity. Keying on an array index remounts every row each time a
+   *  poll prepends a frame — invisible while rows hold no state, fatal the moment one
+   *  can expand, and already costing a screen-reader user their focus every 5 s. */
+  id: string;
   heard_at: string;
+  /** What the row's TITLE says: Telemetry, Status, Capabilities, Position (Mic-E)… */
   kind: string;
+  /** The coarse stored kind the chips filter on. Deliberately different from `kind` —
+   *  five chips are a control you can aim, and "Other" as a title says nothing. */
+  bucket: string;
   gated: boolean;
   direct: boolean;
   /** The payload the station composed — for a relayed frame, what is INSIDE the
    *  wrapper. Showing the stored frame would print the transport on every line. */
   text: string;
+  /** One line in the APP's words. Empty when the station's own text says it better —
+   *  a status report is its own summary, and repeating it in our voice would present a
+   *  stranger's sentence as ours. */
+  summary: string;
+  /** `[label, value]` pairs, in the order a reader wants them. */
+  fields: [string, string][];
+  /** The station's own free text, verbatim. Rendered as theirs, never as ours. */
+  comment: string;
+  /** The two symbol characters as transmitted, for the icon. Empty when none. */
+  symbol: string;
+  /** What could not be read, or what a reader must not assume. Shown, never swallowed. */
+  warnings: string[];
+  /** Who put it on the air, when that is not who wrote it. */
+  relay: string | null;
+  /** The frame as heard — the only place a "gated via N4TDX" claim becomes checkable,
+   *  because the row deliberately shows the inner payload rather than the wrapper. */
+  frame: { source: string; destination: string; path: string[] };
 }
 
 export interface AprsStationDetail {

@@ -92,6 +92,30 @@ function roster(over: Record<string, unknown> = {}) {
   };
 }
 
+/** One heard packet, decoded, as the API now sends it. */
+function packet(over: Record<string, unknown> = {}) {
+  return {
+    id: "pkt-1",
+    heard_at: new Date().toISOString(),
+    kind: "Position",
+    bucket: "Position",
+    gated: true,
+    direct: false,
+    text: "!2835.06ND08048.98W&RNG0001 2m Voice",
+    summary: "Car — 52 knots (60 mph) heading 242° (WSW)",
+    fields: [
+      ["Position", "28.5108, -81.3963"],
+      ["Symbol", "Car"],
+    ],
+    comment: "On D-Star K1XC",
+    symbol: "/>",
+    warnings: [],
+    relay: "N4TDX",
+    frame: { source: "N4TDX", destination: "APDG02", path: ["WIDE1-1"] },
+    ...over,
+  };
+}
+
 /** One station's traffic, as the detail view reads it. */
 function station(call: string, over: Record<string, unknown> = {}) {
   return {
@@ -105,15 +129,7 @@ function station(call: string, over: Record<string, unknown> = {}) {
     has_older: false,
     older: 0,
     kind_packets: { Position: 4 },
-    packets: [
-      {
-        heard_at: new Date().toISOString(),
-        kind: "Position",
-        gated: call === "N1MPR-C",
-        direct: call !== "N1MPR-C",
-        text: "!2835.06ND08048.98W&RNG0001 2m Voice",
-      },
-    ],
+    packets: [packet({ gated: call === "N1MPR-C", direct: call !== "N1MPR-C" })],
     ...over,
   };
 }
@@ -187,15 +203,7 @@ describe("the APRS tab", () => {
       has_older: false,
       older: 0,
       kind_packets: { Position: 4 },
-      packets: [
-        {
-          heard_at: new Date().toISOString(),
-          kind: "Position",
-          gated: true,
-          direct: false,
-          text: "!2835.06ND08048.98W&RNG0001 2m Voice",
-        },
-      ],
+      packets: [packet()],
     } as never);
 
     render(<RadioScreen onClose={() => {}} />);
@@ -203,10 +211,12 @@ describe("the APRS tab", () => {
 
     // The frame the station composed. Rendering the stored `info` would print the
     // third-party transport in front of every relayed line instead of the content.
-    expect(await screen.findByText(/2m Voice/)).toBeInTheDocument();
+    expect(await screen.findByText(/52 knots .* heading 242/)).toBeInTheDocument();
     expect(detail).toHaveBeenCalledWith("N1MPR-C", "1d", []);
     // Provenance per packet, which is also where the untrusted rule meets the eye.
     expect(screen.getByText("gated")).toBeInTheDocument();
+    // The row is a sentence; the bytes are one tap below, not on the row.
+    expect(screen.queryByText(/2835\.06ND/)).toBeNull();
   });
 
   it("narrows the ROSTER by type, not the packets", async () => {
@@ -223,6 +233,171 @@ describe("the APRS tab", () => {
     // server answers it — a client that downloaded the log to narrow it here would
     // move a year of a 1.2M-row channel to render two lines.
     await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"], null));
+  });
+
+  it("puts the meaning on the row and the bytes one tap below", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(station("N1MPR-C") as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    const row = await screen.findByRole("button", { expanded: false, name: /52 knots/ });
+
+    // Collapsed: a sentence, and the station's own words. Not the frame.
+    expect(row).toHaveTextContent("On D-Star K1XC");
+    expect(row).not.toHaveTextContent("2835.06ND");
+
+    fireEvent.click(row);
+
+    // Expanded: the field breakdown AND the frame, so every sentence can be checked.
+    expect(await screen.findByText("28.5108, -81.3963")).toBeInTheDocument();
+    expect(screen.getByText(/The frame as heard/)).toBeInTheDocument();
+    expect(screen.getByText(/2835\.06ND/)).toBeInTheDocument();
+  });
+
+  it("does not restate the icon as text", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // A position whose whole reading IS the symbol's name. The glyph already says it,
+    // and so does that glyph's accessible label — a third copy in words spends a line
+    // on a fact the row has already made twice.
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("KE8XYZ-9", {
+        packets: [packet({ summary: "Car", comment: "", symbol: "/>" })],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    const row = await screen.findByRole("button", { expanded: false, name: /Position/ });
+
+    expect(row.querySelector(".aprs-said")).toBeNull();
+    // But it is still reachable: the icon carries it for a screen reader, and the
+    // detail carries it for a reader who taps.
+    expect(screen.getByRole("img", { name: "Car" })).toBeInTheDocument();
+  });
+
+  it("does not speak in the station's voice when the words are the station's", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // A status report IS its own summary. Repeating it in the app's font would present
+    // a stranger's sentence as ours — the one thing the two-voice rule exists to stop.
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("K4JTT-D", {
+        packets: [
+          packet({
+            kind: "Status",
+            summary: "",
+            comment: "Powered by WPSD (https://wpsd.radio)",
+            symbol: "",
+            fields: [],
+          }),
+        ],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    const quoted = await screen.findByText(/Powered by WPSD/);
+
+    expect(quoted).toHaveClass("aprs-theirs");
+    // A URL from an anonymous transmitter is never linkified.
+    expect(quoted.querySelector("a")).toBeNull();
+  });
+
+  it("shows a station's own symbol differently from our guess about the packet", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("N1KSC-1", {
+        packets: [
+          packet({ id: "a", symbol: "/>", fields: [["Symbol", "Car"]] }),
+          packet({ id: "b", kind: "Telemetry", symbol: "", fields: [], summary: "14.25 Volt" }),
+        ],
+      }) as never,
+    );
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    await screen.findByText(/14.25 Volt/);
+
+    // An APRS symbol is a claim the STATION made; a kind glyph is a claim WE made.
+    expect(container.querySelectorAll(".aprs-sym-own")).toHaveLength(1);
+    expect(container.querySelectorAll(".aprs-sym-kind")).toHaveLength(1);
+  });
+
+  it("surfaces what could not be read instead of swallowing it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("K4KSC-12", {
+        packets: [
+          packet({
+            kind: "Telemetry",
+            symbol: "",
+            summary: "Channel 1 053",
+            fields: [["Channel 1", "053"]],
+            comment: "",
+            warnings: ["This station has not published what its channels measure."],
+          }),
+        ],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    fireEvent.click(await screen.findByRole("button", { expanded: false, name: /Telemetry/ }));
+
+    // The alternative is inventing units for an undeclared channel, which puts a
+    // confident wrong reading on screen with nothing to contradict it.
+    expect(await screen.findByText(/has not published/)).toBeInTheDocument();
+  });
+
+  it("does not repeat the callsign the header already carries", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(station("N1MPR-C") as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    const row = await screen.findByRole("button", { expanded: false, name: /52 knots/ });
+
+    // Inside a station every packet is that station's, so a callsign in every title is
+    // one fact repeated down the whole list, crowding out the only part that varies.
+    expect(row.querySelector(".aprs-packet-title")?.textContent).toBe("Position");
+    expect(row.querySelector(".aprs-call")).toBeNull();
+    // How it REACHED us is still worth saying, and that is a different callsign.
+    expect(row).toHaveTextContent("relayed by N4TDX");
+  });
+
+  it("keeps a row expanded when a poll prepends a newer packet", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const older = packet({ id: "older", summary: "Car — 52 knots (60 mph) heading 242° (WSW)" });
+    const newer = packet({ id: "newer", summary: "Truck — 12 knots (14 mph) heading 90° (E)" });
+    vi.spyOn(api, "getAprsStation")
+      .mockResolvedValueOnce(station("N1MPR-C", { packets: [older] }) as never)
+      .mockResolvedValue(station("N1MPR-C", { packets: [newer, older] }) as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    fireEvent.click(await screen.findByRole("button", { expanded: false, name: /52 knots/ }));
+    expect(await screen.findByText("28.5108, -81.3963")).toBeInTheDocument();
+
+    // Focus the row, the way a keyboard or screen-reader user is holding it.
+    const open = screen.getByRole("button", { expanded: true, name: /52 knots/ });
+    open.focus();
+
+    // Now a poll lands and a newer frame goes on top. Keyed on the ARRAY INDEX, the
+    // focused DOM node is reused for a DIFFERENT packet — focus silently moves to
+    // somebody else's frame, and the reader is never told.
+    fireEvent.click(screen.getByRole("button", { name: /3 days/ }));
+
+    await waitFor(() => expect(screen.getByText(/12 knots/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { expanded: true, name: /52 knots/ })).toBeInTheDocument();
+    expect(document.activeElement).toHaveTextContent("52 knots");
+    expect(document.activeElement).not.toHaveTextContent("12 knots");
   });
 
   it("keeps a way out when a station fails to load", async () => {

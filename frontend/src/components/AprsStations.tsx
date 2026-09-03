@@ -17,11 +17,12 @@
 // included. React escapes it, each row states how it reached us, and none of it is ever
 // put in front of a model as an instruction (the plan's two trust tiers).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import {
   type AprsRoster,
   type AprsStationDetail,
+  type AprsStationPacket,
   type Kind,
   WINDOWS,
   type WindowId,
@@ -32,6 +33,16 @@ import {
   pinMine,
   shownLabel,
 } from "../aprsStations";
+import { AprsSymbol } from "./aprsIcons";
+import {
+  ChatIcon,
+  GaugeIcon,
+  GraphIcon,
+  ListIcon,
+  MessageIcon,
+  RadioIcon,
+  ThingIcon,
+} from "./icons";
 
 export function AprsStations({ tick, owner }: { tick: number; owner: string | null }) {
   const [window_, setWindow] = useState<WindowId>("1d");
@@ -280,6 +291,9 @@ function StationDetail({
 }) {
   const chips = chipsFor(detail.kind_packets, kinds);
   const only = Object.keys(detail.kind_packets);
+  // One open at a time. Two open rows on a phone means neither is readable, and the
+  // second tap becomes a way to lose the first.
+  const [openPacket, setOpenPacket] = useState<string | null>(null);
 
   return (
     <>
@@ -337,24 +351,156 @@ function StationDetail({
           Nothing from {detail.call} in this range. Widen it or clear the type filter.
         </p>
       ) : (
-        detail.packets.map((p, i) => (
-          <div className="aprs-row" key={`${p.heard_at}-${i}-${p.text.slice(0, 24)}`}>
-            <div className="aprs-body">
-              <div className="aprs-msg">
-                {/* How it reached us, on every row. This is also where the untrusted
-                    rule meets the eye: the badge says a stranger transmitted it. */}
-                <span className={`aprs-badge b-${p.direct ? "direct" : p.gated ? "gated" : "rf"}`}>
-                  {p.direct ? "direct" : p.gated ? "gated" : "rf"}
-                </span>
-                {p.text}
-              </div>
-              <div className="aprs-meta">{p.kind}</div>
-            </div>
-            <span className="aprs-when">{ago(p.heard_at)}</span>
-          </div>
+        detail.packets.map((p) => (
+          <PacketRow
+            key={p.id}
+            packet={p}
+            // Inside a station the header already names the sender, so a callsign in
+            // every title is one fact repeated down the whole list.
+            scoped
+            open={openPacket === p.id}
+            onToggle={() => setOpenPacket(openPacket === p.id ? null : p.id)}
+          />
         ))
       )}
     </>
+  );
+}
+
+/** Glyphs for the packets that carry NO symbol of their own — telemetry, a message, a
+ *  status line, a plain beacon. Without one the list gets a ragged left edge; with the
+ *  same tint as a real symbol it would claim to be something the station chose. House
+ *  icons, so the difference from a drawn APRS symbol is visible at a glance. */
+const KIND_ICONS: Record<string, (p: { size?: number }) => ReactElement> = {
+  Telemetry: GraphIcon,
+  Message: MessageIcon,
+  Status: ChatIcon,
+  Capabilities: ListIcon,
+  "AX.25 beacon": RadioIcon,
+  Weather: GaugeIcon,
+};
+
+/** One heard packet, as a sentence with the bytes one tap below.
+ *
+ * Binding spec: `docs/mocks/aprs/i-packet-readable.html`, shape D. The inversion it
+ * settles is that the MEANING goes on the row and the frame goes one tap away — on this
+ * channel the resting list was `` `m3jq6F>/`On D-Star ``, `T#110,190,088` and
+ * `@031030z2837.27N/08049.42W_338/000g000`, three lines of which none could be read.
+ *
+ * THREE RULES, each of them a thing the first cut got wrong:
+ *
+ * 1. **Two voices, told apart by typeface.** The sentence is the app's, in the system
+ *    font; the station's own comment is quoted verbatim in monospace. Typography carries
+ *    the trust boundary so no badge has to — and where the only content IS the station's
+ *    text, a status or a beacon, the app says nothing rather than reciting a stranger's
+ *    sentence in its own voice.
+ * 2. **The icon is not restated as text.** When the whole reading is the symbol's name
+ *    the glyph already says it, and its accessible label says it to a screen reader. The
+ *    name stays in the detail, where the reader is asking what the packet contains.
+ *  3. **The title is the type**, and the callsign only where it is not already known.
+ *
+ * Every string here came off the air from an anonymous transmitter. React escapes it, the
+ * frame is never linkified, and none of it is ever presented as the app's own claim. */
+function PacketRow({
+  packet,
+  scoped,
+  open,
+  onToggle,
+}: {
+  packet: AprsStationPacket;
+  scoped: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const symbolName = packet.fields.find(([name]) => name === "Symbol")?.[1] ?? "";
+  const derived = packet.summary !== "" && packet.summary !== packet.comment;
+  const said = derived ? readingOf(packet.summary, symbolName, packet.symbol) : "";
+  const theirs = packet.comment || (derived ? "" : packet.text);
+  const provenance = packet.direct ? "direct" : packet.gated ? "gated" : "rf";
+
+  return (
+    <div className={`aprs-packet${open ? " open" : ""}`}>
+      <button type="button" className="aprs-packet-btn" aria-expanded={open} onClick={onToggle}>
+        <PacketGlyph packet={packet} label={symbolName} />
+        <span className="aprs-packet-body">
+          <span className="aprs-packet-title">
+            {!scoped && (
+              <>
+                <span className="aprs-call">{packet.frame.source}</span>
+                <span className="aprs-dash">—</span>
+              </>
+            )}
+            {packet.kind}
+          </span>
+          {said && <span className="aprs-said">{said}</span>}
+          {theirs && <span className="aprs-theirs">{theirs}</span>}
+          <span className="aprs-packet-meta">
+            <span className={`aprs-badge b-${provenance}`}>{provenance}</span>
+            {packet.relay ? `relayed by ${packet.relay}` : "heard on the air"}
+          </span>
+        </span>
+        <span className="aprs-when">{ago(packet.heard_at)}</span>
+      </button>
+      {open && (
+        <div className="aprs-packet-panel">
+          {packet.fields.length > 0 && (
+            <dl className="aprs-fields">
+              {packet.fields.map(([name, value]) => (
+                <Fragment key={name}>
+                  <dt>{name}</dt>
+                  <dd>{value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          )}
+          {packet.warnings.map((warning) => (
+            <p className="aprs-warn" key={warning}>
+              {warning}
+            </p>
+          ))}
+          {/* The evidence for every sentence above it. This is also the only place the
+              "gated via" claim can be checked, since the row shows the inner payload. */}
+          <details className="aprs-raw">
+            <summary>The frame as heard</summary>
+            <pre>
+              {packet.frame.source}&gt;{packet.frame.destination}
+              {packet.frame.path.length > 0 ? `,${packet.frame.path.join(",")}` : ""}:{"\n"}
+              {packet.text}
+            </pre>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The reading, with the symbol's name removed when the icon already carries it. */
+function readingOf(summary: string, symbolName: string, symbol: string): string {
+  if (!symbolName || !symbol) return summary;
+  if (summary === symbolName) return "";
+  return summary.startsWith(`${symbolName}, `) ? summary.slice(symbolName.length + 2) : summary;
+}
+
+/** The station's own symbol where it has one, our inference about the packet where it
+ *  does not — and they are tinted differently on purpose. An APRS symbol is a claim the
+ *  station made; a kind glyph is a claim we made. They should not look alike. */
+function PacketGlyph({ packet, label }: { packet: AprsStationPacket; label: string }) {
+  if (packet.symbol.length === 2) {
+    return (
+      <span className="aprs-sym aprs-sym-own">
+        <AprsSymbol
+          table={packet.symbol.slice(0, 1)}
+          code={packet.symbol.slice(1, 2)}
+          label={label || packet.kind}
+        />
+      </span>
+    );
+  }
+  const Glyph = KIND_ICONS[packet.kind] ?? ThingIcon;
+  return (
+    <span className="aprs-sym aprs-sym-kind" role="img" aria-label={packet.kind}>
+      <Glyph size={20} />
+    </span>
   );
 }
 
