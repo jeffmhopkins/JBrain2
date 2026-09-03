@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5◻️(what a packet SAYS — GUI gate OPEN, three mocks up). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4◻️(`aprs_recent` v2 + signal level) F5◻️(what a packet SAYS — shape D chosen: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -221,9 +221,25 @@ qualifications on the record:
 ## F5 — what a packet SAYS (GUI gate open)
 
 Asked for after the roster shipped: tapping a packet card should turn it into plain
-English. Three mocks are up on real traffic — `../mocks/aprs/f-packet-inline.html` (expand
-in place), `g-packet-flip.html` (turn the card over), `h-packet-sheet.html` (a sheet). The
-owner picks one and it becomes binding spec.
+English. Four mocks on real traffic — `../mocks/aprs/f-packet-inline.html` (expand in place),
+`g-packet-flip.html` (turn the card over), `h-packet-sheet.html` (a sheet), and
+`i-packet-readable.html`, which is where the round landed.
+
+**The owner's decision after seeing the first three: human readable FIRST.** A, B and C all
+kept the frame on the row and put the meaning one tap away; D inverts it. On this channel
+that is plainly right — the resting list was `` `m3jq6F>/`On D-Star ``, `T#110,190,088` and
+`@031030z2837.27N/08049.42W_338/000g000`, three lines of which none can be read.
+
+Two consequences that shape the build:
+
+- **Two voices, told apart by typeface.** The derived sentence is the app's, in the system
+  font; the station's own comment is quoted verbatim in monospace. Typography carries the
+  trust boundary so no badge has to. When the only content IS the station's text — a status,
+  a beacon — the app says nothing rather than reciting a stranger's sentence in its own
+  voice.
+- **A wrong decode now reads as a confident wrong sentence** rather than as obviously-raw
+  bytes. That is the cost of the inversion, and it is why the frame stays one tap below
+  every row and why anything undecodable says so instead of guessing.
 
 Two research dossiers feed it: `../research/APRS_PAYLOAD_DECODING.md` (field-by-field, all
 twelve types actually on the air) and `../research/APRS_PACKET_DETAIL_UI.md` (the
