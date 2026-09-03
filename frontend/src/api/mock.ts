@@ -370,6 +370,7 @@ const analyzingNotes = new Set<string>();
 const SETTINGS: AppSettings = {
   image_analysis_mode: "full",
   owner_timezone: null,
+  owner_callsign: null,
   brain_llm_stream: false,
   brain_read_aloud: false,
   brain_answer_voice: "kokoro-af_heart",

@@ -35,7 +35,9 @@
   originator lists him as himself, whatever relayed him. Nothing is hidden by default.
 
   DECIDED, do not relitigate: the segmented tab strip; the full-screen layer; the Tuner
-  tab mounting the real transport (#1275); the callsign field on this tab.
+  tab mounting the real transport (#1275). The owner's callsign lives in APP SETTINGS,
+  not here - it is his identity rather than a property of the radio, and anything on the
+  box that wants to know which traffic is his can then ask.
 
   NOT decided here: retention (nothing prunes, ~3k rows/day); whether a station can be
   muted; signal level, which IS available - direwolf's heard line carries it and we
@@ -168,7 +170,7 @@
   frames are unwrapped.</p>
   <div class="controls">
     <div class="field">
-      <span class="lbl">Pretend my callsign is</span>
+      <span class="lbl">Callsign (set in app Settings)</span>
       <div class="seg" role="group" id="whoami">
         <button aria-pressed="true" data-me="">unset</button>
         <button aria-pressed="false" data-me="KD4WLE">KD4WLE</button>
@@ -289,8 +291,6 @@ function roster(){
     : '';
 
   return header() +
-    `<div class="callsign"><span>My callsign</span>
-      <input id="mycall" value="${esc(ME)}" placeholder="not set" aria-label="My callsign"></div>` +
     timeSeg() + chipRow +
     `<div class="sec">${KINDS.size ? 'Stations sending ' + [...KINDS].join(' or ') : 'Stations heard'}
       <span class="count">${stations.length}${KINDS.size ? ' of ' + Object.keys(by).length : ''}</span></div>` +
@@ -359,6 +359,12 @@ list is led by whichever machine beacons most often, which is never the interest
 without the owner ever learning what a third&#8209;party frame is. Round 4&rsquo;s central trap
 &mdash; that his own mail arrives wrapped as noise from an IGate &mdash; simply cannot bite here:
 he is listed as himself, whatever relayed him.</p>
+
+<h4>The callsign lives in app Settings</h4>
+<p>It is the owner&rsquo;s identity, not a property of the radio &mdash; and once it exists,
+anything on the box that wants to know which traffic is his can ask. Putting it on this screen
+would have made it look like a radio setting and hidden it from everything else. The switcher
+above is a mock affordance only.</p>
 
 <h4>The time control is global</h4>
 <p>You asked for recency inside a station; it is the same control the roster needs. After a month

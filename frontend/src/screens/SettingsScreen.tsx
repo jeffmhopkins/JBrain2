@@ -129,6 +129,29 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // in. Falls back to the browser's detected zone before the server answers.
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const [timezone, setTimezone] = useState<string>(browserZone);
+  // The owner's amateur callsign. Held as typed so a half-entered "KE8X" is a legal
+  // intermediate state; normalised and validated on save.
+  const [callsign, setCallsign] = useState<string>("");
+  const [callsignSaved, setCallsignSaved] = useState<string>("");
+  const [callsignError, setCallsignError] = useState<string | null>(null);
+  const [callsignSaving, setCallsignSaving] = useState(false);
+
+  async function saveCallsign(): Promise<void> {
+    setCallsignSaving(true);
+    setCallsignError(null);
+    try {
+      const next = await api.updateSettings({ owner_callsign: callsign.trim() });
+      setCallsign(next.owner_callsign ?? "");
+      setCallsignSaved(next.owner_callsign ?? "");
+    } catch (err) {
+      // The server refuses a mangled callsign rather than cleaning it, so its reason is
+      // the useful one: a silently-stripped character would filter for a station that
+      // does not exist, and an empty heard log reads as a deaf radio.
+      setCallsignError(err instanceof ApiError ? err.message : "That callsign wasn't accepted.");
+    } finally {
+      setCallsignSaving(false);
+    }
+  }
   useEffect(() => {
     let stale = false;
     api
@@ -140,6 +163,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         applyReadAloud(s);
         setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
+        setCallsign(s.owner_callsign ?? "");
+        setCallsignSaved(s.owner_callsign ?? "");
       })
       .catch(() => {
         // Unreachable backend: show defaults so the controls are still interactive (leaving the
@@ -1071,6 +1096,49 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <div className="settings-value" aria-label="Time zone">
           {timezone}
         </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Amateur callsign</h2>
+        <p className="settings-meta">
+          your callsign, with or without an SSID. The Radio screen uses it to tell your own traffic
+          apart from everyone else's on a packet channel that is mostly other people. A bare
+          callsign matches every SSID you use, so <code>KE8XYZ</code> covers both the truck and the
+          handheld. Leave it empty if you would rather not say.
+        </p>
+        <label className="settings-field">
+          Callsign
+          <input
+            value={callsign}
+            placeholder="not set"
+            spellCheck={false}
+            autoCapitalize="characters"
+            autoComplete="off"
+            onChange={(e) => {
+              setCallsign(e.target.value.toUpperCase());
+              setCallsignError(null);
+            }}
+          />
+        </label>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="seg"
+            // A distinct accessible name: this screen already has a Save in the Gmail
+            // card, and two controls that announce themselves identically are ambiguous
+            // to anyone not looking at which card they are in.
+            aria-label="Save callsign"
+            disabled={callsignSaving || callsign.trim() === callsignSaved}
+            onClick={() => void saveCallsign()}
+          >
+            {callsignSaving ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {callsignError !== null && (
+          <p className="settings-meta" role="alert" style={{ color: "var(--danger)" }}>
+            {callsignError}
+          </p>
+        )}
       </section>
 
       <section className="settings-card">

@@ -398,6 +398,10 @@ class FakeSettingsStore:
     async def upsert(self, ctx: object, key: str, value: object) -> None:
         self.values[key] = value
 
+    async def owner_callsign(self, ctx: object) -> str | None:
+        call = self.values.get("owner_callsign")
+        return call.strip().upper() if isinstance(call, str) and call.strip() else None
+
     async def image_analysis_mode(self, ctx: object) -> str:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
