@@ -103,6 +103,10 @@ export interface AprsStationPacket {
    *  showing it as weak would invent the one fact on this row that is not
    *  self-declared. */
   audio_level: number | null;
+  /** The position as NUMBERS, for working out how far away the station is. Null for a
+   *  frame that carried none. The `Position` field is the one to print. */
+  lat: number | null;
+  lon: number | null;
   /** The frame as heard — the only place a "gated via N4TDX" claim becomes checkable,
    *  because the row deliberately shows the inner payload rather than the wrapper. */
   frame: { source: string; destination: string; path: string[] };

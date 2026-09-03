@@ -33,6 +33,7 @@ import {
   pinMine,
   shownLabel,
 } from "../aprsStations";
+import { type Fix, askWhereYouAre, rangeAndBearing, rangeLine } from "../whereYouAre";
 import { AprsSymbol } from "./aprsIcons";
 import {
   ChatIcon,
@@ -294,6 +295,8 @@ function StationDetail({
   // One open at a time. Two open rows on a phone means neither is readable, and the
   // second tap becomes a way to lose the first.
   const [openPacket, setOpenPacket] = useState<string | null>(null);
+  const you = useWhereYouAre();
+  const runs = collapseRepeats(detail.packets);
 
   return (
     <>
@@ -351,15 +354,17 @@ function StationDetail({
           Nothing from {detail.call} in this range. Widen it or clear the type filter.
         </p>
       ) : (
-        detail.packets.map((p) => (
+        runs.map((run) => (
           <PacketRow
-            key={p.id}
-            packet={p}
+            key={run.packet.id}
+            packet={run.packet}
             // Inside a station the header already names the sender, so a callsign in
             // every title is one fact repeated down the whole list.
             scoped
-            open={openPacket === p.id}
-            onToggle={() => setOpenPacket(openPacket === p.id ? null : p.id)}
+            you={you}
+            repeats={run.repeats}
+            open={openPacket === run.packet.id}
+            onToggle={() => setOpenPacket(openPacket === run.packet.id ? null : run.packet.id)}
           />
         ))
       )}
@@ -406,15 +411,25 @@ function PacketRow({
   scoped,
   open,
   onToggle,
+  you,
+  repeats = 1,
 }: {
   packet: AprsStationPacket;
   scoped: boolean;
   open: boolean;
   onToggle: () => void;
+  /** Where the reader is, when they have allowed it. Null falls back to the grid. */
+  you: Fix | null;
+  /** How many identical frames this row stands for, this one included. */
+  repeats?: number;
 }) {
-  const symbolName = packet.fields.find(([name]) => name === "Symbol")?.[1] ?? "";
+  const fields = new Map(packet.fields);
+  const symbolName = fields.get("Symbol") ?? "";
   const derived = packet.summary !== "" && packet.summary !== packet.comment;
-  const said = derived ? readingOf(packet.summary, symbolName, packet.symbol) : "";
+  // The reading, and — when stripping the icon's name leaves nothing — where it is.
+  const said =
+    (derived ? readingOf(packet.summary, symbolName, packet.symbol) : "") ||
+    placeOf(packet, fields, you);
   const theirs = packet.comment || (derived ? "" : packet.text);
   const provenance = packet.direct ? "direct" : packet.gated ? "gated" : "rf";
 
@@ -438,15 +453,16 @@ function PacketRow({
             <span className={`aprs-badge b-${provenance}`}>{provenance}</span>
             {packet.relay ? `relayed by ${packet.relay}` : "heard on the air"}
             <Signal level={packet.audio_level} />
+            {repeats > 1 && <span className="aprs-reps">heard {repeats}×</span>}
           </span>
         </span>
         <span className="aprs-when">{ago(packet.heard_at)}</span>
       </button>
       {open && (
         <div className="aprs-packet-panel">
-          {packet.fields.length > 0 && (
+          {panelFields(packet, you).length > 0 && (
             <dl className="aprs-fields">
-              {packet.fields.map(([name, value]) => (
+              {panelFields(packet, you).map(([name, value]) => (
                 <Fragment key={name}>
                   <dt>{name}</dt>
                   <dd>{value}</dd>
@@ -459,20 +475,117 @@ function PacketRow({
               {warning}
             </p>
           ))}
-          {/* The evidence for every sentence above it. This is also the only place the
-              "gated via" claim can be checked, since the row shows the inner payload. */}
-          <details className="aprs-raw">
-            <summary>The frame as heard</summary>
+          {/* The evidence for every sentence above it, and NOT behind a second tap: a
+              reader who opened the card already asked to see more. This is also the only
+              place the "gated via" claim can be checked, since the row deliberately shows
+              the inner payload rather than the wrapper. */}
+          <div className="aprs-raw">
+            <span className="aprs-raw-k">The frame as heard</span>
             <pre>
-              {packet.frame.source}&gt;{packet.frame.destination}
-              {packet.frame.path.length > 0 ? `,${packet.frame.path.join(",")}` : ""}:{"\n"}
+              <span className="aprs-raw-hdr">
+                {packet.frame.source}&gt;{packet.frame.destination}
+                {packet.frame.path.length > 0 ? `,${packet.frame.path.join(",")}` : ""}:
+              </span>
+              {"\n"}
               {packet.text}
             </pre>
-          </details>
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+/** The reader's position, asked for once per mount and never sent anywhere.
+ *
+ * Asked for on OPENING A STATION rather than on app start: a permission prompt that
+ * arrives with no visible reason gets refused, and this one has a reason the moment the
+ * reader is looking at a list of places. A refusal is remembered as `null` for the life
+ * of the screen — re-prompting on every render would be the surest way to be denied. */
+function useWhereYouAre(): Fix | null {
+  const [fix, setFix] = useState<Fix | null>(null);
+  useEffect(() => {
+    let live = true;
+    askWhereYouAre().then((got) => {
+      if (live) setFix(got);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return fix;
+}
+
+/** Consecutive identical frames, folded into one row that says how many.
+ *
+ * A beacon re-announces the same object on a timer: 25 of the owner's rows were one
+ * D-STAR object every twenty minutes, each costing three lines and telling him nothing
+ * the row above had not. Only CONSECUTIVE runs fold, and only frames whose payload is
+ * byte-identical — two readings that differ by a degree are two facts, and collapsing
+ * them would hide the change that makes them worth having. The newest of a run is the
+ * one kept, so its time is the last time it was heard. */
+export function collapseRepeats(
+  packets: AprsStationPacket[],
+): { packet: AprsStationPacket; repeats: number }[] {
+  const runs: { packet: AprsStationPacket; repeats: number }[] = [];
+  for (const packet of packets) {
+    const last = runs.at(-1);
+    if (last && last.packet.text === packet.text && last.packet.kind === packet.kind) {
+      last.repeats += 1;
+    } else {
+      runs.push({ packet, repeats: 1 });
+    }
+  }
+  return runs;
+}
+
+/** The panel's fields, in aprs.fi's order and without the one the icon already says.
+ *
+ * Borrowed deliberately: aprs.fi's info page is the layout every ham has already learned
+ * to read — where, then when, then motion, then the station's own instruments, then how
+ * it got here. Anything this list does not name keeps its decoded order at the end.
+ *
+ * "Distance" is computed here rather than sent, and it spells out **from you** because
+ * the row's short form does not: measured from the phone, a station the box heard next
+ * door reads as a hundred miles away when the reader is out of town. */
+const PANEL_ORDER = [
+  "Position",
+  "Grid square",
+  "Distance",
+  "Altitude",
+  "Reported at",
+  "Course and speed",
+  "Range",
+  "Power, height, gain",
+  "Wind",
+  "Gust",
+  "Temperature",
+  "Humidity",
+  "Pressure",
+  "Rain, last hour",
+  "Rain, last 24 hours",
+  "Rain, since midnight",
+  "Station type",
+];
+
+function panelFields(packet: AprsStationPacket, you: Fix | null): [string, string][] {
+  const rows: [string, string][] = packet.fields.filter(
+    // The icon is drawn and its accessible label already says this. Writing it again
+    // spends a line of the panel on the one fact the reader cannot miss.
+    ([name]) => name !== "Symbol",
+  );
+  if (you && packet.lat !== null && packet.lon !== null) {
+    const { miles, point } = rangeAndBearing(you, packet.lat, packet.lon);
+    rows.push([
+      "Distance",
+      `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi ${point} from you`,
+    ]);
+  }
+  const rank = (name: string) => {
+    const at = PANEL_ORDER.indexOf(name);
+    return at < 0 ? PANEL_ORDER.length : at;
+  };
+  return rows.sort((a, b) => rank(a[0]) - rank(b[0]));
 }
 
 /** How strong the transmission was — and NOTHING at all when nobody measured it.
@@ -491,11 +604,45 @@ function Signal({ level }: { level: number | null }) {
   );
 }
 
-/** The reading, with the symbol's name removed when the icon already carries it. */
+/** The reading, with the symbol's name removed wherever `explain` put it.
+ *
+ * ABSOLUTE: the icon is drawn, so its name is never also written. That is not only the
+ * bare-position case — it strips a trailing "— D-STAR" from an object and a leading
+ * "Car —" from a moving station, which is why those rows now open on the thing that
+ * varies (`N1MPR C`, `52 knots heading WSW`) instead of on the picture beside them.
+ *
+ * `explain` still PUTS the name in its summary, deliberately: `aprs_recent` hands that
+ * summary to a model, and there is no icon in a tool result to carry it. */
 function readingOf(summary: string, symbolName: string, symbol: string): string {
   if (!symbolName || !symbol) return summary;
-  if (summary === symbolName) return "";
-  return summary.startsWith(`${symbolName}, `) ? summary.slice(symbolName.length + 2) : summary;
+  const trimmed = summary
+    .replace(new RegExp(`\\s*—\\s*${escapeRe(symbolName)}\\b`), "")
+    .replace(new RegExp(`^${escapeRe(symbolName)}\\s*[,—]\\s*`), "");
+  return trimmed.trim() === symbolName ? "" : trimmed.trim();
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Where the station is, said the way the reader can use.
+ *
+ * Range and bearing when the phone knows where it is — the owner's choice, and the
+ * anchor a hand-held screen wants: it states YOUR distance to the station, which is also
+ * your reception range. The grid square when it does not, because that needs nothing but
+ * the frame. aprs.fi shows both and never a bare coordinate; the precise latitude stays
+ * in the panel for anyone who wants it. */
+function placeOf(packet: AprsStationPacket, fields: Map<string, string>, you: Fix | null): string {
+  const parts: string[] = [];
+  if (you && packet.lat !== null && packet.lon !== null) {
+    parts.push(rangeLine(you, packet.lat, packet.lon));
+  } else {
+    const grid = fields.get("Grid square");
+    if (grid) parts.push(grid);
+  }
+  const altitude = fields.get("Altitude");
+  if (altitude) parts.push(altitude.replace(/\s*\(.*\)$/, ""));
+  return parts.join(" · ");
 }
 
 /** The station's own symbol where it has one, our inference about the packet where it

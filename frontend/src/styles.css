@@ -25495,18 +25495,31 @@ button.task-band:active {
   line-height: 1.45;
   color: var(--warn);
 }
+/* Always visible once the card is open — a reader who expanded it has already asked to
+   see more, so a second disclosure was a tap that bought nothing. */
 .aprs-raw {
   margin-top: 10px;
   border-top: 1px solid var(--border);
-  padding-top: 4px;
+  padding-top: 8px;
 }
-.aprs-raw summary {
-  font-size: 11.5px;
+.aprs-raw-k {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   color: var(--text-3);
-  cursor: pointer;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
+  margin-bottom: 4px;
+}
+.aprs-raw-hdr {
+  color: var(--text-3);
+}
+/* How many identical frames this row stands for. Amber because it is the app counting,
+   not the station saying. */
+.aprs-reps {
+  margin-left: 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--warn);
 }
 .aprs-raw pre {
   margin: 2px 0 0;

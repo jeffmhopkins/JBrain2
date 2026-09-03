@@ -1,0 +1,388 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Borrowing from the other APRS clients</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  APRS packet card, round 8. Three fixes the owner asked for, plus what is worth taking
+  from the clients that have been showing these packets for twenty years.
+
+  1. THE ICONS ARE REAL HERE. Rounds 6 and 7 drew a placeholder diamond for every symbol,
+     which is why nothing looked different. These are the shipped glyphs, pulled straight
+     out of `frontend/src/components/aprsGlyphs.ts` - the phone, the weather station, the
+     dish, the repeater, the car, the truck, the space shuttle, and the D-STAR diamond
+     with its `D` overlay. Symbol-less kinds (telemetry, a message, a status, a beacon)
+     take a house icon from `icons.tsx`, tinted differently because that is OUR inference
+     about the packet and not a claim the station made.
+  2. THE FRAME IS ALWAYS VISIBLE once the card is open. It was behind a second disclosure;
+     an expanded card now shows it without another tap.
+  3. WHAT THE OTHER CLIENTS DO, and what we take from it. See the panel on the right.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#08090A;color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1500px;margin:0 auto;padding:26px 22px 60px}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+  .lede{color:var(--text-2);font-size:13.5px;line-height:1.65;max-width:74ch;margin:0 0 22px}
+  .lede b{color:var(--text)}
+  code{font-family:var(--mono);font-size:.92em;color:var(--steel)}
+
+  /* --- the diagnosis strip ------------------------------------------------------ */
+  .faults{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;
+    margin:0 0 30px}
+  .fault{border:1px solid var(--border);border-radius:12px;background:var(--surface);
+    padding:13px 14px;border-left:3px solid var(--rose)}
+  .fault h3{margin:0 0 7px;font-size:13px;color:var(--text)}
+  .fault p{margin:0;color:var(--text-2);font-size:12.5px;line-height:1.55}
+  .ba{display:flex;gap:9px;align-items:stretch;margin:10px 0 0}
+  .ba>div{flex:1;min-width:0;border-radius:8px;padding:7px 9px;font-size:11.5px;
+    line-height:1.45;overflow-wrap:anywhere}
+  .was{background:var(--rose-tint);color:var(--rose)}
+  .now{background:var(--green-tint);color:var(--green)}
+  .ba .lbl{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    opacity:.75;margin-bottom:3px}
+
+  /* --- the shapes --------------------------------------------------------------- */
+  .shapes{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1 1 360px;max-width:400px;display:flex;flex-direction:column;gap:12px}
+  .colhead h2{margin:0 0 4px;font-size:15px}
+  .colhead h2 span{color:var(--text-3);font-weight:400}
+  .colhead p{margin:0;color:var(--text-2);font-size:12.5px;line-height:1.6}
+  .verdict{margin:9px 0 0;font-size:12px;line-height:1.55;color:var(--text-2);
+    border-top:1px solid var(--border);padding-top:9px}
+  .verdict b{color:var(--text)}
+  .verdict .costs{color:var(--amber)}
+
+  .phone{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:22px;
+    overflow:hidden;display:flex;flex-direction:column;height:820px}
+  .top{display:flex;align-items:center;gap:9px;padding:13px 13px 7px;flex:0 0 auto}
+  .chev{color:var(--text-2);font-size:19px}
+  .scr-title{font-size:16px;font-weight:600}
+  .scr{flex:1;overflow-y:auto;padding:0 12px 26px}
+  .sthead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    padding:9px 11px;border:1px solid var(--border);border-radius:11px;
+    background:var(--surface);margin-bottom:5px}
+  .c{font-family:var(--mono);font-size:12.5px;color:var(--steel)}
+  .g{font-size:11px;color:var(--text-2)}
+  .sec{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);
+    margin:14px 0 7px;display:flex;justify-content:space-between}
+  .sec .count{letter-spacing:0;text-transform:none;color:var(--text-3)}
+
+  /* one packet */
+  .pk{border:1px solid var(--border);border-radius:11px;background:var(--surface);
+    margin-bottom:7px;overflow:hidden}
+  .pk.shot{border-color:rgba(210,169,106,.4)}
+  .rowbtn{width:100%;display:flex;gap:9px;align-items:flex-start;text-align:left;
+    padding:10px 11px;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+  .sym{flex:0 0 auto;width:32px;height:32px;border-radius:9px;display:flex;
+    align-items:center;justify-content:center;border:1px solid var(--border)}
+  .sym.own{color:var(--steel);background:var(--steel-tint)}
+  .sym.kind{color:var(--text-3);background:rgba(154,157,163,.09)}
+  .body{flex:1;min-width:0}
+  .title{display:block;font-size:13.5px;font-weight:600;line-height:1.35;
+    overflow-wrap:anywhere}
+  .title .dash{color:var(--text-3);font-weight:400;margin:0 4px}
+  .title .call{font-family:var(--mono);font-weight:500;color:var(--steel)}
+  .reading{display:block;margin-top:2px;font-size:13.5px;line-height:1.45;
+    overflow-wrap:anywhere}
+  .reading.lead{font-size:14px;font-weight:600;margin:0}
+  .theirs{display:block;margin-top:5px;padding-left:8px;border-left:2px solid var(--border);
+    font-family:var(--mono);font-size:11.5px;color:var(--text-2);overflow-wrap:anywhere;
+    unicode-bidi:isolate}
+  .meta{display:block;margin-top:4px;font-size:11px;color:var(--text-3)}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    font-weight:600;padding:2px 6px;border-radius:5px;margin-right:6px;vertical-align:1px}
+  .b-direct{background:var(--green-tint);color:var(--green)}
+  .b-gated{background:rgba(154,157,163,.16);color:var(--text-2)}
+  .b-rf{background:var(--steel-tint);color:var(--steel)}
+  .chip{display:inline-block;font-size:10.5px;color:var(--text-2);border:1px solid var(--border);
+    border-radius:5px;padding:1px 6px;margin-right:6px;vertical-align:1px}
+  .when{font-family:var(--mono);font-size:11px;color:var(--text-3);flex:0 0 auto}
+  .rep{display:inline-block;font-size:10.5px;color:var(--amber);background:var(--amber-tint);
+    border-radius:5px;padding:1px 6px;margin-left:6px}
+  .one{display:flex;gap:9px;align-items:center;padding:9px 11px}
+  .one .body{overflow:hidden}
+  .one .reading{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .one .meta{margin-top:1px}
+  .panel{padding:0 11px 11px}
+  .fields{display:grid;grid-template-columns:auto 1fr;gap:4px 11px;margin:2px 0 0;
+    font-size:12.5px}
+  .fields dt{color:var(--text-2);white-space:nowrap}
+  .fields dd{margin:0;overflow-wrap:anywhere}
+  .fields dd.added{color:var(--green)}
+  .warn{margin:8px 0 0;font-size:11.5px;color:var(--amber);line-height:1.45}
+  .rawwrap{margin-top:9px;border-top:1px solid var(--border);padding-top:7px}
+  .rawwrap summary{font-size:11.5px;color:var(--text-3);cursor:pointer}
+  .rawwrap pre{margin:5px 0 0;font-family:var(--mono);font-size:11px;color:var(--text-2);
+    white-space:pre-wrap;overflow-wrap:anywhere}
+  .shotmark{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--amber);
+    padding:0 11px 7px;display:block}
+
+  .ask{margin:34px 0 0;border:1px solid var(--border);border-radius:14px;
+    background:var(--surface);padding:17px 18px;max-width:78ch}
+  .ask h2{margin:0 0 9px;font-size:16px}
+  .ask p{margin:0 0 11px;color:var(--text-2);font-size:13px;line-height:1.65}
+  .ask ol{margin:0;padding-left:19px;color:var(--text-2);font-size:13px;line-height:1.7}
+  .ask b{color:var(--text)}
+  .toggle{display:flex;gap:8px;margin:0 0 12px}
+  .toggle button{font:inherit;font-size:12px;padding:6px 12px;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer}
+  .toggle button[aria-pressed=true]{background:var(--steel-tint);color:var(--text);
+    border-color:rgba(127,167,201,.4)}
+  button:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+  .rule{border:1px solid rgba(143,188,154,.35);background:var(--green-tint);border-radius:12px;
+    padding:13px 15px;margin:0 0 22px;max-width:78ch}
+  .rule h2{margin:0 0 6px;font-size:14px;color:var(--green)}
+  .rule p{margin:0;color:var(--text-2);font-size:13px;line-height:1.6}
+  .rule b{color:var(--text)}
+  .gains{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:9px;
+    margin:0 0 26px}
+  .gain{border:1px solid var(--border);border-radius:10px;background:var(--surface);
+    padding:10px 12px;font-size:12px;line-height:1.5}
+  .gain .k{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:5px}
+  .gain .was{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--rose)}
+  .gain .now{color:var(--text);display:block;margin-top:3px}
+  .line{font-family:var(--mono);font-size:12.5px;color:var(--steel);display:block;margin:6px 0 0}
+  .src{border:1px solid var(--border);border-radius:12px;background:var(--surface);
+    padding:14px 16px;margin:0 0 12px}
+  .src h3{margin:0 0 4px;font-size:13px;color:var(--text)}
+  .src h3 a{color:var(--steel);text-decoration:none;font-weight:400;font-size:11.5px;margin-left:6px}
+  .src p{margin:0 0 9px;color:var(--text-2);font-size:12.5px;line-height:1.6}
+  .src p:last-child{margin-bottom:0}
+  .took,.left{display:block;font-size:12px;line-height:1.55;padding:7px 10px;border-radius:8px;
+    margin-top:7px}
+  .took{background:var(--green-tint);color:var(--green)}
+  .left{background:rgba(154,157,163,.1);color:var(--text-2)}
+  .took b,.left b{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    opacity:.8;margin-bottom:2px}
+  .lineopts{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px}
+  .lineopts button{font:inherit;font-size:12px;padding:6px 11px;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer}
+  .lineopts button[aria-pressed=true]{background:var(--steel-tint);color:var(--text);
+    border-color:rgba(127,167,201,.4)}
+  .sym svg{width:22px;height:22px;display:block}
+  .frame{margin-top:9px;border-top:1px solid var(--border);padding-top:8px}
+  .frame .k{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);
+    display:block;margin-bottom:4px}
+  .frame pre{margin:0;font-family:var(--mono);font-size:11px;color:var(--text-2);
+    white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:isolate}
+  .frame .hdr{color:var(--text-3)}
+  .twocol{display:grid;grid-template-columns:minmax(330px,400px) minmax(320px,1fr);gap:24px;
+    align-items:start}
+  @media (max-width:820px){ .twocol{grid-template-columns:1fr} .phone{height:600px} }
+</style>
+<div class="wrap">
+<h1>Borrowing from the other APRS clients</h1>
+<p class="lede">
+  The icons are <b>real</b> here — the shipped glyph set, not the placeholder diamond rounds 6
+  and 7 drew, which is why nothing looked different between kinds. The frame is <b>always
+  visible</b> once a card is open. And the panel on the right is what twenty years of other
+  people's APRS clients suggest we should be showing.
+</p>
+
+<div class="lineopts" role="group" aria-label="What the location line says">
+  <button type="button" data-line="rb" aria-pressed="true">Range &amp; bearing</button>
+  <button type="button" data-line="rbgrid" aria-pressed="false">Range + grid</button>
+  <button type="button" data-line="grid" aria-pressed="false">Grid square</button>
+  <button type="button" data-line="coords" aria-pressed="false">Coordinates</button>
+</div>
+
+<div class="twocol">
+  <div>
+    <div class="phone">
+      <div class="top"><span class="chev">‹</span><span class="scr-title">Radio</span></div>
+      <div class="scr" id="scr"></div>
+    </div>
+    <p class="verdict" style="margin-top:11px;max-width:400px">
+      The second card is open, so you can see both states at once. Tap any row.
+    </p>
+  </div>
+
+  <div>
+    <div class="src">
+      <h3>aprs.fi<a href="https://aprs.fi/doc/guide/aprsfi-info-pages.html">the info page guide</a></h3>
+      <p>
+        The reference implementation, and the one every ham has seen. A station page gives the
+        position in your preferred format, <b>the Maidenhead locator</b>, and <b>a list of nearby
+        towns with the distance and bearing from each</b> — then last-heard time, course and
+        speed, the most recent telemetry, the most recent weather, and the path with a
+        digipeater advisor.
+      </p>
+      <span class="took"><b>Taken</b>
+        Never a bare coordinate. aprs.fi always says where a station is <em>relative to
+        something a person knows</em> — and it shows the grid <em>and</em> the distance, not one
+        or the other. That is the “Range + grid” option above, and it is why the default here
+        is not the raw latitude.</span>
+      <span class="took"><b>Taken</b>
+        Its panel order — where, then when, then motion, then the station's own readings, then
+        the path — is the order the expanded card now uses.</span>
+      <span class="left"><b>Left</b>
+        Nearby town names need a gazetteer the box does not carry, and a network call it
+        should not need. Distance from <em>your box</em> is the better anchor for a receiver
+        log anyway: it tells you your own reception range, which is the question a heard log
+        is actually for.</span>
+    </div>
+
+    <div class="src">
+      <h3>APRSdroid<a href="https://github.com/ge0rg/aprsdroid">ge0rg/aprsdroid</a></h3>
+      <p>
+        Its list row is three fields: timestamp and status on one line, then the message body
+        below in <b>monospace</b>, at a larger size than the metadata above it.
+      </p>
+      <span class="took"><b>Taken</b>
+        Monospace for what the station sent, proportional for what we say about it — the same
+        trust boundary this card already draws with typeface. Good to see it arrived at
+        independently.</span>
+      <span class="left"><b>Left</b>
+        APRSdroid shows the packet body essentially raw. That is the thing your own screenshots
+        made the case against, and the whole point of F5.</span>
+    </div>
+
+    <div class="src">
+      <h3>What none of them do</h3>
+      <p>
+        No client surfaces <b>how the packet reached you</b> on the row. They are mostly
+        internet-fed, so “direct / gated / RF” is not a distinction they have to make. On a box
+        with an antenna it is the difference between a station you can actually work and one
+        that arrived over the internet — three quarters of your channel — so the badge stays.
+      </p>
+    </div>
+
+    <div class="ask" style="margin-top:0">
+      <h2>Still open</h2>
+      <ol>
+        <li><b>The location line</b> — the four buttons above. aprs.fi's precedent argues for
+          “Range + grid”.</li>
+        <li><b>Altitude on the row?</b> Shown where a station sends one. Interesting for a
+          balloon, noise for a house at 0 ft.</li>
+        <li><b>Collapse repeats?</b> Carried from round 6 — 25 identical D-STAR beacons.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const D = {"rows": [{"heard_at": "2026-09-03T13:17:00+00:00", "origin": "KC3EFJ", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "!2837.27N/08049.42W$/A=-00085", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Phone"], ["Altitude", "-85 ft"]], "comment": "", "warnings": [], "summary": "Phone", "sym": "/$", "gated": false, "direct": true, "shot": true, "stripped": "", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "-85 ft", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "KC3EFJ", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "!2837.27N/08049.42W$", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Phone"]], "comment": "", "warnings": [], "summary": "Phone", "sym": "/$", "gated": false, "direct": true, "shot": true, "stripped": "", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "WA4IKQ", "relay": null, "kind": "Weather", "kindlabel": "Weather", "text": "@031417z2837.27N/08049.42W_073/003g005t082r000p000P000h88b10141tU2k", "fields": [["Reported at", "day 03, 14:17 UTC, by the station's own clock"], ["Position", "28.6212, -80.8237"], ["Symbol", "Weather station"], ["Wind", "from the ENE (73\u00b0) at 3 mph"], ["Gust", "5 mph"], ["Temperature", "82 \u00b0F (27.8 \u00b0C)"], ["Rain, last hour", "0.00 in"], ["Rain, last 24 hours", "0.00 in"], ["Rain, since midnight", "0.00 in"], ["Humidity", "88 %"], ["Pressure", "1014.1 hPa (29.95 inHg)"], ["Station type", "tU2k \u2014 a weather-software id, not a message"]], "comment": "", "warnings": [], "summary": "82 \u00b0F, from the ENE (73\u00b0) at 3 mph, 88 % humidity", "sym": "/_", "gated": false, "direct": true, "shot": true, "stripped": "82 \u00b0F, from the ENE (73\u00b0) at 3 mph, 88 % humidity", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:31:28.288502+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "@290308z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club", "fields": [["Reported at", "day 29, 03:08 UTC (station's own clock)"], ["Position", "28.5855, -80.6507"], ["Symbol", "Space shuttle"]], "comment": "PLXDigi U=14.2V. KSC Amateur Radio Club", "warnings": [], "summary": "Space shuttle", "sym": "/S", "gated": false, "direct": true, "shot": false, "stripped": "", "coords": "28.5855, -80.6507", "grid": "EL98qo", "rb": "9.8 mi E", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:24.293424+00:00", "origin": "K4JTT-D", "relay": "N4TDX", "kind": "Position", "kindlabel": "Position", "text": "!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway", "fields": [["Position", "28.5968, -80.8488"], ["Symbol", "House (VHF home station)"], ["Altitude", "0 ft (0 m)"]], "comment": "70cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway", "warnings": [], "summary": "House (VHF home station)", "sym": "/-", "gated": true, "direct": false, "shot": false, "stripped": "", "coords": "28.5968, -80.8488", "grid": "EL98no", "rb": "2.5 mi WSW", "alt": "0 ft (0 m)", "ago_min": null}, {"heard_at": "2026-09-03T10:30:41.214866+00:00", "origin": "N4TDX-15", "relay": null, "kind": "Other", "kindlabel": "AX.25 beacon", "text": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "fields": [], "comment": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "warnings": ["Not an APRS frame \u2014 a plain AX.25 beacon to the address BEACON."], "summary": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:30:29.642116+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Weather", "kindlabel": "Weather", "text": "@031030z2837.27N/08049.42W_338/000g000t078r000p000P000h99b10141L000AmbientCWOP.com", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Weather station"], ["Wind", "from the NNW (338\u00b0) at 0 mph"], ["Gust", "0 mph"], ["Temperature", "78 \u00b0F (25.6 \u00b0C)"], ["Rain last hour", "0.00 in"], ["Rain last 24h", "0.00 in"], ["Rain since midnight", "0.00 in"], ["Humidity", "99 %"], ["Pressure", "1014.1 hPa (29.95 inHg)"], ["Luminosity", "0 W/m\u00b2"]], "comment": "AmbientCWOP.com", "warnings": [], "summary": "78 \u00b0F, from the NNW (338\u00b0) at 0 mph, 99 % humidity", "sym": "/_", "gated": true, "direct": false, "shot": false, "stripped": "78 \u00b0F, from the NNW (338\u00b0) at 0 mph, 99 % humidity", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:23:34.062824+00:00", "origin": "WA4IKQ", "relay": null, "kind": "Weather", "kindlabel": "Weather", "text": "_09030625c346s000g000t078r000p000P000h94b10135tU2k", "fields": [["Reported at", "09-03 06:25 UTC (station's own clock)"], ["Wind", "from the NNW (346\u00b0) at 0 mph"], ["Gust", "0 mph"], ["Temperature", "78 \u00b0F (25.6 \u00b0C)"], ["Rain last hour", "0.00 in"], ["Rain last 24h", "0.00 in"], ["Rain since midnight", "0.00 in"], ["Humidity", "94 %"], ["Pressure", "1013.5 hPa (29.93 inHg)"], ["Station type", "tU2k \u2014 a weather-software id, not a message"]], "comment": "", "warnings": ["No position in this frame \u2014 this station's location comes from a separate beacon."], "summary": "78 \u00b0F, from the NNW (346\u00b0) at 0 mph, 94 % humidity", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "78 \u00b0F, from the NNW (346\u00b0) at 0 mph, 94 % humidity", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:25.073674+00:00", "origin": "K4JTT-D", "relay": "N4TDX", "kind": "Other", "kindlabel": "Status", "text": ">Powered by WPSD (https://wpsd.radio)", "fields": [], "comment": "Powered by WPSD (https://wpsd.radio)", "warnings": [], "summary": "Powered by WPSD (https://wpsd.radio)", "sym": "", "gated": true, "direct": false, "shot": false, "stripped": "Powered by WPSD (https://wpsd.radio)", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:17.270439+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";FLMesh-2 *031028z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info.", "fields": [["Object", "FLMesh-2"], ["State", "live"], ["Reported at", "day 03, 10:28 UTC (station's own clock)"], ["Position", "28.6313, -80.8242"], ["Symbol", "Dish antenna"]], "comment": "N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info.", "warnings": [], "summary": "FLMesh-2 \u2014 Dish antenna", "sym": "/`", "gated": true, "direct": false, "shot": false, "stripped": "FLMesh-2", "coords": "28.6313, -80.8242", "grid": "EL98op", "rb": "1.7 mi NNW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:14.800134+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";442.850  *031028z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)", "fields": [["Object", "442.850"], ["State", "live"], ["Reported at", "day 03, 10:28 UTC (station's own clock)"], ["Position", "28.6315, -80.8247"], ["Symbol", "Repeater"]], "comment": "N4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)", "warnings": [], "summary": "442.850 \u2014 Repeater", "sym": "/r", "gated": true, "direct": false, "shot": false, "stripped": "442.850", "coords": "28.6315, -80.8247", "grid": "EL98op", "rb": "1.7 mi NNW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:27:16.806845+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Other", "kindlabel": "Telemetry", "text": "T#110,190,088,011,068,000,00000000", "fields": [["Sequence", "110"], ["Vin", "14.25 Volt   (raw 190)"], ["Rx1h", "880 Pkt   (raw 088)"], ["Dg1h", "110 Pkt   (raw 011)"], ["Eff1h", "68 Pcnt   (raw 068)"], ["A5", "0 None   (raw 000)"], ["Digital bits", "all off"]], "comment": "", "warnings": [], "summary": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 110 Pkt", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 110 Pkt", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:22:12.793056+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Other", "kindlabel": "Telemetry", "text": "T#109,190,088,012,067,000,00000000", "fields": [["Sequence", "109"], ["Vin", "14.25 Volt   (raw 190)"], ["Rx1h", "880 Pkt   (raw 088)"], ["Dg1h", "120 Pkt   (raw 012)"], ["Eff1h", "67 Pcnt   (raw 067)"], ["A5", "0 None   (raw 000)"], ["Digital bits", "all off"]], "comment": "", "warnings": [], "summary": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 120 Pkt", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 120 Pkt", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:20:00.420426+00:00", "origin": "N0XIA-4", "relay": null, "kind": "Position", "kindlabel": "Position (Mic-E)", "text": "`m3jq6F>/`On D-Star K1XC, W4AES, W4PLB & KJ4OVA DMR_%", "fields": [["Position", "28.5108, -81.3963"], ["Status", "En Route"], ["Symbol", "Car"], ["Moving", "52 knots (60 mph) heading 242\u00b0 (WSW)"], ["Radio", "Yaesu FTM-400DR"]], "comment": "On D-Star K1XC, W4AES, W4PLB & KJ4OVA DMR", "warnings": [], "summary": "Car \u2014 52 knots (60 mph) heading 242\u00b0 (WSW), En Route", "sym": "/>", "gated": false, "direct": false, "shot": false, "stripped": "52 knots (60 mph) heading 242\u00b0 (WSW), En Route", "coords": "28.5108, -81.3963", "grid": "EL98hm", "rb": "36.2 mi W", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T09:46:00.223174+00:00", "origin": "W1LBR-9", "relay": null, "kind": "Position", "kindlabel": "Position (Mic-E)", "text": "`lBFm!Pk/]\"4\"}=", "fields": [["Position", "28.0923, -80.6403"], ["Status", "Committed"], ["Symbol", "Truck"], ["Moving", "10 knots (12 mph) heading 152\u00b0 (SSE)"], ["Altitude", "11 m (36 ft)"]], "comment": "]=", "warnings": [], "summary": "Truck \u2014 10 knots (12 mph) heading 152\u00b0 (SSE), Committed", "sym": "/k", "gated": false, "direct": false, "shot": false, "stripped": "10 knots (12 mph) heading 152\u00b0 (SSE), Committed", "coords": "28.0923, -80.6403", "grid": "EL98qc", "rb": "37.2 mi SSE", "alt": "11 m (36 ft)", "ago_min": null}, {"heard_at": "2026-09-03T10:17:06.047429+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Message", "kindlabel": "Message", "text": ":N1KSC-1  :BITS.11111111,Telemetry test", "fields": [["To", "N1KSC-1"], ["Kind", "BITS \u2014 telemetry definition"], ["Defines", "11111111,Telemetry test"]], "comment": "", "warnings": [], "summary": "telemetry BITS definition for N1KSC-1", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "telemetry BITS definition for N1KSC-1", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:17:05.656350+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Message", "kindlabel": "Message", "text": ":N1KSC-1  :EQNS.0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0", "fields": [["To", "N1KSC-1"], ["Kind", "EQNS \u2014 telemetry definition"], ["Defines", "0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0"]], "comment": "", "warnings": [], "summary": "telemetry EQNS definition for N1KSC-1", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "telemetry EQNS definition for N1KSC-1", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:00:35.464634+00:00", "origin": "N4TDX", "relay": null, "kind": "Other", "kindlabel": "Capabilities", "text": "<IGATE,MSG_CNT=106,LOC_CNT=85", "fields": [["Capability", "IGATE"], ["MSG_CNT", "106"], ["LOC_CNT", "85"]], "comment": "", "warnings": [], "summary": "IGATE, MSG_CNT 106, LOC_CNT 85", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "IGATE, MSG_CNT 106, LOC_CNT 85", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}], "reps": [{"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 13}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 33}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 120}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 133}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 180}], "home": [28.61, -80.81], "glyphs": {"/!": [{"t": "path", "a": {"d": "M12 2.6 5 5.2v6.6c0 4.1 2.9 6.9 7 8.6 4.1-1.7 7-4.5 7-8.6V5.2Z"}}, {"t": "path", "a": {"d": "m12 8.4 1.4 2.8 3.1.5-2.2 2.2.5 3.1-2.8-1.5-2.8 1.5.5-3.1-2.2-2.2 3.1-.5Z"}}], "/#": [{"t": "path", "a": {"d": "M12 2 16.6 7.4 22 12 16.6 16.6 12 22 7.4 16.6 2 12 7.4 7.4Z"}}], "/$": [{"t": "path", "a": {"d": "M6.6 3.5 9.4 3a1.4 1.4 0 0 1 1.5.8l1 2.3a1.4 1.4 0 0 1-.4 1.7l-1.4 1.1a11 11 0 0 0 4.6 4.6l1.1-1.4a1.4 1.4 0 0 1 1.7-.4l2.3 1a1.4 1.4 0 0 1 .8 1.5l-.5 2.8a1.4 1.4 0 0 1-1.4 1.2A15 15 0 0 1 5.4 4.9a1.4 1.4 0 0 1 1.2-1.4Z"}}], "/%": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "2.5"}}, {"t": "circle", "a": {"cx": "4.4", "cy": "6.2", "r": "1.6"}}, {"t": "circle", "a": {"cx": "19.6", "cy": "6.2", "r": "1.6"}}, {"t": "circle", "a": {"cx": "4.4", "cy": "17.8", "r": "1.6"}}, {"t": "circle", "a": {"cx": "19.6", "cy": "17.8", "r": "1.6"}}, {"t": "path", "a": {"d": "m5.8 7.2 4.3 3.3M18.2 7.2l-4.3 3.3M5.8 16.8l4.3-3.3M18.2 16.8l-4.3-3.3"}}], "/&": [{"t": "path", "a": {"d": "M12 2.5 21.5 12 12 21.5 2.5 12Z"}}, {"t": "path", "a": {"d": "M7.9 12.5c1.05-1.8 2.1-1.8 3.15 0s2.1 1.8 3.15 0"}}], "/'": [{"t": "path", "a": {"d": "M12 2.8c.8 0 1.3 1.2 1.3 3v3.4h7.4v2.2h-7.4v4.3l2.2 1.7v1.5L12 18.2l-3.5.7v-1.5l2.2-1.7v-4.3H3.3V9.2h7.4V5.8c0-1.8.5-3 1.3-3Z"}}, {"t": "path", "a": {"d": "M9.5 3.4h5"}}], "/(": [{"t": "path", "a": {"d": "M4.5 8.5a6.5 6.5 0 0 0 8.2 8.2Z"}}, {"t": "path", "a": {"d": "M8 13 11.2 9.8"}}, {"t": "path", "a": {"d": "M14 9.6a4.2 4.2 0 0 0-4.2-4.2"}}, {"t": "path", "a": {"d": "M17.6 9.2A7.8 7.8 0 0 0 9.8 1.4"}}, {"t": "circle", "a": {"cx": "6.5", "cy": "20", "r": "1.5"}}, {"t": "circle", "a": {"cx": "15.5", "cy": "20", "r": "1.5"}}, {"t": "path", "a": {"d": "M6.5 18.5h9"}}], "/)": [{"t": "circle", "a": {"cx": "10.5", "cy": "15.8", "r": "5"}}, {"t": "circle", "a": {"cx": "15", "cy": "4.6", "r": "1.7"}}, {"t": "path", "a": {"d": "M13.6 8.4h-3.4a1.7 1.7 0 0 0-1.7 1.9l.6 4.3h4.6l2.6 4.6h2.8"}}], "/*": [{"t": "rect", "a": {"height": "4.4", "rx": "2.2", "width": "10.5", "x": "3.5", "y": "13.8"}}, {"t": "path", "a": {"d": "M5.8 13.8 8.6 9h4.6l2.6 4.8"}}, {"t": "path", "a": {"d": "M13.2 9 15.8 6.2h2.4"}}, {"t": "path", "a": {"d": "m16.4 13.6 1 5"}}, {"t": "path", "a": {"d": "M14 18.6h5.4c1 0 1.6-.6 1.8-1.6"}}], "/+": [{"t": "path", "a": {"d": "M9.2 4h5.6v5.2H20v5.6h-5.2V20H9.2v-5.2H4V9.2h5.2Z"}}], "/,": [{"t": "path", "a": {"d": "M12 3c1.6 2.4 2.2 4.6 2.2 6.4S13 12.4 12 13.4c-1-1-2.2-2.2-2.2-4S10.4 5.4 12 3Z"}}, {"t": "path", "a": {"d": "M9.8 9.4c-2-1.4-4.2-.6-4.6 1.4-.5 2.4 2 4.2 6.8 4.4"}}, {"t": "path", "a": {"d": "M14.2 9.4c2-1.4 4.2-.6 4.6 1.4.5 2.4-2 4.2-6.8 4.4"}}, {"t": "path", "a": {"d": "M8.6 16.6h6.8"}}, {"t": "path", "a": {"d": "M12 15.2v5.4"}}], "/-": [{"t": "path", "a": {"d": "M3 10.5 12 3.5l9 7V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"}}, {"t": "path", "a": {"d": "M9.5 21v-6h5v6"}}], "/.": [{"t": "path", "a": {"d": "M5 5 19 19M19 5 5 19"}}], "//": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "7"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "fill": "currentColor", "r": "2.4", "stroke": "none"}}], "/0": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "0"}], "/1": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "1"}], "/2": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "2"}], "/3": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "3"}], "/4": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "4"}], "/5": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "5"}], "/6": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "6"}], "/7": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "7"}], "/8": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "8"}], "/9": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "text", "a": {"fill": "currentColor", "fontFamily": "ui-sans-serif, system-ui, sans-serif", "fontSize": "10.5", "fontWeight": "600", "stroke": "none", "textAnchor": "middle", "x": "12", "y": "15.7"}, "c": "9"}], "/:": [{"t": "path", "a": {"d": "M12 20.8a5.8 5.8 0 0 0 5.8-5.8c0-3.9-2.9-5.3-2.9-8.7-2.9 1.5-4.4 3.9-4.4 6.3 0 1-1 1.5-1.4.8a2.9 2.9 0 0 1-.6-2.2A6.7 6.7 0 0 0 6.2 15a5.8 5.8 0 0 0 5.8 5.8Z"}}], "/;": [{"t": "path", "a": {"d": "M12 5 3.5 20h17Z"}}, {"t": "path", "a": {"d": "m12 11.4 4.8 8.6"}}, {"t": "path", "a": {"d": "M2 20h20"}}, {"t": "path", "a": {"d": "M12 5V2.8"}}], "/<": [{"t": "circle", "a": {"cx": "5.5", "cy": "16.6", "r": "3.1"}}, {"t": "circle", "a": {"cx": "18.5", "cy": "16.6", "r": "3.1"}}, {"t": "path", "a": {"d": "M5.5 16.6h3l1.2-4.4h4.6l2.2 4.4"}}, {"t": "path", "a": {"d": "M9.7 12.2 8 9.4H6"}}, {"t": "path", "a": {"d": "M14.6 12.2h-4.4"}}, {"t": "path", "a": {"d": "m16.4 12.2 2-3h1.6"}}], "/=": [{"t": "path", "a": {"d": "M3.5 16.5V7.5h6v9"}}, {"t": "path", "a": {"d": "M9.5 16.5v-6h10.5v6"}}, {"t": "path", "a": {"d": "M3.5 16.5h16.5"}}, {"t": "path", "a": {"d": "M17 10.5V8h2.2v2.5"}}, {"t": "path", "a": {"d": "M5 9.6h3v2.6H5Z"}}, {"t": "circle", "a": {"cx": "6", "cy": "18.4", "r": "1.5"}}, {"t": "circle", "a": {"cx": "12.5", "cy": "18.4", "r": "1.5"}}, {"t": "circle", "a": {"cx": "17.5", "cy": "18.4", "r": "1.5"}}], "/>": [{"t": "path", "a": {"d": "M4 15.5h16v-2.4a1.6 1.6 0 0 0-1-1.5l-2.2-.9-1.9-2.8a2 2 0 0 0-1.7-.9h-2.4a2 2 0 0 0-1.7.9L7.2 10.7l-2.2.9A1.6 1.6 0 0 0 4 13.1Z"}}, {"t": "circle", "a": {"cx": "7.6", "cy": "17.4", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.4", "cy": "17.4", "r": "1.8"}}], "/?": [{"t": "rect", "a": {"height": "7", "rx": "1.5", "width": "18", "x": "3", "y": "4"}}, {"t": "rect", "a": {"height": "7", "rx": "1.5", "width": "18", "x": "3", "y": "13"}}, {"t": "path", "a": {"d": "M6.5 7.5h.01M6.5 16.5h.01"}}], "/@": [{"t": "circle", "a": {"cx": "15", "cy": "8.5", "r": "1.4"}}, {"t": "path", "a": {"d": "M15 7.1c0-2.7 1.3-4.9 4.4-4.9-2 1.3-2.9 2.8-3 4.9"}}, {"t": "path", "a": {"d": "M15 9.9c0 2.7-1.3 4.9-4.4 4.9 2-1.3 2.9-2.8 3-4.9"}}, {"t": "path", "a": {"d": "M2.5 21c1.4-3.4 3.6-6.2 6.6-8.2", "strokeDasharray": "2.6 2.4"}}], "/A": [{"t": "rect", "a": {"height": "17", "rx": "3", "width": "17", "x": "3.5", "y": "3.5"}}, {"t": "path", "a": {"d": "M12 8v8M8 12h8"}}], "/B": [{"t": "rect", "a": {"height": "14", "rx": "1.5", "width": "18", "x": "3", "y": "3.5"}}, {"t": "path", "a": {"d": "M12 17.5v3.5"}}, {"t": "path", "a": {"d": "M6.5 7.5h5M6.5 11h8M6.5 14.5h4"}}], "/C": [{"t": "path", "a": {"d": "M2.5 12.5c2.5 5 16.5 5 19 0"}}, {"t": "path", "a": {"d": "M2.5 12.5c2.5-1.7 16.5-1.7 19 0"}}, {"t": "path", "a": {"d": "m9.5 5.5 4 7"}}, {"t": "path", "a": {"d": "M8.6 3.3 6.4 6.6l3.4 1.2Z"}}], "/E": [{"t": "path", "a": {"d": "M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "r": "2.6"}}], "/F": [{"t": "circle", "a": {"cx": "16.8", "cy": "16", "r": "4.6"}}, {"t": "circle", "a": {"cx": "5.5", "cy": "18", "r": "2.6"}}, {"t": "path", "a": {"d": "M2.8 14.5V9.5h5l1.6 4"}}, {"t": "path", "a": {"d": "M7.8 9.5V6.4h4.4l1.1 3.1"}}, {"t": "path", "a": {"d": "M9.4 13.5h6.2"}}], "/G": [{"t": "rect", "a": {"height": "17", "rx": "1", "width": "17", "x": "3.5", "y": "3.5"}}, {"t": "path", "a": {"d": "M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17"}}], "/H": [{"t": "path", "a": {"d": "M3 19v-9"}}, {"t": "path", "a": {"d": "M3 14h18v5"}}, {"t": "path", "a": {"d": "M21 19v-5a3 3 0 0 0-3-3h-7v3"}}, {"t": "circle", "a": {"cx": "7", "cy": "11.4", "r": "2"}}], "/I": [{"t": "rect", "a": {"height": "5", "rx": "1", "width": "7", "x": "8.5", "y": "3"}}, {"t": "rect", "a": {"height": "5", "rx": "1", "width": "7", "x": "2", "y": "16"}}, {"t": "rect", "a": {"height": "5", "rx": "1", "width": "7", "x": "15", "y": "16"}}, {"t": "path", "a": {"d": "M12 8v4M5.5 16v-4h13v4"}}], "/K": [{"t": "path", "a": {"d": "M4 20.5v-8.8l8-5 8 5v8.8Z"}}, {"t": "path", "a": {"d": "M12 6.7V2.6l3.6 1.3L12 5.2"}}, {"t": "path", "a": {"d": "M9.5 20.5v-5h5v5"}}], "/L": [{"t": "rect", "a": {"height": "12.5", "rx": "2", "width": "19", "x": "2.5", "y": "4"}}, {"t": "path", "a": {"d": "M8.5 20.8h7M12 16.5v4.3"}}, {"t": "circle", "a": {"cx": "12", "cy": "8.6", "r": "1.8"}}, {"t": "path", "a": {"d": "M8.8 13.4a3.6 3.6 0 0 1 6.4 0"}}], "/M": [{"t": "rect", "a": {"height": "12.5", "rx": "2", "width": "19", "x": "2.5", "y": "4"}}, {"t": "path", "a": {"d": "M8.5 20.8h7M12 16.5v4.3"}}], "/N": [{"t": "rect", "a": {"height": "9.5", "rx": "1.5", "width": "13.5", "x": "2", "y": "7"}}, {"t": "path", "a": {"d": "m2 8.4 6.75 4.2L15.5 8.4"}}, {"t": "path", "a": {"d": "M17.8 8.2 21.3 11.8 17.8 15.4"}}], "/O": [{"t": "path", "a": {"d": "M12 15.4c3.6 0 6.5-3.2 6.5-7A6.5 6.5 0 0 0 5.5 8.4c0 3.8 2.9 7 6.5 7Z"}}, {"t": "path", "a": {"d": "M10.6 15.2 12 17.7l1.4-2.5"}}, {"t": "rect", "a": {"height": "3.2", "rx": "0.6", "width": "3.8", "x": "10.1", "y": "17.7"}}], "/P": [{"t": "path", "a": {"d": "M4 15.5h16v-2.4a1.6 1.6 0 0 0-1-1.5l-2.2-.9-1.9-2.8a2 2 0 0 0-1.7-.9h-2.4a2 2 0 0 0-1.7.9L7.2 10.7l-2.2.9A1.6 1.6 0 0 0 4 13.1Z"}}, {"t": "circle", "a": {"cx": "7.6", "cy": "17.4", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.4", "cy": "17.4", "r": "1.8"}}, {"t": "rect", "a": {"height": "2", "rx": "0.7", "width": "5.2", "x": "9.4", "y": "5.4"}}], "/R": [{"t": "path", "a": {"d": "M2 5.5h13.5v11H2Z"}}, {"t": "path", "a": {"d": "M15.5 8.5h3.2l2.8 3.6v4.4h-6Z"}}, {"t": "path", "a": {"d": "M4.2 8h6.4v3.2H4.2Z"}}, {"t": "circle", "a": {"cx": "6.8", "cy": "18.2", "r": "1.6"}}, {"t": "circle", "a": {"cx": "17.6", "cy": "18.2", "r": "1.6"}}], "/S": [{"t": "path", "a": {"d": "M12 2.5c2.4 2.7 3.4 6 3.4 9.3V16H8.6v-4.2C8.6 8.5 9.6 5.2 12 2.5Z"}}, {"t": "path", "a": {"d": "M8.6 13.5 5.2 17.6V20l3.4-2M15.4 13.5l3.4 4.1V20l-3.4-2"}}, {"t": "path", "a": {"d": "M12 16v4"}}, {"t": "circle", "a": {"cx": "12", "cy": "8", "r": "1.1"}}], "/T": [{"t": "rect", "a": {"height": "13", "rx": "2", "width": "19", "x": "2.5", "y": "4"}}, {"t": "path", "a": {"d": "m5.6 14 3.4-4 2.5 2.6 3-3.5 4 4.9"}}, {"t": "circle", "a": {"cx": "8", "cy": "7.6", "r": "1.2"}}, {"t": "path", "a": {"d": "M9 20.8h6"}}], "/U": [{"t": "rect", "a": {"height": "12", "rx": "2", "width": "17", "x": "3.5", "y": "4"}}, {"t": "path", "a": {"d": "M3.5 8.5h17"}}, {"t": "path", "a": {"d": "M12 8.5V16"}}, {"t": "circle", "a": {"cx": "7.5", "cy": "18.2", "r": "1.6"}}, {"t": "circle", "a": {"cx": "16.5", "cy": "18.2", "r": "1.6"}}], "/V": [{"t": "rect", "a": {"height": "8.5", "rx": "1.5", "width": "12.5", "x": "2", "y": "8"}}, {"t": "path", "a": {"d": "m14.5 12.5 5.5-3.5v8.5l-5.5-3.5Z"}}, {"t": "path", "a": {"d": "M6 8V4.4"}}, {"t": "path", "a": {"d": "m4 3 2 1.4 2-1.4"}}], "/W": [{"t": "path", "a": {"d": "M7 10.5a5 5 0 0 1 10 0Z"}}, {"t": "path", "a": {"d": "M9 10.5 8 20.5M15 10.5l1 10"}}, {"t": "path", "a": {"d": "M8.5 15h7"}}, {"t": "path", "a": {"d": "M6.6 20.5h10.8"}}], "/X": [{"t": "path", "a": {"d": "M3.5 4.6h17"}}, {"t": "path", "a": {"d": "M10.5 4.6v3"}}, {"t": "path", "a": {"d": "M4.6 12.8a5.2 5.2 0 0 1 5.2-5.2h1.4c2.6 0 4.4 1.8 5.2 4.2l4.6.8v1.8h-5.2a5.2 5.2 0 0 1-5.2 3.6H9.8a5.2 5.2 0 0 1-5.2-5.2Z"}}, {"t": "path", "a": {"d": "M5.4 19.4h9"}}, {"t": "path", "a": {"d": "M7.2 17.4v2M12.2 17.4v2"}}], "/Y": [{"t": "path", "a": {"d": "M2.5 17c2.6 3.2 16.4 3.2 19 0"}}, {"t": "path", "a": {"d": "M12.6 3.5v12"}}, {"t": "path", "a": {"d": "M11 15.5H4.6L11 6Z"}}, {"t": "path", "a": {"d": "M14.2 15.5h5L14.2 8.4Z"}}], "/Z": [{"t": "rect", "a": {"height": "12.5", "rx": "2", "width": "19", "x": "2.5", "y": "4"}}, {"t": "path", "a": {"d": "M8.5 20.8h7M12 16.5v4.3"}}, {"t": "path", "a": {"d": "M6.6 7.4h10.8v6.2H6.6Z"}}, {"t": "path", "a": {"d": "M6.6 9.5h10.8"}}], "/[": [{"t": "circle", "a": {"cx": "12", "cy": "7.2", "r": "3.2"}}, {"t": "path", "a": {"d": "M4.8 20.5a7.2 7.2 0 0 1 14.4 0"}}], "/\\": [{"t": "path", "a": {"d": "M12 3 21 20H3Z"}}, {"t": "path", "a": {"d": "M12 3v17"}}], "/]": [{"t": "rect", "a": {"height": "13", "rx": "2", "width": "19", "x": "2.5", "y": "5.5"}}, {"t": "path", "a": {"d": "m3 7 9 6.5L21 7"}}], "/^": [{"t": "path", "a": {"d": "M12 2.4c1.1 0 1.9 1.7 1.9 4.1v2.2l7.6 5.1v2.3l-7.6-2.6v3.6l2.3 2v1.6L12 19.6l-4.2 1.1v-1.6l2.3-2v-3.6L2.5 16.1v-2.3l7.6-5.1V6.5c0-2.4.8-4.1 1.9-4.1Z"}}], "/_": [{"t": "path", "a": {"d": "M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0Z"}}, {"t": "path", "a": {"d": "M10 8h2M10 11h2"}}], "/`": [{"t": "path", "a": {"d": "M4 11a7 7 0 0 0 9 9Z"}}, {"t": "path", "a": {"d": "M9 16l3.5-3.5"}}, {"t": "path", "a": {"d": "M15 12a4 4 0 0 0-4-4"}}, {"t": "path", "a": {"d": "M19 12a8 8 0 0 0-8-8"}}], "/a": [{"t": "rect", "a": {"height": "10", "rx": "1", "width": "12", "x": "2", "y": "6"}}, {"t": "path", "a": {"d": "M14 9.5h3.4l3.1 3.4V16H14Z"}}, {"t": "circle", "a": {"cx": "6", "cy": "17.6", "r": "1.7"}}, {"t": "circle", "a": {"cx": "18", "cy": "17.6", "r": "1.7"}}, {"t": "path", "a": {"d": "M8 8.6v4.8M5.6 11h4.8"}}], "/b": [{"t": "circle", "a": {"cx": "5.5", "cy": "17", "r": "3.6"}}, {"t": "circle", "a": {"cx": "18.5", "cy": "17", "r": "3.6"}}, {"t": "path", "a": {"d": "M5.5 17h4l3-6.5 3 6.5h3"}}, {"t": "path", "a": {"d": "M9.4 10.5h4.6"}}, {"t": "path", "a": {"d": "m12.5 10.5 2.5-4h2"}}], "/c": [{"t": "path", "a": {"d": "M6 3v18"}}, {"t": "path", "a": {"d": "M6 4.4h11.5L14.6 8l2.9 3.6H6Z"}}], "/d": [{"t": "path", "a": {"d": "M3 20.5V11l9-6.5 9 6.5v9.5Z"}}, {"t": "path", "a": {"d": "M8 20.5V15h8v5.5"}}, {"t": "path", "a": {"d": "M12 6.8c1.4 1.5 2 2.4 2 3.4a2 2 0 0 1-4 0c0-1 .6-1.9 2-3.4Z"}}], "/e": [{"t": "path", "a": {"d": "M8 20.5c0-4 1-6.4 3.4-8.2l-1-2.2-2.6 1.4 1.2-3.6L12.4 5.4V2.9l3 2.7c2.6 1.2 3.6 3.8 3.6 6.9 0 3.2-1.2 5.6-1.2 8Z"}}, {"t": "circle", "a": {"cx": "14.6", "cy": "7.6", "fill": "currentColor", "r": "0.7", "stroke": "none"}}], "/f": [{"t": "rect", "a": {"height": "9", "rx": "1", "width": "11.5", "x": "2", "y": "7"}}, {"t": "path", "a": {"d": "M13.5 9.5h3.6l3.4 3.5V16h-7Z"}}, {"t": "circle", "a": {"cx": "5.8", "cy": "18", "r": "1.7"}}, {"t": "circle", "a": {"cx": "16.6", "cy": "18", "r": "1.7"}}, {"t": "path", "a": {"d": "M2.8 5.6 12.6 3"}}, {"t": "path", "a": {"d": "M4.4 5.4 3.9 3.4M7 4.7 6.5 2.7M9.6 4 9.1 2"}}], "/g": [{"t": "path", "a": {"d": "M12 3.6c.7 0 1.1 1 1.1 2.6v4.3l8.4 1.6v1.6l-8.4-.9v4.3l1.9 1.7v1.2L12 19.4l-3 .6v-1.2l1.9-1.7v-4.3l-8.4.9v-1.6l8.4-1.6V6.2c0-1.6.4-2.6 1.1-2.6Z"}}], "/h": [{"t": "rect", "a": {"height": "14", "rx": "1.5", "width": "16", "x": "4", "y": "6.5"}}, {"t": "path", "a": {"d": "M12 9.6v5M9.5 12.1h5"}}, {"t": "path", "a": {"d": "M8.6 20.5V17h6.8v3.5"}}], "/i": [{"t": "path", "a": {"d": "M3 19c2 1.8 4.6 1.8 6.6 0s4.6-1.8 6.6 0 3.3 1.4 4.8 0"}}, {"t": "path", "a": {"d": "M6.5 16c1.3-2.6 3.2-4 5.5-4s4.2 1.4 5.5 4Z"}}, {"t": "path", "a": {"d": "M12 12V7"}}, {"t": "path", "a": {"d": "M12 7c-1.4-1.5-3.4-1.5-4.4 0M12 7c1.4-1.5 3.4-1.5 4.4 0"}}], "/j": [{"t": "path", "a": {"d": "M2.5 15.5v-3.2h19v3.2Z"}}, {"t": "path", "a": {"d": "M5 12.3 7.5 7h8l2.5 5.3"}}, {"t": "path", "a": {"d": "M11.5 7v5.3"}}, {"t": "circle", "a": {"cx": "6.8", "cy": "17.6", "r": "2"}}, {"t": "circle", "a": {"cx": "17.2", "cy": "17.6", "r": "2"}}], "/k": [{"t": "path", "a": {"d": "M2 5.5h11v10H2z"}}, {"t": "path", "a": {"d": "M13 9h3.8l3.2 3.3v3.2h-7z"}}, {"t": "circle", "a": {"cx": "6.5", "cy": "17.6", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.8", "cy": "17.6", "r": "1.8"}}], "/l": [{"t": "rect", "a": {"height": "10.5", "rx": "1.5", "width": "16", "x": "4", "y": "5"}}, {"t": "path", "a": {"d": "M2 18.5h20a2 2 0 0 0-2-3H4a2 2 0 0 0-2 3Z"}}], "/m": [{"t": "path", "a": {"d": "M12 8.5V20"}}, {"t": "path", "a": {"d": "M8.5 20 12 12l3.5 8"}}, {"t": "path", "a": {"d": "M8.6 3.6a5 5 0 0 0 0 6.8M15.4 3.6a5 5 0 0 1 0 6.8"}}, {"t": "rect", "a": {"height": "5.2", "rx": "1.4", "width": "2.8", "x": "10.6", "y": "2.6"}}], "/n": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "8.5"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "r": "4.5"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "fill": "currentColor", "r": "1.3", "stroke": "none"}}], "/o": [{"t": "path", "a": {"d": "M4 20.5v-9l8-4.5 8 4.5v9Z"}}, {"t": "path", "a": {"d": "M12 7V3.2"}}, {"t": "path", "a": {"d": "M9.8 3.8a3.6 3.6 0 0 1 4.4 0"}}, {"t": "path", "a": {"d": "M9.6 20.5V16h4.8v4.5"}}], "/p": [{"t": "path", "a": {"d": "M6.5 9.6c0-3 2.5-5.2 5.5-5.2s5.5 2.2 5.5 5.2v2.8a5.5 5.5 0 0 1-11 0Z"}}, {"t": "path", "a": {"d": "M6.6 9.8C4.6 8.8 4 6.2 5 4.6c1.5.4 2.6 1.5 3.2 2.8"}}, {"t": "path", "a": {"d": "M17.4 9.8c2-1 2.6-3.6 1.6-5.2-1.5.4-2.6 1.5-3.2 2.8"}}, {"t": "circle", "a": {"cx": "9.8", "cy": "11.4", "fill": "currentColor", "r": "0.8", "stroke": "none"}}, {"t": "circle", "a": {"cx": "14.2", "cy": "11.4", "fill": "currentColor", "r": "0.8", "stroke": "none"}}, {"t": "path", "a": {"d": "M12 13.8v1.4"}}, {"t": "path", "a": {"d": "M9.9 15a2.6 2.6 0 0 0 4.2 0"}}], "/q": [{"t": "rect", "a": {"height": "17", "rx": "1", "width": "17", "x": "3.5", "y": "3.5"}}, {"t": "path", "a": {"d": "M12 3.5v17M3.5 12h17"}}, {"t": "path", "a": {"d": "m13.6 18.4 2.6-3.6 2.6 3.6Z"}}], "/r": [{"t": "circle", "a": {"cx": "12", "cy": "6", "r": "1.4"}}, {"t": "path", "a": {"d": "M12 7.6V20"}}, {"t": "path", "a": {"d": "M8.5 20 12 11.5 15.5 20"}}, {"t": "path", "a": {"d": "M8.6 3.6a5 5 0 0 0 0 6.8M15.4 3.6a5 5 0 0 1 0 6.8"}}], "/s": [{"t": "path", "a": {"d": "M2.5 15.5h19l-2.5 4.5H5Z"}}, {"t": "path", "a": {"d": "M5.5 15.5V11h9l2 4.5"}}, {"t": "path", "a": {"d": "M8.5 11V7.4h3.4V11"}}], "/t": [{"t": "path", "a": {"d": "M2 6h20v2.2H2Z"}}, {"t": "path", "a": {"d": "M4 8.2V20.5M20 8.2V20.5"}}, {"t": "rect", "a": {"height": "8.5", "rx": "1", "width": "5", "x": "7.5", "y": "12"}}, {"t": "path", "a": {"d": "M9 14.2h2"}}, {"t": "path", "a": {"d": "M12.5 14h1.6a1.2 1.2 0 0 1 1.2 1.2v3a1.1 1.1 0 0 0 2.2 0v-2"}}], "/u": [{"t": "path", "a": {"d": "M2 8.5h4.2l1.8 3v4.5H2Z"}}, {"t": "path", "a": {"d": "M8.5 6.5h13v9.5h-13Z"}}, {"t": "circle", "a": {"cx": "4.6", "cy": "17.6", "r": "1.6"}}, {"t": "circle", "a": {"cx": "13.6", "cy": "17.6", "r": "1.6"}}, {"t": "circle", "a": {"cx": "18", "cy": "17.6", "r": "1.6"}}], "/v": [{"t": "path", "a": {"d": "M2 15.5V9.6l3-4h9.4l4.6 4v5.9Z"}}, {"t": "circle", "a": {"cx": "6.6", "cy": "17.4", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.4", "cy": "17.4", "r": "1.8"}}, {"t": "path", "a": {"d": "M6 9.6h5"}}], "/w": [{"t": "path", "a": {"d": "M12 3.5c2.9 3.7 4.6 6.2 4.6 8.3a4.6 4.6 0 0 1-9.2 0c0-2.1 1.7-4.6 4.6-8.3Z"}}, {"t": "path", "a": {"d": "M5 20.5h14"}}], "/x": [{"t": "rect", "a": {"height": "16", "rx": "2", "width": "19", "x": "2.5", "y": "4"}}, {"t": "path", "a": {"d": "m7 10 2.5 2.5L7 15"}}, {"t": "path", "a": {"d": "M12.6 15.4h4.6"}}], "/y": [{"t": "path", "a": {"d": "M4 8h16"}}, {"t": "path", "a": {"d": "M6 4.6v6.8M9.6 5.2v5.6M13.2 5.6v4.8M16.8 6.2v3.6"}}, {"t": "path", "a": {"d": "M12 8v12.6"}}, {"t": "path", "a": {"d": "M9 20.6h6"}}], "/z": [{"t": "path", "a": {"d": "M2.5 11.5 12 4l9.5 7.5"}}, {"t": "path", "a": {"d": "M5.5 11.5V20M18.5 11.5V20"}}, {"t": "path", "a": {"d": "M3.5 20h17"}}], "??": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "path", "a": {"d": "M5.6 5.6 18.4 18.4"}}], "\\!": [{"t": "path", "a": {"d": "M12 3.5 21.5 20H2.5Z"}}, {"t": "path", "a": {"d": "M12 9.8v4.6"}}, {"t": "circle", "a": {"cx": "12", "cy": "17.4", "fill": "currentColor", "r": "0.85", "stroke": "none"}}], "\\#": [{"t": "path", "a": {"d": "M12 2 16.6 7.4 22 12 16.6 16.6 12 22 7.4 16.6 2 12 7.4 7.4Z"}}], "\\$": [{"t": "rect", "a": {"height": "12", "rx": "2", "width": "19", "x": "2.5", "y": "6"}}, {"t": "path", "a": {"d": "M5.4 9h1.8M16.8 15h1.8"}}], "\\%": [{"t": "path", "a": {"d": "M2.5 20V11l4.6-2.6V11l4.6-2.6V20Z"}}, {"t": "path", "a": {"d": "M12 20V4.6h2.9V20"}}, {"t": "path", "a": {"d": "M5.2 14.4h1.4M9.8 14.4h1.4"}}], "\\&": [{"t": "path", "a": {"d": "M12 2.5 21.5 12 12 21.5 2.5 12Z"}}], "\\'": [{"t": "path", "a": {"d": "m12 3 2.2 4.6 5-.6-2.6 4.3 2.6 4.3-5-.6L12 20l-2.2-4.6-5 .6 2.6-4.3L4.8 7l5 .6Z"}}], "\\(": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}], "\\)": [{"t": "path", "a": {"d": "M2.5 20.5a10 10 0 0 1 19 0"}}, {"t": "rect", "a": {"height": "5", "rx": "1", "width": "5.6", "x": "9.2", "y": "7.5"}}, {"t": "path", "a": {"d": "M9.2 10H4.6M14.8 10h4.6"}}, {"t": "path", "a": {"d": "M4.6 7.6v4.8M19.4 7.6v4.8"}}, {"t": "path", "a": {"d": "M12 7.5V4.6"}}], "\\*": [{"t": "path", "a": {"d": "M12 3.5v17.0M4.605 7.75l14.79 8.5M19.395 7.75l-14.79 8.5"}}, {"t": "path", "a": {"d": "m9.4 5.6 2.6 2.4 2.6-2.4M9.4 18.4l2.6-2.4 2.6 2.4"}}], "\\+": [{"t": "path", "a": {"d": "M5 20.5V11l7-4.6 7 4.6v9.5Z"}}, {"t": "path", "a": {"d": "M12 6.4V2.8M10.3 4.4h3.4"}}, {"t": "path", "a": {"d": "M10 20.5v-5h4v5"}}], "\\,": [{"t": "circle", "a": {"cx": "12", "cy": "6.4", "r": "3"}}, {"t": "circle", "a": {"cx": "7.2", "cy": "12", "r": "3"}}, {"t": "circle", "a": {"cx": "16.8", "cy": "12", "r": "3"}}, {"t": "path", "a": {"d": "M12 15v5.6"}}], "\\-": [{"t": "path", "a": {"d": "M3.5 11 12 4.5l8.5 6.5V20.5h-17Z"}}, {"t": "path", "a": {"d": "M17.6 7.6V3"}}, {"t": "path", "a": {"d": "M15.6 4a3 3 0 0 1 4 0"}}], "\\.": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "8.5", "strokeDasharray": "2.5 3"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "fill": "currentColor", "r": "1.4", "stroke": "none"}}], "\\/": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "7"}}, {"t": "path", "a": {"d": "M12 2v3.4M12 18.6V22M2 12h3.4M18.6 12H22"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "fill": "currentColor", "r": "1.3", "stroke": "none"}}], "\\0": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}], "\\8": [{"t": "rect", "a": {"height": "7.5", "rx": "1.5", "width": "17", "x": "3.5", "y": "13"}}, {"t": "path", "a": {"d": "M7.6 4.6a6.5 6.5 0 0 1 8.8 0M10.1 7.8a3 3 0 0 1 3.8 0"}}, {"t": "path", "a": {"d": "M12 10.4v.01"}}], "\\9": [{"t": "rect", "a": {"height": "16", "rx": "1.5", "width": "9.5", "x": "4.5", "y": "4.5"}}, {"t": "path", "a": {"d": "M7 7.6h4.5v3.4H7Z"}}, {"t": "path", "a": {"d": "M14 8h2.4a1.4 1.4 0 0 1 1.4 1.4v6.2a1.4 1.4 0 0 0 2.8 0v-4.4l-2-2"}}], "\\:": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "circle", "a": {"cx": "9", "cy": "18.6", "r": "1.15"}}, {"t": "circle", "a": {"cx": "14.6", "cy": "19.3", "r": "1.15"}}, {"t": "circle", "a": {"cx": "12", "cy": "16.4", "r": "1.15"}}], "\\;": [{"t": "path", "a": {"d": "M3 8h18"}}, {"t": "path", "a": {"d": "m6.6 8-2.6 12M17.4 8l2.6 12"}}, {"t": "path", "a": {"d": "M5.4 13.5h13.2"}}], "\\<": [{"t": "path", "a": {"d": "M6 3v18"}}, {"t": "path", "a": {"d": "M6 4.6h11L6 11Z"}}], "\\>": [{"t": "path", "a": {"d": "M8 3.5h8a1.8 1.8 0 0 1 1.75 1.4l1.25 5.6v8a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-8l1.25-5.6A1.8 1.8 0 0 1 8 3.5Z"}}, {"t": "path", "a": {"d": "M6.6 9.6c3.6-1 7.2-1 10.8 0"}}, {"t": "path", "a": {"d": "M6.8 15.4c3.4.9 6.8.9 10.4 0"}}, {"t": "path", "a": {"d": "M4.6 11.4 3 12M19.4 11.4 21 12"}}], "\\?": [{"t": "path", "a": {"d": "M4 8.5 12 4l8 4.5"}}, {"t": "path", "a": {"d": "M6 8.5V20.5h12V8.5"}}, {"t": "path", "a": {"d": "M12 12.4v5"}}, {"t": "circle", "a": {"cx": "12", "cy": "10.4", "fill": "currentColor", "r": "0.85", "stroke": "none"}}], "\\@": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "1.8"}}, {"t": "path", "a": {"d": "M12 10.2c0-3.6 1.8-6.6 6-6.6-2.8 1.7-4 3.8-4.1 6.6"}}, {"t": "path", "a": {"d": "M12 13.8c0 3.6-1.8 6.6-6 6.6 2.8-1.7 4-3.8 4.1-6.6"}}], "\\A": [{"t": "rect", "a": {"height": "17", "rx": "2", "width": "17", "x": "3.5", "y": "3.5"}}], "\\B": [{"t": "path", "a": {"d": "M3 6.5h9.6a2.4 2.4 0 1 0-2.4-2.4"}}, {"t": "path", "a": {"d": "M3 11.5h13"}}, {"t": "path", "a": {"d": "M7 15.200000000000001v4.8M4.912 16.400000000000002l4.176 2.4M9.088000000000001 16.400000000000002l-4.176 2.4"}}, {"t": "path", "a": {"d": "M15.5 15.200000000000001v4.8M13.411999999999999 16.400000000000002l4.176 2.4M17.588 16.400000000000002l-4.176 2.4"}}], "\\C": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "r": "4"}}, {"t": "path", "a": {"d": "M12 3v5M12 16v5M3 12h5M16 12h5"}}], "\\D": [{"t": "path", "a": {"d": "M3 9.8 12 5l9 4.8"}}, {"t": "path", "a": {"d": "M5 9.8V17h14V9.8"}}, {"t": "path", "a": {"d": "M3 17h18"}}, {"t": "path", "a": {"d": "M4.5 20.5h15"}}], "\\E": [{"t": "path", "a": {"d": "M3.5 21h17"}}, {"t": "path", "a": {"d": "M8 21c0-3.6 3-4.2 3-7.4S8 9.6 8 6.4"}}, {"t": "path", "a": {"d": "M14.5 21c0-3.6 3-4.2 3-7.4s-3-4-3-7.2"}}], "\\F": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M8.5 16.6l0.0 2.4M12 16.6l0.0 2.4M15.5 16.6l0.0 2.4"}}, {"t": "path", "a": {"d": "M6.5 21.2h11"}}], "\\G": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M9 16.6v4.4M7.086 17.7l3.8280000000000003 2.2M10.914 17.7l-3.8280000000000003 2.2"}}, {"t": "path", "a": {"d": "M15.6 16.6l-1 3.4"}}], "\\H": [{"t": "circle", "a": {"cx": "12", "cy": "8.5", "r": "3.8"}}, {"t": "path", "a": {"d": "M12 2.2v1.6M4.8 8.5H3.2M20.8 8.5h-1.6M6.9 3.4 8 4.5M17.1 3.4 16 4.5"}}, {"t": "path", "a": {"d": "M3.5 16.5h17M6 20h12"}}], "\\I": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M9.6 16.6l-1.4 3.2M13.1 16.6l-1.4 3.2M16.6 16.6l-1.4 3.2"}}], "\\J": [{"t": "path", "a": {"d": "M13.6 2.5 5.6 13.6h5l-2 7.9 8-11h-5Z"}}], "\\K": [{"t": "rect", "a": {"height": "15.5", "rx": "2", "width": "10", "x": "7", "y": "5.5"}}, {"t": "path", "a": {"d": "M15 5.5V2"}}, {"t": "path", "a": {"d": "M9.5 9h5"}}, {"t": "path", "a": {"d": "M9.5 13h5M9.5 16.6h5"}}], "\\L": [{"t": "path", "a": {"d": "M9 20.5 10 9h4l1 11.5Z"}}, {"t": "path", "a": {"d": "M9.6 13h4.8"}}, {"t": "path", "a": {"d": "M10 9V6.4h4V9"}}, {"t": "path", "a": {"d": "M12 6.4V4"}}, {"t": "path", "a": {"d": "M6.6 6 4.2 4.6M17.4 6l2.4-1.4M6.6 9.2H4M17.4 9.2H20"}}, {"t": "path", "a": {"d": "M7 20.5h10"}}], "\\M": [{"t": "path", "a": {"d": "M12 2.8 4.5 5.8v6.4c0 4 3 6.8 7.5 8.5 4.5-1.7 7.5-4.5 7.5-8.5V5.8Z"}}], "\\N": [{"t": "path", "a": {"d": "M12 20.5V13"}}, {"t": "path", "a": {"d": "M9 13h6l-1-4h-4Z"}}, {"t": "path", "a": {"d": "M12 9V6.4"}}, {"t": "circle", "a": {"cx": "12", "cy": "4.6", "r": "1.5"}}, {"t": "path", "a": {"d": "M4 18c2.7-2 5.3 2 8 0s5.3-2 8 0"}}], "\\O": [{"t": "path", "a": {"d": "M12 15c3.4 0 6-3 6-6.6A6 6 0 0 0 6 8.4c0 3.6 2.6 6.6 6 6.6Z"}}, {"t": "path", "a": {"d": "M10.7 14.8 12 17.3l1.3-2.5"}}, {"t": "path", "a": {"d": "M10.4 17.3h3.2l-.5 3.4h-2.2Z"}}], "\\P": [{"t": "rect", "a": {"height": "17", "rx": "3", "width": "17", "x": "3.5", "y": "3.5"}}, {"t": "path", "a": {"d": "M10 17V7.4h3.2a2.9 2.9 0 0 1 0 5.8H10"}}], "\\Q": [{"t": "path", "a": {"d": "M2.5 14h4l3-5.5 3 9.5 3-7.5 2 3.5h4"}}, {"t": "path", "a": {"d": "M4 19.5h16"}}], "\\R": [{"t": "path", "a": {"d": "M6 3v6a2.5 2.5 0 0 0 5 0V3"}}, {"t": "path", "a": {"d": "M8.5 11.5v9.5"}}, {"t": "path", "a": {"d": "M17.5 3c-1.6 1.6-2.2 3.6-2.2 5.6s.8 3.1 2.2 3.1v9.3"}}], "\\S": [{"t": "rect", "a": {"height": "5", "rx": "1", "width": "5", "x": "9.5", "y": "9.5"}}, {"t": "path", "a": {"d": "M9.5 12H4.5M14.5 12h5"}}, {"t": "path", "a": {"d": "M4.5 9v6M19.5 9v6"}}, {"t": "path", "a": {"d": "M12 9.5V6.2M10.4 5.2a2.2 2.2 0 0 1 3.2 0"}}], "\\T": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M13.4 15.8 10 20.2h2.7l-1 2"}}], "\\U": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "4.5"}}, {"t": "path", "a": {"d": "M12 2.6v2.4M12 19v2.4M2.6 12H5M19 12h2.4M5.3 5.3 7 7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7"}}], "\\V": [{"t": "path", "a": {"d": "m12 3 7.8 4.5v9L12 21l-7.8-4.5v-9Z"}}, {"t": "circle", "a": {"cx": "12", "cy": "12", "r": "2"}}, {"t": "path", "a": {"d": "M12 3v3.4M12 17.6V21"}}], "\\W": [{"t": "path", "a": {"d": "M7 10.5a5 5 0 0 1 10 0Z"}}, {"t": "path", "a": {"d": "M9 10.5 8 20.5M15 10.5l1 10"}}, {"t": "path", "a": {"d": "M8.5 15h7"}}, {"t": "path", "a": {"d": "M6.6 20.5h10.8"}}], "\\X": [{"t": "path", "a": {"d": "M5 10.5h14v1.4a7 7 0 0 1-14 0Z"}}, {"t": "path", "a": {"d": "M12 18.9v2.1M8 21h8"}}, {"t": "path", "a": {"d": "m10.2 10.5 5.8-6 2.4 2.4-4.4 3.6"}}], "\\Y": [{"t": "rect", "a": {"height": "11", "rx": "2", "width": "19", "x": "2.5", "y": "8"}}, {"t": "path", "a": {"d": "M6 8 17 3.6"}}, {"t": "circle", "a": {"cx": "8", "cy": "13.5", "r": "2.5"}}, {"t": "path", "a": {"d": "M13 12h6M13 15.4h6"}}], "\\[": [{"t": "circle", "a": {"cx": "12", "cy": "7.2", "r": "3.2"}}, {"t": "path", "a": {"d": "M4.8 20.5a7.2 7.2 0 0 1 14.4 0"}}], "\\\\": [{"t": "rect", "a": {"height": "17", "rx": "3", "width": "17", "x": "3.5", "y": "3.5"}}, {"t": "path", "a": {"d": "m7.6 16.8 4.4-9.6 4.4 9.6-4.4-3Z"}}], "\\^": [{"t": "path", "a": {"d": "M12 2.4c1.1 0 1.9 1.7 1.9 4.1v2.2l7.6 5.1v2.3l-7.6-2.6v3.6l2.3 2v1.6L12 19.6l-4.2 1.1v-1.6l2.3-2v-3.6L2.5 16.1v-2.3l7.6-5.1V6.5c0-2.4.8-4.1 1.9-4.1Z"}}], "\\_": [{"t": "path", "a": {"d": "M13 13.6V5a2 2 0 1 0-4 0v8.6a3.6 3.6 0 1 0 4 0Z"}}, {"t": "path", "a": {"d": "M9 8h2M9 10.6h2"}}, {"t": "path", "a": {"d": "M18 3.4v5.2M15.4 6h5.2M16.2 4.2l3.6 3.6M19.8 4.2l-3.6 3.6"}}], "\\`": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M8.5 16.6l0.0 3.2M12 16.6l0.0 3.2M15.5 16.6l0.0 3.2"}}], "\\a": [{"t": "path", "a": {"d": "M12 2.5 21.5 12 12 21.5 2.5 12Z"}}], "\\b": [{"t": "path", "a": {"d": "M3 6.5h9.6a2.4 2.4 0 1 0-2.4-2.4"}}, {"t": "path", "a": {"d": "M3 11.5h11a2.4 2.4 0 1 1-2.4 2.4"}}, {"t": "circle", "a": {"cx": "6", "cy": "18.4", "fill": "currentColor", "r": "0.9", "stroke": "none"}}, {"t": "circle", "a": {"cx": "11", "cy": "19.4", "fill": "currentColor", "r": "0.9", "stroke": "none"}}, {"t": "circle", "a": {"cx": "16", "cy": "18.2", "fill": "currentColor", "r": "0.9", "stroke": "none"}}], "\\c": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "9.2"}}, {"t": "path", "a": {"d": "m12 6.4 5 8.8H7Z"}}], "\\d": [{"t": "path", "a": {"d": "m12 3.4 2 4.6 5 .5-3.8 3.3 1.1 4.9L12 14.1l-4.3 2.6 1.1-4.9L5 8.5l5-.5Z"}}, {"t": "path", "a": {"d": "M4.5 20.4a10 10 0 0 1 15 0"}}], "\\e": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "m9 16.6-.9 3.2M16 16.6l-.9 3.2"}}, {"t": "circle", "a": {"cx": "12.4", "cy": "19.2", "r": "1.05"}}], "\\f": [{"t": "path", "a": {"d": "M7 14a3.5 3.5 0 0 1 .3-6.98 4.7 4.7 0 0 1 8.9-.5A3.9 3.9 0 0 1 17 14Z"}}, {"t": "path", "a": {"d": "M8.4 15.4c1.2 3.4 2.4 5 3.4 5.8M15.6 15.4c-.6 2.4-1.6 4-2.8 5.2"}}], "\\g": [{"t": "path", "a": {"d": "M6 3v18"}}, {"t": "path", "a": {"d": "M6 4.4h10L6 9.8Z"}}, {"t": "path", "a": {"d": "M6 11.6h10L6 17Z"}}], "\\h": [{"t": "path", "a": {"d": "M3.5 9.5 5.5 5h13l2 4.5Z"}}, {"t": "path", "a": {"d": "M5.2 9.5V20.5h13.6V9.5"}}, {"t": "path", "a": {"d": "M9.6 20.5V15h4.8v5.5"}}], "\\i": [{"t": "path", "a": {"d": "M12 21.4c0 0 7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11Z"}}, {"t": "circle", "a": {"cx": "12", "cy": "10.4", "r": "2.4"}}], "\\j": [{"t": "path", "a": {"d": "M12 4.5 18.6 20.5H5.4Z"}}, {"t": "path", "a": {"d": "M9.4 13h5.2M8.2 16.4h7.6"}}], "\\k": [{"t": "path", "a": {"d": "M2.5 15.5v-3.4l2-.6 2.5-3.5h9l2.5 3.5 2 .6v3.4Z"}}, {"t": "circle", "a": {"cx": "6.8", "cy": "17.4", "r": "1.7"}}, {"t": "circle", "a": {"cx": "17.2", "cy": "17.4", "r": "1.7"}}, {"t": "path", "a": {"d": "M11.6 8v4.1"}}], "\\l": [{"t": "rect", "a": {"height": "12", "rx": "1", "strokeDasharray": "3 2.5", "width": "17", "x": "3.5", "y": "6"}}], "\\m": [{"t": "path", "a": {"d": "M12 21v-6.6"}}, {"t": "rect", "a": {"height": "10.4", "rx": "1.5", "width": "18", "x": "3", "y": "4"}}], "\\n": [{"t": "path", "a": {"d": "M12 4 21 19.5H3Z"}}], "\\o": [{"t": "circle", "a": {"cx": "12", "cy": "12", "r": "4.5"}}], "\\p": [{"t": "circle", "a": {"cx": "8", "cy": "7.6", "r": "3.2"}}, {"t": "path", "a": {"d": "M8 1.8v1.4M2.2 7.6h1.4M3.9 3.5 4.9 4.5M12.1 3.5 11.1 4.5M8 12v1.4"}}, {"t": "path", "a": {"d": "M10 19.5a3 3 0 0 1 .3-5.98 4 4 0 0 1 7.6-.4 3.3 3.3 0 0 1 .6 6.38Z"}}], "\\r": [{"t": "circle", "a": {"cx": "6.8", "cy": "4.8", "r": "1.8"}}, {"t": "path", "a": {"d": "M6.8 8v6.4M3.8 10.6h6M4.8 21l2-6.6 2 6.6"}}, {"t": "circle", "a": {"cx": "17.2", "cy": "4.8", "r": "1.8"}}, {"t": "path", "a": {"d": "M17.2 8 14.2 15h6Z"}}, {"t": "path", "a": {"d": "M15.8 15v6M18.6 15v6"}}], "\\s": [{"t": "path", "a": {"d": "M12 2.5c3 3.5 4.5 8 4.5 12.5v4a1.5 1.5 0 0 1-1.5 1.5H9a1.5 1.5 0 0 1-1.5-1.5v-4C7.5 10.5 9 6 12 2.5Z"}}, {"t": "path", "a": {"d": "M9 12h6"}}], "\\t": [{"t": "path", "a": {"d": "M4 4.5h16"}}, {"t": "path", "a": {"d": "M6 8h13M8.5 11.5h9M11 15h5.5M12.6 18.4h2.4"}}, {"t": "path", "a": {"d": "M14.6 18.4c-1 1.6-2.6 2.4-4.6 2.6"}}], "\\u": [{"t": "path", "a": {"d": "M2 5.5h11v10H2z"}}, {"t": "path", "a": {"d": "M13 9h3.8l3.2 3.3v3.2h-7z"}}, {"t": "circle", "a": {"cx": "6.5", "cy": "17.6", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.8", "cy": "17.6", "r": "1.8"}}], "\\v": [{"t": "path", "a": {"d": "M2 15.5V9.6l3-4h9.4l4.6 4v5.9Z"}}, {"t": "circle", "a": {"cx": "6.6", "cy": "17.4", "r": "1.8"}}, {"t": "circle", "a": {"cx": "16.4", "cy": "17.4", "r": "1.8"}}, {"t": "path", "a": {"d": "M6 9.6h5"}}], "\\w": [{"t": "path", "a": {"d": "M2.5 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"}}, {"t": "path", "a": {"d": "M2.5 20.5c2-2 4-2 6 0s4 2 6 0 4-2 6 0"}}, {"t": "path", "a": {"d": "M12 12.4V3.6M8.4 7.2 12 3.6l3.6 3.6"}}], "\\x": [{"t": "path", "a": {"d": "M6.5 4.5 17.5 15.5M17.5 4.5 6.5 15.5"}}, {"t": "path", "a": {"d": "M2.5 19.6c2-2 4-2 6 0s4 2 6 0 4-2 6 0"}}], "\\y": [{"t": "path", "a": {"d": "M3 8s3.6-4.6 9-4.6S21 8 21 8s-3.6 4.6-9 4.6S3 8 3 8Z"}}, {"t": "circle", "a": {"cx": "12", "cy": "8", "r": "2"}}, {"t": "path", "a": {"d": "M8.6 15.2c.6 3.2 1.8 5 3.4 5.9M15.4 15.2c-.6 3.2-1.8 5-3.4 5.9"}}], "\\z": [{"t": "path", "a": {"d": "M2.5 11.5 12 4l9.5 7.5"}}, {"t": "path", "a": {"d": "M5.5 11.5V20M18.5 11.5V20"}}, {"t": "path", "a": {"d": "M3.5 20h17"}}], "\\{": [{"t": "path", "a": {"d": "M3 7.6c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0"}}, {"t": "path", "a": {"d": "M3 12.6c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0"}}, {"t": "path", "a": {"d": "M3 17.6c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0"}}]}, "slots": {"0": ["centre", 15.7, 10.5], "8": ["badge"], "!": ["centre", 17.4, 8.5], "#": ["centre", 15.4, 9], "$": ["centre", 15.6, 10], "%": ["badge"], "&": ["centre", 15.7, 10], "'": ["badge"], "(": ["badge"], ")": ["badge"], "-": ["centre", 17.8, 8.5], ";": ["badge"], "<": ["badge"], ">": ["badge"], "A": ["centre", 15.7, 10.5], "D": ["centre", 15.4, 8], "H": ["badge"], "M": ["centre", 15.6, 9.5], "O": ["badge"], "R": ["badge"], "W": ["badge"], "Y": ["badge"], "[": ["badge"], "\\": ["badge"], "^": ["badge"], "_": ["badge"], "a": ["centre", 15.7, 10], "c": ["badge"], "h": ["badge"], "i": ["badge"], "k": ["badge"], "m": ["centre", 11.8, 8], "n": ["centre", 17.6, 8.5], "s": ["badge"], "u": ["badge"], "w": ["badge"], "z": ["centre", 18.4, 8]}, "house": {"GraphIcon": "<circle cx=\"5\" cy=\"6\" r=\"2.4\" /> <circle cx=\"18\" cy=\"5\" r=\"2.4\" /> <circle cx=\"12\" cy=\"13\" r=\"2.6\" /> <circle cx=\"6\" cy=\"19\" r=\"2.4\" /> <circle cx=\"18\" cy=\"18\" r=\"2.4\" /> <path d=\"M6.8 7.4 10 11.2M16.2 6.4 13.4 11M11.2 15 7 17.3M13.6 14.5l3 2.2\" />", "MessageIcon": "<path d=\"M21 11.5a8.4 8.4 0 0 1-12 7.5L3 21l2-6a8.4 8.4 0 1 1 16-3.5z\" />", "ChatIcon": "<path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\" />", "ListIcon": "<path d=\"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01\" />", "RadioIcon": "<path d=\"M4.9 19.1C1 15.2 1 8.8 4.9 4.9\" /> <path d=\"M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5\" /> <circle cx=\"12\" cy=\"12\" r=\"2\" /> <path d=\"M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5\" /> <path d=\"M19.1 4.9C23 8.8 23 15.1 19.1 19\" />", "GaugeIcon": "<path d=\"m12 14 4-4\" /> <path d=\"M3.34 19a10 10 0 1 1 17.32 0\" />", "ThingIcon": "<path d=\"M3.7 11.4 11 4.1a2 2 0 0 1 1.4-.6h6.1a2 2 0 0 1 2 2v6.1a2 2 0 0 1-.6 1.4l-7.3 7.3a2 2 0 0 1-2.8 0l-6.1-6.1a2 2 0 0 1 0-2.8Z\" /> <circle cx=\"16\" cy=\"8\" r=\"1.3\" />"}, "kindicon": {"Telemetry": "GraphIcon", "Message": "MessageIcon", "Status": "ChatIcon", "Capabilities": "ListIcon", "AX.25 beacon": "RadioIcon", "Weather": "GaugeIcon"}};
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* THE REAL GLYPHS, resolved the way `aprsIcons.tsx` resolves them: a table character that
+   is neither / nor \ is an OVERLAY - it selects the alternate table and is drawn on top. */
+const BADGE = 0.78;
+function symbolSvg(sym){
+  const table = sym[0], code = sym[1];
+  const isOverlay = table !== "/" && table !== "\\";
+  const key = (isOverlay ? "\\" : table) + code;
+  const nodes = D.glyphs[key] || D.glyphs["??"];
+  const slot = isOverlay ? D.slots[code] : null;
+  const draw = n => {
+    const a = Object.entries(n.a).map(([k,v]) =>
+      `${k.replace(/[A-Z]/g, m => "-" + m.toLowerCase())}="${esc(v)}"`).join(" ");
+    return n.t === "text" ? `<text ${a}>${esc(n.c || "")}</text>` : `<${n.t} ${a}/>`;
+  };
+  let inner = nodes.map(draw).join("");
+  if (slot && slot[0] === "badge")
+    inner = `<g transform="scale(${BADGE})" stroke-width="${(1.5/BADGE).toFixed(3)}">${inner}</g>`;
+  if (isOverlay && slot){
+    const t = slot[0] === "centre"
+      ? `<text x="12" y="${slot[1]}" text-anchor="middle" font-size="${slot[2]}"`
+      : `<text x="21.4" y="22" text-anchor="end" font-size="9"`;
+    inner += `${t} font-weight="600" font-family="ui-sans-serif,system-ui,sans-serif"
+      fill="currentColor" stroke="none">${esc(table)}</text>`;
+  }
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+    stroke-linecap="round" stroke-linejoin="round" role="img">${inner}</svg>`;
+}
+function glyph(p){
+  if (p.sym) return `<span class="sym own">${symbolSvg(p.sym)}</span>`;
+  const house = D.house[D.kindicon[p.kindlabel]] || D.house.ThingIcon;
+  return `<span class="sym kind"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img">${house}</svg></span>`;
+}
+
+let LINE = "rb";
+const PLACE = {
+  coords: p => p.coords,
+  grid:   p => p.grid,
+  rb:     p => p.rb,
+  rbgrid: p => [p.rb, p.grid].filter(Boolean).join(" · "),
+};
+/* The symbol name is already stripped upstream - the icon is drawn, so its name is never
+   written here. This only decides what fills the line when stripping left nothing. */
+const reading = p => p.stripped || [PLACE[LINE](p), p.alt].filter(Boolean).join(" · ");
+const quote = p => p.comment || (p.stripped || p.coords ? "" : p.text);
+const prov  = p => p.direct ? "direct" : (p.gated ? "gated" : "rf");
+const ago   = m => m == null ? "" : (m < 60 ? m + "m" : Math.round(m/60) + "h");
+
+/* aprs.fi's panel order: where, then when, then motion, then the station's own readings,
+   then the path. Its info page is the one every ham has already learned to read. */
+const ORDER = ["Position","Altitude","Reported at","Course and speed","Wind","Gust",
+  "Temperature","Humidity","Pressure","Rain, last hour","Rain, last 24 hours",
+  "Rain, since midnight","Station type","Symbol"];
+function ordered(fields){
+  const rank = n => { const i = ORDER.indexOf(n); return i < 0 ? ORDER.length : i; };
+  return [...fields].sort((a,b) => rank(a[0]) - rank(b[0]));
+}
+
+function panel(p){
+  const rows = ordered(p.fields)
+    .filter(([k]) => k !== "Symbol")   /* the icon says this - never written as text */
+    .map(([k,v]) => `<dt>${esc(k)}</dt><dd class="${
+      k==="Altitude"||k==="Station type"?"added":""}">${esc(v)}</dd>`).join("");
+  return `<div class="panel">
+    ${rows ? `<dl class="fields">${rows}</dl>` : ""}
+    ${(p.warnings||[]).map(w => `<p class="warn">${esc(w)}</p>`).join("")}
+    <div class="frame"><span class="k">The frame as heard</span><pre><span class="hdr">${
+      esc(p.origin)}&gt;APRS${p.relay ? ",TCPIP," + esc(p.relay) + "*" : ""}:</span>
+${esc(p.text)}</pre></div>
+  </div>`;
+}
+
+let open = 1;
+function render(){
+  const rows = D.rows;
+  document.getElementById("scr").innerHTML =
+    `<div class="sthead"><span class="c">Everything heard</span><span class="g">15 stations</span></div>
+     <div class="sec">Packets<span class="count">${rows.length} shown</span></div>` +
+    rows.map((p,i) => {
+      const q = quote(p), r = reading(p), isOpen = open === i;
+      return `<div class="pk ${p.shot?"shot":""}">
+        ${p.shot?'<span class="shotmark">from your screen</span>':""}
+        <button class="rowbtn" type="button" data-i="${i}" aria-expanded="${isOpen}">
+          ${glyph(p)}
+          <span class="body">
+            <span class="title">${esc(p.kindlabel)}</span>
+            ${r ? `<span class="reading">${esc(r)}</span>` : ""}
+            ${q ? `<span class="theirs">${esc(q)}</span>` : ""}
+            <span class="meta"><span class="badge b-${prov(p)}">${prov(p)}</span>${
+              p.relay ? "relayed by " + esc(p.relay) : "heard on the air"}</span>
+          </span>
+          <span class="when">${ago(p.ago_min ?? 14)}</span>
+        </button>${isOpen ? panel(p) : ""}</div>`;
+    }).join("");
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest(".rowbtn");
+  if (b){ const i = +b.dataset.i; open = open === i ? null : i; return render(); }
+  const l = e.target.closest("[data-line]");
+  if (l){
+    LINE = l.dataset.line;
+    for (const x of document.querySelectorAll("[data-line]"))
+      x.setAttribute("aria-pressed", String(x === l));
+    render();
+  }
+});
+render();
+</script>

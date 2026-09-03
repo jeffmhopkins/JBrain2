@@ -1,0 +1,360 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>What the row says instead</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  APRS packet rows, round 7. ONE question: with the icon rule absolute, what does the
+  line say?
+
+  THE RULE, RESTATED AND NOT RELAXED. The icon is already drawn. Its name is never
+  written in the card. Round 6 proposed relaxing that for bare positions ("Phone at
+  28.6212, -80.8237") and the owner rejected it outright: the icon is displayed, do not
+  restate it.
+
+  WHAT THAT COSTS. Applied strictly, the symbol name comes out of NINE of these nineteen
+  real rows - not just bare positions. Objects lose a trailing "- D-STAR"/"- Repeater"
+  and read as their own names; Mic-E rows lose a leading "Car -"/"Truck -" and open on
+  the motion. Those all improve. But a bare position's summary was ONLY the symbol name,
+  so it empties, and the line has nothing left to say.
+
+  So: three answers, on identical real traffic, in the shipped layout - the layout is
+  not the variable here.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#08090A;color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1500px;margin:0 auto;padding:26px 22px 60px}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+  .lede{color:var(--text-2);font-size:13.5px;line-height:1.65;max-width:74ch;margin:0 0 22px}
+  .lede b{color:var(--text)}
+  code{font-family:var(--mono);font-size:.92em;color:var(--steel)}
+
+  /* --- the diagnosis strip ------------------------------------------------------ */
+  .faults{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;
+    margin:0 0 30px}
+  .fault{border:1px solid var(--border);border-radius:12px;background:var(--surface);
+    padding:13px 14px;border-left:3px solid var(--rose)}
+  .fault h3{margin:0 0 7px;font-size:13px;color:var(--text)}
+  .fault p{margin:0;color:var(--text-2);font-size:12.5px;line-height:1.55}
+  .ba{display:flex;gap:9px;align-items:stretch;margin:10px 0 0}
+  .ba>div{flex:1;min-width:0;border-radius:8px;padding:7px 9px;font-size:11.5px;
+    line-height:1.45;overflow-wrap:anywhere}
+  .was{background:var(--rose-tint);color:var(--rose)}
+  .now{background:var(--green-tint);color:var(--green)}
+  .ba .lbl{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    opacity:.75;margin-bottom:3px}
+
+  /* --- the shapes --------------------------------------------------------------- */
+  .shapes{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1 1 360px;max-width:400px;display:flex;flex-direction:column;gap:12px}
+  .colhead h2{margin:0 0 4px;font-size:15px}
+  .colhead h2 span{color:var(--text-3);font-weight:400}
+  .colhead p{margin:0;color:var(--text-2);font-size:12.5px;line-height:1.6}
+  .verdict{margin:9px 0 0;font-size:12px;line-height:1.55;color:var(--text-2);
+    border-top:1px solid var(--border);padding-top:9px}
+  .verdict b{color:var(--text)}
+  .verdict .costs{color:var(--amber)}
+
+  .phone{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:22px;
+    overflow:hidden;display:flex;flex-direction:column;height:660px}
+  .top{display:flex;align-items:center;gap:9px;padding:13px 13px 7px;flex:0 0 auto}
+  .chev{color:var(--text-2);font-size:19px}
+  .scr-title{font-size:16px;font-weight:600}
+  .scr{flex:1;overflow-y:auto;padding:0 12px 26px}
+  .sthead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    padding:9px 11px;border:1px solid var(--border);border-radius:11px;
+    background:var(--surface);margin-bottom:5px}
+  .c{font-family:var(--mono);font-size:12.5px;color:var(--steel)}
+  .g{font-size:11px;color:var(--text-2)}
+  .sec{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);
+    margin:14px 0 7px;display:flex;justify-content:space-between}
+  .sec .count{letter-spacing:0;text-transform:none;color:var(--text-3)}
+
+  /* one packet */
+  .pk{border:1px solid var(--border);border-radius:11px;background:var(--surface);
+    margin-bottom:7px;overflow:hidden}
+  .pk.shot{border-color:rgba(210,169,106,.4)}
+  .rowbtn{width:100%;display:flex;gap:9px;align-items:flex-start;text-align:left;
+    padding:10px 11px;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+  .sym{flex:0 0 auto;width:32px;height:32px;border-radius:9px;display:flex;
+    align-items:center;justify-content:center;border:1px solid var(--border)}
+  .sym.own{color:var(--steel);background:var(--steel-tint)}
+  .sym.kind{color:var(--text-3);background:rgba(154,157,163,.09)}
+  .body{flex:1;min-width:0}
+  .title{display:block;font-size:13.5px;font-weight:600;line-height:1.35;
+    overflow-wrap:anywhere}
+  .title .dash{color:var(--text-3);font-weight:400;margin:0 4px}
+  .title .call{font-family:var(--mono);font-weight:500;color:var(--steel)}
+  .reading{display:block;margin-top:2px;font-size:13.5px;line-height:1.45;
+    overflow-wrap:anywhere}
+  .reading.lead{font-size:14px;font-weight:600;margin:0}
+  .theirs{display:block;margin-top:5px;padding-left:8px;border-left:2px solid var(--border);
+    font-family:var(--mono);font-size:11.5px;color:var(--text-2);overflow-wrap:anywhere;
+    unicode-bidi:isolate}
+  .meta{display:block;margin-top:4px;font-size:11px;color:var(--text-3)}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    font-weight:600;padding:2px 6px;border-radius:5px;margin-right:6px;vertical-align:1px}
+  .b-direct{background:var(--green-tint);color:var(--green)}
+  .b-gated{background:rgba(154,157,163,.16);color:var(--text-2)}
+  .b-rf{background:var(--steel-tint);color:var(--steel)}
+  .chip{display:inline-block;font-size:10.5px;color:var(--text-2);border:1px solid var(--border);
+    border-radius:5px;padding:1px 6px;margin-right:6px;vertical-align:1px}
+  .when{font-family:var(--mono);font-size:11px;color:var(--text-3);flex:0 0 auto}
+  .rep{display:inline-block;font-size:10.5px;color:var(--amber);background:var(--amber-tint);
+    border-radius:5px;padding:1px 6px;margin-left:6px}
+  .one{display:flex;gap:9px;align-items:center;padding:9px 11px}
+  .one .body{overflow:hidden}
+  .one .reading{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .one .meta{margin-top:1px}
+  .panel{padding:0 11px 11px}
+  .fields{display:grid;grid-template-columns:auto 1fr;gap:4px 11px;margin:2px 0 0;
+    font-size:12.5px}
+  .fields dt{color:var(--text-2);white-space:nowrap}
+  .fields dd{margin:0;overflow-wrap:anywhere}
+  .fields dd.added{color:var(--green)}
+  .warn{margin:8px 0 0;font-size:11.5px;color:var(--amber);line-height:1.45}
+  .rawwrap{margin-top:9px;border-top:1px solid var(--border);padding-top:7px}
+  .rawwrap summary{font-size:11.5px;color:var(--text-3);cursor:pointer}
+  .rawwrap pre{margin:5px 0 0;font-family:var(--mono);font-size:11px;color:var(--text-2);
+    white-space:pre-wrap;overflow-wrap:anywhere}
+  .shotmark{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--amber);
+    padding:0 11px 7px;display:block}
+
+  .ask{margin:34px 0 0;border:1px solid var(--border);border-radius:14px;
+    background:var(--surface);padding:17px 18px;max-width:78ch}
+  .ask h2{margin:0 0 9px;font-size:16px}
+  .ask p{margin:0 0 11px;color:var(--text-2);font-size:13px;line-height:1.65}
+  .ask ol{margin:0;padding-left:19px;color:var(--text-2);font-size:13px;line-height:1.7}
+  .ask b{color:var(--text)}
+  .toggle{display:flex;gap:8px;margin:0 0 12px}
+  .toggle button{font:inherit;font-size:12px;padding:6px 12px;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer}
+  .toggle button[aria-pressed=true]{background:var(--steel-tint);color:var(--text);
+    border-color:rgba(127,167,201,.4)}
+  button:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+  .rule{border:1px solid rgba(143,188,154,.35);background:var(--green-tint);border-radius:12px;
+    padding:13px 15px;margin:0 0 22px;max-width:78ch}
+  .rule h2{margin:0 0 6px;font-size:14px;color:var(--green)}
+  .rule p{margin:0;color:var(--text-2);font-size:13px;line-height:1.6}
+  .rule b{color:var(--text)}
+  .gains{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:9px;
+    margin:0 0 26px}
+  .gain{border:1px solid var(--border);border-radius:10px;background:var(--surface);
+    padding:10px 12px;font-size:12px;line-height:1.5}
+  .gain .k{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:5px}
+  .gain .was{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--rose)}
+  .gain .now{color:var(--text);display:block;margin-top:3px}
+  .line{font-family:var(--mono);font-size:12.5px;color:var(--steel);display:block;margin:6px 0 0}
+  @media (max-width:900px){ .phone{height:560px} }
+</style>
+<style>
+  .collapsebtn{width:100%;font:inherit;font-size:11.5px;color:var(--steel);background:var(--steel-tint);
+    border:1px solid rgba(127,167,201,.3);border-radius:8px;padding:6px 0;margin:0 0 7px;cursor:pointer}
+</style><div class="wrap">
+<h1>What the row says instead</h1>
+<p class="lede">
+  The icon is drawn, so its name is never written in the card — <b>no relaxation</b>. Applied
+  strictly that empties a bare position's line entirely, because its whole reading <em>was</em>
+  the symbol name. Three answers below, on identical real traffic, in the layout you already
+  have. Rows edged in amber are from your screenshots.
+</p>
+
+<div class="rule">
+  <h2>The rule, applied everywhere — not just to positions</h2>
+  <p>
+    The symbol name came out of <b>nine of these nineteen real rows</b>. Everywhere except a
+    bare position, removing it makes the row <em>better</em> — the object rows become their own
+    names, and the moving stations open on the motion.
+  </p>
+</div>
+
+<div class="gains">
+  <div class="gain"><span class="k">Object · the icon says D-STAR</span>
+    <span class="was">N1MPR C — D-STAR</span><span class="now">N1MPR C</span></div>
+  <div class="gain"><span class="k">Object · the icon says Repeater</span>
+    <span class="was">442.850 — Repeater</span><span class="now">442.850</span></div>
+  <div class="gain"><span class="k">Mic-E · the icon says Car</span>
+    <span class="was">Car — 52 knots (60 mph) heading 242° (WSW)</span>
+    <span class="now">52 knots (60 mph) heading 242° (WSW), En Route</span></div>
+  <div class="gain"><span class="k">Bare position · the icon says Phone</span>
+    <span class="was">Phone</span><span class="now" style="color:var(--amber)">nothing left — the three
+    shapes below are what fills it</span></div>
+</div>
+
+<div class="toggle" role="group" aria-label="Which traffic">
+  <button type="button" data-view="mix" aria-pressed="true">A day's traffic</button>
+  <button type="button" data-view="reps" aria-pressed="false">The 25 repeats</button>
+</div>
+
+<div class="shapes">
+  <div class="col">
+    <div class="colhead">
+      <h2>H <span>· the coordinates</span></h2>
+      <p>The position as transmitted, to four decimals. Nothing computed, nothing assumed.</p>
+      <p class="verdict">
+        <b>Keeps</b> total honesty — it is exactly what the station sent, and it works with no
+        other information on the box.
+        <span class="costs">Costs</span> readability: it is the least human line on the screen,
+        and two stations a mile apart look nearly identical at a glance.
+      </p>
+    </div>
+    <div class="phone"><div class="top"><span class="chev">‹</span><span class="scr-title">Radio</span></div>
+      <div class="scr" id="scr-H"></div></div>
+  </div>
+
+  <div class="col">
+    <div class="colhead">
+      <h2>J <span>· the grid square</span></h2>
+      <p>
+        The Maidenhead locator, six characters, computed from the frame alone — no network,
+        no other data. <code>EL98</code> is the Space Coast.
+      </p>
+      <p class="verdict">
+        <b>Keeps</b> the offline guarantee, and it is how hams already talk about where a
+        station is.
+        <span class="costs">Costs</span> precision a non-ham can use: <code>EL98oo</code> means
+        nothing unless you read grids, and it is a 3×4 mile box, not a point.
+      </p>
+    </div>
+    <div class="phone"><div class="top"><span class="chev">‹</span><span class="scr-title">Radio</span></div>
+      <div class="scr" id="scr-J"></div></div>
+  </div>
+
+  <div class="col">
+    <div class="colhead">
+      <h2>K <span>· range and bearing</span></h2>
+      <p>
+        How far away it is and in which direction, from your box — the position the location
+        core already holds and the geofence triggers already read.
+      </p>
+      <p class="verdict">
+        <b>Keeps</b> the question a heard log actually answers: <em>how far away is this?</em>
+        <span class="costs">Costs</span> a dependency — with no position set for the box the
+        line has to fall back to H or J, so this shape is really “K, then one of the others”.
+      </p>
+    </div>
+    <div class="phone"><div class="top"><span class="chev">‹</span><span class="scr-title">Radio</span></div>
+      <div class="scr" id="scr-K"></div></div>
+  </div>
+</div>
+
+<div class="ask">
+  <h2>What I need from you</h2>
+  <ol>
+    <li><b>H, J or K</b> — and they combine: K falling back to J reads
+      <code>1.1 mi NW</code> when the box knows where it is and <code>EL98oo</code> when it
+      does not.</li>
+    <li><b>Altitude on the row, or only in the panel?</b> All three show it where a station
+      sends one. It is genuinely interesting for a balloon and noise for a house at 0 ft —
+      the rows here show both.</li>
+    <li><b>Collapse repeats?</b> Switch to <b>The 25 repeats</b>. Still open from last round.</li>
+  </ol>
+  <p style="margin:12px 0 0">
+    The box's position is a <b>placeholder</b> in this mock (28.6100, -80.8100). The real one
+    comes from the location core, so K's distances will shift — the shape of the line will not.
+  </p>
+</div>
+</div>
+
+<script>
+const DATA = {"rows": [{"heard_at": "2026-09-03T13:17:00+00:00", "origin": "KC3EFJ", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "!2837.27N/08049.42W$/A=-00085", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Phone"], ["Altitude", "-85 ft"]], "comment": "", "warnings": [], "summary": "Phone", "sym": "/$", "gated": false, "direct": true, "shot": true, "stripped": "", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "-85 ft", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "KC3EFJ", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "!2837.27N/08049.42W$", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Phone"]], "comment": "", "warnings": [], "summary": "Phone", "sym": "/$", "gated": false, "direct": true, "shot": true, "stripped": "", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "WA4IKQ", "relay": null, "kind": "Weather", "kindlabel": "Weather", "text": "@031417z2837.27N/08049.42W_073/003g005t082r000p000P000h88b10141tU2k", "fields": [["Reported at", "day 03, 14:17 UTC, by the station's own clock"], ["Position", "28.6212, -80.8237"], ["Symbol", "Weather station"], ["Wind", "from the ENE (73\u00b0) at 3 mph"], ["Gust", "5 mph"], ["Temperature", "82 \u00b0F (27.8 \u00b0C)"], ["Rain, last hour", "0.00 in"], ["Rain, last 24 hours", "0.00 in"], ["Rain, since midnight", "0.00 in"], ["Humidity", "88 %"], ["Pressure", "1014.1 hPa (29.95 inHg)"], ["Station type", "tU2k \u2014 a weather-software id, not a message"]], "comment": "", "warnings": [], "summary": "82 \u00b0F, from the ENE (73\u00b0) at 3 mph, 88 % humidity", "sym": "/_", "gated": false, "direct": true, "shot": true, "stripped": "82 \u00b0F, from the ENE (73\u00b0) at 3 mph, 88 % humidity", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:31:28.288502+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Position", "kindlabel": "Position", "text": "@290308z2835.13N/08039.04WSPLXDigi U=14.2V. KSC Amateur Radio Club", "fields": [["Reported at", "day 29, 03:08 UTC (station's own clock)"], ["Position", "28.5855, -80.6507"], ["Symbol", "Space shuttle"]], "comment": "PLXDigi U=14.2V. KSC Amateur Radio Club", "warnings": [], "summary": "Space shuttle", "sym": "/S", "gated": false, "direct": true, "shot": false, "stripped": "", "coords": "28.5855, -80.6507", "grid": "EL98qo", "rb": "9.8 mi E", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:24.293424+00:00", "origin": "K4JTT-D", "relay": "N4TDX", "kind": "Position", "kindlabel": "Position", "text": "!2835.81N/08050.93W-/A=00000070cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway", "fields": [["Position", "28.5968, -80.8488"], ["Symbol", "House (VHF home station)"], ["Altitude", "0 ft (0 m)"]], "comment": "70cm MMDVM Voice (DMR) 439.41250MHz +0.0000MHz, APRS for DMRGateway", "warnings": [], "summary": "House (VHF home station)", "sym": "/-", "gated": true, "direct": false, "shot": false, "stripped": "", "coords": "28.5968, -80.8488", "grid": "EL98no", "rb": "2.5 mi WSW", "alt": "0 ft (0 m)", "ago_min": null}, {"heard_at": "2026-09-03T10:30:41.214866+00:00", "origin": "N4TDX-15", "relay": null, "kind": "Other", "kindlabel": "AX.25 beacon", "text": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "fields": [], "comment": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "warnings": ["Not an APRS frame \u2014 a plain AX.25 beacon to the address BEACON."], "summary": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "BPQ Node Stack/iGate/Chat/Full Service BBSMims, Florida", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:30:29.642116+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Weather", "kindlabel": "Weather", "text": "@031030z2837.27N/08049.42W_338/000g000t078r000p000P000h99b10141L000AmbientCWOP.com", "fields": [["Position", "28.6212, -80.8237"], ["Symbol", "Weather station"], ["Wind", "from the NNW (338\u00b0) at 0 mph"], ["Gust", "0 mph"], ["Temperature", "78 \u00b0F (25.6 \u00b0C)"], ["Rain last hour", "0.00 in"], ["Rain last 24h", "0.00 in"], ["Rain since midnight", "0.00 in"], ["Humidity", "99 %"], ["Pressure", "1014.1 hPa (29.95 inHg)"], ["Luminosity", "0 W/m\u00b2"]], "comment": "AmbientCWOP.com", "warnings": [], "summary": "78 \u00b0F, from the NNW (338\u00b0) at 0 mph, 99 % humidity", "sym": "/_", "gated": true, "direct": false, "shot": false, "stripped": "78 \u00b0F, from the NNW (338\u00b0) at 0 mph, 99 % humidity", "coords": "28.6212, -80.8237", "grid": "EL98oo", "rb": "1.1 mi NW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:23:34.062824+00:00", "origin": "WA4IKQ", "relay": null, "kind": "Weather", "kindlabel": "Weather", "text": "_09030625c346s000g000t078r000p000P000h94b10135tU2k", "fields": [["Reported at", "09-03 06:25 UTC (station's own clock)"], ["Wind", "from the NNW (346\u00b0) at 0 mph"], ["Gust", "0 mph"], ["Temperature", "78 \u00b0F (25.6 \u00b0C)"], ["Rain last hour", "0.00 in"], ["Rain last 24h", "0.00 in"], ["Rain since midnight", "0.00 in"], ["Humidity", "94 %"], ["Pressure", "1013.5 hPa (29.93 inHg)"], ["Station type", "tU2k \u2014 a weather-software id, not a message"]], "comment": "", "warnings": ["No position in this frame \u2014 this station's location comes from a separate beacon."], "summary": "78 \u00b0F, from the NNW (346\u00b0) at 0 mph, 94 % humidity", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "78 \u00b0F, from the NNW (346\u00b0) at 0 mph, 94 % humidity", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:25.073674+00:00", "origin": "K4JTT-D", "relay": "N4TDX", "kind": "Other", "kindlabel": "Status", "text": ">Powered by WPSD (https://wpsd.radio)", "fields": [], "comment": "Powered by WPSD (https://wpsd.radio)", "warnings": [], "summary": "Powered by WPSD (https://wpsd.radio)", "sym": "", "gated": true, "direct": false, "shot": false, "stripped": "Powered by WPSD (https://wpsd.radio)", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:17.270439+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";FLMesh-2 *031028z2837.88N/08049.45W`N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info.", "fields": [["Object", "FLMesh-2"], ["State", "live"], ["Reported at", "day 03, 10:28 UTC (station's own clock)"], ["Position", "28.6313, -80.8242"], ["Symbol", "Dish antenna"]], "comment": "N4TDX-Parish-MVFD-PTP pointing North, Channel 60/5Mhz - seanhaga@kd4wle.net for more info.", "warnings": [], "summary": "FLMesh-2 \u2014 Dish antenna", "sym": "/`", "gated": true, "direct": false, "shot": false, "stripped": "FLMesh-2", "coords": "28.6313, -80.8242", "grid": "EL98op", "rb": "1.7 mi NNW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:28:14.800134+00:00", "origin": "KD4WLE", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";442.850  *031028z2837.89N/08049.48WrN4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)", "fields": [["Object", "442.850"], ["State", "live"], ["Reported at", "day 03, 10:28 UTC (station's own clock)"], ["Position", "28.6315, -80.8247"], ["Symbol", "Repeater"]], "comment": "N4TDX UHF Parrish Hospital Mixed Mode/DMR CC 13 (Slot 1 - Dynamic TGs/Slot 2 - Static BM TG 3124968)", "warnings": [], "summary": "442.850 \u2014 Repeater", "sym": "/r", "gated": true, "direct": false, "shot": false, "stripped": "442.850", "coords": "28.6315, -80.8247", "grid": "EL98op", "rb": "1.7 mi NNW", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:27:16.806845+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Other", "kindlabel": "Telemetry", "text": "T#110,190,088,011,068,000,00000000", "fields": [["Sequence", "110"], ["Vin", "14.25 Volt   (raw 190)"], ["Rx1h", "880 Pkt   (raw 088)"], ["Dg1h", "110 Pkt   (raw 011)"], ["Eff1h", "68 Pcnt   (raw 068)"], ["A5", "0 None   (raw 000)"], ["Digital bits", "all off"]], "comment": "", "warnings": [], "summary": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 110 Pkt", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 110 Pkt", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:22:12.793056+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Other", "kindlabel": "Telemetry", "text": "T#109,190,088,012,067,000,00000000", "fields": [["Sequence", "109"], ["Vin", "14.25 Volt   (raw 190)"], ["Rx1h", "880 Pkt   (raw 088)"], ["Dg1h", "120 Pkt   (raw 012)"], ["Eff1h", "67 Pcnt   (raw 067)"], ["A5", "0 None   (raw 000)"], ["Digital bits", "all off"]], "comment": "", "warnings": [], "summary": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 120 Pkt", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "Vin 14.25 Volt, Rx1h 880 Pkt, Dg1h 120 Pkt", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:20:00.420426+00:00", "origin": "N0XIA-4", "relay": null, "kind": "Position", "kindlabel": "Position (Mic-E)", "text": "`m3jq6F>/`On D-Star K1XC, W4AES, W4PLB & KJ4OVA DMR_%", "fields": [["Position", "28.5108, -81.3963"], ["Status", "En Route"], ["Symbol", "Car"], ["Moving", "52 knots (60 mph) heading 242\u00b0 (WSW)"], ["Radio", "Yaesu FTM-400DR"]], "comment": "On D-Star K1XC, W4AES, W4PLB & KJ4OVA DMR", "warnings": [], "summary": "Car \u2014 52 knots (60 mph) heading 242\u00b0 (WSW), En Route", "sym": "/>", "gated": false, "direct": false, "shot": false, "stripped": "52 knots (60 mph) heading 242\u00b0 (WSW), En Route", "coords": "28.5108, -81.3963", "grid": "EL98hm", "rb": "36.2 mi W", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T09:46:00.223174+00:00", "origin": "W1LBR-9", "relay": null, "kind": "Position", "kindlabel": "Position (Mic-E)", "text": "`lBFm!Pk/]\"4\"}=", "fields": [["Position", "28.0923, -80.6403"], ["Status", "Committed"], ["Symbol", "Truck"], ["Moving", "10 knots (12 mph) heading 152\u00b0 (SSE)"], ["Altitude", "11 m (36 ft)"]], "comment": "]=", "warnings": [], "summary": "Truck \u2014 10 knots (12 mph) heading 152\u00b0 (SSE), Committed", "sym": "/k", "gated": false, "direct": false, "shot": false, "stripped": "10 knots (12 mph) heading 152\u00b0 (SSE), Committed", "coords": "28.0923, -80.6403", "grid": "EL98qc", "rb": "37.2 mi SSE", "alt": "11 m (36 ft)", "ago_min": null}, {"heard_at": "2026-09-03T10:17:06.047429+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Message", "kindlabel": "Message", "text": ":N1KSC-1  :BITS.11111111,Telemetry test", "fields": [["To", "N1KSC-1"], ["Kind", "BITS \u2014 telemetry definition"], ["Defines", "11111111,Telemetry test"]], "comment": "", "warnings": [], "summary": "telemetry BITS definition for N1KSC-1", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "telemetry BITS definition for N1KSC-1", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:17:05.656350+00:00", "origin": "N1KSC-1", "relay": null, "kind": "Message", "kindlabel": "Message", "text": ":N1KSC-1  :EQNS.0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0", "fields": [["To", "N1KSC-1"], ["Kind", "EQNS \u2014 telemetry definition"], ["Defines", "0,0.075,0,0,10,0,0,10,0,0,1,0,0,0,0"]], "comment": "", "warnings": [], "summary": "telemetry EQNS definition for N1KSC-1", "sym": "", "gated": false, "direct": true, "shot": false, "stripped": "telemetry EQNS definition for N1KSC-1", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}, {"heard_at": "2026-09-03T10:00:35.464634+00:00", "origin": "N4TDX", "relay": null, "kind": "Other", "kindlabel": "Capabilities", "text": "<IGATE,MSG_CNT=106,LOC_CNT=85", "fields": [["Capability", "IGATE"], ["MSG_CNT", "106"], ["LOC_CNT", "85"]], "comment": "", "warnings": [], "summary": "IGATE, MSG_CNT 106, LOC_CNT 85", "sym": "", "gated": false, "direct": false, "shot": false, "stripped": "IGATE, MSG_CNT 106, LOC_CNT 85", "coords": "", "grid": "", "rb": "", "alt": "", "ago_min": null}], "reps": [{"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 13}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 33}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 120}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 133}, {"heard_at": "2026-09-03T13:17:00+00:00", "origin": "N1MPR-C", "relay": "N4TDX", "kind": "Object", "kindlabel": "Object", "text": ";N1MPR C  *111111z2835.06ND08048.98WaRNG0001 2m Voice (D-Star) 147.58500MHz +0.0000MHz", "fields": [["Object", "N1MPR C"], ["State", "live"], ["Reported at", "day 11, 11:11 UTC, by the station's own clock"], ["Position", "28.5843, -80.8163"], ["Symbol", "D-STAR"], ["Range", "1 miles"]], "comment": "2m Voice (D-Star) 147.58500MHz +0.0000MHz", "warnings": ["Object names are not owned \u2014 any station may transmit the same name."], "summary": "N1MPR C \u2014 D-STAR", "sym": "Da", "gated": true, "direct": false, "shot": true, "stripped": "N1MPR C", "coords": "28.5843, -80.8163", "grid": "EL98oo", "rb": "1.8 mi SSW", "alt": "", "ago_min": 180}], "home": [28.61, -80.81]};
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* THE RULE. `p.stripped` is the summary with the symbol name already removed - the icon
+   is drawn, so its name is never written here. What differs between H, J and K is only
+   what fills the line when stripping leaves nothing. */
+const PLACE = {
+  H: p => [p.coords, p.alt].filter(Boolean).join(" · "),
+  J: p => [p.grid,   p.alt].filter(Boolean).join(" · "),
+  K: p => [p.rb,     p.alt].filter(Boolean).join(" · "),
+};
+function reading(p, shape){
+  return p.stripped || PLACE[shape](p) || "";
+}
+/* Only ever the station's own free text. An altitude extension or a weather-software id
+   is a FIELD; it never reaches this slot pretending a person typed it. */
+const quote = p => p.comment || (p.stripped || p.coords ? "" : p.text);
+const prov  = p => p.direct ? "direct" : (p.gated ? "gated" : "rf");
+const ago   = m => m == null ? "" : (m < 60 ? m + "m" : Math.round(m/60) + "h");
+const glyph = p => p.sym ? '<span class="sym own">◈</span>' : '<span class="sym kind">·</span>';
+
+function panel(p){
+  const rows = p.fields.map(([k,v]) =>
+    `<dt>${esc(k)}</dt><dd class="${k==="Altitude"||k==="Station type"?"added":""}">${esc(v)}</dd>`
+  ).join("");
+  return `<div class="panel">
+    ${rows ? `<dl class="fields">${rows}</dl>` : ""}
+    ${(p.warnings||[]).map(w => `<p class="warn">${esc(w)}</p>`).join("")}
+    <details class="rawwrap"><summary>The frame as heard</summary><pre>${esc(p.text)}</pre></details>
+  </div>`;
+}
+
+function row(p, i, shape, open, repeat){
+  const q = quote(p), r = reading(p, shape);
+  return `<div class="pk ${p.shot?"shot":""}">
+    ${p.shot?'<span class="shotmark">from your screen</span>':""}
+    <button class="rowbtn" type="button" data-i="${i}" aria-expanded="${open}">
+      ${glyph(p)}
+      <span class="body">
+        <span class="title">${esc(p.kindlabel)}</span>
+        ${r ? `<span class="reading">${esc(r)}</span>` : ""}
+        ${q ? `<span class="theirs">${esc(q)}</span>` : ""}
+        <span class="meta"><span class="badge b-${prov(p)}">${prov(p)}</span>${
+          p.relay ? "relayed by " + esc(p.relay) : "heard on the air"
+        }${repeat ? '<span class="rep">heard 25× · every ~20m</span>' : ""}</span>
+      </span>
+      <span class="when">${ago(p.ago_min ?? 14)}</span>
+    </button>${open ? panel(p) : ""}</div>`;
+}
+
+const openRow = {H:null, J:null, K:null};
+let view = "mix", collapse = false;
+
+function render(){
+  const reps = view === "reps";
+  const rows = reps ? (collapse ? DATA.reps.slice(0,1) : DATA.reps) : DATA.rows;
+  for (const shape of ["H","J","K"]){
+    const head = `<div class="sthead"><span class="c">${
+      reps ? "N1MPR-C" : "Everything heard"}</span><span class="g">${
+      reps ? "one object, re-announced" : "15 stations"}</span></div>
+      <div class="sec">Packets<span class="count">${
+        reps ? (collapse ? "25 heard, 1 shown" : "25 heard") : rows.length + " shown"}</span></div>
+      ${reps ? `<button class="collapsebtn" type="button" data-collapse>${
+        collapse ? "Show every repeat" : "Collapse the repeats"}</button>` : ""}`;
+    document.getElementById("scr-" + shape).innerHTML =
+      head + rows.map((p,i) => row(p, i, shape, openRow[shape] === i, reps && collapse)).join("");
+  }
+}
+
+document.addEventListener("click", e => {
+  if (e.target.closest("[data-collapse]")){ collapse = !collapse; return render(); }
+  const btn = e.target.closest(".rowbtn");
+  if (btn){
+    const shape = btn.closest(".scr").id.slice(-1);
+    const i = +btn.dataset.i;
+    openRow[shape] = openRow[shape] === i ? null : i;
+    return render();
+  }
+  const tab = e.target.closest("[data-view]");
+  if (tab){
+    view = tab.dataset.view; collapse = false;
+    for (const b of document.querySelectorAll("[data-view]"))
+      b.setAttribute("aria-pressed", String(b === tab));
+    openRow.H = openRow.J = openRow.K = null;
+    render();
+  }
+});
+render();
+</script>

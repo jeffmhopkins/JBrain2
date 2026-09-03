@@ -136,6 +136,12 @@ class Explained:
     warnings: list[str] = field(default_factory=list)
     """What could not be read, or what a reader must not assume. Shown, not swallowed."""
 
+    latitude: float | None = None
+    longitude: float | None = None
+    """The position as NUMBERS, when the frame carried one. The `Position` field is for
+    reading; these are for computing with — a caller working out how far away a station
+    is should not have to parse its own display string back into floats."""
+
 
 def _compass(deg: float) -> str:
     return _COMPASS[int((deg % 360) / 22.5 + 0.5) % 16]
@@ -207,9 +213,12 @@ def _extensions(rest: str) -> tuple[list[Field], str]:
     if m:
         out.append(Field("Range", f"{int(m.group(1))} miles", m.group(0)))
         rest = rest[7:]
-    # SIX digits exactly, and a leading minus is legal. A greedy `\d+` reads the real
-    # frame `/A=00000070cm MMDVM…` as seventy million feet.
-    m = re.search(r"/A=(-?\d{6})", rest)
+    # SIX CHARACTERS exactly, and a leading minus is one of them — `/A=-00085` carries
+    # five digits, not six, which is why the owner's own KC3EFJ beacons were leaving
+    # `/A=-00085` in the comment to be quoted as if a person had typed it. A greedy
+    # `\d+` has the opposite failure: it reads the real frame `/A=00000070cm MMDVM…`
+    # as seventy million feet.
+    m = re.search(r"/A=(-\d{5}|\d{6})", rest)
     if m:
         feet = int(m.group(1))
         out.append(Field("Altitude", f"{feet:,} ft ({round(feet * 0.3048):,} m)", m.group(0)))
@@ -466,6 +475,35 @@ def collect_definitions(frames: list[Heard]) -> dict[str, dict[str, list[str]]]:
     return out
 
 
+# A weather report's tail is the software and unit type that produced it — `tU2k` is an
+# Ultimeter, `.DsVP` a Davis. It is machine identification, so like the Mic-E device
+# bytes above it comes OFF the comment: quoting it in the slot that means "the station's
+# own words" attributes a protocol token to a person. Only stripped when it is the WHOLE
+# remainder, so a real comment is never eaten.
+_WX_SOFTWARE = re.compile(r"^[a-zA-Z][a-zA-Z0-9]{2,4}$")
+
+
+def _weather_software(comment: str) -> tuple[str, str]:
+    """`(station type, what is left of the comment)`."""
+    text = comment.strip()
+    return (text, "") if _WX_SOFTWARE.match(text) else ("", comment)
+
+
+def _grid(lat: float, lon: float) -> str:
+    """The Maidenhead locator, six characters.
+
+    Computed from the frame alone — no network, no other data — which is what makes it
+    the honest fallback when nothing else is known about where the reader is. Hams read
+    these natively; `EL98` is the Space Coast.
+    """
+    lon, lat = lon + 180.0, lat + 90.0
+    field_ = chr(65 + int(lon // 20)) + chr(65 + int(lat // 10))
+    lon, lat = lon % 20, lat % 10
+    square = f"{int(lon // 2)}{int(lat)}"
+    lon, lat = lon % 2, lat % 1
+    return field_ + square + chr(97 + int(lon * 12)) + chr(97 + int(lat * 24))
+
+
 def _summarise(kind_label: str, fields: list[Field], comment: str) -> str:
     """One line, in the app's words — or nothing when the station's own text says it.
 
@@ -586,6 +624,9 @@ def _explain(heard: Heard, definitions: dict[str, list[str]]) -> Explained:
         weather, comment, more = _weather(body)
         fields += weather
         warnings += more
+        software, comment = _weather_software(comment)
+        if software:
+            fields.append(Field("Station type", software, software))
     elif label == "Telemetry":
         fields, warnings = _telemetry(text, definitions)
     elif label == "Object":
@@ -642,12 +683,27 @@ def _explain(heard: Heard, definitions: dict[str, list[str]]) -> Explained:
             label = "AX.25 beacon"
             warnings.append("Not an APRS frame — a plain AX.25 beacon addressed to BEACON.")
 
+    # The grid square rides along with any position, because it is free once the frame is
+    # parsed and it is the one location form that needs nothing but the frame.
+    lat = lon = None
+    for f in fields:
+        if f.name == "Position" and "," in f.value:
+            try:
+                lat, lon = (float(x) for x in f.value.split(",", 1))
+            except ValueError:
+                lat = lon = None
+            break
+    if lat is not None and lon is not None:
+        fields.append(Field("Grid square", _grid(lat, lon)))
+
     return Explained(
         summary=_summarise(label, fields, comment),
         fields=fields,
         comment=comment,
         symbol=symbol,
         warnings=warnings,
+        latitude=lat,
+        longitude=lon,
     )
 
 

@@ -112,6 +112,8 @@ function packet(over: Record<string, unknown> = {}) {
     warnings: [],
     relay: "N4TDX",
     audio_level: null,
+    lat: 28.6212,
+    lon: -80.8237,
     frame: { source: "N4TDX", destination: "APDG02", path: ["WIDE1-1"] },
     ...over,
   };
@@ -375,8 +377,18 @@ describe("the APRS tab", () => {
   it("keeps a row expanded when a poll prepends a newer packet", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
     vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
-    const older = packet({ id: "older", summary: "Car — 52 knots (60 mph) heading 242° (WSW)" });
-    const newer = packet({ id: "newer", summary: "Truck — 12 knots (14 mph) heading 90° (E)" });
+    // Distinct `text`, because that is what makes two frames two facts — a fixture
+    // differing only in its decoded summary describes one frame, and folds.
+    const older = packet({
+      id: "older",
+      summary: "Car — 52 knots (60 mph) heading 242° (WSW)",
+      text: "!2835.06ND08048.98W>242/052",
+    });
+    const newer = packet({
+      id: "newer",
+      summary: "Truck — 12 knots (14 mph) heading 90° (E)",
+      text: "!2835.06ND08048.98W>090/012",
+    });
     vi.spyOn(api, "getAprsStation")
       .mockResolvedValueOnce(station("N1MPR-C", { packets: [older] }) as never)
       .mockResolvedValue(station("N1MPR-C", { packets: [newer, older] }) as never);
@@ -435,6 +447,141 @@ describe("the APRS tab", () => {
     await screen.findByRole("button", { expanded: false, name: /52 knots/ });
 
     expect(container.querySelector(".aprs-sig")).toBeNull();
+  });
+
+  it("says where a station is, once stripping the icon's name leaves nothing", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // A plain position: its whole reading IS the symbol name, so the icon rule empties
+    // it. Without a fallback the row said the bare word "Position" — which is what the
+    // owner's own screen showed.
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("KC3EFJ", {
+        packets: [
+          packet({
+            kind: "Position",
+            summary: "Phone",
+            symbol: "/$",
+            comment: "",
+            fields: [
+              ["Position", "28.6212, -80.8237"],
+              ["Symbol", "Phone"],
+              ["Altitude", "-85 ft (-26 m)"],
+              ["Grid square", "EL98oo"],
+            ],
+          }),
+        ],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    const row = await screen.findByRole("button", { expanded: false, name: /Position/ });
+
+    // With no location allowed it falls through to the grid square — which needs
+    // nothing but the frame — plus the altitude the owner asked to see.
+    expect(row).toHaveTextContent("EL98oo");
+    expect(row).toHaveTextContent("-85 ft");
+    // And never the icon's own name AS TEXT. It still belongs in the glyph's accessible
+    // title, which is how a screen-reader user gets the one fact a sighted reader gets
+    // from the picture — so this checks the written lines, not the whole subtree.
+    expect(row.querySelector(".aprs-said")?.textContent).toBe("EL98oo · -85 ft");
+    expect(row.querySelector(".aprs-packet-title")?.textContent).toBe("Position");
+    expect(row.querySelector("svg title")?.textContent).toBe("Phone");
+  });
+
+  it("measures from the phone when the reader allows it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("KC3EFJ", {
+        packets: [
+          packet({
+            summary: "Phone",
+            symbol: "/$",
+            comment: "",
+            fields: [
+              ["Symbol", "Phone"],
+              ["Grid square", "EL98oo"],
+            ],
+          }),
+        ],
+      }) as never,
+    );
+    vi.stubGlobal("navigator", {
+      geolocation: {
+        getCurrentPosition: (ok: PositionCallback) =>
+          ok({
+            coords: { latitude: 28.61, longitude: -80.81, accuracy: 15 },
+          } as GeolocationPosition),
+      },
+    });
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+
+    // Range beats the grid when the phone knows where it is: it answers "how far is
+    // that from me", which is also this box's reception range.
+    expect(await screen.findByText(/1\.1 mi NW/)).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("folds a run of identical beacons into one row that says how many", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // 25 of the owner's rows were one D-STAR object re-announced every twenty minutes.
+    const beacon = (id: string) =>
+      packet({
+        id,
+        kind: "Object",
+        summary: "N1MPR C",
+        text: ";N1MPR C  *111111z2835.06ND08048.98Wa",
+      });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("N1MPR-C", { packets: [beacon("a"), beacon("b"), beacon("c")] }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+
+    expect(await screen.findByText("heard 3×")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /N1MPR C/ })).toHaveLength(1);
+  });
+
+  it("keeps two readings apart even when they arrive back to back", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // Only byte-identical payloads fold. Two weather readings a degree apart are two
+    // facts, and collapsing them would hide the change that makes them worth having.
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(
+      station("WA4IKQ", {
+        packets: [
+          packet({ id: "w1", kind: "Weather", summary: "82 °F", text: "...t082..." }),
+          packet({ id: "w2", kind: "Weather", summary: "81 °F", text: "...t081..." }),
+        ],
+      }) as never,
+    );
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("KE8XYZ-9"));
+    await screen.findByText("82 °F");
+
+    expect(screen.getByText("81 °F")).toBeInTheDocument();
+    expect(screen.queryByText(/heard \d+×/)).toBeNull();
+  });
+
+  it("shows the frame without a second tap once the card is open", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    vi.spyOn(api, "getAprsStation").mockResolvedValue(station("N1MPR-C") as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("N1MPR-C"));
+    fireEvent.click(await screen.findByRole("button", { expanded: false, name: /52 knots/ }));
+
+    // A reader who expanded the card has already asked to see more; a second
+    // disclosure was a tap that bought nothing.
+    expect(await screen.findByText(/2835\.06ND/)).toBeVisible();
   });
 
   it("keeps a way out when a station fails to load", async () => {

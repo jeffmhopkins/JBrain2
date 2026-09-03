@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** Shipped · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** Shipped, with the F5 row shape reopened for round 6 · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -274,7 +274,108 @@ qualifications on the record:
    liveness, but it means a broken INSERT stops the log *silently* — which is exactly
    why F1's live-path test writes through real Postgres.
 
-## F5 — what a packet SAYS (GUI gate open)
+## F5b — what the row SHOWS (GUI gate REOPENED, `../mocks/aprs/j-what-a-row-shows.html`)
+
+Shape D shipped, and the owner's own screen broke it three ways in the first hour. Two of
+them the round could not have caught, because of how its sample was built:
+
+1. **A position row rendered as the bare word "Position".** D's rule was *the icon is not
+   restated as text* — but a plain position's whole reading IS the symbol name, so the rule
+   stripped it to empty, and the coordinates are a `field`, one tap down. The row lost the
+   only fact it exists to carry. **Zero of D's 58 sample packets hit this**, because every
+   one of them happened to carry a comment. The sample hid the failure mode, and no
+   amount of looking at the mock would have shown it.
+2. **`/A=-00085` and `tU2k` in the quoted monospace slot**, which by D's own rule means
+   *the station's own words*. One is the APRS altitude extension, the other a
+   weather-software id. The row attributed protocol bytes to a person — the exact thing
+   the two-voice rule exists to prevent. `tU2k` was already in D's data, in 1 row of 58.
+3. **Twenty-five identical beacons**, three lines each: N1MPR-C re-announcing one D-STAR
+   object every twenty minutes.
+
+1 and 2 are decoder work and land whichever shape wins: the altitude extension and the
+weather-station type become FIELDS, and nothing reaches the quoted slot unless it is free
+text a human typed. 3 is a question about the list, not the row.
+
+Round 6 (`j-what-a-row-shows.html`) put three layouts on real traffic. **Its E was
+rejected**, and on the one point it had got wrong: E proposed relaxing the icon rule for a
+bare position (`Phone at 28.6212, -80.8237`). The owner's answer was that the icon is
+already displayed and its name is not to be restated in the card, full stop. That is the
+right call — the relaxation would have written the icon's name on exactly the rows where
+the icon is the *only* thing identifying the station.
+
+**Round 7 — `../mocks/aprs/k-what-the-row-says.html` (open).** With the rule absolute, the
+symbol name comes out of **nine of nineteen** real rows, and everywhere except a bare
+position that is an improvement: objects become their own names (`N1MPR C`, `442.850`) and
+Mic-E rows open on the motion. A bare position's line, though, empties completely — so the
+round asks what fills it, in the shipped layout, with layout held constant:
+
+| | Fills the line with | Costs |
+|---|---|---|
+| **H** | the coordinates, `28.6212, -80.8237` | the least human line on the screen; two stations a mile apart look identical |
+| **J** | the Maidenhead grid, `EL98oo` | means nothing to a non-ham, and names a 3×4 mile box rather than a point |
+| **K** | range and bearing, `1.1 mi NW` | needs the box's own position, so it is really "K, falling back to H or J" |
+
+They compose: K falling back to J is one line of code and covers the unset case.
+
+**Round 8 — `../mocks/aprs/l-borrowed-structure.html` (open).** Three fixes and a survey.
+
+*The icons were fake in rounds 6 and 7* — a placeholder diamond stood in for every symbol,
+which is exactly why nothing looked different between a weather report and an object. Round
+8 pulls the real glyph data out of `aprsGlyphs.ts` and resolves it the way `aprsIcons.tsx`
+does, overlays included, so the phone, the thermometer and the `D`-overlaid D-STAR diamond
+are the drawings that actually ship. Symbol-less kinds take a house icon on the neutral tint,
+because that is OUR inference and not a claim the station made. *The frame is always visible*
+once a card is open, rather than behind a second disclosure.
+
+*What the other clients do*, and what is worth taking:
+
+- **aprs.fi** never shows a bare coordinate. Its info page gives the Maidenhead locator AND
+  nearby towns with distance and bearing from each — location relative to something a person
+  knows, and both forms rather than one. That is the strongest argument yet for round 7's
+  **K + J together**, and its panel order (where → when → motion → the station's own readings
+  → path) is now the expanded card's order. Not taken: town names need a gazetteer the box
+  does not carry, and distance from *your box* is the better anchor for a receiver log — it
+  states your own reception range, which is the question a heard log exists to answer.
+- **APRSdroid** puts the station's text in monospace under proportional metadata — the same
+  trust boundary this card draws with typeface, arrived at independently. Not taken: it shows
+  the body essentially raw, which is what the owner's screenshots argued against.
+- **None of them** surface how a packet reached you. They are internet-fed, so direct/gated/RF
+  is not a distinction they have to draw; on a box with an antenna it separates a station you
+  can work from one that arrived over the internet, so the badge stays.
+
+**Decided (owner, 2026-09-03): range and bearing from the PWA's own location; altitude on
+the row; collapse repeats.** All three are built.
+
+The location choice is better than the one this plan proposed. Anchoring to the PWA rather
+than to the box means the coordinate is the phone's, so **it never leaves the device** — the
+distance is computed in `whereYouAre.ts` from a fix the browser hands the page, and nothing
+about where the reader is reaches the server. It is also the honest anchor for a hand-held
+screen: it answers *how far is that from me*, which on a box at home is also its reception
+range. The cost is that it measures from the READER, so away from home a station the box
+heard next door reads as a hundred miles off — true rather than wrong, and why the panel
+spells out "from you" where the row's short form cannot.
+
+Geolocation is allowed to fail, and failing is the common case rather than the edge:
+refused, no GPS, a fix that never lands. Every path falls through to the **grid square**,
+which needs nothing but the frame. The prompt is asked on opening a station, not at app
+start — a permission request with no visible reason gets refused.
+
+Two decoder faults that fed the same rows are fixed with it. `/A=` carries **six
+characters**, and a leading minus is one of them, so the old `-?\d{6}` left `/A=-00085`
+in the comment on every KC3EFJ beacon to be quoted as if a person had typed it. A weather
+report's trailing software id (`tU2k` — an Ultimeter) is now a **Station type** field for
+the same reason, and only when it is the whole remainder, so a real comment survives.
+
+Repeats fold only when **consecutive and byte-identical**: two weather readings a degree
+apart are two facts, and collapsing them would hide the change that makes them worth
+having.
+
+**The lesson worth keeping** is about mock data, not about rows: a sample drawn from real
+traffic is still a *sample*, and D's happened to exclude the empty case entirely. A mock
+round should include the degenerate rows on purpose — the packet with no comment, the
+frame that decodes to nothing — because those are where a layout rule turns into a blank.
+
+## F5 — what a packet SAYS (round 5, shape D)
 
 Asked for after the roster shipped: tapping a packet card should turn it into plain
 English. Four mocks on real traffic — `../mocks/aprs/f-packet-inline.html` (expand in place),
