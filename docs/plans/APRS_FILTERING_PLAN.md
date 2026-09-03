@@ -230,6 +230,27 @@ kept the frame on the row and put the meaning one tap away; D inverts it. On thi
 that is plainly right — the resting list was `` `m3jq6F>/`On D-Star ``, `T#110,190,088` and
 `@031030z2837.27N/08049.42W_338/000g000`, three lines of which none can be read.
 
+**Icons.** The standard APRS symbol set is part of the ask, and measuring the channel found
+a gap: four of the fifteen symbols on the air are **overlaid** — `I#` is N4TDX identifying
+itself as an IGate, `Wa` is the Winlink gateway, `D&`/`Da` are the D-STAR pair — and the
+first cut of the decoder treated the overlay character as a table and gave up. The rule is
+that a table character which is neither `/` nor `\` selects the ALTERNATE table and is drawn
+*on* the icon.
+
+`../research/APRS_SYMBOLS.md` carries the tables and settles the rendering question. We
+**draw our own glyphs** rather than embed a set: `hessu/aprs-symbols` ships no LICENSE, marks
+69 entries "Licensing: Unknown", carries vendor logos its own copyright notice says to check
+for yourself, and is full-colour raster with drop shadows — illegible on `--bg #0E0F11`. The
+app already has the mechanism: `components/icons.tsx` is inlined Lucide-style outlines behind
+a shared `<Icon>` wrapper, and these are just more of its children. Adding a symbol later is
+one line in the label dict; the glyph is optional, because labels and drawings are decoupled.
+An unknown symbol renders as the international circle-and-slash, which is what the spec
+itself prescribes — honest, rather than blank or guessed.
+
+Three label corrections the tables forced, all live on this channel: `/$` is **Phone** (not
+Bank/ATM — that is `\$` on the alternate table), `/r` is **Repeater** (renamed from Antenna
+in 2007), `/[` is **Person** (renamed from Jogger in 2015).
+
 Two consequences that shape the build:
 
 - **Two voices, told apart by typeface.** The derived sentence is the app's, in the system

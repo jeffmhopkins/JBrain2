@@ -575,6 +575,13 @@ unrecognised, and stop.
 
 ## 2. Symbols — every one present, and where the table comes from
 
+> **Superseded by `APRS_SYMBOLS.md`.** This section was written from APRS101
+> Appendix 2 (2000), which is stale on 18 codes — including two on this channel: `/r` is
+> **Repeater** (renamed from Antenna in 2007), `/[` is **Person** (renamed from Jogger in
+> 2015). `/$` is **Phone**; "Bank or ATM" is `\$` on the ALTERNATE table. The shelter
+> family lives on `\z`, not `/z`. And `hessu/aprs-symbols` is not usable artwork: no
+> LICENSE file, 69 entries marked "Licensing: Unknown", vendor logos, raster only.
+
 The symbol is a **table identifier + code** pair. Table `/` = Primary, `\` = Alternate, and any
 other character (`0`–`9`, `A`–`Z`, or `a`–`j` in compressed reports) means *Alternate table with
 that character overlaid on the icon* (ch.20 p.91).
