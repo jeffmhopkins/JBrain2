@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.sdr.classify import base_call, classify
+from jbrain.sdr.explain import collect_definitions, explain, kind_label
 
 # The four ranges from the mock's segmented control. Three NEST — "3 days" contains "1
 # day" — and `old` is the complement of a week, the one exclusive bucket and the only one
@@ -55,6 +56,9 @@ _BOUNDED_WINDOWS = ("1d", "3d", "1w")
 # because a screen showing a thousand frames is a screen nobody reads.
 MAX_STATIONS = 300
 MAX_PACKETS = 200
+# How far back to look for a station's telemetry definitions. They are re-sent on a slow
+# cycle, so a bounded scan of its recent messages finds them without reading its history.
+_DEFINITION_SCAN = 40
 
 # Only classified rows can be grouped by sender. Rows the sweep has not reached yet are
 # counted separately and reported rather than dropped silently — a roster that is missing
@@ -66,6 +70,54 @@ _CLASSIFIED = "origin_call IS NOT NULL"
 def _window(window: str | None) -> tuple[str, str]:
     chosen = window if window in WINDOWS else DEFAULT_WINDOW
     return chosen, WINDOWS[chosen]
+
+
+def _packet(row: Any, definitions: dict[str, list[str]]) -> dict[str, Any]:
+    """One heard frame, decoded into what the card shows.
+
+    Derived on READ rather than stored. The frame itself is in `raw` and never changes,
+    so a better decoder improves every row that has ever been logged the moment it ships
+    — the same reasoning that made the classifier's columns a cache in the first place.
+    Only what the SQL has to group and filter on is persisted."""
+    heard = classify(
+        str(row["source"] or ""),
+        str(row["info"] or ""),
+        list(row["path"] or []),
+        str(row["raw"] or ""),
+    )
+    said = explain(heard, definitions=definitions)
+    return {
+        # The row's identity. Without it the client keys on the array index, and every
+        # poll that prepends a frame remounts the whole list — which is invisible until a
+        # row holds state, and is already costing a screen-reader user their focus.
+        "id": str(row["id"]),
+        "heard_at": row["heard_at"].isoformat(),
+        # TWO different questions, so two fields. `kind` is what the row's title says —
+        # Telemetry, Status, Capabilities — and `bucket` is the coarse stored kind the
+        # chips filter on. They differ on purpose: five chips are a control you can aim,
+        # and "Other" as a row title tells the reader nothing. One field serving both
+        # would force the row to lie or the chips to sprawl.
+        "kind": kind_label(heard),
+        "bucket": row["kind"],
+        "gated": bool(row["gated"]),
+        "direct": bool(row["heard_direct"]),
+        # The EFFECTIVE info — the payload from inside a third-party wrapper, not the
+        # wrapper itself.
+        "text": heard.text,
+        "summary": said.summary,
+        "fields": [[f.name, f.value] for f in said.fields],
+        "comment": said.comment,
+        "symbol": said.symbol,
+        "warnings": said.warnings,
+        # The frame as heard, so the sentence above it can always be checked. This is the
+        # only place the "gated via N4TDX" claim becomes verifiable, because the row
+        # deliberately shows the inner payload rather than the wrapper.
+        "frame": {
+            "source": str(row["source"] or ""),
+            "destination": str(row["destination"] or ""),
+            "path": list(row["path"] or []),
+        },
+    }
 
 
 def _relay(source: str, origin: str) -> str | None:
@@ -290,12 +342,41 @@ class StationsReader:
                 .all()
             )
 
+            # Telemetry means nothing without the station's own PARM/UNIT/EQNS messages,
+            # and those are ordinary packets in the same table. One extra bounded read
+            # per station detail, not per packet.
+            definition_rows = (
+                (
+                    await s.execute(
+                        text(
+                            "SELECT source, path, info, raw FROM app.aprs_packets"
+                            " WHERE origin_call = :call AND kind = 'Message'"
+                            " ORDER BY heard_at DESC LIMIT :n"
+                        ),
+                        {"call": call, "n": _DEFINITION_SCAN},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            definitions = collect_definitions(
+                [
+                    classify(
+                        str(d["source"] or ""),
+                        str(d["info"] or ""),
+                        list(d["path"] or []),
+                        str(d["raw"] or ""),
+                    )
+                    for d in definition_rows
+                ]
+            ).get(call, {})
+
             rows = (
                 (
                     await s.execute(
                         text(
-                            "SELECT heard_at, source, path, info, raw, kind, gated,"
-                            " heard_direct FROM app.aprs_packets"
+                            "SELECT id, heard_at, source, destination, path, info, raw,"
+                            " kind, gated, heard_direct FROM app.aprs_packets"
                             f" WHERE origin_call = :call AND {predicate}{wanted_sql}"
                             " ORDER BY heard_at DESC LIMIT :limit"
                         ),
@@ -325,23 +406,5 @@ class StationsReader:
             "has_older": overall["w_old"] > 0,
             "older": overall["w_old"],
             "kind_packets": {r["kind"]: r["packets"] for r in kind_rows if r["kind"]},
-            "packets": [
-                {
-                    "heard_at": r["heard_at"].isoformat(),
-                    "kind": r["kind"],
-                    "gated": bool(r["gated"]),
-                    "direct": bool(r["heard_direct"]),
-                    # The EFFECTIVE info — the payload from inside a third-party wrapper,
-                    # not the wrapper. Derived on read rather than stored: it is display
-                    # text, and only the columns the SQL groups and filters on need to be
-                    # persisted.
-                    "text": classify(
-                        str(r["source"] or ""),
-                        str(r["info"] or ""),
-                        list(r["path"] or []),
-                        str(r["raw"] or ""),
-                    ).text,
-                }
-                for r in rows
-            ],
+            "packets": [_packet(r, definitions) for r in rows],
         }
