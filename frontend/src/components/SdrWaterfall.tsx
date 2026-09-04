@@ -1,4 +1,4 @@
-// The live waterfall: one row a second, newest at the top.
+// The live waterfall: one row a second, newest at the bottom, history rising.
 //
 // The rows come off `sdrSpectrum.ts` and the colours off `sdrWaterfall.ts`; this draws
 // them and nothing else. Deliberately thin, because the two halves that can be silently

@@ -39,6 +39,7 @@ that looks like a dead radio several seconds after the thing that actually cause
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import os
 import dataclasses
@@ -140,6 +141,16 @@ SPECTRUM_MAX_BINS = 4096
 #: import, rather than per launch: it is a property of the image, and a `which` on every
 #: retune is a syscall for an answer that cannot have changed.
 _LINE_BUFFERED = shutil.which("stdbuf") is not None
+
+#: How long a freshly launched pipeline is given to prove it did not die on the spot.
+#: `rtl_fm` and `rtl_power` both fail in MILLISECONDS when the device cannot be opened —
+#: they print the reason and exit — so this waits for an answer that is already there
+#: rather than for anything to settle. It is paid on every start, which is the cost of
+#: a 200 meaning "the radio opened" instead of "a process was spawned".
+STARTUP_GRACE_S = 0.4
+#: How many lines of a tool's own stderr to keep for a refusal. Enough to carry
+#: librtlsdr's device list, which is what says WHICH radio it could not find.
+_LOG_TAIL = 12
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
@@ -654,10 +665,15 @@ class Session:
         # One way, set by `stop`. A released session must never relaunch a pipeline: see
         # `tune`, where the alternative is an rtl_fm holding a dongle nothing can see.
         self._released = False
+        # The tool's own last words, for a refusal. Without them "the radio did not
+        # start" is untraceable from the PWA, and the reason is sitting in a container
+        # log the owner has no way to read (CLAUDE.md #10).
+        self._tail: collections.deque[str] = collections.deque(maxlen=_LOG_TAIL)
         self._rtl: subprocess.Popen[bytes] | None = None
         self._enc: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
         self._start_pipeline()
+        self._confirm_started()
 
     # ---- pipeline -------------------------------------------------------------
 
@@ -892,6 +908,33 @@ class Session:
         with self._lock:
             self._frames.discard(sub)
 
+    def _confirm_started(self) -> None:
+        """Refuse a session whose radio could not be opened.
+
+        Without this, `start` answers 200 for a pipeline that has ALREADY exited: the
+        api reports a session, the omnibox lights, and a second later the tuner reaps a
+        dead session with nothing anywhere saying why. The only trace is a line in a
+        container log, which is precisely what the owner cannot read (CLAUDE.md #10).
+
+        MEASURED on the box 2026-09-04: a dongle whose USB descriptors had stopped
+        answering gave `No matching devices found` and exited in milliseconds, and the
+        sweep built on it reported `complete: true` with zero rows. A success over a
+        measurement that did not happen is the worst answer available."""
+        deadline = time.time() + STARTUP_GRACE_S
+        while time.time() < deadline and self.alive:
+            time.sleep(0.02)
+        if self.alive:
+            return
+        # Give the log drain the moment it needs to have read the tool's complaint —
+        # the process is already gone, so this is a read of a pipe that is closed.
+        for thread in self._threads:
+            thread.join(timeout=0.2)
+        said = self.tail or "it exited without saying why"
+        self._released = True
+        self._stopping = True
+        self._kill()
+        raise SdrError(f"the radio did not start: {said}")
+
     def _start_packet_pipeline(self) -> None:
         """rtl_fm -> direwolf. No encoder, because there is no audio to serve.
 
@@ -1124,6 +1167,7 @@ KISSPORT {self.kiss_port}
             for line in rtl.stderr:
                 text = line.decode("utf-8", "replace").rstrip()
                 if text:
+                    self._tail.append(text)
                     print(f"[rtl_fm] {text}", flush=True)  # noqa: T201
         except (ValueError, OSError):
             pass  # the process went away; teardown handles it
@@ -1267,13 +1311,26 @@ KISSPORT {self.kiss_port}
                         pass
 
     def _kill(self) -> None:
+        """SIGTERM, then SIGKILL only if it will not go.
+
+        Not politeness: `rtl_fm` and `rtl_power` install a handler that cancels the
+        pending async USB transfer and CLOSES THE DEVICE. SIGKILL never runs it, so the
+        RTL2832U is left with transfers submitted, and a device torn down that way can
+        stop answering the descriptor reads librtlsdr does to enumerate it — after which
+        every `-d <serial>` lookup fails and the radio looks absent while sysfs still
+        lists it. Two seconds is far more than the handler needs; the kill is still
+        there for a tool that has genuinely wedged."""
         for proc in (self._rtl, self._enc):
             if proc is None:
                 continue
             try:
-                proc.kill()
-                proc.wait(timeout=3)
-            except (OSError, subprocess.TimeoutExpired):
+                proc.terminate()
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    proc.kill()
+                    proc.wait(timeout=3)
+            except OSError:
                 pass
         self._rtl = self._enc = None
         # The per-session direwolf config would otherwise accumulate in /tmp for the
@@ -1340,6 +1397,10 @@ KISSPORT {self.kiss_port}
             self._stopping = False
             apply()
             self._start_pipeline()
+            # A retune onto a radio that has stopped answering fails the same way a
+            # start does, and the route turns it into the same sentence rather than a
+            # session that quietly disappears a second later.
+            self._confirm_started()
         finally:
             # Cleared only after the pumps have exited and the new ones are up, so the
             # old pump's teardown sees it set and keeps every listener attached. If the
@@ -1387,6 +1448,15 @@ KISSPORT {self.kiss_port}
         # session that never closed its streams would hold a server thread apiece,
         # each still reporting a healthy picture of a radio nothing is watching.
         self._end_frames()
+
+    @property
+    def tail(self) -> str:
+        """The tool's own last words, for a refusal that has to name a cause.
+
+        A LIVE read of the deque, so it carries whatever had been printed by the time
+        the caller asked — which for a pipeline that died on the spot is the whole
+        complaint, librtlsdr's device list included."""
+        return "; ".join(self._tail)
 
     @property
     def alive(self) -> bool:

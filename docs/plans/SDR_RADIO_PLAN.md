@@ -361,6 +361,13 @@ the dedicated one. What the measurement settled, in order of how much it was a g
   grant; it now reports the grant as soon as a row has arrived. Two numbers for one
   measured fact, and the more prominent one was the wrong one.
 
+**The picture runs bottom-up** (owner's call, 2026-09-04): newest row against the
+frequency axis it is measured on, history rising away from it. Built the other way
+first — SDR# and gqrx both default to newest-at-top — so this is a preference between
+two real conventions rather than a correction. It is indexed from the bottom rather
+than drawn and flipped, because a half-full waterfall flipped whole would put its blank
+half over the newest rows.
+
 Three decisions worth keeping:
 
 - **The colour scale is calibrated once, then held.** Re-taking it per row renormalises
@@ -378,6 +385,42 @@ Three decisions worth keeping:
 - **Shortwave listens and cannot be drawn.** `rtl_power` hardcodes direct-sampling mode
   1 — the ADC's I branch — while this hardware wires Q, so the band picker disables those
   rows with the reason on them rather than offering a tap that ends in a 400.
+
+### S4e — a radio that will not open ✅ *(shipped on-branch 2026-09-04)*
+
+**Found by a sweep that answered `complete: true` with zero rows.** One dongle's USB
+descriptors had stopped answering, so librtlsdr enumerated it with blank strings and
+every `-d <serial>` lookup failed:
+
+    Found 2 device(s):
+      0:  , , SN:
+      1:  Nooelec, NESDR SMArt v5, SN: 09022796
+    No matching devices found.
+
+`rtl_power` printed that and exited in milliseconds. Three separate defects turned a
+hardware fault into something only a container-log read could explain — which is exactly
+what the owner cannot do (CLAUDE.md #10):
+
+- **`start` answered 200 for a pipeline that had already exited.** The api reported a
+  session, the omnibox lit, and a second later the tuner reaped a dead one. Sessions now
+  wait `STARTUP_GRACE_S` to prove they did not die on the spot and REFUSE if they did,
+  carrying the tool's own last words — which are what name the radio it could not find.
+  It costs 0.4 s on every start: the price of a 200 meaning "the radio opened" rather
+  than "a process was spawned".
+- **A sweep that measured nothing reported success.** `complete` meant "did not overrun",
+  so an empty CSV read as a finished sweep of a quiet band. An empty result is now a 502
+  carrying the same last words.
+- **The sidecar's 400s arrived as 502s.** "a sweep cannot go below 24 MHz" and "the radio
+  did not start" are sentences for an operator, and wrapping them in `sdr sidecar: …`
+  buried the actionable half behind a status that reads as the box being broken.
+
+**And the cause may have been ours.** `_kill` sent SIGKILL with no SIGTERM first, and
+both tools install a handler that cancels the pending async USB transfer and CLOSES the
+device. SIGKILL never runs it, leaving the RTL2832U with transfers submitted — a known
+way to leave one needing a reset before its descriptors read again. It is now SIGTERM,
+two seconds, then SIGKILL only for a tool that will not go. Not proven to be what
+happened (a powered hub is the owner's own theory, and power starvation fits the
+symptom too), but the code was wrong either way.
 
 ### S4d — the Radios tab, shape A ✅ *(shipped on-branch 2026-09-04)*
 

@@ -98,6 +98,11 @@ def sidecar(monkeypatch) -> Iterator[str]:
     # sessions but deliberately not the capture reservations — an in-flight rtl_fm still
     # has the device open, and freeing its key would let the next session collide with a
     # process still running. That is right in production and leaks between tests.
+    # `_confirm_started` watches a fresh pipeline for `STARTUP_GRACE_S` before believing
+    # it — the check that turns an unopenable radio into a refusal instead of a session
+    # that vanishes a second later. A fake process is alive the instant it exists, so
+    # that wait buys nothing here and costs every case four tenths of a second.
+    monkeypatch.setattr(listen, "STARTUP_GRACE_S", 0)
     monkeypatch.setattr(server, "TUNER", listen.Tuner())
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -311,28 +316,47 @@ def _ndjson(base: str, count: int) -> list[dict[str, Any]]:
 
 
 class _DeadProc(_FakeProc):
-    """A sweep that has already finished — rtl_power's exit timer fired.
+    """A sweep that finishes almost at once — rtl_power's exit timer fired.
 
     Real `_FakeProc` stays alive until killed, which models rtl_fm streaming. A sweep
-    is the opposite and ENDS on its own, so `/sweep` would wait out its deadline."""
+    is the opposite and ENDS on its own, so `/sweep` would wait out its deadline.
+
+    ALIVE for the first few polls, not dead from birth, and that distinction became
+    load-bearing: `_confirm_started` now watches a fresh pipeline briefly and refuses a
+    session whose process has already exited, because that is what "the radio could not
+    be opened" looks like. A fake that was dead before it started would be refused as
+    exactly that — which is right, and is why a sweep has to be modelled as something
+    that ran."""
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        self._polls = 0
 
     def poll(self) -> int | None:
-        return 0
+        self._polls += 1
+        return 0 if self._polls > 2 else None
+
+
+def _csv_on_disk(monkeypatch, csv: str) -> None:
+    """What rtl_power wrote, without a radio. Separate from `_sweeping` because the
+    overrun case needs a CSV AND a process that is still running — a sweep that
+    measured nothing is now a refusal, so "partial" has to be modelled as partial."""
+    real_open = open
+
+    def fake_open(path, *a, **k):
+        if str(path).startswith("/tmp/sweep-"):
+            import io as _io
+
+            return _io.StringIO(csv)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", fake_open)
 
 
 def _sweeping(monkeypatch, csv: str = "") -> None:
     monkeypatch.setattr(listen.subprocess, "Popen", _DeadProc)
     if csv:
-        real_open = open
-
-        def fake_open(path, *a, **k):
-            if str(path).startswith("/tmp/sweep-"):
-                import io as _io
-
-                return _io.StringIO(csv)
-            return real_open(path, *a, **k)
-
-        monkeypatch.setattr("builtins.open", fake_open)
+        _csv_on_disk(monkeypatch, csv)
 
 
 def test_a_sweep_holds_the_radio_and_returns_its_rows(
@@ -456,7 +480,13 @@ def test_a_sweep_that_overruns_is_stopped_and_says_so(
     holds the tuner until somebody notices — and the result says it is partial, because
     a short window reported as a full one reads as a quiet band."""
     monkeypatch.setattr(server, "SWEEP_SETTLE_S", 0)
-    # The default fake stays alive until killed, which IS the overrun case.
+    # The default fake stays alive until killed, which IS the overrun case. It still has
+    # to have MEASURED something: a sweep with no rows at all is a different answer now
+    # (see the test below), and conflating the two is what let an unopenable radio
+    # report `complete: true`.
+    _csv_on_disk(
+        monkeypatch, "2026-09-04, 13:00:00, 144000000, 144100000, 25000.00, 12, -70.0\n"
+    )
 
     status, body = _post(
         sidecar,
@@ -467,6 +497,32 @@ def test_a_sweep_that_overruns_is_stopped_and_says_so(
     assert status == 200
     assert body["complete"] is False
     # And the next caller finds the radio free.
+    free, _ = _post(
+        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
+    )
+    assert free == 200
+
+
+def test_a_sweep_that_measured_nothing_is_not_reported_as_finished(
+    sidecar: str, monkeypatch
+) -> None:
+    """MEASURED on the box 2026-09-04, and the reason this test exists: a dongle whose
+    USB descriptors had stopped answering made rtl_power exit on `No matching devices
+    found`, and the route answered `complete: true` with an empty CSV. A success over a
+    measurement that never happened is the worst answer available — it cost a container
+    log read to notice, which is exactly what the owner cannot do."""
+    monkeypatch.setattr(server, "SWEEP_SETTLE_S", 0)
+    _sweeping(monkeypatch)  # a process that ends at once and writes nothing
+
+    status, body = _post(
+        sidecar,
+        "/sweep",
+        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 1},
+    )
+
+    assert status == 502
+    assert "measured nothing" in body["detail"]
+    # ...and the radio is free regardless, because a failed sweep must not hold it.
     free, _ = _post(
         sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
     )
