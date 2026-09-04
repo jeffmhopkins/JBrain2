@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Radios - name, describe, dedicate</title>
+<!--
+  MOCK: RADIOS IN SETTINGS (docs/plans/APRS_CONTROL_PLAN.md, P0b).
+
+  WHY THIS EXISTS, measured 2026-09-03. A second NESDR SMArt v5 is plugged in and the
+  probe sees both (09022796 on bus 1-1, 77192819 on bus 3-4, both unclaimed). But
+  `rtl_fm` and `rtl_power` are invoked with NO `-d`, so they open whichever librtlsdr
+  enumerates FIRST. With one radio on a desk whip and one on a long wire, APRS can move
+  to the wrong antenna on a re-plug and the only symptom is worse reception.
+
+  THE SHAPE IS THE OWNER'S, given directly rather than chosen from three rivals:
+  "in settings, we should be able to name the dongles, and add a description, and then
+  assign if it's general use or dedicated to APRS (or other service that we create
+  later) ... this way I can change out antenna or dedicate one to APRS and one to
+  shortwave etc". Two earlier drafts (a job-per-row assignment table, and device cards
+  with jobs moved into them) were built and discarded against it; both organised around
+  JOBS, and the owner's model is the RADIO and what it is for.
+
+  WHAT THE OWNER AUTHORS, and why each field is load-bearing:
+    NAME        - because 77192819 is not a physical fact. Nobody knows which is which.
+    DESCRIPTION - because the ANTENNA is the thing that actually changes. "Long wire,
+                  9:1 unun, out the north window" is what makes a reading interpretable
+                  six months later, and it survives a re-plug where a bus number does not.
+    ROLE        - general use, or dedicated to one service.
+
+  Keyed by SERIAL, so all three survive a re-plug, a reboot, and moving the dongle to a
+  different USB port. The measured failure this fixes: the node moved 001/005 -> 001/011
+  across one re-plug tonight.
+
+  WHAT DEDICATED MEANS, and the edge this mock exists to settle: a dedicated radio is
+  NOT available to anything else, and a service whose dedicated radio is unplugged does
+  NOT silently fall back onto a general one. Falling back is exactly the failure being
+  fixed - it is how APRS ends up on the wrong antenna quietly. Unplug a dedicated radio
+  below and the service says it is waiting, rather than moving.
+
+  THE HARNESS IS THE ARGUMENT. Unplug either radio, change a role, and the "what will
+  actually happen" panel really recomputes. Nothing is asserted in prose that a control
+  does not draw.
+
+  OPEN, for the owner: whether a second radio dedicated to the SAME service is an error
+  (shown here) or a standby. Left as an error because two radios logging one frequency
+  writes every frame twice.
+
+  NOT decided here: whether two services may run SIMULTANEOUSLY on two radios. That is
+  the rest of P0b - one session per device in the sidecar - and is not a GUI question.
+  This surface deliberately keeps today's one-at-a-time contention visible so it cannot
+  promise what the sidecar does not yet do.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:960px;margin:0 auto;padding:26px 20px 60px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:20px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:74ch;}
+  .sub b{color:var(--text);font-weight:600;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+
+  .harness{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin:18px 0 24px;
+    padding:13px 15px;background:var(--surface);border:1px dashed var(--border);border-radius:13px;}
+  .harness .cap{font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;
+    width:100%;margin-bottom:-4px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:13px;overflow:hidden;background:var(--surface-2);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:8px 13px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+    padding:16px 17px;margin-bottom:14px;}
+  .card.gone{opacity:.5;}
+  .card.unnamed{border-color:var(--amber);}
+  .idrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+  .idrow .hw{font-family:var(--mono);font-size:11.5px;color:var(--text-3);}
+  .idrow .state{font-size:11.5px;font-family:var(--mono);}
+  .state.up{color:var(--green);} .state.down{color:var(--text-3);}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:13px;}
+  @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
+  .grid .full{grid-column:1/-1;}
+  label.f{display:flex;flex-direction:column;gap:6px;font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--text-3);}
+  input[type=text], select{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    color:var(--text);font-family:inherit;font-size:13.5px;padding:9px 11px;width:100%;}
+  input[type=text]::placeholder{color:var(--text-3);}
+  input:focus-visible, select:focus-visible{outline:2px solid var(--steel);outline-offset:-1px;}
+  input:disabled, select:disabled{opacity:.5;cursor:not-allowed;}
+  .hint{font-size:11.5px;color:var(--text-3);line-height:1.5;margin-top:5px;text-transform:none;letter-spacing:0;}
+  .rolebadge{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;}
+  .rolebadge.gen{background:var(--surface-2);color:var(--text-2);}
+  .rolebadge.ded{background:var(--steel-tint);color:var(--steel);}
+  .cardnote{margin:12px 0 0;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.5;}
+  .cardnote.warn{background:var(--amber-tint);color:var(--amber);}
+  .cardnote.bad{background:var(--rose-tint);color:var(--rose);}
+
+  h2.sec{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);
+    margin:26px 0 11px;}
+  .outcome{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .orow{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding:13px 16px;border-bottom:1px solid var(--border);}
+  .orow:last-child{border-bottom:0;}
+  .orow .svc{font-size:13.5px;font-weight:560;}
+  .orow .svcm{font-size:11.5px;color:var(--text-3);font-family:var(--mono);margin-top:2px;}
+  .orow .res{font-size:12.5px;text-align:right;line-height:1.45;}
+  .res.ok{color:var(--green);} .res.warn{color:var(--amber);} .res.bad{color:var(--rose);}
+  .res .small{display:block;color:var(--text-3);font-size:11.5px;}
+  .why{margin-top:24px;font-size:12.5px;color:var(--text-2);line-height:1.6;max-width:76ch;}
+  .why b{color:var(--text);font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Radios</h1>
+    <p class="sub">Name each radio, say what it is plugged into, and set what it is for.
+      All three are keyed to the <b>serial</b>, so they survive a re-plug &mdash; tonight
+      one radio&rsquo;s node moved <code>001/005 &rarr; 001/011</code> and its identity
+      should not have moved with it.</p>
+  </header>
+
+  <div class="harness">
+    <span class="cap">Mock harness &mdash; not part of the screen</span>
+    <div class="field">
+      <span class="lbl" id="h1l">Physically attached</span>
+      <div class="seg" role="group" aria-labelledby="h1l">
+        <button type="button" data-att="both" aria-pressed="true">Both</button>
+        <button type="button" data-att="first" aria-pressed="false">Unplug #2</button>
+        <button type="button" data-att="second" aria-pressed="false">Unplug #1</button>
+        <button type="button" data-att="third" aria-pressed="false">Add a 3rd</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cards"></div>
+
+  <h2 class="sec">What will actually happen</h2>
+  <div class="outcome" id="outcome"></div>
+
+  <p class="why">
+    <b>Why a description and not just a name:</b> the antenna is the thing that changes.
+    &ldquo;Long wire, 9:1 unun, north window&rdquo; is what makes a reading interpretable
+    later, and what tells you which radio to re-point when a band goes quiet.
+    <b>Why dedicated does not fall back:</b> a service quietly moving to another antenna
+    is the exact failure this screen exists to stop &mdash; so unplugging a dedicated
+    radio makes its service <i>wait</i>, visibly, rather than move.
+  </p>
+</div>
+
+<script>
+(function(){
+  var SERVICES = [
+    {id:"aprs",      name:"APRS logging",       meta:"144.390 · continuous", ready:true},
+    {id:"shortwave", name:"Shortwave listening", meta:"HF · needs direct sampling", ready:false}
+  ];
+  var RADIOS = [
+    {serial:"09022796", bus:"1-1", node:"/dev/bus/usb/001/011",
+     name:"Desk whip", desc:"Retractable whip on the desk, ~49 cm", role:"aprs"},
+    {serial:"77192819", bus:"3-4", node:"/dev/bus/usb/003/010",
+     name:"Long wire", desc:"Long wire via 9:1 unun, north window", role:"general"},
+    {serial:"41550903", bus:"3-6", node:"/dev/bus/usb/003/014",
+     name:"", desc:"", role:"general"}
+  ];
+  var state = {att:"both"};
+
+  function attached(){
+    if (state.att === "both")   return [RADIOS[0], RADIOS[1]];
+    if (state.att === "first")  return [RADIOS[0]];
+    if (state.att === "second") return [RADIOS[1]];
+    return [RADIOS[0], RADIOS[1], RADIOS[2]];
+  }
+  function isUp(r){ return attached().indexOf(r) !== -1; }
+  function labelOf(r){ return (r.name || "").trim() || r.serial; }
+  function svc(id){ return SERVICES.filter(function(s){ return s.id === id; })[0]; }
+
+  function renderCards(){
+    var host = document.getElementById("cards");
+    host.innerHTML = "";
+    RADIOS.forEach(function(r){
+      var up = isUp(r), unnamed = up && !(r.name || "").trim();
+      var card = document.createElement("div");
+      card.className = "card" + (up ? "" : " gone") + (unnamed ? " unnamed" : "");
+
+      var badge = r.role === "general"
+        ? '<span class="rolebadge gen">General use</span>'
+        : '<span class="rolebadge ded">Dedicated · ' + svc(r.role).name + '</span>';
+      card.innerHTML =
+        '<div class="idrow">' +
+          '<span class="hw">NESDR SMArt v5 · ' + r.serial + ' · bus ' + r.bus + '</span>' +
+          '<span>' + badge + ' <span class="state ' + (up ? "up" : "down") + '">' +
+            (up ? "attached" : "not attached") + '</span></span>' +
+        '</div>';
+
+      var grid = document.createElement("div"); grid.className = "grid";
+
+      var nameL = document.createElement("label"); nameL.className = "f";
+      nameL.innerHTML = "<span>Name</span>";
+      var nameI = document.createElement("input");
+      nameI.type = "text"; nameI.value = r.name; nameI.disabled = !up;
+      nameI.placeholder = "e.g. Long wire";
+      nameI.addEventListener("input", function(){ r.name = nameI.value; renderOutcome(); });
+      nameL.appendChild(nameI);
+
+      var roleL = document.createElement("label"); roleL.className = "f";
+      roleL.innerHTML = "<span>Used for</span>";
+      var roleS = document.createElement("select");
+      roleS.disabled = !up;
+      var og = document.createElement("option");
+      og.value = "general"; og.textContent = "General use — anything may take it";
+      roleS.appendChild(og);
+      SERVICES.forEach(function(s){
+        var o = document.createElement("option");
+        o.value = s.id;
+        o.textContent = "Dedicated — " + s.name + (s.ready ? "" : " (not built yet)");
+        roleS.appendChild(o);
+      });
+      roleS.value = r.role;
+      roleS.addEventListener("change", function(){ r.role = roleS.value; render(); });
+      roleL.appendChild(roleS);
+
+      var descL = document.createElement("label"); descL.className = "f full";
+      descL.innerHTML = "<span>Description</span>";
+      var descI = document.createElement("input");
+      descI.type = "text"; descI.value = r.desc; descI.disabled = !up;
+      descI.placeholder = "What is it plugged into? e.g. long wire via 9:1 unun, north window";
+      descI.addEventListener("input", function(){ r.desc = descI.value; });
+      descL.appendChild(descI);
+      var h = document.createElement("div"); h.className = "hint";
+      h.textContent = "The antenna is the part that changes. This is what makes a reading "
+        + "interpretable six months from now.";
+      descL.appendChild(h);
+
+      grid.appendChild(nameL); grid.appendChild(roleL); grid.appendChild(descL);
+      card.appendChild(grid);
+
+      if (unnamed){
+        var n = document.createElement("p"); n.className = "cardnote warn";
+        n.setAttribute("role","alert");
+        n.innerHTML = "<strong>New radio, not named yet.</strong> It works as general use, " +
+          "but until it has a name it is only tellable from the others by its serial.";
+        card.appendChild(n);
+      }
+      var clash = RADIOS.filter(function(x){ return isUp(x) && x.role !== "general" && x.role === r.role; });
+      if (up && r.role !== "general" && clash.length > 1 && clash[0] === r){
+        var c = document.createElement("p"); c.className = "cardnote bad";
+        c.setAttribute("role","alert");
+        c.innerHTML = "<strong>Two radios dedicated to " + svc(r.role).name + ".</strong> " +
+          "Both would log the same frequency and every frame would be stored twice. " +
+          "Set one back to general use.";
+        card.appendChild(c);
+      }
+      host.appendChild(card);
+    });
+  }
+
+  function renderOutcome(){
+    var host = document.getElementById("outcome");
+    host.innerHTML = "";
+    SERVICES.forEach(function(s){
+      var dedicated = RADIOS.filter(function(r){ return r.role === s.id; });
+      var upDedicated = dedicated.filter(isUp);
+      var generals = RADIOS.filter(function(r){ return isUp(r) && r.role === "general"; });
+
+      var cls, txt, sub = "";
+      if (!s.ready){
+        cls = "warn";
+        txt = dedicated.length ? "Reserved on " + labelOf(dedicated[0]) : "No radio reserved";
+        sub = "Service not built yet — nothing runs on it.";
+      } else if (upDedicated.length > 1){
+        cls = "bad"; txt = "Two radios dedicated";
+        sub = "Ambiguous — every frame would be logged twice.";
+      } else if (upDedicated.length === 1){
+        cls = "ok"; txt = "Uses " + labelOf(upDedicated[0]);
+        sub = "Reserved. Nothing else can take it.";
+      } else if (dedicated.length && !upDedicated.length){
+        cls = "bad"; txt = "Waiting for " + labelOf(dedicated[0]);
+        sub = "Its radio is unplugged. It will NOT move to another one.";
+      } else if (generals.length){
+        cls = "warn"; txt = "Uses " + labelOf(generals[0]);
+        sub = "General use — the tuner or a sweep can take it away.";
+      } else {
+        cls = "bad"; txt = "No radio available"; sub = "Nothing attached it may use.";
+      }
+
+      var row = document.createElement("div"); row.className = "orow";
+      row.innerHTML =
+        '<div><div class="svc">' + s.name + '</div><div class="svcm">' + s.meta + '</div></div>' +
+        '<div class="res ' + cls + '">' + txt + '<span class="small">' + sub + '</span></div>';
+      host.appendChild(row);
+    });
+
+    // Everything not dedicated: the tuner and sweeps share whatever is left.
+    var generals = RADIOS.filter(function(r){ return isUp(r) && r.role === "general"; });
+    var row = document.createElement("div"); row.className = "orow";
+    var t, c;
+    if (!generals.length){
+      c = "bad"; t = "No radio available<span class=\"small\">Every attached radio is dedicated.</span>";
+    } else {
+      c = "ok";
+      t = "Uses " + generals.map(labelOf).join(" or ") +
+        '<span class="small">' + (generals.length > 1
+          ? "Two to choose from."
+          : "One radio, so the tuner and a sweep still take turns.") + '</span>';
+    }
+    row.innerHTML = '<div><div class="svc">Tuner &amp; band sweeps</div>' +
+      '<div class="svcm">owner-driven · on demand</div></div>' +
+      '<div class="res ' + c + '">' + t + '</div>';
+    host.appendChild(row);
+  }
+
+  function render(){ renderCards(); renderOutcome(); }
+
+  document.querySelectorAll("[data-att]").forEach(function(b){
+    b.addEventListener("click", function(){
+      state.att = b.dataset.att;
+      document.querySelectorAll("[data-att]").forEach(function(x){
+        x.setAttribute("aria-pressed", String(x.dataset.att === state.att));
+      });
+      render();
+    });
+  });
+  render();
+})();
+</script>
+</body></html>
