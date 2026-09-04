@@ -498,7 +498,9 @@ async def test_the_tab_still_loads_before_the_drain_has_started(
 # antenna — no error, no log line, just worse reception.
 
 WHIP, WIRE = "09022796", "77192819"
-_TWO_RADIOS = {"sdrs": [{"serial": WHIP}, {"serial": WIRE}]}
+# Shaped like the supervisor's real answer: `sysfs_readable` travels WITH the list,
+# because an empty list means "nothing plugged in" only when the scan could actually see.
+_TWO_RADIOS = {"sysfs_readable": True, "sdrs": [{"serial": WHIP}, {"serial": WIRE}]}
 
 
 def _stored(monkeypatch: pytest.MonkeyPatch, radios: dict[str, Any]) -> None:
@@ -534,7 +536,7 @@ async def test_logging_waits_rather_than_moving_to_the_other_antenna(
     _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
 
     with pytest.raises(HTTPException) as refused:
-        await _aprs(True, usb={"sdrs": [{"serial": WIRE}]})
+        await _aprs(True, usb={"sysfs_readable": True, "sdrs": [{"serial": WIRE}]})
 
     assert refused.value.status_code == 409
     assert "Desk whip" in str(refused.value.detail)
@@ -556,6 +558,40 @@ async def test_an_unreachable_usb_scan_names_no_radio_rather_than_guessing(
     assert box.posts[0][1]["serial"] is None
 
 
+async def test_a_scan_that_sees_nothing_still_makes_a_dedicated_service_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "Nothing is attached" and "we could not look" are different answers.
+
+    Both used to arrive as an empty list, so a healthy scan reporting zero radios read
+    as a broken scan and skipped the refusal entirely — APRS then started on whatever
+    librtlsdr enumerated first, which is the failure the whole feature removes. A scan
+    that ANSWERED and saw nothing must make a dedicated service wait."""
+    box = _Sidecar(health=_IDLE, start={"purpose": "aprs"})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
+
+    with pytest.raises(HTTPException) as refused:
+        await _aprs(True, usb={"sysfs_readable": True, "sdrs": []})
+
+    assert refused.value.status_code == 409
+    assert box.posts == []
+
+
+async def test_an_unreadable_sysfs_is_not_an_empty_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A supervisor without /sys mounted answers 200 with `sysfs_readable: false`. That
+    is "we could not see", so it takes the historical path rather than the refusal."""
+    box = _Sidecar(health=_IDLE, start={"purpose": "aprs", "frequency_hz": 144_390_000})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
+
+    await _aprs(True, usb={"sysfs_readable": False, "sdrs": []})
+
+    assert box.posts[0][1]["serial"] is None
+
+
 async def test_listening_never_takes_a_radio_reserved_for_a_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -566,7 +602,12 @@ async def test_listening_never_takes_a_radio_reserved_for_a_service(
     _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
 
     with pytest.raises(HTTPException) as refused:
-        await sdr_api.listen(_request({"sdrs": [{"serial": WHIP}]}), _Settings(), OWNER, 146.52)  # type: ignore[arg-type]
+        await sdr_api.listen(
+            _request({"sysfs_readable": True, "sdrs": [{"serial": WHIP}]}),
+            _Settings(),
+            OWNER,
+            146.52,
+        )  # type: ignore[arg-type]
 
     assert refused.value.status_code == 409
     assert box.posts == []

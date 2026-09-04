@@ -105,14 +105,14 @@ async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any
     return cast(dict[str, Any], resp.json())
 
 
-async def _attached(request: Request, settings: Any) -> list[str]:
+async def _attached(request: Request, settings: Any) -> list[str] | None:
     """Serials of the radios physically present, from the supervisor's `/sys` scan.
 
-    The supervisor is the only container that reads `/sys`, so this is a proxy hop, and
-    it is best-effort ON PURPOSE: when the scan cannot be reached an empty list means
-    "we do not know what is attached", and the caller then names no radio rather than
-    guessing one. A one-dongle box is unaffected either way, because naming no radio is
-    exactly what it did before this existed."""
+    The None is load-bearing rather than tidiness. An EMPTY list is a real answer — the
+    scan worked and nothing is plugged in — so a service dedicated to a radio should
+    WAIT for it. None means the scan failed or sysfs was unreadable, and only then is
+    naming no radio right: that is exactly what a one-dongle box always did, and a proxy
+    hiccup must not be able to pick an antenna."""
     try:
         resp = await request.app.state.supervisor_client.get(
             "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
@@ -120,7 +120,7 @@ async def _attached(request: Request, settings: Any) -> list[str]:
         resp.raise_for_status()
         return serials_in(resp.json())
     except (httpx.HTTPError, ValueError, AttributeError, KeyError):
-        return []
+        return None
 
 
 async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> Choice:
@@ -132,7 +132,9 @@ async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> 
     `waiting` and `ambiguous` mean the OWNER has to plug something in or stop
     double-dedicating, and must not read as "the radio is busy"."""
     attached = await _attached(request, settings)
-    if not attached:
+    if attached is None:
+        # Could not see. Name no radio and let the sidecar behave as it always has —
+        # NOT the same as seeing nothing, which is a state a dedicated radio waits on.
         return Choice(None, "unknown", "")
     radios = await get_settings_store(request).sdr_radios(ctx_for(owner))
     return choose(radios, attached, want)
@@ -433,7 +435,8 @@ async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> Ra
     The union rather than either alone. A dongle plugged in but never described has to
     appear or a new one is invisible; a dongle described but unplugged has to appear or
     the service waiting for it cannot say what it is waiting for."""
-    attached = await _attached(request, settings)
+    seen = await _attached(request, settings)
+    attached = seen or []
     stored = await get_settings_store(request).sdr_radios(ctx_for(owner))
     known = {**{s: Radio(serial=s) for s in attached}, **stored}
     return RadiosOut(
@@ -448,7 +451,10 @@ async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> Ra
             for radio in sorted(known.values(), key=lambda r: r.serial)
         ],
         conflicts=conflicts(stored),
-        scan_ok=bool(attached) or not settings.sdr_url,
+        # Whether the scan ANSWERED, not whether it found anything. Deriving this from
+        # the device count told an owner who had simply unplugged both dongles that the
+        # scan was unreachable, and sent them debugging a proxy that was fine.
+        scan_ok=seen is not None,
     )
 
 

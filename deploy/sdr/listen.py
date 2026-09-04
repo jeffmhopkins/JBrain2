@@ -42,6 +42,7 @@ import contextlib
 import os
 import dataclasses
 import queue
+import re
 import shutil
 import socket
 import struct
@@ -168,6 +169,33 @@ def validate(frequency_hz: int, mode: str) -> str:
 # Narrowband FM is the only thing 1200-baud AFSK arrives on. Accepting `usb` or `wbfm`
 # for a logging session would start a radio that reports healthy and can never decode.
 APRS_MODES = ("fm", "nfm")
+
+
+#: What a USB serial may contain. librtlsdr's own strings are alphanumeric, and this is
+#: the value that becomes an `rtl_fm` argv token — the only field in a /listen/start body
+#: that reaches a subprocess at all.
+SERIAL_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def validate_serial(serial: object) -> str | None:
+    """Bound the one field that becomes a subprocess argument.
+
+    Here as well as in the api, for the reason `validate_purpose` gives: a bound that
+    lives only in the caller is not a bound once there is a second caller — and this
+    process has its own HTTP surface. Every neighbouring field is cast and checked
+    (`mode` through `validate`, `purpose` through `validate_purpose`, `frequency_hz`
+    through an int and a range); `serial` was taken raw off the JSON, so a dict body
+    value became the argv token `serial={'a': 1}` and a dict in `/healthz`.
+
+    None means "no radio named", which is the historical one-dongle behaviour and stays
+    legal. Anything present but unusable is refused rather than silently dropped: a
+    caller that asked for a specific radio and got an arbitrary one is the exact failure
+    this whole path exists to prevent."""
+    if serial is None or serial == "":
+        return None
+    if not isinstance(serial, str) or not SERIAL_RE.match(serial):
+        raise SdrError(f"{serial!r} is not a usable device serial")
+    return serial
 
 
 def validate_purpose(purpose: str) -> str:
@@ -406,16 +434,24 @@ class Session:
         return [*cmd, self.sweep_csv]
 
     def _device_args(self) -> list[str]:
-        """`-d serial=...`, or nothing at all.
+        """`-d <serial>`, or nothing at all.
 
         Nothing is not a neutral default once a second dongle exists: librtlsdr then
         opens whichever it enumerated first, which is a property of USB bus order rather
         than of anything the owner chose. Both tools take the same `-d` and both went
         without it, so the fix belongs in one place rather than twice.
 
+        THE BARE SERIAL, not `serial=...`. rtl_fm and rtl_power hand `-d` straight to
+        librtlsdr's `verbose_device_search`, which tries a raw index, then an exact
+        serial, then a serial prefix, then a serial suffix — and has no key=value form
+        at all. `serial=` is SoapySDR's syntax; passed here it matches nothing and the
+        tool exits(1) before opening the device, which is WORSE than the bug it was
+        meant to fix: the sidecar's `start` has already returned, so the lease looks
+        live and the omnibox lights while nothing is decoding.
+
         Empty when the caller named no radio, which keeps a one-dongle box byte
         identical to what it ran before."""
-        return ["-d", f"serial={self.serial}"] if self.serial else []
+        return ["-d", str(self.serial)] if self.serial else []
 
     def _start_sweep_pipeline(self) -> None:
         """One process, no threads, and it ENDS ON ITS OWN.

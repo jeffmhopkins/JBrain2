@@ -812,7 +812,7 @@ class TestAddressingOneRadioOfSeveral:
         finally:
             session.stop()
 
-        assert cmd[cmd.index("-d") + 1] == "serial=77192819"
+        assert cmd[cmd.index("-d") + 1] == "77192819"
 
     def test_sweeping_opens_the_named_radio(self, monkeypatch) -> None:
         session = self._session(
@@ -826,9 +826,29 @@ class TestAddressingOneRadioOfSeveral:
         finally:
             session.stop()
 
-        assert cmd[cmd.index("-d") + 1] == "serial=77192819"
+        assert cmd[cmd.index("-d") + 1] == "77192819"
         # ...and the CSV path stays last, where rtl_power expects its positional.
         assert cmd[-1].endswith(".csv")
+
+    def test_the_argument_is_what_librtlsdr_can_actually_match(
+        self, monkeypatch
+    ) -> None:
+        """The form matters, and asserting a formatted string does not check it.
+
+        rtl_fm and rtl_power pass `-d` straight to librtlsdr's `verbose_device_search`,
+        which tries a raw index, an exact serial, a serial prefix and a serial suffix —
+        and has NO key=value form. `serial=09022796` is SoapySDR syntax; here it matches
+        nothing and the tool exits(1) before opening the device, while `Tuner.start` has
+        already returned a lease that looks live. An earlier cut of this shipped exactly
+        that, and the test that was supposed to catch it only proved an f-string ran."""
+        session = self._session(monkeypatch, serial="09022796")
+        try:
+            arg = session._rtl_cmd()[session._rtl_cmd().index("-d") + 1]
+        finally:
+            session.stop()
+
+        assert "=" not in arg
+        assert arg == "09022796"
 
     def test_naming_no_radio_stays_byte_identical_to_before(self, monkeypatch) -> None:
         """A one-dongle box must not change behaviour. `-d` absent means librtlsdr's
@@ -843,6 +863,21 @@ class TestAddressingOneRadioOfSeveral:
         finally:
             listening.stop()
             sweeping.stop()
+
+    def test_a_serial_that_is_not_one_is_refused_rather_than_passed_along(self) -> None:
+        """`serial` is the only field in a start body that becomes a subprocess argv
+        token, and it was the only one taken raw off the JSON while its neighbours were
+        each cast and validated. A dict here became the argv token `serial={'a': 1}`
+        and a dict in the `/healthz` payload typed `str | None`."""
+        for bad in ({"a": 1}, "has space", "semi;colon", "x" * 65, 12345):
+            with pytest.raises(listen.SdrError):
+                listen.validate_serial(bad)
+
+    def test_naming_nothing_stays_legal(self) -> None:
+        # The one-dongle case, which must not become an error.
+        assert listen.validate_serial(None) is None
+        assert listen.validate_serial("") is None
+        assert listen.validate_serial("09022796") == "09022796"
 
     def test_the_lease_says_which_radio_it_holds(self, tuner) -> None:
         """The omnibox and /health read this. "Something is using the radio" is not an

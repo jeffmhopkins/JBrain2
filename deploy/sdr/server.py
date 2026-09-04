@@ -145,7 +145,9 @@ def capture(
         else:
             cmd += ["-s", str(rate)]
         if serial:
-            cmd += ["-d", f"serial={serial}"]
+            # The BARE serial: librtlsdr's verbose_device_search has no key=value form,
+            # so `serial=X` matches nothing and rtl_fm exits before opening the device.
+            cmd += ["-d", str(serial)]
         if gain:
             cmd += ["-g", gain]
         cmd += ["-"]
@@ -392,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
                 body.get("gain"),
                 purpose=listen.PURPOSE_SURVEY,
                 sweep=sweep,
-                serial=body.get("serial") or None,
+                serial=listen.validate_serial(body.get("serial")),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -453,7 +455,7 @@ class Handler(BaseHTTPRequestHandler):
                 purpose=str(body.get("purpose") or PURPOSE_LISTEN),
                 # Which radio, resolved by the api from the owner's settings. Absent
                 # keeps the historical "whatever enumerates first" for a one-dongle box.
-                serial=body.get("serial") or None,
+                serial=listen.validate_serial(body.get("serial")),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -523,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
                 seconds=body.get("seconds", 8),
                 mode=str(body.get("mode", "fm")),
                 gain=body.get("gain"),
-                serial=body.get("serial"),
+                serial=listen.validate_serial(body.get("serial")),
             )
         except SdrBusy as busy:
             self._json(409, {"detail": str(busy)})
