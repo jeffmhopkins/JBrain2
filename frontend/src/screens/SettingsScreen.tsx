@@ -13,6 +13,7 @@ import type {
 } from "../api/client";
 import { ApiError, api } from "../api/client";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
+import { SdrRadiosCard } from "../components/SdrRadiosCard";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
@@ -1097,6 +1098,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           {timezone}
         </div>
       </section>
+
+      <SdrRadiosCard />
 
       <section className="settings-card">
         <h2 className="settings-label">Amateur callsign</h2>
