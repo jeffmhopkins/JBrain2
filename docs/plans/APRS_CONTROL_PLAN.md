@@ -188,12 +188,51 @@ all three, falling back to `listening` for the seconds during an update when the
 is the older build.
 
 *An unnamed `/listen/stop` is now a choice rather than a tautology.* It takes the
-listening session, falling back to the only session when there is exactly one — every
-one-dongle box, unchanged. It never picks between two services: jerv's "release the
-radio" must not stop a log the owner armed on a schedule.
+listening session and nothing else, and reports what IS holding a radio so the caller
+can name it. A first cut fell back to "the only session when there is exactly one",
+reasoning that a one-dongle box has nothing to choose between — but the condition it
+tested was `len(sessions) == 1`, equally true of a two-dongle box running only APRS. It
+would have stopped the log there. The cost is a real change on a one-dongle box: "release
+the radio" while APRS holds it now answers `stopped: false` and points at the APRS switch
+rather than stopping the log.
 
-Still one radio each for the omnibox icon and the tuner sheet: showing two live sessions
-at once is a GUI change and needs the gate, not a sidecar change.
+*A general radio someone is already on is not a free one.* `roles.choose` had no notion
+of "in use", so with two undedicated dongles APRS and the tuner both got `generals[0]`
+and the second caller met the new per-radio 409 naming the radio it had asked for — the
+original symptom, through a per-radio sidecar. `resolve.busy_serials` reads what the
+sidecar is running and `choose` sorts those last. Serial order still decides between the
+FREE radios, and a DEDICATED radio that is busy is still its service's: offering a
+substitute there is the silent antenna change this all exists to stop. **So the two
+dongles now share themselves out with no settings visit** — dedicating one is how you
+pin an ANTENNA to a service, not how you get simultaneity.
+
+*A retune could resurrect a released session and orphan its dongle.* `/listen/tune`
+resolves the Session under the tuner's lock and calls `tune` outside it, so a stop
+landing in between made `_start_pipeline` spawn a fresh `rtl_fm` for a session no longer
+in `_sessions`: invisible to `blocking_key`, never reaped, holding the dongle until the
+container restarts — after which the next caller for that serial is let through and two
+processes fight over one radio. `Session.tune` now refuses once released
+(`SessionGone`). Structurally pre-existing; the window grew with the extra holders.
+
+*A capture reservation lapses.* A session is reaped by asking its process whether it is
+alive; a reservation has no process to ask — it is a claim a `capture` promises to
+release in a `finally`, and a promise is not a reap. A signal between taking the claim
+and entering that `try` stranded the key for the life of the process, refusing that radio
+for ever while `/healthz` reported `busy` with nothing running. `RESERVATION_TTL_S` is
+longer than any capture the sidecar will run, so an expiry is always a leak.
+
+*The PWA was reading the old shape at the surface the owner touches.* Found by the
+independent review, and the same bug the three backend readers had: with APRS on one
+dongle and the tuner on the other, `listening` is the tuner's, so the APRS tab showed the
+one-dongle contention panel, replaced **Stop APRS logging** with a button whose only
+effect was a no-op 200, and printed the TUNER's elapsed time as how long APRS had held a
+radio. The Tuner tab had it mirrored. `/api/sdr/status` now carries `sessions` and
+`sdrSession.sessionFor` asks per job — `listening` is what to DRAW, `sessionFor` is what
+to ASK. No shape changed, so no GUI gate: the panels are the ones the mock specifies,
+selected by a condition that is now true.
+
+Still one radio for the omnibox icon: showing two live sessions at once IS a shape change
+and needs the gate.
 
 **The rule the round settled** (binding spec `../mocks/sdr-dongles/a-named-roles.html`,
 enforced in `jbrain/sdr/roles.py`): a **dedicated** radio that is unplugged makes its

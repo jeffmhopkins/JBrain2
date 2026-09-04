@@ -97,6 +97,11 @@ MAX_SWEEP_SECONDS = 900
 MIN_SWEEP_BIN_HZ = 100
 MAX_SWEEP_BIN_HZ = 100_000
 MAX_SWEEP_SPAN_HZ = 60_000_000
+# How long a non-session claim on a radio (a one-shot `capture`) stays good. Longer than
+# any capture the sidecar will run — server.py caps one at 120 s — plus room for device
+# open and tuner settle on a cold radio, so an expiry is always a LEAK rather than a slow
+# caller. See `Tuner._holders` for why a promise to release is not enough.
+RESERVATION_TTL_S = 300.0
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
@@ -150,6 +155,10 @@ class SdrBusy(RuntimeError):
 
 class SdrError(RuntimeError):
     """The radio could not be tuned, or the pipeline could not start."""
+
+
+class SessionGone(RuntimeError):
+    """This session was released, so it may not relaunch anything."""
 
 
 def validate(frequency_hz: int, mode: str) -> str:
@@ -375,6 +384,9 @@ class Session:
         # sets this so the audio pump tears down WITHOUT telling them the stream is
         # over — the sentinel means the session ended, not that ffmpeg was relaunched.
         self._restarting = False
+        # One way, set by `stop`. A released session must never relaunch a pipeline: see
+        # `tune`, where the alternative is an rtl_fm holding a dongle nothing can see.
+        self._released = False
         self._rtl: subprocess.Popen[bytes] | None = None
         self._enc: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
@@ -904,9 +916,22 @@ KISSPORT {self.kiss_port}
     # ---- public surface -------------------------------------------------------
 
     def tune(self, frequency_hz: int, mode: str | None = None) -> None:
-        """Retune in place. Restarts the pipeline but keeps the session id."""
+        """Retune in place. Restarts the pipeline but keeps the session id.
+
+        Refuses once the session has been released, and this is the load-bearing half.
+        The route resolves the Session under the tuner's lock and calls this OUTSIDE it,
+        so a `/listen/stop` landing in between used to make `_start_pipeline` spawn a
+        fresh `rtl_fm` for a session no longer in `_sessions`: invisible to
+        `blocking_key`, never reaped, and holding the dongle until the container
+        restarts — after which the next caller for that serial is allowed through and
+        two processes fight over one radio. That is the "garbled audio rather than an
+        error" outcome the whole per-radio rule exists to prevent, so the guard belongs
+        here rather than in the route, where the window is."""
         wanted = validate(frequency_hz, mode or self.mode)
-        self._restarting = True
+        with self._lock:
+            if self._released:
+                raise SessionGone("that session has been released")
+            self._restarting = True
         self._stopping = True
         try:
             self._kill()
@@ -934,6 +959,11 @@ KISSPORT {self.kiss_port}
             self._subs.discard(sub)
 
     def stop(self) -> None:
+        # Set BEFORE the kill and under the lock, so a `tune` racing this either sees it
+        # and refuses, or has already passed its own check and is holding the lock we
+        # are waiting for. Either order leaves exactly one of them relaunching.
+        with self._lock:
+            self._released = True
         self._stopping = True
         self._kill()
         with self._lock:
@@ -1009,12 +1039,12 @@ class Tuner:
         self._sessions: dict[str, Session] = {}
         # Radios held by something that is NOT a session: the one-shot capture path,
         # which runs rtl_fm to completion rather than keeping a pipeline. Key → what it
-        # is doing, for the refusal message. Here rather than behind its own lock in
+        # is doing and when the claim lapses. Here rather than behind its own lock in
         # server.py because that is what it WAS, and a capture could then start on a
         # radio a session held only because capture checked first — while a session
         # could start on a radio a capture held, because `start` never checked at all.
         # One registry under one lock makes both directions true and neither racy.
-        self._reserved: dict[str, str] = {}
+        self._reserved: dict[str, tuple[str, float]] = {}
         self._lock = threading.Lock()
 
     def _reap(self) -> None:
@@ -1029,11 +1059,25 @@ class Tuner:
 
     def _holders(self) -> dict[str, str]:
         """Every held radio → what is holding it, in the words a refusal uses. Caller
-        holds the lock."""
+        holds the lock.
+
+        Lapsed reservations are dropped here rather than trusted. A session is reaped by
+        asking its process whether it is alive; a reservation has no process to ask —
+        it is a claim staked by a `capture` that promises to release it in a `finally`.
+        A promise is not a reap: a signal between taking the claim and entering that
+        `try`, or a worker thread killed outright, strands the key for the lifetime of
+        the process, and `blocking_key` then refuses that radio for ever (every radio,
+        if the claim was unnamed) while `/healthz` reports `busy` with nothing running.
+        The deadline is what a capture can legally take, so an expiry is always a leak
+        rather than a slow caller."""
+        now = time.monotonic()
+        for key, (_doing, expires) in list(self._reserved.items()):
+            if expires <= now:
+                self._reserved.pop(key, None)
         held = {
             key: PURPOSE_LABEL.get(s.purpose, "in use") for key, s in self._sessions.items()
         }
-        held.update(self._reserved)
+        held.update({key: doing for key, (doing, _e) in self._reserved.items()})
         return held
 
     def _blocker(self, key: str) -> tuple[str, str] | None:
@@ -1066,7 +1110,7 @@ class Tuner:
             self._reap()
             busy = self._busy(key)
             if busy is None:
-                self._reserved[key] = doing
+                self._reserved[key] = (doing, time.monotonic() + RESERVATION_TTL_S)
             return busy
 
     def unreserve(self, serial: str | None) -> None:
@@ -1074,8 +1118,12 @@ class Tuner:
             self._reserved.pop(serial or self.ANY, None)
 
     def reserved(self) -> bool:
-        """Whether anything holds a radio outside a session — `/healthz`'s `busy`."""
+        """Whether anything holds a radio outside a session — `/healthz`'s `busy`.
+
+        Through `_holders` so a lapsed claim is dropped first: `busy` stuck on with
+        nothing running is the visible half of the leak `_holders` describes."""
         with self._lock:
+            self._holders()  # expires lapsed claims
             return bool(self._reserved)
 
     def start(
@@ -1104,20 +1152,37 @@ class Tuner:
             self._reap()
             return [self._sessions[k] for k in sorted(self._sessions)]
 
+    #: How the omnibox's ONE icon chooses between live sessions: prefer what a person is
+    #: most likely asking about — the tuner they opened — then a service, then a sweep.
+    #: Serial only BREAKS A TIE, so the answer is deterministic without being arbitrary.
+    _SHOWN_FIRST = {PURPOSE_LISTEN: 0, PURPOSE_APRS: 1, PURPOSE_SURVEY: 2}
+
+    @classmethod
+    def _worth_showing(cls, live: list[Session]) -> Session | None:
+        """The one to draw, out of a snapshot the caller already has."""
+        if not live:
+            return None
+        return min(live, key=lambda s: (cls._SHOWN_FIRST.get(s.purpose, 3), s.serial or ""))
+
     def current(self, serial: str | None = None) -> Session | None:
         """One session: the named radio's, or the one worth showing.
 
-        With no serial this answers for the omnibox, which draws ONE icon: prefer what a
-        person is most likely asking about — the tuner they opened — then a service, then
-        a sweep. Deterministic rather than arbitrary, because "which session is showing"
-        must not change between two reads that changed nothing."""
+        Deterministic rather than arbitrary, because "which session is showing" must not
+        change between two reads that changed nothing."""
         live = self.sessions()
         if serial is not None:
             return next((s for s in live if s.serial == serial), None)
-        if not live:
-            return None
-        order = {PURPOSE_LISTEN: 0, PURPOSE_APRS: 1, PURPOSE_SURVEY: 2}
-        return min(live, key=lambda s: (order.get(s.purpose, 3), s.serial or ""))
+        return self._worth_showing(live)
+
+    def snapshot(self) -> tuple[Session | None, list[Session]]:
+        """Every live session, and the one worth showing, from ONE reading.
+
+        `/healthz` reports both, and taking them from two calls let a session appear in
+        `sessions` but not in `listening` — or the reverse — for callers that reasonably
+        assume `listening` is one of `sessions`. `health.session_for`'s fallback assumes
+        exactly that."""
+        live = self.sessions()
+        return self._worth_showing(live), live
 
     def find(self, session_id: str) -> Session | None:
         """The session with this id, whichever radio it is on."""

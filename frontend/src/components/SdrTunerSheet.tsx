@@ -5,7 +5,7 @@
 // its dismiss paths (scrim, Escape, swipe-down, the grab handle, platform Back).
 //
 // Content order is binding: readout + tune steppers, mode, signal, transport, actions.
-// Release is a first-class action because it is what hands the single tuner back — and
+// Release is a first-class action because it is what hands this session's radio back — and
 // what makes the omnibox icon disappear, since the icon IS the lease.
 
 import { useEffect, useRef, useState } from "react";
@@ -166,7 +166,7 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   return (
     <>
       <p className="sdr-note">
-        The radio has one tuner, so this session holds it until you release it.
+        This session holds its radio until you release it.
       </p>
 
       <div className="sdr-readout">

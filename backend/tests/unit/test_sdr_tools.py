@@ -157,9 +157,21 @@ async def test_stop_releases_and_says_so(tools) -> None:
 
 
 async def test_stopping_an_idle_radio_is_not_an_error(tools) -> None:
-    out = await tools(lambda _p, _b: _ok({"stopped": False}))["sdr_stop"]({}, None)
+    out = await tools(lambda _p, _b: _ok({"stopped": False, "holding": []}))["sdr_stop"]({}, None)
 
-    assert "wasn't listening" in out
+    assert "already free" in out
+
+
+async def test_release_says_what_is_holding_a_radio_rather_than_stopping_it(tools) -> None:
+    """ "Release the radio" names no session, and the sidecar reads that as the LISTENING
+    one — never a service, or a scheduled APRS window would end on a casual ask. Without
+    naming the holder the answer is a dead end: nothing happened and nothing said why."""
+    answer = {"stopped": False, "holding": [{"purpose": "aprs", "serial": "77192819"}]}
+
+    out = await tools(lambda _p, _b: _ok(answer))["sdr_stop"]({}, None)
+
+    assert "Nothing was listening" in out
+    assert "aprs" in out and "own switch" in out
 
 
 def test_a_box_with_no_radio_gets_no_tools() -> None:

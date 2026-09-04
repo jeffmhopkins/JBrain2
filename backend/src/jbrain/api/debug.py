@@ -120,7 +120,12 @@ async def _radio(request: Request, settings: Any, want: str) -> str | None:
     a capture from here could take the dongle the owner reserved for APRS. Same resolver
     as the other two, under the console's owner context."""
     choice = await for_purpose(
-        _supervisor(request), settings.supervisor_token, _store(request), _OWNER_CTX, want
+        _supervisor(request),
+        settings.supervisor_token,
+        _store(request),
+        _OWNER_CTX,
+        want,
+        settings.sdr_url,
     )
     detail = refusal(choice)
     if detail is not None:
@@ -1713,7 +1718,8 @@ async def sdr_sweep(
     like, the agent-facing tool can be designed against measurements instead of hopes.
 
     **This takes the radio** for the length of the sweep, as a real lease with the
-    omnibox icon and Release — so it is refused, with a 409, while APRS is logging.
+    omnibox icon and Release — so it is refused, with a 409 naming the radio, when the
+    one it would open is already held.
 
     `channel_khz` folds the busy bins onto a channel grid and sets how wide a
     neighbourhood `steady` judges a bin against — one number, because both answer "how
@@ -1868,7 +1874,12 @@ async def sdr_capture(
             },
         )
     if resp.status_code == 409:
-        raise HTTPException(status_code=409, detail="The radio is busy with another capture.")
+        # The sidecar's OWN sentence, not a guess. Since sessions became per radio it
+        # says which radio and what holds it — "the radio (77192819) is already logging
+        # APRS" — and overwriting that with "another capture" was both wrong and
+        # unactionable on the one surface the owner has when they cannot reach a
+        # terminal (CLAUDE.md #10). The sibling doors already pass it through.
+        raise HTTPException(status_code=409, detail=_sidecar_detail(resp, "The radio is busy."))
     if resp.status_code != 200:
         detail = resp.json().get("detail", resp.text[:400]) if resp.content else resp.text[:400]
         raise HTTPException(status_code=502, detail=f"sdr sidecar: {detail}")
@@ -1952,13 +1963,26 @@ async def sdr_stop_debug(request: Request, settings: SettingsDep, _p: DebugDep) 
     return await _sdr_post(settings, "/listen/stop", {"session_id": None})
 
 
+def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:
+    """The sidecar's own refusal, or `fallback` if it did not send one.
+
+    One helper because two debug routes flattened it separately, and the flattening only
+    became visible once the refusal started carrying the radio's serial: "The radio is
+    busy" tells an owner with no terminal nothing they can act on, while "the radio
+    (77192819) is already logging APRS" names the thing to turn off."""
+    try:
+        return cast(str, resp.json().get("detail") or fallback)
+    except ValueError:
+        return fallback
+
+
 async def _sdr_post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
     async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=30.0) as client:
         resp = await client.post(path, json=body)
     if resp.status_code == 409:
-        raise HTTPException(status_code=409, detail="The radio is busy.")
+        raise HTTPException(status_code=409, detail=_sidecar_detail(resp, "The radio is busy."))
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"sdr sidecar: {resp.text[:300]}")
     return cast(dict[str, Any], resp.json())

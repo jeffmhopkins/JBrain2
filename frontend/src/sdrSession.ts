@@ -1,6 +1,6 @@
 // The live radio session, shared by every reader.
 //
-// The box has one tuner, so there is at most one session — and its EXISTENCE is what
+// The box holds one session per radio, and a session's EXISTENCE is what
 // decides whether the omnibox shows a radio icon at all. Keeping that in one shared
 // reading rather than per-component state is what stops the composer and the tuner
 // sheet ever disagreeing about whether the radio is held
@@ -36,8 +36,26 @@ export interface SdrState {
   /** False on a box with no radio, or one whose sidecar is unreachable. Either way
    *  the icon must not appear: a lit icon over a dead radio is worse than none. */
   available: boolean;
-  /** Null when the radio is idle. Non-null is precisely the icon's condition. */
+  /** Null when the radio is idle. Non-null is precisely the icon's condition.
+   *
+   *  ONE session — the omnibox draws one icon — and it PREFERS the tuner. So it answers
+   *  "what should the icon show", never "is APRS logging": with a radio each, reading
+   *  its purpose for that told the APRS tab nothing was logging while it was. Use
+   *  `sessionFor` for a question about a particular job. */
   listening: SdrListening | null;
+  /** Every radio the box is holding. Absent from an api older than per-radio sessions,
+   *  hence the default — a box like that can hold only one thing anyway. */
+  sessions?: SdrListening[];
+}
+
+/** The session holding a radio for one job, or null.
+ *
+ *  The whole reason `sessions` exists. `listening` is what to DRAW; this is what to
+ *  ASK. Falls back to `listening` for an api that predates the field, which can only
+ *  ever have had the one session. */
+export function sessionFor(state: SdrState, purpose: string): SdrListening | null {
+  const live = state.sessions ?? (state.listening ? [state.listening] : []);
+  return live.find((s) => (s.purpose ?? "listen") === purpose) ?? null;
 }
 
 /** Whether a held radio is one there is any point hearing. A session whose purpose is
@@ -49,7 +67,7 @@ export function isAudible(session: SdrListening): boolean {
 
 type Listener = (state: SdrState) => void;
 
-const IDLE: SdrState = { available: false, listening: null };
+const IDLE: SdrState = { available: false, listening: null, sessions: [] };
 // A second is the same cadence the vitals stream uses, and the tuner shows an
 // elapsed time and a level meter that both want to move.
 const POLL_MS = 1000;

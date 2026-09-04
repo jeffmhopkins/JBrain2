@@ -82,10 +82,17 @@ ATTEMPTS_SHOWN = 20
 
 class SdrStatusOut(BaseModel):
     """`listening` is None when the radio is idle — which is exactly the condition
-    the omnibox uses to decide whether the icon exists at all."""
+    the omnibox uses to decide whether the icon exists at all.
+
+    `sessions` is every radio the box is holding. It exists because `listening` is now
+    the ONE the omnibox should draw and prefers the tuner: with APRS on one dongle and
+    the tuner on another, a screen reading `listening.purpose` to ask "is APRS logging?"
+    is told no while it is running — which is how the APRS tab put up a contention panel
+    and an inert button in front of the owner."""
 
     available: bool
     listening: dict[str, Any] | None
+    sessions: list[dict[str, Any]] = []
 
 
 def _base(settings: Any) -> str:
@@ -122,6 +129,7 @@ async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> 
         get_settings_store(request),
         ctx_for(owner),
         want,
+        settings.sdr_url,
     )
 
 
@@ -157,7 +165,16 @@ async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
         # The sidecar is configured but unreachable (starting, crashed). Idle is the
         # honest answer — the icon stays dark rather than lit over a dead radio.
         return SdrStatusOut(available=False, listening=None)
-    return SdrStatusOut(available=True, listening=health.get("listening"))
+    live = health.get("sessions")
+    one = health.get("listening")
+    return SdrStatusOut(
+        available=True,
+        listening=one,
+        # An OLDER sidecar sends no `sessions`; it can hold only one thing, so
+        # `listening` IS the list. Same fallback as `health.session_for`, for the seconds
+        # during an update when the two containers are different builds.
+        sessions=live if isinstance(live, list) else ([one] if isinstance(one, dict) else []),
+    )
 
 
 @router.post("/listen")

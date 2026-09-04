@@ -1,10 +1,12 @@
 """The `sdr` sidecar: tune a USB software-defined radio, return audio.
 
-The only container that touches the radio. It owns the device because the box has
-exactly ONE tuner (docs/plans/SDR_RADIO_PLAN.md §4.2): listening, sweeping and
-recording are mutually exclusive, so a single owner with a lock is what keeps two
-callers from fighting over it. Serialising here rather than in the api means the
-guarantee holds no matter who calls.
+The only container that touches the radio. It owns the devices because the arbitration
+has to happen somewhere only one process can see: one session per RADIO, so listening,
+sweeping and recording are mutually exclusive PER DONGLE and a second caller for a held
+one is refused by name (docs/plans/SDR_RADIO_PLAN.md §4.2, APRS_CONTROL_PLAN.md P0b).
+It was one holder per box until there were two dongles, which is the same thing while
+there is one. Arbitrating here rather than in the api means the guarantee holds no
+matter who calls — and there are four callers.
 
 **Egress-free by topology.** Compose puts this on a network declared `internal: true`,
 so the container has no route off the box. A radio receiver has no business reaching
@@ -209,7 +211,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         # Report whether the tools are even present: a sidecar that starts but has no
         # rtl_fm is a failure the api should see at /healthz, not on first capture.
-        session = TUNER.current()
+        # ONE reading for both fields below: taken separately, a session could appear in
+        # `sessions` but not in `listening`, and the api's fallback assumes otherwise.
+        session, live = TUNER.snapshot()
         self._json(
             200,
             {
@@ -231,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
                 # and the tuner, "the session" is no longer a thing that exists. A
                 # caller that asks `listening` whether APRS is running now gets the
                 # right answer only when nothing else is holding a radio.
-                "sessions": [s.info().as_dict() for s in TUNER.sessions()],
+                "sessions": [s.info().as_dict() for s in live],
             },
         )
 
@@ -489,8 +493,15 @@ class Handler(BaseHTTPRequestHandler):
         # listening session keeps a one-radio caller working unchanged.
         wanted = body.get("session_id")
         session = TUNER.find(str(wanted)) if wanted else TUNER.for_purpose(PURPOSE_LISTEN)
-        if session is None and not wanted:
-            session = TUNER.current()
+        if wanted and session is None:
+            # `find` matches on id, so a named session that is not here is a STALE id —
+            # the session was replaced or released while the sheet held it. Said plainly:
+            # an earlier cut left the old "no longer the live one" check below `find`,
+            # where it could never fire, and this case fell through to "nothing is
+            # listening" — false whenever a listening session existed, and not something
+            # the owner could act on.
+            self._json(409, {"detail": "that session is no longer the live one"})
+            return
         if session is not None and session.purpose != PURPOSE_LISTEN:
             # Retuning a logging session would move the packet channel to wherever the
             # tuner sheet asked for, leave the lease claiming to be logging APRS, and
@@ -506,14 +517,16 @@ class Handler(BaseHTTPRequestHandler):
         if session is None:
             self._json(409, {"detail": "nothing is listening"})
             return
-        wanted = body.get("session_id")
-        if wanted is not None and wanted != session.id:
-            # A stale client retuning a session that has since been replaced would
-            # otherwise silently move someone else's radio.
-            self._json(409, {"detail": "that session is no longer the live one"})
-            return
         try:
             session.tune(int(body.get("frequency_hz", 0)), body.get("mode"))
+        except listen.SessionGone:
+            # Released between resolving it above and retuning it. `tune` refuses rather
+            # than relaunching, because a relaunch here would spawn an rtl_fm for a
+            # session no longer in the registry: invisible to `blocking_key`, unreapable,
+            # and holding the dongle until the container restarts — after which the next
+            # caller for that serial succeeds and two processes fight over one radio.
+            self._json(409, {"detail": "that session is no longer the live one"})
+            return
         except (ListenError, ValueError) as bad:
             self._json(400, {"detail": str(bad)})
             return
@@ -527,19 +540,34 @@ class Handler(BaseHTTPRequestHandler):
         happens to be first would let jerv's "release the radio" stop a log the owner
         armed on a schedule — a silent loss, in the direction that looks like success.
 
-        So an unnamed stop takes the LISTENING session, which is what a person means,
-        and falls back to the only session when there is exactly one — which is every
-        one-dongle box, and keeps them byte-identical. It never picks between two
-        services: stopping a service is that service's own switch, by id.
+        So an unnamed stop takes the LISTENING session and nothing else. An earlier cut
+        fell back to "the only session when there is exactly one", reasoning that a
+        one-dongle box has nothing to choose between — but the condition it actually
+        tested was `len(sessions) == 1`, which is equally true of a TWO-dongle box
+        running only APRS. It would have stopped the log there, which is the outcome
+        this paragraph says it prevents.
+
+        The cost is a real behaviour change on a one-dongle box: "release the radio"
+        while APRS holds it now answers `stopped: false` instead of stopping the log.
+        That is the honest answer — the caller is told nothing was listening, and the
+        APRS switch is one tap away — and it is the direction that cannot lose a log the
+        owner armed on a schedule. `holding` says what IS on a radio, so the caller can
+        name it rather than leaving the owner to guess.
         """
         session_id = body.get("session_id")
         if session_id is None:
             chosen = TUNER.for_purpose(PURPOSE_LISTEN)
             if chosen is None:
-                live = TUNER.sessions()
-                chosen = live[0] if len(live) == 1 else None
-            if chosen is None:
-                self._json(200, {"stopped": False})
+                self._json(
+                    200,
+                    {
+                        "stopped": False,
+                        "holding": [
+                            {"purpose": s.purpose, "serial": s.serial, "session_id": s.id}
+                            for s in TUNER.sessions()
+                        ],
+                    },
+                )
                 return
             session_id = chosen.id
         self._json(200, {"stopped": TUNER.stop(str(session_id))})

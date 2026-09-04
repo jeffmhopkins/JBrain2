@@ -885,6 +885,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.settings_store,
                 ctx,
                 want,
+                settings.sdr_url,
             )
 
         sdr_handlers: dict[str, ToolHandler] = build_sdr_handlers(settings.sdr_url, _pick_radio)

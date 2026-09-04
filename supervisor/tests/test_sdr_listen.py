@@ -1021,15 +1021,46 @@ class TestOneSessionPerRadio:
     def test_current_prefers_the_tuner_over_a_service(self, tuner) -> None:
         """The omnibox draws ONE icon, so `current` has to pick — and pick the same way
         twice, or "which session is showing" changes between two reads that changed
-        nothing. Order is what a person is most likely asking about."""
+        nothing. Order is what a person is most likely asking about.
+
+        The listening session is on the HIGHER serial deliberately. With it on the lower
+        one, `min` by (priority, serial) and plain serial order give the same answer, and
+        an earlier cut of this test passed with the priority map deleted — proving only
+        that sorting happened. This is the rule the whole PWA reads through
+        `/api/sdr/status.listening`, so it has to be the thing under test."""
         tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                    serial="77192819")
-        listening = tuner.start(146_520_000, "fm", None, serial="09022796")
+                    serial="09022796")
+        listening = tuner.start(146_520_000, "fm", None, serial="77192819")
 
         assert tuner.current().id == listening.session_id
         # ...and naming a radio asks about that radio, not about the box.
-        assert tuner.current("77192819").purpose == listen.PURPOSE_APRS
+        assert tuner.current("09022796").purpose == listen.PURPOSE_APRS
         assert tuner.current("nosuchserial") is None
+
+    def test_current_breaks_a_TIE_by_serial(self, tuner) -> None:
+        """Priority first, serial only to break a tie — so two sessions of the same
+        purpose still answer the same way on every read."""
+        tuner.start(146_520_000, "fm", None, serial="77192819")
+        tuner.start(99_300_000, "wbfm", None, serial="09022796")
+
+        assert tuner.current().serial == "09022796"
+
+    def test_a_released_session_cannot_relaunch_itself(self, tuner) -> None:
+        """The retune race. `/listen/tune` resolves the Session under the tuner's lock
+        and calls `tune` outside it, so a stop landing in between used to spawn a fresh
+        rtl_fm for a session no longer in the registry — invisible to `blocking_key`,
+        never reaped, holding the dongle until the container restarts, after which the
+        next caller for that serial is let through and two processes fight over one
+        radio."""
+        info = tuner.start(146_520_000, "fm", None, serial="77192819")
+        session = tuner.find(info.session_id)
+        tuner.stop(info.session_id)
+
+        with pytest.raises(listen.SessionGone):
+            session.tune(146_940_000)
+
+        # ...and the radio really is free, rather than held by a process nothing tracks.
+        assert tuner.start(146_940_000, "fm", None, serial="77192819") is not None
 
     def test_sessions_are_listed_in_a_stable_order(self, tuner) -> None:
         """Sorted by serial rather than by whoever started first, so a list the owner
@@ -1111,6 +1142,55 @@ class TestCaptureAndSessionsShareOneRegistry:
         tuner.unreserve("77192819")
 
         assert tuner.start(144_390_000, "fm", None, serial="77192819") is not None
+
+    def test_a_stranded_reservation_lapses_instead_of_holding_a_radio_for_ever(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A session is reaped by asking its process whether it is alive. A reservation
+        has no process to ask — it is a claim staked by a `capture` that PROMISES to
+        release it in a `finally`, and a promise is not a reap: a signal between taking
+        the claim and entering that `try`, or a worker killed outright, would strand the
+        key for the life of the process. `blocking_key` then refuses that radio for
+        ever, and `/healthz` reports busy with nothing running."""
+        assert tuner.reserve("77192819", "recording") is None
+        assert tuner.reserve("77192819", "recording") is not None  # still held
+        assert tuner.reserved() is True
+
+        later = time.monotonic() + listen.RESERVATION_TTL_S + 1
+        monkeypatch.setattr(listen.time, "monotonic", lambda: later)
+
+        assert tuner.reserve("77192819", "recording") is None
+        assert tuner.start(146_520_000, "fm", None, serial="09022796") is not None
+
+    def test_a_reservation_does_not_lapse_while_a_capture_could_still_be_running(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The deadline is longer than any capture the sidecar will run, so an expiry is
+        always a leak rather than a slow caller. A TTL below that would hand the radio
+        away underneath a recording that is still going."""
+        tuner.reserve("77192819", "recording")
+
+        soon = time.monotonic() + listen.RESERVATION_TTL_S - 1
+        monkeypatch.setattr(listen.time, "monotonic", lambda: soon)
+
+        assert tuner.reserve("77192819", "recording") is not None
+
+    def test_stopping_every_session_does_NOT_free_a_capture_s_radio(self, tuner) -> None:
+        """Stated in prose by the sidecar's test fixture and unpinned until now.
+
+        An in-flight `rtl_fm` still has the device open; releasing its key because a
+        person pressed Release would let the next session open a dongle a running
+        process holds — the "garbled audio rather than an error" outcome. The capture
+        frees it in its own `finally`, seconds later."""
+        tuner.start(146_520_000, "fm", None, serial="09022796")
+        tuner.reserve("77192819", "recording")
+
+        assert tuner.stop() is True
+
+        assert tuner.sessions() == []
+        assert tuner.reserved() is True
+        with pytest.raises(listen.SdrBusy):
+            tuner.start(144_390_000, "fm", None, serial="77192819")
 
     def test_reserved_is_what_healthz_calls_busy(self, tuner) -> None:
         """`/healthz`'s `busy` has always meant "a capture is running" — not "a session

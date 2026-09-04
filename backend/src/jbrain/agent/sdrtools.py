@@ -225,15 +225,28 @@ def build_sdr_handlers(
         # The RESULTING state, never "ok": a caller must not be able to report a
         # success it did not achieve.
         return (
-            f"APRS logging is on, on {mhz:g} MHz. The radio is held for packets, so it "
-            "can't be listened to until logging is turned off."
+            f"APRS logging is on, on {mhz:g} MHz. That radio is held for packets, so it "
+            "can't be listened to until logging is turned off — but another dongle, if "
+            "this box has one, is still free."
         )
 
     async def sdr_stop(_arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
         status, body = await _call("/listen/stop", {"session_id": None})
         if status != 200:
             return f"Couldn't release the radio: {body.get('detail', 'unknown error')}"
-        return "Radio released." if body.get("stopped") else "The radio wasn't listening."
+        if body.get("stopped"):
+            return "Radio released."
+        # Naming no session means the LISTENING one, and a service is never released
+        # this way: "release the radio" must not stop a log the owner armed on a
+        # schedule. So say what IS holding one, or the answer is a dead end.
+        holding = body.get("holding") or []
+        jobs = sorted({str(h.get("purpose")) for h in holding if isinstance(h, dict)})
+        if not jobs:
+            return "Nothing was listening — the radio is already free."
+        return (
+            f"Nothing was listening. {' and '.join(jobs)} is holding a radio; that has "
+            "its own switch, so tell me which you want turned off."
+        )
 
     return {
         "sdr_listen": sdr_listen,
