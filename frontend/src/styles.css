@@ -26008,3 +26008,23 @@ button.task-band:active {
 .jobsurface {
   margin-top: 14px;
 }
+
+/* The repair, not a control: quiet, last, and below a hairline (SdrRadiosTab.tsx). */
+.hair {
+  margin: 16px 0 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.radio-reset {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.radio-reset:disabled {
+  opacity: 0.4;
+}

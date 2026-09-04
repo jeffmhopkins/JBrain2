@@ -424,6 +424,23 @@ what the owner cannot do (CLAUDE.md #10):
   did not start" are sentences for an operator, and wrapping them in `sdr sidecar: …`
   buried the actionable half behind a status that reads as the box being broken.
 
+**And a dongle that has stopped answering can now be reset REMOTELY.** That is the part
+that mattered most on the day: the fault appeared while the owner was away, and the only
+recovery anyone could name was walking to the box and re-plugging it. `USBDEVFS_RESET`
+on the device node is a port reset — the kernel re-enumerates exactly as a re-plug does —
+and the sdr container already has `/dev/bus/usb` and runs as root, so it needs no new
+privilege and no new package (`deploy/sdr/usb.py`, stdlib `fcntl`).
+
+What makes it possible for the broken case specifically is that **sysfs still names the
+device**: the kernel answers from what it cached at enumeration, so a serial still maps
+to a node long after librtlsdr has stopped being able to identify it. So the api resolves
+serial → node from the supervisor's scan and the sidecar resets that node — never a path
+from the caller, and never a device that is not an SDR. It runs through the lease, so a
+reset cannot happen under a decode, and it touches one device, so APRS on the other
+dongle keeps logging. Reachable from the PWA (**Radios → the radio → Reset this radio**)
+and from a handed-over token (`scripts/debug-connect.sh sdr-reset`). CLAUDE.md #10 asks
+for terminal dependencies to be designed out rather than documented; this is one.
+
 **And the cause may have been ours.** `_kill` sent SIGKILL with no SIGTERM first, and
 both tools install a handler that cancels the pending async USB transfer and CLOSES the
 device. SIGKILL never runs it, leaving the RTL2832U with transfers submitted — a known

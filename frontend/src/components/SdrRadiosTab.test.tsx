@@ -331,3 +331,34 @@ describe("giving a radio a job", () => {
     expect(await screen.findByText(/reserved for APRS logging/)).toBeInTheDocument();
   });
 });
+
+describe("resetting a radio that will not open", () => {
+  it("re-enumerates the dongle, after asking twice", async () => {
+    // The software equivalent of unplugging it, and the only recovery that does not
+    // involve hands. It is in the PWA because the owner has no terminal (CLAUDE.md
+    // #10) — before this the answer was "go and unplug it", which is no answer when
+    // the box is somewhere else.
+    box([radio(WHIP, { name: "Desk whip" })]);
+    const reset = vi.spyOn(api, "resetSdrRadio").mockResolvedValue({ reset: true } as never);
+
+    show();
+    await open("Desk whip");
+    fireEvent.click(await screen.findByRole("button", { name: "Reset this radio" }));
+
+    expect(reset).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Again\?/ }));
+
+    await waitFor(() => expect(reset).toHaveBeenCalledWith(WHIP));
+  });
+
+  it("is offered on a radio the box cannot open at all", async () => {
+    // The case it exists for. A dongle that has stopped answering still appears in the
+    // scan, so the repair has to be reachable from a card whose every JOB is refused.
+    box([radio(WHIP, { name: "Desk whip", attached: false })]);
+
+    show();
+    await open("Desk whip");
+
+    expect(await screen.findByRole("button", { name: "Reset this radio" })).toBeTruthy();
+  });
+});

@@ -38,6 +38,7 @@ def _load():
 
 
 listen = _load()
+usbdev = importlib.import_module("usbdev")
 
 
 class _FakeProc:
@@ -1983,3 +1984,59 @@ class TestClosingTheRadioPolitely:
         sent = self._run(monkeypatch, self._Stubborn)
 
         assert sent.index("term") < sent.index("kill")
+
+
+class TestTheUsbReset:
+    """The ioctl itself. Pure enough to check without a device: the number, and the one
+    guard that stops a caller-supplied path reaching `os.open` in a root container."""
+
+    def test_it_is_the_kernel_s_own_reset_number(self) -> None:
+        # _IO('U', 20) from <linux/usbdevice_fs.h>: direction 0, type 'U', number 20.
+        assert (ord("U") << 8) | 20 == usbdev.USBDEVFS_RESET
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/etc/passwd",
+            "/dev/bus/usb/003/010/../../../../etc/shadow",
+            "/dev/bus/usb/3/10",
+            "/dev/null",
+            "",
+        ],
+    )
+    def test_only_a_device_node_is_ever_opened(self, path: str) -> None:
+        with pytest.raises(ValueError):
+            usbdev.reset(path)
+
+    def test_a_real_node_shape_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: list[tuple[str, int]] = []
+        monkeypatch.setattr(
+            usbdev.os, "open", lambda p, f: (opened.append((p, f)), 7)[1]
+        )
+        monkeypatch.setattr(usbdev.os, "close", lambda _fd: None)
+        monkeypatch.setattr(usbdev.fcntl, "ioctl", lambda *_a: 0)
+
+        usbdev.reset("/dev/bus/usb/003/010")
+
+        assert opened == [("/dev/bus/usb/003/010", usbdev.os.O_WRONLY)]
+
+    def test_the_handle_is_closed_even_when_the_ioctl_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A leaked fd on a USB device node would keep the device open against the very
+        # tools the reset exists to unblock.
+        closed: list[int] = []
+        monkeypatch.setattr(usbdev.os, "open", lambda _p, _f: 7)
+        monkeypatch.setattr(usbdev.os, "close", closed.append)
+
+        def boom(*_a: object) -> int:
+            raise OSError(19, "No such device")
+
+        monkeypatch.setattr(usbdev.fcntl, "ioctl", boom)
+
+        with pytest.raises(OSError):
+            usbdev.reset("/dev/bus/usb/003/010")
+
+        assert closed == [7]

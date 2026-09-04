@@ -1176,3 +1176,111 @@ def test_a_survey_is_never_moved_mid_measurement(sidecar: str, monkeypatch) -> N
 
     assert status == 409
     assert "sweeping the band" in body["detail"]
+
+
+# --- resetting a radio that has stopped answering -----------------------------------
+
+
+def test_a_reset_re_enumerates_the_named_device(sidecar: str, monkeypatch) -> None:
+    """The software equivalent of unplugging it, and the ONLY recovery that does not
+    involve hands: nothing else clears a dongle that is on the bus but not answering —
+    not a container restart, not a rebuild, not an update. The owner runs this box with
+    no terminal (CLAUDE.md #10), so "go and unplug it" is not an answer."""
+    hit: list[str] = []
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", hit.append)
+
+    status, body = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 200
+    assert body["reset"] is True
+    assert hit == ["/dev/bus/usb/003/010"]
+
+
+def test_a_reset_is_refused_while_that_radio_is_in_use(
+    sidecar: str, monkeypatch
+) -> None:
+    """Through the LEASE, so a reset cannot be run under a session using the radio —
+    re-enumerating a device mid-decode would take the log down with no explanation."""
+    hit: list[str] = []
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", hit.append)
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+
+    status, body = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 409
+    assert "logging APRS" in body["detail"]
+    assert hit == []
+
+
+def test_the_other_radio_keeps_working_through_a_reset(
+    sidecar: str, monkeypatch
+) -> None:
+    # One device is re-enumerated, not the bus. APRS on the second dongle is untouched,
+    # which is the whole reason this is addressed by serial.
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", lambda _n: None)
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WHIP},
+    )
+
+    status, _ = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 200
+    _, health = _get(sidecar, "/healthz")
+    assert any(s["purpose"] == "aprs" for s in health["sessions"])
+
+
+def test_a_reset_leaves_the_radio_free_afterwards(sidecar: str, monkeypatch) -> None:
+    # The reservation is held only for the ioctl. Left behind, it would lock the radio
+    # out for its full TTL with nothing running — a repair that broke the thing.
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", lambda _n: None)
+    _post(sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"})
+
+    free, _ = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WIRE},
+    )
+
+    assert free == 200
+
+
+def test_a_reset_that_the_kernel_refuses_says_so(sidecar: str, monkeypatch) -> None:
+    def boom(_node: str) -> None:
+        raise OSError(19, "No such device")
+
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", boom)
+
+    status, body = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 502
+    assert "would not reset" in body["detail"]
+    # ...and the radio is not left reserved by a repair that failed.
+    free, _ = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WIRE},
+    )
+    assert free == 200
+
+
+def test_a_node_that_is_not_a_device_node_is_refused(sidecar: str) -> None:
+    """`os.open` on a caller-supplied path inside a ROOT container is not a thing to
+    leave open — even one only the api can reach today, because "only the api can reach
+    it" is a property of routing rather than of this code."""
+    status, _ = _post(sidecar, "/reset", {"serial": WIRE, "device_node": "/etc/passwd"})
+
+    assert status == 400

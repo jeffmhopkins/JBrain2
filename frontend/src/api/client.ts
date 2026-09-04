@@ -2810,6 +2810,16 @@ export const api = {
     return (await response.json()) as SdrRadios;
   },
 
+  // Re-enumerate one dongle: the software equivalent of unplugging it. The only
+  // recovery for a radio that has stopped answering, and the reason it is in the PWA at
+  // all is that the owner has no terminal (CLAUDE.md #10).
+  async resetSdrRadio(serial: string): Promise<{ reset: boolean }> {
+    const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}/reset`, {
+      method: "POST",
+    });
+    return (await response.json()) as { reset: boolean };
+  },
+
   async forgetSdrRadio(serial: string): Promise<SdrRadios> {
     const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}`, {
       method: "DELETE",

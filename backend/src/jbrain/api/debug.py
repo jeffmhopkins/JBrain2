@@ -76,7 +76,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, sweepable
+from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, sweepable
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1965,6 +1965,33 @@ async def sdr_listen_debug(
             "serial": await _radio(request, settings, GENERAL),
         },
     )
+
+
+@router.post("/sdr/reset")
+async def sdr_reset_debug(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    serial: Annotated[str, Query(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+) -> dict[str, Any]:
+    """Re-enumerate one dongle — the debug twin of `POST /api/sdr/radios/{serial}/reset`.
+
+    The owner surface is `OwnerDep` and a capability token is on a physically distinct
+    path, so it cannot reach that route. Without a twin, the one recovery for a radio
+    that has stopped answering would be unreachable from a handed-over token — which is
+    the situation it was written in: the dongle was already broken and nobody was home."""
+    request.state.debug_detail = f"sdr reset {serial}"
+    scan = await _supervisor(request).get(
+        "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    scan.raise_for_status()
+    node = nodes_in(cast(dict[str, Any], scan.json())).get(serial)
+    if node is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No radio {serial} in the USB scan, so there is no device to reset.",
+        )
+    return await _sdr_post(settings, "/reset", {"serial": serial, "device_node": node})
 
 
 @router.post("/sdr/stop")
