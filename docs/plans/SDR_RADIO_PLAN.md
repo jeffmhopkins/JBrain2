@@ -38,8 +38,11 @@ pipeline. The work is a sidecar, a device lease, a launcher screen, and five too
 
 **Nooelec NESDR SMArt v5** — RTL2832U + R820T2/R860, 0.5 PPM TCXO, SMA female,
 **receive only**, one tuner, ~2.4 MHz usable instantaneous bandwidth (3.2 max), 8-bit
-ADC. Native tuner range 24 MHz – 1.766 GHz; HF below 25 MHz needs direct sampling and a
-suitable antenna (**out of scope**, §9).
+ADC. Native tuner range 24 MHz – 1.766 GHz — but the unit is **sold as 100 kHz–1.75 GHz**,
+because the RTL2832U's ADC can be fed directly, bypassing the R820T2, which is how any
+RTL-SDR reaches HF. So HF is a software gap here rather than a missing part: nothing in
+`deploy/sdr/` passes a direct-sampling flag, and `MIN_HZ`/`MIN_MHZ` block the range
+regardless (**out of scope for now**, §9 — but for reach, not for hardware).
 
 Three consequences drive the whole design:
 
@@ -539,8 +542,11 @@ is flat because whisper.cpp pads every clip to a 30 s window. Residency is still
 ## 9. Out of scope (named, not silently dropped)
 
 - **Transmit.** The hardware cannot, and the tools will not pretend otherwise.
-- **HF below 25 MHz.** Direct sampling plus an HF antenna; the interesting voice traffic
-  is above it.
+- **HF below 24 MHz.** Out of scope for reach, NOT because the hardware lacks it: this
+  unit is sold as 100 kHz–1.75 GHz and the ADC can be fed directly. What is missing is
+  ours — a direct-sampling flag through `deploy/sdr/`, a lowered `MIN_HZ`, and an
+  antenna. Whether `rtl_power` (as opposed to `rtl_fm`) can even be put into that mode
+  is unverified and would decide whether the SWEEP reaches HF or only listening does.
 - **Trunked / P25 systems.** Needs OP25 or trunk-recorder — a substantially larger lift.
   Worth knowing that much local public-safety traffic is now trunked and often
   encrypted, so S0 may find little clear voice depending on the county. Encrypted

@@ -48,10 +48,16 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 
 # The R820T2's real range, and the demodulators rtl_fm offers. Bounded here as well
 # as in the sidecar because a bound that lives only in the caller is not a bound.
-# The R820T's own tuning range, and the same numbers `deploy/sdr/*.py` enforce. This
-# read 0.024 — 24 kHz, a thousand times low — so a request for HF passed validation here
-# and came back as a 502 from the sidecar rather than a 422 naming the real limit. The
-# tuner reaches HF only with a direct-sampling mod this dongle does not have.
+# The same numbers `deploy/sdr/*.py` enforces, so a refusal is a 422 naming the limit
+# rather than a 502 from the radio. This read 0.024 — 24 kHz — which passed anything
+# through to a sidecar that rejects everything under 24 MHz.
+#
+# 24 MHz is OUR floor, not the hardware's. It is the R820T2's native tuner range, and
+# the SMArt v5 is sold as 100 kHz-1.75 GHz: the RTL2832U's ADC can be fed directly,
+# bypassing the tuner, which is how any RTL-SDR reaches HF. Nothing here enables that —
+# `deploy/sdr/` never passes a direct-sampling flag and `MIN_HZ` blocks the range anyway
+# — so HF is a SOFTWARE gap on this box, not a missing part. Raising this bound alone
+# would only move the refusal back to the sidecar.
 MIN_MHZ = 24.0
 MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
