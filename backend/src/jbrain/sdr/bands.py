@@ -737,6 +737,45 @@ def containing(hz: int) -> Section | None:
     return min(covering, key=lambda s: s.span_hz) if covering else None
 
 
+#: What a frequency gets when NO curated section covers it — the expert path, typing a
+#: number. Coarse on purpose: these are the broad conventions of the spectrum, not a band
+#: plan, and their job is to be un-surprising rather than right. Ordered, first match
+#: wins, and the last entry catches everything above.
+_FALLBACKS: tuple[tuple[int, str, int, int], ...] = (
+    # up to Hz,      mode,  step,    channel spacing
+    (1_800_000, "am", 10_000, 10_000),  # medium wave, 10 kHz channels in North America
+    (24_000_000, "am", 5_000, 5_000),  # shortwave broadcast is AM on a 5 kHz grid
+    (87_500_000, "fm", 12_500, 25_000),  # low VHF: land mobile and 6 m
+    (108_000_000, "wbfm", 100_000, 200_000),  # the FM broadcast dial
+    (137_000_000, "am", 25_000, 25_000),  # airband is AM, and getting this wrong is silence
+    (1_766_000_000, "fm", 12_500, 25_000),  # everything else narrowband
+)
+
+
+def defaults_for(hz: int) -> tuple[str, int, int]:
+    """Mode, tuning step and channel spacing for any frequency the radio can reach.
+
+    The curated section when there is one, and a convention when there is not — because
+    most of the spectrum is not in the table and never will be, while all of it is
+    tunable. Without this the expert path would have to make the owner choose a
+    demodulator before they could hear anything, and the commonest wrong choice is
+    silent: FM on an airband frequency produces a hiss with a voice buried in it that
+    never quite resolves, which reads as a dead channel rather than a wrong setting."""
+    section = containing(hz)
+    fallback = next(
+        ((m, s, c) for ceiling, m, s, c in _FALLBACKS if hz <= ceiling),
+        ("fm", 12_500, 25_000),
+    )
+    if section is None:
+        return fallback
+    # A CHANNEL-LIST section carries no step — MURS is five fixed frequencies, so
+    # stepping through the 2.8 MHz between them is meaningless and `step_hz` is 0. But
+    # the expert path can still land there by typing a number, and a step of zero is a
+    # pair of ± buttons that do nothing. Take the section's mode, borrow the
+    # convention's step.
+    return section.mode, section.step_hz or fallback[1], section.channel_hz
+
+
 def validate(sections: tuple[Section, ...] = SECTIONS) -> list[str]:
     """Re-derive the physics from the rows and report every disagreement.
 

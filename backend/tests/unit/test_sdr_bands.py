@@ -257,3 +257,57 @@ class TestTheRouteThatServesTheTable:
 
         assert any(c.name == "Ch 16" and c.hz == 156_800_000 for c in marine.channels)
         assert any("not voice" in c.note for c in marine.channels)  # Ch 70 is DSC data
+
+
+class TestTheExpertPathCoversTheWholeRadio:
+    """Typing a frequency has to work everywhere the radio reaches, not only inside the
+    32 curated sections. Most of the spectrum is not in the table and never will be."""
+
+    def test_every_reachable_frequency_gets_a_mode_and_a_step(self) -> None:
+        """Swept across the whole range rather than spot-checked, because the failure
+        this guards is a hole between fallback bands, which a handful of samples would
+        step straight over."""
+        hz = 100_000
+        while hz <= 1_766_000_000:
+            mode, step, _chan = bands.defaults_for(hz)
+            assert mode, hz
+            assert step > 0, hz
+            hz += 137_000  # a prime-ish stride, so the walk cannot land only on edges
+
+    def test_a_curated_section_wins_over_the_convention(self) -> None:
+        """The table is the better answer wherever it has one — 2 m steps in 5 kHz,
+        which no general rule would produce."""
+        assert bands.defaults_for(146_940_000) == ("fm", 5_000, 15_000)
+
+    def test_airband_gets_AM_even_though_nothing_curated_covers_all_of_it(self) -> None:
+        """The commonest wrong choice here is SILENT: FM on an airband frequency gives
+        a hiss with a voice buried in it that never resolves, which reads as a dead
+        channel rather than a wrong setting. 133.5 is inside the band and outside every
+        section this table happens to carry."""
+        mode, step, _ = bands.defaults_for(133_500_000)
+
+        assert mode == "am"
+        assert step == 25_000
+
+    def test_the_FM_dial_gets_wide_FM(self) -> None:
+        assert bands.defaults_for(99_500_000)[0] == "wbfm"
+
+    def test_shortwave_between_the_broadcast_bands_still_gets_AM(self) -> None:
+        assert bands.defaults_for(8_000_000)[0] == "am"
+
+    def test_the_top_of_the_range_is_covered(self) -> None:
+        """1766 MHz is the last frequency the tuner reaches, and an off-by-one in the
+        fallback ladder would leave it with nothing."""
+        assert bands.defaults_for(1_766_000_000)[0]
+
+    def test_a_channel_list_section_still_yields_a_usable_step(self) -> None:
+        """MURS is five fixed frequencies 2.8 MHz apart, so `step_hz` is 0 — stepping
+        between them is meaningless. But the expert path can land there by typing a
+        number, and a step of zero is a pair of ± buttons that do nothing. Found by the
+        sweep above, which is why it sweeps rather than spot-checks."""
+        section = bands.containing(152_000_000)
+        assert section is not None and section.step_hz == 0  # it really has none
+
+        mode, step, _ = bands.defaults_for(152_000_000)
+
+        assert mode == "fm" and step == 12_500
