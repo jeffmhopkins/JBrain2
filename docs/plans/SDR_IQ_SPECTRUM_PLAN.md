@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-04 (rev 4) · **Waves:** F0◻️ F1✅ F2✅ F3◻️ F4◻️ F5✅ F6◻️ F7◻️ F8◻️ F9◻️ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-04 (rev 4) · **Waves:** F0◻️ F1✅ F2✅ F3◻️ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
