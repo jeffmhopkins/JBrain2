@@ -25,6 +25,7 @@ from jbrain.sdr.tuner import (
     MIN_MHZ,
     SPECTRUM_MAX_BINS,
     live_bin_hz,
+    nodes_in,
     serials_in,
     viewable,
 )
@@ -176,3 +177,53 @@ class TestWhatALiveViewCanCover:
 
     def test_an_ordinary_band_is_viewable(self) -> None:
         assert viewable(144.0, 148.0) is None
+
+
+class TestFindingTheDeviceToReset:
+    """Serial -> device node, and why it comes from sysfs.
+
+    A reset is aimed at a dongle that has stopped answering — which is exactly the
+    device librtlsdr can no longer identify. sysfs answers anyway, from what the kernel
+    cached when the device first enumerated, and that is the whole reason a remote reset
+    is possible at all.
+    """
+
+    def test_it_maps_every_radio_the_scan_named(self) -> None:
+        found = nodes_in(
+            {
+                "sysfs_readable": True,
+                "sdrs": [
+                    {"serial": "09022796", "device_node": "/dev/bus/usb/001/011"},
+                    {"serial": "77192819", "device_node": "/dev/bus/usb/003/010"},
+                ],
+            }
+        )
+
+        assert found == {
+            "09022796": "/dev/bus/usb/001/011",
+            "77192819": "/dev/bus/usb/003/010",
+        }
+
+    def test_a_scan_that_could_not_see_maps_nothing(self) -> None:
+        # Unlike `serials_in`, "we could not see" and "no such radio" are the SAME
+        # answer here: a reset needs a node, and there is no node either way. Guessing
+        # one would aim an ioctl that re-enumerates hardware at a device nobody named.
+        assert nodes_in({"sysfs_readable": False, "sdrs": []}) == {}
+        assert nodes_in({"sdrs": [{"serial": "x", "device_node": "/dev/bus/usb/001/011"}]}) == {}
+        assert nodes_in("not a payload") == {}
+        assert nodes_in(None) == {}
+
+    def test_a_radio_with_no_node_is_left_out(self) -> None:
+        found = nodes_in(
+            {
+                "sysfs_readable": True,
+                "sdrs": [
+                    {"serial": "a1", "device_node": ""},
+                    {"serial": "a2"},
+                    {"serial": "", "device_node": "/dev/bus/usb/001/011"},
+                    {"serial": "a3", "device_node": "/dev/bus/usb/001/012"},
+                ],
+            }
+        )
+
+        assert found == {"a3": "/dev/bus/usb/001/012"}

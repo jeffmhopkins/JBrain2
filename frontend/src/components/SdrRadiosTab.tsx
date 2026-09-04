@@ -308,7 +308,57 @@ function RadioDetail({
         )}
       </div>
 
+      <ResetRadio radio={radio} busy={busy} onRun={run} />
+
       {arming && <SdrBandSheet purpose={arming} onPick={picked} onClose={() => setArming(null)} />}
+    </>
+  );
+}
+
+/** Re-enumerate the dongle — the software equivalent of unplugging it.
+ *
+ *  **It is here because the owner has no terminal** (CLAUDE.md #10). An RTL-SDR left
+ *  with transfers pending can stay on the bus and stop answering descriptor reads, and
+ *  then every lookup by serial fails while the USB scan still lists the device. Nothing
+ *  else clears it — not a container restart, not a rebuild, not an update — so before
+ *  this the only answer was "go and unplug it", which is no answer when the box is
+ *  somewhere else.
+ *
+ *  Last on the surface and quiet, because it is a repair rather than a control: the
+ *  ordinary way to use a radio is the job row above. Arm-then-confirm per DESIGN.md,
+ *  since it does interrupt the device. */
+function ResetRadio({
+  radio,
+  busy,
+  onRun,
+}: {
+  radio: SdrRadio;
+  busy: boolean;
+  onRun: (what: () => Promise<unknown>, whenItFails: string) => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <>
+      <hr className="hair" />
+      <button
+        type="button"
+        className="radio-reset"
+        disabled={busy}
+        onClick={() => {
+          if (!armed) {
+            setArmed(true);
+            return;
+          }
+          setArmed(false);
+          onRun(() => api.resetSdrRadio(radio.serial), "Couldn't reset the radio.");
+        }}
+      >
+        {armed ? "Again? This re-enumerates the dongle" : "Reset this radio"}
+      </button>
+      <p className="radio-hint">
+        Re-plugs it in software. For a radio the box can see but cannot open — nothing else clears
+        that, not even an update.
+      </p>
     </>
   );
 }

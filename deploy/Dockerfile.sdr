@@ -39,6 +39,9 @@ WORKDIR /app
 COPY deploy/sdr/server.py ./server.py
 COPY deploy/sdr/listen.py ./listen.py
 COPY deploy/sdr/packets.py ./packets.py
+# The USB port reset — the one recovery for a dongle that has stopped answering, and
+# the reason the owner never has to walk to the box for one (docs/runbooks/DEBUG_ACCESS.md).
+COPY deploy/sdr/usbdev.py ./usbdev.py
 
 # Fail the BUILD, not the first capture: this is the check that would have caught a
 # sidecar shipping without its radio tools, whose only on-box symptom is a capture

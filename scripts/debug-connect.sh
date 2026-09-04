@@ -46,6 +46,12 @@
 #      --channel-khz is how wide a signal is HERE — 15 on 2m, 25 on 70cm/airband/marine,
 #      200 on FM broadcast, thousands on a cellular carrier. Off the narrowband bands
 #      it is not optional: it sizes the neighbourhood `steady` judges a bin against.)
+#   scripts/debug-connect.sh sdr-reset <serial>       # re-enumerate one dongle
+#     (The software equivalent of unplugging it. An RTL-SDR left with transfers pending
+#      can stay on the bus and stop answering descriptor reads — every lookup by serial
+#      then fails while sysfs still lists it — and NOTHING else clears that: not a
+#      container restart, not a rebuild, not an update. Refused with a 409 while a
+#      session holds that radio; the other dongle is untouched.)
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
@@ -510,6 +516,10 @@ PY
     else
       _call POST /api/debug/sdr/stop | _pp
     fi ;;
+
+  sdr-reset) # <serial> — re-enumerate one dongle, for one that has stopped answering
+    ser="${1:?usage: debug-connect.sh sdr-reset <serial>}"
+    _call POST "/api/debug/sdr/reset?serial=$ser" | _pp ;;
 
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

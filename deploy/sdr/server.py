@@ -40,6 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
 import listen
+import usbdev
 from listen import (
     PURPOSE_APRS,
     PURPOSE_LABEL,
@@ -547,6 +548,56 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
+    def _reset(self, body: dict[str, Any]) -> None:
+        """Re-enumerate one radio, for a dongle that has stopped answering.
+
+        THE ONLY RECOVERY that does not involve hands. An RTL-SDR left with transfers
+        pending — an unclean teardown, a brown-out — can stay on the bus and stop
+        answering descriptor reads, after which every `-d <serial>` lookup fails and the
+        radio looks absent while sysfs still lists it. A container restart does not clear
+        that; a rebuild does not either; only a port reset or a person does. The owner
+        runs this box remotely with no terminal (CLAUDE.md #10), so "unplug it" is not an
+        answer, and this is the thing that stops it being one.
+
+        The node comes from the api, resolved through the supervisor's sysfs scan,
+        because resolving a serial to a node is precisely what a broken device cannot
+        help with — and sysfs answers it anyway from what the kernel cached when the
+        device first enumerated.
+
+        Through the LEASE, so a reset cannot be run under a session that is using the
+        radio: `reserve` refuses if it is held and holds it against anything starting
+        mid-reset. The other radio is untouched — this resets one device, so APRS on a
+        second dongle keeps logging."""
+        serial = body.get("serial")
+        node = str(body.get("device_node") or "")
+        try:
+            named = listen.validate_serial(serial)
+        except ListenError as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        busy = TUNER.reserve(named, "resetting the radio")
+        if busy is not None:
+            self._json(409, {"detail": str(busy)})
+            return
+        try:
+            usbdev.reset(node)
+        except ValueError as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        except OSError as failed:
+            # ENODEV is the ordinary one: the node moved between the scan and now, which
+            # a reset itself causes. Said plainly, because "try again" really is the fix.
+            self._json(
+                502,
+                {"detail": f"the radio would not reset ({failed.strerror or failed}). "},
+            )
+            return
+        finally:
+            TUNER.unreserve(named)
+        # The node number changes as a result — a reset device comes back at the next
+        # free address — so the caller is told to look again rather than reuse it.
+        self._json(200, {"reset": True, "serial": named, "was": node})
+
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
         # exactly that, so the default keeps them byte-identical.
@@ -719,6 +770,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/sweep":
             self._sweep()
+            return
+        if route == "/reset":
+            body = self._body()
+            if body is not None:
+                self._reset(body)
             return
         if route != "/capture":
             self._json(404, {"detail": "not found"})

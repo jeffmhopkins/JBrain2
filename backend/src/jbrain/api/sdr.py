@@ -47,7 +47,14 @@ from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ, live_bin_hz, viewable
+from jbrain.sdr.tuner import (
+    MAX_MHZ,
+    MIN_MHZ,
+    TUNABLE_MIN_MHZ,
+    live_bin_hz,
+    nodes_in,
+    viewable,
+)
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -128,6 +135,20 @@ async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any
             status_code=502, detail=f"sdr sidecar: {_detail(resp, resp.text[:300])}"
         )
     return cast(dict[str, Any], resp.json())
+
+
+async def _usb_scan(request: Request, settings: Any) -> dict[str, Any]:
+    """The supervisor's raw `/usb` payload, for the one caller that needs more than the
+    serials — a reset needs the device node beside them."""
+    client = request.app.state.supervisor_client
+    try:
+        resp = await client.get(
+            "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+        )
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+    except (httpx.HTTPError, ValueError, AttributeError, KeyError):
+        return {}
 
 
 async def _attached(request: Request, settings: Any) -> list[str] | None:
@@ -613,6 +634,40 @@ async def describe_radio(
         role=body.role,
     )
     return await radios(request, settings, owner)
+
+
+@router.post("/radios/{serial}/reset")
+async def reset_radio(
+    request: Request,
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    serial: Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+) -> dict[str, Any]:
+    """Re-enumerate one dongle — the software equivalent of unplugging it.
+
+    **This exists because the owner has no terminal** (CLAUDE.md #10). An RTL-SDR left
+    with transfers pending can stay on the bus and stop answering descriptor reads, and
+    then every lookup by serial fails while sysfs still lists the device. Nothing else
+    clears it: not a container restart, not a rebuild, not an update. Before this the
+    only answer was "go and unplug it", which is not an answer when the box is somewhere
+    else — so the terminal dependency is designed out rather than documented.
+
+    The node is resolved HERE, from the supervisor's sysfs scan, and never taken from
+    the caller: the sidecar opens whatever node it is handed, and "only the api can
+    reach it" is a property of today's routing rather than of that code. Resolving by
+    serial also means a caller cannot aim a reset at a device that is not an SDR."""
+    request.state.debug_detail = f"sdr reset {serial}"
+    nodes = nodes_in(await _usb_scan(request, settings))
+    node = nodes.get(serial)
+    if node is None:
+        # Both readings land here: a serial nothing reports, and a scan that could not
+        # be read at all. A reset needs a node either way, and guessing one is the last
+        # thing to do with an ioctl that re-enumerates hardware.
+        raise HTTPException(
+            status_code=404,
+            detail=f"No radio {serial} in the USB scan, so there is no device to reset.",
+        )
+    return await _post(settings, "/reset", {"serial": serial, "device_node": node})
 
 
 @router.delete("/radios/{serial}")

@@ -142,6 +142,34 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
     return None
 
 
+def nodes_in(usb_payload: object) -> dict[str, str]:
+    """Serial -> `/dev/bus/usb/...` node, from the supervisor's scan.
+
+    The map a RESET needs, and the reason it can exist at all: sysfs answers from what
+    the kernel cached when the device first enumerated, so it still names a dongle whose
+    LIVE descriptor reads have stopped working — which is exactly the device anyone
+    would want to reset. Asking librtlsdr instead would fail on the one case that
+    matters.
+
+    Empty rather than None on a scan that could not see: a reset needs a node, so "we
+    cannot tell" and "no such radio" lead to the same refusal here, unlike `serials_in`
+    where they must not be flattened."""
+    if not isinstance(usb_payload, dict) or not usb_payload.get("sysfs_readable"):
+        return {}
+    found = usb_payload.get("sdrs")
+    if not isinstance(found, list):
+        return {}
+    return {
+        entry["serial"]: entry["device_node"]
+        for entry in found
+        if isinstance(entry, dict)
+        and isinstance(entry.get("serial"), str)
+        and entry["serial"]
+        and isinstance(entry.get("device_node"), str)
+        and entry["device_node"]
+    }
+
+
 def serials_in(usb_payload: object) -> list[str] | None:
     """The serials of every SDR the supervisor's `/usb` scan found, in serial order —
     or None when the scan could not see.
