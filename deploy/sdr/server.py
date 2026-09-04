@@ -40,7 +40,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
 import listen
-from listen import PURPOSE_APRS, PURPOSE_LABEL, PURPOSE_LISTEN, PURPOSES
+from listen import (
+    PURPOSE_APRS,
+    PURPOSE_LABEL,
+    PURPOSE_LISTEN,
+    PURPOSE_SPECTRUM,
+    PURPOSES,
+    SWEEPING,
+)
 from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
 from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
@@ -101,6 +108,31 @@ def _wav(pcm: bytes, rate: int) -> bytes:
         out.setframerate(rate)
         out.writeframes(pcm)
     return buf.getvalue()
+
+
+def _range_of(body: dict[str, Any]) -> listen.Sweep:
+    """The span a sweeping request is asking for, bounds and all.
+
+    Shared by the one-shot `/sweep` and by starting or moving a live spectrum, so the
+    three cannot drift apart on what a legal range is — the tuner's limits are a fact
+    about the radio, not about which route asked.
+
+    `seconds` is how long a SURVEY runs and means nothing to a live spectrum, which
+    runs until it is released. It is parsed either way rather than made conditional:
+    `Sweep` is one type, and a field a caller may ignore is cheaper than two types that
+    agree about everything else."""
+    sweep = listen.Sweep.of(
+        start_hz=int(body.get("start_hz", 0)),
+        stop_hz=int(body.get("stop_hz", 0)),
+        bin_hz=int(body.get("bin_hz", 25_000)),
+        seconds=float(body.get("seconds", 60)),
+    )
+    if not (MIN_HZ <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
+        raise ListenError(
+            f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the tuner's range "
+            f"({MIN_HZ}-{MAX_HZ} Hz)"
+        )
+    return sweep
 
 
 def _peak(pcm: bytes) -> float:
@@ -202,6 +234,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/listen/packets":
             self._stream_packets()
+            return
+        if route == "/listen/spectrum":
+            self._stream_spectrum()
             return
         if route != "/healthz":
             self._json(404, {"detail": "not found"})
@@ -366,6 +401,49 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             session.unsubscribe_packets(sub)
 
+    def _stream_spectrum(self) -> None:
+        """Hand one viewer a stream of waterfall rows, newline-framed JSON.
+
+        Same shape as `/listen/packets`, and for the same two reasons: one JSON object
+        per line so a reader needs no framing of its own, and keep-alives so a stream
+        that is between frames does not look like a dead socket.
+
+        Each row carries its own range (`listen.Frame`), so the api relays lines without
+        understanding them and a retune needs no message of its own."""
+        session = TUNER.for_purpose(PURPOSE_SPECTRUM)
+        if session is None:
+            held = TUNER.sessions()
+            if held:
+                # Name the holder rather than saying "idle", which is false and sends
+                # the owner looking for a radio that is plainly in use.
+                doing = PURPOSE_LABEL.get(held[0].purpose, "in use")
+                detail = f"the radio is {doing}, not watching the spectrum"
+                self._json(409, {"detail": detail})
+                return
+            self._json(409, {"detail": "nothing is watching the spectrum"})
+            return
+        sub = session.subscribe_frames()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    frame = sub.get(timeout=20)
+                except queue.Empty:
+                    self.wfile.write(b'{"keepalive":true}\n')
+                    self.wfile.flush()
+                    continue
+                if frame is None:
+                    return  # the session ended; the stream ends with it
+                self.wfile.write(json.dumps(frame.as_dict()).encode() + b"\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # the viewer hung up; entirely normal
+        finally:
+            session.unsubscribe_frames(sub)
+
     def _sweep(self) -> None:
         """Run one band sweep and return the CSV rtl_power wrote.
 
@@ -383,27 +461,12 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         try:
-            sweep = listen.Sweep.of(
-                start_hz=int(body.get("start_hz", 0)),
-                stop_hz=int(body.get("stop_hz", 0)),
-                bin_hz=int(body.get("bin_hz", 25_000)),
-                seconds=float(body.get("seconds", 60)),
-            )
+            sweep = _range_of(body)
         except (TypeError, ValueError) as bad:
             self._json(400, {"detail": f"a sweep needs numbers: {bad}"})
             return
         except ListenError as refused:
             self._json(400, {"detail": str(refused)})
-            return
-
-        if not (MIN_HZ <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
-            self._json(
-                400,
-                {
-                    "detail": f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the "
-                    f"tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
-                },
-            )
             return
 
         try:
@@ -464,14 +527,28 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _listen(self, body: dict[str, Any]) -> None:
+        # Absent means listening: every existing caller predates purposes and means
+        # exactly that, so the default keeps them byte-identical.
+        purpose = str(body.get("purpose") or PURPOSE_LISTEN)
+        sweep = None
+        if purpose in SWEEPING:
+            try:
+                sweep = _range_of(body)
+            except (TypeError, ValueError) as bad:
+                self._json(400, {"detail": f"a range needs numbers: {bad}"})
+                return
+            except ListenError as refused:
+                self._json(400, {"detail": str(refused)})
+                return
         try:
             info = TUNER.start(
+                # Zero is fine for a sweeping purpose: `Session` replaces it with the
+                # range's centre, which is the only frequency a span has.
                 frequency_hz=int(body.get("frequency_hz", 0)),
                 mode=str(body.get("mode", "fm")),
                 gain=body.get("gain"),
-                # Absent means listening: every existing caller predates purposes and
-                # means exactly that, so the default keeps them byte-identical.
-                purpose=str(body.get("purpose") or PURPOSE_LISTEN),
+                purpose=purpose,
+                sweep=sweep,
                 # Which radio, resolved by the api from the owner's settings. Absent
                 # keeps the historical "whatever enumerates first" for a one-dongle box.
                 serial=listen.validate_serial(body.get("serial")),
@@ -489,7 +566,14 @@ class Handler(BaseHTTPRequestHandler):
         # session" is not a request that identifies anything. Falling back to the
         # listening session keeps a one-radio caller working unchanged.
         wanted = body.get("session_id")
-        session = TUNER.find(str(wanted)) if wanted else TUNER.for_purpose(PURPOSE_LISTEN)
+        # A body carrying a RANGE is asking about the waterfall, not the tuner, and
+        # "the session" is not one thing on a box with two radios. Naming the id is
+        # what the api actually does; this is what makes the route readable without it.
+        ranged = body.get("start_hz") is not None
+        if wanted:
+            session = TUNER.find(str(wanted))
+        else:
+            session = TUNER.for_purpose(PURPOSE_SPECTRUM if ranged else PURPOSE_LISTEN)
         if wanted and session is None:
             # `find` matches on id, so a named session that is not here is a STALE id —
             # the session was replaced or released while the sheet held it. Said plainly:
@@ -498,6 +582,9 @@ class Handler(BaseHTTPRequestHandler):
             # listening" — false whenever a listening session existed, and not something
             # the owner could act on.
             self._json(409, {"detail": "that session is no longer the live one"})
+            return
+        if session is not None and session.purpose == PURPOSE_SPECTRUM:
+            self._resweep(session, body)
             return
         if session is not None and session.purpose != PURPOSE_LISTEN:
             # Retuning a logging session would move the packet channel to wherever the
@@ -512,7 +599,8 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if session is None:
-            self._json(409, {"detail": "nothing is listening"})
+            doing = "watching the spectrum" if ranged else "listening"
+            self._json(409, {"detail": f"nothing is {doing}"})
             return
         try:
             session.tune(int(body.get("frequency_hz", 0)), body.get("mode"))
@@ -522,6 +610,32 @@ class Handler(BaseHTTPRequestHandler):
             # session no longer in the registry: invisible to `blocking_key`, unreapable,
             # and holding the dongle until the container restarts — after which the next
             # caller for that serial succeeds and two processes fight over one radio.
+            self._json(409, {"detail": "that session is no longer the live one"})
+            return
+        except (ListenError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        self._json(200, session.info().as_dict())
+
+    def _resweep(self, session: listen.Session, body: dict[str, Any]) -> None:
+        """Point a live spectrum somewhere else, on the session it is already holding.
+
+        Through the SAME route as a retune because it is the same move — the radio stays
+        leased, the session id stays good, the viewers stay attached — and a second route
+        would be a second place for the released-session race to be got wrong."""
+        try:
+            sweep = _range_of(body)
+        except (TypeError, ValueError) as bad:
+            self._json(400, {"detail": f"a range needs numbers: {bad}"})
+            return
+        except ListenError as refused:
+            self._json(400, {"detail": str(refused)})
+            return
+        try:
+            session.resweep(sweep)
+        except listen.SessionGone:
+            # Released between resolving it above and moving it. `resweep` refuses
+            # rather than relaunching, for the reason `Session._restart` gives.
             self._json(409, {"detail": "that session is no longer the live one"})
             return
         except (ListenError, ValueError) as bad:

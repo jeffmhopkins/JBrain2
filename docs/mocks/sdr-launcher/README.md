@@ -1,6 +1,17 @@
 # Radio launcher — GUI gate round 1
 
-> **Status:** Awaiting the owner's choice · **Last verified:** 2026-09-04
+> **Status:** **CHOSEN — shape A** (2026-09-04) · **Last verified:** 2026-09-04
+
+**Shape A is the binding spec.** The radio is the object: tabs become
+`Radios | APRS | Recordings`, the first is a roster of what each radio is doing, and
+tapping one opens a control layer where its job is chosen.
+
+**This supersedes round 3's decision** in `../aprs/c-single-dongle.html`, which put the
+APRS switch in the APRS tab and rejected a radio-wide job selector. That was decided on a
+**one-dongle box**, where "which radio" was not a question. It is now, and the owner was
+asked directly rather than the change being inferred. The APRS tab keeps its log, its
+roster and its command tasks — what moves is only the on/off switch, to the radio it runs
+on. The two must remain **one state, never two switches** (`APRS_CONTROL_PLAN.md`).
 
 `shapes.html` — three shapes of the same screen, on one data model, switchable.
 `docs/reference/PROCESS.md` requires three interactive mocks before implementation;

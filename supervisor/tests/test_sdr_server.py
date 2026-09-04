@@ -23,7 +23,7 @@ from collections.abc import Iterator
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 import pytest
@@ -915,3 +915,208 @@ def test_a_capture_runs_on_a_free_radio_while_another_is_held(
     )
 
     assert status == 200
+
+
+# --- the live spectrum ----------------------------------------------------------
+
+
+def _spectrum_row(stamp: str, low: int, step: int, *db: float) -> bytes:
+    high = low + len(db) * step
+    values = ", ".join(f"{v:.2f}" for v in db)
+    return f"{stamp}, {low}, {high}, {step:.2f}, 12, {values}\n".encode()
+
+
+class _Rows(_FakeProc):
+    """rtl_power streaming two intervals of one block, then holding the pipe open.
+
+    Two, because a frame is only known to be complete when the next interval starts or
+    the learned width is reached — so one row proves nothing about what a viewer sees.
+    """
+
+    # The same readings twice, so the assertion does not depend on WHICH frame the
+    # viewer catches: a viewer attaching after both were published is seeded with the
+    # newer one, which is right, and is a race a fixed expectation would lose at random.
+    LINES: ClassVar[list[bytes]] = [
+        _spectrum_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0),
+        _spectrum_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0, -71.0),
+    ]
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        self.stdout = _Lines(self.LINES)
+
+
+class _Lines:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+        self._done = threading.Event()
+
+    def read(self, _n: int = -1) -> bytes:
+        return b""
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield from self._lines
+        # Held open, as a live rtl_power's pipe is: a stream that ended would send the
+        # viewer an end-of-stream sentinel and hide whether the rows arrived at all.
+        self._done.wait(timeout=5)
+
+    def close(self) -> None:
+        self._done.set()
+
+
+def _start_spectrum(base: str, **extra: Any) -> tuple[int, dict[str, Any]]:
+    body = {
+        "purpose": "spectrum",
+        "start_hz": 144_000_000,
+        "stop_hz": 144_200_000,
+        "bin_hz": 25_000,
+    }
+    body.update(extra)
+    return _post(base, "/listen/start", body)
+
+
+def test_a_spectrum_session_is_started_by_its_range_not_a_frequency(
+    sidecar: str,
+) -> None:
+    status, body = _start_spectrum(sidecar)
+
+    assert status == 200
+    assert body["purpose"] == "spectrum"
+    assert body["sweep"]["start_hz"] == 144_000_000
+    # No `frequency_hz` was sent at all: a span's centre is the only frequency it has.
+    assert body["frequency_hz"] == 144_100_000
+
+
+def test_a_spectrum_outside_the_tuner_s_range_is_refused_in_words(sidecar: str) -> None:
+    status, body = _start_spectrum(sidecar, start_hz=1_000_000, stop_hz=2_000_000)
+
+    assert status == 400
+    assert "cannot go below" in body["detail"]
+
+
+def test_a_spectrum_with_no_range_is_refused_rather_than_run(sidecar: str) -> None:
+    status, body = _post(sidecar, "/listen/start", {"purpose": "spectrum"})
+
+    assert status == 400
+    assert body["detail"]
+
+
+def test_the_waterfall_is_refused_when_the_radio_is_doing_something_else(
+    sidecar: str,
+) -> None:
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs"},
+    )
+
+    status, body = _get(sidecar, "/listen/spectrum")
+
+    # Named, because "idle" and "busy logging" need opposite advice from the owner.
+    assert status == 409
+    assert "logging APRS" in body["detail"]
+
+
+def test_the_waterfall_is_refused_when_nothing_is_watching(sidecar: str) -> None:
+    status, body = _get(sidecar, "/listen/spectrum")
+
+    assert status == 409
+    assert "nothing is watching" in body["detail"]
+
+
+def test_a_row_reaches_a_viewer_carrying_its_own_range(
+    sidecar: str, monkeypatch
+) -> None:
+    """The shape the renderer depends on: a frame says where it is, so a retune needs
+    no protocol event and a client that draws what each row says is already right."""
+    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
+    assert _start_spectrum(sidecar)[0] == 200
+
+    with urllib.request.urlopen(sidecar + "/listen/spectrum", timeout=10) as resp:
+        row = next(
+            json.loads(raw) for raw in resp if not json.loads(raw).get("keepalive")
+        )
+
+    assert row["start_hz"] == 144_000_000
+    assert row["bin_hz"] == 25_000
+    assert row["stop_hz"] == row["start_hz"] + row["bins"] * row["bin_hz"]
+    assert row["db"] == [-70.0, -71.0]
+
+
+def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> None:
+    _, started = _start_spectrum(sidecar)
+
+    status, body = _post(
+        sidecar,
+        "/listen/tune",
+        {
+            "session_id": started["session_id"],
+            "start_hz": 440_000_000,
+            "stop_hz": 440_200_000,
+            "bin_hz": 25_000,
+        },
+    )
+
+    assert status == 200
+    # Same lease, same id, new band: the radio is never released in between, which is
+    # what stops a retune losing the dongle to whatever asks next.
+    assert body["session_id"] == started["session_id"]
+    assert body["sweep"]["start_hz"] == 440_000_000
+    assert body["frequency_hz"] == 440_100_000
+
+
+def test_an_unnamed_move_with_a_range_finds_the_waterfall_not_the_tuner(
+    sidecar: str,
+) -> None:
+    """Two radios, two jobs: a body carrying a RANGE is asking about the waterfall, and
+    resolving "the session" would have moved whichever one happened to answer first."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": "09022796"},
+    )
+    _start_spectrum(sidecar, serial="77192819")
+
+    status, body = _post(
+        sidecar,
+        "/listen/tune",
+        {"start_hz": 440_000_000, "stop_hz": 440_200_000, "bin_hz": 25_000},
+    )
+
+    assert status == 200
+    assert body["purpose"] == "spectrum"
+    # ...and the tuner is exactly where it was.
+    _, health = _get(sidecar, "/healthz")
+    listening = next(s for s in health["sessions"] if s["purpose"] == "listen")
+    assert listening["frequency_hz"] == 99_300_000
+
+
+def test_a_survey_is_never_moved_mid_measurement(sidecar: str, monkeypatch) -> None:
+    """A survey's rows are a measurement someone is waiting on, and moving it halfway
+    through would hand them a CSV of two different bands with nothing to say so."""
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+    _, started = _post(
+        sidecar,
+        "/listen/start",
+        {
+            "purpose": "survey",
+            "start_hz": 144_000_000,
+            "stop_hz": 144_200_000,
+            "bin_hz": 25_000,
+            "seconds": 60,
+        },
+    )
+
+    status, body = _post(
+        sidecar,
+        "/listen/tune",
+        {
+            "session_id": started["session_id"],
+            "start_hz": 440_000_000,
+            "stop_hz": 440_200_000,
+            "bin_hz": 25_000,
+        },
+    )
+
+    assert status == 409
+    assert "sweeping the band" in body["detail"]

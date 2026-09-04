@@ -299,8 +299,9 @@ and the tab structure are settled; what the mocks explore is layout, the tuning
 interaction, and how the lease state is surfaced. **The omnibox-tuner half of this
 gate is CLOSED** — three mocks ran in `../mocks/sdr-tuner/` and the owner chose the
 bottom sheet (`a-tuner-sheet.html`, now carrying a BINDING SPEC header with the
-component contract). The **Radio launcher still needs its own mock round** before
-S4b touches it.
+component contract). **The launcher's round is CLOSED (2026-09-04): shape A**, the radio as the object —
+`../mocks/sdr-launcher/shapes.html`, now the binding spec, with its README recording
+that it supersedes round 3's APRS-switch placement and why.
 
 **S4b** implements two surfaces. The **Radio launcher**: tabs mirroring the Math
 launcher's pattern — **Spectrum** (waterfall + tuning + listen controls) and
