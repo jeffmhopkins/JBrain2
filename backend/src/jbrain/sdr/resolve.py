@@ -39,8 +39,49 @@ async def attached_serials(client: Any, token: str) -> list[str] | None:
         return None
 
 
+async def busy_serials(sdr_url: str | None) -> list[str]:
+    """The radios the sidecar already has a session on.
+
+    Without this, `choose` handed APRS and the tuner the same `generals[0]` and the
+    second caller met a 409 naming the radio it had asked for — two dongles attached and
+    one of them idle, which is the whole symptom P0b exists to remove. Only ever
+    REORDERS general radios (see `roles.choose`), so being wrong costs a preference
+    rather than a substitution.
+
+    Empty on any failure, deliberately: an unreachable sidecar means nothing can start
+    anyway, and guessing that everything is busy would turn a transport error into
+    "no radio available" — a settings problem the owner does not have.
+
+    Reads `sessions`, falling back to `listening` for the seconds during an update when
+    the sidecar is the older build; `health.session_for` explains why those differ."""
+    if not sdr_url:
+        return []
+    try:
+        async with httpx.AsyncClient(base_url=sdr_url, timeout=5.0) as client:
+            resp = await client.get("/healthz")
+        health = resp.json()
+        sessions = health.get("sessions")
+        if not isinstance(sessions, list):
+            one = health.get("listening") or {}
+            sessions = [one] if one else []
+        return sorted(
+            {
+                s["serial"]
+                for s in sessions
+                if isinstance(s, dict) and isinstance(s.get("serial"), str) and s["serial"]
+            }
+        )
+    except (httpx.HTTPError, ValueError, AttributeError, KeyError):
+        return []
+
+
 async def for_purpose(
-    client: Any, token: str, store: Any, ctx: SessionContext, want: str
+    client: Any,
+    token: str,
+    store: Any,
+    ctx: SessionContext,
+    want: str,
+    sdr_url: str | None = None,
 ) -> Choice:
     """Which radio `want` should open, and the sentence explaining it.
 
@@ -48,11 +89,14 @@ async def for_purpose(
     situations needing opposite handling: `unknown` means the scan could not see, so the
     sidecar should proceed exactly as it always has, while `waiting` and `ambiguous`
     mean the OWNER has to plug something in or stop double-dedicating, and must never
-    read as "the radio is busy"."""
+    read as "the radio is busy".
+
+    `sdr_url` is optional so a caller that has no sidecar to ask still gets a decision:
+    without it the answer is the same one a one-dongle box always got."""
     attached = await attached_serials(client, token)
     if attached is None:
         return Choice(None, "unknown", "")
-    return choose(await store.sdr_radios(ctx), attached, want)
+    return choose(await store.sdr_radios(ctx), attached, want, await busy_serials(sdr_url))
 
 
 #: Choices the caller cannot fix by retrying: the owner has to act. Every entry point

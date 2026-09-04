@@ -223,7 +223,7 @@ describe("the tuner sheet", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Release" }));
 
-    // Release is what hands the single tuner back — and what makes the omnibox
+    // Release is what hands this session's radio back — and what makes the omnibox
     // icon disappear, since the icon is the lease.
     await waitFor(() => expect(stop).toHaveBeenCalledWith("abc123"));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

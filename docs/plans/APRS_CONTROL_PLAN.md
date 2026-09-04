@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b🟡(**addressing shipped** — naming, roles and `-d serial=`; per-device sessions still to do) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
+> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b✅(**both halves** — naming, roles and `-d <serial>`; then one session per device, so APRS and the tuner run at once) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -129,7 +129,7 @@ in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the han
 back. Binding spec `../mocks/aprs/c-single-dongle.html`. It also survives P0b unchanged —
 the contention stops happening rather than the control changing.
 
-### P0b · Second tuner, addressable — **half shipped 2026-09-04**
+### P0b · Second tuner, addressable — **shipped 2026-09-04**
 
 The sidecar assumes one radio ("one tuner, one session"). It becomes **one session per
 device**: enumerate by USB serial (the supervisor's probe already reports it — a
@@ -144,7 +144,7 @@ $30. USB passthrough is already `/dev/bus/usb`, so the container sees both.
 **Exit:** two dongles enumerated and independently tunable, PWA-visible, with the
 existing tuner unaffected.
 
-#### What shipped, and what did not
+#### What shipped, in two rounds
 
 The second dongle arrived (`77192819` on bus 3-4, beside `09022796` on 1-1) and the
 plan's own framing turned out to bury the urgent half. **Addressing** was not a
@@ -157,15 +157,82 @@ shipped first, alone.
 | P0b clause | state |
 |---|---|
 | enumerate by USB serial | ✅ `serials_in()`, one place that knows the payload shape |
-| address sessions by device | ✅ `-d serial=` on both pipelines; the lease reports which radio it holds |
+| address sessions by device | ✅ `-d <serial>` on both pipelines; the lease reports which radio it holds |
 | PWA-visible | ✅ Settings → Radios: name, description, role |
-| 409 semantics **per device** | ◻️ still one global session in the sidecar |
-| two dongles **independently tunable** | ◻️ — the contention is unchanged |
+| 409 semantics **per device** | ✅ `Tuner._sessions` keyed by serial; the refusal names the radio |
+| two dongles **independently tunable** | ✅ APRS on one and the tuner on the other, at once |
 
-So the owner can now say *which* radio does what, and a service cannot be moved off its
-radio silently — but two services still cannot run at once. `TUNER._session` is still a
-single slot; making it a map keyed by serial, with the 409 raised per device, is the
-remaining work and is a sidecar change rather than a GUI one.
+**Round two: one session per device.** `Tuner` became a map keyed by serial. Three things
+fell out of that and are the part worth remembering:
+
+*An unnamed session conflicts with everything.* A session started with no serial opens
+whatever librtlsdr enumerates first, so nothing can prove it is not on the radio the next
+caller wants. Refusing is the only honest answer — the alternative fails as two processes
+garbling one dongle rather than as an error. The rule lives in `listen.blocking_key`,
+shared with the one-shot capture path, because a capture and a session are the two things
+that open a device and a rule they could disagree about eventually puts both on one.
+
+*The capture lock was the same bug one layer down, and leaked both ways.* It was global,
+so recording off one dongle refused a capture on the other; and `Tuner.start` never
+consulted it, so a listening session could open a dongle mid-recording. Captures now
+reserve in the same registry under the same lock.
+
+*`listening` stopped being "the session", and three callers were still reading it.* The
+sidecar's `/healthz` keeps `listening` for the omnibox, which draws one icon and prefers
+the tuner — and gained `sessions` beside it. The PWA's APRS routes, jerv's
+`sdr_aprs_logging` and the packet drain all asked `listening.purpose == "aprs"`, so
+opening the tuner sheet while APRS logged would have flipped the switch off in front of
+the owner and, worst of the three, **detached the drain** — frames still decoding, none
+stored, no error anywhere. One reader (`jbrain/sdr/health.session_for`) now answers for
+all three, falling back to `listening` for the seconds during an update when the sidecar
+is the older build.
+
+*An unnamed `/listen/stop` is now a choice rather than a tautology.* It takes the
+listening session and nothing else, and reports what IS holding a radio so the caller
+can name it. A first cut fell back to "the only session when there is exactly one",
+reasoning that a one-dongle box has nothing to choose between — but the condition it
+tested was `len(sessions) == 1`, equally true of a two-dongle box running only APRS. It
+would have stopped the log there. The cost is a real change on a one-dongle box: "release
+the radio" while APRS holds it now answers `stopped: false` and points at the APRS switch
+rather than stopping the log.
+
+*A general radio someone is already on is not a free one.* `roles.choose` had no notion
+of "in use", so with two undedicated dongles APRS and the tuner both got `generals[0]`
+and the second caller met the new per-radio 409 naming the radio it had asked for — the
+original symptom, through a per-radio sidecar. `resolve.busy_serials` reads what the
+sidecar is running and `choose` sorts those last. Serial order still decides between the
+FREE radios, and a DEDICATED radio that is busy is still its service's: offering a
+substitute there is the silent antenna change this all exists to stop. **So the two
+dongles now share themselves out with no settings visit** — dedicating one is how you
+pin an ANTENNA to a service, not how you get simultaneity.
+
+*A retune could resurrect a released session and orphan its dongle.* `/listen/tune`
+resolves the Session under the tuner's lock and calls `tune` outside it, so a stop
+landing in between made `_start_pipeline` spawn a fresh `rtl_fm` for a session no longer
+in `_sessions`: invisible to `blocking_key`, never reaped, holding the dongle until the
+container restarts — after which the next caller for that serial is let through and two
+processes fight over one radio. `Session.tune` now refuses once released
+(`SessionGone`). Structurally pre-existing; the window grew with the extra holders.
+
+*A capture reservation lapses.* A session is reaped by asking its process whether it is
+alive; a reservation has no process to ask — it is a claim a `capture` promises to
+release in a `finally`, and a promise is not a reap. A signal between taking the claim
+and entering that `try` stranded the key for the life of the process, refusing that radio
+for ever while `/healthz` reported `busy` with nothing running. `RESERVATION_TTL_S` is
+longer than any capture the sidecar will run, so an expiry is always a leak.
+
+*The PWA was reading the old shape at the surface the owner touches.* Found by the
+independent review, and the same bug the three backend readers had: with APRS on one
+dongle and the tuner on the other, `listening` is the tuner's, so the APRS tab showed the
+one-dongle contention panel, replaced **Stop APRS logging** with a button whose only
+effect was a no-op 200, and printed the TUNER's elapsed time as how long APRS had held a
+radio. The Tuner tab had it mirrored. `/api/sdr/status` now carries `sessions` and
+`sdrSession.sessionFor` asks per job — `listening` is what to DRAW, `sessionFor` is what
+to ASK. No shape changed, so no GUI gate: the panels are the ones the mock specifies,
+selected by a condition that is now true.
+
+Still one radio for the omnibox icon: showing two live sessions at once IS a shape change
+and needs the gate.
 
 **The rule the round settled** (binding spec `../mocks/sdr-dongles/a-named-roles.html`,
 enforced in `jbrain/sdr/roles.py`): a **dedicated** radio that is unplugged makes its

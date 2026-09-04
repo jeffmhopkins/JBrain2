@@ -151,3 +151,58 @@ class TestSpottingTheProblemBeforeAnythingRuns:
 
     def test_general_radios_never_conflict_with_each_other(self) -> None:
         assert conflicts(_radios(Radio(WHIP), Radio(WIRE), Radio(THIRD))) == {}
+
+
+class TestARadioSomeoneIsAlreadyOnIsNotAFreeOne:
+    """`busy`, which came last and was the reason two dongles still took turns.
+
+    MEASURED 2026-09-04: two undedicated NESDR SMArt v5s attached. APRS asked for a
+    radio and got `generals[0]`; the tuner asked and got `generals[0]`. The second
+    caller met the sidecar's new per-radio 409 naming the radio it had asked for, and
+    the other dongle sat idle — the original symptom, through a per-radio sidecar.
+    """
+
+    WHIP, WIRE = "09022796", "77192819"
+
+    def _two(self) -> dict[str, Radio]:
+        return {self.WHIP: Radio(self.WHIP, "Desk whip"), self.WIRE: Radio(self.WIRE, "Long wire")}
+
+    def test_a_second_job_takes_the_other_radio(self) -> None:
+        attached = [self.WHIP, self.WIRE]
+        first = choose(self._two(), attached, GENERAL)
+
+        second = choose(self._two(), attached, "aprs", busy=[first.serial or ""])
+
+        assert first.serial == self.WHIP  # serial order, unchanged
+        assert second.serial == self.WIRE
+
+    def test_serial_order_still_decides_between_FREE_radios(self) -> None:
+        """`busy` only moves a caller off a radio it could not have had anyway. Which
+        free radio it gets must stay arbitrary-but-repeatable, or the choice changes
+        with whatever the USB stack did this boot."""
+        assert choose(self._two(), [self.WIRE, self.WHIP], GENERAL, busy=[]).serial == self.WHIP
+
+    def test_every_general_radio_busy_is_a_409_not_a_settings_problem(self) -> None:
+        """Two states that need different words: "everything is in use" is something the
+        owner fixes by releasing a session, and "there is no general radio" is something
+        they fix in Settings. A busy radio is sorted last, never dropped, so this stays
+        the first one."""
+        choice = choose(self._two(), [self.WHIP, self.WIRE], GENERAL, busy=[self.WHIP, self.WIRE])
+
+        assert choice.reason == "general"
+        assert choice.serial == self.WHIP
+
+    def test_a_DEDICATED_radio_is_still_this_service_s_even_when_busy(self) -> None:
+        """The rule `busy` must not touch. Offering a service a different radio because
+        its own is in use is the silent antenna change the whole module exists to stop —
+        the honest answer is the sidecar's 409 naming that radio."""
+        radios = {self.WIRE: Radio(self.WIRE, "Long wire", role="aprs")}
+
+        choice = choose(radios, [self.WHIP, self.WIRE], "aprs", busy=[self.WIRE])
+
+        assert choice.serial == self.WIRE and choice.reason == "dedicated"
+
+    def test_an_unknown_busy_serial_changes_nothing(self) -> None:
+        """The sidecar's list and the USB scan are read at different moments, so one can
+        name a radio the other does not."""
+        assert choose(self._two(), [self.WHIP], GENERAL, busy=["nosuchserial"]).serial == self.WHIP

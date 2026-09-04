@@ -157,9 +157,21 @@ async def test_stop_releases_and_says_so(tools) -> None:
 
 
 async def test_stopping_an_idle_radio_is_not_an_error(tools) -> None:
-    out = await tools(lambda _p, _b: _ok({"stopped": False}))["sdr_stop"]({}, None)
+    out = await tools(lambda _p, _b: _ok({"stopped": False, "holding": []}))["sdr_stop"]({}, None)
 
-    assert "wasn't listening" in out
+    assert "already free" in out
+
+
+async def test_release_says_what_is_holding_a_radio_rather_than_stopping_it(tools) -> None:
+    """ "Release the radio" names no session, and the sidecar reads that as the LISTENING
+    one — never a service, or a scheduled APRS window would end on a casual ask. Without
+    naming the holder the answer is a dead end: nothing happened and nothing said why."""
+    answer = {"stopped": False, "holding": [{"purpose": "aprs", "serial": "77192819"}]}
+
+    out = await tools(lambda _p, _b: _ok(answer))["sdr_stop"]({}, None)
+
+    assert "Nothing was listening" in out
+    assert "aprs" in out and "own switch" in out
 
 
 def test_a_box_with_no_radio_gets_no_tools() -> None:
@@ -243,6 +255,52 @@ async def test_turning_it_off_never_releases_a_listening_session(tools) -> None:
     # the owner was actually using.
     assert posts == []
     assert "already off" in out
+
+
+def _two_radios(aprs_id: str = "s-aprs"):
+    """A two-dongle box: APRS on the long wire, the tuner on the desk whip.
+
+    `listening` is the TUNER's session, because that is the one the omnibox draws. This
+    tool read that field, so it reported "APRS logging is already off" while it ran —
+    and "turn it off" would have released the tuner instead."""
+    posts: list[tuple[str, dict[str, Any]]] = []
+    tuner = {"purpose": "listen", "session_id": "s-tuner", "frequency_hz": 146_520_000}
+    aprs = {"purpose": "aprs", "session_id": aprs_id, "frequency_hz": 144_390_000}
+
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        if path == "/healthz":
+            return httpx.Response(
+                200,
+                json={
+                    "purposes": ["listen", "aprs"],
+                    "listening": tuner,
+                    "sessions": [tuner, aprs],
+                },
+                request=req,
+            )
+        posts.append((path, body or {}))
+        return httpx.Response(200, json={"stopped": True, "session_id": "new"}, request=req)
+
+    return route, posts
+
+
+async def test_logging_is_seen_even_when_the_tuner_holds_the_other_radio(tools) -> None:
+    route, posts = _two_radios()
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": True}, None)
+
+    assert posts == []  # no second APRS session started on top of the running one
+    assert "already on" in out
+
+
+async def test_turning_it_off_stops_the_APRS_session_not_the_tuners(tools) -> None:
+    route, posts = _two_radios(aprs_id="abc123")
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": False}, None)
+
+    assert posts[0] == ("/listen/stop", {"session_id": "abc123"})
+    assert "off" in out
 
 
 async def test_it_refuses_a_sidecar_too_old_to_log_rather_than_succeeding_at_nothing(

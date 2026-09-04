@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api/client";
-import { resetSdrSession, subscribeSdr } from "./sdrSession";
+import { resetSdrSession, sessionFor, subscribeSdr } from "./sdrSession";
 
 const LISTENING = {
   session_id: "abc123",
@@ -148,5 +148,45 @@ describe("audio follows the job, not just the lease", () => {
     await settle();
 
     expect(document.querySelector("audio")?.getAttribute("src")).toBe("/api/sdr/audio");
+  });
+});
+
+describe("sessionFor", () => {
+  // `listening` is what to DRAW and prefers the tuner; this is what to ASK. Reading the
+  // first for the second is how the APRS tab reported nothing logging while it ran.
+  const TUNER = { ...LISTENING, session_id: "s-tuner", purpose: "listen" };
+  const APRS = { ...LISTENING, session_id: "s-aprs", purpose: "aprs" };
+
+  it("finds the job listening did not name", () => {
+    const state = { available: true, listening: TUNER, sessions: [TUNER, APRS] };
+
+    expect(sessionFor(state, "aprs")?.session_id).toBe("s-aprs");
+    expect(sessionFor(state, "listen")?.session_id).toBe("s-tuner");
+  });
+
+  it("answers null for a job nothing is doing", () => {
+    const state = { available: true, listening: TUNER, sessions: [TUNER] };
+
+    expect(sessionFor(state, "aprs")).toBeNull();
+  });
+
+  it("falls back to listening on an api too old to send sessions", () => {
+    // The two containers restart one at a time on an update, so for a few seconds one
+    // of them is the previous build — which could hold only one session anyway.
+    const state = { available: true, listening: APRS };
+
+    expect(sessionFor(state, "aprs")?.session_id).toBe("s-aprs");
+    expect(sessionFor(state, "listen")).toBeNull();
+  });
+
+  it("treats a session with no purpose as listening", () => {
+    // A sidecar older than purposes only ever listened.
+    const state = { available: true, listening: LISTENING, sessions: [LISTENING] };
+
+    expect(sessionFor(state, "listen")?.session_id).toBe("abc123");
+  });
+
+  it("is idle-safe", () => {
+    expect(sessionFor({ available: false, listening: null }, "aprs")).toBeNull();
   });
 });

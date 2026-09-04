@@ -53,6 +53,16 @@ function lease(purpose: string, elapsed_s = 4320) {
   };
 }
 
+/** APRS on the long wire, the tuner on the desk whip — the measured two-dongle box.
+ *
+ *  `listening` is the TUNER's session, because that is the one the omnibox draws. Only
+ *  `sessions` says APRS is running. */
+function twoRadios() {
+  const tuner = { ...lease("listen", 30).listening, session_id: "s-tuner" };
+  const aprs = { ...lease("aprs").listening, session_id: "s-aprs" };
+  return { available: true, listening: tuner, sessions: [tuner, aprs] };
+}
+
 function noCommands() {
   return vi.spyOn(api, "getAprsCommands").mockResolvedValue({ commands: [], attempts: [] });
 }
@@ -910,13 +920,30 @@ describe("the APRS tab", () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
   });
 
-  it("shows how long logging has held the tuner", async () => {
+  it("shows how long logging has held its radio", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
     vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
 
     render(<RadioScreen onClose={() => {}} />);
 
-    expect(await screen.findByText(/Holding the tuner for 1h 12m/)).toBeInTheDocument();
+    expect(await screen.findByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();
+  });
+
+  it("stays on the logging controls when the tuner takes the OTHER radio", async () => {
+    // The bug this whole round exists to stop, at the surface the owner touches.
+    // `listening` is the session the omnibox draws and it PREFERS the tuner, so reading
+    // its purpose here said "listening" while APRS logged: the tab put up the
+    // one-dongle contention panel, replaced "Stop APRS logging" with a button whose
+    // only effect was a no-op 200, and printed the TUNER's elapsed time as APRS's.
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(twoRadios() as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+
+    expect(await screen.findByRole("button", { name: "Stop APRS logging" })).toBeInTheDocument();
+    expect(screen.queryByText(/The radio is listening/)).not.toBeInTheDocument();
+    // ...and the elapsed time is the APRS session's, not the tuner's 30 s.
+    expect(screen.getByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();
   });
 
   it("keeps the decode rate on screen", async () => {
@@ -1122,5 +1149,33 @@ describe("the Tuner tab", () => {
     expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Release & listen/ }));
     await waitFor(() => expect(set).toHaveBeenCalledWith(false));
+  });
+
+  it("shows the tuner controls when APRS is on the OTHER radio", async () => {
+    // The same bug as the APRS tab, mirrored. APRS logging is no longer a reason there
+    // is nothing to tune — it is a reason only when it holds the radio the tuner wants,
+    // which on a two-dongle box it does not.
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(twoRadios() as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
+
+    expect(screen.queryByText(/In use by APRS logging/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
+  });
+
+  it("times the handoff panel by the LOGGING session, not the tuner's", async () => {
+    // It printed `listening.elapsed_s`, which is a different session on a different
+    // dongle the moment there are two.
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
+
+    render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
+
+    expect(screen.getByText(/Held for 1h 12m/)).toBeInTheDocument();
   });
 });

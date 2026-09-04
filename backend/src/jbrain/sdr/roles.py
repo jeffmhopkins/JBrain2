@@ -15,6 +15,13 @@ So an absent dedicated radio is a refusal carrying a reason, never a substitutio
 **A general radio is picked by serial order, not enumeration order.** Which general
 radio a tuner gets is arbitrary but it must be REPEATABLE — "arbitrary and stable" is a
 choice, "arbitrary and whatever the USB stack did this boot" is the bug.
+
+**A general radio someone is already on is not a free one.** `busy` came later, and
+without it this module was the reason two dongles still took turns: with two undedicated
+radios, APRS and the tuner both got `generals[0]`, the second caller met the sidecar's
+per-radio 409 naming the radio it had asked for, and the other dongle sat idle. Serial
+order still decides between the free ones, so the rule above holds where it matters —
+`busy` only moves a caller off a radio it could not have had anyway.
 """
 
 from __future__ import annotations
@@ -64,35 +71,54 @@ class Choice:
     """A sentence for the operator, naming radios the way they named them."""
 
 
-def _generals(radios: Mapping[str, Radio], attached: Sequence[str]) -> list[Radio]:
-    """Attached radios nothing has reserved, in serial order.
+def _generals(
+    radios: Mapping[str, Radio], attached: Sequence[str], busy: Sequence[str] = ()
+) -> list[Radio]:
+    """Attached radios nothing has reserved, FREE ones first, in serial order.
 
     Sorted so the choice is repeatable across reboots. An attached serial with no stored
     entry is a radio the owner has not described yet, which is general use by default —
     plugging in a new dongle must not need a settings visit before anything works.
 
     Reserved radios are excluded, which is the whole force of "dedicated": a radio kept
-    for APRS is not a radio the tuner may borrow while APRS happens to be idle."""
+    for APRS is not a radio the tuner may borrow while APRS happens to be idle.
+
+    A radio in `busy` is one the sidecar is already running something on. It is sorted
+    LAST rather than dropped, because "every general radio is busy" and "there is no
+    general radio" are different states: the first is a 409 the caller can act on by
+    releasing something, and the second is a settings problem. Dropping it would turn
+    the first into the second and send the owner to the wrong screen."""
     return sorted(
         (
             radio
             for radio in (radios.get(s) or Radio(serial=s) for s in set(attached))
             if radio.role == GENERAL
         ),
-        key=lambda r: r.serial,
+        key=lambda r: (r.serial in set(busy), r.serial),
     )
 
 
-def choose(radios: Mapping[str, Radio], attached: Sequence[str], want: str) -> Choice:
+def choose(
+    radios: Mapping[str, Radio],
+    attached: Sequence[str],
+    want: str,
+    busy: Sequence[str] = (),
+) -> Choice:
     """Pick the radio for `want` — a service id, or `GENERAL` for the tuner and sweeps.
 
     Dedication is read off the STORED entries rather than the attached ones, so a
     service dedicated to an unplugged radio is distinguishable from one dedicated to
     nothing. That distinction is the whole point: the first waits, the second falls back
     to a general radio, and collapsing them is how a service silently changes antenna.
+
+    `busy` is the serials the sidecar already has a session on, and only ever reorders
+    the general radios — a DEDICATED radio that is busy is still this service's radio,
+    and offering it a different one would be the substitution the whole module exists to
+    prevent. Empty by default so the pure callers (and the settings screen) keep working
+    with no notion of what is running.
     """
     live = set(attached)
-    generals = _generals(radios, attached)
+    generals = _generals(radios, attached, busy)
 
     if want == GENERAL:
         if generals:
