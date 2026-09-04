@@ -23,6 +23,7 @@ import httpx
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext
+from jbrain.sdr import bands
 from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import refusal
 from jbrain.sdr.roles import GENERAL, Choice
@@ -40,7 +41,7 @@ _BROADCAST_FM = (88.0, 108.0)
 # only because it is where traffic actually is; a private command frequency is an
 # owner decision the plan holds open (APRS_CONTROL_PLAN.md §7).
 PURPOSE_APRS = "aprs"
-APRS_DEFAULT_MHZ = 144.39
+APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
 
 def _default_mode(mhz: float) -> str:

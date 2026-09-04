@@ -39,6 +39,7 @@ from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.llm_settings import get_settings_store
 from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
+from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
@@ -60,7 +61,10 @@ MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 # when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
 # command frequency open).
 APRS_PURPOSE = "aprs"
-APRS_DEFAULT_MHZ = 144.39
+#: From the band table, which is the one place that knows where a service lives — it was
+#: this literal in two files. Kept in MHz here because that is the unit the route's query
+#: parameter takes, and converting at the boundary is better than a second constant.
+APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
 # How far back a single caption may reach. Segments that pile up behind a busy whisper
 # are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
