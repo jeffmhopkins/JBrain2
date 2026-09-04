@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-04 · **Waves:** F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ F5◻️ F6◻️ F7◻️ F8◻️
+> **Status:** Proposed · **Last verified:** 2026-09-04 · **Waves:** F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ F5◻️ F6◻️ F7◻️ F8◻️ F9◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -340,6 +340,65 @@ caveat and "no gain control here" appear where they will be read.
 **F8 — stop calling loudness a signal level.** The spectrum path reports true dBFS; the
 listening path keeps `rtl_fm`, so its `peak` stays audio loudness and gets **labelled** as
 such. The two dB quantities are distinguished in the UI (§6.9).
+
+**F9 — the agent's half.** Everything above gives the BOX a capability. jerv reaches
+almost none of it, and two of the three tools it does have now describe a machine that
+has not existed since `APRS_CONTROL_PLAN` P0b shipped.
+
+*First, the corrections — these are wrong today, independent of this plan.*
+`sdr_listen.tool` v3 tells the model "**The box has ONE tuner, so this takes it**" and
+that the jobs are "listening, or logging APRS". The box has two dongles, the lease is
+per-radio, and `sdrtools.py:113` already resolves per radio through `resolve.for_purpose`
+— so the prose contradicts the code it documents, and jerv will report a radio busy
+while the other one is idle. There are also **four** purposes now; a refusal naming
+`survey` or `spectrum` is a job the description has never heard of. `sdr_stop` has the
+same shape of problem: it says "release the owner's radio", singular, and passes
+`session_id: None`, which means *the listening one*. On a two-dongle box the owner's
+"turn the radio off" needs the tool to name which.
+
+*Second, the gap.* jerv has the CONTROL half of the radio and none of the MEASUREMENT
+half. It can tune, log packets and stop; it cannot say what bands exist, cannot sweep,
+and cannot tell which radios are attached or what each is doing. So it guesses
+frequencies from training data against a regional band plan it has no way to check,
+while `bands.py` sits beside it with 29 curated sections carrying mode, channel spacing,
+duty cycle and a note about what actually lives there.
+
+*Third, the shape.* `TOOL_CATALOG_PLAN` W1 shipped the opposite work — **48 → 37 tools**
+by collapsing read families into umbrellas, validated on the live model through
+`/api/debug/tool-probe` before and after. Five new SDR tools would fight that. So:
+
+- **One read umbrella** (no radio taken, `permission: read`): the band table, the radio
+  roster, and the existing `aprs_recent` folded in behind a `what`. Net **zero** new read
+  tools for three capabilities — W1's exact pattern, and the umbrella is what a sub-agent
+  holds under the parent⊆child clamp. ⚠ `aprs_recent` has the richest parameter set of
+  the three, so folding it risks degrading the query jerv is best at today. Measure it
+  with the same probe harness W1 used rather than asserting it; keeping `aprs_recent`
+  standalone is an acceptable outcome.
+- **`sdr_survey`** (`permission: web`, a deferred job): sweep a band, report what is busy.
+  The route exists — it is owner-debug only. The runbook calls it "a measuring instrument
+  rather than an agent tool, and deliberately so", but that was about **calibration**, and
+  the calibration is done and recorded: +6 dB over a local floor, 13/13 stations on the FM
+  dial, nothing on a quiet band. Its output — occupancy as a fraction, steady carriers,
+  `uncovered` spans, `revisit_s` — is already shaped for interpretation rather than
+  display. This is what answers "is anything happening on 2 m right now?"
+- **`sdr_signal`** (`permission: web`, seconds not minutes): power at a frequency or
+  across a small span, **in dBFS**. New capability, from F2–F4: today the only number
+  available is audio loudness off the discriminator, so "how strong is it?" has no honest
+  answer. It answers "is my antenna doing anything", "how is WWV tonight", "is the
+  repeater keyed". Distinct from `sdr_survey` because the ANSWERS differ — one is a
+  minutes-long occupancy statistic, the other is a reading now.
+
+A waterfall tool is deliberately **not** proposed: the picture is a visual surface the
+model cannot see, and `sdr_listen`'s "start it and point at the icon" precedent would
+make it a tool whose whole output is a pointer. If it earns a place it is as an argument
+to the launcher, not a tool of its own.
+
+Two rules carry into every new tool here. **No tool takes a host or a URL** — frequencies
+and band-section ids only, so the `stream.py` SSRF guard is neither used nor widened. And
+**heard text stays untrusted**: these return numbers, which is safe, but the moment a
+scanner transcript is involved it is external-corpus material and may never reach a model
+as instructions (`APRS_CONTROL_PLAN`'s two-tier rule). A packet becoming a prompt is
+prompt injection with an antenna.
 
 ## 8. Deliberately not in this plan
 
