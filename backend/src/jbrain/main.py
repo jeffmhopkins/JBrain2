@@ -138,7 +138,7 @@ from jbrain.connectors.geocoding import geocode_connectors
 from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
@@ -182,6 +182,8 @@ from jbrain.push import SqlFcmTokenRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.sdr.aprslog import AprsLog, run_aprs_backfill_loop, run_aprs_log_loop
 from jbrain.sdr.gate import CommandGate, heard_from_row
+from jbrain.sdr.resolve import for_purpose
+from jbrain.sdr.roles import Choice
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
@@ -862,6 +864,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # it off /chat/capabilities): an attached image is useful without vision exactly
         # when the agent can analyze_image it by id.
         app.state.chat_can_analyze_images = "analyze_image" in image_handlers
+
         # jerv's on-box audio transcription (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
@@ -870,7 +873,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # for the GUI: sdr_listen is what takes the tuner lease, and the composer's
         # radio icon exists only while a session holds it, so without this tool the
         # tuner surface cannot be reached at all (SDR_RADIO_PLAN.md D7).
-        sdr_handlers: dict[str, ToolHandler] = build_sdr_handlers(settings.sdr_url)
+        async def _pick_radio(ctx: SessionContext, want: str) -> Choice:
+            """Which radio a tool should open, by the owner's settings.
+
+            Reads app.state at CALL time rather than build time: these handlers are
+            constructed during startup, and binding the client and store here would
+            capture whatever they happened to be then."""
+            return await for_purpose(
+                app.state.supervisor_client,
+                settings.supervisor_token,
+                app.state.settings_store,
+                ctx,
+                want,
+            )
+
+        sdr_handlers: dict[str, ToolHandler] = build_sdr_handlers(settings.sdr_url, _pick_radio)
         transcribe_handlers: dict[str, ToolHandler] = {}
         if settings.whisper_url:
             transcribe_handlers = build_transcribe_handlers(

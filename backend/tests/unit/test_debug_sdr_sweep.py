@@ -22,12 +22,32 @@ from jbrain.api import debug
 class _Settings:
     def __init__(self, url: str | None = "http://sdr:8000") -> None:
         self.sdr_url = url
+        self.supervisor_token = "t"
 
 
-def _request() -> Request:
+def _request(usb: dict[str, Any] | None = None) -> Request:
+    """A request whose USB scan answers `usb`, or cannot be reached.
+
+    Unreachable by DEFAULT: these tests predate radio roles and are about what a sweep
+    reports, not about which radio it opens. An unreachable scan names no radio, which
+    is the one-dongle behaviour they were written against — so they keep proving what
+    they were written to prove."""
+
+    class _Client:
+        async def get(self, _path: str, **_kw: Any) -> Any:
+            if usb is None:
+                raise httpx.ConnectError("no supervisor")
+            return httpx.Response(200, json=usb, request=httpx.Request("GET", "http://s/usb"))
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Any]:
+            return {}
+
     app = FastAPI()
     app.state.debug_jobs = {}
     app.state.debug_job_tasks = set()
+    app.state.supervisor_client = _Client()
+    app.state.settings_store = _Store()
     return Request({"type": "http", "app": app, "headers": [], "method": "POST", "path": "/"})
 
 

@@ -22,7 +22,9 @@ from fastapi import HTTPException
 from jbrain.api import sdr as sdr_api
 from jbrain.sdr.roles import Radio
 
-OWNER = object()
+# A real-enough principal: resolving a radio builds an RLS context from it, so a bare
+# object() stopped working the moment these routes started reading the owner's settings.
+OWNER = SimpleNamespace(id="owner", kind="owner")
 
 
 class _Sidecar:
@@ -92,7 +94,17 @@ def _request(usb: dict[str, Any] | None = None) -> Any:
                 raise httpx.ConnectError("no supervisor")
             return httpx.Response(200, json=usb, request=httpx.Request("GET", "http://s/usb"))
 
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(supervisor_client=_Client())))
+    class _EmptyStore:
+        """No radio described. `_stored` swaps this out where a test needs one."""
+
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Any]:
+            return {}
+
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(supervisor_client=_Client(), settings_store=_EmptyStore())
+        )
+    )
 
 
 async def _aprs(enabled: bool, usb: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -603,9 +615,9 @@ async def test_listening_never_takes_a_radio_reserved_for_a_service(
 
     with pytest.raises(HTTPException) as refused:
         await sdr_api.listen(
-            _request({"sysfs_readable": True, "sdrs": [{"serial": WHIP}]}),
-            _Settings(),
-            OWNER,
+            _request({"sysfs_readable": True, "sdrs": [{"serial": WHIP}]}),  # type: ignore[arg-type]
+            _Settings(),  # type: ignore[arg-type]
+            OWNER,  # type: ignore[arg-type]
             146.52,
         )  # type: ignore[arg-type]
 

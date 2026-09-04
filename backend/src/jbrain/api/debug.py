@@ -73,6 +73,8 @@ from jbrain.llm.types import (
 from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
+from jbrain.sdr.resolve import for_purpose, refusal
+from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
 from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.settings_store import SqlSettingsStore
@@ -108,6 +110,22 @@ def _blobs(request: Request) -> BlobStore:
 
 def _store(request: Request) -> SqlSettingsStore:
     return cast(SqlSettingsStore, request.app.state.settings_store)
+
+
+async def _radio(request: Request, settings: Any, want: str) -> str | None:
+    """Which radio a debug call may open, or a 409 naming what the owner must fix.
+
+    The debug console is a THIRD door onto the same radio, beside the PWA routes and
+    jerv's tools, and a rule enforced at two of three doors is not enforced: a sweep or
+    a capture from here could take the dongle the owner reserved for APRS. Same resolver
+    as the other two, under the console's owner context."""
+    choice = await for_purpose(
+        _supervisor(request), settings.supervisor_token, _store(request), _OWNER_CTX, want
+    )
+    detail = refusal(choice)
+    if detail is not None:
+        raise HTTPException(status_code=409, detail=detail)
+    return choice.serial
 
 
 def _gateway(request: Request) -> Any:
@@ -1719,6 +1737,10 @@ async def sdr_sweep(
         "bin_hz": int(round(bin_khz * 1_000)),
         "seconds": seconds,
         "gain": gain,
+        # A sweep is a general use of the radio, so it may not take one reserved for a
+        # service. Resolved BEFORE the job is queued, so a refusal is this request's 409
+        # rather than an error the caller has to poll for.
+        "serial": await _radio(request, settings, GENERAL),
     }
     jobs = request.app.state.debug_jobs
     tasks = request.app.state.debug_job_tasks
@@ -1835,7 +1857,15 @@ async def sdr_capture(
     async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=seconds + 60) as client:
         resp = await client.post(
             "/capture",
-            json={"frequency_hz": freq_hz, "seconds": seconds, "mode": mode, "gain": gain},
+            json={
+                "frequency_hz": freq_hz,
+                "seconds": seconds,
+                "mode": mode,
+                "gain": gain,
+                # A capture is a general use of the radio. The sidecar has accepted a
+                # serial here since before radio roles existed; nothing had ever sent one.
+                "serial": await _radio(request, settings, GENERAL),
+            },
         )
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail="The radio is busy with another capture.")
@@ -1906,7 +1936,12 @@ async def sdr_listen_debug(
     return await _sdr_post(
         settings,
         "/listen/start",
-        {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": None},
+        {
+            "frequency_hz": int(round(frequency_mhz * 1_000_000)),
+            "mode": mode,
+            "gain": None,
+            "serial": await _radio(request, settings, GENERAL),
+        },
     )
 
 

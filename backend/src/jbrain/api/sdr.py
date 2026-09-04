@@ -42,9 +42,10 @@ from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
-from jbrain.sdr.roles import GENERAL, Choice, Radio, choose, conflicts
+from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
+from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, serials_in
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -106,38 +107,21 @@ async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any
 
 
 async def _attached(request: Request, settings: Any) -> list[str] | None:
-    """Serials of the radios physically present, from the supervisor's `/sys` scan.
-
-    The None is load-bearing rather than tidiness. An EMPTY list is a real answer — the
-    scan worked and nothing is plugged in — so a service dedicated to a radio should
-    WAIT for it. None means the scan failed or sysfs was unreadable, and only then is
-    naming no radio right: that is exactly what a one-dongle box always did, and a proxy
-    hiccup must not be able to pick an antenna."""
-    try:
-        resp = await request.app.state.supervisor_client.get(
-            "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
-        )
-        resp.raise_for_status()
-        return serials_in(resp.json())
-    except (httpx.HTTPError, ValueError, AttributeError, KeyError):
-        return None
+    """What the scan can see, or None when it could not. See `sdr.resolve`."""
+    return await attached_serials(request.app.state.supervisor_client, settings.supervisor_token)
 
 
 async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> Choice:
-    """Which radio `want` should open, and the sentence explaining it.
-
-    The whole Choice comes back rather than just a serial, because `serial is None`
-    covers two situations that need opposite handling: `unknown` means nothing is
-    knowably attached, so the sidecar should proceed exactly as it always has, while
-    `waiting` and `ambiguous` mean the OWNER has to plug something in or stop
-    double-dedicating, and must not read as "the radio is busy"."""
-    attached = await _attached(request, settings)
-    if attached is None:
-        # Could not see. Name no radio and let the sidecar behave as it always has —
-        # NOT the same as seeing nothing, which is a state a dedicated radio waits on.
-        return Choice(None, "unknown", "")
-    radios = await get_settings_store(request).sdr_radios(ctx_for(owner))
-    return choose(radios, attached, want)
+    """Which radio `want` should open. The rule and the plumbing are shared with the
+    debug console and jerv's tools, because a rule enforced at one of three doors is
+    not enforced."""
+    return await for_purpose(
+        request.app.state.supervisor_client,
+        settings.supervisor_token,
+        get_settings_store(request),
+        ctx_for(owner),
+        want,
+    )
 
 
 def _refuse(choice: Choice) -> None:
@@ -146,8 +130,9 @@ def _refuse(choice: Choice) -> None:
     A dedicated radio that is unplugged is not "the radio is busy" — it is one specific
     dongle, called what the owner called it, that has to go back in. The generic message
     would send them hunting for a session that does not exist."""
-    if choice.reason in ("waiting", "ambiguous", "none"):
-        raise HTTPException(status_code=409, detail=choice.detail)
+    detail = refusal(choice)
+    if detail is not None:
+        raise HTTPException(status_code=409, detail=detail)
 
 
 def _detail(resp: httpx.Response, fallback: str) -> str:
