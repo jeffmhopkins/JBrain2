@@ -21,10 +21,8 @@ from typing import Any
 import httpx
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 
-# The R820T2's real range. HF below 24 MHz needs direct sampling and is out of scope.
-MIN_MHZ = 0.024
-MAX_MHZ = 1766.0
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
 # Broadcast FM is the common case a plain frequency implies, and getting it wrong is
