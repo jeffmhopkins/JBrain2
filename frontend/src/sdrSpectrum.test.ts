@@ -97,6 +97,32 @@ describe("noticing that the picture moved", () => {
     expect(sameBand(null, here)).toBe(false);
     expect(sameBand(here, null)).toBe(false);
   });
+
+  it("does not call a hertz of readback jitter a retune", () => {
+    // The I/Q engine reads the ACHIEVED sample rate back off the hardware rather than
+    // assuming the requested one, so a derived start_hz can flap by a hertz between
+    // frames. Under exact equality that is a retune ten times a second: history blanked
+    // and colour scale thrown away every frame, so the picture never draws anything.
+    expect(sameBand(here, rowOf(frame({ start_hz: 144_000_001 })))).toBe(true);
+    expect(sameBand(here, rowOf(frame({ start_hz: 143_999_999 })))).toBe(true);
+  });
+
+  it("does not call a bin width a fraction off a retune either", () => {
+    // `bin_hz = rate / N` off a rate that came back 2,047,999 instead of 2,048,000.
+    expect(sameBand(here, rowOf(frame({ bin_hz: 24_999.99 })))).toBe(true);
+  });
+
+  it("still notices a move the picture could actually draw", () => {
+    // Half a bin is the threshold because that is the resolution the picture HAS. A
+    // whole bin is a column, and a column is a shift someone can see.
+    expect(sameBand(here, rowOf(frame({ start_hz: 144_025_000 })))).toBe(false);
+  });
+
+  it("notices a widened span even when the bottom edge did not move", () => {
+    // A bin width that really changed moves the top edge and nothing else, so both
+    // edges are checked rather than only the one a retune happens to move.
+    expect(sameBand(here, rowOf(frame({ bin_hz: 40_000 })))).toBe(false);
+  });
 });
 
 class FakeSource {

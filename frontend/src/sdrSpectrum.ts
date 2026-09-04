@@ -1,8 +1,8 @@
 // The live spectrum: rows of dB off the box, held for one canvas to draw.
 //
 // A module store rather than React state, and that is the whole design. A row is
-// hundreds of numbers arriving once a second; putting it through `useState` would
-// re-render a tree for a picture that is drawn imperatively anyway. Components
+// hundreds of numbers arriving up to ten times a second; putting it through `useState`
+// would re-render a tree for a picture that is drawn imperatively anyway. Components
 // subscribe and draw; nothing here renders.
 //
 // Shaped after sdrCaptions.ts — an EventSource, a refcount, and a reset seam — because
@@ -85,10 +85,23 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
  *  A retune arrives with no message of its own — each row simply starts describing
  *  somewhere else — so this is how a viewer notices. It is also when the colour scale
  *  has to be re-taken: a new band has a new noise floor, and holding the old one paints
- *  the whole picture one flat colour. */
+ *  the whole picture one flat colour.
+ *
+ *  **Compared to within half a bin, not exactly**, and that is the whole point of the
+ *  function. Exact equality was safe while `rtl_power` printed the edges it was asked
+ *  for; the I/Q engine reads the ACHIEVED sample rate back off the hardware, which is
+ *  not the requested one, so `bin_hz = rate / N` and a `start_hz` derived from it can
+ *  flap by a hertz between frames. Under exact equality that flap is a retune ten times
+ *  a second: history blanked, colour scale thrown away, and a waterfall that never
+ *  survives long enough to draw anything. Half a bin is the honest threshold because it
+ *  is the resolution the picture HAS — a shift the renderer cannot place in a different
+ *  column is not a shift anyone can see. Both edges are checked, so a bin width that
+ *  drifted shows up as a moved top edge rather than hiding inside the tolerance. */
 export function sameBand(a: SpectrumRow | null, b: SpectrumRow | null): boolean {
   if (!a || !b) return false;
-  return a.startHz === b.startHz && a.binHz === b.binHz && a.db.length === b.db.length;
+  if (a.db.length !== b.db.length) return false;
+  const tolerance = Math.min(a.binHz, b.binHz) / 2;
+  return Math.abs(a.startHz - b.startHz) <= tolerance && Math.abs(a.stopHz - b.stopHz) <= tolerance;
 }
 
 /** Open the stream. Safe to call when already open. */
