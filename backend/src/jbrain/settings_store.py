@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.sdr.roles import GENERAL, Radio
 
 ImageAnalysisMode = Literal["full", "ocr"]
 IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
@@ -125,6 +126,18 @@ OWNER_TIMEZONE_KEY = "owner_timezone"
 # A FILTER, never an identity: a callsign is plain bytes in a frame and forges trivially
 # (deploy/sdr/packets.py). Nothing may gate an action on it.
 OWNER_CALLSIGN_KEY = "owner_callsign"
+
+# What the owner called each RTL-SDR dongle, and what it is for. A JSON map
+# serial -> {"name", "description", "role"}, where role is "general" or a service id.
+# Keyed by SERIAL because everything else about a dongle moves: this box's first one
+# went from /dev/bus/usb/001/005 to 001/011 across a single re-plug, and its identity
+# must not move with it. Absent = every attached radio is general use, which is what a
+# box with one dongle has always meant, so this key changes nothing until it is written.
+SDR_RADIOS_KEY = "sdr_radios"
+# Long enough for "Long wire via 9:1 unun, out the north window"; short enough that a
+# settings blob cannot become a place to store prose.
+SDR_RADIO_NAME_MAX = 60
+SDR_RADIO_DESC_MAX = 200
 # The archivist's Gmail OAuth credentials, set from the GUI settings panel
 # (docs/archive/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
 # refresh token is the durable credential. Stored values take precedence over the
@@ -832,6 +845,66 @@ class SqlSettingsStore:
             if sane:
                 clean[task] = sane
         return clean
+
+    async def sdr_radios(self, ctx: SessionContext) -> dict[str, Radio]:
+        """Every radio the owner has described, by serial.
+
+        Defensive on read, like `llm_task_overrides`: this decides which antenna a
+        service listens through, and a malformed stored value must degrade to "general
+        use" — the behaviour of a box that has never opened this screen — rather than
+        crash a tuner. An entry that is not a dict, or whose serial is not a string, is
+        dropped entirely; individual bad FIELDS fall back one at a time."""
+        raw = await self.get(ctx, SDR_RADIOS_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, Radio] = {}
+        for serial, entry in raw.items():
+            if not isinstance(serial, str) or not serial or not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            desc = entry.get("description")
+            role = entry.get("role")
+            clean[serial] = Radio(
+                serial=serial,
+                name=name[:SDR_RADIO_NAME_MAX] if isinstance(name, str) else "",
+                description=desc[:SDR_RADIO_DESC_MAX] if isinstance(desc, str) else "",
+                # An unknown role is NOT coerced to general: it means dedicated to a
+                # service this build does not have, and quietly freeing that radio for
+                # the tuner is the silent-substitution failure this whole feature exists
+                # to stop. It stays reserved and unusable until the owner says otherwise.
+                role=role if isinstance(role, str) and role else GENERAL,
+            )
+        return clean
+
+    async def set_sdr_radio(
+        self, ctx: SessionContext, serial: str, *, name: str, description: str, role: str
+    ) -> dict[str, Radio]:
+        """Describe one radio, leaving the others alone. Returns the whole map.
+
+        Read-modify-write on one jsonb key, which is safe here because the only writer
+        is the owner editing a settings screen — there is no concurrent updater to lose
+        an entry to."""
+        current = await self.get(ctx, SDR_RADIOS_KEY, {})
+        entries = dict(current) if isinstance(current, dict) else {}
+        entries[serial] = {
+            "name": name.strip()[:SDR_RADIO_NAME_MAX],
+            "description": description.strip()[:SDR_RADIO_DESC_MAX],
+            "role": role.strip() or GENERAL,
+        }
+        await self.upsert(ctx, SDR_RADIOS_KEY, entries)
+        return await self.sdr_radios(ctx)
+
+    async def forget_sdr_radio(self, ctx: SessionContext, serial: str) -> dict[str, Radio]:
+        """Drop a radio's description — for a dongle that is gone for good.
+
+        Kept separate from setting it back to general use: a radio still on the desk and
+        a radio sold last month are different states, and only one of them should keep
+        holding a name in a list."""
+        current = await self.get(ctx, SDR_RADIOS_KEY, {})
+        entries = dict(current) if isinstance(current, dict) else {}
+        entries.pop(serial, None)
+        await self.upsert(ctx, SDR_RADIOS_KEY, entries)
+        return await self.sdr_radios(ctx)
 
     async def brain_llm_stream(self, ctx: SessionContext) -> bool:
         """Whether real LLM prompt/answer text is streamed to the on-box wall display.

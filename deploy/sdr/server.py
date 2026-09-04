@@ -392,6 +392,7 @@ class Handler(BaseHTTPRequestHandler):
                 body.get("gain"),
                 purpose=listen.PURPOSE_SURVEY,
                 sweep=sweep,
+                serial=body.get("serial") or None,
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -450,6 +451,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Absent means listening: every existing caller predates purposes and
                 # means exactly that, so the default keeps them byte-identical.
                 purpose=str(body.get("purpose") or PURPOSE_LISTEN),
+                # Which radio, resolved by the api from the owner's settings. Absent
+                # keeps the historical "whatever enumerates first" for a one-dongle box.
+                serial=body.get("serial") or None,
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})

@@ -787,6 +787,72 @@ class TestSurveySession:
         assert cmd[cmd.index("-g") + 1] == "30"
 
 
+class TestAddressingOneRadioOfSeveral:
+    """Both pipelines must open the radio they were TOLD to, not the first one.
+
+    MEASURED 2026-09-03: two NESDR SMArt v5s attached (09022796 on bus 1-1, 77192819 on
+    bus 3-4). Neither `rtl_fm` nor `rtl_power` was passed `-d`, so both opened whichever
+    librtlsdr enumerated first — a property of USB bus order, not of anything the owner
+    chose. With one radio on a desk whip and one on a long wire, that is how APRS moves
+    to the wrong antenna on a re-plug with no symptom but worse reception.
+    """
+
+    def _sweep(self):
+        return listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300)
+
+    def _session(self, monkeypatch, **kwargs):
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        return listen.Session(144_390_000, "fm", None, **kwargs)
+
+    def test_listening_opens_the_named_radio(self, monkeypatch) -> None:
+        session = self._session(monkeypatch, serial="77192819")
+        try:
+            cmd = session._rtl_cmd()
+        finally:
+            session.stop()
+
+        assert cmd[cmd.index("-d") + 1] == "serial=77192819"
+
+    def test_sweeping_opens_the_named_radio(self, monkeypatch) -> None:
+        session = self._session(
+            monkeypatch,
+            purpose=listen.PURPOSE_SURVEY,
+            sweep=self._sweep(),
+            serial="77192819",
+        )
+        try:
+            cmd = session._sweep_cmd()
+        finally:
+            session.stop()
+
+        assert cmd[cmd.index("-d") + 1] == "serial=77192819"
+        # ...and the CSV path stays last, where rtl_power expects its positional.
+        assert cmd[-1].endswith(".csv")
+
+    def test_naming_no_radio_stays_byte_identical_to_before(self, monkeypatch) -> None:
+        """A one-dongle box must not change behaviour. `-d` absent means librtlsdr's
+        own choice, which is exactly right when there is only one thing to choose."""
+        listening = self._session(monkeypatch)
+        sweeping = self._session(
+            monkeypatch, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+        try:
+            assert "-d" not in listening._rtl_cmd()
+            assert "-d" not in sweeping._sweep_cmd()
+        finally:
+            listening.stop()
+            sweeping.stop()
+
+    def test_the_lease_says_which_radio_it_holds(self, tuner) -> None:
+        """The omnibox and /health read this. "Something is using the radio" is not an
+        answer on a box with two of them."""
+        info = tuner.start(144_390_000, "fm", None, serial="09022796")
+
+        assert info.serial == "09022796"
+        assert info.as_dict()["serial"] == "09022796"
+
+
 class TestSweepBounds:
     """The caps, enforced where the sweep is BUILT rather than at each caller.
 
