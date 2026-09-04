@@ -75,9 +75,11 @@ MODES = {
     "lsb": "lsb",
 }
 
-# What a session is HOLDING the tuner for. One radio, so the lease is the only arbiter,
-# and which job holds it decides what the loser is told: "release it to listen" and
-# "release it to log" are opposite advice (docs/plans/APRS_CONTROL_PLAN.md P0).
+# What a session is HOLDING a radio for. The lease is PER RADIO (APRS_CONTROL_PLAN P0b),
+# so a refusal has to name both — which radio, and which job has it — because on a
+# two-dongle box "the radio is busy" is not even true, let alone actionable. Which job
+# also decides what the loser is told: "release it to listen" and "release it to log"
+# are opposite advice (docs/plans/APRS_CONTROL_PLAN.md P0).
 # `listen` produces audio; `aprs` decodes packets and produces none.
 PURPOSE_LISTEN = "listen"
 PURPOSE_APRS = "aprs"
@@ -266,7 +268,8 @@ _SUB_QUEUE_CHUNKS = 64
 
 
 class SdrBusy(RuntimeError):
-    """This radio is already held. One radio, one session — and a holder that named no
+    """This radio is already held — one session per RADIO, not per box, so the other
+    dongle is unaffected and a refusal names the one it is about. A holder that named no
     radio holds them all, because nothing can prove which one it opened."""
 
 

@@ -984,18 +984,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "sdr_aprs_logging.tool": (
             "sdr_aprs_logging",
-            1,
-            "242766ea3638cf55b00649c30dddfdbcf211fcb86699b86bc58c851a6109030e",
+            2,
+            "717e1a57eca5d65391637d97f25ca126dd31f17a417b70780d4bfb82bd463399",
         ),
         "sdr_listen.tool": (
             "sdr_listen",
-            3,
-            "e41eda2c0ca9628ad23be21288288a9a6faffe2246371ea830a6f5b3807d9237",
+            4,
+            "f43452b5503101d5c0cb414bbc952db61b296ee09a93f2db1d445bfb0d551b8e",
         ),
         "sdr_stop.tool": (
             "sdr_stop",
-            2,
-            "ae92d813c86da7660c689c26502720ce1c33260bf34138b2c0b7f1ddf241cfcc",
+            3,
+            "9d2e5de0bd61c13e41b8c160b3d226f1a20bfa6397389059c89bb611aa45d3d9",
         ),
         "search.tool": (
             "search",
