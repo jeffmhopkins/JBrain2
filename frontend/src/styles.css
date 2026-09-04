@@ -1117,6 +1117,16 @@ button.vitals:focus-visible {
   box-shadow: var(--shadow-card);
 }
 
+/* One radio inside the Radios card. Nested cards are rare here on purpose — this is
+   the only settings section with a variable number of independently-saved objects, and
+   without an edge each radio's three fields run into the next radio's. */
+.settings-subcard {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 12px;
+  margin-top: 12px;
+}
+
 .settings-label {
   font-size: var(--fs-micro);
   letter-spacing: 0.08em;

@@ -54,6 +54,7 @@ import type {
   JlaunchSpec,
   PublicJlaunchRun,
 } from "../jlaunch/types";
+import type { SdrRadios } from "../sdrRadios";
 import type { SdrListening, SdrState } from "../sdrSession";
 
 export interface Principal {
@@ -2768,6 +2769,33 @@ export const api = {
     if (frequencyMhz !== undefined) query += `&frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
     const response = await request(`/api/sdr/aprs?${query}`, { method: "POST" });
     return (await response.json()) as AprsToggleResult;
+  },
+
+  // Which radio does what (docs/mocks/sdr-dongles/a-named-roles.html). Keyed by serial
+  // because everything else about a dongle moves — one of this box's went from
+  // /dev/bus/usb/001/005 to 001/011 across a single re-plug.
+  async getSdrRadios(): Promise<SdrRadios> {
+    const response = await request("/api/sdr/radios");
+    return (await response.json()) as SdrRadios;
+  },
+
+  async describeSdrRadio(
+    serial: string,
+    body: { name: string; description: string; role: string },
+  ): Promise<SdrRadios> {
+    const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return (await response.json()) as SdrRadios;
+  },
+
+  async forgetSdrRadio(serial: string): Promise<SdrRadios> {
+    const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}`, {
+      method: "DELETE",
+    });
+    return (await response.json()) as SdrRadios;
   },
 
   async sdrStop(sessionId?: string): Promise<void> {

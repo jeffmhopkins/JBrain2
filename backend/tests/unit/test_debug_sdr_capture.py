@@ -23,10 +23,27 @@ class _Settings:
         self.whisper_url = whisper
         self.whisper_model = "whisper"
         self.whisper_timeout = 300.0
+        self.supervisor_token = "t"
 
 
 def _request(app_state: dict[str, object] | None = None) -> Request:
+    """A request whose USB scan is unreachable unless a test supplies one.
+
+    Unreachable means "name no radio", which is the one-dongle behaviour these tests
+    were written against — so a capture keeps being about level and transcript rather
+    than about which dongle it opened."""
+
+    class _Client:
+        async def get(self, _path: str, **_kw: Any) -> Any:
+            raise httpx.ConnectError("no supervisor")
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Any]:
+            return {}
+
     app = FastAPI()
+    app.state.supervisor_client = _Client()
+    app.state.settings_store = _Store()
     for key, value in (app_state or {}).items():
         setattr(app.state, key, value)
     return Request({"type": "http", "app": app, "headers": [], "method": "POST", "path": "/"})

@@ -16,11 +16,15 @@ the sidecar. The `stream.py` SSRF guard is untouched by this path (§4.4).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.db.session import SessionContext
+from jbrain.sdr.resolve import refusal
+from jbrain.sdr.roles import GENERAL, Choice
 from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
@@ -42,11 +46,36 @@ def _default_mode(mhz: float) -> str:
     return "wbfm" if _BROADCAST_FM[0] <= mhz < _BROADCAST_FM[1] else "fm"
 
 
-def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
+#: How a tool asks which radio to open: `(session_ctx, purpose) -> Choice`. Injected
+#: rather than built here because resolving needs the settings store and the supervisor
+#: client, and these tools are constructed with neither.
+RadioPicker = Callable[[SessionContext, str], Awaitable[Choice]]
+
+
+def build_sdr_handlers(
+    base_url: str, pick_radio: RadioPicker | None = None
+) -> dict[str, ToolHandler]:
     """Bind the radio tools to the sidecar. Empty base_url => no radio => no tools,
-    the same graceful degrade the image and transcription tools use."""
+    the same graceful degrade the image and transcription tools use.
+
+    `pick_radio` is how these tools honour the owner's radio settings. Without it they
+    take whichever radio librtlsdr enumerates first — which is the historical behaviour
+    and correct on a one-dongle box, and is why it stays optional rather than required.
+    On a two-dongle box it is the bug: this is the CONVERSATIONAL path to APRS logging
+    (`APRS_CONTROL_PLAN.md` P1a), so an unwired picker means asking the assistant to
+    start logging quietly opens the wrong antenna while the PWA switch beside it
+    refuses to."""
     if not base_url:
         return {}
+
+    async def _chosen(ctx: ToolContext, want: str) -> tuple[str | None, str | None]:
+        """`(serial, refusal)`. A refusal is a sentence for the owner, not an error:
+        it names the radio they have to plug back in, or the double-dedication they
+        have to undo, and the tool returns it instead of taking a different radio."""
+        if pick_radio is None:
+            return None, None
+        choice = await pick_radio(ctx.session, want)
+        return choice.serial, refusal(choice)
 
     async def _call(path: str, params: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
@@ -66,7 +95,7 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             body = {}
         return resp.status_code, body
 
-    async def sdr_listen(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
+    async def sdr_listen(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         try:
             mhz = float(arguments.get("frequency_mhz") or 0)
         except (TypeError, ValueError):
@@ -78,9 +107,17 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
         if mode not in MODES:
             return f"I don't know the mode {mode!r} — try one of {', '.join(MODES)}."
 
+        serial, refused = await _chosen(ctx, GENERAL)
+        if refused is not None:
+            return refused
         status, body = await _call(
             "/listen/start",
-            {"frequency_hz": int(round(mhz * 1_000_000)), "mode": mode, "gain": None},
+            {
+                "frequency_hz": int(round(mhz * 1_000_000)),
+                "mode": mode,
+                "gain": None,
+                "serial": serial,
+            },
         )
         if status == 409:
             # PASS THE SIDECAR'S REASON THROUGH. It names which job holds the tuner,
@@ -104,7 +141,7 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
             "composer — tap it to tune, hear it, or release the radio."
         )
 
-    async def sdr_aprs_logging(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
+    async def sdr_aprs_logging(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         enabled = arguments.get("enabled")
         if not isinstance(enabled, bool):
             return "Say whether to turn APRS logging on or off (enabled: true or false)."
@@ -155,6 +192,12 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
         if not MIN_MHZ < mhz < MAX_MHZ:
             return f"{mhz} MHz is outside what this radio can tune ({MIN_MHZ}-{MAX_MHZ} MHz)."
 
+        # Which radio, before taking one. This is the conversational path to logging,
+        # so without it "turn APRS on" opens whichever radio enumerated first while the
+        # PWA switch beside it refuses — the same act, two answers.
+        serial, refused = await _chosen(ctx, PURPOSE_APRS)
+        if refused is not None:
+            return refused
         status, body = await _call(
             "/listen/start",
             {
@@ -162,6 +205,7 @@ def build_sdr_handlers(base_url: str) -> dict[str, ToolHandler]:
                 "mode": "fm",
                 "gain": None,
                 "purpose": PURPOSE_APRS,
+                "serial": serial,
             },
         )
         if status == 409:

@@ -42,6 +42,7 @@ import contextlib
 import os
 import dataclasses
 import queue
+import re
 import shutil
 import socket
 import struct
@@ -170,6 +171,33 @@ def validate(frequency_hz: int, mode: str) -> str:
 APRS_MODES = ("fm", "nfm")
 
 
+#: What a USB serial may contain. librtlsdr's own strings are alphanumeric, and this is
+#: the value that becomes an `rtl_fm` argv token — the only field in a /listen/start body
+#: that reaches a subprocess at all.
+SERIAL_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def validate_serial(serial: object) -> str | None:
+    """Bound the one field that becomes a subprocess argument.
+
+    Here as well as in the api, for the reason `validate_purpose` gives: a bound that
+    lives only in the caller is not a bound once there is a second caller — and this
+    process has its own HTTP surface. Every neighbouring field is cast and checked
+    (`mode` through `validate`, `purpose` through `validate_purpose`, `frequency_hz`
+    through an int and a range); `serial` was taken raw off the JSON, so a dict body
+    value became the argv token `serial={'a': 1}` and a dict in `/healthz`.
+
+    None means "no radio named", which is the historical one-dongle behaviour and stays
+    legal. Anything present but unusable is refused rather than silently dropped: a
+    caller that asked for a specific radio and got an arbitrary one is the exact failure
+    this whole path exists to prevent."""
+    if serial is None or serial == "":
+        return None
+    if not isinstance(serial, str) or not SERIAL_RE.match(serial):
+        raise SdrError(f"{serial!r} is not a usable device serial")
+    return serial
+
+
 def validate_purpose(purpose: str) -> str:
     """Bound the job a session may hold the tuner for.
 
@@ -237,6 +265,7 @@ class SessionInfo:
     peak: float
     listeners: int
     purpose: str = PURPOSE_LISTEN
+    serial: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +274,7 @@ class SessionInfo:
             "mode": self.mode,
             "gain": self.gain,
             "purpose": self.purpose,
+            "serial": self.serial,
             "started_at": self.started_at,
             "elapsed_s": round(time.time() - self.started_at, 1),
             "peak": round(self.peak, 4),
@@ -262,9 +292,15 @@ class Session:
         gain: str | None,
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
+        serial: str | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.sweep = sweep
+        # WHICH radio this session opened. None means "whichever librtlsdr enumerates
+        # first", which is the historical behaviour and is fine with one dongle plugged
+        # in; with two it is how APRS silently ends up on the wrong antenna, so the api
+        # resolves a serial from the owner's settings and names it here.
+        self.serial = serial
         # The CSV rtl_power writes, read back once the sweep ends. Per session, so a
         # retune or a restart cannot serve a stale file.
         self.sweep_csv = f"/tmp/sweep-{self.id}.csv" if sweep else ""  # noqa: S108
@@ -312,6 +348,7 @@ class Session:
 
     def _rtl_cmd(self) -> list[str]:
         cmd = ["rtl_fm", "-f", str(self.frequency_hz), "-M", MODES[self.mode]]
+        cmd += self._device_args()
         if MODES[self.mode] == "wbfm":
             cmd += ["-s", str(WBFM_SAMPLE_RATE), "-r", str(AUDIO_RATE)]
         else:
@@ -393,7 +430,28 @@ class Session:
             # Fixed gain, never AGC. A floor that moves with the signal makes dB values
             # incomparable across the sweep, and every threshold built on them drifts.
             cmd += ["-g", str(self.gain)]
+        cmd += self._device_args()
         return [*cmd, self.sweep_csv]
+
+    def _device_args(self) -> list[str]:
+        """`-d <serial>`, or nothing at all.
+
+        Nothing is not a neutral default once a second dongle exists: librtlsdr then
+        opens whichever it enumerated first, which is a property of USB bus order rather
+        than of anything the owner chose. Both tools take the same `-d` and both went
+        without it, so the fix belongs in one place rather than twice.
+
+        THE BARE SERIAL, not `serial=...`. rtl_fm and rtl_power hand `-d` straight to
+        librtlsdr's `verbose_device_search`, which tries a raw index, then an exact
+        serial, then a serial prefix, then a serial suffix — and has no key=value form
+        at all. `serial=` is SoapySDR's syntax; passed here it matches nothing and the
+        tool exits(1) before opening the device, which is WORSE than the bug it was
+        meant to fix: the sidecar's `start` has already returned, so the lease looks
+        live and the omnibox lights while nothing is decoding.
+
+        Empty when the caller named no radio, which keeps a one-dongle box byte
+        identical to what it ran before."""
+        return ["-d", str(self.serial)] if self.serial else []
 
     def _start_sweep_pipeline(self) -> None:
         """One process, no threads, and it ENDS ON ITS OWN.
@@ -887,6 +945,7 @@ KISSPORT {self.kiss_port}
             peak=self.peak,
             listeners=listeners,
             purpose=self.purpose,
+            serial=self.serial,
         )
 
 
@@ -904,6 +963,7 @@ class Tuner:
         gain: str | None,
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
+        serial: str | None = None,
     ) -> SessionInfo:
         validate_purpose(purpose)
         with self._lock:
@@ -912,7 +972,7 @@ class Tuner:
                 raise SdrBusy(f"the radio is already {held}")
             if self._session is not None:
                 self._session.stop()  # a dead session must not block a new one
-            self._session = Session(frequency_hz, mode, gain, purpose, sweep)
+            self._session = Session(frequency_hz, mode, gain, purpose, sweep, serial)
             return self._session.info()
 
     def current(self) -> Session | None:

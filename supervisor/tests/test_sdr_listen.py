@@ -787,6 +787,107 @@ class TestSurveySession:
         assert cmd[cmd.index("-g") + 1] == "30"
 
 
+class TestAddressingOneRadioOfSeveral:
+    """Both pipelines must open the radio they were TOLD to, not the first one.
+
+    MEASURED 2026-09-03: two NESDR SMArt v5s attached (09022796 on bus 1-1, 77192819 on
+    bus 3-4). Neither `rtl_fm` nor `rtl_power` was passed `-d`, so both opened whichever
+    librtlsdr enumerated first — a property of USB bus order, not of anything the owner
+    chose. With one radio on a desk whip and one on a long wire, that is how APRS moves
+    to the wrong antenna on a re-plug with no symptom but worse reception.
+    """
+
+    def _sweep(self):
+        return listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300)
+
+    def _session(self, monkeypatch, **kwargs):
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        return listen.Session(144_390_000, "fm", None, **kwargs)
+
+    def test_listening_opens_the_named_radio(self, monkeypatch) -> None:
+        session = self._session(monkeypatch, serial="77192819")
+        try:
+            cmd = session._rtl_cmd()
+        finally:
+            session.stop()
+
+        assert cmd[cmd.index("-d") + 1] == "77192819"
+
+    def test_sweeping_opens_the_named_radio(self, monkeypatch) -> None:
+        session = self._session(
+            monkeypatch,
+            purpose=listen.PURPOSE_SURVEY,
+            sweep=self._sweep(),
+            serial="77192819",
+        )
+        try:
+            cmd = session._sweep_cmd()
+        finally:
+            session.stop()
+
+        assert cmd[cmd.index("-d") + 1] == "77192819"
+        # ...and the CSV path stays last, where rtl_power expects its positional.
+        assert cmd[-1].endswith(".csv")
+
+    def test_the_argument_is_what_librtlsdr_can_actually_match(
+        self, monkeypatch
+    ) -> None:
+        """The form matters, and asserting a formatted string does not check it.
+
+        rtl_fm and rtl_power pass `-d` straight to librtlsdr's `verbose_device_search`,
+        which tries a raw index, an exact serial, a serial prefix and a serial suffix —
+        and has NO key=value form. `serial=09022796` is SoapySDR syntax; here it matches
+        nothing and the tool exits(1) before opening the device, while `Tuner.start` has
+        already returned a lease that looks live. An earlier cut of this shipped exactly
+        that, and the test that was supposed to catch it only proved an f-string ran."""
+        session = self._session(monkeypatch, serial="09022796")
+        try:
+            arg = session._rtl_cmd()[session._rtl_cmd().index("-d") + 1]
+        finally:
+            session.stop()
+
+        assert "=" not in arg
+        assert arg == "09022796"
+
+    def test_naming_no_radio_stays_byte_identical_to_before(self, monkeypatch) -> None:
+        """A one-dongle box must not change behaviour. `-d` absent means librtlsdr's
+        own choice, which is exactly right when there is only one thing to choose."""
+        listening = self._session(monkeypatch)
+        sweeping = self._session(
+            monkeypatch, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+        try:
+            assert "-d" not in listening._rtl_cmd()
+            assert "-d" not in sweeping._sweep_cmd()
+        finally:
+            listening.stop()
+            sweeping.stop()
+
+    def test_a_serial_that_is_not_one_is_refused_rather_than_passed_along(self) -> None:
+        """`serial` is the only field in a start body that becomes a subprocess argv
+        token, and it was the only one taken raw off the JSON while its neighbours were
+        each cast and validated. A dict here became the argv token `serial={'a': 1}`
+        and a dict in the `/healthz` payload typed `str | None`."""
+        for bad in ({"a": 1}, "has space", "semi;colon", "x" * 65, 12345):
+            with pytest.raises(listen.SdrError):
+                listen.validate_serial(bad)
+
+    def test_naming_nothing_stays_legal(self) -> None:
+        # The one-dongle case, which must not become an error.
+        assert listen.validate_serial(None) is None
+        assert listen.validate_serial("") is None
+        assert listen.validate_serial("09022796") == "09022796"
+
+    def test_the_lease_says_which_radio_it_holds(self, tuner) -> None:
+        """The omnibox and /health read this. "Something is using the radio" is not an
+        answer on a box with two of them."""
+        info = tuner.start(144_390_000, "fm", None, serial="09022796")
+
+        assert info.serial == "09022796"
+        assert info.as_dict()["serial"] == "09022796"
+
+
 class TestSweepBounds:
     """The caps, enforced where the sweep is BUILT rather than at each caller.
 

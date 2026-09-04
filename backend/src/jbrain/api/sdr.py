@@ -32,15 +32,18 @@ from typing import Annotated, Any, cast
 import httpx
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
+from jbrain.api.llm_settings import get_settings_store
 from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
+from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
+from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
 from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.transcribe import WhisperCppClient
@@ -103,6 +106,35 @@ async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any
     return cast(dict[str, Any], resp.json())
 
 
+async def _attached(request: Request, settings: Any) -> list[str] | None:
+    """What the scan can see, or None when it could not. See `sdr.resolve`."""
+    return await attached_serials(request.app.state.supervisor_client, settings.supervisor_token)
+
+
+async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> Choice:
+    """Which radio `want` should open. The rule and the plumbing are shared with the
+    debug console and jerv's tools, because a rule enforced at one of three doors is
+    not enforced."""
+    return await for_purpose(
+        request.app.state.supervisor_client,
+        settings.supervisor_token,
+        get_settings_store(request),
+        ctx_for(owner),
+        want,
+    )
+
+
+def _refuse(choice: Choice) -> None:
+    """Turn an owner-fixable choice into a 409 naming the radio and the reason.
+
+    A dedicated radio that is unplugged is not "the radio is busy" — it is one specific
+    dongle, called what the owner called it, that has to go back in. The generic message
+    would send them hunting for a session that does not exist."""
+    detail = refusal(choice)
+    if detail is not None:
+        raise HTTPException(status_code=409, detail=detail)
+
+
 def _detail(resp: httpx.Response, fallback: str) -> str:
     try:
         return cast(str, resp.json().get("detail") or fallback)
@@ -129,17 +161,28 @@ async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
 
 @router.post("/listen")
 async def listen(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
-    """Take the radio and start listening. 409 when it is already held."""
+    """Take the radio and start listening. 409 when it is already held.
+
+    Takes a GENERAL radio: one the owner reserved for a service is not one the tuner may
+    borrow while that service happens to be idle."""
+    chosen = await _radio_for(request, settings, _owner, GENERAL)
+    _refuse(chosen)
     return await _post(
         settings,
         "/listen/start",
-        {"frequency_hz": int(round(frequency_mhz * 1_000_000)), "mode": mode, "gain": gain},
+        {
+            "frequency_hz": int(round(frequency_mhz * 1_000_000)),
+            "mode": mode,
+            "gain": gain,
+            "serial": chosen.serial,
+        },
     )
 
 
@@ -344,8 +387,107 @@ async def station(
     return found
 
 
+class RadioOut(BaseModel):
+    serial: str
+    name: str
+    description: str
+    role: str
+    attached: bool
+    """Whether the scan can see it right now. A described radio that is unplugged still
+    appears — that is how its service explains what it is waiting for."""
+
+
+class RadiosOut(BaseModel):
+    radios: list[RadioOut]
+    conflicts: dict[str, list[str]]
+    """Service -> serials, for services with more than one radio dedicated to them. The
+    settings screen shows this on the cards, before anything tries to run."""
+    scan_ok: bool
+    """False when the USB scan could not be reached, so `attached` is unknown rather
+    than false. The screen must not draw every radio as unplugged over a proxy hiccup."""
+
+
+class RadioIn(BaseModel):
+    name: Annotated[str, Field(max_length=200)] = ""
+    description: Annotated[str, Field(max_length=600)] = ""
+    # A service id, not prose. The store truncates too; this refuses rather than
+    # silently shortening, because a role the caller did not ask for is a wrong answer
+    # where a shortened description is only a shorter one.
+    role: Annotated[str, Field(max_length=40)] = GENERAL
+
+
+@router.get("/radios")
+async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> RadiosOut:
+    """Every radio: described, attached, or both.
+
+    The union rather than either alone. A dongle plugged in but never described has to
+    appear or a new one is invisible; a dongle described but unplugged has to appear or
+    the service waiting for it cannot say what it is waiting for."""
+    seen = await _attached(request, settings)
+    attached = seen or []
+    stored = await get_settings_store(request).sdr_radios(ctx_for(owner))
+    known = {**{s: Radio(serial=s) for s in attached}, **stored}
+    return RadiosOut(
+        radios=[
+            RadioOut(
+                serial=radio.serial,
+                name=radio.name,
+                description=radio.description,
+                role=radio.role,
+                attached=radio.serial in attached,
+            )
+            for radio in sorted(known.values(), key=lambda r: r.serial)
+        ],
+        conflicts=conflicts(stored),
+        # Whether the scan ANSWERED, not whether it found anything. Deriving this from
+        # the device count told an owner who had simply unplugged both dongles that the
+        # scan was unreachable, and sent them debugging a proxy that was fine.
+        scan_ok=seen is not None,
+    )
+
+
+@router.put("/radios/{serial}")
+async def describe_radio(
+    request: Request,
+    settings: SettingsDep,
+    owner: OwnerDep,
+    body: RadioIn,
+    serial: Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+) -> RadiosOut:
+    """Name a radio, say what it is plugged into, and set what it is for.
+
+    The serial pattern is narrow because this value becomes `-d serial=...` on an
+    `rtl_fm` argv. It is not shell-interpolated (the sidecar uses a fixed argv, no
+    shell), so this is a second lock rather than the only one — but a settings key that
+    reaches a subprocess argument should not accept arbitrary text either way."""
+    await get_settings_store(request).set_sdr_radio(
+        ctx_for(owner),
+        serial,
+        name=body.name,
+        description=body.description,
+        role=body.role,
+    )
+    return await radios(request, settings, owner)
+
+
+@router.delete("/radios/{serial}")
+async def forget_radio(
+    request: Request,
+    settings: SettingsDep,
+    owner: OwnerDep,
+    serial: Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+) -> RadiosOut:
+    """Forget a radio's description — for a dongle that is gone for good.
+
+    Distinct from setting it back to general use: a radio still on the desk and a radio
+    sold last month are different states, and only one should keep a name in the list."""
+    await get_settings_store(request).forget_sdr_radio(ctx_for(owner), serial)
+    return await radios(request, settings, owner)
+
+
 @router.post("/aprs")
 async def aprs_logging(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     enabled: Annotated[bool, Query()],
@@ -386,6 +528,11 @@ async def aprs_logging(
 
     if logging_now:
         return {"logging": True, "changed": False, "frequency_hz": session.get("frequency_hz")}
+    # Which radio, before taking one. A dedicated dongle that is unplugged makes this a
+    # 409 naming it, rather than APRS quietly moving to whatever else is plugged in —
+    # the whole point of the setting, and invisible without this check.
+    chosen = await _radio_for(request, settings, _owner, APRS_PURPOSE)
+    _refuse(chosen)
     body = await _post(
         settings,
         "/listen/start",
@@ -395,6 +542,7 @@ async def aprs_logging(
             "mode": "fm",
             "gain": None,
             "purpose": APRS_PURPOSE,
+            "serial": chosen.serial,
         },
     )
     if body.get("purpose") != APRS_PURPOSE:
