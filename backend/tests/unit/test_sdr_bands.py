@@ -311,3 +311,38 @@ class TestTheExpertPathCoversTheWholeRadio:
         mode, step, _ = bands.defaults_for(152_000_000)
 
         assert mode == "fm" and step == 12_500
+
+
+class TestRefusingASweepInWordsRatherThanASchema:
+    """Measured on the box: asking to sweep 9.9-10.1 MHz returned a bare 422 with a
+    FastAPI validation blob, because the route's `Query` bound rejected before anything
+    could explain itself. The sentence existed — in the sidecar — and was unreachable.
+
+    This is the one surface an owner with no terminal has (CLAUDE.md #10), and the
+    distinction it has to carry is the least obvious one on this hardware: shortwave is
+    perfectly listenable and cannot be swept.
+    """
+
+    def test_shortwave_is_refused_with_a_reason_and_a_way_forward(self) -> None:
+        from jbrain.sdr.tuner import sweepable
+
+        refusal = sweepable(10.0)
+
+        assert refusal is not None
+        assert "cannot go below" in refusal
+        assert "still listen" in refusal  # ...says what DOES work down there
+
+    def test_a_frequency_the_radio_cannot_reach_says_that_instead(self) -> None:
+        """A different failure needing different words: 2000 MHz is not 'listen instead',
+        it is 'this radio does not go there'."""
+        from jbrain.sdr.tuner import sweepable
+
+        refusal = sweepable(2000.0)
+
+        assert refusal is not None and "above what this radio reaches" in refusal
+
+    def test_a_sweepable_frequency_is_waved_through(self) -> None:
+        from jbrain.sdr.tuner import sweepable
+
+        assert sweepable(144.0) is None
+        assert sweepable(24.0) is None  # exactly at the handover, where the tuner starts

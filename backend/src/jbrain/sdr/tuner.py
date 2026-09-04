@@ -49,6 +49,30 @@ def direct_sampling(mhz: float) -> bool:
     return mhz < MIN_MHZ
 
 
+def sweepable(mhz: float) -> str | None:
+    """Why a SWEEP cannot reach this frequency, or None.
+
+    Separate from `out_of_range` because the two answers differ, and the difference is
+    the one an owner most needs explained: shortwave is perfectly listenable and cannot
+    be swept. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` — the ADC's I
+    branch — while this hardware wires Q, so the tool would tune something and measure
+    nothing, and a flat plausible waterfall is worse than a refusal.
+
+    Lives here rather than in the route's `Query` bounds because a bound produces a 422
+    with a validation blob, and this is the one surface an owner with no terminal has
+    (CLAUDE.md #10). They need the sentence, not the schema."""
+    refusal = out_of_range(mhz)
+    if refusal:
+        return refusal
+    if direct_sampling(mhz):
+        return (
+            f"a sweep cannot go below {MIN_MHZ:g} MHz — the radio reaches shortwave by "
+            f"bypassing its tuner, and the sweep tool cannot use that path. You can "
+            f"still listen there."
+        )
+    return None
+
+
 def tunable(mhz: float) -> bool:
     """Whether the radio can reach this frequency at all, by either path."""
     return DIRECT_MIN_MHZ <= mhz <= MAX_MHZ

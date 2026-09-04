@@ -76,7 +76,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, sweepable
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1696,8 +1696,12 @@ async def sdr_sweep(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    start_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
-    stop_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    # Bounded to what the RADIO reaches, not to what a sweep reaches — so a shortwave
+    # request arrives here and gets `sweepable`'s sentence rather than a 422 validation
+    # blob. The difference matters because shortwave is listenable and not sweepable,
+    # and that is precisely the thing a bare bound cannot say.
+    start_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
+    stop_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
     seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
     gain: Annotated[str | None, Query()] = None,
@@ -1736,6 +1740,13 @@ async def sdr_sweep(
     request.state.debug_detail = f"sdr sweep {start_mhz}-{stop_mhz} MHz for {seconds}s"
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
+    # Both EDGES, because the sidecar validates the sweep's centre: a 10-70 MHz request
+    # centres on 40 and passes every check while its bottom half cannot be measured at
+    # all, and comes back reported as quiet.
+    for edge in (start_mhz, stop_mhz):
+        refusal = sweepable(edge)
+        if refusal:
+            raise HTTPException(status_code=400, detail=refusal)
 
     body = {
         "start_hz": int(round(start_mhz * 1_000_000)),
