@@ -75,23 +75,25 @@ describe("the ramp", () => {
 describe("painting a picture", () => {
   const scale = { lowDb: -80, highDb: -20 };
 
-  it("puts the newest row at the top", () => {
-    // Which is what every receiver does, and therefore what an operator reads without
-    // being told. Upside down, a rising signal appears to be falling.
+  it("puts the newest row at the bottom", () => {
+    // The owner's call (2026-09-04): the live edge sits against the frequency axis it
+    // is measured on, and history rises away from it.
     const pixels = paint([row([-20]), row([-80])], 1, 2, scale);
 
-    expect([pixels[0], pixels[1], pixels[2]]).toEqual([254, 205, 94]);
-    expect([pixels[4], pixels[5], pixels[6]]).toEqual([14, 15, 24]);
+    expect([pixels[4], pixels[5], pixels[6]]).toEqual([254, 205, 94]);
+    expect([pixels[0], pixels[1], pixels[2]]).toEqual([14, 15, 24]);
   });
 
-  it("leaves rows it does not have yet transparent", () => {
-    // So a picture that is still filling reads as empty, rather than as a band with
-    // nothing on it — two very different claims about the radio.
+  it("leaves rows it does not have yet transparent, ABOVE the live edge", () => {
+    // So a picture that is still filling reads as empty rather than as a band with
+    // nothing on it — two very different claims about the radio. And the blank half has
+    // to be the OLD half: flipping the finished picture instead of indexing from the
+    // bottom would park the emptiness over the newest rows.
     const pixels = paint([row([-40])], 1, 3, scale);
 
-    expect(pixels[3]).toBe(255);
+    expect(pixels[11]).toBe(255); // the newest row, at the bottom
     expect(pixels[7]).toBe(0);
-    expect(pixels[11]).toBe(0);
+    expect(pixels[3]).toBe(0);
   });
 
   it("leaves the tail of a short row transparent rather than filling it", () => {

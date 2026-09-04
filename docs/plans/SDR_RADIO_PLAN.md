@@ -361,6 +361,13 @@ the dedicated one. What the measurement settled, in order of how much it was a g
   grant; it now reports the grant as soon as a row has arrived. Two numbers for one
   measured fact, and the more prominent one was the wrong one.
 
+**The picture runs bottom-up** (owner's call, 2026-09-04): newest row against the
+frequency axis it is measured on, history rising away from it. Built the other way
+first — SDR# and gqrx both default to newest-at-top — so this is a preference between
+two real conventions rather than a correction. It is indexed from the bottom rather
+than drawn and flipped, because a half-full waterfall flipped whole would put its blank
+half over the newest rows.
+
 Three decisions worth keeping:
 
 - **The colour scale is calibrated once, then held.** Re-taking it per row renormalises

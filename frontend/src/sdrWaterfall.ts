@@ -70,10 +70,17 @@ export function shade(db: number, scale: Scale): [number, number, number] {
 
 /** Paint `rows` — newest first — into an RGBA buffer `bins` wide and `height` tall.
  *
- *  Newest at the TOP, scrolling down, which is what every receiver does and therefore
- *  what an operator reads without being told. Rows the history does not have yet are
- *  left transparent rather than black, so a picture that is still filling reads as
- *  empty rather than as a band with nothing on it. */
+ *  **Newest at the BOTTOM, scrolling up**, which is the owner's call (2026-09-04) and
+ *  the convention a spectrum analyser uses: the live edge sits against the frequency
+ *  axis it is measured on, and history rises away from it. This was built the other way
+ *  round — receivers like SDR# and gqrx default to newest-at-top — and both are real
+ *  conventions, so it is a preference rather than a correction.
+ *
+ *  Rows the history does not have yet are left transparent rather than black, so a
+ *  picture that is still filling reads as empty rather than as a band with nothing on
+ *  it. They are ABOVE the live edge now, which is also why the fill has to be indexed
+ *  from the bottom rather than the picture simply being flipped: a half-full waterfall
+ *  drawn upside down would put its blank half over the newest rows. */
 export function paint(
   rows: readonly SpectrumRow[],
   bins: number,
@@ -83,8 +90,10 @@ export function paint(
   // An explicit ArrayBuffer, not the default: `ImageData` refuses a view that might sit
   // on a SharedArrayBuffer, and the inferred type is the union of both.
   const pixels = new Uint8ClampedArray(new ArrayBuffer(bins * height * 4));
-  for (let y = 0; y < height && y < rows.length; y += 1) {
-    const row = rows[y] as SpectrumRow;
+  for (let age = 0; age < height && age < rows.length; age += 1) {
+    // `age` counts back from the live edge; `y` puts it that far above the bottom.
+    const y = height - 1 - age;
+    const row = rows[age] as SpectrumRow;
     for (let x = 0; x < bins; x += 1) {
       // A row narrower than the canvas is a frame that lost a block. Left transparent,
       // because painting its floor colour would claim a measurement that was not taken.
