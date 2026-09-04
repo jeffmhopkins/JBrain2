@@ -81,6 +81,11 @@ NARROW_RATE = 16_000
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wbfm capture rate
 
 MAX_SECONDS = 120
+#: How long rtl_fm gets to run its SIGTERM handler — cancel the USB transfer, close the
+#: device — before a capture escalates to SIGKILL. The handler needs milliseconds; this
+#: is slack for a loaded box, and it matches the live path's own grace in
+#: `listen.Session._kill` so the two cannot drift into different teardown behaviour.
+_SHUTDOWN_GRACE_S = 2
 
 
 # Every radio this box is holding and what for: the live sessions, plus the one-shot
@@ -186,16 +191,35 @@ def capture(
         cmd += listen.demod_args(key, gain, freq_hz)
         cmd += ["-"]
 
-        # rtl_fm streams until killed, so the timeout IS the recording length. A
-        # generous kill margin covers device open + tuner settle on a cold radio.
+        # rtl_fm streams until stopped, so the timeout IS the recording length and the
+        # timeout branch is the NORMAL path, taken by every capture that records
+        # anything at all.
+        #
+        # Which is why this cannot be `subprocess.run(timeout=...)`: on timeout CPython
+        # calls `process.kill()` — SIGKILL — and `listen.Session._kill` exists to spell
+        # out what that does to this hardware. rtl_fm installs a handler that cancels
+        # the pending async USB transfer and CLOSES THE DEVICE; SIGKILL never runs it,
+        # the RTL2832U is left with transfers submitted, and a dongle torn down that way
+        # can stop answering the descriptor reads librtlsdr enumerates with — after
+        # which every `-d <serial>` lookup fails and the radio reads as absent while
+        # sysfs still lists it. The live path has been careful about this since it was
+        # written; capture was quietly doing the opposite on every single run.
+        #
+        # So: SIGTERM, let the handler close the device, and keep SIGKILL for a tool
+        # that has genuinely wedged. `communicate` is resumed rather than restarted —
+        # it keeps what it has already read, which is the recording.
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, timeout=seconds, check=False
-            )
-            pcm, err = proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as expired:
-            pcm = expired.stdout or b""
-            err = expired.stderr or b""
+            pcm, err = proc.communicate(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                pcm, err = proc.communicate(timeout=_SHUTDOWN_GRACE_S)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                pcm, err = proc.communicate()
 
         text = err.decode("utf-8", "replace")
         if not pcm:

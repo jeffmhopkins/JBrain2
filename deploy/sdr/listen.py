@@ -166,6 +166,44 @@ _CANNOT_OPEN = (
 #: How many lines of a tool's own stderr to keep for a refusal. Enough to carry
 #: librtlsdr's device list, which is what says WHICH radio it could not find.
 _LOG_TAIL = 12
+
+#: Child processes a teardown could not confirm dead.
+#:
+#: `_kill` clears `_rtl`/`_enc` unconditionally, because `alive` has to be able to go
+#: false. That is right for the session and wrong for the PROCESS: a survivor holds the
+#: dongle against every later caller with nothing left in the program pointing at it,
+#: and this container owns the radio exclusively, so there is no such thing as a
+#: legitimate orphan. Handles that outlive their kill are parked here and retried on
+#: every reap instead of being dropped on the floor.
+_survivors: list[subprocess.Popen[bytes]] = []
+_survivors_lock = threading.Lock()
+
+
+def _park(proc: subprocess.Popen[bytes]) -> None:
+    with _survivors_lock:
+        _survivors.append(proc)
+
+
+def reap_survivors() -> int:
+    """Kill whatever an earlier teardown could not, and forget what has gone. Count left.
+
+    Called from `Tuner._reap`, so it runs on the same beat as the session sweep and
+    needs no timer of its own."""
+    with _survivors_lock:
+        pending, _survivors[:] = list(_survivors), []
+    left: list[subprocess.Popen[bytes]] = []
+    for proc in pending:
+        if proc.poll() is not None:
+            continue
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            proc.kill()
+            proc.wait(timeout=1)
+        if proc.poll() is None:
+            left.append(proc)
+    if left:
+        with _survivors_lock:
+            _survivors.extend(left)
+    return len(left)
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
@@ -1368,6 +1406,12 @@ KISSPORT {self.kiss_port}
                     proc.wait(timeout=3)
             except OSError:
                 pass
+            if proc.poll() is None:
+                # SIGKILL did not take (a process wedged in a USB ioctl is the way that
+                # happens here). Dropping the handle on the next line would make it
+                # unreachable for the life of the container while it still holds the
+                # radio, so park it and let `reap_survivors` keep trying.
+                _park(proc)
         self._rtl = self._enc = None
         # The per-session direwolf config would otherwise accumulate in /tmp for the
         # life of the container, one file per lease taken.
@@ -1433,6 +1477,22 @@ KISSPORT {self.kiss_port}
             self._stopping = False
             apply()
             self._start_pipeline()
+            # The guard above is not enough on its own, and this is where it showed.
+            # `stop()` takes the lock, sets `_released`, and kills the processes it can
+            # see; land it in the window between that guard and this line and it kills
+            # NOTHING (the old pipeline is already down, the new one not yet up), the
+            # session leaves `_sessions`, and the pipeline spawned a moment later holds
+            # the dongle with nothing anywhere still pointing at it. MEASURED on the box
+            # 2026-09-04: an `rtl_fm` alive for hours, `[rtl_fm] Error: dropped samples`
+            # on repeat because `_stopping` was already true when its pumps started so
+            # nothing drained its stdout, and `/dev/bus/usb/001/011` claimed by usbfs
+            # while the PWA said "Idle — nothing is holding this radio".
+            with self._lock:
+                abandoned = self._released
+            if abandoned:
+                self._stopping = True
+                self._kill()
+                raise SessionGone("that session has been released")
             # A retune onto a radio that has stopped answering fails the same way a
             # start does, and the route turns it into the same sentence rather than a
             # session that quietly disappears a second later.
@@ -1565,6 +1625,10 @@ class Tuner:
             if not session.alive:
                 session.stop()
                 self._sessions.pop(key, None)
+        # Nothing to do with sessions, and deliberately on the same beat: a parked
+        # process is one holding a radio that every `blocking_key` here believes is
+        # free, so the sweep that decides what is free is exactly when to retry it.
+        reap_survivors()
 
     def _holders(self) -> dict[str, str]:
         """Every held radio → what is holding it, in the words a refusal uses. Caller

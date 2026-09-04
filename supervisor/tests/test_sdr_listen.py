@@ -2040,3 +2040,90 @@ class TestTheUsbReset:
             usbdev.reset("/dev/bus/usb/003/010")
 
         assert closed == [7]
+
+
+class _Tracked(_FakeProc):
+    """A fake process that records itself, so a test can ask what is still running."""
+
+    made: ClassVar[list[_Tracked]] = []
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        _Tracked.made.append(self)
+
+    @property
+    def running(self) -> bool:
+        return not self._dead
+
+
+@pytest.fixture
+def tracking(monkeypatch: pytest.MonkeyPatch):
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    _Tracked.made = []
+    monkeypatch.setattr(listen.subprocess, "Popen", _Tracked)
+    return listen.Tuner()
+
+
+def test_a_stop_during_a_retune_does_not_strand_the_relaunched_radio(tracking) -> None:
+    """The bug this closes, seen on the box on 2026-09-04.
+
+    `_restart` checked `_released` under the lock and then let go of it to do the work.
+    A `stop()` landing in that window killed the OLD pipeline (already down) and popped
+    the session — and the pipeline `_start_pipeline` spawned a moment later held the
+    dongle with nothing left in the program pointing at it. It ran for hours, printing
+    `[rtl_fm] Error: dropped samples` because `_stopping` was already true when its
+    pumps started so nothing drained its stdout, while `/healthz` and the PWA both said
+    the radio was idle. The only cure was restarting the container."""
+    tracking.start(99_300_000, "wbfm", None)
+    session = tracking.current()
+    assert session is not None
+    spawn = session._start_pipeline
+
+    def stop_lands_mid_relaunch() -> None:
+        # Exactly the interleaving: the guard has passed, the old pipeline is down, and
+        # the release happens before the new one exists to be killed.
+        session.stop()
+        spawn()
+
+    session._start_pipeline = stop_lands_mid_relaunch  # type: ignore[method-assign]
+
+    with pytest.raises(listen.SessionGone):
+        session.tune(107_100_000, "wbfm")
+
+    still_up = [p for p in _Tracked.made if p.running]
+    assert not still_up, "a released session left a process holding the radio"
+
+
+def test_a_process_that_survives_its_kill_is_retried_not_forgotten(tracking) -> None:
+    """`_kill` clears `_rtl`/`_enc` so `alive` can go false, which is right for the
+    SESSION and wrong for the process: a survivor holds the radio while every
+    `blocking_key` believes it is free, and nothing left can still reach it."""
+
+    class _Unkillable(_Tracked):
+        def terminate(self) -> None:
+            self.signals = getattr(self, "signals", 0) + 1
+
+        kill = terminate
+
+    unkillable = _Unkillable()
+    listen._park(unkillable)
+
+    assert listen.reap_survivors() == 1, "a survivor must stay parked, not be dropped"
+
+    unkillable._dead = True  # it finally went
+
+    assert listen.reap_survivors() == 0
+    assert listen._survivors == []
+
+
+def test_reaping_sessions_also_retries_stranded_processes(tracking) -> None:
+    """Wired onto the session sweep deliberately: a parked process is one holding a
+    radio the sweep is about to report as free, so that is exactly when to try again."""
+    tracking.start(99_300_000, "wbfm", None)
+    stranded = _Tracked()
+    listen._park(stranded)
+
+    tracking.current()  # takes the lock and reaps
+
+    assert not stranded.running and listen._survivors == []

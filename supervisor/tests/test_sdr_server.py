@@ -22,7 +22,6 @@ import urllib.request
 from collections.abc import Iterator
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest import mock
 
@@ -866,14 +865,63 @@ def _capture(base: str, body: dict[str, Any]) -> tuple[int, dict[str, str]]:
         return err.code, {"detail": (json.loads(err.read() or b"{}")).get("detail", "")}
 
 
-def _recording(monkeypatch, pcm: bytes = b"\x00\x10" * 8000) -> None:
-    """rtl_fm that records instantly. The real one streams until the timeout fires, so
-    a test driving the route would otherwise wait out the whole capture."""
+class _Recorder:
+    """rtl_fm as `capture` actually drives it: it streams until it is STOPPED.
 
-    def run(cmd, **_kw):
-        return SimpleNamespace(stdout=pcm, stderr=b"", args=cmd)
+    So the first `communicate` always times out — that is the normal path, not the
+    error one — and what the recording is worth depends on how it is then asked to
+    stop. This fake remembers the signals in order, which is the whole of what
+    `test_a_capture_closes_the_device_before_it_kills_it` can check without a radio."""
 
-    monkeypatch.setattr(server.subprocess, "run", run)
+    def __init__(self, cmd, pcm: bytes, deaf: bool = False) -> None:
+        self.args = cmd
+        # A superset of `_FakeProc`, because patching `Popen` patches it for the whole
+        # process: a test that starts a SESSION while a capture fake is installed gets
+        # one of these, and its pumps read these attributes.
+        self.stdout = _Empty()
+        self.stderr = _Empty()
+        self.stdin = _Sink()
+        self.returncode = None
+        self.signals: list[str] = []
+        self._pcm = pcm
+        self._deaf = deaf  # ignores SIGTERM, so the escalation has to happen
+        self._stopped = False
+
+    def communicate(self, timeout: float | None = None):
+        if not self._stopped:
+            raise server.subprocess.TimeoutExpired(self.args, timeout or 0)
+        return self._pcm, b""
+
+    def terminate(self) -> None:
+        self.signals.append("terminate")
+        self._stopped = not self._deaf
+
+    def kill(self) -> None:
+        self.signals.append("kill")
+        self._stopped = True
+
+    def poll(self) -> int | None:
+        return 0 if self._stopped else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def _recording(
+    monkeypatch, pcm: bytes = b"\x00\x10" * 8000, deaf: bool = False
+) -> list[_Recorder]:
+    """rtl_fm that records instantly. The real one streams until it is stopped, so a
+    test driving the route would otherwise wait out the whole capture.
+
+    Returns the list it spawns into, so a caller can inspect how it was torn down."""
+    made: list[_Recorder] = []
+
+    def popen(cmd, **_kw):
+        made.append(_Recorder(cmd, pcm, deaf))
+        return made[-1]
+
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    return made
 
 
 def test_a_capture_names_the_radio_it_was_told_to_open(
@@ -881,14 +929,7 @@ def test_a_capture_names_the_radio_it_was_told_to_open(
 ) -> None:
     """The serial has to reach BOTH the reservation and rtl_fm's argv. Nothing drove
     this route, so the whole serial-to-key plumbing ran only in production."""
-    seen: list[list[str]] = []
-    _recording(monkeypatch)
-    real = server.subprocess.run
-    monkeypatch.setattr(
-        server.subprocess,
-        "run",
-        lambda cmd, **kw: (seen.append(cmd), real(cmd, **kw))[1],
-    )
+    made = _recording(monkeypatch)
 
     status, _ = _capture(
         sidecar,
@@ -896,7 +937,8 @@ def test_a_capture_names_the_radio_it_was_told_to_open(
     )
 
     assert status == 200
-    arg = seen[0][seen[0].index("-d") + 1]
+    cmd = made[0].args
+    arg = cmd[cmd.index("-d") + 1]
     # BARE, not `serial=X`: librtlsdr's verbose_device_search has no key=value form.
     assert arg == WHIP and "=" not in arg
 
@@ -1284,3 +1326,43 @@ def test_a_node_that_is_not_a_device_node_is_refused(sidecar: str) -> None:
     status, _ = _post(sidecar, "/reset", {"serial": WIRE, "device_node": "/etc/passwd"})
 
     assert status == 400
+
+
+def test_a_capture_closes_the_device_before_it_kills_it(
+    sidecar: str, monkeypatch
+) -> None:
+    """The capture path SIGKILLed rtl_fm on every single recording, and that is the one
+    thing `listen.Session._kill` exists to spell out as forbidden.
+
+    `subprocess.run(timeout=...)` calls `process.kill()` when the timeout fires — and
+    for this route the timeout IS the recording length, so the normal path was the
+    fatal one. rtl_fm's SIGTERM handler cancels the pending async USB transfer and
+    CLOSES the device; SIGKILL never runs it, and a dongle torn off a submitted
+    transfer can stop answering the descriptor reads librtlsdr enumerates with. The
+    symptom is a radio that reads as absent while sysfs still lists it by name — which
+    is the state one of this box's two dongles is in."""
+    made = _recording(monkeypatch)
+
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert status == 200
+    assert made[0].signals == ["terminate"], "a capture must never SIGKILL a live radio"
+
+
+def test_a_capture_still_escalates_to_a_kill_for_a_wedged_tool(
+    sidecar: str, monkeypatch
+) -> None:
+    """Politeness is not patience. SIGTERM first, but a tool that ignores it must not
+    hold the radio for ever — the grace is bounded and the kill is still there."""
+    made = _recording(monkeypatch, deaf=True)
+
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert status == 200
+    assert made[0].signals == ["terminate", "kill"]
