@@ -265,6 +265,68 @@ async def test_the_sidecars_own_refusal_is_not_buried_in_a_gateway_error(
     assert "sdr sidecar" not in str(raised.value.detail)
 
 
+async def test_a_slow_reset_is_never_reported_as_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEASURED 2026-09-04, and the reason this is a test rather than a comment: a
+    `USBDEVFS_RESET` outran the timeout and the owner got a 500 with a traceback for an
+    operation that had in fact HAPPENED — the device left the bus. Answering "the radio
+    did not reset" would have been worse than the traceback, because it is false. A
+    timeout licenses "look again" and nothing more."""
+
+    class _Slow:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *_a: Any) -> bool:
+            return False
+
+        async def post(self, _path: str, **_kw: Any) -> httpx.Response:
+            raise httpx.ReadTimeout("too slow")
+
+    monkeypatch.setattr(sdr_api.httpx, "AsyncClient", lambda **_kw: _Slow())
+
+    with pytest.raises(HTTPException) as raised:
+        await sdr_api._post(_settings(), "/reset", {})
+
+    assert raised.value.status_code == 504
+    said = str(raised.value.detail)
+    assert "may still be happening" in said
+    # The words that would make it a lie.
+    assert "did not reset" not in said
+    assert "failed" not in said.lower()
+
+
+async def test_a_reset_gets_longer_than_an_ordinary_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The kernel waits on a port that may never answer, and that wait IS the operation.
+    seen: list[float] = []
+
+    class _Timed:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *_a: Any) -> bool:
+            return False
+
+        async def post(self, _path: str, **_kw: Any) -> httpx.Response:
+            return httpx.Response(
+                200, json={"reset": True}, request=httpx.Request("POST", "http://sdr/reset")
+            )
+
+    def client(**kw: Any) -> Any:
+        seen.append(kw["timeout"])
+        return _Timed()
+
+    monkeypatch.setattr(sdr_api.httpx, "AsyncClient", client)
+
+    await sdr_api._post(_settings(), "/listen/start", {})
+    await sdr_api._post(_settings(), "/reset", {}, wait_s=sdr_api.RESET_TIMEOUT_S)
+
+    assert seen[1] > seen[0]
+
+
 async def test_a_busy_radio_reaches_the_owner_as_a_sentence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

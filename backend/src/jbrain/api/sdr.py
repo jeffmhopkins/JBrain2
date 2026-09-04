@@ -86,6 +86,12 @@ CAPTION_IDLE_S = 15.0
 # an error rather than a hung composer.
 _TIMEOUT = 30.0
 
+#: How long a USB port reset may take before the api stops waiting. MEASURED: the ioctl
+#: outran `_TIMEOUT` on a device that was in trouble — which is exactly the device anyone
+#: resets, because the kernel waits on a port that may never answer and that wait IS the
+#: operation rather than a hang. Generous, and still bounded.
+RESET_TIMEOUT_S = 120.0
+
 #: A radio the owner pointed at, or nothing at all. The pattern is narrow because this
 #: value becomes an argv token in the sidecar (`-d <serial>`), and the sidecar bounds it
 #: again for the same reason — a bound that lives only in the caller is not a bound once
@@ -119,9 +125,26 @@ def _base(settings: Any) -> str:
     return url
 
 
-async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient(base_url=_base(settings), timeout=_TIMEOUT) as client:
-        resp = await client.post(path, json=body)
+async def _post(
+    settings: Any, path: str, body: dict[str, Any], wait_s: float | None = None
+) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(
+            base_url=_base(settings), timeout=wait_s or _TIMEOUT
+        ) as client:
+            resp = await client.post(path, json=body)
+    except httpx.TimeoutException as slow:
+        # NOT "it failed". MEASURED 2026-09-04: a `USBDEVFS_RESET` outran the ordinary
+        # timeout and the owner got a 500 for an operation that had in fact HAPPENED —
+        # the device left the bus. "The radio did not reset" would have been worse than
+        # the traceback, because it is false. A timeout licenses "look again", nothing
+        # more, and that is all this says.
+        raise HTTPException(
+            status_code=504,
+            detail="The radio hasn't answered yet. Whatever was asked for may still be "
+            "happening — check the radio list again in a moment rather than assuming it "
+            "did not.",
+        ) from slow
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail=_detail(resp, "The radio is busy."))
     if resp.status_code == 400:
@@ -667,7 +690,9 @@ async def reset_radio(
             status_code=404,
             detail=f"No radio {serial} in the USB scan, so there is no device to reset.",
         )
-    return await _post(settings, "/reset", {"serial": serial, "device_node": node})
+    return await _post(
+        settings, "/reset", {"serial": serial, "device_node": node}, wait_s=RESET_TIMEOUT_S
+    )
 
 
 @router.delete("/radios/{serial}")
