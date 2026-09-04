@@ -940,9 +940,7 @@ describe("the APRS tab", () => {
 
     render(<RadioScreen onClose={() => {}} />);
 
-    expect(
-      await screen.findByRole("button", { name: "Stop APRS logging" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Stop APRS logging" })).toBeInTheDocument();
     expect(screen.queryByText(/The radio is listening/)).not.toBeInTheDocument();
     // ...and the elapsed time is the APRS session's, not the tuner's 30 s.
     expect(screen.getByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();

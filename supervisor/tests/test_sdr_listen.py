@@ -953,8 +953,9 @@ class TestOneSessionPerRadio:
         assert logging_.session_id != listening.session_id
 
     def test_the_same_radio_twice_is_still_refused(self, tuner) -> None:
-        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                    serial="77192819")
+        tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
 
         with pytest.raises(listen.SdrBusy) as refused:
             tuner.start(146_520_000, "fm", None, serial="77192819")
@@ -990,8 +991,9 @@ class TestOneSessionPerRadio:
             tuner.start(162_400_000, "fm", None)
 
     def test_releasing_one_radio_leaves_the_other_running(self, tuner) -> None:
-        keep = tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                           serial="77192819")
+        keep = tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
         drop = tuner.start(146_520_000, "fm", None, serial="09022796")
 
         assert tuner.stop(drop.session_id) is True
@@ -1001,8 +1003,9 @@ class TestOneSessionPerRadio:
     def test_stopping_with_no_id_stops_EVERY_radio(self, tuner) -> None:
         """It used to mean "the one". With several, an arbitrary pick would be a
         control that does something different each time it is pressed."""
-        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                    serial="77192819")
+        tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
         tuner.start(146_520_000, "fm", None, serial="09022796")
 
         assert tuner.stop() is True
@@ -1011,8 +1014,9 @@ class TestOneSessionPerRadio:
     def test_for_purpose_finds_the_radio_doing_that_job(self, tuner) -> None:
         """What the packets and captions routes need: "the session" is no longer one
         thing, so a purpose-specific stream has to ask for its own."""
-        aprs = tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                           serial="77192819")
+        aprs = tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
         tuner.start(146_520_000, "fm", None, serial="09022796")
 
         assert tuner.for_purpose(listen.PURPOSE_APRS).id == aprs.session_id
@@ -1024,12 +1028,13 @@ class TestOneSessionPerRadio:
         nothing. Order is what a person is most likely asking about.
 
         The listening session is on the HIGHER serial deliberately. With it on the lower
-        one, `min` by (priority, serial) and plain serial order give the same answer, and
-        an earlier cut of this test passed with the priority map deleted — proving only
-        that sorting happened. This is the rule the whole PWA reads through
+        one, `min` by (priority, serial) and plain serial order agree, and an earlier
+        cut of this test passed with the priority map deleted — proving only that
+        sorting happened. This is the rule the whole PWA reads through
         `/api/sdr/status.listening`, so it has to be the thing under test."""
-        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                    serial="09022796")
+        tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="09022796"
+        )
         listening = tuner.start(146_520_000, "fm", None, serial="77192819")
 
         assert tuner.current().id == listening.session_id
@@ -1069,7 +1074,9 @@ class TestOneSessionPerRadio:
             tuner.start(146_520_000, "fm", None, serial=serial)
 
         assert [s.serial for s in tuner.sessions()] == [
-            "09022796", "40000123", "77192819"
+            "09022796",
+            "40000123",
+            "77192819",
         ]
 
     def test_a_dead_session_stops_holding_its_radio(self, tuner) -> None:
@@ -1114,8 +1121,9 @@ class TestCaptureAndSessionsShareOneRegistry:
         assert "recording" in str(refused.value)
 
     def test_a_session_blocks_a_reservation_on_that_radio(self, tuner) -> None:
-        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
-                    serial="77192819")
+        tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
 
         busy = tuner.reserve("77192819", "recording")
 
@@ -1175,7 +1183,9 @@ class TestCaptureAndSessionsShareOneRegistry:
 
         assert tuner.reserve("77192819", "recording") is not None
 
-    def test_stopping_every_session_does_NOT_free_a_capture_s_radio(self, tuner) -> None:
+    def test_stopping_every_session_does_NOT_free_a_capture_s_radio(
+        self, tuner
+    ) -> None:
         """Stated in prose by the sidecar's test fixture and unpinned until now.
 
         An in-flight `rtl_fm` still has the device open; releasing its key because a

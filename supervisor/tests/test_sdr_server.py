@@ -20,11 +20,11 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
-from unittest import mock
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -97,7 +97,7 @@ def sidecar(monkeypatch) -> Iterator[str]:
     # A FRESH registry per test rather than a stopped one. `TUNER.stop()` releases the
     # sessions but deliberately not the capture reservations — an in-flight rtl_fm still
     # has the device open, and freeing its key would let the next session collide with a
-    # process that is still running. That is right in production and leaks between tests.
+    # process still running. That is right in production and leaks between tests.
     monkeypatch.setattr(server, "TUNER", listen.Tuner())
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -551,7 +551,10 @@ def test_releasing_one_radio_leaves_the_other_logging(sidecar: str) -> None:
         {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
     )[1]
 
-    assert _post(sidecar, "/listen/stop", {"session_id": listening["session_id"]})[0] == 200
+    assert (
+        _post(sidecar, "/listen/stop", {"session_id": listening["session_id"]})[0]
+        == 200
+    )
 
     _, health = _get(sidecar, "/healthz")
     assert [s["serial"] for s in health["sessions"]] == [WIRE]
@@ -587,10 +590,14 @@ def test_a_capture_and_a_session_on_different_radios_do_not_collide(
     server.TUNER.reserve(WIRE, "recording")
 
     free = _post(
-        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP}
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
     )
     taken = _post(
-        sidecar, "/listen/start", {"frequency_hz": 144_390_000, "mode": "fm", "serial": WIRE}
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "serial": WIRE},
     )
 
     assert free[0] == 200
@@ -611,7 +618,9 @@ def test_healthz_busy_still_means_a_capture_is_running(sidecar: str) -> None:
     assert _get(sidecar, "/healthz")[1]["busy"] is True
 
 
-def test_an_unnamed_stop_releases_the_tuner_and_leaves_APRS_logging(sidecar: str) -> None:
+def test_an_unnamed_stop_releases_the_tuner_and_leaves_APRS_logging(
+    sidecar: str,
+) -> None:
     """jerv's "release the radio" and the debug console's stop both send no id. With one
     radio that could only mean one thing; with two, releasing whichever came first would
     stop a log the owner armed on a schedule — silently, and reporting success."""
@@ -649,7 +658,9 @@ def test_an_unnamed_stop_never_stops_a_SERVICE(sidecar: str) -> None:
     _, body = _post(sidecar, "/listen/stop", {"session_id": None})
 
     assert body["stopped"] is False
-    assert body["holding"] == [{"purpose": "aprs", "serial": WIRE, "session_id": mock.ANY}]
+    assert body["holding"] == [
+        {"purpose": "aprs", "serial": WIRE, "session_id": mock.ANY}
+    ]
     assert _get(sidecar, "/healthz")[1]["sessions"] != []
 
 
@@ -748,7 +759,7 @@ def test_an_unnamed_retune_moves_the_TUNER_not_a_service(sidecar: str) -> None:
 
     assert status == 200 and body["serial"] == WHIP
     _, health = _get(sidecar, "/healthz")
-    aprs = [s for s in health["sessions"] if s["purpose"] == "aprs"][0]
+    aprs = next(s for s in health["sessions"] if s["purpose"] == "aprs")
     assert aprs["frequency_hz"] == 144_390_000  # untouched
 
 
@@ -807,18 +818,24 @@ def _recording(monkeypatch, pcm: bytes = b"\x00\x10" * 8000) -> None:
     monkeypatch.setattr(server.subprocess, "run", run)
 
 
-def test_a_capture_names_the_radio_it_was_told_to_open(sidecar: str, monkeypatch) -> None:
+def test_a_capture_names_the_radio_it_was_told_to_open(
+    sidecar: str, monkeypatch
+) -> None:
     """The serial has to reach BOTH the reservation and rtl_fm's argv. Nothing drove
     this route, so the whole serial-to-key plumbing ran only in production."""
     seen: list[list[str]] = []
     _recording(monkeypatch)
     real = server.subprocess.run
     monkeypatch.setattr(
-        server.subprocess, "run", lambda cmd, **kw: (seen.append(cmd), real(cmd, **kw))[1]
+        server.subprocess,
+        "run",
+        lambda cmd, **kw: (seen.append(cmd), real(cmd, **kw))[1],
     )
 
-    status, _ = _capture(sidecar, {"frequency_hz": 99_300_000, "seconds": 1,
-                                   "mode": "wbfm", "serial": WHIP})
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
 
     assert status == 200
     arg = seen[0][seen[0].index("-d") + 1]
@@ -826,13 +843,20 @@ def test_a_capture_names_the_radio_it_was_told_to_open(sidecar: str, monkeypatch
     assert arg == WHIP and "=" not in arg
 
 
-def test_a_capture_releases_its_radio_when_it_finishes(sidecar: str, monkeypatch) -> None:
+def test_a_capture_releases_its_radio_when_it_finishes(
+    sidecar: str, monkeypatch
+) -> None:
     """The `finally` is the one line whose failure strands a radio: `blocking_key` would
     then refuse it for ever and /healthz would report busy with nothing running."""
     _recording(monkeypatch)
 
-    assert _capture(sidecar, {"frequency_hz": 99_300_000, "seconds": 1,
-                              "mode": "wbfm", "serial": WHIP})[0] == 200
+    assert (
+        _capture(
+            sidecar,
+            {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+        )[0]
+        == 200
+    )
 
     assert _get(sidecar, "/healthz")[1]["busy"] is False
     assert server.TUNER.reserve(WHIP, "recording") is None
@@ -844,8 +868,10 @@ def test_a_capture_releases_its_radio_even_when_rtl_fm_produces_nothing(
     """The failure path, which is the one a `finally` exists for."""
     _recording(monkeypatch, pcm=b"")
 
-    status, _ = _capture(sidecar, {"frequency_hz": 99_300_000, "seconds": 1,
-                                   "mode": "wbfm", "serial": WHIP})
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
 
     assert status == 400
     assert _get(sidecar, "/healthz")[1]["busy"] is False
@@ -861,8 +887,10 @@ def test_a_capture_is_refused_by_the_session_holding_THAT_radio(
         {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
     )
 
-    status, body = _capture(sidecar, {"frequency_hz": 99_300_000, "seconds": 1,
-                                      "mode": "wbfm", "serial": WIRE})
+    status, body = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WIRE},
+    )
 
     assert status == 409
     assert WIRE in body["detail"] and "logging APRS" in body["detail"]
@@ -879,7 +907,9 @@ def test_a_capture_runs_on_a_free_radio_while_another_is_held(
         {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
     )
 
-    status, _ = _capture(sidecar, {"frequency_hz": 99_300_000, "seconds": 1,
-                                   "mode": "wbfm", "serial": WHIP})
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
 
     assert status == 200
