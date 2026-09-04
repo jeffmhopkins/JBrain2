@@ -38,3 +38,23 @@ def _constant(name: str) -> int:
 def test_the_api_refuses_exactly_what_the_sidecar_refuses() -> None:
     assert _constant("MIN_HZ") == MIN_MHZ * 1_000_000
     assert _constant("MAX_HZ") == MAX_MHZ * 1_000_000
+
+
+def test_no_source_file_writes_the_tuner_range_as_a_literal() -> None:
+    """The bound has to be imported, not retyped — which is the only durable version of
+    the fix, since the value being wrong was never the point.
+
+    It was retyped FOUR times: `api/sdr.py`, `agent/sdrtools.py`, and twice more as bare
+    `Query(gt=0.024, ...)` literals inside `api/debug.py`, found only after the first
+    three were consolidated and I had already said the job was done. Sharing a module
+    fixes the copies that exist; this fixes the next one."""
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
+    offenders = [
+        f"{path.relative_to(root)}:{n}"
+        for path in root.rglob("*.py")
+        if path.name != "tuner.py"
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if re.search(r"(?<![\w.])0\.024(?![\w])|(?<![\w.])1766\.0(?![\w])", line)
+    ]
+
+    assert offenders == [], f"tuner range hardcoded instead of imported: {offenders}"

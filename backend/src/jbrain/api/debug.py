@@ -74,6 +74,7 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1566,6 +1567,12 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
 
     claimed = [d for d in sdrs if d.claimed_by_dvb]
     named = sdrs[0].product or sdrs[0].usb_id
+    # Every message below described sdrs[0] as if it were the whole picture, which read
+    # as one radio the day a second was plugged in — the summary line quietly wrong on a
+    # box whose owner has no terminal to check it against (CLAUDE.md #10). The LIST was
+    # always right; only the prose was singular.
+    more = " (and 1 other)" if len(sdrs) == 2 else f" (and {len(sdrs) - 1} others)"
+    also = more if len(sdrs) > 1 else ""
     if claimed:
         holder = ", ".join(
             sorted({drv for d in claimed for drv in d.drivers if drv in _DVB_DRIVERS})
@@ -1573,8 +1580,8 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         return SdrProbeOut(
             found=True,
             ready=False,
-            summary=f"Found {named} ({sdrs[0].usb_id}), but the kernel DVB driver "
-            f"{holder} has claimed it.",
+            summary=f"Found {named} ({sdrs[0].usb_id}){also}, but the kernel DVB "
+            f"driver {holder} has claimed it.",
             next_step=f"Blacklist {holder} on the host and re-plug (or reboot). Until "
             "then librtlsdr cannot open the device.",
             sysfs_readable=True,
@@ -1588,7 +1595,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         return SdrProbeOut(
             found=True,
             ready=False,
-            summary=f"Found {named} ({sdrs[0].usb_id}), claimed by {', '.join(other)}.",
+            summary=f"Found {named} ({sdrs[0].usb_id}){also}, claimed by {', '.join(other)}.",
             next_step="Identify what bound that driver before passing the device through.",
             sysfs_readable=True,
             usb_device_count=len(devices),
@@ -1601,14 +1608,24 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
     # the dongle is moved. Selecting by serial is what makes it stable — and what
     # lets a second dongle join later without ambiguity.
     node = sdrs[0].device_node or "an unknown node"
-    serial = sdrs[0].serial
-    by_serial = f", selected by serial {serial}" if serial else ""
+    serials = [d.serial for d in sdrs if d.serial]
+    by_serial = f", selected by serial {' or '.join(serials)}" if serials else ""
+    # With more than one attached, naming the serials is not decoration: `rtl_fm` and
+    # `rtl_power` are invoked with no `-d`, so they take whichever librtlsdr enumerates
+    # FIRST, and nothing here can say which that is. Two radios and a silent choice
+    # between them is how APRS ends up on the wrong antenna with no other symptom.
+    ambiguous = (
+        " With more than one attached and no `-d` passed, which one a pipeline opens is"
+        " librtlsdr's enumeration order, not a setting."
+        if len(sdrs) > 1
+        else ""
+    )
     return SdrProbeOut(
         found=True,
         ready=True,
-        summary=f"Found {named} ({sdrs[0].usb_id}), unclaimed \u2014 userspace can open it.",
+        summary=f"Found {named} ({sdrs[0].usb_id}){also}, unclaimed \u2014 userspace can open it.",
         next_step=f"Pass /dev/bus/usb into the sdr service{by_serial}. Do not pin the "
-        f"per-device node ({node}) \u2014 it changes on every re-plug.",
+        f"per-device node ({node}) \u2014 it changes on every re-plug.{ambiguous}",
         sysfs_readable=True,
         usb_device_count=len(devices),
         sdrs=sdrs,
@@ -1656,8 +1673,8 @@ async def sdr_sweep(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    start_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
-    stop_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    start_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    stop_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
     seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
     gain: Annotated[str | None, Query()] = None,
@@ -1792,7 +1809,7 @@ async def sdr_capture(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     seconds: Annotated[float, Query(ge=0.5, le=120.0)] = 8.0,
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "fm",
     gain: Annotated[str | None, Query()] = None,
@@ -1875,7 +1892,7 @@ async def sdr_listen_debug(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "wbfm",
 ) -> dict[str, Any]:
     """Take the radio and start listening — the debug twin of `POST /api/sdr/listen`.
