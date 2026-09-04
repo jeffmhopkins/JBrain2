@@ -105,14 +105,24 @@ class Reduced:
     Compared against the local floor, not the sweep's, because "high" is a local claim:
     a repeater is obvious next to 146.655 and unremarkable next to a whole band.
 
-    THE THRESHOLD IS NOT CALIBRATED. Three sweeps of 2m on this box (2026-09-03, gain
-    30 and AGC) found no steady carrier to calibrate against — the band was quiet, and
-    quiet measures like this: total floor spread 6.7-7.2 dB whatever the gain, excess
-    over the local floor p50 0.0 / p90 0.4 / p99 1.4 dB, and a single candidate at
-    146.6616 (a real repeater output) reaching +3.5 to +4.8 dB in both sweeps. Under
-    that, 6 dB reports nothing and 3 dB would also report the band edges and spurs the
-    4 MHz sweep put at +2.4 to +2.9. Setting this number needs a sweep taken while
-    something is actually transmitting."""
+    THE THRESHOLD IS CALIBRATED, against FM broadcast — which is the answer to "sweep
+    something that is actually transmitting", since those carriers are up 24/7 and the
+    2m sweeps that first raised the question caught a band with nothing on it.
+
+    Measured 2026-09-03 across four sweeps. A real transmitter clears its local floor by
+    **+11 to +24 dB** (88-108, 13 stations); noise sits at p50 0.09 dB, and a QUIET 2m
+    band's worst bin reached only +4.8. Sweeping `STEADY_DB` over the same CSVs:
+
+        3 dB -> 18 stations, and the first false positive on the quiet band
+        6 dB -> 13 stations, quiet band silent      <- here
+        8 dB ->  9 stations
+       10 dB ->  8 stations
+
+    So 6 dB is not a compromise between the two failures, it is above one and below the
+    other: every station the band has, nothing on a band with none, and 3 dB of margin
+    to the first false positive. Raising it LOSES real stations, which was the intuition
+    to check — a signal's skirts fall away smoothly from its peak, so a higher bar keeps
+    the strong and drops the weak rather than sharpening anything."""
     uncovered: list[tuple[int, int]] = field(default_factory=list)
     """Half-open Hz spans this sweep did not measure, low to high.
 

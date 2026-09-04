@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from jbrain.sdr.sweep import (
+    STEADY_DB,
     Bin,
     Reduced,
     channels,
@@ -572,3 +573,15 @@ class TestHowOftenABinIsRead:
         ]
 
         assert reduce_csv("\n".join(rows)).revisit_s == 0.0
+
+    def test_the_threshold_brackets_measured_noise_and_a_measured_carrier(self) -> None:
+        """What the FM calibration actually pins, as an invariant rather than a number.
+
+        MEASURED 2026-09-03: a real transmitter clears its local floor by +11 to +24 dB
+        (13 FM stations, 88-108), while a quiet 2m band's WORST bin reached +4.8. The
+        threshold has to sit between those, and this fails if it ever leaves that
+        bracket in either direction — too high drops real stations, too low reports a
+        silent band's noise."""
+        quiet_worst, weakest_carrier = 4.8, 11.4
+
+        assert quiet_worst < STEADY_DB < weakest_carrier

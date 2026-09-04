@@ -380,13 +380,40 @@ means nothing in dB. Measured on the numbers: **the two blocks of one 144-148 sw
 | excess over local floor, p50 / p90 / p99 | 0.0 / 0.5 / 2.0 | 0.0 / 0.4 / 0.8 | 0.0 / 0.3 / 1.4 |
 | strongest bin | 146.6616, +4.8 | 146.6616, +3.5 | 147.4569, +2.9 |
 
-Three things follow. **Fixed gain does not open the dynamic range** — it shifts the floor
+Two things follow. **Fixed gain does not open the dynamic range** — it shifts the floor
 down ~22 dB and leaves the spread within 0.5 dB of AGC, so "AGC is compressing the band"
-is not the explanation for a flat sweep; the band is flat. **146.6616 is the one real
-candidate**, a repeater output that sits +3.5 to +4.8 dB over its neighbours in both
-sweeps of that span. And **`STEADY_DB` cannot be set from these sweeps**: at 6 dB it
-reports nothing, and at 3 dB it would also report the band edges and spurs the 4 MHz
-sweep put at +2.4 to +2.9. Setting it needs a sweep taken while something transmits.
+is not the explanation for a flat sweep; the band is flat. And **146.6616 is the one
+candidate**, a repeater output at +3.5 to +4.8 dB over its neighbours in both sweeps of
+that span — which the FM calibration below reveals is almost certainly NOT a carrier: a
+real transmitter clears its local floor by 11 dB or more, and +4.8 is noise-tail.
+
+**`STEADY_DB` calibrated, against FM broadcast.** "Sweep something that is actually
+transmitting" turned out to need no new sweep and no keyed-up repeater: FM carriers are
+up 24 hours a day, and the 88-108 sweep above already held 13 of them. Measured across
+four sweeps — a real transmitter clears its local floor by **+11 to +24 dB**, noise sits
+at p50 0.09 dB, and the quiet 2m band's WORST bin reached +4.8:
+
+| `STEADY_DB` | FM 88-108, stations found | quiet 2m, bins flagged |
+|---|---|---|
+| 3 dB | 18 | **1** (first false positive) |
+| 4 dB | 16 | 0 |
+| 5 dB | 15 | 0 |
+| **6 dB** | **13** | **0** |
+| 8 dB | 9 | 0 |
+| 10 dB | 8 | 0 |
+| 14 dB | 4 | 0 |
+
+6 dB is not a compromise between the two failures — it is above one and below the other,
+with 3 dB of margin to the first false positive. The shipped value was a guess and turns
+out to be right, so nothing changes but its justification. Worth recording that raising
+it LOSES stations, which is the opposite of the intuition: a signal's skirts fall away
+smoothly from its peak, so a higher bar keeps the strong and drops the weak rather than
+sharpening the distinction.
+
+**The tuner's own DC spike does not flood the results**, which the per-bin floor was
+built to ensure and nothing had checked. On the 22-hop 60 MHz sweep, 0 of 22 block
+centres are reported steady; on the 8-hop FM sweep, 7 of 84 steady bins (8%) sit within
+two bins of any block edge or centre.
 
 None of this was readable from the response as first built, which returned `csv_chars`
 and no CSV — which is exactly how the 1.76x claim survived. `include_csv=true` now
