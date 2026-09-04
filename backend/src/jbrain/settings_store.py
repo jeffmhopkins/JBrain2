@@ -138,6 +138,9 @@ SDR_RADIOS_KEY = "sdr_radios"
 # settings blob cannot become a place to store prose.
 SDR_RADIO_NAME_MAX = 60
 SDR_RADIO_DESC_MAX = 200
+# A service id, not prose. Bounded like the other two because it is stored in the same
+# jsonb and echoed on every read — the truncation pass missed it the first time.
+SDR_RADIO_ROLE_MAX = 40
 # The archivist's Gmail OAuth credentials, set from the GUI settings panel
 # (docs/archive/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
 # refresh token is the durable credential. Stored values take precedence over the
@@ -872,7 +875,7 @@ class SqlSettingsStore:
                 # service this build does not have, and quietly freeing that radio for
                 # the tuner is the silent-substitution failure this whole feature exists
                 # to stop. It stays reserved and unusable until the owner says otherwise.
-                role=role if isinstance(role, str) and role else GENERAL,
+                role=role[:SDR_RADIO_ROLE_MAX] if isinstance(role, str) and role else GENERAL,
             )
         return clean
 
@@ -889,7 +892,7 @@ class SqlSettingsStore:
         entries[serial] = {
             "name": name.strip()[:SDR_RADIO_NAME_MAX],
             "description": description.strip()[:SDR_RADIO_DESC_MAX],
-            "role": role.strip() or GENERAL,
+            "role": role.strip()[:SDR_RADIO_ROLE_MAX] or GENERAL,
         }
         await self.upsert(ctx, SDR_RADIOS_KEY, entries)
         return await self.sdr_radios(ctx)

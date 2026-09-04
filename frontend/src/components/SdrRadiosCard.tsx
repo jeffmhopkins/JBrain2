@@ -40,11 +40,27 @@ export function SdrRadiosCard() {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  const adopt = useCallback((payload: unknown) => {
+  /**
+   * Take a server payload, keeping edits in progress on the OTHER radios.
+   *
+   * `keep` is the serial just saved, whose draft the server has now superseded.
+   * Rebuilding the whole map on every save threw away a description half-typed on
+   * another card — silently, and with its Save button then greyed out because the
+   * draft matched the server again. Per-card save has to mean per-card adopt.
+   */
+  const adopt = useCallback((payload: unknown, keep?: string) => {
     const next = asRadios(payload);
     if (next === null) return;
     setState(next);
-    setDrafts(Object.fromEntries(next.radios.map((r) => [r.serial, draftOf(r)])));
+    setDrafts((current) =>
+      Object.fromEntries(
+        next.radios.map((r) => {
+          const edited = current[r.serial];
+          const stale = keep === undefined || r.serial === keep || edited === undefined;
+          return [r.serial, stale ? draftOf(r) : edited];
+        }),
+      ),
+    );
   }, []);
 
   useEffect(() => {
@@ -72,7 +88,7 @@ export function SdrRadiosCard() {
     setSaving(serial);
     setError(null);
     try {
-      adopt(await api.describeSdrRadio(serial, draft));
+      adopt(await api.describeSdrRadio(serial, draft), serial);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save that radio.");
     } finally {
@@ -84,7 +100,7 @@ export function SdrRadiosCard() {
     setSaving(serial);
     setError(null);
     try {
-      adopt(await api.forgetSdrRadio(serial));
+      adopt(await api.forgetSdrRadio(serial), serial);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not forget that radio.");
     } finally {

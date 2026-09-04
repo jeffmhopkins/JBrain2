@@ -155,3 +155,27 @@ describe("reading the wire defensively", () => {
     expect(asRadios({ radios: [], scan_ok: false })?.scan_ok).toBe(false);
   });
 });
+
+describe("when the scan could not look", () => {
+  it("does not claim a service is waiting, because the API is not waiting", () => {
+    // With no scan every radio arrives attached:false. Read literally that produced
+    // "Waiting for Desk whip … it will not move to another radio" in the exact state
+    // where `_radio_for` returns `unknown` and lets the sidecar open whatever it likes.
+    const out = outcomeFor(
+      state([radio(WHIP, { name: "Desk whip", role: "aprs", attached: false })], {
+        scan_ok: false,
+      }),
+      "aprs",
+    );
+
+    expect(out.text).toContain("Unknown");
+    expect(out.text).not.toContain("Waiting");
+  });
+
+  it("does not say no radio is attached while it cannot tell", () => {
+    const out = generalOutcome(state([radio(WHIP, { attached: false })], { scan_ok: false }));
+
+    expect(out.text).toContain("Unknown");
+    expect(out.text).not.toContain("No radio attached");
+  });
+});

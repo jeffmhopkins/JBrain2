@@ -18,7 +18,7 @@ import re
 
 import pytest
 
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, serials_in
 
 _SIDECAR = pathlib.Path(__file__).resolve().parents[3] / "deploy" / "sdr" / "listen.py"
 
@@ -58,3 +58,59 @@ def test_no_source_file_writes_the_tuner_range_as_a_literal() -> None:
     ]
 
     assert offenders == [], f"tuner range hardcoded instead of imported: {offenders}"
+
+
+class TestReadingTheUsbScan:
+    """`serials_in` parses an external payload and decides which radios exist.
+
+    It had no test at all, and its docstring claimed one — the sort of claim that is
+    only ever checked by someone going to look. The load-bearing part is that it
+    distinguishes "the scan saw nothing" from "the scan could not see": collapsing them
+    made a healthy scan reporting zero radios skip the refusal entirely, so a service
+    dedicated to an absent dongle started on whatever enumerated first.
+    """
+
+    def test_it_reads_the_serials_the_scan_found_IN_ORDER(self) -> None:
+        """Sorted, so "the first one" is stable across reboots rather than USB order —
+        which is the entire bug this feature removes.
+
+        Enough serials that set iteration does not land on sorted order by luck: with
+        two it does, and a version returning `list(set(...))` passed."""
+        serials = [
+            "A1B2C3D4",
+            "77192819",
+            "99887766",
+            "41550903",
+            "09022796",
+            "55443322",
+            "12345678",
+            "ZZ001122",
+        ]
+        found = serials_in({"sysfs_readable": True, "sdrs": [{"serial": s} for s in serials]})
+
+        assert found == sorted(serials)
+
+    def test_a_scan_that_saw_nothing_is_an_empty_list_not_a_blind_one(self) -> None:
+        assert serials_in({"sysfs_readable": True, "sdrs": []}) == []
+
+    def test_a_scan_that_could_not_see_is_None(self) -> None:
+        # A supervisor with no /sys mounted answers 200 with sysfs_readable false. That
+        # is not "no radios", and treating it as such is how the refusal gets skipped.
+        assert serials_in({"sysfs_readable": False, "sdrs": []}) is None
+        assert serials_in({"sdrs": [{"serial": "09022796"}]}) is None
+        assert serials_in("not a payload") is None
+        assert serials_in(None) is None
+
+    def test_a_device_with_no_serial_is_left_out(self) -> None:
+        # It cannot be named to `-d`, so listing it would offer a selection that cannot
+        # actually be made.
+        found = serials_in(
+            {"sysfs_readable": True, "sdrs": [{"serial": ""}, {}, {"serial": 5}, {"serial": "x1"}]}
+        )
+
+        assert found == ["x1"]
+
+    def test_the_same_radio_twice_is_one_radio(self) -> None:
+        payload = {"sysfs_readable": True, "sdrs": [{"serial": "x1"}, {"serial": "x1"}]}
+
+        assert serials_in(payload) == ["x1"]

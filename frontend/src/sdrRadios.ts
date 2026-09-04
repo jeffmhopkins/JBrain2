@@ -114,6 +114,14 @@ export function outcomeFor(
   state: SdrRadios,
   service: string,
 ): { tone: "ok" | "warn" | "bad"; text: string } {
+  // With no scan, every radio arrives `attached: false` — and reading that literally
+  // makes this say "Waiting for Desk whip … it will not move to another radio" in the
+  // one state where the API does NOT wait: `_radio_for` returns `unknown` and lets the
+  // sidecar open whatever it likes. Asserting the guarantee exactly where it is off is
+  // worse than saying nothing.
+  if (!state.scan_ok) {
+    return { tone: "warn", text: "Unknown — the USB scan could not say what is attached." };
+  }
   const dedicated = state.radios.filter((r) => r.role === service);
   const [reserved] = dedicated;
   const [live] = dedicated.filter((r) => r.attached);
@@ -145,6 +153,11 @@ export function outcomeFor(
 
 /** What the tuner and sweeps are left with once services have taken theirs. */
 export function generalOutcome(state: SdrRadios): { tone: "ok" | "warn" | "bad"; text: string } {
+  // Same trap: without a scan this said "No radio attached." directly under a banner
+  // admitting we cannot tell, while two dongles were plugged in.
+  if (!state.scan_ok) {
+    return { tone: "warn", text: "Unknown — the USB scan could not say what is attached." };
+  }
   const generals = state.radios.filter((r) => r.role === GENERAL && r.attached);
   const [only] = generals;
   if (only === undefined) {

@@ -32,7 +32,7 @@ from typing import Annotated, Any, cast
 import httpx
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
@@ -408,9 +408,12 @@ class RadiosOut(BaseModel):
 
 
 class RadioIn(BaseModel):
-    name: str = ""
-    description: str = ""
-    role: str = GENERAL
+    name: Annotated[str, Field(max_length=200)] = ""
+    description: Annotated[str, Field(max_length=600)] = ""
+    # A service id, not prose. The store truncates too; this refuses rather than
+    # silently shortening, because a role the caller did not ask for is a wrong answer
+    # where a shortened description is only a shorter one.
+    role: Annotated[str, Field(max_length=40)] = GENERAL
 
 
 @router.get("/radios")
