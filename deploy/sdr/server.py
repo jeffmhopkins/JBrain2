@@ -522,7 +522,9 @@ class Handler(BaseHTTPRequestHandler):
             # finished. The tool's own last words go back with the refusal, because they
             # name WHICH radio it could not find and the owner cannot read the container
             # log (CLAUDE.md #10).
-            said = ran.tail if ran else ""
+            # The refusal line first: the rest of the tail is hop plans and buffer
+            # sizes, and leading with those buries the sentence that names what to fix.
+            said = (ran.refusal or ran.tail) if ran else ""
             self._json(
                 502,
                 {"detail": f"the sweep measured nothing: {said or 'the tool wrote no rows'}"},
