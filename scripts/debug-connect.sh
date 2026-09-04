@@ -41,7 +41,10 @@
 #   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
 #   scripts/debug-connect.sh sweep 144 148 --seconds 300 --channel-khz 15
 #     (TAKES THE RADIO; refused with 409 while APRS logs. Writes the waterfall PNG and,
-#      with --csv, rtl_power's raw numbers next to it; --out DIR picks where.)
+#      with --csv, rtl_power's raw numbers next to it; --out DIR picks where.
+#      --channel-khz is how wide a signal is HERE — 15 on 2m, 25 on 70cm/airband/marine,
+#      200 on FM broadcast, thousands on a cellular carrier. Off the narrowband bands
+#      it is not optional: it sizes the neighbourhood `steady` judges a bin against.)
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
@@ -474,7 +477,7 @@ PY
         --seconds) SECS="$2"; shift 2 ;;
         --bin-khz) BINK="$2"; shift 2 ;;
         --gain) G="$2"; shift 2 ;;
-        --channel-khz) CHK="$2"; shift 2 ;;
+        --channel-khz) CHK="$2"; shift 2 ;;   # how wide a signal is here; sizes `steady` too
         --out) OUTDIR="$2"; shift 2 ;;
         --csv) CSV=1; shift ;;
         --no-wait) WAIT=0; shift ;;

@@ -42,14 +42,14 @@ from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.stations import WINDOWS, StationsReader
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
 
-# The R820T2's real range, and the demodulators rtl_fm offers. Bounded here as well
-# as in the sidecar because a bound that lives only in the caller is not a bound.
-MIN_MHZ = 0.024
-MAX_MHZ = 1766.0
+# The demodulators rtl_fm offers. Bounded here as well as in the sidecar because a
+# bound that lives only in the caller is not a bound — and the tuner range, which used
+# to sit beside this, is now `jbrain.sdr.tuner` rather than a third copy of itself.
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
 # The lease purpose a logging session holds, and where APRS lives in North America

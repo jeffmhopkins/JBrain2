@@ -74,6 +74,7 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -974,6 +975,11 @@ class SdrSweepOut(BaseModel):
     rows: int
     bins: int
     floor_db: float
+    revisit_s: float
+    """Seconds between readings of one bin, measured off rtl_power's own timestamps —
+    the scale `occupancy` is a fraction of. A 10 s transmission is six intervals at 1 s
+    and rounding error at 60 s, and how often a bin is revisited depends on how many
+    retune hops the span needs, which is not otherwise visible from the response."""
     complete: bool
     busy: list[SweepBinOut]
     steady: list[SweepBinOut]
@@ -1561,6 +1567,12 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
 
     claimed = [d for d in sdrs if d.claimed_by_dvb]
     named = sdrs[0].product or sdrs[0].usb_id
+    # Every message below described sdrs[0] as if it were the whole picture, which read
+    # as one radio the day a second was plugged in — the summary line quietly wrong on a
+    # box whose owner has no terminal to check it against (CLAUDE.md #10). The LIST was
+    # always right; only the prose was singular.
+    more = " (and 1 other)" if len(sdrs) == 2 else f" (and {len(sdrs) - 1} others)"
+    also = more if len(sdrs) > 1 else ""
     if claimed:
         holder = ", ".join(
             sorted({drv for d in claimed for drv in d.drivers if drv in _DVB_DRIVERS})
@@ -1568,8 +1580,8 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         return SdrProbeOut(
             found=True,
             ready=False,
-            summary=f"Found {named} ({sdrs[0].usb_id}), but the kernel DVB driver "
-            f"{holder} has claimed it.",
+            summary=f"Found {named} ({sdrs[0].usb_id}){also}, but the kernel DVB "
+            f"driver {holder} has claimed it.",
             next_step=f"Blacklist {holder} on the host and re-plug (or reboot). Until "
             "then librtlsdr cannot open the device.",
             sysfs_readable=True,
@@ -1583,7 +1595,7 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         return SdrProbeOut(
             found=True,
             ready=False,
-            summary=f"Found {named} ({sdrs[0].usb_id}), claimed by {', '.join(other)}.",
+            summary=f"Found {named} ({sdrs[0].usb_id}){also}, claimed by {', '.join(other)}.",
             next_step="Identify what bound that driver before passing the device through.",
             sysfs_readable=True,
             usb_device_count=len(devices),
@@ -1596,14 +1608,24 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
     # the dongle is moved. Selecting by serial is what makes it stable — and what
     # lets a second dongle join later without ambiguity.
     node = sdrs[0].device_node or "an unknown node"
-    serial = sdrs[0].serial
-    by_serial = f", selected by serial {serial}" if serial else ""
+    serials = [d.serial for d in sdrs if d.serial]
+    by_serial = f", selected by serial {' or '.join(serials)}" if serials else ""
+    # With more than one attached, naming the serials is not decoration: `rtl_fm` and
+    # `rtl_power` are invoked with no `-d`, so they take whichever librtlsdr enumerates
+    # FIRST, and nothing here can say which that is. Two radios and a silent choice
+    # between them is how APRS ends up on the wrong antenna with no other symptom.
+    ambiguous = (
+        " With more than one attached and no `-d` passed, which one a pipeline opens is"
+        " librtlsdr's enumeration order, not a setting."
+        if len(sdrs) > 1
+        else ""
+    )
     return SdrProbeOut(
         found=True,
         ready=True,
-        summary=f"Found {named} ({sdrs[0].usb_id}), unclaimed \u2014 userspace can open it.",
+        summary=f"Found {named} ({sdrs[0].usb_id}){also}, unclaimed \u2014 userspace can open it.",
         next_step=f"Pass /dev/bus/usb into the sdr service{by_serial}. Do not pin the "
-        f"per-device node ({node}) \u2014 it changes on every re-plug.",
+        f"per-device node ({node}) \u2014 it changes on every re-plug.{ambiguous}",
         sysfs_readable=True,
         usb_device_count=len(devices),
         sdrs=sdrs,
@@ -1651,12 +1673,12 @@ async def sdr_sweep(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    start_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
-    stop_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    start_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    stop_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
     seconds: Annotated[float, Query(ge=1.0, le=900.0)] = 60.0,
     gain: Annotated[str | None, Query()] = None,
-    channel_khz: Annotated[float, Query(ge=0.0, le=100.0)] = 0.0,
+    channel_khz: Annotated[float, Query(ge=0.0, le=20_000.0)] = 0.0,
     include_csv: Annotated[bool, Query()] = False,
 ) -> JobSubmitOut:
     """Sweep a band and report what was busy in it. A BACKGROUND JOB — poll `/jobs/{id}`.
@@ -1675,9 +1697,13 @@ async def sdr_sweep(
     **This takes the radio** for the length of the sweep, as a real lease with the
     omnibox icon and Release — so it is refused, with a 409, while APRS is logging.
 
-    `channel_khz` folds the busy bins onto a channel grid (15 for 2m, 25 for 70cm): a
-    16 kHz signal in a 5 kHz sweep lights several adjacent bins and reads as several
-    stations otherwise. Zero leaves the bins alone.
+    `channel_khz` folds the busy bins onto a channel grid and sets how wide a
+    neighbourhood `steady` judges a bin against — one number, because both answer "how
+    wide is a signal here". 15 for 2m, 25 for 70cm and airband and marine, 200 for FM
+    broadcast, thousands for a cellular carrier. It matters twice over off the narrowband
+    bands: unfolded, a 200 kHz signal in a 5 kHz sweep reads as forty stations, and
+    unsized, `steady` measures a wide carrier against a window sitting inside it and sees
+    nothing. Zero leaves the bins alone and takes the narrowband default neighbourhood.
 
     `include_csv` returns rtl_power's own numbers alongside the reduction. Off by
     default because it is megabytes; worth having because calibrating a detector against
@@ -1719,8 +1745,8 @@ async def sdr_sweep(
                 return
             payload = resp.json()
             csv_text = str(payload.get("csv") or "")
-            reduced = reduce_csv(csv_text)
             spacing = int(round(channel_khz * 1_000))
+            reduced = reduce_csv(csv_text, channel_hz=spacing)
             busy = channels(reduced, spacing)
             out = SdrSweepOut(
                 start_hz=reduced.start_hz or body["start_hz"],
@@ -1730,6 +1756,7 @@ async def sdr_sweep(
                 rows=reduced.rows,
                 bins=reduced.bins,
                 floor_db=reduced.floor_db,
+                revisit_s=reduced.revisit_s,
                 complete=bool(payload.get("complete")),
                 busy=[
                     SweepBinOut(
@@ -1782,7 +1809,7 @@ async def sdr_capture(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     seconds: Annotated[float, Query(ge=0.5, le=120.0)] = 8.0,
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "fm",
     gain: Annotated[str | None, Query()] = None,
@@ -1865,7 +1892,7 @@ async def sdr_listen_debug(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=0.024, lt=1766.0)],
+    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "wbfm",
 ) -> dict[str, Any]:
     """Take the radio and start listening — the debug twin of `POST /api/sdr/listen`.

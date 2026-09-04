@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from jbrain.sdr.sweep import (
+    STEADY_DB,
     Bin,
     Reduced,
     channels,
@@ -489,3 +490,98 @@ class TestTheBaselineWindow:
         # the strongest signal on the sweep and made of nothing.
         assert reduced.busy == []
         assert reduced.steady == []
+
+
+class TestBandsThatAreNotTwoMetres:
+    """A neighbourhood 400 kHz wide is a NARROWBAND assumption, and it does not travel.
+
+    2m at 15 kHz, 70cm and airband and marine at 25 kHz all fit many channels in 400 kHz.
+    FM broadcast at 200 kHz fits two. A cellular carrier is wider than the whole window,
+    so the baseline gets computed from inside the signal — the one case where a detector
+    reports a quiet band while sitting on a transmitter."""
+
+    def _wide_carrier(self, *, channel_hz: int, width_bins: int) -> Reduced:
+        """One flat-topped signal `width_bins` wide in an otherwise quiet 20 MHz sweep."""
+        rows = []
+        for i in range(8):
+            values = [-98.0] * 400
+            for b in range(200, 200 + width_bins):
+                values[b] = -70.0
+            rows.append(_row(f"15:00:0{i}", 100_000_000, 120_000_000, 50_000, *values))
+        return reduce_csv("\n".join(rows), channel_hz=channel_hz)
+
+    def test_a_carrier_wider_than_the_default_window_is_invisible_without_help(
+        self,
+    ) -> None:
+        """The failure, stated as a test so the fix has something to fix.
+
+        A 2 MHz-wide signal at 50 kHz bins is 40 bins. The flat 400 kHz window is 11
+        bins here — entirely inside it — so every bin of the carrier is measured against
+        its own middle and none of them stands out."""
+        assert self._wide_carrier(channel_hz=0, width_bins=40).steady == []
+
+    def test_telling_it_the_channel_width_finds_the_same_carrier(self) -> None:
+        # 21 channels of 2 MHz is 42 MHz of window asked for against a 20 MHz sweep, so
+        # every bin's neighbourhood is the whole sweep — which is the right answer here,
+        # and the degenerate case the rolling window falls into rather than breaks on.
+        found = self._wide_carrier(channel_hz=2_000_000, width_bins=40).steady
+
+        assert len(found) == 40
+        assert min(b.hz for b in found) == 110_000_000
+        assert max(b.hz for b in found) == 111_950_000
+
+    def test_a_narrowband_sweep_is_unchanged_by_naming_its_channel(self) -> None:
+        """21 channels of 15 kHz is 315 kHz, under the 400 kHz floor — so 2m keeps
+        exactly the neighbourhood it had, and this cannot regress the band it was
+        calibrated on."""
+        rows = []
+        for i in range(8):
+            values = [-98.0] * 200
+            values[100] = -70.0
+            rows.append(_row(f"15:00:0{i}", 144_000_000, 145_000_000, 5_000, *values))
+        text = "\n".join(rows)
+
+        assert [b.hz for b in reduce_csv(text).steady] == [
+            b.hz for b in reduce_csv(text, channel_hz=15_000).steady
+        ]
+
+
+class TestHowOftenABinIsRead:
+    """`occupancy` is a fraction of the intervals a bin was measured in, and that only
+    means something at a known revisit. A reader cannot work it out from the response —
+    it depends on how many retune hops the span needed — so it is measured, not assumed.
+    """
+
+    def test_the_revisit_comes_off_the_radio_s_own_clock(self) -> None:
+        rows = [
+            _row(f"15:00:{i * 2:02d}", 144_000_000, 144_020_000, 5_000, *([-98.0] * 4))
+            for i in range(6)
+        ]
+
+        assert reduce_csv("\n".join(rows)).revisit_s == 2.0
+
+    def test_it_is_the_median_so_one_stall_does_not_stand_for_the_sweep(self) -> None:
+        stamps = ["15:00:00", "15:00:01", "15:00:02", "15:00:47", "15:00:48"]
+        rows = [_row(t, 144_000_000, 144_020_000, 5_000, *([-98.0] * 4)) for t in stamps]
+
+        assert reduce_csv("\n".join(rows)).revisit_s == 1.0
+
+    def test_an_unreadable_clock_reports_nothing_rather_than_a_guess(self) -> None:
+        rows = [
+            f"not-a-date, {t}, 144000000, 144020000, 5000, 12, -98.0, -98.0"
+            for t in ("15:00:00", "15:00:01")
+        ]
+
+        assert reduce_csv("\n".join(rows)).revisit_s == 0.0
+
+    def test_the_threshold_brackets_measured_noise_and_a_measured_carrier(self) -> None:
+        """What the FM calibration actually pins, as an invariant rather than a number.
+
+        MEASURED 2026-09-03: a real transmitter clears its local floor by +11 to +24 dB
+        (13 FM stations, 88-108), while a quiet 2m band's WORST bin reached +4.8. The
+        threshold has to sit between those, and this fails if it ever leaves that
+        bracket in either direction — too high drops real stations, too low reports a
+        silent band's noise."""
+        quiet_worst, weakest_carrier = 4.8, 11.4
+
+        assert quiet_worst < STEADY_DB < weakest_carrier

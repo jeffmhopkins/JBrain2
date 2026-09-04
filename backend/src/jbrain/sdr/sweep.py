@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 
 # How far above its own floor a bin has to sit to count as occupied for one interval.
 # 8 dB rather than the 3 dB that feels generous: an 800-bin sweep over 150 intervals is
@@ -49,10 +50,20 @@ FLOOR_PERCENTILE = 0.25
 # having gone quiet. Small, because the comparison is local: 6 dB over the couple of
 # hundred kHz either side is a lot, where 6 dB over a whole band is nothing.
 STEADY_DB = 6.0
-# How much neighbouring spectrum makes up a bin's local floor. In Hz rather than bins
-# because a bin is 7812 Hz on one sweep and 1000 Hz on the next, and what this wants is
-# "enough band that no one channel moves the median" — a fact about band plans, not FFTs.
+# How much neighbouring spectrum makes up a bin's local floor when the caller names no
+# channel width. In Hz rather than bins because a bin is 7812 Hz on one sweep and 1000 Hz
+# on the next, and what this wants is "enough band that no one channel moves the median"
+# — a fact about band plans, not FFTs. 400 kHz is a NARROWBAND VHF/UHF figure: 2m at
+# 15 kHz, 70cm and airband and marine at 25 kHz all fit many channels inside it.
 BASELINE_SPAN_HZ = 400_000
+# ...and how many channel widths make up that floor when the caller DOES name one, which
+# is what carries this off the narrowband bands. A signal has to be a small minority of
+# the window it is judged against or it becomes its own baseline and hides: at FM
+# broadcast's 200 kHz spacing the flat 400 kHz above spans two channels, so in a city the
+# median IS a station; a 5-20 MHz cellular carrier swallows the window whole and the
+# baseline is then computed from inside the signal. At 21 channels one signal is under 5%
+# of its own window and five adjacent busy ones still leave the median in noise.
+BASELINE_CHANNELS = 21
 # Fewest bins a local baseline may ever be built from. It binds at coarse resolution —
 # a 100 kHz bin (the route's limit) puts only four bins in 400 kHz, and a signal three
 # bins wide is then most of its own baseline, so it hides itself.
@@ -94,14 +105,24 @@ class Reduced:
     Compared against the local floor, not the sweep's, because "high" is a local claim:
     a repeater is obvious next to 146.655 and unremarkable next to a whole band.
 
-    THE THRESHOLD IS NOT CALIBRATED. Three sweeps of 2m on this box (2026-09-03, gain
-    30 and AGC) found no steady carrier to calibrate against — the band was quiet, and
-    quiet measures like this: total floor spread 6.7-7.2 dB whatever the gain, excess
-    over the local floor p50 0.0 / p90 0.4 / p99 1.4 dB, and a single candidate at
-    146.6616 (a real repeater output) reaching +3.5 to +4.8 dB in both sweeps. Under
-    that, 6 dB reports nothing and 3 dB would also report the band edges and spurs the
-    4 MHz sweep put at +2.4 to +2.9. Setting this number needs a sweep taken while
-    something is actually transmitting."""
+    THE THRESHOLD IS CALIBRATED, against FM broadcast — which is the answer to "sweep
+    something that is actually transmitting", since those carriers are up 24/7 and the
+    2m sweeps that first raised the question caught a band with nothing on it.
+
+    Measured 2026-09-03 across four sweeps. A real transmitter clears its local floor by
+    **+11 to +24 dB** (88-108, 13 stations); noise sits at p50 0.09 dB, and a QUIET 2m
+    band's worst bin reached only +4.8. Sweeping `STEADY_DB` over the same CSVs:
+
+        3 dB -> 18 stations, and the first false positive on the quiet band
+        6 dB -> 13 stations, quiet band silent      <- here
+        8 dB ->  9 stations
+       10 dB ->  8 stations
+
+    So 6 dB is not a compromise between the two failures, it is above one and below the
+    other: every station the band has, nothing on a band with none, and 3 dB of margin
+    to the first false positive. Raising it LOSES real stations, which was the intuition
+    to check — a signal's skirts fall away smoothly from its peak, so a higher bar keeps
+    the strong and drops the weak rather than sharpening anything."""
     uncovered: list[tuple[int, int]] = field(default_factory=list)
     """Half-open Hz spans this sweep did not measure, low to high.
 
@@ -115,6 +136,12 @@ class Reduced:
     grid: list[list[float]] = field(default_factory=list)
     """dB per bin per interval, oldest first — what the waterfall draws."""
     bins: int = 0
+    revisit_s: float = 0.0
+    """Seconds between consecutive readings of one bin, median, off the CSV's own clock.
+
+    The scale `occupancy` is a fraction OF, and the thing that decides whether it means
+    anything: a 10-second transmission is six intervals at a 1 s revisit and rounding
+    error at a 60 s one. Zero when the timestamps could not be read."""
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -129,7 +156,7 @@ def _percentile(values: list[float], fraction: float) -> float:
     return ordered[at]
 
 
-def _local_floors(floors: list[float], bin_hz: int) -> list[float]:
+def _local_floors(floors: list[float], bin_hz: int, channel_hz: int = 0) -> list[float]:
     """Each bin's neighbourhood floor: the median of the floors around it.
 
     The whole point of `steady` is "higher than it has any business being", and that
@@ -140,12 +167,18 @@ def _local_floors(floors: list[float], bin_hz: int) -> list[float]:
     knowable in advance. A rolling median tracks the floor the receiver actually had at
     each frequency; a single number answers for no part of it.
 
+    `channel_hz` is what carries this off the narrowband bands: the window has to be many
+    channels wide, and a channel is 15 kHz on 2m and 10 MHz on a cellular downlink. Zero
+    means the caller did not say, and the flat `BASELINE_SPAN_HZ` applies.
+
     A sweep narrower than one window needs no special case: every bin's window is then
     the whole sweep, which is exactly the one-figure fallback, and the slicing already
-    does it. The window is counted in bins that MEASURED something, so a sweep with
-    unmeasured holes in it reaches a little further in Hz than asked; a median does not
-    care, and the alternative is no baseline across a gap."""
-    width = max(int(BASELINE_SPAN_HZ // bin_hz) if bin_hz > 0 else 0, BASELINE_MIN_BINS)
+    does it — so a window asked to be wider than the sweep degrades to a global median
+    rather than misbehaving. The window is counted in bins that MEASURED something, so a
+    sweep with unmeasured holes in it reaches a little further in Hz than asked; a median
+    does not care, and the alternative is no baseline across a gap."""
+    span = max(BASELINE_SPAN_HZ, BASELINE_CHANNELS * max(channel_hz, 0))
+    width = max(int(span // bin_hz) if bin_hz > 0 else 0, BASELINE_MIN_BINS)
     half = width // 2
     return [_percentile(floors[max(0, i - half) : i + half + 1], 0.5) for i in range(len(floors))]
 
@@ -181,7 +214,40 @@ def _uncovered(columns: list[tuple[int, list[float]]], bin_hz: int) -> list[tupl
     return spans
 
 
-def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
+def _revisit_s(blocks: dict[tuple[int, int, int], list[tuple[str, list[float]]]]) -> float:
+    """How long a bin waits between readings, measured off rtl_power's own timestamps.
+
+    Occupancy is a fraction of the intervals a bin was measured IN, so it only means
+    something when a bin is measured often relative to how long a transmission lasts —
+    and how often that is depends on how many retune hops the span needs, which the
+    caller cannot work out from the response. So it is measured and reported rather than
+    assumed. MEASURED on this box, 1.0 s at 1, 2, 4, 8 and 22 hops alike: rtl_power
+    retunes WITHIN its `-i` interval rather than multiplying it, and the sidecar's 60 MHz
+    span cap means ~25 hops is the most anyone can ask for — so across the whole allowed
+    range occupancy is a fraction of one-second intervals. Reported anyway, because that
+    is a fact about this hardware and this cap rather than about the arithmetic.
+
+    The median of the gaps, so one long stall does not stand for the sweep.
+
+    Zero means the clock could not answer — either the timestamps did not parse, or the
+    revisit is faster than the one-second resolution rtl_power writes them at. Those are
+    the same reading here, and neither is a rate."""
+    gaps: list[float] = []
+    for series in blocks.values():
+        stamps: list[datetime] = []
+        for when, _values in series:
+            try:
+                stamps.append(datetime.fromisoformat(when))
+            except ValueError:
+                continue
+        gaps += [
+            (later - earlier).total_seconds()
+            for earlier, later in zip(stamps, stamps[1:], strict=False)
+        ]
+    return round(_percentile(gaps, 0.5), 3) if gaps else 0.0
+
+
+def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB, channel_hz: int = 0) -> Reduced:
     """Parse rtl_power's CSV into a grid plus what is busy in it.
 
     Tolerant by design: rtl_power writes a partial final row when its exit timer fires
@@ -263,7 +329,7 @@ def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
     busy.sort(key=lambda b: (-b.occupancy, -b.peak_db))
 
     # A bin whose own floor sits well above its neighbours' never went quiet.
-    local = _local_floors(floors, step)
+    local = _local_floors(floors, step, channel_hz)
     steady = [
         Bin(
             hz=hz,
@@ -288,6 +354,7 @@ def reduce_csv(csv_text: str, *, snr_db: float = DEFAULT_SNR_DB) -> Reduced:
         uncovered=_uncovered(columns, step),
         grid=grid,
         bins=len(columns),
+        revisit_s=_revisit_s(blocks),
     )
 
 

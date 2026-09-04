@@ -38,8 +38,11 @@ pipeline. The work is a sidecar, a device lease, a launcher screen, and five too
 
 **Nooelec NESDR SMArt v5** — RTL2832U + R820T2/R860, 0.5 PPM TCXO, SMA female,
 **receive only**, one tuner, ~2.4 MHz usable instantaneous bandwidth (3.2 max), 8-bit
-ADC. Native tuner range 24 MHz – 1.766 GHz; HF below 25 MHz needs direct sampling and a
-suitable antenna (**out of scope**, §9).
+ADC. Native tuner range 24 MHz – 1.766 GHz — but the unit is **sold as 100 kHz–1.75 GHz**,
+because the RTL2832U's ADC can be fed directly, bypassing the R820T2, which is how any
+RTL-SDR reaches HF. So HF is a software gap here rather than a missing part: nothing in
+`deploy/sdr/` passes a direct-sampling flag, and `MIN_HZ`/`MIN_MHZ` block the range
+regardless (**out of scope for now**, §9 — but for reach, not for hardware).
 
 Three consequences drive the whole design:
 
@@ -380,18 +383,87 @@ means nothing in dB. Measured on the numbers: **the two blocks of one 144-148 sw
 | excess over local floor, p50 / p90 / p99 | 0.0 / 0.5 / 2.0 | 0.0 / 0.4 / 0.8 | 0.0 / 0.3 / 1.4 |
 | strongest bin | 146.6616, +4.8 | 146.6616, +3.5 | 147.4569, +2.9 |
 
-Three things follow. **Fixed gain does not open the dynamic range** — it shifts the floor
+Two things follow. **Fixed gain does not open the dynamic range** — it shifts the floor
 down ~22 dB and leaves the spread within 0.5 dB of AGC, so "AGC is compressing the band"
-is not the explanation for a flat sweep; the band is flat. **146.6616 is the one real
-candidate**, a repeater output that sits +3.5 to +4.8 dB over its neighbours in both
-sweeps of that span. And **`STEADY_DB` cannot be set from these sweeps**: at 6 dB it
-reports nothing, and at 3 dB it would also report the band edges and spurs the 4 MHz
-sweep put at +2.4 to +2.9. Setting it needs a sweep taken while something transmits.
+is not the explanation for a flat sweep; the band is flat. And **146.6616 is the one
+candidate**, a repeater output at +3.5 to +4.8 dB over its neighbours in both sweeps of
+that span — which the FM calibration below reveals is almost certainly NOT a carrier: a
+real transmitter clears its local floor by 11 dB or more, and +4.8 is noise-tail.
+
+**`STEADY_DB` calibrated, against FM broadcast.** "Sweep something that is actually
+transmitting" turned out to need no new sweep and no keyed-up repeater: FM carriers are
+up 24 hours a day, and the 88-108 sweep above already held 13 of them. Measured across
+four sweeps — a real transmitter clears its local floor by **+11 to +24 dB**, noise sits
+at p50 0.09 dB, and the quiet 2m band's WORST bin reached +4.8:
+
+| `STEADY_DB` | FM 88-108, stations found | quiet 2m, bins flagged |
+|---|---|---|
+| 3 dB | 18 | **1** (first false positive) |
+| 4 dB | 16 | 0 |
+| 5 dB | 15 | 0 |
+| **6 dB** | **13** | **0** |
+| 8 dB | 9 | 0 |
+| 10 dB | 8 | 0 |
+| 14 dB | 4 | 0 |
+
+6 dB is not a compromise between the two failures — it is above one and below the other,
+with 3 dB of margin to the first false positive. The shipped value was a guess and turns
+out to be right, so nothing changes but its justification. Worth recording that raising
+it LOSES stations, which is the opposite of the intuition: a signal's skirts fall away
+smoothly from its peak, so a higher bar keeps the strong and drops the weak rather than
+sharpening the distinction.
+
+**The tuner's own DC spike does not flood the results**, which the per-bin floor was
+built to ensure and nothing had checked. On the 22-hop 60 MHz sweep, 0 of 22 block
+centres are reported steady; on the 8-hop FM sweep, 7 of 84 steady bins (8%) sit within
+two bins of any block edge or centre.
 
 None of this was readable from the response as first built, which returned `csv_chars`
 and no CSV — which is exactly how the 1.76x claim survived. `include_csv=true` now
 returns rtl_power's own output: a detector calibrated against its own summary, or
 against a picture of its own summary, is calibrated against nothing.
+
+**Off 2m: what the full range actually costs (2026-09-03, second session).** The sweep
+was calibrated on 2m; five more sweeps say how far that travels.
+
+| span | hops | bin asked / got | revisit | result |
+|---|---|---|---|---|
+| 146.0-147.4 (1.4 MHz) | 1 | 5 / 2.7 kHz | 1.0 s | quiet band |
+| 144-148 (4 MHz) | 2 | 5 / 3.9 kHz | 1.0 s | APRS at 144.3906 |
+| 440-450 (10 MHz) | 4 | 5 / 4.9 kHz | 1.0 s | 5 signals, busiest 444.575 at 23% |
+| 88-108 (20 MHz) | 8 | 25 / 19.5 kHz | 1.0 s | 13 FM stations |
+| 440-500 (60 MHz) | 22 | 100 / 85.2 kHz | 1.0 s | the widest span allowed |
+
+Four things follow.
+
+**`MAX_SWEEP_SPAN_HZ` is 60 MHz** (`deploy/sdr/listen.py`), so the tuner's 24-1766 MHz is
+never one call — it is at least 29 sweeps. A 400 MHz request is refused outright. That cap
+is also what makes the next line safe.
+
+**Revisit is 1.0 s at every hop count, 1 through 22.** Every block carries identical
+timestamps: rtl_power retunes WITHIN its `-i` interval rather than multiplying it. The
+`_sweep_cmd` docstring claimed the opposite ("one second times the number of hops") and is
+corrected. Since 60 MHz is ~25 hops, occupancy is a fraction of one-second intervals
+everywhere a caller can reach — there is no wide-span regime where it quietly stops
+meaning anything. `revisit_s` is reported anyway, because that is a fact about this
+hardware and this cap, not about the arithmetic.
+
+**`bin_hz` coarsens with the span**, because rtl_power picks a power-of-2 FFT per hop:
+asking 5 kHz got 2.7 kHz over 1.4 MHz and 3.9 kHz over 4 MHz; asking 100 kHz over 60 MHz
+got 85.2 kHz. A caller cannot pick resolution independently of width.
+
+**The 400 kHz neighbourhood is a narrowband figure and it shows on FM broadcast.** A
+station is ~200 kHz, so it occupies HALF its own default window whatever the bin size
+(the window is fixed in Hz, and so is the station) — right at a median's breaking point.
+Measured on the 88-108 sweep: the default found 44 steady bins in 11 channels; told
+`channel_hz=200_000` (a 4.2 MHz window, where a station is under 5%) the same CSV gives 84
+bins in **13** channels. The two it had been hiding, 97.71 and 105.91 MHz, are the weak
+ones — exactly the failure mode. So `channel_khz` now sizes the detector's neighbourhood
+as well as the folding, and off the narrowband bands it is not optional.
+
+A cellular carrier is the same failure an order of magnitude worse — 5-20 MHz of signal
+against a 400 kHz window is a baseline computed entirely from inside the transmitter —
+but that is reasoned, not measured: nothing here has swept one.
 
 **A gap this exposed.** The debug token can STOP the radio (`POST /api/debug/sdr/stop`)
 but cannot restart APRS logging — `POST /api/sdr/aprs` is owner-session-only. So a
@@ -470,8 +542,11 @@ is flat because whisper.cpp pads every clip to a 30 s window. Residency is still
 ## 9. Out of scope (named, not silently dropped)
 
 - **Transmit.** The hardware cannot, and the tools will not pretend otherwise.
-- **HF below 25 MHz.** Direct sampling plus an HF antenna; the interesting voice traffic
-  is above it.
+- **HF below 24 MHz.** Out of scope for reach, NOT because the hardware lacks it: this
+  unit is sold as 100 kHz–1.75 GHz and the ADC can be fed directly. What is missing is
+  ours — a direct-sampling flag through `deploy/sdr/`, a lowered `MIN_HZ`, and an
+  antenna. Whether `rtl_power` (as opposed to `rtl_fm`) can even be put into that mode
+  is unverified and would decide whether the SWEEP reaches HF or only listening does.
 - **Trunked / P25 systems.** Needs OP25 or trunk-recorder — a substantially larger lift.
   Worth knowing that much local public-safety traffic is now trunked and often
   encrypted, so S0 may find little clear voice depending on the county. Encrypted
