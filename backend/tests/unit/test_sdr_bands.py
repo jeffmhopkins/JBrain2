@@ -201,3 +201,59 @@ class TestFindingTheSectionForAFrequency:
         section = bands.containing(bands.APRS_HZ)
         assert section is not None
         assert any(c.hz == bands.APRS_HZ for c in section.channels)
+
+
+class TestTheRouteThatServesTheTable:
+    """`GET /api/sdr/bands`. Static data, but the shape is a contract: the client is
+    supposed to never recompute any of the physics, so every derived fact has to
+    actually arrive."""
+
+    async def _out(self):
+        from jbrain.api import sdr as sdr_api
+
+        return await sdr_api.band_sections(object())  # type: ignore[arg-type]
+
+    async def test_it_serves_every_section(self) -> None:
+        out = await self._out()
+
+        assert [s.id for s in out.sections] == [s.id for s in bands.SECTIONS]
+        assert out.region == bands.REGION
+
+    async def test_it_carries_the_derived_facts_so_the_client_never_derives_them(
+        self,
+    ) -> None:
+        """A screen that worked out its own hop count would be a second implementation
+        of the physics, free to disagree with the sweep that actually runs."""
+        out = await self._out()
+        aprs = next(s for s in out.sections if s.id == "2m-aprs")
+        whole = next(s for s in out.sections if s.id == "2m-all")
+
+        assert (aprs.span_hz, aprs.hops, aprs.centre_hz) == (800_000, 1, 144_700_000)
+        assert whole.hops == 2  # 4 MHz needs a retune, and the client must not guess
+
+    async def test_HF_sections_arrive_marked_unsweepable_and_gainless(self) -> None:
+        """Both facts have to reach the screen or it will offer controls that cannot
+        work: a Survey button that always fails, and a gain slider wired to a tuner that
+        is powered down."""
+        out = await self._out()
+        wwv = next(s for s in out.sections if s.id == "wwv-10")
+
+        assert wwv.direct_sampling is True
+        assert wwv.surveyable is False
+        assert wwv.mirrored is False
+
+    async def test_it_reports_the_two_ranges_the_hardware_actually_has(self) -> None:
+        """Not one range with a lower floor. Below `direct_max_hz` the tuner is bypassed
+        entirely — a different signal path, not a wider one."""
+        out = await self._out()
+
+        assert out.direct_max_hz == bands.DIRECT_SAMPLING_MAX_HZ
+        assert out.tuner_min_hz == 24_000_000
+        assert out.tuner_max_hz == 1_766_000_000
+
+    async def test_named_channels_survive_the_trip(self) -> None:
+        out = await self._out()
+        marine = next(s for s in out.sections if s.id == "marine")
+
+        assert any(c.name == "Ch 16" and c.hz == 156_800_000 for c in marine.channels)
+        assert any("not voice" in c.note for c in marine.channels)  # Ch 70 is DSC data

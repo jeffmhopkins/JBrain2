@@ -438,6 +438,101 @@ class RadioIn(BaseModel):
     role: Annotated[str, Field(max_length=40)] = GENERAL
 
 
+class ChannelOut(BaseModel):
+    hz: int
+    name: str
+    note: str = ""
+
+
+class SectionOut(BaseModel):
+    """One band section, with the derived facts already worked out.
+
+    The client never recomputes any of this. `hops`, `surveyable` and `mirrored` follow
+    from the frequency and the hardware, and a screen that derived them itself would be
+    a second implementation of the physics — free to disagree with the sweep that
+    actually runs. Everything here is either stored in the table or a property of it."""
+
+    id: str
+    band: str
+    name: str
+    start_hz: int
+    stop_hz: int
+    mode: str
+    step_hz: int
+    channel_hz: int
+    note: str
+    live: str
+    continuous: bool
+    sweep_seconds: int
+    span_hz: int
+    centre_hz: int
+    hops: int
+    surveyable: bool
+    """False for every HF section: rtl_power hardcodes the ADC branch this hardware does
+    not wire, so those bands can be listened to and never swept."""
+    direct_sampling: bool
+    """True below 24 MHz, where the tuner is bypassed — and therefore where there is no
+    gain control at all, because the tuner is powered down."""
+    mirrored: bool
+    """Above 14.4 MHz in the direct-sampling range: real, but carrying images of the
+    strong stations below it, with the sidebands swapped."""
+    channels: list[ChannelOut]
+
+
+class BandsOut(BaseModel):
+    region: str
+    """Which band plan these rows encode. Channel spacings and sub-band boundaries are
+    regional, so a table read against the wrong plan mis-tunes rather than erroring."""
+    sections: list[SectionOut]
+    tuner_min_hz: int
+    tuner_max_hz: int
+    direct_max_hz: int
+
+
+def _section_out(section: bands.Section) -> SectionOut:
+    return SectionOut(
+        id=section.id,
+        band=section.band,
+        name=section.name,
+        start_hz=section.start_hz,
+        stop_hz=section.stop_hz,
+        mode=section.mode,
+        step_hz=section.step_hz,
+        channel_hz=section.channel_hz,
+        note=section.note,
+        live=section.live,
+        continuous=section.continuous,
+        sweep_seconds=section.sweep_seconds,
+        span_hz=section.span_hz,
+        centre_hz=section.centre_hz,
+        hops=section.hops,
+        surveyable=section.surveyable,
+        direct_sampling=section.direct_sampling,
+        mirrored=section.mirrored,
+        channels=[ChannelOut(hz=c.hz, name=c.name, note=c.note) for c in section.channels],
+    )
+
+
+@router.get("/bands")
+async def band_sections(_owner: OwnerDep) -> BandsOut:
+    """The band table: what is worth listening to, and how to hear each of it.
+
+    Static, and deliberately not gated on a radio being present. The picker is how the
+    owner learns what the box CAN do, which matters most on a box where the answer is
+    currently "nothing is plugged in" — a list that vanishes with the hardware teaches
+    nobody anything.
+
+    Owner-only like the rest of this router: it is not secret, but every other route
+    here is, and a lone public one is the kind of asymmetry nobody revisits."""
+    return BandsOut(
+        region=bands.REGION,
+        sections=[_section_out(s) for s in bands.SECTIONS],
+        tuner_min_hz=int(MIN_MHZ * 1_000_000),
+        tuner_max_hz=int(MAX_MHZ * 1_000_000),
+        direct_max_hz=bands.DIRECT_SAMPLING_MAX_HZ,
+    )
+
+
 @router.get("/radios")
 async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> RadiosOut:
     """Every radio: described, attached, or both.
