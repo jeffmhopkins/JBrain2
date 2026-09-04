@@ -40,8 +40,9 @@
 #   scripts/debug-connect.sh load gpt-oss-120b
 #   scripts/debug-connect.sh replay --body-file sitting.json  # multi-turn replay
 #   scripts/debug-connect.sh sweep 144 148 --seconds 300 --channel-khz 15
-#     (TAKES THE RADIO; refused with 409 while APRS logs. Writes the waterfall PNG and,
-#      with --csv, rtl_power's raw numbers next to it; --out DIR picks where.
+#     (TAKES A GENERAL RADIO, so on a two-dongle box it runs while APRS logs on the
+#      dedicated one; the 409 names the radio when there is no free one. Writes the
+#      waterfall PNG and, with --csv, rtl_power's raw numbers next to it; --out picks where.
 #      --channel-khz is how wide a signal is HERE — 15 on 2m, 25 on 70cm/airband/marine,
 #      200 on FM broadcast, thousands on a cellular carrier. Off the narrowband bands
 #      it is not optional: it sizes the neighbourhood `steady` judges a bin against.)
