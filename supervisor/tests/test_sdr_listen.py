@@ -145,8 +145,10 @@ def test_retuning_keeps_the_session_id(tuner) -> None:
 
 
 def test_an_out_of_range_frequency_is_refused(tuner) -> None:
+    # 50 kHz is below the ADC itself. 12 MHz used to fail here and no longer does: it
+    # is below the TUNER, but the radio reaches it by bypassing one (TestShortwave).
     with pytest.raises(listen.SdrError):
-        tuner.start(12_000_000, "fm", None)  # below the tuner's 24 MHz floor
+        tuner.start(50_000, "fm", None)
 
 
 def test_an_unknown_mode_is_refused(tuner) -> None:
@@ -1252,8 +1254,10 @@ class TestHowASignalIsDemodulated:
     research showed were measurably wrong, each so that reverting it fails here.
     """
 
-    def _args(self, mode: str, gain: str | None = None) -> list[str]:
-        return listen.demod_args(mode, gain)
+    def _args(
+        self, mode: str, gain: str | None = None, hz: int = 146_940_000
+    ) -> list[str]:
+        return listen.demod_args(mode, gain, hz)
 
     def test_wide_FM_gets_enough_bandwidth_for_the_station_it_is_tuned_to(self) -> None:
         """A broadcast station deviates ±75 kHz and carries audio to 53 kHz, so Carson
@@ -1317,9 +1321,58 @@ class TestHowASignalIsDemodulated:
         finally:
             session.stop()
 
-        shared = listen.demod_args("wbfm", None)
+        shared = listen.demod_args("wbfm", None, 92_300_000)
 
         # The shared flags appear in the live command CONTIGUOUSLY and in order, so this
         # fails if the session ever starts building its own variant beside them.
         joined = "\x00".join(live)
         assert "\x00".join(shared) in joined
+
+
+class TestShortwave:
+    """Below 24 MHz the tuner is BYPASSED, not merely tuned lower.
+
+    The NESDR SMArt v5 routes HF through an on-board diplexer into the RTL2832U's Q
+    branch — printed in Nooelec's own datasheet block diagram, no hardware mod. Three
+    things follow, and each is a way the software could lie about the hardware.
+    """
+
+    def test_it_selects_the_branch_this_board_actually_wires(self) -> None:
+        """`direct` is the I branch and `direct2` is Q. This board wires Q, so the wrong
+        one produces silence from hardware that looks entirely healthy — no error, no
+        log line, just a dead band."""
+        args = listen.demod_args("am", None, 10_000_000)
+
+        assert args[args.index("-E") + 1] == "direct2"
+
+    def test_it_is_not_used_above_the_tuner(self) -> None:
+        assert "direct2" not in listen.demod_args("fm", None, 146_940_000)
+
+    def test_gain_is_dropped_below_the_tuner(self) -> None:
+        """`rtlsdr_set_direct_sampling` calls the tuner's own exit(), so the R820T2 is
+        powered down and out of the signal path. Passing `-g` there writes to a chip
+        that is not listening — a control that appears to work and does nothing."""
+        assert "-g" not in listen.demod_args("am", "36.4", 10_000_000)
+        assert "-g" in listen.demod_args("fm", "36.4", 146_940_000)
+
+    def test_a_shortwave_frequency_is_accepted(self) -> None:
+        assert listen.validate(10_000_000, "am") == "am"
+        assert listen.validate(530_000, "am") == "am"
+
+    def test_below_the_ADC_is_still_refused(self) -> None:
+        with pytest.raises(listen.SdrError):
+            listen.validate(50_000, "am")
+
+    def test_a_sweep_refuses_to_go_there_and_says_why(self) -> None:
+        """Not a policy. `rtl_power -D` hardcodes direct sampling mode 1 — the I branch
+        — so on this board it would tune something and measure nothing. A flat,
+        plausible, meaningless waterfall is worse than a refusal."""
+        with pytest.raises(listen.SdrError) as refused:
+            listen.Sweep.of(7_000_000, 7_300_000, 1_000, 60)
+
+        assert "cannot go below" in str(refused.value)
+        assert "still listen" in str(refused.value)
+
+    def test_a_sweep_above_the_tuner_is_unaffected(self) -> None:
+        sweep = listen.Sweep.of(144_000_000, 148_000_000, 5_000, 60)
+        assert sweep.start_hz == 144_000_000

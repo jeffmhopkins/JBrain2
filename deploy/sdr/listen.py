@@ -56,8 +56,14 @@ from typing import Any
 
 import packets
 
+#: What the R820T2 TUNER reaches. Not the floor of the radio — see DIRECT_MIN_HZ.
 MIN_HZ = 24_000_000
 MAX_HZ = 1_766_000_000
+#: What the RTL2832U's ADC reaches with the tuner bypassed. The NESDR SMArt v5 feeds HF
+#: to the ADC's **Q branch** through an on-board diplexer, so `-E direct2` reaches it
+#: with no hardware mod. `-E direct` is the I branch, which this board does not wire —
+#: which is also why `rtl_power` can never sweep down here: it hardcodes mode 1.
+DIRECT_MIN_HZ = 100_000
 MODES = {
     "fm": "fm",
     "nfm": "fm",
@@ -182,7 +188,7 @@ def validate(frequency_hz: int, mode: str) -> str:
     Validated here as well as in the api because this process is the one that
     actually opens the device: a bound that lives only in the caller is a bound that
     a second caller does not have."""
-    if not MIN_HZ <= frequency_hz <= MAX_HZ:
+    if not DIRECT_MIN_HZ <= frequency_hz <= MAX_HZ:
         raise SdrError(
             f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
@@ -258,7 +264,7 @@ def blocking_key(held: object, key: str) -> str | None:
     return None
 
 
-def demod_args(mode: str, gain: str | None) -> list[str]:
+def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
     """Everything after `-f` and `-d` that decides how a signal is DEMODULATED.
 
     One function because there are two callers — a live session and the one-shot
@@ -280,13 +286,22 @@ def demod_args(mode: str, gain: str | None) -> list[str]:
     one — a discriminator's output is already centred — so this would only add a filter
     with nothing to remove."""
     args = ["-F", "9"]
+    if frequency_hz < MIN_HZ:
+        # Below the tuner, the ADC is fed straight from the antenna. `direct2` selects
+        # the Q branch, which is the one this board wires; `direct` would select I and
+        # produce silence on hardware that looks otherwise healthy.
+        args += ["-E", "direct2"]
     if MODES[mode] == "wbfm":
         args += ["-s", str(WBFM_SAMPLE_RATE), "-r", str(AUDIO_RATE)]
     else:
         args += ["-s", str(AUDIO_RATE)]
     if MODES[mode] == "am":
         args += ["-E", "dc"]
-    if gain:
+    if gain and frequency_hz >= MIN_HZ:
+        # Deliberately dropped below the tuner's floor: `rtlsdr_set_direct_sampling`
+        # calls the tuner's own `exit()`, so the R820T2 is powered down and out of the
+        # signal path. `-g` there writes to a chip that is not listening, and the
+        # honest thing is to not claim a control that does nothing.
         args += ["-g", gain]
     return args
 
@@ -332,6 +347,17 @@ class Sweep:
             )
         if stop - start < 1:
             raise SdrError("a sweep needs a range, not a single frequency")
+        if start < MIN_HZ:
+            # NOT a policy. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` —
+            # the ADC's I branch — and this board wires Q, so the tool would tune
+            # something and measure nothing. Listening below the tuner works
+            # (`-E direct2` on rtl_fm); sweeping there cannot, and saying so beats
+            # returning a flat, plausible, meaningless waterfall.
+            raise SdrError(
+                f"a sweep cannot go below {MIN_HZ / 1e6:.0f} MHz — the radio reaches "
+                f"shortwave by bypassing its tuner, and the sweep tool cannot use that "
+                f"path. You can still listen there."
+            )
         return Sweep(
             start_hz=start,
             stop_hz=stop,
@@ -445,7 +471,7 @@ class Session:
     def _rtl_cmd(self) -> list[str]:
         cmd = ["rtl_fm", "-f", str(self.frequency_hz), "-M", MODES[self.mode]]
         cmd += self._device_args()
-        cmd += demod_args(self.mode, self.gain)
+        cmd += demod_args(self.mode, self.gain, self.frequency_hz)
         return [*cmd, "-"]
 
     def _enc_cmd(self) -> list[str]:

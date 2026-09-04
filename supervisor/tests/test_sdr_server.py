@@ -401,8 +401,9 @@ def test_a_sweep_is_refused_while_APRS_is_logging(sidecar: str, monkeypatch) -> 
 def test_a_sweep_outside_the_tuner_s_range_is_refused(
     sidecar: str, monkeypatch
 ) -> None:
-    # The hardware tunes 24 MHz-1.766 GHz. Asking below it would sweep nothing and
-    # report the band as quiet.
+    # A sweep reaches 24 MHz-1.766 GHz. Below that the radio still LISTENS — it bypasses
+    # the tuner — but rtl_power hardcodes the other ADC branch, so a sweep there would
+    # tune something and measure nothing, and report the band as quiet.
     _sweeping(monkeypatch)
 
     status, body = _post(
@@ -410,7 +411,8 @@ def test_a_sweep_outside_the_tuner_s_range_is_refused(
     )
 
     assert status == 400
-    assert "range" in body["detail"]
+    assert "cannot go below" in body["detail"]
+    assert "still listen" in body["detail"]  # ...and say what DOES work down there
 
 
 def test_a_sweep_with_no_range_is_refused_rather_than_run(
@@ -431,9 +433,9 @@ def test_a_range_whose_EDGE_is_out_of_band_is_refused(
     """The check `listen.py` cannot make for us.
 
     It validates the CENTRE frequency, which for 20-70 MHz is 45 MHz — comfortably in
-    band, while the sweep's low edge is below anything the tuner can reach. A sweep that
-    silently started 4 MHz above where it was asked to would report the bottom of the
-    range as quiet."""
+    band, while the sweep's low edge is below anything the sweep tool can reach. A sweep
+    that silently started 4 MHz above where it was asked to would report the bottom of
+    the range as quiet."""
     _sweeping(monkeypatch)
 
     status, body = _post(
@@ -441,7 +443,7 @@ def test_a_range_whose_EDGE_is_out_of_band_is_refused(
     )
 
     assert status == 400
-    assert "range" in body["detail"]
+    assert "cannot go below" in body["detail"]
 
 
 def test_a_sweep_that_overruns_is_stopped_and_says_so(

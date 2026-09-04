@@ -39,6 +39,7 @@ from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.llm_settings import get_settings_store
 from jbrain.api.notes import SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
+from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
@@ -46,7 +47,7 @@ from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -60,7 +61,10 @@ MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 # when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
 # command frequency open).
 APRS_PURPOSE = "aprs"
-APRS_DEFAULT_MHZ = 144.39
+#: From the band table, which is the one place that knows where a service lives — it was
+#: this literal in two files. Kept in MHz here because that is the unit the route's query
+#: parameter takes, and converting at the boundary is better than a second constant.
+APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
 # How far back a single caption may reach. Segments that pile up behind a busy whisper
 # are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
@@ -182,7 +186,7 @@ async def listen(
     request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
@@ -434,6 +438,101 @@ class RadioIn(BaseModel):
     role: Annotated[str, Field(max_length=40)] = GENERAL
 
 
+class ChannelOut(BaseModel):
+    hz: int
+    name: str
+    note: str = ""
+
+
+class SectionOut(BaseModel):
+    """One band section, with the derived facts already worked out.
+
+    The client never recomputes any of this. `hops`, `surveyable` and `mirrored` follow
+    from the frequency and the hardware, and a screen that derived them itself would be
+    a second implementation of the physics — free to disagree with the sweep that
+    actually runs. Everything here is either stored in the table or a property of it."""
+
+    id: str
+    band: str
+    name: str
+    start_hz: int
+    stop_hz: int
+    mode: str
+    step_hz: int
+    channel_hz: int
+    note: str
+    live: str
+    continuous: bool
+    sweep_seconds: int
+    span_hz: int
+    centre_hz: int
+    hops: int
+    surveyable: bool
+    """False for every HF section: rtl_power hardcodes the ADC branch this hardware does
+    not wire, so those bands can be listened to and never swept."""
+    direct_sampling: bool
+    """True below 24 MHz, where the tuner is bypassed — and therefore where there is no
+    gain control at all, because the tuner is powered down."""
+    mirrored: bool
+    """Above 14.4 MHz in the direct-sampling range: real, but carrying images of the
+    strong stations below it, with the sidebands swapped."""
+    channels: list[ChannelOut]
+
+
+class BandsOut(BaseModel):
+    region: str
+    """Which band plan these rows encode. Channel spacings and sub-band boundaries are
+    regional, so a table read against the wrong plan mis-tunes rather than erroring."""
+    sections: list[SectionOut]
+    tuner_min_hz: int
+    tuner_max_hz: int
+    direct_max_hz: int
+
+
+def _section_out(section: bands.Section) -> SectionOut:
+    return SectionOut(
+        id=section.id,
+        band=section.band,
+        name=section.name,
+        start_hz=section.start_hz,
+        stop_hz=section.stop_hz,
+        mode=section.mode,
+        step_hz=section.step_hz,
+        channel_hz=section.channel_hz,
+        note=section.note,
+        live=section.live,
+        continuous=section.continuous,
+        sweep_seconds=section.sweep_seconds,
+        span_hz=section.span_hz,
+        centre_hz=section.centre_hz,
+        hops=section.hops,
+        surveyable=section.surveyable,
+        direct_sampling=section.direct_sampling,
+        mirrored=section.mirrored,
+        channels=[ChannelOut(hz=c.hz, name=c.name, note=c.note) for c in section.channels],
+    )
+
+
+@router.get("/bands")
+async def band_sections(_owner: OwnerDep) -> BandsOut:
+    """The band table: what is worth listening to, and how to hear each of it.
+
+    Static, and deliberately not gated on a radio being present. The picker is how the
+    owner learns what the box CAN do, which matters most on a box where the answer is
+    currently "nothing is plugged in" — a list that vanishes with the hardware teaches
+    nobody anything.
+
+    Owner-only like the rest of this router: it is not secret, but every other route
+    here is, and a lone public one is the kind of asymmetry nobody revisits."""
+    return BandsOut(
+        region=bands.REGION,
+        sections=[_section_out(s) for s in bands.SECTIONS],
+        tuner_min_hz=int(MIN_MHZ * 1_000_000),
+        tuner_max_hz=int(MAX_MHZ * 1_000_000),
+        direct_max_hz=bands.DIRECT_SAMPLING_MAX_HZ,
+    )
+
+
 @router.get("/radios")
 async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> RadiosOut:
     """Every radio: described, attached, or both.
@@ -509,7 +608,7 @@ async def aprs_logging(
     settings: SettingsDep,
     _owner: OwnerDep,
     enabled: Annotated[bool, Query()],
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)] = APRS_DEFAULT_MHZ,
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = APRS_DEFAULT_MHZ,
 ) -> dict[str, Any]:
     """Turn APRS logging on or off. 409 when something else holds the radio.
 
@@ -586,7 +685,7 @@ async def _health(base: str) -> dict[str, Any] | None:
 async def tune(
     settings: SettingsDep,
     _owner: OwnerDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str | None, Query(pattern=f"^({'|'.join(MODES)})$")] = None,
     session_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> dict[str, Any]:

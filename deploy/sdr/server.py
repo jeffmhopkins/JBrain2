@@ -125,7 +125,7 @@ def capture(
     Reserves the radio for the whole capture and refuses rather than queues: a caller
     waiting an unknown time on a radio someone else is using is worse than a caller
     told plainly that it is busy."""
-    if not MIN_HZ <= freq_hz <= MAX_HZ:
+    if not listen.DIRECT_MIN_HZ <= freq_hz <= MAX_HZ:
         raise SdrError(
             f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
@@ -150,7 +150,7 @@ def capture(
         # Shared with the live path rather than rebuilt here — see `listen.demod_args`.
         # A capture is meant to be a sample of what a session would hear, and it stops
         # being one the moment the two lists can drift apart.
-        cmd += listen.demod_args(key, gain)
+        cmd += listen.demod_args(key, gain, freq_hz)
         cmd += ["-"]
 
         # rtl_fm streams until killed, so the timeout IS the recording length. A

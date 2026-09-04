@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Radio launcher - three shapes</title>
+<!--
+  MOCK: THE RADIO LAUNCHER, ROUND 1 (docs/plans/SDR_RADIO_PLAN.md S4a - the GUI gate).
+
+  THE ASK, from the owner: "we should be able to select which dongle and either tune it
+  and set modulation, or set it to a service like aprs decode ... but then we also need a
+  way to perhaps have a live spectrum view ... we have a lot more control on the SDR than
+  what the tuner gives us ... even if that means building out another tab or being a
+  little smarter in the GUI". And then: "I think we'd want to have interesting bands.
+  predefined ... and that would be the default way to select the bands that we are tuned
+  to. but then we could have an expert mode etc that we could select and manually define".
+
+  THREE SHAPES IN ONE FILE, on ONE data model, so the comparison is real. Flipping the
+  switcher does not reload the state: the same two radios, doing the same things, drawn
+  three ways. That is the only way to see what each shape costs.
+
+  WHAT SEPARATES THEM is one question the owner has to answer:
+    A  the RADIO is the object. Tabs become Radios | APRS | Recordings; a radio's job
+       (Listen / APRS / Spectrum / Idle) is chosen inside that radio.
+    B  the JOB is the object. Tabs stay Tuner | APRS | Recordings; each grows a picker
+       for which radio it runs on.
+    C  one console. No detail level at all - a scrolling page of per-radio panels.
+
+  A RE-OPENS A DECIDED ROUND, and says so out loud. docs/mocks/aprs/c-single-dongle.html
+  chose "a switch in the APRS tab" and explicitly rejected a radio-wide mode selector.
+  That decision was made on a ONE-DONGLE box. The second dongle arrived, one session per
+  radio shipped (APRS_CONTROL_PLAN.md P0b), and the premise changed - but the owner
+  decides whether it changed enough, not the mock.
+
+  WHAT IS SETTLED and appears identically in all three:
+    - The BAND PICKER is the primary way to tune. 32 curated US sections, each carrying
+      its own mode, step, channel spacing and sweep settings (jbrain/sdr/bands.py).
+      Manual entry is behind "Enter a frequency", not the front door.
+    - The tuning cluster is the SAME COMPONENT as the omnibox sheet, in the same order.
+      DESIGN.md forbids the sheet from growing ("longer flows are full screens", "one
+      modal at a time"), so anything launcher-only is stacked BELOW a hairline, never
+      woven in. Two surfaces that look alike and behave differently is the failure mode.
+    - Expert settings collapse to a line that REPORTS ITSELF - "auto gain - 12.5 kHz -
+      squelch off" - so a non-default is visible without opening anything.
+
+  MEASURED FACTS THE MOCKS OBEY, not decoration:
+    - A sweep TAKES A RADIO for its duration and ends by itself. It is a run, not a mode.
+    - HF (below 24 MHz) CANNOT BE SWEPT: rtl_power hardcodes the ADC branch this hardware
+      does not wire. And it has NO GAIN CONTROL - the tuner is powered down. Both are
+      drawn, because a Survey button that always fails is worse than an absent one.
+    - A section wider than ~2 MHz needs a retune hop, and the per-bin duty cycle falls
+      from 100% to 20%. Sections say which they are; the code never infers it.
+    - `scan_ok: false` means "we could not look", NOT "nothing attached".
+
+  THE HARNESS IS THE ARGUMENT. Every control does something. The state buttons put the
+  box into each edge case and all three shapes redraw from the same store.
+
+  NOT decided here: the live spectrum's own surface (P1 is a 1 fps waterfall from
+  streamed rtl_power); landscape (this app has ZERO orientation media queries today, so
+  it would be its first - deliberately not proposed); and the waterfall's colour ramp,
+  which needs a DESIGN.md token that does not exist yet.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13); --rose-tint:rgba(201,138,138,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 70px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:18px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;max-width:78ch;}
+  .sub b{color:var(--text);font-weight:600;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;margin:16px 0 6px;}
+  .seg button{appearance:none;border:0;background:var(--surface);color:var(--text-2);font:inherit;
+    font-size:13px;padding:9px 15px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .states{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 16px;}
+  .states button{appearance:none;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+    color:var(--text-2);font:inherit;font-size:11.5px;padding:6px 12px;cursor:pointer;}
+  .states button[aria-pressed="true"]{border-color:var(--amber);color:var(--amber);background:var(--amber-tint);}
+
+  .stage{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;}
+  .phone{width:390px;min-height:690px;border:1px solid var(--border);border-radius:26px;background:var(--bg);
+    padding:14px 13px 20px;box-shadow:0 18px 50px rgba(0,0,0,.45);position:relative;overflow:hidden;}
+  .note{flex:1;min-width:300px;max-width:460px;color:var(--text-2);font-size:13.5px;line-height:1.6;}
+  .note h3{color:var(--text);font-size:14px;margin:18px 0 8px;font-weight:620;}
+  .note h3:first-child{margin-top:0;}
+  .note p{margin:0 0 11px;}
+  .note strong{color:var(--text);font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+  .note ul{margin:0 0 11px;padding-left:17px;} .note li{margin-bottom:5px;}
+
+  .scr-top{display:flex;align-items:center;gap:10px;padding:2px 2px 12px;}
+  .chev{color:var(--text-2);font-size:19px;line-height:1;cursor:pointer;background:none;border:0;padding:0 4px 0 0;}
+  .scr-title{font-size:17px;font-weight:640;}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:0 0 13px;}
+  .tabs button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;flex:1;
+    color:var(--text-2);font:inherit;font-size:13px;padding:9px 4px;cursor:pointer;}
+  .tabs button[aria-selected="true"]{color:var(--steel);border-bottom-color:var(--steel);font-weight:600;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 13px;margin-bottom:10px;}
+  .card.tap{cursor:pointer;} .card.tap:hover{border-color:var(--steel);}
+  .rowtop{display:flex;align-items:baseline;gap:8px;}
+  .rname{font-size:14.5px;font-weight:620;}
+  .rser{font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-left:auto;}
+  .rdesc{font-size:12px;color:var(--text-3);margin:2px 0 0;}
+  .rstate{display:flex;align-items:center;gap:7px;margin-top:9px;font-size:12.5px;color:var(--text-2);}
+  .rstate b{color:var(--text);font-weight:600;}
+  .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--text-3);}
+  .dot.on{background:var(--green);} .dot.warn{background:var(--amber);} .dot.bad{background:var(--rose);}
+
+  .lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:14px 0 7px;}
+  .jobs{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);}
+  .jobs button{flex:1;appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:11px 4px;cursor:pointer;border-right:1px solid var(--border);}
+  .jobs button:last-child{border-right:0;}
+  .jobs button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .jobs button:disabled{color:var(--text-3);cursor:not-allowed;}
+
+  .why{font-size:11.5px;color:var(--text-2);line-height:1.5;margin:8px 2px 0;}
+  .why.warn{color:var(--amber);} .why.bad{color:var(--rose);}
+
+  .band{width:100%;display:flex;align-items:center;gap:10px;appearance:none;text-align:left;
+    border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);
+    font:inherit;padding:11px 12px;cursor:pointer;margin-bottom:8px;}
+  .band:hover{border-color:var(--steel);}
+  .band .bn{display:block;font-size:13.5px;font-weight:600;}
+  .band .bs{display:block;font-size:11.5px;color:var(--text-3);margin-top:2px;}
+  .band .caret{margin-left:auto;color:var(--text-3);font-size:15px;}
+
+  .freq{font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-.5px;text-align:center;
+    padding:8px 0 2px;cursor:pointer;}
+  .funit{font-size:14px;color:var(--text-3);margin-left:5px;font-weight:400;}
+  .steppers{display:flex;gap:8px;margin:8px 0 10px;}
+  .steppers button{flex:1;appearance:none;border:1px solid var(--border);border-radius:11px;background:var(--surface-2);
+    color:var(--text);font:inherit;font-size:16px;padding:11px;cursor:pointer;min-height:44px;}
+  .modes{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);}
+  .modes button{flex:1;appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12px;
+    padding:10px 3px;cursor:pointer;border-right:1px solid var(--border);}
+  .modes button:last-child{border-right:0;}
+  .modes button[aria-pressed="true"]{background:var(--green-tint);color:var(--green);font-weight:600;}
+  .transport{display:flex;gap:8px;margin-top:10px;}
+  .transport button{flex:1;appearance:none;border:1px solid var(--border);border-radius:11px;background:var(--surface-2);
+    color:var(--text-2);font:inherit;font-size:12.5px;padding:11px 6px;cursor:pointer;min-height:44px;}
+  .transport button.pri{border-color:var(--steel);color:var(--steel);background:var(--steel-tint);font-weight:600;}
+
+  .hair{border:0;border-top:1px solid var(--border);margin:16px 0 12px;}
+  .below{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 9px;}
+  .exp{width:100%;display:flex;align-items:center;gap:8px;appearance:none;border:1px solid var(--border);
+    border-radius:12px;background:var(--surface);color:var(--text-2);font:inherit;font-size:12px;
+    padding:11px 12px;cursor:pointer;text-align:left;}
+  .exp > span:first-child{flex:1;min-width:0;line-height:1.5;}
+  .exp b{color:var(--text);font-weight:600;} .exp .caret{margin-left:auto;flex:0 0 auto;}
+  .expbody{border:1px solid var(--border);border-top:0;border-radius:0 0 12px 12px;background:var(--surface);
+    padding:12px;font-size:12px;color:var(--text-2);}
+  .erow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);}
+  .erow:last-child{border-bottom:0;}
+  .erow .en{flex:1;} .erow .ev{font-family:var(--mono);font-size:11.5px;color:var(--steel);}
+  .erow.off .ev{color:var(--text-3);}
+
+  .banner{padding:11px 12px;border-radius:12px;font-size:12px;line-height:1.55;margin-bottom:10px;}
+  .banner.warn{border:1px solid var(--amber);background:var(--amber-tint);color:var(--amber);}
+  .banner.bad{border:1px solid var(--rose);background:var(--rose-tint);color:var(--rose);}
+  .banner.info{border:1px solid var(--border);background:var(--surface);color:var(--text-2);}
+  .banner b{font-weight:700;}
+  .cta{display:inline-block;margin-top:9px;appearance:none;border-radius:999px;background:transparent;
+    font:inherit;font-size:11.5px;font-weight:600;padding:6px 13px;cursor:pointer;
+    border:1px solid currentColor;color:inherit;}
+
+  .sheet{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;}
+  .sheetbody{width:100%;max-height:88%;overflow:auto;background:var(--surface);border-radius:20px 20px 0 0;
+    border:1px solid var(--border);padding:14px 13px 20px;}
+  .sheethead{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+  .sheethead .t{font-size:15px;font-weight:640;}
+  .sheethead button{margin-left:auto;appearance:none;border:0;background:none;color:var(--text-2);
+    font:inherit;font-size:13px;cursor:pointer;padding:6px;}
+  .bgroup{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:14px 0 6px;}
+  .bitem{width:100%;display:flex;align-items:flex-start;gap:10px;appearance:none;text-align:left;border:0;
+    border-radius:10px;background:none;color:var(--text);font:inherit;padding:9px 8px;cursor:pointer;}
+  .bitem:hover{background:var(--surface-2);}
+  .bitem > span:first-child{flex:1;min-width:0;}
+  .bitem .bt{display:block;font-size:13px;font-weight:560;line-height:1.4;}
+  .bitem .bd{display:block;font-size:11px;color:var(--text-3);margin-top:3px;line-height:1.45;}
+  .bitem .bhz{font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-left:auto;flex:0 0 auto;padding-top:2px;}
+  .tag{display:inline-block;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;
+    border-radius:5px;margin-left:6px;vertical-align:1px;}
+  .tag.hf{background:var(--amber-tint);color:var(--amber);}
+  .tag.slow{background:var(--steel-tint);color:var(--steel);}
+
+  .panel{border:1px solid var(--border);border-radius:14px;background:var(--surface);margin-bottom:10px;overflow:hidden;}
+  .phead{display:flex;align-items:center;gap:9px;padding:12px 13px;cursor:pointer;}
+  .phead > span:nth-child(2){flex:1;min-width:0;line-height:1.5;}
+  .phead .caret{margin-left:auto;flex:0 0 auto;color:var(--text-3);}
+  .pbody{padding:0 13px 13px;border-top:1px solid var(--border);padding-top:12px;}
+  .pick{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);margin-bottom:12px;}
+  .pick select{appearance:none;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    color:var(--text);font:inherit;font-size:12.5px;padding:8px 11px;cursor:pointer;}
+  .foot{font-size:11px;color:var(--text-3);line-height:1.5;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Radio launcher — three shapes</h1>
+  <p class="sub">Two radios, each able to <b>listen</b>, <b>decode APRS</b>, <b>sweep a band</b> or sit idle — and since
+  <code>P0b</code> they can do different jobs <b>at the same time</b>. The question these three shapes answer differently:
+  <b>is the radio the object, or is the job?</b> Same data in all three; the switcher only changes how it is drawn.</p>
+</header>
+
+<div class="seg" role="group" aria-label="Shape">
+  <button id="sA" aria-pressed="true" onclick="setShape('A')">A · Radio is the object</button>
+  <button id="sB" aria-pressed="false" onclick="setShape('B')">B · Job is the object</button>
+  <button id="sC" aria-pressed="false" onclick="setShape('C')">C · One console</button>
+</div>
+<div class="states" id="states"></div>
+
+<div class="stage">
+  <div class="phone" id="phone"></div>
+  <div class="note" id="note"></div>
+</div>
+</div>
+<script>
+// ---------------------------------------------------------------------------------
+// THE STORE. One model, three renderers. Every shape reads this and nothing else, so a
+// state button really does put all three into the same situation.
+// ---------------------------------------------------------------------------------
+const SECTIONS = [
+  {g:"Everyday", id:"fm", band:"FM broadcast", name:"The dial", lo:88, hi:108, mode:"WBFM", step:200, chan:200, live:"slow", note:"Carriers up around the clock — one frame a second misses nothing."},
+  {g:"Everyday", id:"wx", band:"NOAA weather", name:"WX 1–7", lo:162.4, hi:162.55, mode:"FM", step:25, chan:25, live:"fast", note:"Seven channels, continuous forecasts."},
+  {g:"Everyday", id:"air", band:"Airband", name:"Tower and ground", lo:118, hi:120, mode:"AM", step:25, chan:25, live:"fast", note:"AM, so two aircraft at once beat audibly instead of one capturing the other."},
+  {g:"Everyday", id:"guard", band:"Airband", name:"Guard and emergency", lo:121, hi:122, mode:"AM", step:25, chan:25, live:"fast", note:"121.500 is monitored everywhere and almost always silent."},
+  {g:"Everyday", id:"marine", band:"Marine VHF", name:"Ship and coast", lo:156, hi:157.5, mode:"FM", step:25, chan:25, live:"fast", note:"Ch 16 is distress and calling. Ch 70 is DSC data, not voice."},
+  {g:"Amateur", id:"2m-ssb", band:"2 m", name:"Weak signal and SSB", lo:144.1, hi:144.3, mode:"USB", step:1, chan:0, live:"fast", note:"144.200 calling. Upper sideband, not FM."},
+  {g:"Amateur", id:"2m-aprs", band:"2 m", name:"APRS and packet", lo:144.3, hi:145.1, mode:"FM", step:5, chan:15, live:"fast", note:"144.390 — position beacons and messages, digipeated."},
+  {g:"Amateur", id:"2m-rpt", band:"2 m", name:"Repeater outputs", lo:146, hi:148, mode:"FM", step:5, chan:15, live:"fast", note:"The busiest listening segment. 146.520 is the national simplex calling frequency."},
+  {g:"Amateur", id:"2m-all", band:"2 m", name:"Whole band (survey)", lo:144, hi:148, mode:"FM", step:5, chan:15, live:"slow", note:"Two hops, so each frequency is watched about a fifth of the time."},
+  {g:"Amateur", id:"70-rpt", band:"70 cm", name:"Repeater outputs (442–445)", lo:442, hi:444, mode:"FM", step:12.5, chan:25, live:"fast", note:"Local-option repeater pairs."},
+  {g:"Amateur", id:"70-splx", band:"70 cm", name:"Simplex", lo:445, hi:447, mode:"FM", step:12.5, chan:25, live:"fast", note:"446.000 is the national simplex calling frequency."},
+  {g:"Shortwave (no gain control, cannot be swept)", id:"mw", band:"Medium wave", name:"AM broadcast", lo:0.53, hi:1.7, mode:"AM", step:10, chan:10, live:"fast", hf:true, note:"The strongest signals HF will see."},
+  {g:"Shortwave (no gain control, cannot be swept)", id:"31m", band:"Shortwave", name:"31 m broadcast", lo:9.4, hi:9.9, mode:"AM", step:5, chan:5, live:"fast", hf:true, note:"Works day and night — the band to try first on a new antenna."},
+  {g:"Shortwave (no gain control, cannot be swept)", id:"40m", band:"40 m", name:"Voice (LSB)", lo:7.125, hi:7.3, mode:"LSB", step:0.1, chan:0, live:"fast", hf:true, note:"Regional by day, continental at night."},
+  {g:"Shortwave (no gain control, cannot be swept)", id:"wwv", band:"Time signal", name:"WWV 10 MHz", lo:9.9, hi:10.1, mode:"AM", step:1, chan:0, live:"fast", hf:true, note:"Ticks, and a voice announcement each minute. The right first test of an HF antenna."},
+];
+const SEC = id => SECTIONS.find(s => s.id === id);
+
+const JOBS = {listen:"Listen", aprs:"APRS", spectrum:"Spectrum", idle:"Idle"};
+
+let S = {};
+function reset(){
+  S = {
+    shape:"A", tab:"radios", open:null, sheet:null, expert:false, scanOk:true,
+    radios:[
+      {ser:"09022796", name:"Desk whip", desc:"Retractable whip on the desk", role:"general",
+       attached:true, job:"listen", sec:"2m-rpt", hz:146.94, mode:"FM", gain:"auto", heldFor:"6m"},
+      {ser:"77192819", name:"Long wire", desc:"Long wire, 9:1 unun, out the north window", role:"aprs",
+       attached:true, job:"aprs", sec:"2m-aprs", hz:144.39, mode:"FM", gain:"36.4 dB", heldFor:"2h 14m", lastHeard:"12s"},
+    ],
+  };
+}
+reset();
+const RAD = ser => S.radios.find(r => r.ser === ser);
+const byJob = j => S.radios.find(r => r.job === j && r.attached);
+
+// --- the edge cases the harness has to be able to reach ---------------------------
+const STATES = [
+  ["Both radios working", () => reset()],
+  ["One radio only", () => { reset(); S.radios = [S.radios[0]]; }],
+  ["Dedicated radio unplugged", () => { reset(); S.radios[1].attached = false; S.radios[1].job = "idle"; }],
+  ["Sweep running", () => { reset(); S.radios[0].job = "spectrum"; S.radios[0].sec = "2m-all"; S.radios[0].left = "2m 40s"; }],
+  ["Receiver has gone deaf", () => { reset(); S.radios[1].lastHeard = "41m"; }],
+  ["Gain changed by hand", () => { reset(); S.radios[0].gain = "32.8 dB"; S.expert = true; }],
+  ["Tuned to shortwave", () => { reset(); S.radios[0].sec = "wwv"; S.radios[0].hz = 10.0; S.radios[0].mode = "AM"; }],
+  ["USB scan unreachable", () => { reset(); S.scanOk = false; }],
+  ["Nothing plugged in", () => { reset(); S.radios.forEach(r => { r.attached = false; r.job = "idle"; }); }],
+];
+let stateIx = 0;
+
+// --- helpers ----------------------------------------------------------------------
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mhz = n => (n >= 100 ? n.toFixed(2) : n.toFixed(3));
+function conflictFor(job){
+  const ded = S.radios.filter(r => r.role === job);
+  if (ded.length > 1) return `${ded.map(r => r.name).join(" and ")} are both dedicated to it.`;
+  return null;
+}
+/** What a radio is doing, in the words the sidecar already uses. */
+function stateLine(r){
+  if (!S.scanOk) return {dot:"", text:"<b>Unknown</b> — the USB scan could not say what is attached."};
+  if (!r.attached) return {dot:"bad", text:`<b>Not attached.</b>${r.role !== "general" ? " " + JOBS[r.role] + " is waiting for it." : ""}`};
+  const s = SEC(r.sec);
+  if (r.job === "listen")   return {dot:"on",   text:`<b>Listening</b> — ${mhz(r.hz)} ${r.mode} · ${r.heldFor}`};
+  if (r.job === "aprs")     return r.lastHeard === "41m"
+      ? {dot:"bad",  text:`<b>Logging APRS</b> — 144.390 · nothing heard for 41m`}
+      : {dot:"on",   text:`<b>Logging APRS</b> — 144.390 · heard ${r.lastHeard} ago`};
+  if (r.job === "spectrum") return {dot:"warn", text:`<b>Sweeping</b> ${s.band} ${s.lo}–${s.hi} · ${r.left} left`};
+  return {dot:"", text:"<b>Idle</b>"};
+}
+/** Which jobs this radio may take, and why not. Dedication binds the tuner too. */
+function jobAllowed(r, job){
+  if (!r.attached) return "not attached";
+  if (r.role !== "general" && job !== r.role && job !== "idle") return `reserved for ${JOBS[r.role]}`;
+  const other = S.radios.find(o => o !== r && o.job === job && job !== "idle" && o.attached);
+  if (other) return `${other.name} is doing it`;
+  if (job === "spectrum" && SEC(r.sec).hf) return "shortwave cannot be swept";
+  return null;
+}
+
+// ---------------------------------------------------------------------------------
+// SHARED PARTS. The tuning cluster is deliberately ONE function used by all three
+// shapes, in one order, because that is the contract with the omnibox sheet: the same
+// controls, the same sequence, and anything launcher-only stacked strictly below a
+// hairline. Two surfaces that look alike and behave differently is the failure mode.
+// ---------------------------------------------------------------------------------
+function bandButton(r){
+  const s = SEC(r.sec);
+  return `<button class="band" onclick="openSheet('${r.ser}')">
+    <span><span class="bn">${esc(s.band)} · ${esc(s.name)}</span>
+    <span class="bs">${s.lo}–${s.hi} MHz · ${s.mode} · steps of ${s.step} kHz</span></span>
+    <span class="caret">›</span></button>`;
+}
+function tuningCluster(r){
+  const s = SEC(r.sec);
+  const modes = ["WBFM","FM","AM","USB","LSB"];
+  return `
+    ${bandButton(r)}
+    <div class="freq" onclick="alert('Tap to type a frequency — the expert path.')">${mhz(r.hz)}<span class="funit">MHz</span></div>
+    <div class="steppers">
+      <button onclick="nudge('${r.ser}',-1)">−</button>
+      <button onclick="alert('Step size follows the band: ${s.step} kHz here.')">${s.step} kHz</button>
+      <button onclick="nudge('${r.ser}',1)">+</button>
+    </div>
+    <div class="modes">${modes.map(m => `<button aria-pressed="${m === r.mode}" onclick="setMode('${r.ser}','${m}')">${m}</button>`).join("")}</div>
+    <div class="transport">
+      <button class="pri">▶ Listen</button><button>CC</button><button onclick="setJob('${r.ser}','idle')">Release</button>
+    </div>`;
+}
+/** Launcher-only, and below the line. The sheet cannot grow this (DESIGN.md: "one modal
+ *  at a time", "longer flows are full screens"), so the asymmetry is forced, not chosen. */
+function expertBlock(r){
+  const s = SEC(r.sec);
+  const hf = s.hf;
+  const summary = `${hf ? "no gain on shortwave" : "gain " + r.gain} · ${s.chan ? s.chan + " kHz" : "wide"} · squelch off`;
+  const body = !S.expert ? "" : `<div class="expbody">
+    <div class="erow ${hf ? "off" : ""}"><span class="en">Gain</span><span class="ev">${hf ? "unavailable — the tuner is bypassed below 24 MHz" : esc(r.gain)}</span></div>
+    <div class="erow"><span class="en">Channel width</span><span class="ev">${s.chan ? s.chan + " kHz" : "continuous"}</span></div>
+    <div class="erow off"><span class="en">Squelch</span><span class="ev">off</span></div>
+    <div class="erow ${s.mode === "WBFM" ? "" : "off"}"><span class="en">De-emphasis</span><span class="ev">${s.mode === "WBFM" ? "75 µs" : "off"}</span></div>
+    <div class="erow off"><span class="en">Frequency calibration</span><span class="ev">not needed — 0.5 ppm TCXO</span></div>
+  </div>`;
+  return `<hr class="hair"><p class="below">More control</p>
+    <button class="exp" onclick="S.expert=!S.expert;draw()" aria-expanded="${S.expert}">
+      <span><b>Advanced</b><br>${esc(summary)}</span><span class="caret">${S.expert ? "⌄" : "›"}</span></button>${body}`;
+}
+/** The job selector. Shapes A and C own one per radio; shape B does not have one. */
+function jobRow(r){
+  const keys = Object.keys(JOBS);
+  const btns = keys.map(j => {
+    const why = jobAllowed(r, j);
+    return `<button aria-pressed="${r.job === j}" ${why && r.job !== j ? "disabled" : ""}
+      onclick="setJob('${r.ser}','${j}')" title="${why ? esc(why) : ""}">${JOBS[j]}</button>`;
+  }).join("");
+  const blocked = keys.filter(j => j !== r.job && jobAllowed(r, j)).map(j => `${JOBS[j]} — ${jobAllowed(r, j)}`);
+  return `<p class="lbl">Doing</p><div class="jobs">${btns}</div>
+    ${blocked.length ? `<p class="why">${esc(blocked.join(" · "))}</p>` : ""}`;
+}
+/** What the radio's chosen job actually shows. A sweep is a RUN, not a resting mode. */
+function jobSurface(r){
+  const s = SEC(r.sec);
+  if (!r.attached) return `<div class="banner bad"><b>Not attached.</b> ${r.role !== "general"
+    ? JOBS[r.role] + " is dedicated to this radio and will wait for it rather than moving to another one."
+    : "Plug it in to use it."}</div>`;
+  if (r.job === "listen")   return tuningCluster(r) + expertBlock(r);
+  if (r.job === "aprs")     return `<div class="banner ${r.lastHeard === "41m" ? "bad" : "info"}">
+      ${r.lastHeard === "41m" ? "<b>Nothing decoded for 41 minutes.</b> The log is running but the receiver may be deaf — a quiet channel and a dead one look the same until you say so."
+        : "<b>Logging on 144.390.</b> Last frame " + r.lastHeard + " ago."}</div>
+      <button class="band" onclick="switchTab('aprs')"><span><span class="bn">Open the APRS log</span>
+      <span class="bs">Heard stations, packets and command tasks</span></span><span class="caret">›</span></button>`;
+  if (r.job === "spectrum") return `<div class="banner warn"><b>Sweeping ${esc(s.band)} ${s.lo}–${s.hi}.</b>
+      ${r.left} left. This radio is held until it finishes — a sweep ends on its own.
+      ${s.live === "slow" ? "<br>Two hops, so each frequency is watched about a fifth of the time." : ""}
+      <button class="cta" onclick="setJob('${r.ser}','idle')">Stop</button></div>`;
+  return `<div class="banner info">Idle — nothing is holding this radio.</div>` + bandButton(r) +
+    `<div class="transport"><button class="pri" onclick="setJob('${r.ser}','listen')">▶ Listen here</button>
+     <button onclick="${SEC(r.sec).hf ? `alert('Shortwave cannot be swept: rtl_power hardcodes the ADC branch this hardware does not wire.')` : `setJob('${r.ser}','spectrum')`}">Sweep it</button></div>`;
+}
+function bandSheet(ser){
+  const groups = [...new Set(SECTIONS.map(s => s.g))];
+  return `<div class="sheet" onclick="if(event.target===this){S.sheet=null;draw()}"><div class="sheetbody">
+    <div class="sheethead"><span class="t">Choose a band</span><button onclick="S.sheet=null;draw()">Close</button></div>
+    ${groups.map(g => `<p class="bgroup">${esc(g)}</p>` + SECTIONS.filter(s => s.g === g).map(s => `
+      <button class="bitem" onclick="pickBand('${ser}','${s.id}')">
+        <span><span class="bt">${esc(s.band)} · ${esc(s.name)}${s.hf ? '<span class="tag hf">HF</span>' : ""}${s.live === "slow" ? '<span class="tag slow">1 fps</span>' : ""}</span>
+        <span class="bd">${esc(s.note)}</span></span>
+        <span class="bhz">${s.lo}–${s.hi}</span></button>`).join("")).join("")}
+    <button class="bitem" onclick="alert('Expert mode: type any frequency. It inherits the mode, step and channel spacing of whichever section it lands in.')">
+      <span><span class="bt">Enter a frequency…</span><span class="bd">Anywhere in 0.1–1766 MHz. Settings are inherited from wherever it lands.</span></span></button>
+  </div></div>`;
+}
+
+// ---------------------------------------------------------------------------------
+// SHAPE A — the radio is the object.
+// Tabs become Radios | APRS | Recordings. A radio's job is chosen inside that radio.
+// ---------------------------------------------------------------------------------
+function shapeA(){
+  if (S.open){
+    const r = RAD(S.open);
+    return `<div class="scr-top"><button class="chev" onclick="S.open=null;draw()">‹</button>
+        <span class="scr-title">${esc(r.name)}</span></div>
+      <div class="card"><p class="rdesc">${esc(r.desc)}</p>
+        <div class="rstate"><span class="rser">${r.ser}</span>
+        <span style="margin-left:auto;font-size:11.5px;color:var(--text-3)">Used for: ${r.role === "general" ? "General use" : JOBS[r.role]}</span></div></div>
+      ${jobRow(r)}
+      <div style="margin-top:14px">${jobSurface(r)}</div>`;
+  }
+  return tabsRow("radios") + (S.tab !== "radios" ? otherTab() : `
+    ${!S.scanOk ? '<div class="banner warn">The USB scan could not be reached, so whether each radio is attached is <b>unknown</b> rather than no.</div>' : ""}
+    ${S.radios.map(r => { const st = stateLine(r); return `
+      <div class="card tap" onclick="S.open='${r.ser}';draw()">
+        <div class="rowtop"><span class="rname">${esc(r.name)}</span><span class="rser">${r.ser}</span></div>
+        <p class="rdesc">${esc(r.desc)}</p>
+        <div class="rstate"><span class="dot ${st.dot}"></span><span>${st.text}</span><span class="caret" style="margin-left:auto;color:var(--text-3)">›</span></div>
+      </div>`; }).join("")}
+    ${S.radios.length === 0 ? '<div class="banner info">No radio on this box. Plug one in and it appears here.</div>' : ""}
+    <p class="foot">Naming a radio and saying what it is plugged into lives in Settings → Radios. This screen is what each one is <b>doing right now</b>.</p>`);
+}
+
+// ---------------------------------------------------------------------------------
+// SHAPE B — the job is the object. Today's tabs, each with a radio picker.
+// ---------------------------------------------------------------------------------
+function shapeB(){
+  const r = byJob(S.tab === "tuner" ? "listen" : "aprs") || S.radios.find(x => x.attached) || S.radios[0];
+  if (S.tab === "aprs") return tabsRow("tuner", true) + otherTab();
+  if (S.tab === "recordings") return tabsRow("tuner", true) + otherTab();
+  if (!r) return tabsRow("tuner", true) + '<div class="banner info">No radio on this box.</div>';
+  const eligible = S.radios.filter(x => x.role === "general" || x.role === "listen");
+  return tabsRow("tuner", true) + `
+    <div class="pick"><span>on</span>
+      <select onchange="moveJob('listen',this.value)">
+        ${S.radios.map(x => `<option value="${x.ser}" ${x === r ? "selected" : ""}>${esc(x.name)}${x.attached ? "" : " — not attached"}${x.role !== "general" && x.role !== "listen" ? " — reserved for " + JOBS[x.role] : ""}</option>`).join("")}
+      </select></div>
+    ${eligible.length === 0 ? '<div class="banner bad"><b>No radio available.</b> Every attached radio is dedicated to a service.</div>' : ""}
+    ${r.job === "aprs" ? `<div class="banner warn"><b>${esc(r.name)} is logging APRS.</b> Release it to listen here, or pick the other radio.
+      <button class="cta" onclick="setJob('${r.ser}','listen')">Release &amp; listen</button></div>`
+      : r.job === "spectrum" ? `<div class="banner warn"><b>${esc(r.name)} is sweeping.</b> ${r.left} left.</div>`
+      : !r.attached ? `<div class="banner bad"><b>${esc(r.name)} is not attached.</b></div>`
+      : tuningCluster(r) + `<div class="transport" style="margin-top:8px">
+          <button onclick="${SEC(r.sec).hf ? `alert('Shortwave cannot be swept.')` : `setJob('${r.ser}','spectrum')`}">See the band</button></div>` + expertBlock(r)}`;
+}
+
+// ---------------------------------------------------------------------------------
+// SHAPE C — one console. No detail level; per-radio panels that expand in place.
+// ---------------------------------------------------------------------------------
+function shapeC(){
+  if (S.tab !== "radios") return tabsRow("radios") + otherTab();
+  return tabsRow("radios") + `
+    ${!S.scanOk ? '<div class="banner warn">The USB scan could not be reached — whether each radio is attached is <b>unknown</b>.</div>' : ""}
+    ${S.radios.map(r => { const st = stateLine(r); const open = S.open === r.ser; return `
+      <div class="panel">
+        <div class="phead" onclick="S.open='${open ? "" : r.ser}';draw()">
+          <span class="dot ${st.dot}"></span>
+          <span><span class="rname">${esc(r.name)}</span><br><span class="rdesc">${st.text}</span></span>
+          <span class="caret">${open ? "⌄" : "›"}</span></div>
+        ${open ? `<div class="pbody">${jobRow(r)}<div style="margin-top:14px">${jobSurface(r)}</div></div>` : ""}
+      </div>`; }).join("")}
+    <p class="foot">Everything on one surface — no level to climb back out of. Only one radio opens at a time, so a long page never gets longer than one panel.</p>`;
+}
+
+// --- chrome shared by the shapes ---------------------------------------------------
+function tabsRow(first, jobFirst){
+  const tabs = jobFirst ? [["tuner","Tuner"],["aprs","APRS"],["recordings","Recordings"]]
+                        : [["radios","Radios"],["aprs","APRS"],["recordings","Recordings"]];
+  return `<div class="scr-top"><button class="chev">‹</button><span class="scr-title">Radio</span></div>
+    <div class="tabs">${tabs.map(([id,label]) =>
+      `<button aria-selected="${S.tab === id}" onclick="switchTab('${id}')">${label}</button>`).join("")}</div>`;
+}
+function otherTab(){
+  if (S.tab === "aprs"){
+    const r = byJob("aprs");
+    return `${r ? `<div class="banner ${r.lastHeard === "41m" ? "bad" : "info"}">
+        ${r.lastHeard === "41m" ? "<b>Armed but deaf.</b> Logging on 144.390 for 2h 14m and nothing decoded for 41 minutes."
+          : `<b>Logging on 144.390</b> — heard ${r.lastHeard} ago, on ${esc(r.name)}.`}</div>`
+      : '<div class="banner info">APRS logging is off. Turn it on from a radio.</div>'}
+      <div class="card"><div class="rowtop"><span class="rname">KE8XYZ-9</span><span class="rser">12s ago</span></div>
+        <p class="rdesc">Position · 3 mi NE · 34 mph</p></div>
+      <div class="card"><div class="rowtop"><span class="rname">W8ABC-1</span><span class="rser">4m ago</span></div>
+        <p class="rdesc">Weather · 61°F · wind 6 mph</p></div>
+      <p class="foot">The log spans radios — it is not a property of one, which is why it stays a tab in all three shapes.</p>`;
+  }
+  return `<div class="card"><div class="rowtop"><span class="rname">146.940 FM</span><span class="rser">6m ago</span></div>
+      <p class="rdesc">4m 12s · transcribed</p></div>
+    <p class="foot">The library spans radios too.</p>`;
+}
+
+// --- actions ----------------------------------------------------------------------
+function setShape(s){ S.shape = s; S.open = null; S.sheet = null;
+  S.tab = (s === "B") ? "tuner" : "radios";
+  ["A","B","C"].forEach(x => document.getElementById("s"+x).setAttribute("aria-pressed", String(x === s)));
+  draw(); }
+function switchTab(t){ S.tab = t; S.open = null; draw(); }
+function openSheet(ser){ S.sheet = ser; draw(); }
+function pickBand(ser, id){
+  const r = RAD(ser), s = SEC(id);
+  r.sec = id; r.hz = +( (s.lo + s.hi) / 2 ).toFixed(3); r.mode = s.mode; S.sheet = null; draw();
+}
+function nudge(ser, dir){ const r = RAD(ser); r.hz = +(r.hz + dir * SEC(r.sec).step / 1000).toFixed(4); draw(); }
+function setMode(ser, m){ RAD(ser).mode = m; draw(); }
+function setJob(ser, j){
+  const r = RAD(ser);
+  if (j !== "idle" && jobAllowed(r, j)) return;
+  r.job = j;
+  if (j === "spectrum") r.left = "2m 40s";
+  draw();
+}
+function moveJob(job, ser){
+  S.radios.forEach(r => { if (r.job === job) r.job = "idle"; });
+  const r = RAD(ser);
+  if (!jobAllowed(r, job)) r.job = job;
+  draw();
+}
+function setState(i){ stateIx = i; const keep = S.shape; STATES[i][1](); S.shape = keep;
+  S.tab = keep === "B" ? "tuner" : "radios"; draw(); }
+
+// --- render -----------------------------------------------------------------------
+const NOTES = {
+A:`<h3>A · The radio is the object</h3>
+<p>Tabs become <strong>Radios | APRS | Recordings</strong>. The first tab is the roster — what each radio is doing, on one screen. Tapping one pushes its control layer, and <strong>that</strong> is where its job is chosen.</p>
+<p><strong>Better at:</strong> it is the only shape where "what is the box doing" has a resting answer in one place, which is exactly what the second dongle made possible. Every radio gets the same shape whatever job it holds. A fourth service later is a new option in an existing list, not a new tab.</p>
+<p><strong>Costs:</strong> one extra tap to reach the tuner, and it dissolves the Tuner tab. And it <strong>re-opens a decided round</strong> — <code>c-single-dongle.html</code> chose "a switch in the APRS tab" and rejected a radio-wide mode selector. That was decided on a one-dongle box.</p>`,
+B:`<h3>B · The job is the object</h3>
+<p>Today's tabs stay exactly as they are. Each grows one line at the top: <strong>on [ radio ▾ ]</strong>. Spectrum becomes a button inside the Tuner tab.</p>
+<p><strong>Better at:</strong> it re-opens nothing, it is the least new navigation, and it costs zero extra taps for the commonest act — open Radio, type a frequency. Smallest build by a distance, and the Tuner tab stays a literal one-to-one of the omnibox sheet.</p>
+<p><strong>Costs:</strong> there is <strong>no screen that shows both radios at once</strong>, so "what is the box doing" has to be assembled from two tabs. The picker mostly does nothing — two entries, usually one legal — and has to render three awkward states inline. A fourth service needs a fourth tab, and the tab bar has no room.</p>`,
+C:`<h3>C · One console</h3>
+<p>No detail level at all. The first tab is a scrolling column of per-radio panels, each collapsed to a summary and expanding in place. One open at a time.</p>
+<p><strong>Better at:</strong> zero navigation — nothing to climb back out of, no "which screen am I on". Comparing the two radios is a scroll, not a round trip, which is genuinely nice when re-cabling antennas or working out which one has gone deaf.</p>
+<p><strong>Costs:</strong> it collides with DESIGN.md, which assigns inline expansion to "row-level detail that doesn't warrant navigation" — a live tuner plus a spectrum plus a dozen settings is not that. The tuning cluster ends up <strong>mid-page inside a scroller</strong>, so the thumb position depends on scroll offset, against "primary actions live in the bottom half". Degrades at three radios.</p>`};
+
+function draw(){
+  const shape = {A:shapeA, B:shapeB, C:shapeC}[S.shape];
+  document.getElementById("phone").innerHTML = shape() + (S.sheet ? bandSheet(S.sheet) : "");
+  document.getElementById("note").innerHTML = NOTES[S.shape] + `
+    <h3>Identical in all three</h3>
+    <p><strong>The band picker is the front door.</strong> Tap the band button to see the 32 curated sections — each carrying its own mode, step and channel spacing. Typing a frequency is at the bottom of that sheet, not on the main surface.</p>
+    <p><strong>Shortwave is drawn honestly.</strong> Pick a shortwave section and Advanced says gain is unavailable — the tuner is powered down below 24 MHz — and Sweep refuses, because <code>rtl_power</code> hardcodes the ADC branch this hardware does not wire.</p>
+    <p><strong>Dedication binds the tuner too.</strong> Long wire is reserved for APRS, so its other jobs are disabled with the reason on the control. Unplug it and APRS <em>waits</em> rather than moving to the whip.</p>`;
+  document.getElementById("states").innerHTML = STATES.map(([label], i) =>
+    `<button aria-pressed="${i === stateIx}" onclick="setState(${i})">${esc(label)}</button>`).join("");
+}
+setState(0);
+</script>
+</body></html>

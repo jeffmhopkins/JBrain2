@@ -23,10 +23,11 @@ import httpx
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext
+from jbrain.sdr import bands
 from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import refusal
 from jbrain.sdr.roles import GENERAL, Choice
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
+from jbrain.sdr.tuner import out_of_range
 
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
@@ -40,7 +41,7 @@ _BROADCAST_FM = (88.0, 108.0)
 # only because it is where traffic actually is; a private command frequency is an
 # owner decision the plan holds open (APRS_CONTROL_PLAN.md §7).
 PURPOSE_APRS = "aprs"
-APRS_DEFAULT_MHZ = 144.39
+APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
 
 def _default_mode(mhz: float) -> str:
@@ -101,8 +102,9 @@ def build_sdr_handlers(
             mhz = float(arguments.get("frequency_mhz") or 0)
         except (TypeError, ValueError):
             return "That frequency isn't a number — give it in MHz, like 99.3."
-        if not MIN_MHZ < mhz < MAX_MHZ:
-            return f"{mhz} MHz is outside what this radio can tune ({MIN_MHZ}–{MAX_MHZ} MHz)."
+        refusal = out_of_range(mhz)
+        if refusal:
+            return refusal
 
         mode = str(arguments.get("mode") or _default_mode(mhz)).lower()
         if mode not in MODES:
@@ -195,8 +197,9 @@ def build_sdr_handlers(
             mhz = float(arguments.get("frequency_mhz") or APRS_DEFAULT_MHZ)
         except (TypeError, ValueError):
             return "That frequency isn't a number — give it in MHz, like 144.39."
-        if not MIN_MHZ < mhz < MAX_MHZ:
-            return f"{mhz} MHz is outside what this radio can tune ({MIN_MHZ}-{MAX_MHZ} MHz)."
+        refusal = out_of_range(mhz)
+        if refusal:
+            return refusal
 
         # Which radio, before taking one. This is the conversational path to logging,
         # so without it "turn APRS on" opens whichever radio enumerated first while the

@@ -141,7 +141,38 @@ async def test_an_out_of_range_frequency_never_reaches_the_radio(tools) -> None:
     out = await tools(handler)["sdr_listen"]({"frequency_mhz": 5000}, None)
 
     assert not called
-    assert "outside what this radio can tune" in out
+    # Says which END it is outside. Quoting the whole 0.1-1766 range would invite the
+    # reader to conclude the radio is one thing that tunes all of it, and it is two.
+    assert "above what this radio reaches" in out
+
+
+async def test_shortwave_is_no_longer_refused(tools) -> None:
+    """It was, by a floor of 24 MHz that described the TUNER rather than the radio. The
+    NESDR SMArt v5 feeds HF to the ADC directly through an on-board diplexer, so 10 MHz
+    is a frequency this hardware can actually receive."""
+    seen: list[dict] = []
+
+    def handler(_p, body):
+        seen.append(body or {})
+        return _ok({"session_id": "s1", "frequency_hz": 10_000_000})
+
+    await tools(handler)["sdr_listen"]({"frequency_mhz": 10.0, "mode": "am"}, None)
+
+    assert seen and seen[0]["frequency_hz"] == 10_000_000
+
+
+async def test_below_the_ADC_is_still_refused(tools) -> None:
+    called = False
+
+    def handler(_p, _b):
+        nonlocal called
+        called = True
+        return _ok({})
+
+    out = await tools(handler)["sdr_listen"]({"frequency_mhz": 0.05}, None)
+
+    assert not called
+    assert "below what this radio reaches" in out
 
 
 async def test_a_non_numeric_frequency_is_refused_kindly(tools) -> None:
