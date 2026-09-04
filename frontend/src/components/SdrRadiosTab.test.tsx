@@ -6,13 +6,28 @@
 // radio: a job offered on a radio that may not take it, a switch that silently stops
 // something the owner armed, and a tap the api quietly serves from a different dongle.
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
 import { resetBands } from "../sdrBands";
 import { resetSdrSession } from "../sdrSession";
 import { resetSdrSpectrum } from "../sdrSpectrum";
 import { SdrRadiosTab } from "./SdrRadiosTab";
+
+/** The stream the store opens, held so a test can deliver a row through it — the same
+ *  path a real one takes, rather than a second way of getting a row in. */
+class FakeSource {
+  static last: FakeSource | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = 1;
+
+  constructor() {
+    FakeSource.last = this;
+  }
+
+  close(): void {}
+}
 
 const WHIP = "09022796";
 const WIRE = "77192819";
@@ -79,18 +94,19 @@ function box(radios: ReturnType<typeof radio>[], sessions: ReturnType<typeof ses
   } as never);
 }
 
+/** Push one row through the real store, as the SSE stream would. */
+function row(over: Record<string, unknown>): void {
+  const stream = (globalThis as { EventSource?: { last?: FakeSource } }).EventSource?.last;
+  stream?.onmessage?.(new MessageEvent("message", { data: JSON.stringify(over) }));
+}
+
 function show() {
   return render(<SdrRadiosTab tick={0} log={null} onOpenAprs={() => {}} />);
 }
 
 beforeEach(() => {
   vi.spyOn(api, "getSdrBands").mockResolvedValue(BANDS as never);
-  vi.stubGlobal(
-    "EventSource",
-    class {
-      close(): void {}
-    },
-  );
+  vi.stubGlobal("EventSource", FakeSource);
 });
 
 afterEach(() => {
@@ -170,6 +186,35 @@ describe("giving a radio a job", () => {
     fireEvent.click(await screen.findByText(/FM broadcast · The dial/));
 
     await waitFor(() => expect(start).toHaveBeenCalledWith({ section: "fm-broadcast" }, WIRE));
+  });
+
+  it("reports the band the radio GRANTED, not the one that was asked for", async () => {
+    // MEASURED on the box: 88-108 at 25 kHz came back as 1032 bins of 19531 Hz covering
+    // 88.000-108.156, because rtl_power grants the largest power-of-two division of its
+    // per-hop bandwidth no coarser than the request and its blocks tile past the top
+    // edge. The button read "25 kHz bins, 88.000-108.000" directly above a picture whose
+    // own axis said otherwise — two numbers for one measured fact, the wrong one bigger.
+    box(
+      [radio(WHIP, { name: "Desk whip" })],
+      [
+        session({
+          purpose: "spectrum",
+          serial: WHIP,
+          sweep: { start_hz: 88_000_000, stop_hz: 108_000_000, bin_hz: 25_000, seconds: 60 },
+        }),
+      ],
+    );
+
+    show();
+    await open("Desk whip");
+    // Before a row arrives there is nothing better than the request to show.
+    expect(await screen.findByText(/88.000–108.000 MHz · 25.0 kHz bins/)).toBeInTheDocument();
+
+    act(() => {
+      row({ start_hz: 88_000_000, bin_hz: 19_531, db: new Array(1032).fill(-50) });
+    });
+
+    expect(await screen.findByText(/88.000–108.156 MHz · 19.5 kHz bins/)).toBeInTheDocument();
   });
 
   it("mounts the real transport for a listening radio, not a description of it", async () => {

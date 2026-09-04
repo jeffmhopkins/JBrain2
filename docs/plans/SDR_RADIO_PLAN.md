@@ -339,6 +339,28 @@ fraction of that second and a burst can fall between visits. The tab prints the 
 `duty` from the server, because a waterfall that hid that would look identical to one
 that could not miss anything.
 
+**CONFIRMED ON THE BOX 2026-09-04**, on the general dongle while APRS kept logging on
+the dedicated one. What the measurement settled, in order of how much it was a guess:
+
+- **rtl_power streams.** Rows reached the PWA within a second or two of starting, so the
+  `stdbuf -oL` insurance was never load-bearing — but it stays, because what was tested
+  is a binary apt installed, not one this repo builds.
+- **The stitching model is the tool's own.** 8 blocks per interval across 88-108 MHz, all
+  carrying one timestamp, constant width for 60 intervals — which is exactly the shape
+  `Stitch` assumes, including that the learned width lets every frame after the first
+  land on its last block rather than on the next interval.
+- **The colour scale lands where it has to.** Calibrating over the first 8 frames of the
+  real numbers gives low −7.2 dB / high +14.9 dB; the noise floor (p50 −4.7) sits at
+  t=0.11 — dark blue — and the four strongest stations at t=0.69-0.87 — steel through
+  amber, with headroom above. No adjustment was needed, which is the outcome the
+  percentiles were borrowed from `waterfall_png` to get.
+- **What the radio grants is not what it was asked for.** A request for 88.000-108.000 at
+  25 kHz came back as **1032 bins of 19531 Hz covering 88.000-108.156** — the largest
+  power-of-two division of the per-hop bandwidth, and blocks that tile past the top edge.
+  The band button printed the REQUEST directly above a picture whose axis printed the
+  grant; it now reports the grant as soon as a row has arrived. Two numbers for one
+  measured fact, and the more prominent one was the wrong one.
+
 Three decisions worth keeping:
 
 - **The colour scale is calibrated once, then held.** Re-taking it per row renormalises
