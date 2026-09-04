@@ -47,7 +47,7 @@ from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -186,7 +186,7 @@ async def listen(
     request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
@@ -608,7 +608,7 @@ async def aprs_logging(
     settings: SettingsDep,
     _owner: OwnerDep,
     enabled: Annotated[bool, Query()],
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)] = APRS_DEFAULT_MHZ,
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = APRS_DEFAULT_MHZ,
 ) -> dict[str, Any]:
     """Turn APRS logging on or off. 409 when something else holds the radio.
 
@@ -685,7 +685,7 @@ async def _health(base: str) -> dict[str, Any] | None:
 async def tune(
     settings: SettingsDep,
     _owner: OwnerDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str | None, Query(pattern=f"^({'|'.join(MODES)})$")] = None,
     session_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> dict[str, Any]:

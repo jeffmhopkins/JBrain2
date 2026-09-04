@@ -18,7 +18,7 @@ import re
 
 import pytest
 
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, serials_in
+from jbrain.sdr.tuner import DIRECT_MIN_MHZ, MAX_MHZ, MIN_MHZ, serials_in
 
 _SIDECAR = pathlib.Path(__file__).resolve().parents[3] / "deploy" / "sdr" / "listen.py"
 
@@ -38,6 +38,10 @@ def _constant(name: str) -> int:
 def test_the_api_refuses_exactly_what_the_sidecar_refuses() -> None:
     assert _constant("MIN_HZ") == MIN_MHZ * 1_000_000
     assert _constant("MAX_HZ") == MAX_MHZ * 1_000_000
+    # The SECOND range, added when HF landed. It is the same class of duplicate and the
+    # same class of silent failure: a sidecar that disagreed here would refuse a
+    # shortwave frequency the api had already accepted, as a 502 rather than a bound.
+    assert _constant("DIRECT_MIN_HZ") == DIRECT_MIN_MHZ * 1_000_000
 
 
 def test_no_source_file_writes_the_tuner_range_as_a_literal() -> None:

@@ -38,7 +38,8 @@ pipeline. The work is a sidecar, a device lease, a launcher screen, and five too
 
 **Nooelec NESDR SMArt v5** — RTL2832U + R820T2/R860, 0.5 PPM TCXO, SMA female,
 **receive only**, one tuner, ~2.4 MHz usable instantaneous bandwidth (3.2 max), 8-bit
-ADC. Native tuner range 24 MHz – 1.766 GHz — but the unit is **sold as 100 kHz–1.75 GHz**,
+ADC. Native tuner range 24 MHz – 1.766 GHz, and **HF below that is reached by bypassing
+the tuner** (shipped 2026-09-04) — the unit is **sold as 100 kHz–1.75 GHz**,
 because the RTL2832U's ADC can be fed directly, bypassing the R820T2, which is how any
 RTL-SDR reaches HF. So HF is a software gap here rather than a missing part: nothing in
 `deploy/sdr/` passes a direct-sampling flag, and `MIN_HZ`/`MIN_MHZ` block the range
@@ -543,11 +544,19 @@ is flat because whisper.cpp pads every clip to a 30 s window. Residency is still
 ## 9. Out of scope (named, not silently dropped)
 
 - **Transmit.** The hardware cannot, and the tools will not pretend otherwise.
-- **HF below 24 MHz.** Out of scope for reach, NOT because the hardware lacks it: this
-  unit is sold as 100 kHz–1.75 GHz and the ADC can be fed directly. What is missing is
-  ours — a direct-sampling flag through `deploy/sdr/`, a lowered `MIN_HZ`, and an
-  antenna. Whether `rtl_power` (as opposed to `rtl_fm`) can even be put into that mode
-  is unverified and would decide whether the SWEEP reaches HF or only listening does.
+- **HF below 24 MHz — LISTENING SHIPPED 2026-09-04; SWEEPING NEVER WILL.** The open
+  question here ("whether `rtl_power` can even be put into that mode") is answered, and
+  the answer is no. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` — the
+  ADC's **I branch** — while the NESDR SMArt v5 wires **Q** through its on-board
+  diplexer (Nooelec's datasheet block diagram; no hardware mod, which is what makes this
+  a software gap rather than a hardware one). `rtl_fm` lets the branch be chosen, so
+  `-E direct2` reaches it and listening works. Sweeping would need a patched C tool and
+  therefore a compiler in the image, and is deferred.
+  The range is modelled as **two paths, not one lower floor** (`jbrain/sdr/tuner.py`):
+  below the tuner it is powered down entirely, so there is **no gain control** at all,
+  and above 14.4 MHz — the first Nyquist zone at the ADC's 28.8 MHz — signals arrive
+  **mirrored** with the sidebands swapped. All three facts are carried in the band table
+  rather than discovered as failures.
 - **Trunked / P25 systems.** Needs OP25 or trunk-recorder — a substantially larger lift.
   Worth knowing that much local public-safety traffic is now trunked and often
   encrypted, so S0 may find little clear voice depending on the county. Encrypted

@@ -76,7 +76,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1837,7 +1837,7 @@ async def sdr_capture(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     seconds: Annotated[float, Query(ge=0.5, le=120.0)] = 8.0,
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "fm",
     gain: Annotated[str | None, Query()] = None,
@@ -1933,7 +1933,7 @@ async def sdr_listen_debug(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    frequency_mhz: Annotated[float, Query(gt=MIN_MHZ, lt=MAX_MHZ)],
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str, Query(pattern="^(fm|nfm|wbfm|am|usb|lsb)$")] = "wbfm",
 ) -> dict[str, Any]:
     """Take the radio and start listening — the debug twin of `POST /api/sdr/listen`.

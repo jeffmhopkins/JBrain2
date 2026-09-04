@@ -19,8 +19,53 @@ reaches today, and lowering it alone would only move the refusal one layer down.
 
 from __future__ import annotations
 
+#: What the R820T2 TUNER reaches. Above this the signal goes through the tuner and has a
+#: gain control; below it the tuner is powered down entirely.
 MIN_MHZ = 24.0
 MAX_MHZ = 1766.0
+
+#: What the RTL2832U's ADC reaches with the tuner bypassed — the NESDR SMArt v5's
+#: on-board diplexer feeds HF straight to the **Q branch** (`rtl_fm -E direct2`).
+#: Nooelec's datasheet block diagram shows the wiring; no hardware mod is involved.
+#: The two ranges MEET at `MIN_MHZ` rather than leaving a gap, so everything from here
+#: to `MAX_MHZ` is reachable — by one path or the other.
+DIRECT_MIN_MHZ = 0.1
+
+#: The floor of everything this radio can reach, either way. Not a replacement for
+#: `MIN_MHZ`: the two ranges are DIFFERENT SIGNAL PATHS, and code that needs to know
+#: which one a frequency uses must ask `direct_sampling`, never compare against this.
+TUNABLE_MIN_MHZ = DIRECT_MIN_MHZ
+
+
+def direct_sampling(mhz: float) -> bool:
+    """Whether this frequency is reached with the tuner bypassed.
+
+    Three consequences follow, and every one of them is a thing the UI must not offer:
+    there is **no gain control** (the tuner is powered down, so `-g` writes to a chip
+    that is not listening); **`rtl_power` cannot sweep it**, because it hardcodes direct
+    sampling mode 1 — the I branch — while this hardware wires Q; and above 14.4 MHz the
+    signal arrives **mirrored**, because the ADC samples at 28.8 MHz and that is where
+    the first Nyquist zone ends."""
+    return mhz < MIN_MHZ
+
+
+def tunable(mhz: float) -> bool:
+    """Whether the radio can reach this frequency at all, by either path."""
+    return DIRECT_MIN_MHZ <= mhz <= MAX_MHZ
+
+
+def out_of_range(mhz: float) -> str | None:
+    """Why this frequency cannot be tuned, or None. One sentence, for an operator.
+
+    Says which END it is outside rather than quoting the whole range, because "0.1 to
+    1766" invites the reader to conclude the radio is one thing that tunes all of it —
+    and the interesting fact about a frequency near the bottom is which path it takes,
+    not that it is legal."""
+    if mhz > MAX_MHZ:
+        return f"{mhz:g} MHz is above what this radio reaches ({MAX_MHZ:g} MHz)."
+    if mhz < DIRECT_MIN_MHZ:
+        return f"{mhz:g} MHz is below what this radio reaches ({DIRECT_MIN_MHZ:g} MHz)."
+    return None
 
 
 def serials_in(usb_payload: object) -> list[str] | None:
