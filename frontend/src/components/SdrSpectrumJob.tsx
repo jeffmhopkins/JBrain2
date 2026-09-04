@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import { mhz } from "../mhz";
+import { khz, mhz } from "../mhz";
 import {
   type BandSection,
   type SdrBands,
@@ -22,7 +22,13 @@ import {
   sectionAt,
 } from "../sdrBands";
 import type { SdrListening } from "../sdrSession";
-import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
+import {
+  type SpectrumRow,
+  sdrSpectrum,
+  startSdrSpectrum,
+  stopSdrSpectrum,
+  subscribeSdrSpectrum,
+} from "../sdrSpectrum";
 import { SdrBandSheet } from "./SdrBandSheet";
 import { SdrWaterfall } from "./SdrWaterfall";
 
@@ -40,6 +46,11 @@ export function SdrSpectrumJob({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bands, setBands] = useState<SdrBands | null>(null);
+  // The newest row, for the band button. React state and not a ref: it changes once a
+  // second and re-renders two lines of text, which is nothing — the CANVAS is what
+  // reads rows imperatively, and it subscribes on its own.
+  const [row, setRow] = useState<SpectrumRow | null>(() => sdrSpectrum().latest);
+  useEffect(() => subscribeSdrSpectrum((next) => setRow(next.latest)), []);
 
   useEffect(() => {
     let alive = true;
@@ -104,7 +115,7 @@ export function SdrSpectrumJob({
         </p>
       )}
 
-      <BandButton section={section} session={session} onOpen={() => setSheet(true)} />
+      <BandButton section={section} session={session} row={row} onOpen={() => setSheet(true)} />
 
       {session ? (
         <>
@@ -140,35 +151,42 @@ export function SdrSpectrumJob({
 function BandButton({
   section,
   session,
+  row,
   onOpen,
 }: {
   section: BandSection | null;
   session: SdrListening | null;
+  /** The newest waterfall row, once one has arrived. */
+  row: SpectrumRow | null;
   onOpen: () => void;
 }) {
-  const sweep = session?.sweep;
+  // WHAT THE RADIO GRANTED, not what was asked for. `session.sweep` is the request;
+  // rtl_power answers it with the largest power-of-two division of its per-hop
+  // bandwidth no coarser than that, and the blocks then tile slightly past the top
+  // edge. Measured on the box: a request for 88.000-108.000 at 25 kHz came back as
+  // 1032 bins of 19531 Hz covering 88.000-108.156 — so the button read "25 kHz bins,
+  // 88.000-108.000" directly above a picture whose own axis said otherwise. Two
+  // numbers for one measured fact, and the more prominent one was the wrong one.
+  const shown = row
+    ? { start_hz: row.startHz, stop_hz: row.stopHz, bin_hz: row.binHz }
+    : session?.sweep;
   return (
     <button type="button" className="band" onClick={onOpen}>
       <span className="bband">
         <span className="bt">
           {section
             ? `${section.band} · ${section.name}`
-            : sweep
+            : shown
               ? "Hand-entered range"
               : "Choose a band"}
         </span>
         <span className="bd">
-          {sweep
-            ? `${mhz(sweep.start_hz)}–${mhz(sweep.stop_hz)} MHz · ${khz(sweep.bin_hz)} kHz bins`
+          {shown
+            ? `${mhz(shown.start_hz)}–${mhz(shown.stop_hz)} MHz · ${khz(shown.bin_hz)} kHz bins`
             : "Nothing is being watched on this radio."}
         </span>
       </span>
       <span className="bcaret">›</span>
     </button>
   );
-}
-
-function khz(hz: number): string {
-  const at = hz / 1000;
-  return at >= 10 ? at.toFixed(0) : at.toFixed(1);
 }
