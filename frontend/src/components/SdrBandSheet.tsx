@@ -76,7 +76,7 @@ export function SdrBandSheet({
             <span className="bband">
               <span className="bt">Enter a frequency…</span>
               <span className="bd">
-                Anywhere from {mhz(bands.tuner_min_hz)} to {mhz(bands.tuner_max_hz)} MHz. Settings
+                Anywhere from {edge(bands.tuner_min_hz)} to {edge(bands.tuner_max_hz)} MHz. Settings
                 are inherited from whichever section it lands in.
               </span>
             </span>
@@ -123,7 +123,7 @@ function BandRow({
         <span className="bd">{refusal ?? duty ?? section.note}</span>
       </span>
       <span className="bhz">
-        {mhz(section.start_hz)}–{mhz(section.stop_hz)}
+        {edge(section.start_hz)}–{edge(section.stop_hz)}
       </span>
     </button>
   );
@@ -213,7 +213,10 @@ function ManualEntry({
   );
 }
 
-function mhz(hz: number): string {
+/** A range EDGE in a list, abbreviated on purpose — "88–108", not "88.000–108.000".
+ *  Deliberately not `mhz()`: this is a label for browsing, and the full precision that
+ *  matters when naming a channel is noise in a column of thirty-two of them. */
+function edge(hz: number): string {
   const at = hz / 1_000_000;
   if (at >= 100) return at.toFixed(0);
   if (at >= 1) return at.toFixed(1);

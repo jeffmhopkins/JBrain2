@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { mhz } from "../mhz";
 import { isSdrPlaying, subscribeSdrAudio, toggleSdrAudio } from "../sdrAudio";
 import {
   sdrCaptions,
@@ -56,10 +57,6 @@ interface ControlsProps {
   /** Called after Release succeeds. The sheet dismisses itself; the Radio screen's
    * Tuner tab has nothing to dismiss and simply falls back to its idle state. */
   onReleased: () => void;
-}
-
-function mhz(hz: number): string {
-  return (hz / 1_000_000).toFixed(3);
 }
 
 function elapsed(seconds: number): string {

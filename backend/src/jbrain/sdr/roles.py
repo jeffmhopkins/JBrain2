@@ -33,6 +33,16 @@ from dataclasses import dataclass
 #: radio of its own may all take it, one at a time.
 GENERAL = "general"
 
+#: What to call a job in a refusal. `.get` with the id as its own fallback, because a
+#: stored role this build does not recognise still RESERVES the radio (`_generals`
+#: excludes anything that is not GENERAL) — so the sentence has to name it rather than
+#: crash on it or, worse, call it general use.
+JOB_LABEL = {GENERAL: "general use", "aprs": "APRS logging"}
+
+
+def job_label(job: str) -> str:
+    return JOB_LABEL.get(job, job)
+
 
 @dataclass(frozen=True, slots=True)
 class Radio:
@@ -66,7 +76,9 @@ class Choice:
 
     serial: str | None
     reason: str
-    """One of: `dedicated`, `general`, `waiting`, `ambiguous`, `none`."""
+    """One of: `dedicated`, `general`, `named`, `waiting`, `ambiguous`, `reserved`,
+    `none`. The last four are the ones the OWNER has to act on (`resolve.OWNER_MUST_ACT`);
+    the first three are a radio to go ahead with."""
     detail: str
     """A sentence for the operator, naming radios the way they named them."""
 
@@ -169,6 +181,42 @@ def choose(
         if live
         else "No radio attached.",
     )
+
+
+def named(
+    radios: Mapping[str, Radio],
+    attached: Sequence[str],
+    want: str,
+    serial: str,
+) -> Choice:
+    """May THIS radio take this job? The owner pointed at one.
+
+    `choose` answers "which radio should do this"; this answers "may that one". Both are
+    needed and neither is the other. The launcher's chosen shape makes the RADIO the
+    object, so a tap on a radio is a decision the api has to honour or refuse BY NAME —
+    quietly running the job on a different one is the same substitution this module
+    exists to prevent, reached from the opposite direction. A refusal that named no
+    radio would be just as bad: the owner tapped a specific card.
+
+    **A radio the owner has not described yet is general use**, exactly as `_generals`
+    treats it: plugging in a new dongle must not need a settings visit before anything
+    works, and that has to hold whether the radio was chosen for you or by you.
+
+    **Being BUSY is not refused here.** The sidecar holds one session per radio and
+    answers with a 409 naming the job that has it — a better sentence than anything this
+    could compose from a serial list, and the only one that cannot already be stale by
+    the time the caller reads it."""
+    known = radios.get(serial) or Radio(serial=serial)
+    if serial not in set(attached):
+        return Choice(None, "waiting", f"{known.label} is not attached.")
+    if known.role != GENERAL and known.role != want:
+        return Choice(
+            None,
+            "reserved",
+            f"{known.label} is reserved for {job_label(known.role)}. Free it in "
+            f"Settings → Radios, or pick another radio.",
+        )
+    return Choice(serial, "named", f"Using {known.label}, as asked.")
 
 
 def conflicts(radios: Mapping[str, Radio]) -> dict[str, list[str]]:

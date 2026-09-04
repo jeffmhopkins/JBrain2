@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from jbrain.db.session import SessionContext
-from jbrain.sdr.roles import Choice, choose
+from jbrain.sdr.roles import Choice, choose, named
 from jbrain.sdr.tuner import serials_in
 
 
@@ -82,6 +82,7 @@ async def for_purpose(
     ctx: SessionContext,
     want: str,
     sdr_url: str | None = None,
+    serial: str | None = None,
 ) -> Choice:
     """Which radio `want` should open, and the sentence explaining it.
 
@@ -92,17 +93,30 @@ async def for_purpose(
     read as "the radio is busy".
 
     `sdr_url` is optional so a caller that has no sidecar to ask still gets a decision:
-    without it the answer is the same one a one-dongle box always got."""
+    without it the answer is the same one a one-dongle box always got.
+
+    `serial` is the owner pointing at a radio, and it switches the question from "which
+    one" to "may that one" (`roles.named`). It comes from a screen where the radio is the
+    object rather than from the model or a schedule, which is why it is honoured rather
+    than treated as a hint: a tap the api quietly overrode would be worse than a
+    refusal."""
     attached = await attached_serials(client, token)
     if attached is None:
-        return Choice(None, "unknown", "")
-    return choose(await store.sdr_radios(ctx), attached, want, await busy_serials(sdr_url))
+        # The scan could not see, so whether the named radio is attached is unknowable.
+        # Passing it through anyway is strictly better than the historical "whatever
+        # librtlsdr enumerates first": the owner named it, and if it is gone the sidecar
+        # fails on a device it can prove is missing rather than opening the wrong one.
+        return Choice(serial, "named", "") if serial else Choice(None, "unknown", "")
+    stored = await store.sdr_radios(ctx)
+    if serial:
+        return named(stored, attached, want, serial)
+    return choose(stored, attached, want, await busy_serials(sdr_url))
 
 
 #: Choices the caller cannot fix by retrying: the owner has to act. Every entry point
 #: that takes a radio turns these into a refusal naming the radio, rather than starting
 #: a session on a different one.
-OWNER_MUST_ACT = ("waiting", "ambiguous", "none")
+OWNER_MUST_ACT = ("waiting", "ambiguous", "none", "reserved")
 
 
 def refusal(choice: Choice) -> str | None:

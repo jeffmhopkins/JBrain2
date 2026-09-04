@@ -8,7 +8,7 @@ SMArt v5s attached, one of which had already moved node across a re-plug.
 
 from __future__ import annotations
 
-from jbrain.sdr.roles import GENERAL, Choice, Radio, choose, conflicts
+from jbrain.sdr.roles import GENERAL, Choice, Radio, choose, conflicts, named
 
 WHIP = "09022796"
 WIRE = "77192819"
@@ -206,3 +206,88 @@ class TestARadioSomeoneIsAlreadyOnIsNotAFreeOne:
         """The sidecar's list and the USB scan are read at different moments, so one can
         name a radio the other does not."""
         assert choose(self._two(), [self.WHIP], GENERAL, busy=["nosuchserial"]).serial == self.WHIP
+
+
+class TestARadioTheOwnerPointedAt:
+    """`choose` answers "which radio should do this"; `named` answers "may that one".
+
+    Both are needed and neither is the other. The launcher's chosen shape makes the
+    RADIO the object, so a tap on a radio card is a decision the api honours or refuses
+    BY NAME — running the job on a different radio would be the same silent substitution
+    this module exists to prevent, reached from the opposite direction.
+    """
+
+    def test_the_radio_asked_for_is_the_radio_used(self) -> None:
+        got = named(
+            _radios(Radio(WHIP, name="Desk whip"), Radio(WIRE, name="Long wire")),
+            [WHIP, WIRE],
+            GENERAL,
+            WIRE,
+        )
+
+        # Not `generals[0]`, which is what `choose` would have answered here: serial
+        # order picks the whip, and the owner tapped the wire.
+        assert got.serial == WIRE
+        assert "Long wire" in got.detail
+
+    def test_a_radio_the_owner_has_not_described_is_general_use(self) -> None:
+        # Plugging in a new dongle must not need a settings visit before anything works,
+        # and that has to hold whether the radio was chosen for you or by you.
+        got = named({}, [WHIP], GENERAL, WHIP)
+
+        assert got.serial == WHIP
+
+    def test_a_radio_reserved_for_something_else_is_refused_by_name(self) -> None:
+        got = named(
+            _radios(Radio(WHIP, name="Desk whip", role="aprs")),
+            [WHIP],
+            GENERAL,
+            WHIP,
+        )
+
+        assert got.serial is None
+        assert got.reason == "reserved"
+        assert "Desk whip" in got.detail
+        # The JOB in words, not the stored id: "reserved for aprs" reads like a bug.
+        assert "APRS logging" in got.detail
+
+    def test_a_radio_reserved_for_THIS_job_is_exactly_the_right_one(self) -> None:
+        got = named(
+            _radios(Radio(WHIP, name="Desk whip", role="aprs")),
+            [WHIP],
+            "aprs",
+            WHIP,
+        )
+
+        assert got.serial == WHIP
+
+    def test_an_unrecognised_role_still_reserves_the_radio(self) -> None:
+        # `_generals` excludes anything that is not GENERAL, so a role this build does
+        # not know still keeps the radio. The refusal has to name it rather than call it
+        # general use — or crash reaching for a label that is not in the map.
+        got = named(_radios(Radio(WHIP, name="Desk whip", role="ads-b")), [WHIP], GENERAL, WHIP)
+
+        assert got.serial is None
+        assert "ads-b" in got.detail
+
+    def test_a_radio_that_is_not_attached_is_refused_rather_than_replaced(self) -> None:
+        got = named(
+            _radios(Radio(WHIP, name="Desk whip"), Radio(WIRE, name="Long wire")),
+            [WHIP],
+            GENERAL,
+            WIRE,
+        )
+
+        assert got.serial is None
+        assert got.reason == "waiting"
+        # Named, because the owner tapped a specific card and "no radio available" would
+        # be false — the other one is right there.
+        assert "Long wire" in got.detail
+
+    def test_being_busy_is_left_to_the_lease(self) -> None:
+        """The sidecar holds one session per radio and answers with a 409 naming the job
+        that has it. That is a better sentence than anything composable from a serial
+        list, and the only one that cannot already be stale by the time it is read."""
+        got = named(_radios(Radio(WHIP, name="Desk whip")), [WHIP], GENERAL, WHIP)
+
+        assert got.serial == WHIP

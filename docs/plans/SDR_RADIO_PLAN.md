@@ -357,10 +357,41 @@ Three decisions worth keeping:
   1 — the ADC's I branch — while this hardware wires Q, so the band picker disables those
   rows with the reason on them rather than offering a tap that ends in a 400.
 
-**The Spectrum TAB is interim.** The launcher's chosen shape makes the radio the object,
-so a spectrum is one of the jobs chosen inside a radio. That restructure needs the api to
-honour a NAMED radio — `/sdr/spectrum` today takes whichever general radio `roles.py`
-picks — so it is its own wave, and the tab is built out of the pieces shape A wants.
+### S4d — the Radios tab, shape A ✅ *(shipped on-branch 2026-09-04)*
+
+**The radio is the object.** Tabs are `Radios | APRS | Recordings`; the first is a
+roster of what each radio is doing, and tapping one opens a control layer where its job
+— Listen / APRS / Spectrum / Idle — is chosen. The Tuner tab and the interim Spectrum
+tab are both gone: each was a place where a job lived apart from the radio running it,
+which is exactly the split shape A was chosen to remove.
+
+**A tap on a radio is honoured or refused BY NAME.** `roles.named` is the new half of
+`roles.py`: `choose` answers "which radio should do this", `named` answers "may that
+one". Both are needed and neither is the other — quietly serving the job from a
+different dongle is the same silent substitution the module already existed to prevent,
+reached from the opposite direction. `/sdr/listen`, `/sdr/spectrum` and `/sdr/aprs` all
+take an optional `serial`; omitting it keeps the old behaviour exactly.
+
+Three rules fall out of it, each one a sentence the owner reads rather than a 409:
+
+- **Dedication binds the tuner too.** A radio reserved for APRS is not one the waterfall
+  may borrow because APRS happens to be idle, so its other jobs are disabled with the
+  reason under the control — not only in a `title`, which a phone has no way to show.
+- **Busy is left to the lease.** The sidecar holds one session per radio and answers
+  with a 409 naming the job that has it, which is a better sentence than anything the
+  api could compose from a serial list and the only one that cannot already be stale.
+- **A named radio survives a scan that could not see.** There is then no way to check
+  whether it is attached — but the owner named it, and passing it through beats the
+  historical "whatever librtlsdr enumerates first": if it is gone the sidecar fails on a
+  device it can prove is missing rather than opening the other antenna.
+
+**Changing a radio's job frees it first**, and asks twice before doing so (DESIGN.md's
+inline confirm). One of the things a job change stops is an APRS log the owner may have
+armed on a schedule — the silent loss the sidecar's own `_stop` is written against.
+
+**The APRS switch moved with it** (`APRS_CONTROL_PLAN.md`, where the supersession is
+recorded): the APRS tab keeps its log, health line, roster and command tasks, and where
+the switch was it now carries a pointer. One state, never two switches.
 
 ## 6. Interfaces
 

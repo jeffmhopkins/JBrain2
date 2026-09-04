@@ -79,6 +79,12 @@ CAPTION_IDLE_S = 15.0
 # an error rather than a hung composer.
 _TIMEOUT = 30.0
 
+#: A radio the owner pointed at, or nothing at all. The pattern is narrow because this
+#: value becomes an argv token in the sidecar (`-d <serial>`), and the sidecar bounds it
+#: again for the same reason — a bound that lives only in the caller is not a bound once
+#: there is a second caller.
+SerialQuery = Annotated[str | None, Query(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+
 # How many command attempts the radio tab shows. Enough to see a burst of failures at a
 # glance; the whole history stays in the table.
 ATTEMPTS_SHOWN = 20
@@ -123,10 +129,16 @@ async def _attached(request: Request, settings: Any) -> list[str] | None:
     return await attached_serials(request.app.state.supervisor_client, settings.supervisor_token)
 
 
-async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> Choice:
+async def _radio_for(
+    request: Request, settings: Any, owner: Any, want: str, serial: str | None = None
+) -> Choice:
     """Which radio `want` should open. The rule and the plumbing are shared with the
     debug console and jerv's tools, because a rule enforced at one of three doors is
-    not enforced."""
+    not enforced.
+
+    `serial` is the owner pointing at a radio from a screen where the radio is the
+    object. It changes the question from "which one" to "may that one" — see
+    `roles.named` — and is honoured rather than treated as a hint."""
     return await for_purpose(
         request.app.state.supervisor_client,
         settings.supervisor_token,
@@ -134,6 +146,7 @@ async def _radio_for(request: Request, settings: Any, owner: Any, want: str) -> 
         ctx_for(owner),
         want,
         settings.sdr_url,
+        serial,
     )
 
 
@@ -189,12 +202,15 @@ async def listen(
     frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
+    serial: SerialQuery = None,
 ) -> dict[str, Any]:
-    """Take the radio and start listening. 409 when it is already held.
+    """Take a radio and start listening. 409 when it is already held.
 
-    Takes a GENERAL radio: one the owner reserved for a service is not one the tuner may
-    borrow while that service happens to be idle."""
-    chosen = await _radio_for(request, settings, _owner, GENERAL)
+    Naming none takes a GENERAL radio: one the owner reserved for a service is not one
+    the tuner may borrow while that service happens to be idle. Naming one is the
+    launcher asking for THAT radio, and it is refused by name rather than quietly
+    served from another."""
+    chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
     return await _post(
         settings,
@@ -615,6 +631,7 @@ async def aprs_logging(
     _owner: OwnerDep,
     enabled: Annotated[bool, Query()],
     frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = APRS_DEFAULT_MHZ,
+    serial: SerialQuery = None,
 ) -> dict[str, Any]:
     """Turn APRS logging on or off. 409 when something else holds the radio.
 
@@ -653,7 +670,7 @@ async def aprs_logging(
     # Which radio, before taking one. A dedicated dongle that is unplugged makes this a
     # 409 naming it, rather than APRS quietly moving to whatever else is plugged in —
     # the whole point of the setting, and invisible without this check.
-    chosen = await _radio_for(request, settings, _owner, APRS_PURPOSE)
+    chosen = await _radio_for(request, settings, _owner, APRS_PURPOSE, serial)
     _refuse(chosen)
     body = await _post(
         settings,
@@ -768,13 +785,15 @@ async def spectrum_start(
     stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
     bin_hz: Annotated[int | None, Query(ge=100, le=100_000)] = None,
     gain: Annotated[str | None, Query(max_length=16)] = None,
+    serial: SerialQuery = None,
 ) -> dict[str, Any]:
     """Take a radio and start drawing the band. 409 when every radio is held.
 
-    A GENERAL radio, like the tuner takes: one the owner reserved for a service is not
-    one a waterfall may borrow because that service is momentarily idle."""
+    Naming none takes a GENERAL radio, like the tuner: one the owner reserved for a
+    service is not one a waterfall may borrow because that service is momentarily idle.
+    Naming one is the launcher asking for THAT radio."""
     start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz, bin_hz)
-    chosen = await _radio_for(request, settings, _owner, GENERAL)
+    chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
     return await _post(
         settings,

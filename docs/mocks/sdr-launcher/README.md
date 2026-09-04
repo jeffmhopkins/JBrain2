@@ -1,6 +1,6 @@
 # Radio launcher — GUI gate round 1
 
-> **Status:** **CHOSEN — shape A** (2026-09-04) · **Last verified:** 2026-09-04
+> **Status:** **CHOSEN — shape A, and BUILT** (2026-09-04) · **Last verified:** 2026-09-04
 
 **Shape A is the binding spec.** The radio is the object: tabs become
 `Radios | APRS | Recordings`, the first is a roster of what each radio is doing, and
@@ -66,13 +66,13 @@ Three behaviours are drawn from measurement, not decoration:
 **Landscape**, which would be this app's first orientation-aware screen and is
 deliberately not proposed.
 
-Two things listed here as undecided have since been settled, both in
-`../../plans/SDR_RADIO_PLAN.md` S4c:
+Everything else listed here as undecided has since been settled, in
+`../../plans/SDR_RADIO_PLAN.md` S4c and S4d:
 
 - **The live spectrum's own surface** shipped 2026-09-04 as a 1 fps waterfall from
-  streamed `rtl_power`, built out of the pieces this shape wants — the band sheet, the
-  picture, and the session as the state. It is an interim TAB rather than a job inside a
-  radio, because shape A needs the api to honour a named radio and that is its own wave.
+  streamed `rtl_power`. It arrived as an interim tab and is now a **job inside a radio**,
+  where this shape puts it: S4d taught the api to honour a named radio (`roles.named`),
+  which is what the tab was waiting on.
 - **The waterfall's colour ramp** needed no new DESIGN.md token after all: it is
   `sweep.waterfall_png`'s ramp and percentiles, so a still image of a sweep and the live
   picture of the same band are the same picture.
