@@ -1242,3 +1242,84 @@ class TestBlockingKey:
         held = {"h", "c", "f", "a", "d", "g", "b", "e"}
 
         assert listen.blocking_key(held, listen.ANY_DEVICE) == "a"
+
+
+class TestHowASignalIsDemodulated:
+    """`demod_args` — the flags that decide what a station SOUNDS like.
+
+    Built in two places until now (a live session and the one-shot capture), which is
+    how `-d serial=` shipped wrong in both at once. These pin the three settings that
+    research showed were measurably wrong, each so that reverting it fails here.
+    """
+
+    def _args(self, mode: str, gain: str | None = None) -> list[str]:
+        return listen.demod_args(mode, gain)
+
+    def test_wide_FM_gets_enough_bandwidth_for_the_station_it_is_tuned_to(self) -> None:
+        """A broadcast station deviates ±75 kHz and carries audio to 53 kHz, so Carson
+        puts it near 190 kHz wide. rtl_fm's documented 171 kHz gives the demodulator
+        ±85.5 kHz and clips the station's OWN sidebands — distortion introduced in the
+        signal path, where nothing downstream can undo it."""
+        args = self._args("wbfm")
+
+        assert args[args.index("-s") + 1] == "192000"
+        # Carson, for ±75 kHz deviation plus 53 kHz of audio.
+        assert int(args[args.index("-s") + 1]) >= 190_000
+
+    def test_the_wide_FM_rates_divide_EXACTLY(self) -> None:
+        """rtl_fm resamples with `low_pass_real`, whose factor is the INTEGER
+        `rate_in / rate_out`. 171000/16000 = 10.6875 truncates to 10: the output runs
+        6.9% fast and each sample averages a count that alternates between 10 and 11 —
+        a per-sample gain wobble on every wide-FM capture ever taken here."""
+        args = self._args("wbfm")
+        rate_in = int(args[args.index("-s") + 1])
+        rate_out = int(args[args.index("-r") + 1])
+
+        assert rate_in % rate_out == 0, f"{rate_in}/{rate_out} does not divide exactly"
+
+    def test_AM_strips_the_carrier_pedestal(self) -> None:
+        """An AM carrier is a DC offset after envelope detection. Left in, it eats
+        headroom and reaches whisper as a bias on every sample."""
+        assert "-E" in self._args("am") and "dc" in self._args("am")
+
+    def test_FM_does_NOT_get_the_DC_filter(self) -> None:
+        """A discriminator's output is already centred, so this would be a filter with
+        nothing to remove — and `-E dc` is not free: it is a one-pole high-pass that
+        would eat the low end of voice."""
+        for mode in ("fm", "nfm", "wbfm"):
+            assert "dc" not in self._args(mode)
+
+    def test_every_mode_gets_the_real_decimation_filter(self) -> None:
+        """rtl_fm's default is a BOXCAR — an unweighted sum whose first sidelobe is only
+        ~13 dB down — so a strong neighbour a few channels away leaks into whatever you
+        are tuned to. `-F 9` is cascaded half-bands at the SAME bandwidth, which makes
+        it the one filter improvement that costs no selectivity to buy."""
+        for mode in sorted(listen.MODES):
+            args = self._args(mode)
+            assert args[args.index("-F") + 1] == "9", mode
+
+    def test_gain_is_passed_through_and_omitting_it_means_AGC(self) -> None:
+        """No `-g` is not "default gain" — it is `rtlsdr_set_tuner_gain_mode(0)`, a
+        different operating point where the tuner runs its own loop."""
+        assert "-g" not in self._args("fm")
+        assert self._args("fm", "36.4")[-2:] == ["-g", "36.4"]
+
+    def test_the_live_path_and_a_capture_ask_for_the_SAME_demodulation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reason this function exists. A capture is meant to be a sample of what
+        a session would hear, and two builders that can drift apart make that false."""
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        session = listen.Session(92_300_000, "wbfm", None)
+        try:
+            live = session._rtl_cmd()
+        finally:
+            session.stop()
+
+        shared = listen.demod_args("wbfm", None)
+
+        # The shared flags appear in the live command CONTIGUOUSLY and in order, so this
+        # fails if the session ever starts building its own variant beside them.
+        joined = "\x00".join(live)
+        assert "\x00".join(shared) in joined

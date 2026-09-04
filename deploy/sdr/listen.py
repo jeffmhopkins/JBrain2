@@ -108,7 +108,22 @@ _LEVEL_WINDOW_S = 2.0
 AUDIO_BITRATE = (
     "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
 )
-WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wide-FM capture rate
+# Wide FM's demodulation rate. **192 k, not rtl_fm's documented 171 k**, for two
+# measured reasons that both bite at 171:
+#
+# 1. A broadcast FM station deviates ±75 kHz and carries audio to 53 kHz (stereo
+#    subcarrier and RDS above that), so Carson's rule puts its occupied bandwidth near
+#    190 kHz. At `-s 171000` the demodulator sees ±85.5 kHz and CLIPS THE STATION'S OWN
+#    SIDEBANDS — the distortion is in the signal path before anything can fix it.
+# 2. rtl_fm resamples to `-r` with `low_pass_real`, whose decimation factor is the
+#    INTEGER `rate_in / rate_out`. 171000/16000 = 10.6875 truncates to 10, so the
+#    output is 6.9% fast and each sample averages a number of inputs that alternates
+#    between 10 and 11 — a per-sample gain wobble on every wide-FM capture we have ever
+#    taken. 192000/16000 = 12 exactly, and 192 kHz clears Carson.
+#
+# Measured on the box before the change: 92.3 MHz read `Oversampling input by: 6x`,
+# `1026000 S/s`, `Output at 171000 Hz` — confirming both.
+WBFM_SAMPLE_RATE = 192_000
 AUDIO_CONTENT_TYPE = "audio/mpeg"
 _CHUNK = 4096
 
@@ -241,6 +256,39 @@ def blocking_key(held: object, key: str) -> str | None:
     if key == ANY_DEVICE and keys:
         return keys[0]
     return None
+
+
+def demod_args(mode: str, gain: str | None) -> list[str]:
+    """Everything after `-f` and `-d` that decides how a signal is DEMODULATED.
+
+    One function because there are two callers — a live session and the one-shot
+    `capture` — and they were building this list separately. That is how `-d serial=`
+    shipped wrong in both places at once: a setting that lives in two builders is a
+    setting that will eventually differ between them, and the symptom is a capture that
+    sounds unlike the live audio of the same station.
+
+    `-F 9` on every mode. rtl_fm's default decimator is a BOXCAR — an unweighted sum,
+    whose first sidelobe is only ~13 dB down — so a strong neighbour a few channels away
+    leaks into whatever you are tuned to. `-F 9` swaps it for cascaded half-band stages
+    with droop correction: real adjacent-channel rejection at the SAME bandwidth, which
+    makes it the one filter improvement that costs nothing. It forces the decimation to
+    a power of two (63 → 64 narrowband), so the device lands on 1.024 MS/s instead of
+    1.008.
+
+    `-E dc` on AM only. An AM carrier is a DC pedestal after envelope detection; left in,
+    it eats headroom and reaches whisper as an offset on every sample. FM does not have
+    one — a discriminator's output is already centred — so this would only add a filter
+    with nothing to remove."""
+    args = ["-F", "9"]
+    if MODES[mode] == "wbfm":
+        args += ["-s", str(WBFM_SAMPLE_RATE), "-r", str(AUDIO_RATE)]
+    else:
+        args += ["-s", str(AUDIO_RATE)]
+    if MODES[mode] == "am":
+        args += ["-E", "dc"]
+    if gain:
+        args += ["-g", gain]
+    return args
 
 
 def validate_purpose(purpose: str) -> str:
@@ -397,12 +445,7 @@ class Session:
     def _rtl_cmd(self) -> list[str]:
         cmd = ["rtl_fm", "-f", str(self.frequency_hz), "-M", MODES[self.mode]]
         cmd += self._device_args()
-        if MODES[self.mode] == "wbfm":
-            cmd += ["-s", str(WBFM_SAMPLE_RATE), "-r", str(AUDIO_RATE)]
-        else:
-            cmd += ["-s", str(AUDIO_RATE)]
-        if self.gain:
-            cmd += ["-g", self.gain]
+        cmd += demod_args(self.mode, self.gain)
         return [*cmd, "-"]
 
     def _enc_cmd(self) -> list[str]:

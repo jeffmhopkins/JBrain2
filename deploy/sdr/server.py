@@ -143,17 +143,14 @@ def capture(
     try:
         rate = NARROW_RATE
         cmd = ["rtl_fm", "-f", str(freq_hz), "-M", MODES[key]]
-        if MODES[key] == "wbfm":
-            # wbfm forces its own capture rate; -r resamples the output for us.
-            cmd += ["-s", str(WBFM_SAMPLE_RATE), "-r", str(rate)]
-        else:
-            cmd += ["-s", str(rate)]
         if serial:
             # The BARE serial: librtlsdr's verbose_device_search has no key=value form,
             # so `serial=X` matches nothing and rtl_fm exits before opening the device.
             cmd += ["-d", str(serial)]
-        if gain:
-            cmd += ["-g", gain]
+        # Shared with the live path rather than rebuilt here — see `listen.demod_args`.
+        # A capture is meant to be a sample of what a session would hear, and it stops
+        # being one the moment the two lists can drift apart.
+        cmd += listen.demod_args(key, gain)
         cmd += ["-"]
 
         # rtl_fm streams until killed, so the timeout IS the recording length. A
