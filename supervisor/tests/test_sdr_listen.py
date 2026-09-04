@@ -1868,6 +1868,44 @@ class TestARadioThatWillNotOpen:
         assert tuner.current() is None
         assert tuner.sessions() == []
 
+    class _Complaining(_FakeProc):
+        """A tool that SAYS it cannot have the radio and then carries on.
+
+        MEASURED, and it is why matching the words beats waiting for an exit: rtl_power
+        printed `No matching devices found` and went straight on to its hop plan, still
+        running well past the grace. A check that only watched for a dead process saw a
+        healthy session and let the caller build a sweep on it."""
+
+        SAID: ClassVar[list[bytes]] = [
+            b"Found 2 device(s):",
+            b"  0:  , , SN:",
+            b"No matching devices found.",
+            b"Number of frequency hops: 1",
+            b"Dongle bandwidth: 2000000Hz",
+        ]
+
+        def __init__(self, *a: Any, **k: Any) -> None:
+            super().__init__(*a, **k)
+            self.stderr = _Lines(self.SAID)
+
+    def test_a_tool_that_complains_and_keeps_running_is_still_refused(
+        self, monkeypatch
+    ) -> None:
+        _instant(monkeypatch)
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", self._Complaining)
+        monkeypatch.setattr(listen, "STARTUP_GRACE_S", 0.2)
+        tuner = listen.Tuner()
+
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(99_300_000, "wbfm", None)
+
+        # The process never died, so only its own words could have caught this.
+        assert "No matching devices found" in str(refused.value)
+        # And it leads with that line rather than the hop plan behind it.
+        assert "Dongle bandwidth" not in str(refused.value)
+        assert tuner.sessions() == []
+
     def test_a_spectrum_is_refused_the_same_way(self, tuner) -> None:
         with pytest.raises(listen.SdrError) as refused:
             tuner.start(

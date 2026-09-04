@@ -401,15 +401,25 @@ every `-d <serial>` lookup failed:
 hardware fault into something only a container-log read could explain — which is exactly
 what the owner cannot do (CLAUDE.md #10):
 
-- **`start` answered 200 for a pipeline that had already exited.** The api reported a
-  session, the omnibox lit, and a second later the tuner reaped a dead one. Sessions now
-  wait `STARTUP_GRACE_S` to prove they did not die on the spot and REFUSE if they did,
-  carrying the tool's own last words — which are what name the radio it could not find.
-  It costs 0.4 s on every start: the price of a 200 meaning "the radio opened" rather
-  than "a process was spawned".
+- **`start` answered 200 for a pipeline that could not work.** The api reported a
+  session, the omnibox lit, and a moment later the tuner reaped a dead one. Sessions are
+  now watched for `STARTUP_GRACE_S` and REFUSED if the radio did not open, carrying the
+  line that says so. 0.4 s on every start: the price of a 200 meaning "the radio opened"
+  rather than "a process was spawned".
+
+  **It refuses on the tool's WORDS, not on the process dying**, and that distinction is
+  the box's correction rather than a design instinct. The first cut waited for an exit,
+  on the stated grounds that these tools "fail in milliseconds" — and the re-test after
+  deploying it showed `rtl_power` printing `No matching devices found` and then carrying
+  on with its hop plan, alive well past the grace. Waiting for a death catches only the
+  fast half; the announcement is always there, and earlier. `_CANNOT_OPEN` matches it,
+  and the liveness check stays as the general case for a pipeline that dies without an
+  explanation that list knows.
 - **A sweep that measured nothing reported success.** `complete` meant "did not overrun",
   so an empty CSV read as a finished sweep of a quiet band. An empty result is now a 502
-  carrying the same last words.
+  carrying the same words. This is the check that actually caught the fault on the
+  re-test, the startup one having been fooled by a tool that complained and kept
+  running — which is the argument for having both.
 - **The sidecar's 400s arrived as 502s.** "a sweep cannot go below 24 MHz" and "the radio
   did not start" are sentences for an operator, and wrapping them in `sdr sidecar: …`
   buried the actionable half behind a status that reads as the box being broken.

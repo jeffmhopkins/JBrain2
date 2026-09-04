@@ -142,12 +142,27 @@ SPECTRUM_MAX_BINS = 4096
 #: retune is a syscall for an answer that cannot have changed.
 _LINE_BUFFERED = shutil.which("stdbuf") is not None
 
-#: How long a freshly launched pipeline is given to prove it did not die on the spot.
-#: `rtl_fm` and `rtl_power` both fail in MILLISECONDS when the device cannot be opened —
-#: they print the reason and exit — so this waits for an answer that is already there
-#: rather than for anything to settle. It is paid on every start, which is the cost of
-#: a 200 meaning "the radio opened" instead of "a process was spawned".
+#: How long a freshly launched pipeline is watched before it is believed. Paid on every
+#: start, which is the cost of a 200 meaning "the radio opened" instead of "a process
+#: was spawned".
+#:
+#: An earlier version of this comment said the tools "fail in milliseconds", and the box
+#: disproved it: `rtl_power` printed `No matching devices found` and then carried on
+#: printing its hop plan, still running when the grace expired. So waiting for the
+#: process to DIE is not a reliable way to notice — which is why `_CANNOT_OPEN` exists
+#: and this window is the backstop rather than the mechanism.
 STARTUP_GRACE_S = 0.4
+
+#: What the rtl_* tools say when they cannot have the radio. MATCHED ON rather than
+#: waited for: the tool announces the failure long before it acts on it, so its own
+#: words are both faster and more certain than watching for an exit. Lower-cased at the
+#: comparison, because librtlsdr and the tools around it are not consistent about case.
+_CANNOT_OPEN = (
+    "no matching devices found",
+    "no supported devices found",
+    "usb_open error",
+    "failed to open rtlsdr device",
+)
 #: How many lines of a tool's own stderr to keep for a refusal. Enough to carry
 #: librtlsdr's device list, which is what says WHICH radio it could not find.
 _LOG_TAIL = 12
@@ -908,28 +923,49 @@ class Session:
         with self._lock:
             self._frames.discard(sub)
 
+    @property
+    def refusal(self) -> str:
+        """The line where the tool said it could not have the radio, if it said so.
+
+        The one line worth putting in front of a person. The rest of the tail is setup
+        chatter — hop plans and buffer sizes — and leading with it buries the sentence
+        that names what to fix."""
+        for line in list(self._tail):
+            if any(sig in line.lower() for sig in _CANNOT_OPEN):
+                return line
+        return ""
+
     def _confirm_started(self) -> None:
         """Refuse a session whose radio could not be opened.
 
-        Without this, `start` answers 200 for a pipeline that has ALREADY exited: the
-        api reports a session, the omnibox lights, and a second later the tuner reaps a
-        dead session with nothing anywhere saying why. The only trace is a line in a
-        container log, which is precisely what the owner cannot read (CLAUDE.md #10).
+        Without this, `start` answers 200 for a pipeline that cannot work: the api
+        reports a session, the omnibox lights, and a moment later the tuner reaps a dead
+        one with nothing anywhere saying why. The only trace is a line in a container
+        log, which is precisely what the owner cannot read (CLAUDE.md #10).
 
-        MEASURED on the box 2026-09-04: a dongle whose USB descriptors had stopped
-        answering gave `No matching devices found` and exited in milliseconds, and the
-        sweep built on it reported `complete: true` with zero rows. A success over a
-        measurement that did not happen is the worst answer available."""
+        MEASURED on the box 2026-09-04. A dongle whose USB descriptors had stopped
+        answering enumerated blank, and every `-d <serial>` lookup failed. **The tool did
+        not exit on it** — `rtl_power` printed `No matching devices found` and carried on
+        printing its hop plan, alive well past this grace — so waiting for a process to
+        die catches only the fast half. What it always does is SAY so, which is what
+        `_CANNOT_OPEN` matches: faster than an exit and not a guess about timing.
+
+        The liveness check stays as the general case, for a pipeline that dies without
+        an explanation this list knows."""
         deadline = time.time() + STARTUP_GRACE_S
-        while time.time() < deadline and self.alive:
+        said = ""
+        while time.time() < deadline:
+            said = self.refusal
+            if said or not self.alive:
+                break
             time.sleep(0.02)
-        if self.alive:
+        if not said and self.alive:
             return
-        # Give the log drain the moment it needs to have read the tool's complaint —
-        # the process is already gone, so this is a read of a pipe that is closed.
+        # Give the log drain the moment it needs to have read the tool's complaint. On
+        # the exit path the process is already gone, so this is a read of a closed pipe.
         for thread in self._threads:
             thread.join(timeout=0.2)
-        said = self.tail or "it exited without saying why"
+        said = said or self.refusal or self.tail or "it exited without saying why"
         self._released = True
         self._stopping = True
         self._kill()
