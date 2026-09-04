@@ -110,27 +110,22 @@ class TestWhatTheHardwareCanReach:
         for s in hf:
             assert s.stop_hz <= bands.DIRECT_SAMPLING_MAX_HZ
 
-    def test_sections_above_the_first_nyquist_zone_are_flagged_mirrored(self) -> None:
-        """Above 14.4 MHz a signal aliases to 28.8 − f and arrives with images of the
-        strong stations below it, sidebands swapped. Real, but not something to hand
-        someone without saying so."""
-        assert (
-            bands.Section(
-                id="t",
-                band="B",
-                name="N",
-                start_hz=21_000_000,
-                stop_hz=21_450_000,
-                mode="usb",
-                step_hz=100,
-                channel_hz=0,
-            ).mirrored
-            is True
-        )
-        twenty = bands.by_id("20m")
-        assert twenty is not None
-        # 14.350 clears the 14.4 MHz boundary deliberately — it is the last band that does.
-        assert twenty.mirrored is False
+    def test_every_HF_section_says_which_band_folds_onto_it(self) -> None:
+        """`mirrored` was False for all ten HF rows and told the owner nothing, while
+        all ten carry an image: the ADC samples at 28.8 MHz, so everything at 28.8 − f
+        is summed into the same bins, reversed. Not separable in software — which is
+        why the honest answer is to name the band rather than to raise a flag."""
+        forty = bands.by_id("sw-41m")
+        assert forty is not None
+        # 7.200-7.450 folds with 21.350-21.600: 15 m amateur and 13 m broadcast.
+        assert (forty.image_start_hz, forty.image_stop_hz) == (21_350_000, 21_600_000)
+        for s in bands.SECTIONS:
+            if s.direct_sampling:
+                assert s.image_start_hz == bands.ADC_RATE_HZ - s.stop_hz, s.id
+                assert s.image_stop_hz == bands.ADC_RATE_HZ - s.start_hz, s.id
+            else:
+                # Above 24 MHz the tuner is in circuit and there is no fold to report.
+                assert (s.image_start_hz, s.image_stop_hz) == (0, 0), s.id
 
     def test_the_duty_cycle_falls_with_hop_count(self) -> None:
         """The number that justifies splitting bands at all."""
@@ -157,6 +152,172 @@ class TestWhatTheHardwareCanReach:
 
         assert one.hops == 1 and one.duty == 1.0
         assert many.hops == 8 and many.duty < 0.15
+
+
+class TestTheCaptureBehindALiveRow:
+    """The rate and the bin count, which are now this table's to choose.
+
+    Every rule here fails SILENTLY on the box. librtlsdr quantises a sample rate to a
+    22-bit divider and tells nobody; `Sweep.of` clamps a bin width that is too fine
+    rather than refusing it; and a direct capture that reaches past 14.4 MHz folds the
+    band onto itself inside one frame. All three produce a picture that is wrong rather
+    than absent, which is the only kind of error this file exists for.
+    """
+
+    def _fast(self, **over: object) -> Section:
+        base: dict[str, object] = {
+            "id": "x",
+            "band": "B",
+            "name": "N",
+            "start_hz": 144_000_000,
+            "stop_hz": 145_000_000,
+            "mode": "fm",
+            "step_hz": 5_000,
+            "channel_hz": 15_000,
+            "live": LIVE_FAST,
+            "sample_rate_hz": 1_600_000,
+        }
+        return Section(**{**base, **over})  # type: ignore[arg-type]
+
+    def test_the_shipped_ladder_is_exactly_achievable(self) -> None:
+        """The headline claim. Every rate here comes back off the divider unchanged, so
+        `bin_hz = rate / N` is a constant rather than a number that flaps."""
+        for rate, _bins in bands.LIVE_CAPTURES:
+            assert bands.achieved_rate_hz(rate) == rate, rate
+
+    def test_the_rates_the_plan_rejected_really_are_inexact(self) -> None:
+        """The arithmetic that chose the ladder, run rather than quoted. 1.5 MS/s and
+        250 kS/s are the two the earlier drafts wanted and the divider will not give."""
+        assert bands.achieved_rate_hz(1_500_000) == pytest.approx(1_500_000.0149, abs=1e-4)
+        assert bands.achieved_rate_hz(250_000) == pytest.approx(250_000.0004, abs=1e-4)
+        assert bands.rate_is_exact(2_048_000) and bands.rate_is_exact(256_000)
+
+    def test_900_kilosamples_does_not_exist(self) -> None:
+        """The trap the third draft fell into twice: `rtlsdr_set_sample_rate` rejects
+        `rate > 300000 && rate <= 900000`, so 900 kS/s is inside the excluded band. The
+        usable neighbour is 1.024 MS/s."""
+        assert not bands.rate_is_legal(900_000)
+        assert bands.rate_is_legal(900_001) and bands.rate_is_legal(1_024_000)
+        assert not bands.rate_is_legal(225_000) and bands.rate_is_legal(225_001)
+        assert not bands.rate_is_legal(3_200_001)
+
+    def test_every_live_row_carries_an_exact_bin_width_above_the_floor(self) -> None:
+        """`MIN_SWEEP_BIN_HZ` CLAMPS instead of raising, so a row whose arithmetic came
+        out at 61 Hz would ship frames declaring 100 Hz bins the FFT never used — worse
+        than a refusal, and invisible. At a fixed N=4096 five sections would do exactly
+        that; the bin count follows the rate instead."""
+        for s in bands.SECTIONS:
+            if s.live != LIVE_FAST:
+                assert s.live_bin_hz == 0, s.id
+                continue
+            assert isinstance(s.live_bin_hz, int), s.id  # exact, not a float
+            assert s.live_bin_hz >= bands.MIN_LIVE_BIN_HZ, s.id
+            assert s.fft_bins <= bands.LIVE_MAX_BINS, s.id
+
+    def test_every_HF_capture_stays_inside_the_honest_window(self) -> None:
+        """`R/2 <= fc <= 14.4 MHz - R/2`. Below 0 Hz the picture is a mirror of what is
+        just above it; past 14.4 MHz the next Nyquist zone folds into the same frame."""
+        for s in bands.SECTIONS:
+            if s.direct_sampling and s.sample_rate_hz:
+                assert bands.window_holds(s.sample_rate_hz, s.centre_hz), s.id
+                assert s.capture_start_hz > 0, s.id
+                assert s.capture_stop_hz <= bands.NYQUIST_HZ, s.id
+
+    def test_a_rate_the_driver_would_quantise_is_refused(self) -> None:
+        assert any("flaps" in p for p in bands.ladder_problems(((1_500_000, 4_096),)))
+
+    def test_an_illegal_rate_is_refused(self) -> None:
+        assert any("librtlsdr accepts" in p for p in bands.ladder_problems(((900_000, 4_096),)))
+
+    def test_a_bin_width_that_does_not_divide_is_refused(self) -> None:
+        """2.4 MS/s over 4096 bins is 585.9375 Hz. Rounded to 586 the top of the frame
+        is 256 Hz out, and nothing downstream can tell."""
+        bad = bands.ladder_problems(((2_400_000, 4_096),))
+
+        assert any("585.9375" in p and "not exact" in p for p in bad)
+
+    def test_a_bin_finer_than_the_clamp_is_refused(self) -> None:
+        bad = bands.ladder_problems(((256_000, 3_200),))
+
+        assert any("CLAMPS" in p for p in bad)
+
+    def test_an_FFT_size_that_is_not_5_smooth_is_refused(self) -> None:
+        """N need not be a power of two — that freedom is what makes 600 Hz bins
+        possible — but pocketfft is only fast on 5-smooth sizes."""
+        assert any("5-smooth" in p for p in bands.ladder_problems(((2_400_000, 4_001),)))
+
+    def test_a_fast_section_with_no_rate_is_refused(self) -> None:
+        bad = bands.validate((self._fast(sample_rate_hz=0),))
+
+        assert any("no sample_rate_hz" in p for p in bad)
+
+    def test_an_rtl_power_tier_may_not_name_a_rate(self) -> None:
+        """`slow` and `none` are rtl_power, which picks its own rate: a number here
+        would describe a capture nothing makes."""
+        row = self._fast(live=LIVE_SLOW, sample_rate_hz=2_400_000)
+
+        assert any("chooses its own rate" in p for p in bands.validate((row,)))
+
+    def test_a_rate_off_the_ladder_is_refused(self) -> None:
+        bad = bands.validate((self._fast(sample_rate_hz=1_200_000),))
+
+        assert any("capture ladder" in p for p in bad)
+
+    def test_a_band_wider_than_the_trusted_fill_is_refused(self) -> None:
+        """The rolloff rule, generalised off `LIVE_FAST_MAX_HZ`: a section that fills
+        its own passband reads as dead at both edges."""
+        row = self._fast(stop_hz=146_000_000, sample_rate_hz=2_048_000)
+
+        assert any("IF rolloff" in p for p in bands.validate((row,)))
+
+    def test_a_direct_capture_that_folds_the_band_is_refused(self) -> None:
+        """20 m at 1.024 MS/s reaches 14.762 MHz, so 14.4-14.76 lands back on
+        14.04-14.4 inside the same picture."""
+        row = self._fast(
+            start_hz=14_150_000, stop_hz=14_350_000, sample_rate_hz=1_024_000, channel_hz=0
+        )
+
+        assert any("fold of itself" in p for p in bands.validate((row,)))
+
+    def test_a_tuner_path_section_may_not_use_an_HF_rate(self) -> None:
+        """Below the 300-900 kHz legal gap the R820T2's IF filter can no longer bracket
+        the picture, and `rtl_fm` keeps the ADC above a megasample for the same reason.
+        Those rates are for the direct path only."""
+        bad = bands.validate((self._fast(sample_rate_hz=256_000),))
+
+        assert any("IF filter can bracket" in p for p in bad)
+
+
+class TestChoosingACaptureForAHandEnteredRange:
+    """The expert path takes the same ladder a curated section does, so typing
+    144.0-144.2 and tapping the 2 m SSB button produce the same picture."""
+
+    def test_it_takes_the_smallest_capture_that_covers_the_range(self) -> None:
+        assert bands.capture_for(144_000_000, 146_000_000) == (2_400_000, 4_000)
+        assert bands.capture_for(144_000_000, 144_200_000) == (1_024_000, 4_096)
+
+    def test_a_range_wider_than_one_hop_has_no_capture_at_all(self) -> None:
+        """Not a refusal — that range is the rtl_power tier's, several hops at one row
+        a second, with the duty cost said out loud."""
+        assert bands.capture_for(88_000_000, 108_000_000) is None
+
+    def test_shortwave_gets_a_narrow_capture_and_a_window_check(self) -> None:
+        twenty = bands.by_id("20m")
+        assert twenty is not None
+        # The same answer the table stores: the window leaves no room for more.
+        assert bands.capture_for(twenty.start_hz, twenty.stop_hz) == (256_000, 1_024)
+        # ...and a range that cannot be captured without folding has none.
+        assert bands.capture_for(14_300_000, 14_390_000) is None
+
+    def test_the_tuner_path_never_gets_an_HF_rate(self) -> None:
+        rate, _bins = bands.capture_for(144_000_000, 144_100_000) or (0, 0)
+
+        assert rate == 1_024_000  # not 256_000, though the span would fit
+
+    def test_a_range_straddling_the_tuner_floor_has_no_capture(self) -> None:
+        """23.9-24.1 MHz is not a bandwidth problem: the tuner is powered down on one
+        side of 24 MHz and in circuit on the other, so no single capture covers both."""
+        assert bands.capture_for(23_900_000, 24_100_000) is None
 
 
 class TestFindingTheSectionForAFrequency:
@@ -240,7 +401,11 @@ class TestTheRouteThatServesTheTable:
 
         assert wwv.direct_sampling is True
         assert wwv.surveyable is False
-        assert wwv.mirrored is False
+        # ...and the capture that WILL draw it, which is the other half of the same
+        # honesty: 256 kS/s over 1024 bins is 250 Hz, exactly, and the image it carries
+        # is named rather than flagged.
+        assert (wwv.sample_rate_hz, wwv.fft_bins, wwv.bin_hz) == (256_000, 1_024, 250)
+        assert (wwv.image_start_hz, wwv.image_stop_hz) == (18_700_000, 18_900_000)
 
     async def test_it_reports_the_two_ranges_the_hardware_actually_has(self) -> None:
         """Not one range with a lower floor. Below `direct_max_hz` the tuner is bypassed

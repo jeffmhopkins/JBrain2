@@ -1,6 +1,6 @@
 // The band table as the PWA sees it (`jbrain/sdr/bands.py`, `GET /api/sdr/bands`).
 //
-// **Nothing here is recomputed.** `hops`, `surveyable`, `direct_sampling` and `mirrored`
+// **Nothing here is recomputed.** `hops`, `surveyable`, `bin_hz` and the image edges
 // follow from the frequency and the hardware, and a screen that worked them out itself
 // would be a second implementation of the physics — free to disagree with the radio that
 // actually runs. Every field arrives from the server; this file only names them and says
@@ -38,12 +38,28 @@ export interface BandSection {
    *  the server, never derived here — see the note at the top of this file. */
   duty: number;
   /** False for every HF section: `rtl_power` hardcodes the ADC branch this hardware
-   *  does not wire, so shortwave listens perfectly and cannot be drawn. */
+   *  does not wire, so shortwave can be listened to and watched live, and never
+   *  SURVEYED. It is no longer the same question as whether a waterfall can be drawn —
+   *  see `whyNotLive`. */
   surveyable: boolean;
   /** True below 24 MHz, where the tuner is bypassed — and so where there is no gain
    *  control at all, because the tuner is powered down. */
   direct_sampling: boolean;
-  mirrored: boolean;
+  /** What the radio digitises to draw this section in one hop, and 0 on the tiers
+   *  rtl_power still serves. The picture is this WIDE, not as wide as the section. */
+  sample_rate_hz: number;
+  /** Bins in one live row — derived from the rate so `bin_hz` divides exactly, and
+   *  deliberately not a fixed 4096. */
+  fft_bins: number;
+  /** `sample_rate_hz / fft_bins`, and 0 on the rtl_power tiers. Never rounded: the
+   *  server refuses a pairing that does not divide, so a fraction arriving here would
+   *  mean a frame mislabelled at its top edge. */
+  bin_hz: number;
+  /** The band that folds onto this one, reversed, and 0 where none does. The ADC
+   *  samples at 28.8 MHz, so everything at `28.8 MHz − f` is SUMMED into the same bins;
+   *  no software separates the two, which is why the honest thing is to name it. */
+  image_start_hz: number;
+  image_stop_hz: number;
   channels: BandChannel[];
 }
 
@@ -64,7 +80,6 @@ export interface SpectrumRange {
   section?: string;
   startMhz?: number;
   stopMhz?: number;
-  binHz?: number;
 }
 
 /** The sections grouped by band, in table order — which is browsing order: everyday
@@ -96,12 +111,32 @@ export function sectionAt(
  *
  *  A READING of what the server will answer, not a second rule: the route refuses the
  *  same thing in the same words. It exists so the picker can disable the row instead of
- *  offering a tap that ends in an error. */
+ *  offering a tap that ends in an error.
+ *
+ *  **It no longer asks `surveyable`.** That flag is `rtl_power`'s answer and it kept
+ *  ten shortwave rows greyed out — the refusal that made HF invisible rather than
+ *  merely absent. The live picture is a capture and our own FFT, which reaches
+ *  shortwave through the ADC branch this board actually wires, so what is left to
+ *  refuse down there is a section with no capture to draw it with. */
 export function whyNotLive(section: BandSection): string | null {
-  if (!section.surveyable) {
-    return "shortwave cannot be swept — the sweep tool cannot use the direct path";
+  if (section.direct_sampling && !section.sample_rate_hz) {
+    return "below 24 MHz a waterfall is one capture, and this range is wider than one";
   }
   return null;
+}
+
+/** The reversed image this section carries, in an operator's words, or null.
+ *
+ *  The honesty `mirrored` was supposed to buy and never did: it was false for every
+ *  shortwave row while every one of them carries a fold of `28.8 MHz − f` summed into
+ *  the same bins. Nothing in software can pull the two apart, so the only thing worth
+ *  saying is which band is in there — otherwise a strong station at 21.4 MHz reads as
+ *  a mystery signal on 40 m. */
+export function imageNote(section: BandSection): string | null {
+  if (!section.image_stop_hz) return null;
+  const from = section.image_start_hz / 1_000_000;
+  const to = section.image_stop_hz / 1_000_000;
+  return `Carries a reversed image of ${from.toFixed(2)}–${to.toFixed(2)} MHz.`;
 }
 
 /** What a section's live tier costs the picture, in an operator's words.

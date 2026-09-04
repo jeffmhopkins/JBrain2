@@ -18,14 +18,17 @@ import {
   type SpectrumRange,
   byBand,
   dutyNote,
+  imageNote,
   loadBands,
   whyNotLive,
 } from "../sdrBands";
 import { Sheet } from "./Sheet";
 
 export function SdrBandSheet({
-  /** What the sheet is choosing FOR. `listen` offers every section; `spectrum` disables
-   *  the ones the sweep tool cannot reach, with the reason on the row. */
+  /** What the sheet is choosing FOR. `listen` offers every section; `spectrum` adds the
+   *  duty-cycle cost and disables anything with no capture to draw it, with the reason
+   *  on the row. Shortwave is on both lists now — the waterfall reads raw I/Q and no
+   *  longer inherits the sweep tool's blind spot. */
   purpose,
   onPick,
   onClose,
@@ -111,6 +114,10 @@ function BandRow({
   // for the tuner would take away something that works.
   const refusal = purpose === "spectrum" ? whyNotLive(section) : null;
   const duty = purpose === "spectrum" ? dutyNote(section) : null;
+  // Said on both purposes, because the fold is in the SIGNAL rather than in the
+  // picture: a station folded in from 21.4 MHz is as audible on a listen as it is
+  // visible on a waterfall, and either way it is not where the label says it is.
+  const image = imageNote(section);
 
   return (
     <button type="button" className="bitem" onClick={onPick} disabled={refusal !== null}>
@@ -121,6 +128,7 @@ function BandRow({
           {section.hops > 1 && <span className="btag slow">{section.hops} hops</span>}
         </span>
         <span className="bd">{refusal ?? duty ?? section.note}</span>
+        {image && <span className="bd">{image}</span>}
       </span>
       <span className="bhz">
         {edge(section.start_hz)}–{edge(section.stop_hz)}

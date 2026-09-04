@@ -1398,6 +1398,23 @@ class TestShortwave:
         assert "cannot go below" in str(refused.value)
         assert "still listen" in str(refused.value)
 
+    def test_the_SAME_range_is_accepted_for_the_engine_that_can_see_it(self) -> None:
+        """The whole of F8, in one pair of calls. The refusal above is `rtl_power`'s and
+        was never the radio's: the live spectrum does its own FFT off raw I/Q and sets
+        direct sampling mode 2 — the ADC branch this board wires — so 40 m is a picture
+        for that engine and still not a survey for the tool."""
+        sweep = listen.Sweep.of(7_000_000, 7_300_000, 250, 60, direct_ok=True)
+
+        assert sweep.start_hz == 7_000_000
+
+    def test_even_the_direct_path_stops_at_what_the_ADC_reaches(self) -> None:
+        """`direct_ok` moves the floor, it does not remove it. Below DIRECT_MIN_HZ the
+        board's diplexer feeds the ADC nothing at all."""
+        with pytest.raises(listen.SdrError) as refused:
+            listen.Sweep.of(50_000, 200_000, 250, 60, direct_ok=True)
+
+        assert "below what this radio reaches" in str(refused.value)
+
     def test_a_sweep_above_the_tuner_is_unaffected(self) -> None:
         sweep = listen.Sweep.of(144_000_000, 148_000_000, 5_000, 60)
         assert sweep.start_hz == 144_000_000
@@ -2127,3 +2144,25 @@ def test_reaping_sessions_also_retries_stranded_processes(tracking) -> None:
     tracking.current()  # takes the lock and reaps
 
     assert not stranded.running and listen._survivors == []
+
+
+def test_an_hf_spectrum_is_refused_while_rtl_power_is_still_the_engine(tuner) -> None:
+    """F8 opened the HF band rows one wave before F6 replaces this engine.
+
+    `rtl_power -D` hardcodes direct sampling mode 1 — the I branch — and this hardware
+    wires Q, so the tool would tune something and measure nothing. The refusal has to
+    live on the ENGINE rather than in the route: the same range becomes viewable the
+    moment the I/Q engine lands, and a floor in the route would have to be hunted down
+    and removed again. This test is the reminder to delete both together."""
+    with pytest.raises(listen.SdrError) as refused:
+        tuner.start(
+            7_200_000,
+            "fm",
+            None,
+            purpose=listen.PURPOSE_SPECTRUM,
+            sweep=listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True),
+        )
+
+    assert "I/Q engine" in str(refused.value)
+    # Above the tuner floor is untouched: this guard is about the ENGINE, not the band.
+    assert tuner.current() is None

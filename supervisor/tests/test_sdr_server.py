@@ -1085,11 +1085,41 @@ def test_a_spectrum_session_is_started_by_its_range_not_a_frequency(
     assert body["frequency_hz"] == 144_100_000
 
 
-def test_a_spectrum_outside_the_tuner_s_range_is_refused_in_words(sidecar: str) -> None:
-    status, body = _start_spectrum(sidecar, start_hz=1_000_000, stop_hz=2_000_000)
+def test_a_spectrum_reaches_shortwave_where_a_SURVEY_of_it_does_not(
+    sidecar: str, monkeypatch
+) -> None:
+    """One range, two engines, two answers — which is the point of splitting the guard
+    per purpose rather than per frequency. `rtl_power` hardcodes the ADC branch this
+    board does not wire and can never see 40 m; the live spectrum does its own FFT and
+    sets direct sampling mode 2, so the same numbers are a picture there.
+
+    **Both are refused today, and the two refusals are the assertion.** F8 opened the
+    band before F6 replaced the spectrum engine, so what a shortwave spectrum meets is
+    no longer the tuner floor — it is the engine saying it is still rtl_power. That
+    distinction is the whole wave: the guards now answer per PURPOSE, and the last
+    thing in the way is a fact about the tool rather than about the radio. When F6
+    lands this becomes a 200 and the second half of the test stands unchanged."""
+    status, spectrum = _start_spectrum(sidecar, start_hz=7_000_000, stop_hz=7_300_000)
 
     assert status == 400
-    assert "cannot go below" in body["detail"]
+    assert "I/Q engine" in spectrum["detail"], "the band guard, not the engine, refused"
+    assert "cannot go below" not in spectrum["detail"]
+
+    _sweeping(monkeypatch)
+    status, refused = _post(
+        sidecar, "/sweep", {"start_hz": 7_000_000, "stop_hz": 7_300_000}
+    )
+
+    assert status == 400
+    assert "cannot go below" in refused["detail"]
+
+
+def test_a_spectrum_below_what_the_ADC_reaches_is_still_refused(sidecar: str) -> None:
+    """The floor moved down to the board's own; it did not go away."""
+    status, body = _start_spectrum(sidecar, start_hz=20_000, stop_hz=90_000)
+
+    assert status == 400
+    assert "below what this radio reaches" in body["detail"]
 
 
 def test_a_spectrum_with_no_range_is_refused_rather_than_run(sidecar: str) -> None:

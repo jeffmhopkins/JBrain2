@@ -118,8 +118,24 @@ describe("the tuner sheet", () => {
     fireEvent.keyDown(field, { key: "Enter" });
 
     // The message names the range: a bare refusal leaves the owner guessing at it.
-    expect(await screen.findByText("This radio tunes 24-1766 MHz.")).toBeInTheDocument();
+    expect(await screen.findByText("This radio tunes 0.1-1766 MHz.")).toBeInTheDocument();
     expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("lets shortwave through, because the radio reaches it by bypassing the tuner", async () => {
+    // This field refused everything under 24 MHz — the R820T2 TUNER's floor, retyped
+    // here — while `rtl_fm -E direct2` has been listening down to 100 kHz all along and
+    // every route behind it bounds on the radio's real floor. A duplicated bound
+    // refusing what the box can do is the bug class `jbrain/sdr/tuner.py` exists to end.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "9.6" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(9.6, undefined, "abc123"));
   });
 
   it("keeps the frequency field open when something steals focus", async () => {

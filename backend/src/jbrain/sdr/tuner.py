@@ -17,9 +17,18 @@ bypassing the tuner — how every RTL-SDR reaches HF. `deploy/sdr/listen.py` pas
 there is everything the tuner provides: no gain control, no `rtl_power`, and images
 above 14.4 MHz. `direct_sampling` and `sweepable` are how a caller asks which of those
 apply, rather than comparing against a floor and guessing.
+
+**`sweepable` and `viewable` are two questions now, not one shape of the same one.**
+They used to agree because a waterfall WAS `rtl_power`. It is not: the one-hop tier
+reads raw I/Q and does its own FFT, and that path can be put into direct sampling
+mode 2 — the ADC branch this board wires — where `rtl_power -D` hardcodes mode 1.
+So shortwave is drawable and still not surveyable, and the two predicates say so
+separately (SDR_IQ_SPECTRUM_PLAN §6.3, F8).
 """
 
 from __future__ import annotations
+
+from jbrain.sdr import bands
 
 #: What the R820T2 TUNER reaches. Above this the signal goes through the tuner and has a
 #: gain control; below it the tuner is powered down entirely.
@@ -45,14 +54,20 @@ def direct_sampling(mhz: float) -> bool:
     Three consequences follow, and every one of them is a thing the UI must not offer:
     there is **no gain control** (the tuner is powered down, so `-g` writes to a chip
     that is not listening); **`rtl_power` cannot sweep it**, because it hardcodes direct
-    sampling mode 1 — the I branch — while this hardware wires Q; and above 14.4 MHz the
-    signal arrives **mirrored**, because the ADC samples at 28.8 MHz and that is where
-    the first Nyquist zone ends."""
+    sampling mode 1 — the I branch — while this hardware wires Q; and everything here
+    arrives SUMMED with a reversed image of `28.8 MHz − f`, because that is the ADC's
+    clock and the fold is in the samples rather than in the picture. The band table
+    names the folded band per section (`image_start_hz`); this used to say the images
+    started above 14.4 MHz, which was the *aliasing* rule and not the image one."""
     return mhz < MIN_MHZ
 
 
 def sweepable(mhz: float) -> str | None:
     """Why a SWEEP cannot reach this frequency, or None.
+
+    **`rtl_power`'s question, and only its.** The survey route (`api/debug.py`) really
+    does drive that tool, and the tool really cannot go below `MIN_MHZ`. A live
+    spectrum asks `viewable` instead, which no longer routes through here.
 
     Separate from `out_of_range` because the two answers differ, and the difference is
     the one an owner most needs explained: shortwave is perfectly listenable and cannot
@@ -94,18 +109,20 @@ def out_of_range(mhz: float) -> str | None:
     return None
 
 
-#: The most bins one waterfall row carries. Mirrors the sidecar's `SPECTRUM_MAX_BINS`,
-#: for the reason the tuner range is mirrored: the sidecar ships in a different container
-#: and imports nothing from here. The sidecar refuses a wider frame too, so this copy
-#: only decides whether the owner gets a coarser picture or a 502.
-SPECTRUM_MAX_BINS = 4096
-
 #: The widest span rtl_power is allowed, mirroring `MAX_SWEEP_SPAN_HZ` in the sidecar.
 MAX_SPAN_MHZ = 60.0
 
 
 def live_bin_hz(span_hz: int, want_hz: int) -> int:
-    """The bin width a live view of `span_hz` can actually be drawn at.
+    """The bin width a MULTI-HOP live view of `span_hz` can actually be drawn at.
+
+    **`rtl_power`'s ladder, and now only its.** A one-hop picture does not come through
+    here at all: `bands.LIVE_CAPTURES` pairs every capture rate with an N that divides
+    it exactly, so its bin width is `rate / N` — ours, chosen, and not negotiated with
+    a tool (SDR_IQ_SPECTRUM_PLAN §2.3, F7). What is left for this function is the spans
+    too wide for one capture — the `slow` sections and the hand-entered ranges — which
+    are still swept by rtl_power, hops and all, and still get whatever division of its
+    per-hop bandwidth it feels like granting.
 
     COARSENED, not refused. A live spectrum is the one place the owner asks for a whole
     band at once, and "that is too wide" is a worse answer than a coarser picture they
@@ -117,7 +134,7 @@ def live_bin_hz(span_hz: int, want_hz: int) -> int:
     it was asked for (`bands.sweep_bin_hz` says the same). Walking the sequence the tool
     will itself land on beats computing an exact number it will not honour."""
     bin_hz = max(1, want_hz)
-    while span_hz // bin_hz > SPECTRUM_MAX_BINS:
+    while span_hz // bin_hz > bands.LIVE_MAX_BINS:
         bin_hz *= 2
     return bin_hz
 
@@ -125,15 +142,41 @@ def live_bin_hz(span_hz: int, want_hz: int) -> int:
 def viewable(start_mhz: float, stop_mhz: float) -> str | None:
     """Why a live spectrum cannot cover this range, or None. One sentence, as ever.
 
-    A superset of `sweepable` on both edges — the picture is rtl_power, so everything
-    that stops a sweep stops a waterfall — plus the span ceiling, which a single
-    frequency cannot violate and a range can."""
+    **No longer a superset of `sweepable`, and that split is the point of F8.** The two
+    used to give the same answer because the picture WAS rtl_power. The fast tier is
+    now raw I/Q and our own FFT, which reaches shortwave through direct sampling mode 2
+    — so the flat refusal below `MIN_MHZ` goes, and `sweepable` keeps it for the survey
+    route that really does run the tool.
+
+    What replaces it down there is a NARROWER rule, not none: below `MIN_MHZ` the
+    picture is one capture or nothing, because the thing that stitches several hops
+    together is the tool that cannot go there. `bands.capture_for` answers whether one
+    exists, so the band table and this refusal cannot disagree about the same range."""
     if stop_mhz <= start_mhz:
         return "a waterfall needs a range, not a single frequency."
     for edge in (start_mhz, stop_mhz):
-        refusal = sweepable(edge)
+        refusal = out_of_range(edge)
         if refusal:
             return refusal
+    if direct_sampling(start_mhz) != direct_sampling(stop_mhz):
+        # Not a bandwidth problem, which is why it is said separately: the tuner is
+        # powered down on one side of this line and in circuit on the other, so no
+        # single capture exists that could cover both halves.
+        return (
+            f"{start_mhz:g}-{stop_mhz:g} MHz crosses {MIN_MHZ:g} MHz, where the radio "
+            f"changes signal path — the tuner is bypassed below it and in circuit "
+            f"above. Ask for one side at a time."
+        )
+    if direct_sampling(start_mhz):
+        start_hz = int(round(start_mhz * 1_000_000))
+        stop_hz = int(round(stop_mhz * 1_000_000))
+        if bands.capture_for(start_hz, stop_hz) is None:
+            return (
+                f"{stop_mhz - start_mhz:g} MHz at once is more than one capture below "
+                f"{MIN_MHZ:g} MHz, and the sweep that stitches several together cannot "
+                f"use the shortwave path. Pick a narrower piece of it."
+            )
+        return None
     if stop_mhz - start_mhz > MAX_SPAN_MHZ:
         return (
             f"{stop_mhz - start_mhz:g} MHz at once is wider than the radio can sweep "

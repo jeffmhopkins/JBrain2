@@ -513,10 +513,11 @@ class ChannelOut(BaseModel):
 class SectionOut(BaseModel):
     """One band section, with the derived facts already worked out.
 
-    The client never recomputes any of this. `hops`, `surveyable` and `mirrored` follow
-    from the frequency and the hardware, and a screen that derived them itself would be
-    a second implementation of the physics — free to disagree with the sweep that
-    actually runs. Everything here is either stored in the table or a property of it."""
+    The client never recomputes any of this. `hops`, `surveyable`, `bin_hz` and the
+    image edges follow from the frequency and the hardware, and a screen that derived
+    them itself would be a second implementation of the physics — free to disagree with
+    the radio that actually runs. Everything here is either stored in the table or a
+    property of it."""
 
     id: str
     band: str
@@ -540,13 +541,31 @@ class SectionOut(BaseModel):
     miss anything. Sent rather than derived for the reason the rest of this is."""
     surveyable: bool
     """False for every HF section: rtl_power hardcodes the ADC branch this hardware does
-    not wire, so those bands can be listened to and never swept."""
+    not wire, so those bands can be SURVEYED nowhere below 24 MHz. It is not the same
+    question as whether they can be watched live — that one is `live`."""
     direct_sampling: bool
     """True below 24 MHz, where the tuner is bypassed — and therefore where there is no
     gain control at all, because the tuner is powered down."""
-    mirrored: bool
-    """Above 14.4 MHz in the direct-sampling range: real, but carrying images of the
-    strong stations below it, with the sidebands swapped."""
+    sample_rate_hz: int
+    """What the radio digitises to draw this section in one hop, and 0 on the tiers
+    rtl_power still serves. The picture is this WIDE, not as wide as the section: the
+    frame is the passband."""
+    fft_bins: int
+    """Bins in one live row — derived from the rate so `bin_hz` divides exactly, and
+    deliberately not a fixed 4096."""
+    bin_hz: int | float
+    """`sample_rate_hz / fft_bins`. A float would mean the pairing does not divide,
+    which `validate()` refuses — it is typed honestly rather than rounded into
+    agreement, because the PWA compares it exactly."""
+    image_start_hz: int
+    """The low edge of the band that folds onto this one, reversed, and 0 where none
+    does. Everything on the direct path arrives summed with `28.8 MHz − f`; no software
+    separates the two contributions, so the only honest thing is to say which band is in
+    there. Replaces `mirrored`, which was False for all ten HF rows while all ten in
+    fact carry an image."""
+    image_stop_hz: int
+    """The high edge of that image, mapped from this section's own START — the fold
+    reverses, so the two edges cross over."""
     channels: list[ChannelOut]
 
 
@@ -580,7 +599,11 @@ def _section_out(section: bands.Section) -> SectionOut:
         duty=section.duty,
         surveyable=section.surveyable,
         direct_sampling=section.direct_sampling,
-        mirrored=section.mirrored,
+        sample_rate_hz=section.sample_rate_hz,
+        fft_bins=section.fft_bins,
+        bin_hz=section.live_bin_hz,
+        image_start_hz=section.image_start_hz,
+        image_stop_hz=section.image_stop_hz,
         channels=[ChannelOut(hz=c.hz, name=c.name, note=c.note) for c in section.channels],
     )
 
@@ -829,20 +852,28 @@ def _span(
     section: str | None,
     start_mhz: float | None,
     stop_mhz: float | None,
-    bin_hz: int | None,
-) -> tuple[int, int, int]:
-    """The range a live spectrum should cover: a named section, or explicit edges.
+) -> tuple[int, int, int | float]:
+    """The range a live spectrum should cover, and the bin width that draws it.
 
-    A section carries the bin width someone chose for that band while reading a band
-    plan (`bands.sweep_bin_hz`), which is a better default than any number this route
-    could compute — so naming one is the ordinary way in, and the explicit edges are
-    the expert mode the owner asked for."""
+    A section, or explicit edges: a section carries settings someone chose for that
+    band while reading a band plan, so naming one is the ordinary way in, and the
+    explicit edges are the expert mode the owner asked for.
+
+    **The bin width is no longer the caller's to pick, and no longer rtl_power's to
+    grant.** A one-hop capture has a rate and an N chosen TOGETHER so that `rate / N`
+    divides exactly (`bands.LIVE_CAPTURES`), and that quotient is the frame's bin
+    width — there is nothing here for a caller to override and nothing for the tool to
+    round. The parameter that used to carry an override is gone with the ladder it fed
+    (SDR_IQ_SPECTRUM_PLAN §2.3, F7). Only the spans too wide for one capture still go
+    through `live_bin_hz`, because those are still swept, hop by hop, by rtl_power.
+
+    Both paths ask the SAME question of the table, so a hand-typed 144.0-144.2 and the
+    2 m SSB button produce the same picture rather than two that disagree."""
     if section is not None:
         found = bands.by_id(section)
         if found is None:
             raise HTTPException(status_code=404, detail=f"No band section named {section!r}.")
         start_hz, stop_hz = found.start_hz, found.stop_hz
-        want = bin_hz or found.sweep_bin_hz
     else:
         if start_mhz is None or stop_mhz is None:
             raise HTTPException(
@@ -851,13 +882,21 @@ def _span(
             )
         start_hz = int(round(start_mhz * 1_000_000))
         stop_hz = int(round(stop_mhz * 1_000_000))
-        want = bin_hz or DEFAULT_SPECTRUM_BIN_HZ
+        found = None
     refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000)
     if refusal:
         # The sentence, not a validation blob: this is the surface an owner with no
-        # terminal has (CLAUDE.md #10), and "shortwave listens but cannot be swept" is
-        # the fact they most need said in words.
+        # terminal has (CLAUDE.md #10), and "this is more than one capture down there"
+        # is the fact they most need said in words.
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
+    if found is not None and found.live_bin_hz:
+        return start_hz, stop_hz, found.live_bin_hz
+    capture = bands.capture_for(start_hz, stop_hz)
+    if capture is not None:
+        return start_hz, stop_hz, bands.bin_width_hz(*capture)
+    # No single capture covers it, so this is rtl_power's tier: several hops, one row a
+    # second, and a bin width the tool picks off its own power-of-two ladder.
+    want = found.sweep_bin_hz if found is not None else DEFAULT_SPECTRUM_BIN_HZ
     return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want)
 
 
@@ -869,7 +908,6 @@ async def spectrum_start(
     section: Annotated[str | None, Query(max_length=48)] = None,
     start_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
     stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
-    bin_hz: Annotated[int | None, Query(ge=100, le=100_000)] = None,
     gain: Annotated[str | None, Query(max_length=16)] = None,
     serial: SerialQuery = None,
 ) -> dict[str, Any]:
@@ -878,7 +916,7 @@ async def spectrum_start(
     Naming none takes a GENERAL radio, like the tuner: one the owner reserved for a
     service is not one a waterfall may borrow because that service is momentarily idle.
     Naming one is the launcher asking for THAT radio."""
-    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz, bin_hz)
+    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz)
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
     return await _post(
@@ -902,7 +940,6 @@ async def spectrum_tune(
     section: Annotated[str | None, Query(max_length=48)] = None,
     start_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
     stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
-    bin_hz: Annotated[int | None, Query(ge=100, le=100_000)] = None,
     session_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> dict[str, Any]:
     """Move the live spectrum to another band, on the radio it already holds.
@@ -910,7 +947,7 @@ async def spectrum_tune(
     Not stop-and-start: releasing the radio between two bands is a window in which
     anything else may take it, and the owner would find their waterfall gone because
     they changed band. The session id survives, so the picture does not blink."""
-    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz, bin_hz)
+    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz)
     body: dict[str, Any] = {
         "start_hz": start_hz,
         "stop_hz": stop_hz,

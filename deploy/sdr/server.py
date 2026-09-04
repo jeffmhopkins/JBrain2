@@ -118,12 +118,18 @@ def _wav(pcm: bytes, rate: int) -> bytes:
     return buf.getvalue()
 
 
-def _range_of(body: dict[str, Any]) -> listen.Sweep:
+def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
     Shared by the one-shot `/sweep` and by starting or moving a live spectrum, so the
     three cannot drift apart on what a legal range is — the tuner's limits are a fact
     about the radio, not about which route asked.
+
+    `direct_ok` is the one thing that DOES depend on which route asked, because it is a
+    fact about the engine rather than about the radio: `rtl_power` hardcodes the wrong
+    ADC branch and can never see below `MIN_HZ`, while the live spectrum's own FFT sets
+    direct sampling mode 2 at runtime and can. Passed through rather than decided here,
+    so the floor and the reason for it stay in one place (`listen.Sweep.of`).
 
     `seconds` is how long a SURVEY runs and means nothing to a live spectrum, which
     runs until it is released. It is parsed either way rather than made conditional:
@@ -134,11 +140,13 @@ def _range_of(body: dict[str, Any]) -> listen.Sweep:
         stop_hz=int(body.get("stop_hz", 0)),
         bin_hz=int(body.get("bin_hz", 25_000)),
         seconds=float(body.get("seconds", 60)),
+        direct_ok=direct_ok,
     )
-    if not (MIN_HZ <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
+    floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
+    if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
         raise ListenError(
-            f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the tuner's range "
-            f"({MIN_HZ}-{MAX_HZ} Hz)"
+            f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the radio's range "
+            f"({floor}-{MAX_HZ} Hz)"
         )
     return sweep
 
@@ -631,7 +639,10 @@ class Handler(BaseHTTPRequestHandler):
         sweep = None
         if purpose in SWEEPING:
             try:
-                sweep = _range_of(body)
+                # Per PURPOSE, because the two sweeping purposes run different engines:
+                # `survey` is rtl_power and cannot see shortwave at all, `spectrum` does
+                # its own FFT off raw I/Q and can.
+                sweep = _range_of(body, direct_ok=purpose == PURPOSE_SPECTRUM)
             except (TypeError, ValueError) as bad:
                 self._json(400, {"detail": f"a range needs numbers: {bad}"})
                 return
@@ -722,7 +733,8 @@ class Handler(BaseHTTPRequestHandler):
         leased, the session id stays good, the viewers stay attached — and a second route
         would be a second place for the released-session race to be got wrong."""
         try:
-            sweep = _range_of(body)
+            # Only a live spectrum is ever resweept, and that engine reaches shortwave.
+            sweep = _range_of(body, direct_ok=True)
         except (TypeError, ValueError) as bad:
             self._json(400, {"detail": f"a range needs numbers: {bad}"})
             return

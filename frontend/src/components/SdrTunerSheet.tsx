@@ -42,9 +42,15 @@ function stepLabel(hz: number): string {
   return hz >= 1_000_000 ? `${hz / 1_000_000} MHz` : `${hz / 1000} kHz`;
 }
 
-// The R820T2's real range, mirrored from the api and the sidecar so a typo is caught
+// What the RADIO reaches, mirrored from the api and the sidecar so a typo is caught
 // under the owner's thumb rather than as a round trip that comes back an error.
-const MIN_MHZ = 24;
+//
+// 0.1, not 24. This said 24 — the R820T2 TUNER's floor — and refused with "This radio
+// tunes 24-1766 MHz" for everything below it, while `rtl_fm -E direct2` has been
+// listening down to 100 kHz the whole time and every route behind it bounds on
+// `TUNABLE_MIN_MHZ`. A duplicated tuner floor refusing what the box can do is the exact
+// bug class `jbrain/sdr/tuner.py` exists to end, reappearing one layer up.
+const MIN_MHZ = 0.1;
 const MAX_MHZ = 1766;
 
 interface Props {

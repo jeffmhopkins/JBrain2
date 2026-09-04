@@ -437,7 +437,25 @@ class Sweep:
     seconds: float
 
     @staticmethod
-    def of(start_hz: int, stop_hz: int, bin_hz: int, seconds: float) -> "Sweep":
+    def of(
+        start_hz: int,
+        stop_hz: int,
+        bin_hz: int,
+        seconds: float,
+        *,
+        direct_ok: bool = False,
+    ) -> "Sweep":
+        """`direct_ok` says WHICH ENGINE is asking, and it is the only thing that
+        changes the floor.
+
+        `rtl_power` cannot go below `MIN_HZ` — it hardcodes direct sampling mode 1, the
+        ADC's I branch, where this board wires Q — so the survey path leaves this False
+        and keeps its refusal. The live spectrum reads raw I/Q and does its own FFT,
+        which puts the ADC in mode 2 at runtime, so shortwave really is reachable there
+        and the same floor would be a fiction copied from a tool it no longer uses
+        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §6.2, F8). Two engines, two answers, one
+        constructor — rather than a second Sweep type that agrees about everything else.
+        """
         start, stop = int(min(start_hz, stop_hz)), int(max(start_hz, stop_hz))
         if stop - start > MAX_SWEEP_SPAN_HZ:
             raise SdrError(
@@ -446,7 +464,11 @@ class Sweep:
             )
         if stop - start < 1:
             raise SdrError("a sweep needs a range, not a single frequency")
-        if start < MIN_HZ:
+        if direct_ok and start < DIRECT_MIN_HZ:
+            raise SdrError(
+                f"{start} Hz is below what this radio reaches ({DIRECT_MIN_HZ} Hz)"
+            )
+        if not direct_ok and start < MIN_HZ:
             # NOT a policy. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` —
             # the ADC's I branch — and this board wires Q, so the tool would tune
             # something and measure nothing. Listening below the tuner works
@@ -460,6 +482,12 @@ class Sweep:
         return Sweep(
             start_hz=start,
             stop_hz=stop,
+            # CLAMPED, silently, which is safe only because nothing upstream now asks
+            # for a width this could move: `bands.LIVE_CAPTURES` pairs each rate with an
+            # N whose quotient clears MIN_SWEEP_BIN_HZ, and `bands.validate()` fails CI
+            # if one ever does not. Were that to slip, a frame would declare a bin width
+            # the transform never used — worse than a refusal, because nothing downstream
+            # can tell (§6.14).
             bin_hz=max(MIN_SWEEP_BIN_HZ, min(int(bin_hz), MAX_SWEEP_BIN_HZ)),
             seconds=max(1.0, min(float(seconds), MAX_SWEEP_SECONDS)),
         )
@@ -895,6 +923,19 @@ class Session:
         stderr. No encoder — there is no audio on this path at all."""
         if shutil.which("rtl_power") is None:
             raise SdrError("rtl_power is not installed in this image")
+        # F8 opened the HF band rows before F6 replaced this engine, so a shortwave
+        # spectrum can now reach a tool that cannot serve one: `rtl_power -D` hardcodes
+        # direct sampling mode 1, the I branch, and this hardware wires Q. The guard
+        # belongs HERE rather than in the route because the refusal is a fact about
+        # rtl_power, not about the radio — the same range is perfectly viewable the
+        # moment F6 lands, and a route-level floor would have to be found and removed
+        # again. Delete this with the engine, not before.
+        if self.sweep is not None and self.sweep.start_hz < MIN_HZ:
+            raise SdrError(
+                f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs the I/Q engine, "
+                f"which this build does not have yet — the sweep tool cannot reach the "
+                f"ADC branch this radio wires. Listening there works."
+            )
         try:
             self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE

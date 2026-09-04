@@ -2382,12 +2382,14 @@ export interface EditImageRequest {
   sourceImageId: string | null;
 }
 
+// No `bin_hz`: the width of a bin is `rate / N` off the band table's capture ladder,
+// chosen so the division is exact, and an override here could only ever declare a width
+// the transform did not use (SDR_IQ_SPECTRUM_PLAN F7).
 function spectrumQuery(range: SpectrumRange): string {
   const parts: string[] = [];
   if (range.section) parts.push(`section=${encodeURIComponent(range.section)}`);
   if (range.startMhz !== undefined) parts.push(`start_mhz=${encodeURIComponent(range.startMhz)}`);
   if (range.stopMhz !== undefined) parts.push(`stop_mhz=${encodeURIComponent(range.stopMhz)}`);
-  if (range.binHz !== undefined) parts.push(`bin_hz=${encodeURIComponent(range.binHz)}`);
   return parts.join("&");
 }
 
