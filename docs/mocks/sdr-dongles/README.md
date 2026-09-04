@@ -5,8 +5,8 @@
 The GUI round for **P0b** (`../../plans/APRS_CONTROL_PLAN.md`): telling two RTL-SDR
 dongles apart, and saying what each one is for.
 
-**Awaiting the owner's confirmation.** `a-named-roles.html` is a proposal, not yet the
-binding spec.
+**`a-named-roles.html` is the BINDING SPEC.** Confirmed by the owner 2026-09-04 and
+built the same day (`APRS_CONTROL_PLAN.md` P0b, addressing half).
 
 ## Why the round exists
 
@@ -51,10 +51,19 @@ HF needs the direct-sampling work `SDR_RADIO_PLAN.md` §9 records as missing.
 that service reports *waiting*, rather than quietly taking a general one. Falling back is
 exactly the failure this screen exists to stop.
 
-## Open for the owner
+## Settled when it was built
 
-- **Two radios dedicated to the same service** — rendered as an error (every frame logged
-  twice), but it could equally be a standby.
+- **Two radios dedicated to the same service** is an **error**, not a standby: both would
+  log the same frequency and every frame would be stored twice. `roles.choose` returns
+  `ambiguous` and names both radios rather than picking one, because picking would make
+  which-one arbitrary again — the thing the whole feature removes.
+- **Dedication binds the tuner too.** Not in the mock, and easy to miss: without it a
+  reservation only means "APRS prefers this one" and evaporates the moment APRS is idle.
+- **A never-dedicated service still shares a general radio.** Dedicated-and-absent waits;
+  never-dedicated shares. The mock drew both states but did not name them as different
+  rules, and collapsing them is how a service changes antenna silently.
+- **An unreachable USB scan names no radio**, rather than guessing or refusing — which is
+  exactly what a one-dongle box always did, so a proxy hiccup cannot pick an antenna.
 
 ## Explicitly not decided here
 
@@ -62,7 +71,8 @@ Whether two services may run **simultaneously** on two radios. That is the rest 
 one session per device in the sidecar — and is not a GUI question. The mock deliberately
 keeps today's one-at-a-time contention visible (with one general radio left, the tuner
 and sweeps still take turns) so the surface cannot promise what the sidecar does not yet
-do.
+do. **The shipped screen keeps that promise**: its "what will actually happen" readout
+says a single shared radio still means taking turns.
 
 ## The harness is the argument
 

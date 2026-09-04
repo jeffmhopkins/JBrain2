@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b◻️(second dongle) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
+> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b🟡(**addressing shipped** — naming, roles and `-d serial=`; per-device sessions still to do) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -129,7 +129,7 @@ in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the han
 back. Binding spec `../mocks/aprs/c-single-dongle.html`. It also survives P0b unchanged —
 the contention stops happening rather than the control changing.
 
-### P0b · Second tuner, addressable (later — it removes the contention, it is not a prerequisite)
+### P0b · Second tuner, addressable — **half shipped 2026-09-04**
 
 The sidecar assumes one radio ("one tuner, one session"). It becomes **one session per
 device**: enumerate by USB serial (the supervisor's probe already reports it — a
@@ -143,6 +143,42 @@ $30. USB passthrough is already `/dev/bus/usb`, so the container sees both.
 
 **Exit:** two dongles enumerated and independently tunable, PWA-visible, with the
 existing tuner unaffected.
+
+#### What shipped, and what did not
+
+The second dongle arrived (`77192819` on bus 3-4, beside `09022796` on 1-1) and the
+plan's own framing turned out to bury the urgent half. **Addressing** was not a
+nice-to-have that simultaneity would bring along — it was a live defect on its own:
+`rtl_fm` and `rtl_power` were invoked with **no `-d`**, so both opened whichever device
+librtlsdr enumerated first. With one radio on a desk whip and one on a long wire, APRS
+could change antenna on a re-plug with no symptom but worse reception. So addressing
+shipped first, alone.
+
+| P0b clause | state |
+|---|---|
+| enumerate by USB serial | ✅ `serials_in()`, one place that knows the payload shape |
+| address sessions by device | ✅ `-d serial=` on both pipelines; the lease reports which radio it holds |
+| PWA-visible | ✅ Settings → Radios: name, description, role |
+| 409 semantics **per device** | ◻️ still one global session in the sidecar |
+| two dongles **independently tunable** | ◻️ — the contention is unchanged |
+
+So the owner can now say *which* radio does what, and a service cannot be moved off its
+radio silently — but two services still cannot run at once. `TUNER._session` is still a
+single slot; making it a map keyed by serial, with the 409 raised per device, is the
+remaining work and is a sidecar change rather than a GUI one.
+
+**The rule the round settled** (binding spec `../mocks/sdr-dongles/a-named-roles.html`,
+enforced in `jbrain/sdr/roles.py`): a **dedicated** radio that is unplugged makes its
+service WAIT, naming the radio, rather than falling back. Falling back is precisely the
+failure being fixed. A **never-dedicated** service still shares a general radio — that
+is a different case from dedicated-and-absent, and collapsing the two is how a service
+changes antenna without saying so. Dedication also binds the **tuner**, or a reservation
+would only mean "APRS prefers this one" and would evaporate whenever APRS went idle.
+
+Two smaller decisions worth keeping: choice between general radios is by **serial
+order**, because arbitrary-but-repeatable is a choice and arbitrary-per-boot is the bug;
+and an **unreachable USB scan names no radio at all** rather than guessing or refusing,
+which is exactly what a one-dongle box always did.
 
 ### P1a · Turning logging on and off — a tool, and an action
 
