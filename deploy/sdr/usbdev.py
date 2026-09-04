@@ -12,7 +12,9 @@ supervisor is the one that can READ `/sys`, which is why the caller supplies the
 resolving a serial to a node is exactly what a broken device cannot help with, and
 sysfs answers it anyway from what the kernel cached at enumeration.
 
-Stdlib only, per `Dockerfile.sdr`'s rule — an ioctl number and `fcntl`.
+Stdlib only: an ioctl number and `fcntl`. `Dockerfile.sdr`'s rule is apt-only-no-pip
+rather than stdlib-only since the spectrum path arrived, but a port reset wants nothing
+from either — it is a syscall.
 
 Named `usbdev` rather than `usb` because the sidecar's modules import each other by
 bare name off one WORKDIR, and `usb` is what pyusb installs as: nothing here pulls it

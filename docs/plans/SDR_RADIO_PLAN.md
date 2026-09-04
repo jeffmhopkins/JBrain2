@@ -201,8 +201,10 @@ privileged one — the same property `host_kernel_write` already relies on for
 
 ### S0b-ii — the sidecar + client, then the gate
 
-**Built.** The `sdr` image (`python:3.12-slim` + the `rtl-sdr` apt package; the service
-is stdlib `http.server` piping to `rtl_fm`, so there are no new Python dependencies),
+**Built.** The `sdr` image (then `python:3.12-slim` + the `rtl-sdr` apt package, the
+service stdlib `http.server` piping to `rtl_fm` — `SDR_IQ_SPECTRUM_PLAN.md` F1 has since
+rebased it onto `debian:trixie-slim` and taken numpy + SoapySDR from apt, so the image's
+rule reads apt-only-no-pip rather than stdlib-only),
 the profile-guarded compose service with the whole `/dev/bus/usb` tree passed through on
 the egress-free `radio` network, a pinned `sdr_url` on the api, and
 `POST /api/debug/sdr/capture` — tune, record, transcribe, in one console command.

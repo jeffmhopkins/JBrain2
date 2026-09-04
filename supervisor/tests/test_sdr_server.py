@@ -364,8 +364,8 @@ def test_a_sweep_holds_the_radio_and_returns_its_rows(
     """The happy path, and the shape the api reduces.
 
     The sidecar hands back the CSV rtl_power wrote and does NOT draw it: the image work
-    needs a plotting stack, `Dockerfile.sdr` forbids the pip install that would bring
-    one, and the api already carries Pillow."""
+    needs a plotting stack, which `Dockerfile.sdr`'s apt-only, no-pip rule refuses, and
+    the api already carries Pillow."""
     _sweeping(
         monkeypatch, csv="2026-09-03, 15:00:00, 144000000, 144005000, 5000, 12, -71.2\n"
     )

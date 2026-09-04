@@ -18,10 +18,12 @@ frequency and a mode, both validated against the tuner's real range before they 
 here, and validated again below. The `stream.py` SSRF guard is untouched by any of
 this — see §4.4 of the plan.
 
-Zero new Python dependencies: the HTTP surface is `http.server` from the stdlib and
-the radio work is `rtl_fm` (from the `rtl-sdr` package) over a pipe. What comes back
-is a 16 kHz mono WAV, which is exactly what whisper wants — no resampling stage, a
-convenience of rtl_fm's native output rather than a coincidence.
+Dependencies are APT ONLY, NO PIP — a rule that used to say stdlib-only, and
+`Dockerfile.sdr` argues the weakening. The HTTP surface is `http.server` from the
+stdlib, the radio work is `rtl_fm` (from the `rtl-sdr` package) over a pipe, and numpy
+and SoapySDR come from Debian for the spectrum path. What rtl_fm hands back is a 16 kHz
+mono WAV, which is exactly what whisper wants — no resampling stage, a convenience of
+its native output rather than a coincidence.
 """
 
 from __future__ import annotations
@@ -473,9 +475,9 @@ class Handler(BaseHTTPRequestHandler):
         """Run one band sweep and return the CSV rtl_power wrote.
 
         The sidecar's whole job here is the RADIO: hold the lease, run the sweep, hand
-        back the numbers. It does not reduce them and it does not draw them, because
-        `Dockerfile.sdr` forbids the pip install a plotting stack would need — and the
-        api already carries Pillow for exactly this kind of work. Sending the raw CSV
+        back the numbers. It does not reduce them and it does not draw them: a plotting
+        stack is exactly what `Dockerfile.sdr`'s apt-only, no-pip rule still refuses —
+        and the api already carries Pillow for exactly this kind of work. Sending the raw CSV
         also means a better reduction can be run over an old sweep later, the same
         reasoning that keeps `raw` on every APRS row.
 

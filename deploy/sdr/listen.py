@@ -786,12 +786,13 @@ class Session:
     def _sweep_cmd(self) -> list[str]:
         """`rtl_power` over the range, one CSV row per bin-block per interval.
 
-        rtl_power ONLY, and deliberately: `Dockerfile.sdr` states the rule outright —
-        "No pip install at all: a radio sidecar that pulled a Python SDR stack would be
-        carrying a second implementation of what librtlsdr already does" — and rtl_power
-        is already in the image beside rtl_fm. The rewrites (`rtl_power_fftw`,
-        `soapy_power`) are a source build and a pip install respectively, and neither
-        has earned that against a measured shortfall yet.
+        rtl_power ONLY, and still deliberately — but on narrower grounds than before.
+        `Dockerfile.sdr`'s rule is now APT ONLY, NO PIP rather than stdlib-only, so numpy
+        and SoapySDR are in the image and an FFT of our own has become affordable; this
+        stays rtl_power because nothing has replaced it yet, not because nothing could
+        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6 is where the swap happens). The rewrites
+        are refused as they always were: `rtl_power_fftw` is a source build and
+        `soapy_power` a pip install, and neither is in Debian.
 
         `-i 1` is one second per row, and MEASURED on this box that is also the real
         revisit: 1.0 s between consecutive readings of the same block at 1, 2, 4, 8 and
