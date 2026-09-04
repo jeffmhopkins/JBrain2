@@ -1106,7 +1106,9 @@ describe("the screen's shell", () => {
     const tabbar = container.querySelector('[role="tablist"]');
     expect(tabbar).not.toBeNull();
     expect(tabbar?.classList.contains("seg-tabs")).toBe(true);
-    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(3);
+    // Four: Tuner, Spectrum, APRS, Recordings. Spectrum is a tab only until the
+    // launcher's chosen shape lands, where a spectrum is a job a RADIO is given.
+    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(4);
     expect(container.querySelector(".radio-tabs")).toBeNull();
     // And the roster's range control REUSES it rather than cloning it — the near-identical
     // copy under a different class name is precisely what this test is written against,

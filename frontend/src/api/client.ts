@@ -54,6 +54,7 @@ import type {
   JlaunchSpec,
   PublicJlaunchRun,
 } from "../jlaunch/types";
+import type { SdrBands, SpectrumRange } from "../sdrBands";
 import type { SdrRadios } from "../sdrRadios";
 import type { SdrListening, SdrState } from "../sdrSession";
 
@@ -2381,6 +2382,15 @@ export interface EditImageRequest {
   sourceImageId: string | null;
 }
 
+function spectrumQuery(range: SpectrumRange): string {
+  const parts: string[] = [];
+  if (range.section) parts.push(`section=${encodeURIComponent(range.section)}`);
+  if (range.startMhz !== undefined) parts.push(`start_mhz=${encodeURIComponent(range.startMhz)}`);
+  if (range.stopMhz !== undefined) parts.push(`stop_mhz=${encodeURIComponent(range.stopMhz)}`);
+  if (range.binHz !== undefined) parts.push(`bin_hz=${encodeURIComponent(range.binHz)}`);
+  return parts.join("&");
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(
@@ -2796,6 +2806,31 @@ export const api = {
       method: "DELETE",
     });
     return (await response.json()) as SdrRadios;
+  },
+
+  // The band table (jbrain/sdr/bands.py). Static, and not gated on a radio being
+  // present: the picker is how the owner learns what the box can do, which matters most
+  // on a box where nothing is currently plugged in.
+  async getSdrBands(): Promise<SdrBands> {
+    const response = await request("/api/sdr/bands");
+    return (await response.json()) as SdrBands;
+  },
+
+  // The live waterfall. A band SECTION or an explicit range — the second is the expert
+  // path, and reaches anywhere the sweep tool can. The rows themselves arrive on an
+  // EventSource (sdrSpectrum.ts), not through here.
+  async sdrSpectrumStart(range: SpectrumRange): Promise<SdrListening> {
+    const response = await request(`/api/sdr/spectrum?${spectrumQuery(range)}`, {
+      method: "POST",
+    });
+    return (await response.json()) as SdrListening;
+  },
+
+  async sdrSpectrumTune(range: SpectrumRange, sessionId?: string): Promise<SdrListening> {
+    let query = spectrumQuery(range);
+    if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    const response = await request(`/api/sdr/spectrum/tune?${query}`, { method: "POST" });
+    return (await response.json()) as SdrListening;
   },
 
   async sdrStop(sessionId?: string): Promise<void> {

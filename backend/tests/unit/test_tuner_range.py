@@ -18,7 +18,16 @@ import re
 
 import pytest
 
-from jbrain.sdr.tuner import DIRECT_MIN_MHZ, MAX_MHZ, MIN_MHZ, serials_in
+from jbrain.sdr.tuner import (
+    DIRECT_MIN_MHZ,
+    MAX_MHZ,
+    MAX_SPAN_MHZ,
+    MIN_MHZ,
+    SPECTRUM_MAX_BINS,
+    live_bin_hz,
+    serials_in,
+    viewable,
+)
 
 _SIDECAR = pathlib.Path(__file__).resolve().parents[3] / "deploy" / "sdr" / "listen.py"
 
@@ -42,6 +51,12 @@ def test_the_api_refuses_exactly_what_the_sidecar_refuses() -> None:
     # same class of silent failure: a sidecar that disagreed here would refuse a
     # shortwave frequency the api had already accepted, as a 502 rather than a bound.
     assert _constant("DIRECT_MIN_HZ") == DIRECT_MIN_MHZ * 1_000_000
+    # The waterfall's two bounds, mirrored for the same reason and drifting the same
+    # way: a sidecar that carried a smaller frame cap would refuse — as a 502 — a live
+    # spectrum the api had already coarsened to fit, and one that allowed a wider span
+    # would let the api hand back a picture nothing here believes it asked for.
+    assert _constant("SPECTRUM_MAX_BINS") == SPECTRUM_MAX_BINS
+    assert _constant("MAX_SWEEP_SPAN_HZ") == MAX_SPAN_MHZ * 1_000_000
 
 
 def test_no_source_file_writes_the_tuner_range_as_a_literal() -> None:
@@ -118,3 +133,46 @@ class TestReadingTheUsbScan:
         payload = {"sysfs_readable": True, "sdrs": [{"serial": "x1"}, {"serial": "x1"}]}
 
         assert serials_in(payload) == ["x1"]
+
+
+class TestWhatALiveViewCanCover:
+    """A waterfall is rtl_power, so everything that stops a sweep stops a picture — plus
+    one bound a single frequency cannot violate and a range can."""
+
+    def test_a_row_too_fine_to_send_is_coarsened_by_doubling(self) -> None:
+        # Doubling rather than dividing the span, because rtl_power grants the largest
+        # power-of-two division of its per-hop bandwidth no coarser than what it was
+        # asked for: an exact quotient is a number the tool will not honour.
+        assert live_bin_hz(4_000_000, 100) == 1_600
+        assert SPECTRUM_MAX_BINS >= 4_000_000 // 1_600
+        # ...and 800 really was too fine.
+        assert SPECTRUM_MAX_BINS < 4_000_000 // 800
+
+    def test_a_bin_that_already_fits_is_left_alone(self) -> None:
+        assert live_bin_hz(4_000_000, 25_000) == 25_000
+
+    def test_a_nonsense_bin_does_not_divide_by_zero(self) -> None:
+        assert live_bin_hz(4_000_000, 0) > 0
+
+    def test_shortwave_cannot_be_drawn_even_though_it_can_be_heard(self) -> None:
+        refusal = viewable(7.0, 7.3)
+
+        assert refusal and "still listen" in refusal
+
+    def test_an_edge_that_dips_below_the_tuner_is_caught(self) -> None:
+        # BOTH edges, because a range straddling 24 MHz measures nothing across the
+        # bottom half and reports a plausible flat floor there.
+        assert viewable(20.0, 30.0) is not None
+        assert viewable(30.0, 1800.0) is not None
+
+    def test_a_span_wider_than_the_sweep_allows_names_the_ceiling(self) -> None:
+        refusal = viewable(400.0, 500.0)
+
+        assert refusal and f"{MAX_SPAN_MHZ:g}" in refusal
+
+    def test_a_range_that_is_not_a_range_is_refused(self) -> None:
+        assert viewable(146.0, 146.0) is not None
+        assert viewable(148.0, 144.0) is not None
+
+    def test_an_ordinary_band_is_viewable(self) -> None:
+        assert viewable(144.0, 148.0) is None

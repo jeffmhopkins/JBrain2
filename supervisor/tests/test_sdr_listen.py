@@ -8,6 +8,7 @@ pipeline itself needs hardware, so it is faked at the subprocess seam.
 from __future__ import annotations
 
 import importlib.util
+import queue
 import sys
 import time
 from pathlib import Path
@@ -1376,3 +1377,407 @@ class TestShortwave:
     def test_a_sweep_above_the_tuner_is_unaffected(self) -> None:
         sweep = listen.Sweep.of(144_000_000, 148_000_000, 5_000, 60)
         assert sweep.start_hz == 144_000_000
+
+
+# --- the live spectrum ----------------------------------------------------------
+
+
+def _row(stamp: str, low: int, step: int, *db: float) -> str:
+    """One rtl_power CSV line, in the shape the tool actually writes."""
+    high = low + len(db) * step
+    values = ", ".join(f"{v:.2f}" for v in db)
+    return f"{stamp}, {low}, {high}, {step:.2f}, 12, {values}"
+
+
+class TestStitchingRowsIntoFrames:
+    """rtl_power's rows back into whole waterfall rows, with no radio in sight.
+
+    This is where the awkward cases live, and all of them are text: a sweep wider than
+    the radio's window arrives as several rows per interval, they do not arrive in band
+    order, and a row can be torn or lost while the tool is still writing. `Stitch` is
+    pure so every one of those can be provoked exactly rather than waited for.
+    """
+
+    def test_one_block_per_interval_is_one_frame(self) -> None:
+        """The common case — a span inside the radio's own window — and the one the
+        learned width pays off hardest on: once the first interval has shown that a
+        frame is one row, every row after it is a finished frame the moment it lands."""
+        stitch = listen.Stitch()
+
+        first = stitch.push(
+            _row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0)
+        )
+        second = stitch.push(
+            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0, -61.0)
+        )
+
+        assert first == []  # nothing yet knows how wide a frame is
+        assert [f.db for f in second] == [[-70.0, -71.0], [-60.0, -61.0]]
+
+    def test_a_wide_sweep_is_stitched_into_one_frame_in_band_order(self) -> None:
+        """The blocks do NOT arrive low-to-high, and a waterfall drawn in arrival order
+        is a picture with its halves swapped."""
+        stitch = listen.Stitch()
+
+        stitch.push(_row("2026-09-04, 13:00:00", 144_100_000, 25_000, -60.0, -61.0))
+        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0))
+        frames = stitch.push(
+            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0, -71.0)
+        )
+
+        assert len(frames) == 1
+        assert frames[0].start_hz == 144_000_000
+        assert frames[0].db == [-70.0, -71.0, -60.0, -61.0]
+
+    def test_once_the_width_is_known_a_frame_lands_without_waiting_a_second(
+        self,
+    ) -> None:
+        """The whole reason the width is learned: waiting for the NEXT interval to prove
+        a frame complete costs every frame a second of latency."""
+        stitch = listen.Stitch()
+        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
+        stitch.push(_row("2026-09-04, 13:00:00", 144_025_000, 25_000, -60.0))
+        stitch.push(
+            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -71.0)
+        )  # learns 2
+
+        # The second block of the SECOND interval completes it on arrival.
+        frames = stitch.push(_row("2026-09-04, 13:00:01", 144_025_000, 25_000, -61.0))
+
+        assert len(frames) == 1
+        assert frames[0].db == [-71.0, -61.0]
+
+    def test_a_dropped_block_costs_one_short_frame_not_every_frame_after_it(
+        self,
+    ) -> None:
+        """`max` in `_flush`, and it is load-bearing: a plain assignment would teach the
+        eager path the SHORT width, and every frame after a single lost row would be cut
+        to match — a waterfall that silently loses half its band and never recovers."""
+        stitch = listen.Stitch()
+        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
+        stitch.push(_row("2026-09-04, 13:00:00", 144_025_000, 25_000, -60.0))
+        stitch.push(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -71.0))
+
+        # Interval :01 loses its second block entirely; :02 arrives whole.
+        short = stitch.push(_row("2026-09-04, 13:00:02", 144_000_000, 25_000, -72.0))
+        whole = stitch.push(_row("2026-09-04, 13:00:02", 144_025_000, 25_000, -62.0))
+
+        assert len(short) == 1 and short[0].db == [-71.0]
+        assert len(whole) == 1 and whole[0].db == [-72.0, -62.0]
+
+    def test_a_repeated_block_ends_the_frame_even_if_the_clock_did_not(self) -> None:
+        """Belt and braces for a loaded box stamping two intervals alike. Without it the
+        second reading would overwrite the first and the frame would never complete."""
+        stitch = listen.Stitch()
+        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
+        frames = stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -80.0))
+
+        # Two readings of one block are two intervals, whatever the clock said.
+        assert [f.db for f in frames] == [[-70.0], [-80.0]]
+
+    def test_a_torn_line_is_skipped_not_raised(self) -> None:
+        # This parses text a radio is still writing. One lost row must not end the
+        # picture.
+        stitch = listen.Stitch()
+        assert stitch.push("2026-09-04, 13:00:00, 1440000") == []
+        assert stitch.push("") == []
+        assert stitch.push("2026-09-04, 13:00:00, x, y, z, 12, -70.0") == []
+
+    def test_a_frame_addresses_its_own_bins(self) -> None:
+        """`start_hz + i * bin_hz` has to land on bin i, whatever rtl_power reported
+        about the block edges — the renderer has no other way to place a column."""
+        stitch = listen.Stitch()
+        stitch.push(
+            _row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0, -72.0)
+        )
+        frames = stitch.push(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0))
+
+        frame = frames[0]
+        assert frame.stop_hz == frame.start_hz + len(frame.db) * frame.bin_hz
+        assert frame.as_dict()["bins"] == 3
+
+
+class _Pipe:
+    """One process's stdout. Ends when the process is killed, as a real pipe does."""
+
+    def __init__(self) -> None:
+        self._q: queue.Queue[bytes | None] = queue.Queue()
+
+    def put(self, line: str) -> None:
+        self._q.put(line.encode() + b"\n")
+
+    def close(self) -> None:
+        self._q.put(None)
+
+    def read(self, _n: int = 0) -> bytes:
+        return b""
+
+    def __iter__(self):
+        while True:
+            item = self._q.get()
+            if item is None:
+                return
+            yield item
+
+
+class _Feed:
+    """rtl_power's stdout, driven by the test: `emit()` a line, the pump reads it.
+
+    A queue rather than a fixed list of rows, so a test can attach a viewer BEFORE any
+    row exists and then provoke exactly the one it wants — no sleeps anywhere.
+
+    A FRESH pipe per launch, and `emit` always writes to the newest. A retune relaunches
+    the process, and a single shared queue would leave the old pump thread sitting on it
+    beside the new one, splitting the rows between them at random."""
+
+    def __init__(self) -> None:
+        self.pipes: list[_Pipe] = []
+
+    def open(self) -> _Pipe:
+        pipe = _Pipe()
+        self.pipes.append(pipe)
+        return pipe
+
+    def emit(self, line: str) -> None:
+        self.pipes[-1].put(line)
+
+    def close(self) -> None:
+        for pipe in self.pipes:
+            pipe.close()
+
+
+class TestTheLiveSpectrum:
+    """A waterfall is a radio held open, not a measurement that ends.
+
+    That is the whole difference from `survey`, and every test here is about a
+    consequence of it: no exit timer, rows on stdout instead of a file read back, and a
+    session that has to be released like a listening one rather than freeing itself.
+    """
+
+    @pytest.fixture
+    def feed(self) -> Any:
+        return _Feed()
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch, feed) -> Any:
+        launched: list[list[str]] = []
+
+        class _Fed(_FakeProc):
+            def __init__(self, argv, *a: Any, **k: Any) -> None:
+                launched.append(list(argv))
+                super().__init__(argv, *a, **k)
+                self.stdout = feed.open()
+
+            def kill(self) -> None:
+                # A killed process closes its pipe, and the reader ends. Without this
+                # the pump thread would block on the queue for ever and a retune would
+                # sit out `_restart`'s join timeout on every test that provokes one.
+                super().kill()
+                self.stdout.close()
+
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _Fed)
+        tuner = listen.Tuner()
+        tuner._launched_argv = launched  # type: ignore[attr-defined]
+        yield tuner
+        feed.close()
+        tuner.stop()
+
+    def _sweep(self, start: int = 144_000_000, stop: int = 144_200_000) -> Any:
+        return listen.Sweep.of(start, stop, 25_000, 60)
+
+    def _start(self, tuner, **kw: Any) -> Any:
+        tuner.start(
+            144_000_000,
+            "fm",
+            kw.pop("gain", None),
+            purpose=listen.PURPOSE_SPECTRUM,
+            sweep=kw.pop("sweep", None) or self._sweep(),
+            **kw,
+        )
+        return tuner.for_purpose(listen.PURPOSE_SPECTRUM)
+
+    # ---- the lease ------------------------------------------------------------
+
+    def test_a_spectrum_holds_the_lease_and_says_what_for(self, tuner) -> None:
+        info = tuner.start(
+            144_000_000,
+            "fm",
+            None,
+            purpose=listen.PURPOSE_SPECTRUM,
+            sweep=self._sweep(),
+        )
+
+        body = info.as_dict()
+        assert body["purpose"] == listen.PURPOSE_SPECTRUM
+        # The range, so the waterfall can label its own axis. `frequency_hz` can only
+        # carry the midpoint, which reads as a tuner parked somewhere it is not.
+        assert body["sweep"] == {
+            "start_hz": 144_000_000,
+            "stop_hz": 144_200_000,
+            "bin_hz": 25_000,
+            "seconds": 60.0,
+        }
+        assert body["frequency_hz"] == 144_100_000
+
+    def test_a_spectrum_cannot_steal_the_radio_from_APRS(self, tuner) -> None:
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
+
+        with pytest.raises(listen.SdrBusy) as refused:
+            tuner.start(
+                144_000_000,
+                "fm",
+                None,
+                purpose=listen.PURPOSE_SPECTRUM,
+                sweep=self._sweep(),
+            )
+
+        assert "logging APRS" in str(refused.value)
+
+    def test_a_spectrum_without_a_range_is_refused(self, tuner) -> None:
+        with pytest.raises(listen.SdrError):
+            tuner.start(144_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM)
+
+    def test_a_frame_wider_than_the_stream_carries_is_refused(self, tuner) -> None:
+        """Refused at the lease rather than discovered on the wire: 60 MHz at 100 Hz
+        bins is 600,000 numbers a second per viewer, and the honest place to say no is
+        before a radio is held for it."""
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                144_000_000,
+                "fm",
+                None,
+                purpose=listen.PURPOSE_SPECTRUM,
+                sweep=listen.Sweep.of(144_000_000, 154_000_000, 100, 60),
+            )
+
+        assert "coarser bins" in str(refused.value)
+
+    # ---- the command ----------------------------------------------------------
+
+    def test_the_command_never_carries_an_exit_timer(self, tuner) -> None:
+        """THE defining difference from a survey. `-e` would make the picture stop on
+        its own after a minute, and the radio free itself under a viewer still watching
+        — with nothing but a frozen waterfall to say so."""
+        session = self._start(tuner, gain="30")
+        cmd = session._spectrum_cmd()
+
+        assert "-e" not in cmd
+        assert cmd[-1] == "-"  # stdout, so rows can be fanned out as they are measured
+        assert "144000000:144200000:25000" in cmd
+        assert cmd[cmd.index("-i") + 1] == "1"
+        assert cmd[cmd.index("-g") + 1] == "30"
+
+    def test_the_rows_are_line_buffered_when_stdbuf_is_here(self, tuner) -> None:
+        session = self._start(tuner)
+        assert session._spectrum_cmd()[:3] == ["stdbuf", "-oL", "rtl_power"]
+
+    def test_and_the_tool_still_runs_when_it_is_not(self, tuner, monkeypatch) -> None:
+        # `stdbuf` is insurance, not a dependency: an image without it must still sweep.
+        monkeypatch.setattr(listen, "_LINE_BUFFERED", False)
+        session = self._start(tuner)
+        assert session._spectrum_cmd()[0] == "rtl_power"
+
+    def test_it_opens_the_radio_it_was_told_to(self, tuner) -> None:
+        session = self._start(tuner, serial="77192819")
+        cmd = session._spectrum_cmd()
+        assert cmd[cmd.index("-d") + 1] == "77192819"
+
+    # ---- frames reaching viewers ----------------------------------------------
+
+    def test_a_viewer_is_handed_the_rows_as_they_are_measured(
+        self, tuner, feed
+    ) -> None:
+        session = self._start(tuner)
+        sub = session.subscribe_frames()
+
+        feed.emit(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0))
+        feed.emit(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0, -61.0))
+
+        frame = sub.get(timeout=5)
+        assert frame is not None and frame.db == [-70.0, -71.0]
+
+    def test_a_viewer_arriving_late_is_not_shown_a_blank_canvas(
+        self, tuner, feed
+    ) -> None:
+        """The seeded row. Without it a waterfall opens on nothing for up to a whole
+        interval, which reads as a radio that did not start."""
+        session = self._start(tuner)
+        early = session.subscribe_frames()
+        feed.emit(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
+        feed.emit(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0))
+        early.get(timeout=5)  # the pump has certainly published by now
+
+        late = session.subscribe_frames()
+
+        assert late.get_nowait() is not None
+
+    def test_a_backed_up_viewer_loses_rows_and_never_wedges_the_pump(
+        self, tuner, feed
+    ) -> None:
+        """A phone that stopped reading must cost that phone its picture, not everyone
+        else's — the same backpressure live audio takes, and for the same reason: a
+        waterfall row drawn late is drawn in the wrong place."""
+        session = self._start(tuner)
+        stalled = session.subscribe_frames()
+        reading = session.subscribe_frames()
+
+        for interval in range(listen.SPECTRUM_QUEUE + 6):
+            feed.emit(
+                _row(f"2026-09-04, 13:00:{interval:02d}", 144_000_000, 25_000, -70.0)
+            )
+            if interval:
+                assert reading.get(timeout=5) is not None
+
+        assert stalled.qsize() == listen.SPECTRUM_QUEUE
+
+    def test_releasing_the_radio_closes_every_viewers_stream(self, tuner, feed) -> None:
+        """Without the sentinel a released session leaves a server thread per viewer
+        blocked for ever, each still reporting a healthy picture of a radio nothing is
+        watching — the same leak the packet readers had."""
+        session = self._start(tuner)
+        sub = session.subscribe_frames()
+
+        tuner.stop(session.id)
+
+        assert sub.get(timeout=5) is None
+
+    # ---- moving it ------------------------------------------------------------
+
+    def test_moving_the_range_keeps_the_session_and_its_viewers(
+        self, tuner, feed
+    ) -> None:
+        session = self._start(tuner)
+        sub = session.subscribe_frames()
+        was = session.id
+
+        session.resweep(self._sweep(440_000_000, 440_200_000))
+
+        assert session.id == was
+        assert session.info().as_dict()["sweep"]["start_hz"] == 440_000_000
+        # The omnibox names the new centre, not the old one.
+        assert session.frequency_hz == 440_100_000
+        # And the viewer was never told anything — no sentinel, no reconnect. The next
+        # row simply describes the new band, which is what every frame carrying its own
+        # range buys.
+        feed.emit(_row("2026-09-04, 13:01:00", 440_000_000, 25_000, -70.0))
+        feed.emit(_row("2026-09-04, 13:01:01", 440_000_000, 25_000, -71.0))
+        frame = sub.get(timeout=5)
+        assert frame is not None and frame.start_hz == 440_000_000
+
+    def test_moving_a_released_spectrum_is_refused_not_relaunched(self, tuner) -> None:
+        """The race `Session._restart` exists for: a relaunch here spawns an rtl_power
+        for a session no longer in the registry — unreapable, and holding the dongle
+        until the container restarts."""
+        session = self._start(tuner)
+        tuner.stop(session.id)
+
+        with pytest.raises(listen.SessionGone):
+            session.resweep(self._sweep(440_000_000, 440_200_000))
+
+    def test_a_listening_session_has_no_range_to_move(self, tuner) -> None:
+        tuner.start(99_300_000, "wbfm", None)
+        session = tuner.for_purpose(listen.PURPOSE_LISTEN)
+
+        with pytest.raises(listen.SdrError):
+            session.resweep(self._sweep())

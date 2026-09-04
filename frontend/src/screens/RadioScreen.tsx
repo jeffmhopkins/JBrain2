@@ -30,12 +30,22 @@ import {
   receiverHealth,
 } from "../aprsLog";
 import { AprsStations } from "../components/AprsStations";
+import { SdrSpectrumTab } from "../components/SdrSpectrumTab";
 import { SdrTunerControls } from "../components/SdrTunerSheet";
 import { type SdrListening, sessionFor, useSdrSession } from "../sdrSession";
 
-type Tab = "tuner" | "aprs" | "recordings";
+type Tab = "tuner" | "spectrum" | "aprs" | "recordings";
 
 const POLL_MS = 5000;
+
+const TAB_LABEL: Record<Tab, string> = {
+  tuner: "Tuner",
+  // Its own tab only until the launcher's chosen shape lands — there a spectrum is one
+  // of the jobs a RADIO can be given, not a place of its own (SdrSpectrumTab.tsx).
+  spectrum: "Spectrum",
+  aprs: "APRS",
+  recordings: "Recordings",
+};
 
 export function RadioScreen({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("aprs");
@@ -139,7 +149,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
             instead, which is a second answer to a question the design system had
             already settled. */}
         <div className="seg-tabs" role="tablist" aria-label="Radio">
-          {(["tuner", "aprs", "recordings"] as Tab[]).map((id) => (
+          {(["tuner", "spectrum", "aprs", "recordings"] as Tab[]).map((id) => (
             <button
               key={id}
               type="button"
@@ -148,7 +158,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
               className={`seg-tab${tab === id ? " on" : ""}`}
               onClick={() => setTab(id)}
             >
-              {id === "tuner" ? "Tuner" : id === "aprs" ? "APRS" : "Recordings"}
+              {TAB_LABEL[id]}
             </button>
           ))}
         </div>
@@ -177,6 +187,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
             onReleased={() => void refresh()}
           />
         )}
+        {tab === "spectrum" && <SdrSpectrumTab />}
         {tab === "recordings" && (
           <p className="radio-empty">Recordings arrive in a later wave. Nothing is stored yet.</p>
         )}

@@ -51,6 +51,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,6 +86,13 @@ PURPOSE_APRS = "aprs"
 # the session's existence, so a sweep that held the radio outside the lease would be a
 # radio held by something invisible.
 PURPOSE_SURVEY = "survey"
+# A LIVE spectrum: the same rtl_power, with no exit timer and its CSV on stdout instead
+# of a file, so rows can be fanned out as they are measured rather than read back once.
+# The difference from `survey` is the whole point — a survey is a measurement that ends
+# and is then reduced, this is a picture that keeps being drawn — so it is a purpose of
+# its own rather than a flag on that one: they end differently, they are released
+# differently, and the omnibox has to name them differently.
+PURPOSE_SPECTRUM = "spectrum"
 # Every purpose maps to the phrase a refusal uses. `.get` rather than `[]` because this
 # is read while holding the tuner lock on the contention path: a purpose added without a
 # label would otherwise raise KeyError there and turn a 409 into a 500 with a traceback.
@@ -92,8 +100,13 @@ PURPOSE_LABEL = {
     PURPOSE_LISTEN: "listening",
     PURPOSE_APRS: "logging APRS",
     PURPOSE_SURVEY: "sweeping the band",
+    PURPOSE_SPECTRUM: "watching the spectrum",
 }
 PURPOSES = tuple(PURPOSE_LABEL)
+#: The purposes tuned to a RANGE rather than a frequency. Both drive rtl_power, and
+#: every place that asks "does this session have a sweep" means this set — which is one
+#: line rather than two comparisons that can fall out of step.
+SWEEPING = (PURPOSE_SURVEY, PURPOSE_SPECTRUM)
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
 # Sweep bounds, enforced HERE rather than at the caller. An agent will ask for an hour,
@@ -108,6 +121,25 @@ MAX_SWEEP_SPAN_HZ = 60_000_000
 # open and tuner settle on a cold radio, so an expiry is always a LEAK rather than a slow
 # caller. See `Tuner._holders` for why a promise to release is not enough.
 RESERVATION_TTL_S = 300.0
+
+# --- live spectrum --------------------------------------------------------------
+# One waterfall row per second. rtl_power retunes WITHIN the interval rather than
+# stretching it (measured — `_sweep_cmd` says so at length), so this is the real frame
+# rate at every span the sweep bounds allow, not one divided by the hop count.
+SPECTRUM_INTERVAL_S = 1
+# Frames held for one viewer. Two seconds' worth: a waterfall row that arrives late is
+# drawn in the wrong place, so a viewer that has stopped reading is dropped rather than
+# queued — the same backpressure, and for the same reason, as live audio.
+SPECTRUM_QUEUE = 4
+# Widest a live spectrum may be, in bins. Every bin crosses a websocket once a second
+# per viewer, and 4096 is already more than a pixel per bin on any screen the PWA runs
+# on — so this is where "any width" stops being free. A caller that wants more span
+# asks for coarser bins.
+SPECTRUM_MAX_BINS = 4096
+#: Whether `stdbuf` is here to make rtl_power's stdout line-buffered. Resolved once, at
+#: import, rather than per launch: it is a property of the image, and a `which` on every
+#: retune is a syscall for an answer that cannot have changed.
+_LINE_BUFFERED = shutil.which("stdbuf") is not None
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
@@ -366,10 +398,145 @@ class Sweep:
         )
 
     @property
+    def span_hz(self) -> int:
+        return self.stop_hz - self.start_hz
+
+    @property
     def centre_hz(self) -> int:
         """What the omnibox shows. A range has no one frequency, and showing the low
         edge would read as a tuner parked somewhere it is not."""
         return (self.start_hz + self.stop_hz) // 2
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "start_hz": self.start_hz,
+            "stop_hz": self.stop_hz,
+            "bin_hz": self.bin_hz,
+            "seconds": self.seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Frame:
+    """One waterfall row: every bin of the sweep, measured in one interval.
+
+    SELF-DESCRIBING, and that is the point of the shape. A viewer can be told to look
+    somewhere else mid-stream, and if the range lived only in the request that opened
+    the stream then every frame after a retune would be drawn at the old frequencies
+    until the client noticed. Carrying `start_hz`/`bin_hz` on each row means a retune
+    needs no protocol event at all: the next row simply describes a different band, and
+    a client that draws what each row says is already correct.
+
+    `stop_hz` is DERIVED from the array rather than copied from rtl_power's own high
+    edge, so `start_hz + i * bin_hz` addresses bin `i` exactly, whatever the tool
+    reported about a block it cropped."""
+
+    at: float
+    start_hz: int
+    bin_hz: int
+    db: list[float]
+
+    @property
+    def stop_hz(self) -> int:
+        return self.start_hz + len(self.db) * self.bin_hz
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "at": round(self.at, 3),
+            "start_hz": self.start_hz,
+            "stop_hz": self.stop_hz,
+            "bin_hz": self.bin_hz,
+            "bins": len(self.db),
+            # One decimal. rtl_power prints two, and the second is well under the
+            # noise on any real reading — it is a tenth of a dB — while it costs a
+            # character per bin on every frame of every viewer's stream.
+            "db": [round(v, 1) for v in self.db],
+        }
+
+
+def _spectrum_row(line: str) -> tuple[str, int, int, list[float]] | None:
+    """One rtl_power CSV line as (timestamp, low Hz, bin Hz, dB per bin).
+
+    Tolerant, for the reason `sweep.reduce_csv` is: this parses text a radio wrote
+    while it is still writing, so a torn or short line is a lost row rather than an
+    error that ends a live picture."""
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 7:
+        return None
+    try:
+        low, step = int(float(parts[2])), int(float(parts[4]))
+        values = [float(p) for p in parts[6:] if p]
+    except ValueError:
+        return None
+    if not values or step <= 0:
+        return None
+    return f"{parts[0]} {parts[1]}", low, step, values
+
+
+class Stitch:
+    """rtl_power's rows back into whole waterfall frames.
+
+    rtl_power emits one row per retune BLOCK, and a sweep wider than the radio's ~2.8
+    MHz window is several blocks — all carrying the SAME timestamp, because the retunes
+    happen inside the interval rather than extending it. So a frame is the run of rows
+    sharing a timestamp.
+
+    Waiting for the NEXT timestamp to prove a frame complete would cost every frame a
+    whole interval of latency, including the single-block case that is most of what the
+    PWA asks for. So the width is LEARNED — the first complete frame says how many
+    blocks a frame has — and after that a frame is emitted the moment its last block
+    arrives. The timestamp change is still there as the fallback, which is what makes a
+    dropped row cost one short frame rather than a stalled picture.
+
+    Blocks are keyed by their low edge rather than assumed to arrive in band order,
+    because they do not: `sweep.reduce_csv` learned the same thing off the same tool.
+
+    Pure: text in, frames out, no clock and no radio, which is what lets the awkward
+    cases be tested without one."""
+
+    def __init__(self) -> None:
+        self._stamp = ""
+        self._blocks: dict[int, tuple[int, list[float]]] = {}
+        self._expect = 0
+
+    def push(self, line: str) -> list[Frame]:
+        """Feed one CSV line; get back whatever frames it completed (usually none)."""
+        row = _spectrum_row(line)
+        if row is None:
+            return []
+        stamp, low, step, values = row
+        out: list[Frame] = []
+        # A repeated block is a wrap that the timestamp did not show — belt and braces
+        # against a tool that stamps two intervals alike on a slow box.
+        if stamp != self._stamp or low in self._blocks:
+            frame = self._flush()
+            if frame is not None:
+                out.append(frame)
+            self._stamp = stamp
+        self._blocks[low] = (step, values)
+        if self._expect and len(self._blocks) >= self._expect:
+            frame = self._flush()
+            if frame is not None:
+                out.append(frame)
+        return out
+
+    def _flush(self) -> Frame | None:
+        blocks, self._blocks = self._blocks, {}
+        if not blocks:
+            return None
+        # `max`, never plain assignment: a frame short a dropped row must not teach the
+        # eager path a narrower width, or every frame after it would be cut to match.
+        self._expect = max(self._expect, len(blocks))
+        ordered = sorted(blocks.items())
+        db: list[float] = []
+        for _low, (_step, values) in ordered:
+            db.extend(values)
+        return Frame(
+            at=time.time(),
+            start_hz=ordered[0][0],
+            bin_hz=ordered[0][1][0],
+            db=db,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +552,11 @@ class SessionInfo:
     listeners: int
     purpose: str = PURPOSE_LISTEN
     serial: str | None = None
+    #: The RANGE, for the two purposes that have one. A survey and a live spectrum are
+    #: tuned to a span, and `frequency_hz` can only carry its midpoint — which reads as
+    #: a tuner parked somewhere it is not, and gives a waterfall no way to label its own
+    #: axis. None for the purposes that really are one frequency.
+    sweep: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -398,6 +570,7 @@ class SessionInfo:
             "elapsed_s": round(time.time() - self.started_at, 1),
             "peak": round(self.peak, 4),
             "listeners": self.listeners,
+            "sweep": self.sweep,
         }
 
 
@@ -426,13 +599,27 @@ class Session:
         self.started_at = time.time()
         self.gain = gain
         self.purpose = validate_purpose(purpose)
-        if self.purpose == PURPOSE_SURVEY and sweep is None:
-            raise SdrError("a survey session needs a sweep range")
+        if self.purpose in SWEEPING and sweep is None:
+            raise SdrError(f"a {self.purpose} session needs a sweep range")
+        if self.purpose == PURPOSE_SPECTRUM and sweep is not None:
+            bins = sweep.span_hz // sweep.bin_hz
+            if bins > SPECTRUM_MAX_BINS:
+                raise SdrError(
+                    f"{bins} bins is wider than a live spectrum carries "
+                    f"({SPECTRUM_MAX_BINS}); ask for coarser bins than "
+                    f"{sweep.bin_hz / 1000:.0f} kHz"
+                )
         if self.purpose == PURPOSE_APRS and mode.lower() not in APRS_MODES:
             raise SdrError(
                 f"APRS is 1200-baud AFSK on narrowband FM; {mode!r} cannot decode it "
                 f"(want one of {sorted(APRS_MODES)})"
             )
+        if self.sweep is not None:
+            # A range has no ONE frequency, and its centre is what the omnibox draws and
+            # what a refusal names. Set here rather than trusted from the caller: three
+            # of them build a sweeping session and only one was doing this, so a
+            # waterfall started from the api reported the low edge as its tuning.
+            frequency_hz = self.sweep.centre_hz
         self.frequency_hz = frequency_hz
         self.mode = validate(frequency_hz, mode)
         self.peak = 0.0
@@ -442,6 +629,12 @@ class Session:
         self._segments: set[queue.Queue[tuple[float, bytes]]] = set()
         # Decoded APRS frames, for a purpose=aprs session. Empty on a listening one.
         self._packets: set[queue.Queue[packets.Packet | None]] = set()
+        # Waterfall rows, for a purpose=spectrum session.
+        self._frames: set[queue.Queue[Frame | None]] = set()
+        # The most recent row, handed to a viewer the moment it attaches. Without it the
+        # waterfall opens on a blank canvas for up to a whole interval, which reads as a
+        # radio that did not start.
+        self._last: Frame | None = None
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -491,6 +684,9 @@ class Session:
             return
         if self.purpose == PURPOSE_SURVEY:
             self._start_sweep_pipeline()
+            return
+        if self.purpose == PURPOSE_SPECTRUM:
+            self._start_spectrum_pipeline()
             return
         if shutil.which("rtl_fm") is None:
             raise SdrError("rtl_fm is not installed in this image")
@@ -592,6 +788,109 @@ class Session:
         self._threads = [threading.Thread(target=self._drain_tuner_log, daemon=True)]
         for thread in self._threads:
             thread.start()
+
+    def _spectrum_cmd(self) -> list[str]:
+        """The same rtl_power, with no exit timer and its CSV on stdout.
+
+        `stdbuf -oL` because the whole feature turns on rtl_power flushing each row as
+        it writes it. It does — `csv_dbm` ends in an `fflush` — but that is a property
+        of a binary the image installs from apt rather than one this repo builds, and
+        the failure mode if a future build ever changes it is a waterfall that paints
+        nothing while every test still passes. Line buffering makes the guarantee ours.
+        `stdbuf` execs its argument, so `self._rtl` is still rtl_power's own pid and
+        `_kill` still reaches it.
+
+        No `-e`: a live spectrum runs until the session is released, which is what makes
+        it different from a survey (see PURPOSE_SPECTRUM)."""
+        assert self.sweep is not None
+        span = self.sweep
+        cmd = ["stdbuf", "-oL", "rtl_power"] if _LINE_BUFFERED else ["rtl_power"]
+        cmd += [
+            "-f", f"{span.start_hz}:{span.stop_hz}:{span.bin_hz}",
+            "-i", str(SPECTRUM_INTERVAL_S),
+        ]  # fmt: skip
+        if self.gain:
+            # Fixed gain for the same reason the survey fixes it: a floor that moves
+            # with the signal makes the colours mean nothing across the picture, and a
+            # waterfall whose scale drifts is one nobody can read a weak signal off.
+            cmd += ["-g", str(self.gain)]
+        cmd += self._device_args()
+        return [*cmd, "-"]
+
+    def _start_spectrum_pipeline(self) -> None:
+        """One process and two threads: rows out of stdout, the retune plan out of
+        stderr. No encoder — there is no audio on this path at all."""
+        if shutil.which("rtl_power") is None:
+            raise SdrError("rtl_power is not installed in this image")
+        try:
+            self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        except OSError as exc:
+            self._kill()
+            raise SdrError(f"could not start the spectrum: {exc}") from exc
+        self._threads = [
+            threading.Thread(target=self._pump_spectrum, daemon=True),
+            threading.Thread(target=self._drain_tuner_log, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _pump_spectrum(self) -> None:
+        """rtl_power's CSV -> whole frames -> every viewer."""
+        rtl = self._rtl
+        if rtl is None or rtl.stdout is None:
+            return
+        stitch = Stitch()
+        try:
+            for raw in rtl.stdout:
+                if self._stopping:
+                    break
+                for frame in stitch.push(raw.decode("utf-8", "replace")):
+                    self._publish_frame(frame)
+        except (ValueError, OSError):
+            pass  # a stop, or the process went away; _kill handles teardown
+        finally:
+            # A retune replaces the process under viewers who stay attached, and each
+            # frame says which band it covers — so they need no sentinel and no reconnect
+            # to follow the move. Only a real end closes their streams.
+            if not self._restarting:
+                self._end_frames()
+
+    def _publish_frame(self, frame: Frame) -> None:
+        with self._lock:
+            self._last = frame
+            subs = list(self._frames)
+        for sub in subs:
+            try:
+                sub.put_nowait(frame)
+            except queue.Full:
+                pass  # a waterfall row is worthless late; drop for that viewer only
+
+    def _end_frames(self) -> None:
+        with self._lock:
+            subs = list(self._frames)
+            self._frames.clear()
+        for sub in subs:
+            try:
+                sub.put_nowait(None)  # sentinel: the stream ended
+            except queue.Full:
+                pass
+
+    def subscribe_frames(self) -> queue.Queue[Frame | None]:
+        """Attach one viewer, seeded with the most recent row if there is one."""
+        sub: queue.Queue[Frame | None] = queue.Queue(maxsize=SPECTRUM_QUEUE)
+        with self._lock:
+            self._frames.add(sub)
+            last = self._last
+        if last is not None:
+            with contextlib.suppress(queue.Full):
+                sub.put_nowait(last)
+        return sub
+
+    def unsubscribe_frames(self, sub: queue.Queue[Frame | None]) -> None:
+        with self._lock:
+            self._frames.discard(sub)
 
     def _start_packet_pipeline(self) -> None:
         """rtl_fm -> direwolf. No encoder, because there is no audio to serve.
@@ -985,7 +1284,40 @@ KISSPORT {self.kiss_port}
     # ---- public surface -------------------------------------------------------
 
     def tune(self, frequency_hz: int, mode: str | None = None) -> None:
-        """Retune in place. Restarts the pipeline but keeps the session id.
+        """Retune in place. Restarts the pipeline but keeps the session id, its
+        listeners, and — through `_restart` — its refusal to relaunch once released."""
+        wanted = validate(frequency_hz, mode or self.mode)
+
+        def apply() -> None:
+            self.frequency_hz = frequency_hz
+            self.mode = wanted
+            self.peak = 0.0
+
+        self._restart(apply)
+
+    def resweep(self, sweep: Sweep) -> None:
+        """Point a live spectrum at a different range, in place.
+
+        The same move `tune` makes, and it has to be a separate entry point rather than
+        a wider `tune` because the two carry different things: a tuner is told one
+        frequency and a mode, a waterfall is told a span and a bin width, and there is
+        no reading of "frequency_hz" that means both. `frequency_hz` follows the new
+        centre so the omnibox keeps naming something true.
+
+        Viewers stay attached across it and are told nothing: every frame says which
+        band it covers, so the picture simply starts describing the new one."""
+        if self.purpose not in SWEEPING:
+            raise SdrError(f"a {self.purpose} session has no range to move")
+
+        def apply() -> None:
+            self.sweep = sweep
+            self.frequency_hz = sweep.centre_hz
+            self._last = None
+
+        self._restart(apply)
+
+    def _restart(self, apply: Callable[[], None]) -> None:
+        """Tear the pipeline down, apply the new tuning, bring it back up.
 
         Refuses once the session has been released, and this is the load-bearing half.
         The route resolves the Session under the tuner's lock and calls this OUTSIDE it,
@@ -996,7 +1328,6 @@ KISSPORT {self.kiss_port}
         two processes fight over one radio. That is the "garbled audio rather than an
         error" outcome the whole per-radio rule exists to prevent, so the guard belongs
         here rather than in the route, where the window is."""
-        wanted = validate(frequency_hz, mode or self.mode)
         with self._lock:
             if self._released:
                 raise SessionGone("that session has been released")
@@ -1007,9 +1338,7 @@ KISSPORT {self.kiss_port}
             for thread in self._threads:
                 thread.join(timeout=2)
             self._stopping = False
-            self.frequency_hz = frequency_hz
-            self.mode = wanted
-            self.peak = 0.0
+            apply()
             self._start_pipeline()
         finally:
             # Cleared only after the pumps have exited and the new ones are up, so the
@@ -1054,6 +1383,10 @@ KISSPORT {self.kiss_port}
                 sub.put_nowait(None)
             except queue.Full:
                 pass
+        # ...and so do waterfall viewers, for the same reason: a released spectrum
+        # session that never closed its streams would hold a server thread apiece,
+        # each still reporting a healthy picture of a radio nothing is watching.
+        self._end_frames()
 
     @property
     def alive(self) -> bool:
@@ -1081,6 +1414,7 @@ KISSPORT {self.kiss_port}
             listeners=listeners,
             purpose=self.purpose,
             serial=self.serial,
+            sweep=self.sweep.as_dict() if self.sweep is not None else None,
         )
 
 
@@ -1224,14 +1558,20 @@ class Tuner:
     #: How the omnibox's ONE icon chooses between live sessions: prefer what a person is
     #: most likely asking about — the tuner they opened — then a service, then a sweep.
     #: Serial only BREAKS A TIE, so the answer is deterministic without being arbitrary.
-    _SHOWN_FIRST = {PURPOSE_LISTEN: 0, PURPOSE_APRS: 1, PURPOSE_SURVEY: 2}
+    _SHOWN_FIRST = {
+        PURPOSE_LISTEN: 0,
+        PURPOSE_APRS: 1,
+        PURPOSE_SPECTRUM: 2,
+        PURPOSE_SURVEY: 3,
+    }
 
     @classmethod
     def _worth_showing(cls, live: list[Session]) -> Session | None:
         """The one to draw, out of a snapshot the caller already has."""
         if not live:
             return None
-        return min(live, key=lambda s: (cls._SHOWN_FIRST.get(s.purpose, 3), s.serial or ""))
+        rank = len(cls._SHOWN_FIRST)
+        return min(live, key=lambda s: (cls._SHOWN_FIRST.get(s.purpose, rank), s.serial or ""))
 
     def current(self, serial: str | None = None) -> Session | None:
         """One session: the named radio's, or the one worth showing.

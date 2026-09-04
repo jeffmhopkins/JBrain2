@@ -47,7 +47,7 @@ from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
-from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ
+from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ, TUNABLE_MIN_MHZ, live_bin_hz, viewable
 from jbrain.transcribe import WhisperCppClient
 
 router = APIRouter(prefix="/sdr", tags=["sdr"])
@@ -467,6 +467,11 @@ class SectionOut(BaseModel):
     span_hz: int
     centre_hz: int
     hops: int
+    duty: float
+    """Roughly the fraction of each interval any one bin is actually observed. It is the
+    honesty a live view turns on: past one hop a burst can fall between visits and leave
+    no trace, and a picture that hid that would look identical to one that could not
+    miss anything. Sent rather than derived for the reason the rest of this is."""
     surveyable: bool
     """False for every HF section: rtl_power hardcodes the ADC branch this hardware does
     not wire, so those bands can be listened to and never swept."""
@@ -506,6 +511,7 @@ def _section_out(section: bands.Section) -> SectionOut:
         span_hz=section.span_hz,
         centre_hz=section.centre_hz,
         hops=section.hops,
+        duty=section.duty,
         surveyable=section.surveyable,
         direct_sampling=section.direct_sampling,
         mirrored=section.mirrored,
@@ -706,6 +712,163 @@ async def stop(
 ) -> dict[str, Any]:
     """Release the radio. This is what makes the omnibox icon disappear."""
     return await _post(settings, "/listen/stop", {"session_id": session_id})
+
+
+SPECTRUM_PURPOSE = "spectrum"
+#: The bin width a live view falls back to when neither the caller nor a band section
+#: names one. 25 kHz is a channel on most of the narrowband VHF/UHF plan, so a row at
+#: this width puts roughly one bin per channel — coarse enough to be cheap, fine enough
+#: that a signal lands in a bin of its own rather than smeared across a neighbour's.
+DEFAULT_SPECTRUM_BIN_HZ = 25_000
+
+
+def _span(
+    section: str | None,
+    start_mhz: float | None,
+    stop_mhz: float | None,
+    bin_hz: int | None,
+) -> tuple[int, int, int]:
+    """The range a live spectrum should cover: a named section, or explicit edges.
+
+    A section carries the bin width someone chose for that band while reading a band
+    plan (`bands.sweep_bin_hz`), which is a better default than any number this route
+    could compute — so naming one is the ordinary way in, and the explicit edges are
+    the expert mode the owner asked for."""
+    if section is not None:
+        found = bands.by_id(section)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"No band section named {section!r}.")
+        start_hz, stop_hz = found.start_hz, found.stop_hz
+        want = bin_hz or found.sweep_bin_hz
+    else:
+        if start_mhz is None or stop_mhz is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A waterfall needs a band section, or a start and stop frequency.",
+            )
+        start_hz = int(round(start_mhz * 1_000_000))
+        stop_hz = int(round(stop_mhz * 1_000_000))
+        want = bin_hz or DEFAULT_SPECTRUM_BIN_HZ
+    refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000)
+    if refusal:
+        # The sentence, not a validation blob: this is the surface an owner with no
+        # terminal has (CLAUDE.md #10), and "shortwave listens but cannot be swept" is
+        # the fact they most need said in words.
+        raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
+    return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want)
+
+
+@router.post("/spectrum")
+async def spectrum_start(
+    request: Request,
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    section: Annotated[str | None, Query(max_length=48)] = None,
+    start_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    bin_hz: Annotated[int | None, Query(ge=100, le=100_000)] = None,
+    gain: Annotated[str | None, Query(max_length=16)] = None,
+) -> dict[str, Any]:
+    """Take a radio and start drawing the band. 409 when every radio is held.
+
+    A GENERAL radio, like the tuner takes: one the owner reserved for a service is not
+    one a waterfall may borrow because that service is momentarily idle."""
+    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz, bin_hz)
+    chosen = await _radio_for(request, settings, _owner, GENERAL)
+    _refuse(chosen)
+    return await _post(
+        settings,
+        "/listen/start",
+        {
+            "purpose": SPECTRUM_PURPOSE,
+            "start_hz": start_hz,
+            "stop_hz": stop_hz,
+            "bin_hz": chosen_bin,
+            "gain": gain,
+            "serial": chosen.serial,
+        },
+    )
+
+
+@router.post("/spectrum/tune")
+async def spectrum_tune(
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    section: Annotated[str | None, Query(max_length=48)] = None,
+    start_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    bin_hz: Annotated[int | None, Query(ge=100, le=100_000)] = None,
+    session_id: Annotated[str | None, Query(max_length=32)] = None,
+) -> dict[str, Any]:
+    """Move the live spectrum to another band, on the radio it already holds.
+
+    Not stop-and-start: releasing the radio between two bands is a window in which
+    anything else may take it, and the owner would find their waterfall gone because
+    they changed band. The session id survives, so the picture does not blink."""
+    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz, bin_hz)
+    body: dict[str, Any] = {
+        "start_hz": start_hz,
+        "stop_hz": stop_hz,
+        "bin_hz": chosen_bin,
+    }
+    if session_id is not None:
+        body["session_id"] = session_id
+    return await _post(settings, "/listen/tune", body)
+
+
+@router.get("/spectrum")
+async def spectrum(request: Request, settings: SettingsDep, _owner: OwnerDep) -> StreamingResponse:
+    """The waterfall's rows, as server-sent events.
+
+    SSE rather than a WebSocket, which is what an earlier sketch of this assumed. The
+    traffic is one-directional — rows out, nothing in — and a socket would have brought
+    its own handshake auth and its own CSWSH gate (`api/live.py`) for no message it
+    needs to carry. Retuning is a POST, which is where it belongs: the picture and the
+    control are separate concerns and separate failures. As SSE it inherits the owner
+    session, the same proxy hop, and EventSource's own reconnect for free.
+
+    Each row is relayed verbatim, because each row already says which band it covers
+    (`listen.Frame`). This route understands nothing about the picture, which is what
+    lets a retune land without a message on this stream at all."""
+    base = _base(settings)
+
+    async def pump():
+        client = httpx.AsyncClient(base_url=base, timeout=None)
+        try:
+            async with client.stream("GET", "/listen/spectrum") as upstream:
+                if upstream.status_code != 200:
+                    body = await upstream.aread()
+                    yield _event({"error": _detail_of(body, "The radio is busy.")})
+                    return
+                async for line in upstream.aiter_lines():
+                    if await request.is_disconnected():
+                        break
+                    if line.strip():
+                        # A keepalive is relayed as-is: it holds this socket open too,
+                        # and the client already ignores rows without a `db`.
+                        yield f"data: {line}\n\n"
+        except httpx.HTTPError as exc:
+            yield _event({"error": str(exc)[:200]})
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(
+        pump(), media_type="text/event-stream", headers={"Cache-Control": "no-store"}
+    )
+
+
+def _detail_of(body: bytes, fallback: str) -> str:
+    """The sidecar's own sentence out of an error body, or a fallback.
+
+    Needed beside `_detail` because a streamed response's body is read separately from
+    its status — the refusal arrives as bytes here rather than as an `httpx.Response`
+    the caller already holds."""
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return fallback
+    detail = parsed.get("detail") if isinstance(parsed, dict) else None
+    return str(detail) if detail else fallback
 
 
 @router.get("/audio")

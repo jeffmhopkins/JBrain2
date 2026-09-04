@@ -25782,3 +25782,113 @@ button.task-band:active {
 .aprs-try.bad .aprs-msg {
   color: var(--danger);
 }
+
+/* --- the live waterfall (SdrWaterfall.tsx) --------------------------------------- */
+.wf {
+  margin: 10px 0 4px;
+}
+.wf-canvas {
+  display: block;
+  width: 100%;
+  /* The ground the picture is painted on, and the colour a row that has not arrived
+     yet leaves showing. Deliberately the app's surface rather than black: an empty
+     waterfall should read as an empty panel, not as a band with nothing in it. */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.wf-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.wf-note {
+  margin: 3px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.wf-bad {
+  color: var(--danger);
+}
+
+/* --- the band picker (SdrBandSheet.tsx) ------------------------------------------ */
+.bandlist {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.bgroup {
+  margin: 12px 2px 4px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.bitem,
+.band {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+}
+.bitem:disabled {
+  opacity: 0.45;
+}
+.bband {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+.bt,
+.bd {
+  /* Block, or the two halves flow into one another as inline spans — the layout bug
+     the launcher mock had to be corrected for. */
+  display: block;
+}
+.bt {
+  font-size: var(--fs-secondary);
+}
+.bd {
+  margin-top: 2px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.bhz,
+.bcaret {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.btag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: var(--fs-micro);
+}
+.btag.hf {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.btag.slow {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.manual-back {
+  margin-bottom: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: var(--fs-secondary);
+}

@@ -24,6 +24,13 @@ export interface SdrListening {
    *  (deploy/sdr/listen.py). Absent on a sidecar older than purposes, which only ever
    *  listened. */
   purpose?: string;
+  /** WHICH radio this session opened, when the api named one. Null on a one-dongle box,
+   *  where "whichever librtlsdr enumerates first" was always the answer and still is. */
+  serial?: string | null;
+  /** The RANGE, for the two purposes that have one — a sweep and a live spectrum. Null
+   *  for the purposes that really are a single frequency. `frequency_hz` carries the
+   *  midpoint of this, which is the only frequency a span has. */
+  sweep?: { start_hz: number; stop_hz: number; bin_hz: number; seconds: number } | null;
   /** The box's clock when this session started. With `elapsed_s` it gives the box's
    *  clock NOW, which is what anchors the audio timeline for caption timing. */
   started_at: number;
