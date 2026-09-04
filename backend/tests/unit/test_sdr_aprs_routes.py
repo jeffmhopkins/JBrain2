@@ -15,10 +15,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
 from jbrain.api import sdr as sdr_api
+from jbrain.sdr.roles import Radio
 
 OWNER = object()
 
@@ -72,10 +74,29 @@ _IDLE: dict[str, Any] = {"purposes": ["listen", "aprs"], "listening": None}
 
 class _Settings:
     sdr_url = "http://sdr:8000"
+    supervisor_token = "t"
 
 
-async def _aprs(enabled: bool) -> dict[str, Any]:
-    return await sdr_api.aprs_logging(_Settings(), OWNER, enabled)  # type: ignore[arg-type]
+def _request(usb: dict[str, Any] | None = None) -> Any:
+    """A request whose USB scan answers `usb`, or fails.
+
+    None means the supervisor could not be reached, which is the DEFAULT here on
+    purpose: these tests predate radio selection and must keep proving what the routes
+    say when the sidecar misbehaves, not accidentally start proving how a serial is
+    chosen. An unreachable scan means no serial is named — exactly the one-dongle
+    behaviour they were written against."""
+
+    class _Client:
+        async def get(self, _path: str, **_kw: Any) -> Any:
+            if usb is None:
+                raise httpx.ConnectError("no supervisor")
+            return httpx.Response(200, json=usb, request=httpx.Request("GET", "http://s/usb"))
+
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(supervisor_client=_Client())))
+
+
+async def _aprs(enabled: bool, usb: dict[str, Any] | None = None) -> dict[str, Any]:
+    return await sdr_api.aprs_logging(_request(usb), _Settings(), OWNER, enabled)  # type: ignore[arg-type]
 
 
 async def test_turning_it_on_starts_an_aprs_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -467,3 +488,85 @@ async def test_the_tab_still_loads_before_the_drain_has_started(
     )
 
     assert out["store_failures"] == 0
+
+
+# --- Which radio, once there is more than one -------------------------------------
+#
+# MEASURED 2026-09-03: two NESDR SMArt v5s attached (09022796, 77192819), and both
+# pipelines invoked with no `-d`, so they opened whichever librtlsdr enumerated first.
+# With one on a desk whip and one on a long wire that is how APRS silently changes
+# antenna — no error, no log line, just worse reception.
+
+WHIP, WIRE = "09022796", "77192819"
+_TWO_RADIOS = {"sdrs": [{"serial": WHIP}, {"serial": WIRE}]}
+
+
+def _stored(monkeypatch: pytest.MonkeyPatch, radios: dict[str, Any]) -> None:
+    """Pretend the owner described these radios in Settings."""
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Any]:
+            return {s: Radio(serial=s, **fields) for s, fields in radios.items()}
+
+    monkeypatch.setattr(sdr_api, "get_settings_store", lambda _r: _Store())
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _o: object())
+
+
+async def test_logging_opens_the_radio_dedicated_to_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    box = _Sidecar(health=_IDLE, start={"purpose": "aprs", "frequency_hz": 144_390_000})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WIRE: {"name": "Long wire", "role": "aprs"}})
+
+    await _aprs(True, usb=_TWO_RADIOS)
+
+    assert box.posts[0][1]["serial"] == WIRE
+
+
+async def test_logging_waits_rather_than_moving_to_the_other_antenna(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failure the whole feature exists to stop, at the route.
+
+    The dedicated radio is unplugged and a general one IS attached, so a fallback would
+    succeed — and would be silent. It must be a 409 that names the missing radio."""
+    box = _Sidecar(health=_IDLE, start={"purpose": "aprs"})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
+
+    with pytest.raises(HTTPException) as refused:
+        await _aprs(True, usb={"sdrs": [{"serial": WIRE}]})
+
+    assert refused.value.status_code == 409
+    assert "Desk whip" in str(refused.value.detail)
+    # ...and nothing was started on the wrong radio.
+    assert box.posts == []
+
+
+async def test_an_unreachable_usb_scan_names_no_radio_rather_than_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proxy hiccup must not pick an antenna. Naming none is what a one-dongle box
+    always did, and the sidecar then behaves exactly as it did before this existed."""
+    box = _Sidecar(health=_IDLE, start={"purpose": "aprs", "frequency_hz": 144_390_000})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
+
+    await _aprs(True, usb=None)
+
+    assert box.posts[0][1]["serial"] is None
+
+
+async def test_listening_never_takes_a_radio_reserved_for_a_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dedication has to bind the TUNER too, or it only means "APRS prefers this one"
+    and the reservation evaporates the moment APRS is idle."""
+    box = _Sidecar(health=_IDLE, start={"purpose": "listen"})
+    box.install(monkeypatch)
+    _stored(monkeypatch, {WHIP: {"name": "Desk whip", "role": "aprs"}})
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.listen(_request({"sdrs": [{"serial": WHIP}]}), _Settings(), OWNER, 146.52)  # type: ignore[arg-type]
+
+    assert refused.value.status_code == 409
+    assert box.posts == []
