@@ -117,6 +117,12 @@ async def _post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any
         resp = await client.post(path, json=body)
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail=_detail(resp, "The radio is busy."))
+    if resp.status_code == 400:
+        # The sidecar's 400s are sentences for an OPERATOR, not gateway faults: "a sweep
+        # cannot go below 24 MHz", "the radio did not start: No matching devices found".
+        # Wrapping them in a 502 buried the one thing the owner can act on behind
+        # "sdr sidecar:" and a status that reads as the box being broken.
+        raise HTTPException(status_code=400, detail=_detail(resp, "The radio refused that."))
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502, detail=f"sdr sidecar: {_detail(resp, resp.text[:300])}"

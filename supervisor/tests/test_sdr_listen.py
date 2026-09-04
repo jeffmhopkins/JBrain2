@@ -12,7 +12,7 @@ import queue
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 import pytest
@@ -52,6 +52,11 @@ class _FakeProc:
     def poll(self) -> int | None:
         return 1 if self._dead else None
 
+    def terminate(self) -> None:
+        # A real Popen has both, and `_kill` now asks politely first so rtl_fm and
+        # rtl_power get to close the USB device rather than being torn off it.
+        self._dead = True
+
     def kill(self) -> None:
         self._dead = True
 
@@ -79,8 +84,19 @@ class _Sink:
     def close(self) -> None: ...
 
 
+def _instant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start sessions without waiting to see whether they die.
+
+    `_confirm_started` watches a fresh pipeline for `STARTUP_GRACE_S` before believing
+    it, which is what turns "the radio could not be opened" from a session that silently
+    vanishes into a refusal. A fake process is alive the instant it exists, so that wait
+    buys these tests nothing and costs every one of them four tenths of a second."""
+    monkeypatch.setattr(listen, "STARTUP_GRACE_S", 0)
+
+
 @pytest.fixture
 def tuner(monkeypatch: pytest.MonkeyPatch):
+    _instant(monkeypatch)
     monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
     monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
     return listen.Tuner()
@@ -387,6 +403,7 @@ def recording_tuner(monkeypatch: pytest.MonkeyPatch):
             launched.append(list(argv))
             super().__init__(argv, *a, **k)
 
+    _instant(monkeypatch)
     monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
     monkeypatch.setattr(listen.subprocess, "Popen", _Recorder)
     tuner = listen.Tuner()
@@ -631,6 +648,7 @@ class TestAudioLevelPairing:
         the KISS port in a retry loop, so a leaked session goes on to connect to the
         fake direwolf that `test_a_frame_on_the_KISS_socket_reaches_a_subscriber` binds
         — and consumes the single frame that test is waiting for."""
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         session = listen.Session(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
@@ -703,6 +721,7 @@ class TestSurveySession:
 
     @pytest.fixture
     def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         tuner = listen.Tuner()
@@ -772,6 +791,7 @@ class TestSurveySession:
             tuner.start(144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY)
 
     def test_the_command_is_rtl_power_over_the_range(self, monkeypatch) -> None:
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         session = listen.Session(
@@ -940,6 +960,7 @@ class TestOneSessionPerRadio:
 
     @pytest.fixture
     def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         tuner = listen.Tuner()
@@ -1108,6 +1129,7 @@ class TestCaptureAndSessionsShareOneRegistry:
 
     @pytest.fixture
     def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         tuner = listen.Tuner()
@@ -1314,6 +1336,7 @@ class TestHowASignalIsDemodulated:
     ) -> None:
         """The reason this function exists. A capture is meant to be a sample of what
         a session would hear, and two builders that can drift apart make that false."""
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
         session = listen.Session(92_300_000, "wbfm", None)
@@ -1575,6 +1598,7 @@ class TestTheLiveSpectrum:
                 super().kill()
                 self.stdout.close()
 
+        _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
         monkeypatch.setattr(listen.subprocess, "Popen", _Fed)
         tuner = listen.Tuner()
@@ -1781,3 +1805,143 @@ class TestTheLiveSpectrum:
 
         with pytest.raises(listen.SdrError):
             session.resweep(self._sweep())
+
+
+class TestARadioThatWillNotOpen:
+    """A pipeline that dies on the spot must be a refusal, not a session.
+
+    MEASURED on the box 2026-09-04. One dongle's USB descriptors stopped answering, so
+    librtlsdr enumerated it with blank strings and every `-d <serial>` lookup failed:
+
+        Found 2 device(s):
+          0:  , , SN:
+          1:  Nooelec, NESDR SMArt v5, SN: 09022796
+        No matching devices found.
+
+    rtl_power printed that and exited in milliseconds. `start` returned 200 anyway, the
+    api reported a session, and a second later the tuner reaped a dead one — with the
+    only explanation in a container log the owner has no way to read (CLAUDE.md #10).
+    """
+
+    class _Stillborn(_FakeProc):
+        """A tool that printed its complaint and exited before anything read it."""
+
+        SAID = b"Found 2 device(s):\n  0:  , , SN:\nNo matching devices found.\n"
+
+        def __init__(self, *a: Any, **k: Any) -> None:
+            super().__init__(*a, **k)
+            self._dead = True
+            self.stderr = _Lines(self.SAID.splitlines())
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", self._Stillborn)
+        # NOT `_instant`: the grace is the mechanism under test, and it has to be long
+        # enough to read a pipe that is already closed.
+        monkeypatch.setattr(listen, "STARTUP_GRACE_S", 0.05)
+        return listen.Tuner()
+
+    def test_starting_is_refused_rather_than_answered_with_a_session(
+        self, tuner
+    ) -> None:
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(99_300_000, "wbfm", None)
+
+        assert "did not start" in str(refused.value)
+
+    def test_the_refusal_carries_the_tool_s_own_words(self, tuner) -> None:
+        # Which is what names the radio it could not find. "The radio did not start" on
+        # its own sends the owner to look at everything.
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(99_300_000, "wbfm", None)
+
+        assert "No matching devices found" in str(refused.value)
+
+    def test_the_radio_is_left_free_for_the_next_caller(self, tuner) -> None:
+        """The half that would bite hardest. A refused session that stayed in the
+        registry would hold the radio against every later caller, and nothing would
+        ever release it — the lease would be held by something that never ran."""
+        with pytest.raises(listen.SdrError):
+            tuner.start(99_300_000, "wbfm", None)
+
+        assert tuner.current() is None
+        assert tuner.sessions() == []
+
+    def test_a_spectrum_is_refused_the_same_way(self, tuner) -> None:
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                144_000_000,
+                "fm",
+                None,
+                purpose=listen.PURPOSE_SPECTRUM,
+                sweep=listen.Sweep.of(144_000_000, 144_200_000, 25_000, 60),
+            )
+
+        assert "No matching devices found" in str(refused.value)
+
+
+class _Lines:
+    """A stderr pipe holding lines a dead process already wrote."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+
+    def read(self, _n: int = 0) -> bytes:
+        return b""
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+class TestClosingTheRadioPolitely:
+    """SIGTERM before SIGKILL, and it is not politeness.
+
+    `rtl_fm` and `rtl_power` install a handler that cancels the pending async USB
+    transfer and CLOSES the device. SIGKILL never runs it, so the RTL2832U is left with
+    transfers submitted — and a device torn down that way can stop answering the
+    descriptor reads librtlsdr uses to enumerate it, after which it looks absent while
+    sysfs still lists it. That is the state one dongle was found in.
+    """
+
+    class _Recorder(_FakeProc):
+        signals: ClassVar[list[str]] = []
+
+        def terminate(self) -> None:
+            self.signals.append("term")
+            self._dead = True
+
+        def kill(self) -> None:
+            self.signals.append("kill")
+            self._dead = True
+
+    class _Stubborn(_Recorder):
+        """A tool that ignores SIGTERM — the case the kill is still there for."""
+
+        def terminate(self) -> None:
+            self.signals.append("term")
+
+        def wait(self, timeout: float | None = None) -> int:
+            if not self._dead:
+                raise listen.subprocess.TimeoutExpired("x", timeout or 0)
+            return 0
+
+    def _run(self, monkeypatch: pytest.MonkeyPatch, proc: Any) -> list[str]:
+        proc.signals = []
+        _instant(monkeypatch)
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", proc)
+        tuner = listen.Tuner()
+        tuner.start(99_300_000, "wbfm", None)
+        tuner.stop()
+        return list(proc.signals)
+
+    def test_a_tool_that_goes_quietly_is_never_killed(self, monkeypatch) -> None:
+        assert "kill" not in self._run(monkeypatch, self._Recorder)
+
+    def test_a_tool_that_will_not_go_still_gets_killed(self, monkeypatch) -> None:
+        # The device is worse off either way, but a wedged tool holding the radio for
+        # ever is worse still.
+        sent = self._run(monkeypatch, self._Stubborn)
+
+        assert sent.index("term") < sent.index("kill")

@@ -489,6 +489,10 @@ class Handler(BaseHTTPRequestHandler):
         # because a sweep can finish before this line runs — `Tuner.current()` reaps a
         # dead session, so holding the object is a race the fast case loses.
         csv_path = f"/tmp/sweep-{info.session_id}.csv"  # noqa: S108 - container-local
+        # ...and the Session itself is held anyway, for the OPPOSITE reason: once it is
+        # reaped its stderr is gone with it, and that is the only place a sweep that
+        # measured nothing says why. A reference kept here outlives the registry.
+        ran = TUNER.find(info.session_id)
         # rtl_power's own exit timer ends it; the wait is bounded by that plus a margin
         # for the retune settle it does before the first row. The tuner going idle IS
         # the completion signal, since a survey frees the radio when it ends.
@@ -509,6 +513,21 @@ class Handler(BaseHTTPRequestHandler):
             csv_text = ""
         with contextlib.suppress(OSError):
             os.unlink(csv_path)
+
+        if not csv_text.strip():
+            # A sweep that measured NOTHING is a failure, not a quiet band, and it used
+            # to answer `complete: true` with an empty CSV — a success over a
+            # measurement that never happened. MEASURED on the box 2026-09-04: rtl_power
+            # exited on `No matching devices found` and the caller was told the sweep
+            # finished. The tool's own last words go back with the refusal, because they
+            # name WHICH radio it could not find and the owner cannot read the container
+            # log (CLAUDE.md #10).
+            said = ran.tail if ran else ""
+            self._json(
+                502,
+                {"detail": f"the sweep measured nothing: {said or 'the tool wrote no rows'}"},
+            )
+            return
 
         self._json(
             200,

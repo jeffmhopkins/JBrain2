@@ -14,6 +14,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -228,6 +229,40 @@ async def test_a_row_is_relayed_verbatim(monkeypatch: pytest.MonkeyPatch) -> Non
     out = await sdr_api.spectrum(_request(), _settings(), OWNER)
 
     assert await _collect(out) == [f"data: {row}\n\n", 'data: {"keepalive":true}\n\n']
+
+
+async def test_the_sidecars_own_refusal_is_not_buried_in_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sidecar's 400s are sentences for an OPERATOR, not gateway faults.
+
+    MEASURED on the box 2026-09-04: a dongle whose USB descriptors had stopped answering
+    made rtl_power exit on `No matching devices found`, and the one thing the owner could
+    act on would have reached them as a 502 reading "sdr sidecar: ..." — a status that
+    says the box is broken, over a message that says which radio to reseat."""
+
+    class _Posting:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *_a: Any) -> bool:
+            return False
+
+        async def post(self, _path: str, **_kw: Any) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"detail": "the radio did not start: No matching devices found."},
+                request=httpx.Request("POST", "http://sdr/listen/start"),
+            )
+
+    monkeypatch.setattr(sdr_api.httpx, "AsyncClient", lambda **_kw: _Posting())
+
+    with pytest.raises(HTTPException) as raised:
+        await sdr_api._post(_settings(), "/listen/start", {})
+
+    assert raised.value.status_code == 400
+    assert "No matching devices found" in str(raised.value.detail)
+    assert "sdr sidecar" not in str(raised.value.detail)
 
 
 async def test_a_busy_radio_reaches_the_owner_as_a_sentence(
