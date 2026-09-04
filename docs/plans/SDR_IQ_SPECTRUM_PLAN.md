@@ -1,14 +1,15 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-04 · **Waves:** F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ F5◻️ F6◻️ F7◻️ F8◻️ F9◻️
+> **Status:** Proposed · **Last verified:** 2026-09-04 · **Waves:** F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ F5◻️ F6◻️ F7◻️ F8◻️ F9◻️ F10◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
-> every operator control stays the PWA surface it is today (rule 10). Rule 8 is the one
-> this plan got WRONG in its first draft and now states correctly: `supervisor`'s tests
-> load `deploy/sdr/*.py` **by path**, so a sidecar dependency IS a dev-env dependency —
-> `numpy` lands in `supervisor/pyproject.toml`'s dev extra with a regenerated `uv.lock`,
-> and `scripts/dev-setup.sh` is updated in the same PR. Rule 11 shapes the wave order:
+> every operator control stays the PWA surface it is today (rule 10). Rule 8: `supervisor`'s tests load
+> `deploy/sdr/*.py` **by path**, so a sidecar dependency IS a dev-env dependency — `numpy`
+> goes in `supervisor/pyproject.toml`'s dev extra with a regenerated `uv.lock`. ⟲⟲ The
+> second draft also said `scripts/dev-setup.sh` needs updating; it does not — `sync_python`
+> runs `uv sync --all-extras` keyed off `uv.lock`, so it picks the new extra up on its own.
+> An edit there would be noise. Rule 11 shapes the wave order:
 > `deploy/sdr/` is linted and typechecked by nothing and tested by `supervisor`'s pytest,
 > so every wave here is verified from `supervisor/`.
 
@@ -16,9 +17,10 @@ Stop parsing `rtl_power`'s CSV and read the radio's **raw I/Q** instead, doing t
 here. That is one change to the sidecar's spectrum engine, and it settles four separate
 things the current design records as permanent limits.
 
-**This is the second draft.** The first was independently reviewed and the physics held
-up while almost every claim about *downstream* code did not. §6 exists because of that
-review, and the corrections are marked ⟲ throughout rather than quietly folded in.
+**This is the third draft.** Both predecessors were independently reviewed. The physics has
+survived every pass; the claims about *downstream* code have not, and neither did some of
+the corrections. First-review fixes are marked ⟲; second-review fixes, including four
+places where a ⟲ was itself wrong, are marked ⟲⟲.
 
 ---
 
@@ -47,14 +49,19 @@ The mechanism is `librtlsdr.c`: `rtlsdr_demod_write_reg(dev, 0, 0x06, (on > 1) ?
 
 **The second half is that `rtl_power` can never be fast, under any configuration.**
 `rtl_power.c` parses the interval as an int and clamps `if (interval < 1) interval = 1;`.
-One second is a floor in the C. `bands.py:72` has always said what the fast tier needs —
+One second is a floor in the C. `bands.py:73` has always said what the fast tier needs —
 
 ```
 LIVE_FAST = "fast"  # one hop; rtl_sdr + FFT; ~10 fps; the radio never looks away
 ```
 
-— and **29 sections claim it**, while the only thing that reads `live` is `validate()`
-(⟲ the first draft said "nothing branches on it"; see §6.7). Every one of those sections
+— and **29 sections claim it**. ⟲⟲ Both earlier drafts got this wrong in the same
+direction: the first said "nothing branches on `live`", the second said "only `validate()`
+reads it". In fact `live` is a **wire field** — declared on `SectionOut` in `api/sdr.py`,
+populated in `_section_out`, typed on `BandSection` in `sdrBands.ts`, and shipped to the
+PWA on every `/api/sdr/bands` — as well as being branched on twice in `validate()`
+(`bands.py:797` and `:803`). It is not free to redefine; it is a published contract with a
+frontend type and tests behind it. Every one of those sections
 is served today by the same 1 fps `rtl_power` stream as `LIVE_SLOW`. This plan is not
 inventing a tier; it is paying a promise the table has been making since it was written.
 
@@ -68,8 +75,8 @@ merely optimistic about them — it is currently describing rows that cannot be 
 3. **Bin width becomes ours.** `rate / N`, with `N` chosen — no negotiation with a tool
    that grants power-of-two divisions of its own choosing.
 4. **True RF power in dBFS**, for the first time. Everything the system calls a signal
-   level today is `max(abs(sample))/32768` over **demodulated PCM** (`listen.py:378`) —
-   post-discriminator audio loudness, not RF. It is why the squelch at `listen.py:211`
+   level today is `max(abs(sample))/32768` over **demodulated PCM** (`listen.py:421`) —
+   post-discriminator audio loudness, not RF. It is why the squelch at `listen.py:250`
    is a hand-tuned fraction and not a dB figure.
 
 ## 3. The toolchain: SoapySDR on a `debian:trixie-slim` base
@@ -94,28 +101,75 @@ direct_samp -> True   iq_swap -> True   offset_tune -> True
 biastee -> True   digital_agc -> True   bufflen -> True   buffers -> True
 ```
 
-626 MB with apt lists cleaned. The two results worth calling out: **the existing sidecar
-imports unchanged on 3.13**, so the rebase costs no application code; and `bufflen` /
-`buffers` are settable, so the librtlsdr ring depth is reachable — which the pipe path
-cannot do at all.
+**The existing sidecar imports unchanged on 3.13**, so the rebase costs no application
+code. ⟲⟲ Two things the second draft got wrong here:
 
-| option | new build tooling | mode 2 | retune/zoom | verdict |
-|---|---|---|---|---|
-| **SoapySDR + numpy, trixie-slim** | **none — all apt** | ✅ runtime | **live** | **chosen** |
-| `rtl_sdr` pipe + numpy | none, but needs pip | ✅ launch-time only | process restart | dominated |
-| `pyrtlsdr` | none | ✅ | live | binds fork-only symbols; see below |
-| GNU Radio + gr-soapy | apt | ✅ | retune live, **zoom rebuilds the flowgraph** | +759 MB, 242 pkgs |
-| SatDump | apt | n/a | n/a | an app, not a library — but see §7 |
-| csdr / pycsdr | source build | ✅ | live | not in Debian; apt repo stops at bookworm |
-| SDRangel headless | source build | ✅ | live | real REST API, not in trixie |
-| OpenWebRX+ | container | ✅ | live | a whole product — see §7 |
-| `soapy_power` | pip | ✅ | n/a | still a sweeper, still text; last release 2019 |
+**The size.** "626 MB" was an absolute nobody can act on, and it is not reproducible —
+`du -sx /` says 612 MB, `docker images` says 870 MB. The number that matters is the
+**delta: +37 MB** over today's image. That is the argument, and it was buried.
+⟲⟲ Also worth stating plainly: `python:3.12-slim` **is already Debian trixie** — same
+`rtl-sdr 2.0.2-2+b1`, same direwolf, same ffmpeg. This rebase changes the *interpreter*
+and nothing else, which makes it far less alarming than "rebase the base image" sounds.
+(`python:3.13-slim` + apt `python3-soapysdr` + `PYTHONPATH` would be a smaller diff still,
+and is rejected only because it leaves two site trees and two numpys in one image.)
+
+**`bufflen` and `buffers` are NOT settings** — and this one is load-bearing. They come
+from `getStreamArgsInfo`, are consumed once inside `setupStream(args)`, and are immutable
+for the life of the stream; only `direct_samp`, `iq_swap`, `offset_tune`, `digital_agc`
+and `biastee` are `writeSetting` keys. The second draft read a `strings`-style probe that
+proved only that the words exist in the shared object, and reported them as one list.
+
+**Why it matters: the default buffer makes 10 fps impossible on the sections this plan
+exists to unlock.** `DEFAULT_BUFFER_LENGTH = 16*32*512` = 262,144 bytes = **131,072
+complex samples per USB callback**, and a frame cannot arrive faster than one callback:
+
+| section | rate | one buffer | ceiling |
+|---|---|---|---|
+| VHF sections | 2.4 MS/s | 55 ms | 18.3 fps ✓ |
+| `mw` | 1.5 MS/s | 87 ms | 11.4 fps ✓ |
+| `80m`, `sw-49m`, `sw-31m`, `sw-25m` | 900 kS/s | 146 ms | 6.9 fps |
+| `sw-41m` | 300 kS/s | 437 ms | 2.3 fps |
+| `40m`, `20m`, `wwv-5`, `wwv-10` | 250 kS/s | 524 ms | **1.9 fps** |
+
+Nine of the ten HF sections land at or below the 1 fps `rtl_power` they replace, and four
+are **slower**. Reading with a small `numElems` does not help — it fragments one
+already-arrived buffer, so five rows burst out every 524 ms, which is worse on a
+waterfall than an honest 2 fps. The fix is a **per-section `bufflen`** sized for a ~100 ms
+frame (49,664 B at 250 kS/s, 59,904 at 300 k, 179,712 at 900 k — multiples of 512, as
+librtlsdr requires). It belongs in `bands.py` beside the rate, and F4 owns it.
+
+⚠ **The consequence for the headline: pan stays live, zoom does not.** A frequency change
+is an I2C write on a running stream. A *rate* change needs a matching `bufflen`, which is
+a `setupStream` argument — so zoom means `closeStream` → `setupStream` → `activateStream`.
+That is still far cheaper than the pipe path's process spawn and device open (the Device
+handle stays open throughout), but the comparison table's unqualified "live" was wrong.
+
+| option | new build tooling | mode 2 | pan / zoom | driver fault | verdict |
+|---|---|---|---|---|---|
+| **SoapySDR + numpy, trixie-slim** | **none — all apt** | ✅ runtime | **live** / stream rebuild | ⚠ **process-fatal** | **chosen** |
+| `rtl_sdr` pipe + numpy | none, but needs pip | ✅ launch-time only | process restart / restart | isolated child | dominated |
+| `pyrtlsdr` | none | ✅ | live / rebuild | process-fatal | binds fork-only symbols; see below |
+| GNU Radio + gr-soapy | apt | ✅ | live / **flowgraph rebuild** | process-fatal | +759 MB, 242 pkgs |
+| SatDump | apt | n/a | n/a | separate process | an app, not a library — but see §8 |
+| csdr / pycsdr | source build | ✅ | live / rebuild | process-fatal | not in Debian; apt repo stops at bookworm |
+| SDRangel headless | source build | ✅ | live / live | separate process | real REST API, not in trixie |
+| OpenWebRX+ | container | ✅ | live / live | separate container | a whole product — see §8 |
+| `soapy_power` | pip | ✅ | n/a | separate process | still a sweeper, still text; last release 2019 |
 
 **Why SoapySDR wins, in the order the reasons matter:**
 
-- **Retune and zoom stop blanking.** `rtl_sdr -D` can only be reconfigured by dying, so
-  every pan and zoom costs 200–500 ms of blank canvas. `setFrequency` is an I2C write on
-  a live stream. On a waterfall that is the whole interaction.
+- **Pan stops blanking.** `rtl_sdr -D` can only be reconfigured by dying, so every pan
+  and zoom costs 200–500 ms of blank canvas plus a device re-open. `setFrequency` is an
+  I2C write on a running stream; zoom rebuilds the stream but not the device.
+  ⚠ **But `setFrequency` does not flush the FIFO.** Only `setSampleRate` sets
+  `resetBuffer` — `setFrequency` and `writeSetting("direct_samp")` do not. So after a
+  retune, `readStream` keeps handing back up to `numBuffers × bufflen` = **1.97 M samples
+  of the OLD band** (0.82 s at 2.4 MS/s, 7.9 s at 250 kS/s), which `iq.py` would stamp
+  with the NEW `start_hz`. A frame labelled 7.20–7.45 MHz containing 14.15–14.35 MHz is
+  the same class of lie `duty` and `uncovered` exist to prevent, and it is worse across a
+  `direct_samp` change, where the ADC branch itself moved. **F3 owns a retune barrier** —
+  discard `rate × settle` samples after any frequency or mode change. The asymmetry (rate
+  flushes, frequency does not) is a fact to design around, not to discover.
 - **Overruns become a return code.** `readStream` returns `SOAPY_SDR_OVERFLOW`. ⟲ The
   first draft prescribed scraping `rtl_sdr`'s stderr for an overrun message; the review
   read all of `rtl_sdr.c` and `librtlsdr.c` and **there is no such message** — when the
@@ -126,8 +180,15 @@ cannot do at all.
 - **The achieved sample rate is readable.** librtlsdr quantises to the 28.8 MHz divider,
   so requested ≠ actual; `bin_hz = rate/N` is only exact if you know which. `rtl_sdr`
   never tells you.
-- **It restores the Dockerfile's rule instead of bending it.** Everything is apt, so
-  "No pip install at all" survives intact — the first draft argued for weakening it.
+- ⟲⟲ **It changes the Dockerfile's rule honestly, rather than restoring it.** The second
+  draft called this a restoration. It is not: the rule's stated reason is that a sidecar
+  "would be carrying a second implementation of what librtlsdr already does", and
+  `python3-soapysdr` **is** a Python SDR stack. Installing it by apt satisfies the letter
+  and inverts the rationale. The honest framing is that the rule moves from **stdlib
+  only** to **apt only, no pip** — a real weakening, defensible on its merits. And it is
+  echoed in **six** places, not the two §6.11 counted: `Dockerfile.sdr:6`,
+  `listen.py:790`, `server.py:477`, `packets.py:6` and `usbdev.py:15` (both of which say
+  "stdlib only" and become false), and `test_sdr_server.py:367`.
 - **Hardware portability is real in Debian today**: `soapysdr-module-airspy`, `-hackrf`,
   `-bladerf`, `-lms7`, `-uhd`, `-remote`. An Airspy HF+ — real gain control and real
   filtering where the RTL2832U has ~7 effective bits and none — becomes a config string.
@@ -143,6 +204,36 @@ about device enumeration, on a two-dongle box.
 and `gnome-terminal | x-terminal-emulator` — a radio sidecar on a headless box depending
 on a terminal emulator is the tell. It still rebuilds the flowgraph to zoom, and the
 things it saves later are 40–150 lines of scipy each.
+
+### What going in-process costs, which the ranking did not price
+
+⟲⟲ Neither earlier draft had a row for this, and it is the real price of leaving the
+subprocess model.
+
+**A driver fault becomes process-fatal.** Today a wedged `rtl_fm` is one dead child: the
+sidecar keeps serving, keeps the lease registry, and keeps APRS logging on radio B. After
+the swap, a segfault in librtlsdr — or a hung `_rx_async_thread.join()` in
+`deactivateStream` when `rtlsdr_cancel_async` did not take — kills `ThreadingHTTPServer`,
+every lease, and **the APRS session on the other dongle**. Teardown order is load-bearing
+and must be stated: `deactivateStream` → `closeStream` → `unmake`, because
+`~SoapyRTLSDR()` is a bare `rtlsdr_close` with no stream teardown.
+
+**`/reset` — the owner's terminal-free last resort — stops being clean.** It works today
+because the holder is a *child process*: when the lease says nothing holds the radio, no
+fd in the sidecar points at the device, so `USBDEVFS_RESET` is safe. With an in-process
+handle the leak case is exactly the dangerous one — the lease believes the radio is free
+(that is what leaked means), `TUNER.reserve` succeeds, and the ioctl fires **from the same
+process still holding the usbfs fd with interface 0 claimed**. The device re-enumerates at
+a new node, the orphaned libusb handle goes `ENODEV` and is never closed, and nothing in
+`radio.py` learns. `DEBUG_ACCESS.md` promises this is the one recovery that always works;
+F3 has to keep that true.
+
+**The orphan story is worse in-process, not better.** `1a64ad0` fixed three defects, not
+the one §6.12 named: the `_restart` release race, `_kill` dropping handles it could not
+confirm dead (hence `_survivors`), and `capture` SIGKILLing rtl_fm on every run. The
+second of those is the one with the bad analogue here — a leaked child is reaped on the
+next sweep; **a leaked device handle lives for the container's lifetime with no reap
+path at all.**
 
 ### FFT cost
 
@@ -183,6 +274,14 @@ all ten and found no others:
   "4096 bins" is unreachable for this one section. Bin count must be derived from the
   rate, not fixed, and `validate()` should say so rather than let it 502 at runtime.
 
+⟲⟲ **The 300–900 kHz legal gap forces a choice on several sections.** `sw-49m` is a
+300 kHz span, so 300 kS/s fills 100% of its passband with zero margin — against this
+project's own 83% standard — and the next legal rate is 900 kS/s, three times the span.
+Every HF section needs that decided, not just `mw` and `20m`. ⟲⟲ And the plan must say
+whether a frame is the **passband** or the **section**: at 1.5 MS/s `mw`'s capture reaches
+1.865 MHz, so the whole CB image is inside the frame even though it is outside the
+section's declared edges.
+
 ⟲ **Every HF section needs a rate, not just those two.** With one global 2.4 MS/s,
 `sw-41m` (0.25 MHz wide) draws 6.125–8.525 MHz while the band button still says
 "7.200–7.450" — the label and the axis disagree and nothing notices.
@@ -221,6 +320,10 @@ wrap and the aliasing are the same arithmetic. The classic "even zones invert" r
 about real one-sided downconversion, not a complex DDC. The first draft called this an
 open disagreement and blocked F1 and F2 behind measuring it; no shipped section even
 reaches above 14.35 MHz, so it only affects the wording of the image caveat.
+⟲⟲ "Settled" is still one notch too strong: the same function also writes
+`demod_write_reg(dev, 1, 0x15, 0x00)` — *disable spectrum inversion* — and neither draft
+read it. The NCO derivation is almost certainly right; the confidence was not earned, and
+F0 confirms it for the price of one WWV capture it is taking anyway.
 
 ## 5. What 10 fps actually breaks
 
@@ -240,12 +343,25 @@ main thread.
 the settling window after a retune: freeze a bad scale there and the whole session is
 painted wrong, silently, which is exactly what that file exists to prevent.
 
-**The wire.** A 4096-bin frame serialises to **28,750 bytes**; at 10 fps that is
-**2.30 Mbit/s per viewer** (today: 28 KB/s) over a link the owner reaches **remotely**,
-plus 2.69 ms/frame of GIL-held `json.dumps`. `SPECTRUM_QUEUE = 4` is commented "two
-seconds' worth" → **0.4 s**, and `_publish_frame` drops the **arriving** frame when full,
-so ordinary WAN jitter starts punching holes in the time base. And `api/sdr.py:947`
-relays with `async for line in upstream.aiter_lines()` on the **main API event loop**.
+**The wire.** A 4096-bin frame serialises to **28,750 bytes**. ⟲⟲ The second draft
+turned that into "2.30 Mbit/s per viewer" and proposed a compact binary encoding to fix
+it. Both are wrong, because neither draft read the proxy: `deploy/Caddyfile:13` is
+`encode zstd gzip`, in the same snippet as the `flush_interval -1` that makes SSE work at
+all. Measured on a realistic frame, gzip takes 28,823 B → **5,704 B**, so the real cost is
+**~0.46 Mbit/s per viewer** — still 16× today's, still worth a budget, not an emergency.
+And the proposed remedy is **backwards**: float32 binary is 16,384 B/frame and barely
+compresses, ending ~2.6× *larger* on the wire than the rounded decimal text it replaces.
+
+The CPU cost was undercounted and mis-scoped: `json.dumps` is 1.03 ms but
+`Frame.as_dict`'s `[round(v, 1) for v in self.db]` (`listen.py:517`) is another **1.41 ms**
+of GIL-held pure Python — ~2.4 ms/frame **per subscriber**, not 2.69 ms total.
+
+`SPECTRUM_QUEUE = 4` gives **0.4 s** at 10 fps, and `_publish_frame` (`listen.py:929`)
+drops the **arriving** frame when full, so ordinary WAN jitter punches holes in the time
+base. ⟲⟲ Its comment says "two seconds' worth", which is already wrong today — 4 frames
+at `SPECTRUM_INTERVAL_S = 1` is four. Both drafts repeated the comment's arithmetic
+instead of noticing it. And `api/sdr.py` relays with `async for line in
+upstream.aiter_lines()` on the **main API event loop**.
 
 None of that is optional work, and none of it is fixed by changing the sample source.
 
@@ -255,8 +371,8 @@ None of that is optional work, and none of it is fixed by changing the sample so
    module scope**, and `supervisor/uv.lock` has no numpy. A top-level `import numpy` — or
    `import SoapySDR`, which is apt-only and absent from the dev env — fails collection of
    the whole file. Hence `radio.py` and `iq.py` as separate modules (§7 F2/F3).
-2. **Two sidecar guards refuse HF independently of the backend**: `listen.py:408`
-   `Sweep.of` and `server.py:131` `_range_of`. Relaxing only `tuner.py` and `sdrBands.ts`
+2. **Two sidecar guards refuse HF independently of the backend**: `listen.py:437`
+   `Sweep.of` and `server.py:119` `_range_of`. Relaxing only `tuner.py` and `sdrBands.ts`
    turns ten disabled buttons into 502s.
 3. **`sweepable()` is shared with the debug `/sdr/sweep` route**, which still drives
    `rtl_power`. Relaxing it flat re-opens HF sweeps that genuinely cannot work; it needs
@@ -272,8 +388,8 @@ None of that is optional work, and none of it is fixed by changing the sample so
 7. **`validate()` does branch on `live`, twice** — and one rule ("an HF section may not be
    `slow`") is load-bearing for exactly this change, so redefining `surveyable` silently
    changes what it asserts.
-8. **`sameBand` is fragile to a jittering `start_hz`.** `sdrSpectrum.ts:89` resets the
-   history *and the frozen colour scale* whenever `startHz`/`binHz`/`db.length` changes.
+8. **`sameBand` is fragile to a jittering `start_hz`.** `sdrSpectrum.ts`'s `sameBand` gates a reset of the
+   history *and the frozen colour scale* (`SdrWaterfall.tsx:99`) whenever `startHz`/`binHz`/`db.length` changes.
    ⚠ This gets **more** dangerous under Soapy, not less: reading back the *achieved*
    sample rate is a feature, and a ±1 Hz flap in a derived `start_hz` would re-blank the
    waterfall every frame. `start_hz` must be computed from the requested integers.
@@ -283,8 +399,41 @@ None of that is optional work, and none of it is fixed by changing the sample so
    reducer nor the shared colour scale. But F8 would otherwise put two different
    quantities called "dB" in one UI with nothing distinguishing them.
 10. **`_drain_tuner_log` prints `[rtl_fm]`** whatever tool ran.
-11. **The Dockerfile rule is duplicated** verbatim in `listen.py:752`. Rule 9 means both.
-12. ⚠ **A leaked Soapy device handle is the new orphan.** `1a64ad0` fixed a `_restart`
+11. **The Dockerfile rule is duplicated** verbatim in `listen.py:790`. Rule 9 means both.
+12. **CI does not build `Dockerfile.sdr` at all.** ⟲⟲ The second draft said "the image's
+    build gate proves the real one". `ci.yml`'s `images` matrix is `api`, `supervisor`,
+    `proxy` — there is no `sdr` entry, and the `supervisor` paths filter covers
+    `deploy/sdr/**` but **not `deploy/Dockerfile.sdr`**, so a PR touching only the
+    Dockerfile runs no test at all (including `test_deploy_scripts.py`, which asserts on
+    its contents). The only place the SoapySDR import is ever proved is a `docker build`
+    on the owner's live box during **Ops → Update** — so a broken rebase surfaces as a
+    failed update on a box whose owner has no terminal. That is CLAUDE.md #10 inverted:
+    the verification story *requires* the failure the rule exists to prevent. F1 adds the
+    image build and the path filter.
+13. **`rate / N` is not an integer, and `Frame.bin_hz` is typed `int`** (`listen.py:500`).
+    Through librtlsdr's divider arithmetic: 2.4 MS/s → 585.9375 Hz at N=4096, 1.5 MS/s →
+    366.2109, 250 kS/s → 61.0352. Rounding 585.9375 → 586 puts the top of a 4096-bin frame
+    256 Hz out, and `sameBand` compares `binHz` exactly. ⟲⟲ This also collides head-on
+    with §6.8's own fix: "use the requested integers" contradicts §3's headline that
+    reading back the *achieved* rate makes `bin_hz` exact. One has to go. The clean answer
+    is to choose rates where `rate/N` divides — **2.048 MS/s** rather than 2.4 for the
+    VHF sections (500.0000 Hz exactly at N=4096) — which neither draft considered.
+14. **`MIN_SWEEP_BIN_HZ = 100` clamps silently** (`listen.py:117`, inside `Sweep.of` at
+    `:437`), so the `20m` 61 Hz case does not 502 as the second draft assumed — it clamps
+    to 100 and the frame's declared `bin_hz` then disagrees with the FFT that produced it.
+    Worse than a refusal.
+15. **`SoapySDR::Device::setFrequency(dir, chan, hz)` — the 3-arg overload — writes the
+    remainder to `CORR`**, because SoapyRTLSDR lists `{"RF","CORR"}`. `radio.py` must use
+    the named overload, `setFrequency(SOAPY_SDR_RX, 0, "RF", hz)`. And
+    `rtlsdr_set_direct_sampling` ends by re-applying the *previous* mode's centre, so
+    `direct_samp` must be set **before** `setFrequency`, not after.
+16. **F2's "u8 LUT → complex64" stage cannot exist on this path.** `setupStream` accepts
+    CF32/CS16/CS8 only; the u8→float conversion is SoapyRTLSDR's own C++ loop. The
+    measured "1.2 ms for u8 → complex64" was benchmarking the *pipe* design. F2's input is
+    a numpy buffer, and the LUT trick belongs to the option not chosen.
+17. **The `sweepable()` split has two consumers, not one** — `api/debug.py` calls it for
+    the `rtl_power` survey route as well as the live path.
+18. ⚠ **A leaked Soapy device handle is the new orphan.** `1a64ad0` fixed a `_restart`
     race that stranded an `rtl_fm` holding the dongle with nothing pointing at it. Moving
     spectrum in-process removes the child process for that path — and replaces it with a
     stream and a device handle that must be closed on exactly the same paths. `radio.py`
@@ -292,56 +441,82 @@ None of that is optional work, and none of it is fixed by changing the sample so
 
 ## 7. Waves
 
-**F0 — hardware truths. Blocks only F7.** ⟲ Demoted from a global gate. With a dongle on
-the bus: Soapy enumerates it and `serial=` filtering selects the right one; `direct_samp=2`
-returns Q-branch samples; **retune and sample-rate change on a live stream** (the claim
-the whole ranking rests on and the one thing packaging cannot prove); `SOAPY_SDR_OVERFLOW`
-is actually reported under induced backpressure; and WWV at 5/10/15 MHz for the image
-caveat's wording. F1–F6 need no radio.
+**F0 — hardware truths. ⟲⟲ Gates F3, not just F7.** The second draft demoted this to
+"blocks F7 only" while admitting in the same sentence that live retune is "the claim the
+whole ranking rests on". Those cannot both be true: if retune-while-streaming or the
+overflow return does not behave as read, `radio.py` and the engine swap are already
+written against a premise that failed. "Needs no radio to build" is not "is not
+invalidated". With a dongle: Soapy enumerates it and `serial=` selects the right one;
+`direct_samp=2` returns Q-branch samples; **frequency and rate change on a live stream**;
+`SOAPY_SDR_OVERFLOW` is really reported under induced backpressure; and the retune barrier
+(§3) is measured rather than assumed. F1, F2, F4 and F5 need no radio.
 
-**F1 — the base rebase.** `debian:trixie-slim`; `python3 python3-numpy python3-soapysdr
-soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg direwolf`; `python` → `python3`
-in `CMD` and `HEALTHCHECK`; `python3 -c "import server, SoapySDR, numpy"` added to the
-build gate beside the `command -v` checks. No pip, so the Dockerfile's rule is restored
-rather than bent — and both copies of it are corrected. `numpy` into
-`supervisor/pyproject.toml`'s dev extra + regenerated `uv.lock` + `scripts/dev-setup.sh`.
+**F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
+python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
+direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,
+SoapySDR, numpy"` in the build gate. ⟲⟲ **Add `sdr` to `ci.yml`'s `images` matrix and
+`deploy/Dockerfile.sdr` to the `supervisor` paths filter** — without both, the first time
+anyone finds out the image is broken is the owner's Ops → Update. `numpy` into
+`supervisor`'s dev extra with a regenerated `uv.lock`, **pinned to the major Debian
+ships** so CI does not test a different numpy than production runs. Add `soapysdr-tools`
+for `SoapySDRUtil`, the obvious debug-console probe. All six copies of the stdlib-only
+rule corrected. `deploy/sdr` added to `supervisor`'s pyright `include`, closing a gap the
+plan otherwise only observes.
 
-**F2 — `deploy/sdr/iq.py`: samples → frames.** Pure numpy, no radio, no subprocess: LUT →
-`complex64`, segment, window, batched FFT, Welch, dBFS, `.tolist()`. Tests drive synthetic
-tones — a tone at a known offset lands in a known bin at a known level.
+**F2 — `deploy/sdr/iq.py`: samples → frames.** Pure numpy, no radio: window, batched FFT,
+Welch, dBFS, `.tolist()`. Input is a **numpy buffer**, not a byte pipe (§6.16). Tests
+drive synthetic tones — a tone at a known offset lands in a known bin at a known level.
 
-**F3 — `deploy/sdr/radio.py`: the device behind a protocol.** `import SoapySDR` lives here
-and nowhere else, so the by-path tests keep working against a fake and the image's build
-gate proves the real one. Owns open/close, `setSampleRate` **and reading back the achieved
-rate**, `direct_samp` below 24 MHz, `setFrequency`, `setupStream`/`readStream` into a
-preallocated buffer, and the overflow return. Teardown is this module's whole
-responsibility (§6.12).
+**F3 — `deploy/sdr/radio.py`: the device behind a protocol.** ⟲⟲ **The import must be
+DEFERRED, not merely relocated.** A module boundary does not defer anything: the tests
+put `deploy/sdr` on `sys.path`, so `listen.py` → `import radio` → `import SoapySDR` at
+module scope breaks collection exactly as before. `import SoapySDR` goes inside
+`Radio.open()`, or behind a module-scope `try/except ImportError` with a sentinel. Owns:
+open/close; `setSampleRate` and reading back the achieved rate; the **named** `setFrequency`
+overload; `direct_samp` **before** `setFrequency`; `setupStream` with the per-section
+`bufflen`; the **retune barrier**; the overflow return; teardown order (`deactivateStream`
+→ `closeStream` → `unmake`); and the `/reset` interaction (§3) — the handle must be
+provably released before a reset can be allowed.
 
-**F4 — the `spectrum` purpose switches engine.** `Frame` unchanged. **The wire budget is
-decided here**, not discovered later: cap live bins, or send `db` as a compact binary
-form, or negotiate frame rate — and re-derive `SPECTRUM_QUEUE` from seconds rather than
-rows. Overflow surfaces as a stream condition the way `dutyNote` surfaces hop cost.
+**F4 — the band table learns the truth. ⟲⟲ Moved before the engine swap.** Per-section
+`sample_rate_hz`, `bufflen_bytes` and bin count, with the Nyquist window, the frame-rate
+ceiling and `rate/N` exactness all enforced in `validate()`. Rates chosen so `rate/N`
+divides (2.048 MS/s for VHF). The 300–900 kHz legal gap decided for every HF section, not
+just two. `surveyable` split per engine; `mirrored` → `image_start_hz`/`image_stop_hz`.
+⟲⟲ These are **three-layer contract changes**, not one-liners: both fields are on
+`SectionOut`, typed in `sdrBands.ts`, read by `whyNotLive`, rendered in `SdrBandSheet`, and
+covered by tests on both sides.
 
-**F5 — the PWA survives 10 fps.** Decouple paint from arrival (rAF-coalesced, or
-scroll-and-append into an offscreen canvas); re-derive `ROWS` and `CALIBRATION_ROWS` from
-*seconds* and the live frame rate; fix `start_hz` to the requested integers. New wave,
-entirely from the review.
+**F5 — the PWA survives 10 fps. ⟲⟲ Also moved before the engine swap**, because
+otherwise F6 ships 737k `shade()` calls per frame to a phone. Decouple paint from arrival;
+re-derive `ROWS` and `CALIBRATION_ROWS` from *seconds* and the live frame rate; make
+`start_hz`/`bin_hz` stable so `sameBand` cannot flap.
 
-**F6 — the band table learns the truth.** Per-section `sample_rate_hz` with the Nyquist
-window and the bin-floor enforced in `validate()`; `surveyable` split into per-engine
-predicates; `mirrored` → `image_start_hz`/`image_stop_hz`; `LIVE_FAST_MAX_HZ`'s rationale
-noted as not applying below 24 MHz, with an HF equivalent rather than nothing.
+**F6 — the `spectrum` purpose switches engine.** `Frame` unchanged. The wire budget is
+decided here against the **post-gzip** number (§5), not the raw one. Overflow and the
+retune barrier surface as stream conditions the way `dutyNote` surfaces hop cost.
+⟲⟲ Ships behind a **runtime fallback to `rtl_power`** — if the new engine misbehaves on
+the box, an owner with no terminal must not need a revert and a rebuild to get a picture
+back (CLAUDE.md #10).
 
-**F7 — HF goes live.** All four refusals: `tuner.sweepable`, `tuner.viewable`,
-`listen.Sweep.of`, `server._range_of` — per purpose, so the `rtl_power` survey keeps
-refusing. `sdrBands.ts:whyNotLive` stops saying "shortwave cannot be swept", and the image
-caveat and "no gain control here" appear where they will be read.
+**F7 — bin width becomes ours.** ⟲⟲ §6.4 diagnosed that no wave implemented §2.3 and the
+second draft still assigned it to none. `live_bin_hz`'s power-of-two ladder, `_span`'s
+`chosen_bin`, the `[100, 100_000]` query bounds and the `SPECTRUM_MAX_BINS` check are all
+`rtl_power`'s constraints and all still live. Either this wave removes them or §2.3 is a
+lie by the plan's own standard.
 
-**F8 — stop calling loudness a signal level.** The spectrum path reports true dBFS; the
-listening path keeps `rtl_fm`, so its `peak` stays audio loudness and gets **labelled** as
+**F8 — HF goes live.** ⟲⟲ **Five** refusal sites, not four: `tuner.sweepable`,
+`tuner.viewable`, `listen.Sweep.of`, `server._range_of`, and
+`frontend/src/components/SdrTunerSheet.tsx:47`, which hardcodes `MIN_MHZ = 24` and refuses
+with "This radio tunes 24-1766 MHz" — a duplicated tuner floor of exactly the kind
+`tuner.py`'s own docstring says caused this bug class. Per purpose, so the `rtl_power`
+survey keeps refusing.
+
+**F9 — stop calling loudness a signal level.** The spectrum path reports true dBFS; the
+listening path keeps `rtl_fm`, so its `peak` stays audio loudness and is **labelled** as
 such. The two dB quantities are distinguished in the UI (§6.9).
 
-**F9 — the agent's half.** Everything above gives the BOX a capability. jerv reaches
+**F10 — the agent's half.** Everything above gives the BOX a capability. jerv reaches
 almost none of it, and two of the three tools it does have now describe a machine that
 has not existed since `APRS_CONTROL_PLAN` P0b shipped.
 
@@ -430,6 +605,9 @@ images through the storage abstraction, and releasing. No new DSP, no new stack.
 
 **A pre-existing bug this makes visible and does not fix:** `listen.py` applies `-E
 direct2` to everything below `MIN_HZ` (24 MHz), so 14.4–24 MHz tunes into the second
-Nyquist zone. No table row lives there, but `defaults_for()` lets the owner type
-20.000 MHz by hand and get an unlabelled aliased capture with an image from 8.8 MHz.
-F6's window rule is what keeps the table honest; the expert path needs the same check.
+Nyquist zone. No table row lives there. ⟲⟲ The second draft blamed `defaults_for()`,
+which has **no production caller at all** — it appears only in `bands.py` and its unit
+test — and imagined a hand-typing surface that in fact refuses below 24 MHz
+(`SdrTunerSheet.tsx:47`). The real path is `api/sdr.py`'s `Query(ge=TUNABLE_MIN_MHZ)` at
+0.1 MHz → `listen.validate` → `demod_args`, plus the debug listen route. F4's window rule
+keeps the *table* honest; those two entry points need the same check.
