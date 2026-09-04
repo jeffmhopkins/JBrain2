@@ -356,14 +356,31 @@ class Section:
         stops at or below 14.35 MHz so the flag was False for all ten HF rows — while
         all ten in fact carry an image, because the ADC samples at 28.8 MHz and
         everything at `28.8 MHz − f` folds onto `f` and is SUMMED into the same bins.
-        Reversed, so the section's stop maps to the image's start. Nothing in software
-        can separate the two contributions; saying which band is folded in is the only
-        honest thing available."""
-        return ADC_RATE_HZ - self.stop_hz if self.direct_sampling else 0
+        Reversed, so the top of the frame maps to the bottom of the image.
+
+        Off the PASSBAND, not the section edges: a frame is what the radio digitises
+        (`capture_start_hz`), and it is wider — `mw` is captured 0.091-2.139 MHz under
+        a button that says 0.530-1.700, so a caveat derived from the edges would leave
+        ~440 kHz of folded band unmentioned at each end, and the two loudest sources of
+        it (CB at 27 MHz) sit exactly in that margin. Nothing in software can separate
+        the two contributions; saying which band is folded in is the only honest thing
+        available."""
+        return ADC_RATE_HZ - self._frame_stop_hz if self.direct_sampling else 0
 
     @property
     def image_stop_hz(self) -> int:
-        return ADC_RATE_HZ - self.start_hz if self.direct_sampling else 0
+        return ADC_RATE_HZ - self._frame_start_hz if self.direct_sampling else 0
+
+    @property
+    def _frame_start_hz(self) -> int:
+        """What a picture of this section really covers — the passband where there is a
+        capture, the declared edges where rtl_power picks its own hops and this table
+        has no say in how wide a frame comes out."""
+        return self.capture_start_hz if self.sample_rate_hz else self.start_hz
+
+    @property
+    def _frame_stop_hz(self) -> int:
+        return self.capture_stop_hz if self.sample_rate_hz else self.stop_hz
 
     @property
     def surveyable(self) -> bool:
@@ -966,6 +983,23 @@ def by_id(section_id: str) -> Section | None:
     return next((s for s in SECTIONS if s.id == section_id), None)
 
 
+def by_edges(start_hz: int, stop_hz: int) -> Section | None:
+    """The section whose edges are EXACTLY these, or None.
+
+    What makes the expert path and the band button the same question. A hand-typed
+    144.100-144.300 is the 2 m SSB row said in numbers, and without this lookup the two
+    are answered by different code: the button gets the rate someone chose while reading
+    a band plan, the numbers get the smallest capture that covers them — and for five
+    rows those deliberately differ (`mw` is sampled at 2.048 MS/s so `R/2 <= fc` holds,
+    where the derived answer is 1.6). Same range, two pictures, no way to tell which
+    one is on screen.
+
+    Exact rather than nearest: a range that is not a section's edges is not that
+    section, and inheriting a curated rate for a span it does not cover would draw the
+    band's edge inside the IF rolloff. Those keep the derived answer."""
+    return next((s for s in SECTIONS if (s.start_hz, s.stop_hz) == (start_hz, stop_hz)), None)
+
+
 def containing(hz: int) -> Section | None:
     """The narrowest section covering this frequency, or None.
 
@@ -1146,7 +1180,7 @@ def validate(sections: tuple[Section, ...] = SECTIONS) -> list[str]:
                 f"over {LIVE_FAST_MAX_HZ / 1e6:.1f} MHz it needs a hop, so it is at best "
                 f"{LIVE_SLOW}"
             )
-        if s.live != LIVE_NONE and not s.surveyable and s.live == LIVE_SLOW:
+        if s.live == LIVE_SLOW and not s.surveyable:
             # LIVE_SLOW is rtl_power, and rtl_power cannot reach the Q branch at all.
             problems.append(
                 f"{where} is below {DIRECT_SAMPLING_MAX_HZ / 1e6:.0f} MHz, where a live "

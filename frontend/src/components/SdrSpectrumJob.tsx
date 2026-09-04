@@ -129,10 +129,16 @@ export function SdrSpectrumJob({
           )}
         </>
       ) : (
+        // ⏳ TRANSITIONAL, and the sentence an owner actually reads: this component
+        // opens a band sheet that now OFFERS shortwave, so copy saying it cannot be
+        // drawn at all was flatly contradicted one tap away. What is true today is
+        // narrower — the picture is still `rtl_power`, which hardcodes the ADC branch
+        // this board does not wire. Rewrite it when the I/Q engine lands, alongside
+        // `whyNotLive`'s mirror and `listen.spectrum_engine_refusal`.
         <p className="radio-hint">
           Pick a band and the box draws it, one row a second, for as long as this radio is watching.
-          Shortwave can be listened to but not drawn — the sweep tool cannot use the direct-sampling
-          path.
+          Shortwave can be listened to but not drawn yet — the picture still comes from the sweep
+          tool, and that tool cannot use the HF path this radio wires.
         </p>
       )}
 

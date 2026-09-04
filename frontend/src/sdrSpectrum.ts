@@ -87,21 +87,34 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
  *  has to be re-taken: a new band has a new noise floor, and holding the old one paints
  *  the whole picture one flat colour.
  *
- *  **Compared to within half a bin, not exactly**, and that is the whole point of the
- *  function. Exact equality was safe while `rtl_power` printed the edges it was asked
- *  for; the I/Q engine reads the ACHIEVED sample rate back off the hardware, which is
- *  not the requested one, so `bin_hz = rate / N` and a `start_hz` derived from it can
- *  flap by a hertz between frames. Under exact equality that flap is a retune ten times
- *  a second: history blanked, colour scale thrown away, and a waterfall that never
- *  survives long enough to draw anything. Half a bin is the honest threshold because it
- *  is the resolution the picture HAS — a shift the renderer cannot place in a different
- *  column is not a shift anyone can see. Both edges are checked, so a bin width that
- *  drifted shows up as a moved top edge rather than hiding inside the tolerance. */
+ *  **The axis is `startHz + i * binHz`, so those two are the whole question and the
+ *  ROW LENGTH is not part of it.** Length used to be compared exactly, and that made a
+ *  dropped block indistinguishable from a retune: `Stitch._flush` emits a deliberately
+ *  short frame when one hop of a section goes missing, so on an eight-hop band a single
+ *  lost block blanked the history and threw away a frozen colour scale that had taken
+ *  eighty rows to earn. It is not a different band — every column that did arrive is at
+ *  the same frequency it was before, which is exactly why `paint` already draws a short
+ *  row and leaves the missing columns transparent rather than claiming a measurement.
+ *
+ *  **Compared to within half a bin, not exactly.** Exact equality was safe while
+ *  `rtl_power` printed the edges it was asked for; the I/Q engine reads the ACHIEVED
+ *  sample rate back off the hardware, which is not the requested one, so `bin_hz` and a
+ *  `start_hz` derived from it can flap by a hertz between frames. Under exact equality
+ *  that flap is a retune ten times a second. Half a bin is the honest threshold because
+ *  it is the resolution the picture HAS — a shift the renderer cannot place in a
+ *  different column is not a shift anyone can see. The bin width is held to the same
+ *  threshold ACROSS THE ROW, not per bin: a width that really changed pulls the far end
+ *  of the axis a whole column out of place, which is the top-edge check as it was.
+ *
+ *  What this cannot tell apart is a retune that keeps the same low edge AND the same
+ *  bin width and only narrows the span — and that costs a stale colour window, where
+ *  the mistake it replaces cost the picture on every dropped block. */
 export function sameBand(a: SpectrumRow | null, b: SpectrumRow | null): boolean {
   if (!a || !b) return false;
-  if (a.db.length !== b.db.length) return false;
   const tolerance = Math.min(a.binHz, b.binHz) / 2;
-  return Math.abs(a.startHz - b.startHz) <= tolerance && Math.abs(a.stopHz - b.stopHz) <= tolerance;
+  if (Math.abs(a.startHz - b.startHz) > tolerance) return false;
+  // Over the bins the two rows SHARE, because that is as far as either can disagree.
+  return Math.abs(a.binHz - b.binHz) * Math.min(a.db.length, b.db.length) <= tolerance;
 }
 
 /** Open the stream. Safe to call when already open. */

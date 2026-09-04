@@ -13,10 +13,13 @@ which is the only part of this that cannot be solved by sharing a module.
 **24 MHz is not the hardware's floor.** It is the R820T2's native tuner range, and the
 SMArt v5 is sold as 100 kHz-1.75 GHz because the RTL2832U's ADC can be fed directly,
 bypassing the tuner — how every RTL-SDR reaches HF. `deploy/sdr/listen.py` passes
-`-E direct2` below `MIN_MHZ` and the whole range LISTENS. What does not follow down
-there is everything the tuner provides: no gain control, no `rtl_power`, and images
-above 14.4 MHz. `direct_sampling` and `sweepable` are how a caller asks which of those
-apply, rather than comparing against a floor and guessing.
+`-E direct2` below `MIN_MHZ`, and everything up to the ADC's Nyquist edge LISTENS.
+What does not follow down there is everything the tuner provides: no gain control, no
+`rtl_power`, and images above 14.4 MHz. Nor does the range meet in the middle —
+14.4-24 MHz is bypassed by the tuner and past the ADC's honest edge, so it is refused
+rather than tuned into the second Nyquist zone (`aliased`). `direct_sampling`,
+`sweepable` and `aliased` are how a caller asks which of those apply, rather than
+comparing against a floor and guessing.
 
 **`sweepable` and `viewable` are two questions now, not one shape of the same one.**
 They used to agree because a waterfall WAS `rtl_power`. It is not: the one-hop tier
@@ -35,11 +38,18 @@ from jbrain.sdr import bands
 MIN_MHZ = 24.0
 MAX_MHZ = 1766.0
 
+#: Where the ADC's first Nyquist zone ends, in the unit this module speaks. Everything
+#: above it on the DIRECT path arrives as `28.8 MHz − f`, which is another frequency
+#: entirely rather than a weaker version of the one asked for.
+NYQUIST_MHZ = bands.NYQUIST_HZ / 1_000_000
+
 #: What the RTL2832U's ADC reaches with the tuner bypassed — the NESDR SMArt v5's
 #: on-board diplexer feeds HF straight to the **Q branch** (`rtl_fm -E direct2`).
 #: Nooelec's datasheet block diagram shows the wiring; no hardware mod is involved.
-#: The two ranges MEET at `MIN_MHZ` rather than leaving a gap, so everything from here
-#: to `MAX_MHZ` is reachable — by one path or the other.
+#: The two ranges OVERLAP on paper and not in practice: direct sampling is honest only
+#: to `NYQUIST_MHZ`, so 14.4-24 MHz is inside both endpoints and reachable by neither
+#: path (`aliased`). Everything else from here to `MAX_MHZ` is reachable by one or the
+#: other.
 DIRECT_MIN_MHZ = 0.1
 
 #: The floor of everything this radio can reach, either way. Not a replacement for
@@ -91,8 +101,37 @@ def sweepable(mhz: float) -> str | None:
 
 
 def tunable(mhz: float) -> bool:
-    """Whether the radio can reach this frequency at all, by either path."""
-    return DIRECT_MIN_MHZ <= mhz <= MAX_MHZ
+    """Whether the radio can reach this frequency at all, by either path.
+
+    `out_of_range`'s question as a boolean, and it must stay that — the hole at
+    14.4-24 MHz is a place the radio answers with a different frequency, so a check
+    that only compared the ends would call an alias tunable."""
+    return out_of_range(mhz) is None
+
+
+def aliased(mhz: float) -> str | None:
+    """Why tuning here would hand back a DIFFERENT frequency, or None.
+
+    The hole between the two signal paths, and the reason it is a refusal rather than a
+    caveat. `listen.demod_args` applies `-E direct2` to everything below `MIN_MHZ`, and
+    direct sampling digitises a real signal at 28.8 MS/s — so its honest range stops at
+    `NYQUIST_MHZ`, and 14.4-24 MHz is sampled into the SECOND zone and folds back onto
+    `28.8 MHz − f`. Ask for 18.1 MHz and the radio delivers 10.7 MHz: not a quiet band,
+    not an error, a confident picture and clean audio OF SOMETHING ELSE. The 31 m
+    broadcast band is in there, so a listener would hear a station and have every
+    reason to believe it (SDR_IQ_SPECTRUM_PLAN §8).
+
+    Refused rather than served with a note, because the failure is silent by
+    construction: nothing downstream — not the level meter, not whisper, not the
+    waterfall's colour scale — can tell the two apart."""
+    if NYQUIST_MHZ < mhz < MIN_MHZ:
+        return (
+            f"{mhz:g} MHz is not receivable: below {MIN_MHZ:g} MHz this radio bypasses "
+            f"its tuner and samples directly, and that path is honest only up to "
+            f"{NYQUIST_MHZ:g} MHz. Tuning {mhz:g} would in fact deliver "
+            f"{bands.ADC_RATE_HZ / 1_000_000 - mhz:g} MHz."
+        )
+    return None
 
 
 def out_of_range(mhz: float) -> str | None:
@@ -101,12 +140,15 @@ def out_of_range(mhz: float) -> str | None:
     Says which END it is outside rather than quoting the whole range, because "0.1 to
     1766" invites the reader to conclude the radio is one thing that tunes all of it —
     and the interesting fact about a frequency near the bottom is which path it takes,
-    not that it is legal."""
+    not that it is legal.
+
+    The range has a HOLE in it, which is the other reason not to quote the ends:
+    14.4-24 MHz is inside both numbers and reachable by neither path (`aliased`)."""
     if mhz > MAX_MHZ:
         return f"{mhz:g} MHz is above what this radio reaches ({MAX_MHZ:g} MHz)."
     if mhz < DIRECT_MIN_MHZ:
         return f"{mhz:g} MHz is below what this radio reaches ({DIRECT_MIN_MHZ:g} MHz)."
-    return None
+    return aliased(mhz)
 
 
 #: The widest span rtl_power is allowed, mirroring `MAX_SWEEP_SPAN_HZ` in the sidecar.
@@ -132,9 +174,15 @@ def live_bin_hz(span_hz: int, want_hz: int) -> int:
     Coarsened by DOUBLING rather than by dividing the span, because rtl_power grants the
     largest power-of-two division of its per-hop bandwidth that is no coarser than what
     it was asked for (`bands.sweep_bin_hz` says the same). Walking the sequence the tool
-    will itself land on beats computing an exact number it will not honour."""
+    will itself land on beats computing an exact number it will not honour.
+
+    The `+ 1` is the column rtl_power really prints: `csv_dbm` writes `i1..i2`
+    INCLUSIVE and then repeats `avg[i2]`, so a block is one wider than the division
+    suggests. Counting the division alone is how a ceiling of 4096 lets 4097 values onto
+    the wire — a budget that does not bind is worse than none, because it reads as one
+    that does."""
     bin_hz = max(1, want_hz)
-    while span_hz // bin_hz > bands.LIVE_MAX_BINS:
+    while (span_hz // bin_hz) + 1 > bands.LIVE_MAX_BINS:
         bin_hz *= 2
     return bin_hz
 

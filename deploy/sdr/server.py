@@ -177,6 +177,14 @@ def capture(
         raise SdrError(
             f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
+    # A capture is meant to be a sample of what a session would hear, so it has to
+    # refuse what a session refuses: between 14.4 and 24 MHz `demod_args` bypasses the
+    # tuner and the request folds onto the first Nyquist zone. Shared with `listen`
+    # rather than restated, for the reason `demod_args` itself is shared — the two
+    # drifting apart is how a capture comes back sounding unlike the live audio.
+    aliased = listen.aliased_refusal(freq_hz)
+    if aliased is not None:
+        raise SdrError(aliased)
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
@@ -849,10 +857,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(wav)
 
-    def log_message(self, fmt: str, *args: Any) -> None:
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        # `format`, shadowing the builtin, because that is what BaseHTTPRequestHandler
+        # names this parameter and a caller passing it by keyword would otherwise miss.
+        #
         # Default logging writes to stderr per request; the container log is the
         # audit trail we want, so keep it but without the noisy address prefix.
-        print(f"[sdr] {fmt % args}", flush=True)  # noqa: T201
+        print(f"[sdr] {format % args}", flush=True)  # noqa: T201
 
 
 def main() -> None:

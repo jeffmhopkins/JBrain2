@@ -41,21 +41,24 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["src", "tests"]
+# `../deploy/sdr` is IN the include: the sidecar is typechecked by nothing else — no
+# ruff config, no pyright config of its own — and the execution environment below was
+# dead configuration until this line existed, describing files pyright never opened.
+# It is this package's job because this package's pytest already loads those files by
+# path (CLAUDE.md #8).
+include = ["src", "tests", "../deploy/sdr"]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
 
-# How to read the sdr sidecar's tree, which `include` deliberately does not list yet
-# (deploy/sdr has one pre-existing override error, and iq.py/radio.py are still landing).
-# It applies wherever pyright meets those files — an editor now, CI the day the include
-# arrives — because three facts about them are invisible from here. They import each other
-# by BARE NAME off one image WORKDIR, hence `extraPaths`. And `SoapySDR` is an apt package
-# present in the image and in no venv, so reportMissingImports would flag an import that
-# is correct; deferring it into a function body does not help, pyright resolves those too.
-# What proves a sidecar import really resolves is `Dockerfile.sdr`'s build-time
-# `import server, SoapySDR, numpy`, which CI now runs on every PR that touches it.
+# How to read the sdr sidecar's tree, three facts about which are invisible from here.
+# They import each other by BARE NAME off one image WORKDIR, hence `extraPaths`. And
+# `SoapySDR` is an apt package present in the image and in no venv, so
+# reportMissingImports would flag an import that is correct; deferring it into a function
+# body does not help, pyright resolves those too. What proves a sidecar import really
+# resolves is `Dockerfile.sdr`'s build-time `import server, SoapySDR, numpy`, which CI
+# now runs on every PR that touches it.
 [[tool.pyright.executionEnvironments]]
 root = "../deploy/sdr"
 extraPaths = ["../deploy/sdr"]

@@ -562,6 +562,15 @@ second draft still assigned it to none. `live_bin_hz`'s power-of-two ladder, `_s
 `chosen_bin`, the `[100, 100_000]` query bounds and the `SPECTRUM_MAX_BINS` check are all
 `rtl_power`'s constraints and all still live. Either this wave removes them or §2.3 is a
 lie by the plan's own standard.
+⚠ **Shipped ahead of its engine, and corrected after review.** F7 landed while F6 had
+not, so `_span` was handing `rate / N` — 250-600 Hz — straight to `rtl_power -f
+start:stop:bin`, which honours it: `air-tower` went from 512 bins a frame to 4096, and
+`csv_dbm` prints `i1..i2` INCLUSIVE and then repeats `avg[i2]`, so the block is **4097**
+columns — ~29 kB per frame instead of ~3.6, relayed on the api's event loop and rounded
+value by value in pure Python, for a width the tool labels `%.2f` (488.28 read back as
+488, the frame ~1150 Hz out at the top). The table keeps the exact width; `_span` holds
+it back behind `api/sdr.py`'s `SPECTRUM_ENGINE_IS_IQ`, which **F6 flips and then
+deletes** along with the ladder on the one-hop tier.
 
 **F8 — HF goes live.** ⟲⟲⟲ **Six sites, of which four are independent.** The third
 draft said five and missed the one that matters most. Independent gates: `tuner.sweepable`;
@@ -700,3 +709,9 @@ test — and imagined a hand-typing surface that in fact refuses below 24 MHz
 (`SdrTunerSheet.tsx:47`). The real path is `api/sdr.py`'s `Query(ge=TUNABLE_MIN_MHZ)` at
 0.1 MHz → `listen.validate` → `demod_args`, plus the debug listen route. F4's window rule
 keeps the *table* honest; those two entry points need the same check.
+⟲⟲⟲ **The backend half is now fixed rather than deliberately left**: `tuner.aliased`
+names the hole, `out_of_range` carries it (so `viewable`, `sweepable` and jerv's tools
+inherit it), and every door that tunes — `/sdr/listen`, `/sdr/tune`, `/sdr/aprs`, and
+the debug listen and capture twins — refuses with the frequency that would really have
+arrived. Refusal, not a caveat: nothing downstream of `-E direct2` can tell 18.1 MHz
+from the 10.7 MHz it delivers.

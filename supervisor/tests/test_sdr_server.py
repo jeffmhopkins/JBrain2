@@ -977,6 +977,26 @@ def test_a_capture_releases_its_radio_even_when_rtl_fm_produces_nothing(
     assert _get(sidecar, "/healthz")[1]["busy"] is False
 
 
+def test_a_capture_of_the_second_Nyquist_zone_is_refused_like_a_session(
+    sidecar: str, monkeypatch
+) -> None:
+    """A capture is meant to be a sample of what a session would hear, so it has to
+    refuse what a session refuses. Between 14.4 and 24 MHz the tuner is bypassed and the
+    ADC's 28.8 MHz clock folds the request: this would have returned a healthy-looking
+    WAV of 10.7 MHz, `peak` and all, for a request that named 18.1."""
+    _recording(monkeypatch)
+
+    status, body = _capture(
+        sidecar,
+        {"frequency_hz": 18_100_000, "seconds": 1, "mode": "usb", "serial": WHIP},
+    )
+
+    assert status == 400
+    assert "10.700 MHz" in body["detail"]
+    # And the radio it never opened is not left reserved.
+    assert _get(sidecar, "/healthz")[1]["busy"] is False
+
+
 def test_a_capture_is_refused_by_the_session_holding_THAT_radio(
     sidecar: str, monkeypatch
 ) -> None:
@@ -1191,6 +1211,41 @@ def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> N
     assert body["session_id"] == started["session_id"]
     assert body["sweep"]["start_hz"] == 440_000_000
     assert body["frequency_hz"] == 440_100_000
+
+
+def test_a_refused_shortwave_move_costs_a_sentence_and_not_the_radio(
+    sidecar: str,
+) -> None:
+    """The whole tap, end to end: watching 2 m, ask for 40 m, get a 400.
+
+    `_resweep` passes `direct_ok=True` unconditionally, so the range is legal all the
+    way down to the engine — which is still `rtl_power` until F6, and cannot serve it.
+    What the owner must be left with is the picture they already had: the 400 is the
+    cheap half, and the expensive half is that the session, the lease and the old range
+    are all exactly where they were. When F6 lands this becomes a 200."""
+    _, started = _start_spectrum(sidecar)
+
+    status, refused = _post(
+        sidecar,
+        "/listen/tune",
+        {
+            "session_id": started["session_id"],
+            "start_hz": 7_125_000,
+            "stop_hz": 7_300_000,
+            "bin_hz": 250,
+        },
+    )
+
+    assert status == 400
+    assert "I/Q engine" in refused["detail"]
+    # Not a 409, which is what a session reaped out from under the sheet would look
+    # like — and the sheet would then have to start a new one to get a picture back.
+    status, health = _get(sidecar, "/healthz")
+    assert status == 200
+    live = health["sessions"]
+    assert [s["session_id"] for s in live] == [started["session_id"]]
+    assert live[0]["purpose"] == "spectrum"
+    assert live[0]["sweep"]["start_hz"] == 144_000_000
 
 
 def test_an_unnamed_move_with_a_range_finds_the_waterfall_not_the_tuner(

@@ -190,10 +190,19 @@ class TestWhatALiveViewCanCover:
         # BOTH edges, and for a reason bandwidth cannot express: the tuner is powered
         # down on one side of 24 MHz and in circuit on the other, so no single capture
         # covers both halves however narrow the range is.
-        refusal = viewable(20.0, 30.0)
+        refusal = viewable(10.0, 30.0)
 
         assert refusal and "changes signal path" in refusal
         assert viewable(23.9, 24.1) is not None
+
+    def test_an_edge_in_the_second_nyquist_zone_is_refused_by_name(self) -> None:
+        """14.4-24 MHz passes every bound and is reachable by neither path: the tuner
+        is bypassed down there and direct sampling folds `28.8 − f` onto it. A range
+        starting at 20 MHz would be drawn as one starting at 8.8, so the refusal says
+        which frequency the radio would really have given."""
+        refusal = viewable(20.0, 30.0)
+
+        assert refusal and "8.8 MHz" in refusal
 
     def test_an_edge_the_radio_cannot_reach_at_all_is_still_caught(self) -> None:
         assert viewable(30.0, 1800.0) is not None

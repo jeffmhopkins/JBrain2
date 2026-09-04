@@ -76,7 +76,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, sweepable
+from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range, sweepable
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1867,6 +1867,19 @@ async def sdr_sweep(
     return JobSubmitOut(job_id=job_id)
 
 
+def _receivable(frequency_mhz: float) -> None:
+    """Refuse a frequency the radio would answer with a DIFFERENT one — the debug twin
+    of `api/sdr.py`'s `_tunable`, and needed here for the same reason the owner routes
+    need it: the `Query` bounds check the ENDS, and 14.4-24 MHz sits inside them and is
+    reached by neither path. Below 24 MHz the sidecar tunes with `-E direct2`, and
+    direct sampling folds the second Nyquist zone back onto the first, so 18.1 MHz is
+    received as 10.7 (SDR_IQ_SPECTRUM_PLAN §8). A capture from there transcribes
+    cleanly and names the wrong band."""
+    refusal = out_of_range(frequency_mhz)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
+
+
 @router.post("/sdr/capture")
 async def sdr_capture(
     request: Request,
@@ -1891,6 +1904,7 @@ async def sdr_capture(
     transcript of an empty band is whisper hallucinating on noise, so judge the audio by
     `peak` first and the words second."""
     request.state.debug_detail = f"sdr capture {frequency_mhz} MHz {mode}"
+    _receivable(frequency_mhz)
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
 
@@ -1979,6 +1993,7 @@ async def sdr_listen_debug(
     session is what makes the composer's tuner icon appear at all: there would be no
     way to exercise the surface except through the agent."""
     request.state.debug_detail = f"sdr listen {frequency_mhz} MHz {mode}"
+    _receivable(frequency_mhz)
     return await _sdr_post(
         settings,
         "/listen/start",

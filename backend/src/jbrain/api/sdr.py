@@ -53,6 +53,7 @@ from jbrain.sdr.tuner import (
     TUNABLE_MIN_MHZ,
     live_bin_hz,
     nodes_in,
+    out_of_range,
     viewable,
 )
 from jbrain.transcribe import WhisperCppClient
@@ -244,6 +245,23 @@ async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
     )
 
 
+def _tunable(frequency_mhz: float) -> None:
+    """Refuse a frequency the radio would answer with a DIFFERENT one.
+
+    `Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)` bounds the ENDS, and the reachable range
+    has a hole in it: 14.4-24 MHz passes both bounds and comes back as `28.8 MHz − f`,
+    because below 24 MHz the sidecar tunes with `-E direct2` and direct sampling folds
+    the second Nyquist zone onto the first. Ask for 18.1 and hear 10.7 — with audio, a
+    level meter and a caption, all of them confident (SDR_IQ_SPECTRUM_PLAN §8).
+
+    A sentence and a 400, not a 422 with a validation blob: this is the surface an
+    owner with no terminal has (CLAUDE.md #10), and the fact they need is which
+    frequency they would actually have received."""
+    refusal = out_of_range(frequency_mhz)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
+
+
 @router.post("/listen")
 async def listen(
     request: Request,
@@ -260,6 +278,7 @@ async def listen(
     the tuner may borrow while that service happens to be idle. Naming one is the
     launcher asking for THAT radio, and it is refused by name rather than quietly
     served from another."""
+    _tunable(frequency_mhz)
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
     return await _post(
@@ -748,6 +767,8 @@ async def aprs_logging(
     both directions, and turning it OFF stops the APRS session by id — never a
     listening session the owner started, which on a one-tuner box would silence the
     radio they were actually using."""
+    if enabled:
+        _tunable(frequency_mhz)
     base = _base(settings)
     health = await _health(base)
     if health is None:
@@ -822,6 +843,7 @@ async def tune(
     session_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> dict[str, Any]:
     """Retune the live session. The session id survives, so the icon does not blink."""
+    _tunable(frequency_mhz)
     body: dict[str, Any] = {"frequency_hz": int(round(frequency_mhz * 1_000_000))}
     if mode is not None:
         body["mode"] = mode
@@ -847,6 +869,18 @@ SPECTRUM_PURPOSE = "spectrum"
 #: that a signal lands in a bin of its own rather than smeared across a neighbour's.
 DEFAULT_SPECTRUM_BIN_HZ = 25_000
 
+#: **TRANSITIONAL — F6 deletes this and everything it guards.** Which engine the
+#: sidecar really runs for `purpose=spectrum`. It is still `rtl_power` (F6, the I/Q
+#: swap, is not built), and the two engines do not take the same bin width: the table's
+#: `rate / N` is a number OUR FFT produces, while rtl_power is handed
+#: `-f start:stop:bin` and answers with the finest power-of-two division of its per-hop
+#: bandwidth that is no coarser than what it was asked for. Ask it for `air-tower`'s
+#: 600 Hz and it returns 4097 columns instead of 513 — ~29 kB per frame instead of
+#: ~3.6 kB, relayed on the api's own event loop and rounded bin by bin in pure Python,
+#: for a picture no finer than the tool's own `%.2f` bin width can honestly label.
+#: So the table's exact width is held back until the engine that produces it exists.
+SPECTRUM_ENGINE_IS_IQ = False
+
 
 def _span(
     section: str | None,
@@ -859,16 +893,20 @@ def _span(
     band while reading a band plan, so naming one is the ordinary way in, and the
     explicit edges are the expert mode the owner asked for.
 
-    **The bin width is no longer the caller's to pick, and no longer rtl_power's to
-    grant.** A one-hop capture has a rate and an N chosen TOGETHER so that `rate / N`
-    divides exactly (`bands.LIVE_CAPTURES`), and that quotient is the frame's bin
-    width — there is nothing here for a caller to override and nothing for the tool to
-    round. The parameter that used to carry an override is gone with the ladder it fed
-    (SDR_IQ_SPECTRUM_PLAN §2.3, F7). Only the spans too wide for one capture still go
-    through `live_bin_hz`, because those are still swept, hop by hop, by rtl_power.
+    **The bin width is not the caller's to pick.** The parameter that used to carry an
+    override is gone with the ladder it fed (SDR_IQ_SPECTRUM_PLAN §2.3, F7); what
+    replaces it is whichever engine actually draws the picture. A one-hop capture has a
+    rate and an N chosen TOGETHER so `rate / N` divides exactly
+    (`bands.LIVE_CAPTURES`) — but only the I/Q engine transforms it, and that engine is
+    F6. Until then every purpose=spectrum session is `rtl_power`, so every tier gets
+    rtl_power's ladder and `SPECTRUM_ENGINE_IS_IQ` is the one line F6 flips.
 
-    Both paths ask the SAME question of the table, so a hand-typed 144.0-144.2 and the
-    2 m SSB button produce the same picture rather than two that disagree."""
+    **Both paths ask the same question of the same row.** A hand-typed 144.100-144.300
+    IS the 2 m SSB button, so it is resolved to that section (`bands.by_edges`) and
+    they cannot disagree — five rows would otherwise, because a curated row may
+    deliberately name a wider rate than the smallest one that covers it (`mw` takes
+    2.048 MS/s to satisfy `R/2 <= fc`; the derived answer is 1.6). A range that is NOT
+    a section's edges is nobody's curated row and gets the derived answer."""
     if section is not None:
         found = bands.by_id(section)
         if found is None:
@@ -882,20 +920,23 @@ def _span(
             )
         start_hz = int(round(start_mhz * 1_000_000))
         stop_hz = int(round(stop_mhz * 1_000_000))
-        found = None
+        found = bands.by_edges(start_hz, stop_hz)
     refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000)
     if refusal:
         # The sentence, not a validation blob: this is the surface an owner with no
         # terminal has (CLAUDE.md #10), and "this is more than one capture down there"
         # is the fact they most need said in words.
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
-    if found is not None and found.live_bin_hz:
-        return start_hz, stop_hz, found.live_bin_hz
-    capture = bands.capture_for(start_hz, stop_hz)
-    if capture is not None:
-        return start_hz, stop_hz, bands.bin_width_hz(*capture)
-    # No single capture covers it, so this is rtl_power's tier: several hops, one row a
-    # second, and a bin width the tool picks off its own power-of-two ladder.
+    if SPECTRUM_ENGINE_IS_IQ:
+        # F6 onwards: the width is ours, and the frame is exactly `rate / N` wide.
+        if found is not None and found.live_bin_hz:
+            return start_hz, stop_hz, found.live_bin_hz
+        capture = bands.capture_for(start_hz, stop_hz)
+        if capture is not None:
+            return start_hz, stop_hz, bands.bin_width_hz(*capture)
+    # rtl_power's tier — today that is every tier, and after F6 only the spans too wide
+    # for one capture: several hops, one row a second, and a bin width the tool picks
+    # off its own power-of-two ladder.
     want = found.sweep_bin_hz if found is not None else DEFAULT_SPECTRUM_BIN_HZ
     return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want)
 

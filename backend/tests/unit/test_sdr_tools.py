@@ -7,7 +7,6 @@ so plainly when it cannot, and points at the icon rather than narrating settings
 """
 
 import ast
-import re
 from pathlib import Path
 from typing import Any
 
@@ -423,15 +422,19 @@ async def test_a_stop_that_stopped_nothing_is_not_reported_as_off(tools) -> None
 _TOOLS = Path(__file__).resolve().parents[2] / "src" / "jbrain" / "agent" / "tools"
 _LISTEN_PY = Path(__file__).resolve().parents[3] / "deploy" / "sdr" / "listen.py"
 
-#: The claim that went false. Counting words in front of a receiver, or "the box has
-#: one" — deliberately loose, because the next way to say it will not be this one.
-_ONE_TUNER = re.compile(
-    r"\b(?:only |just )?(?:one|1|a single|a sole|the only)\s+"
-    r"(?:tuner|dongle|receiver|radio|antenna)s?\b"
-    r"|\bthe (?:box|radio) has (?:one|a single|only one)\b"
-    r"|\bsingle[- ](?:tuner|dongle|radio)\b",
-    re.I,
-)
+#: Ways of saying the thing that must survive a rewrite: taking a radio does not take
+#: them all, because the lease is per radio and the box may have several.
+#:
+#: **Positive on purpose.** This replaced a regex that BLACKLISTED "one tuner" and its
+#: neighbours, which is the wrong shape of guard twice over. It missed every rewrite
+#: that drops the number — "APRS logging reserves the tuner, so while it is logging
+#: nothing else can be listened to" says something MORE wrong and matches nothing —
+#: while failing correct sentences like "if the box has one radio this takes it; with
+#: two, another stays free". A guard that fires on true prose and passes false prose
+#: does not protect the claim, it selects for guard-shaped writing. Any new wording is
+#: welcome here; what is not welcome is a description that says nothing about the
+#: other radio.
+_PER_RADIO = ("per radio", "another radio", "other radio", "another stays free")
 
 
 def _flow(path: Path) -> str:
@@ -458,28 +461,30 @@ def _purpose_labels() -> list[str]:
     raise AssertionError(f"PURPOSE_LABEL is gone from {_LISTEN_PY}")
 
 
-def test_no_shipped_tool_tells_the_model_the_box_has_one_tuner() -> None:
+def test_every_tool_that_takes_a_radio_says_the_others_stay_free() -> None:
     """It has two, and the lease has been per radio since APRS_CONTROL_PLAN P0b.
 
     `sdr_listen` and `sdr_aprs_logging` both said otherwise for a release: the second
     one told the model "while it is logging nothing can be listened to" while its own
     handler, in `sdrtools.py`, returned "another dongle, if this box has one, is still
-    free". The whole catalog is swept, not just the radio tools, because the sentence
-    is quotable and the next copy of it will not be in a file named sdr_*."""
-    claims = {
-        path.name: _ONE_TUNER.search(path.read_text(encoding="utf-8"))
-        for path in sorted(_TOOLS.glob("*.tool"))
-    }
-    guilty = {name: m.group(0) for name, m in claims.items() if m}
+    free". What the model does with that is report a radio busy while the other one
+    sits idle — so the claim these tools must CARRY is the per-radio one, and a
+    description that has gone quiet about it is the drift worth failing on."""
+    silent = []
+    for name in ("sdr_listen", "sdr_aprs_logging"):
+        said = _flow(_TOOLS / f"{name}.tool").lower()
+        if not any(phrase in said for phrase in _PER_RADIO):
+            silent.append(name)
 
-    assert guilty == {}, f"tool descriptions claiming a single tuner: {guilty}"
+    assert silent == [], f"tools that never tell the model the lease is per radio: {silent}"
 
 
-def test_the_radio_module_docstring_does_not_claim_one_tuner_either() -> None:
-    """It is the file that does the per-radio resolving, so it was the sharpest case."""
-    doc = sdrtools.__doc__ or ""
+def test_the_radio_module_docstring_says_it_too() -> None:
+    """It is the file that does the per-radio resolving, so it was the sharpest case:
+    the false sentence sat in the docstring of the module whose code contradicts it."""
+    doc = (sdrtools.__doc__ or "").lower()
 
-    assert _ONE_TUNER.search(doc) is None
+    assert any(phrase in doc for phrase in _PER_RADIO)
     assert "for_purpose" in doc  # the thing that actually decides which radio
 
 

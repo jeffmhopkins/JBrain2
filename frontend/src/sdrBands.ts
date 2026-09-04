@@ -38,9 +38,9 @@ export interface BandSection {
    *  the server, never derived here — see the note at the top of this file. */
   duty: number;
   /** False for every HF section: `rtl_power` hardcodes the ADC branch this hardware
-   *  does not wire, so shortwave can be listened to and watched live, and never
-   *  SURVEYED. It is no longer the same question as whether a waterfall can be drawn —
-   *  see `whyNotLive`. */
+   *  does not wire, so shortwave can be listened to and — once the I/Q engine lands —
+   *  watched live, and never SURVEYED. It is no longer the same question as whether a
+   *  waterfall can be drawn — see `whyNotLive`. */
   surveyable: boolean;
   /** True below 24 MHz, where the tuner is bypassed — and so where there is no gain
    *  control at all, because the tuner is powered down. */
@@ -109,16 +109,27 @@ export function sectionAt(
 
 /** Why this section cannot be drawn as a waterfall, or null.
  *
- *  A READING of what the server will answer, not a second rule: the route refuses the
- *  same thing in the same words. It exists so the picker can disable the row instead of
- *  offering a tap that ends in an error.
+ *  A READING of what the server will answer, not a second rule: the sidecar refuses the
+ *  same thing in the same words, and the route hands that sentence back as a 400. It
+ *  exists so the picker can disable the row instead of offering a tap that ends in an
+ *  error — and, on the spectrum, a tap that ends in an error is expensive: it costs the
+ *  waterfall that was already running.
  *
- *  **It no longer asks `surveyable`.** That flag is `rtl_power`'s answer and it kept
- *  ten shortwave rows greyed out — the refusal that made HF invisible rather than
- *  merely absent. The live picture is a capture and our own FFT, which reaches
- *  shortwave through the ADC branch this board actually wires, so what is left to
- *  refuse down there is a section with no capture to draw it with. */
+ *  **It no longer asks `surveyable`.** That flag is `rtl_power`'s answer to a different
+ *  question — whether the band can be SURVEYED — and asking it here kept ten shortwave
+ *  rows greyed out with a reason that was about the wrong tool. */
 export function whyNotLive(section: BandSection): string | null {
+  // ⏳ TRANSITIONAL — the one line in this file that mirrors a rule instead of reading
+  // a field, and it is here because the waves landed out of order. F8 opened the HF
+  // rows before F6 swapped the engine behind them, so the sidecar is still `rtl_power`
+  // and `listen.spectrum_engine_refusal` still refuses everything below 24 MHz — the
+  // tool hardcodes the ADC branch this board does not wire. Returning null here would
+  // make this file's own promise false: the picker would offer ten rows the box answers
+  // with a 400. DELETE THIS WITH THAT GUARD, in the same wave, and the check below —
+  // which is the real F6-era rule — is what remains.
+  if (section.direct_sampling) {
+    return "shortwave needs the I/Q engine, which this build doesn't have yet";
+  }
   if (section.direct_sampling && !section.sample_rate_hz) {
     return "below 24 MHz a waterfall is one capture, and this range is wider than one";
   }

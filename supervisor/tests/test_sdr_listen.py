@@ -1388,6 +1388,31 @@ class TestShortwave:
         with pytest.raises(listen.SdrError):
             listen.validate(50_000, "am")
 
+    def test_the_second_Nyquist_zone_is_refused_rather_than_mis_tuned(self) -> None:
+        """The gap between the two floors, and the reason this is a refusal.
+
+        `demod_args` bypasses the tuner for everything below 24 MHz, but the ADC clocks
+        at 28.8 MHz — so the honest range down there stops at 14.4 MHz. Ask for 18.1 and
+        the radio hands back 10.7, mirrored: the request succeeds, the session reports
+        healthy, the level meter moves, and the owner is listening to a different
+        station with nothing anywhere saying so. The PWA's own floor used to hide this
+        by refusing everything below 24 MHz; F8 lowered it to 0.1 and left the hole
+        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §8)."""
+        with pytest.raises(listen.SdrError) as refused:
+            listen.validate(18_100_000, "usb")
+
+        # The sentence has to carry the number the owner would otherwise be hearing,
+        # because "out of range" is not true — the radio tunes it, at the wrong place.
+        assert "10.700 MHz" in str(refused.value)
+        assert "14.4 MHz" in str(refused.value)
+
+    def test_the_zone_boundaries_themselves_stay_legal(self) -> None:
+        """The first zone ends AT 14.4 MHz and the tuner comes back AT 24, so both
+        edges are reachable and neither folds. A guard that took one of them would cost
+        a real band for nothing."""
+        assert listen.validate(listen.NYQUIST_HZ, "usb") == "usb"
+        assert listen.validate(listen.MIN_HZ, "fm") == "fm"
+
     def test_a_sweep_refuses_to_go_there_and_says_why(self) -> None:
         """Not a policy. `rtl_power -D` hardcodes direct sampling mode 1 — the I branch
         — so on this board it would tune something and measure nothing. A flat,
@@ -1806,6 +1831,44 @@ class TestTheLiveSpectrum:
         feed.emit(_row("2026-09-04, 13:01:01", 440_000_000, 25_000, -71.0))
         frame = sub.get(timeout=5)
         assert frame is not None and frame.start_hz == 440_000_000
+
+    def test_a_refused_shortwave_retune_leaves_the_picture_running(
+        self, tuner, feed
+    ) -> None:
+        """The tap that must not cost the owner their radio.
+
+        F8 opened the ten HF rows one wave before F6 replaces the engine, so "watching
+        2 m, tap 40 m" is now one tap: the band sheet offers it, the route passes it
+        through, and the sidecar refuses it. Refusing from inside the relaunch would
+        refuse AFTER `_restart` had killed the pipeline and written the new range —
+        `alive` false, the next `Tuner._reap` stopping the session and dropping the
+        lease, and the error toast landing on a screen that had just lost the waterfall
+        AND the radio. Validated before anything is destroyed, the tap costs a sentence.
+        """
+        session = self._start(tuner)
+        sub = session.subscribe_frames()
+
+        with pytest.raises(listen.SdrError) as refused:
+            session.resweep(
+                listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True)
+            )
+
+        assert "I/Q engine" in str(refused.value)
+        # Still running, still leased, and still the session the omnibox names —
+        # `current()` takes the lock and reaps, so this is the reaper's own verdict.
+        assert session.alive
+        assert tuner.current() is not None
+        assert tuner.for_purpose(listen.PURPOSE_SPECTRUM) is session
+        # And still pointed where it was. A refused move moves NOTHING: a session left
+        # holding the range it was refused would draw 2 m rows under a 40 m label.
+        assert session.sweep is not None and session.sweep.start_hz == 144_000_000
+        assert session.frequency_hz == 144_100_000
+        # The viewer was never disconnected either — no sentinel, and the picture it is
+        # already watching keeps arriving.
+        feed.emit(_row("2026-09-04, 13:01:00", 144_000_000, 25_000, -70.0))
+        feed.emit(_row("2026-09-04, 13:01:01", 144_000_000, 25_000, -71.0))
+        frame = sub.get(timeout=5)
+        assert frame is not None and frame.start_hz == 144_000_000
 
     def test_moving_a_released_spectrum_is_refused_not_relaunched(self, tuner) -> None:
         """The race `Session._restart` exists for: a relaunch here spawns an rtl_power

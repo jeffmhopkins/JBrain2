@@ -52,6 +52,36 @@ function stepLabel(hz: number): string {
 // bug class `jbrain/sdr/tuner.py` exists to end, reappearing one layer up.
 const MIN_MHZ = 0.1;
 const MAX_MHZ = 1766;
+// ...and the hole that lowering the floor opened. Below 24 MHz the R820T2 is powered
+// down and the RTL2832U's ADC is fed straight from the antenna at 28.8 MHz, so the
+// honest range down there stops at half of that. 14.4-24 MHz is the SECOND Nyquist
+// zone: ask for 18.1 and the radio hands back 10.7, mirrored, while reporting a healthy
+// session at the frequency you typed. Refused rather than warned, because there is
+// nothing in the audio to tell the owner they are somewhere else.
+const NYQUIST_MHZ = 14.4;
+const TUNER_MIN_MHZ = 24;
+const ADC_RATE_MHZ = 28.8;
+
+/** Why the radio cannot honestly be tuned there, or null.
+ *
+ *  Mirrored from `listen.aliased_refusal`, which is where it is enforced — this is the
+ *  reading that catches it under the owner's thumb rather than as a round trip. Both
+ *  the steppers and the typed field ask it: stepping up from 14.35 MHz walks into the
+ *  same zone as typing 18.1, and a guard on only one of them is a guard on neither. */
+function whyNotTunable(mhzValue: number): string | null {
+  if (mhzValue < MIN_MHZ || mhzValue > MAX_MHZ) {
+    return `This radio tunes ${MIN_MHZ}-${MAX_MHZ} MHz.`;
+  }
+  if (mhzValue > NYQUIST_MHZ && mhzValue < TUNER_MIN_MHZ) {
+    const image = (ADC_RATE_MHZ - mhzValue).toFixed(3);
+    return (
+      `Nothing between ${NYQUIST_MHZ} and ${TUNER_MIN_MHZ} MHz: down here the radio ` +
+      `bypasses its tuner and samples at ${ADC_RATE_MHZ} MHz, so you would hear ` +
+      `${image} MHz instead.`
+    );
+  }
+  return null;
+}
 
 interface Props {
   listening: SdrListening;
@@ -139,14 +169,18 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     }
   };
 
-  const step = (direction: number) =>
-    act(() =>
-      api.sdrTune(
-        (listening.frequency_hz + direction * stepHz) / 1_000_000,
-        undefined,
-        listening.session_id,
-      ),
-    );
+  const step = (direction: number) => {
+    const target = (listening.frequency_hz + direction * stepHz) / 1_000_000;
+    // Checked here too, not only in the typed field: a 100 kHz step held down from
+    // 14.35 MHz walks into the aliasing zone one tap at a time, and the owner would
+    // have no reason to suspect the frequency stopped meaning what it says.
+    const refusal = whyNotTunable(target);
+    if (refusal !== null) {
+      setError(refusal);
+      return;
+    }
+    return act(() => api.sdrTune(target, undefined, listening.session_id));
+  };
 
   const commitDraft = () => {
     const typed = draft;
@@ -158,8 +192,9 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       setError("That isn't a frequency. Enter it in MHz, like 99.3.");
       return;
     }
-    if (value < MIN_MHZ || value > MAX_MHZ) {
-      setError(`This radio tunes ${MIN_MHZ}-${MAX_MHZ} MHz.`);
+    const refusal = whyNotTunable(value);
+    if (refusal !== null) {
+      setError(refusal);
       return;
     }
     if (value === listening.frequency_hz / 1_000_000) return;

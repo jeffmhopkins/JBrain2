@@ -90,7 +90,17 @@ describe("noticing that the picture moved", () => {
     expect(sameBand(here, rowOf(frame({ db: [-1, -2] })))).toBe(true);
     expect(sameBand(here, rowOf(frame({ start_hz: 440_000_000 })))).toBe(false);
     expect(sameBand(here, rowOf(frame({ bin_hz: 5_000 })))).toBe(false);
-    expect(sameBand(here, rowOf(frame({ db: [-1] })))).toBe(false);
+  });
+
+  it("takes a frame that lost a block as the same band, arriving short", () => {
+    // `Stitch._flush` emits a short frame ON PURPOSE: the frame width is learned, so a
+    // section missing one of its hops is emitted at the timestamp change rather than
+    // stalling the picture. The axis is `startHz + i * binHz`, and both survived — every
+    // column that did arrive is the frequency it was — which is why `paint` already
+    // draws a short row and leaves the rest transparent. Calling it a retune was the
+    // expensive half: on an eight-hop band one lost block blanked the history and threw
+    // away a colour scale that had taken eighty rows to earn, several times a minute.
+    expect(sameBand(here, rowOf(frame({ db: [-1] })))).toBe(true);
   });
 
   it("is never true of nothing", () => {
@@ -119,9 +129,12 @@ describe("noticing that the picture moved", () => {
   });
 
   it("notices a widened span even when the bottom edge did not move", () => {
-    // A bin width that really changed moves the top edge and nothing else, so both
-    // edges are checked rather than only the one a retune happens to move.
+    // A bin width that really changed moves every column but the first, so the width is
+    // checked across the row rather than only the edge a retune happens to move.
     expect(sameBand(here, rowOf(frame({ bin_hz: 40_000 })))).toBe(false);
+    // ...including when the wider row is also SHORTER, which is the case a length test
+    // would have caught for the wrong reason and this one catches for the right one.
+    expect(sameBand(here, rowOf(frame({ bin_hz: 40_000, db: [-1] })))).toBe(false);
   });
 });
 

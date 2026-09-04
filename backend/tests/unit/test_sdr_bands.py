@@ -117,15 +117,31 @@ class TestWhatTheHardwareCanReach:
         why the honest answer is to name the band rather than to raise a flag."""
         forty = bands.by_id("sw-41m")
         assert forty is not None
-        # 7.200-7.450 folds with 21.350-21.600: 15 m amateur and 13 m broadcast.
-        assert (forty.image_start_hz, forty.image_stop_hz) == (21_350_000, 21_600_000)
+        # 7.200-7.450 is captured 6.813-7.837 at 1.024 MS/s, which folds with
+        # 20.963-21.987: 15 m amateur and 13 m broadcast.
+        assert (forty.image_start_hz, forty.image_stop_hz) == (20_963_000, 21_987_000)
         for s in bands.SECTIONS:
             if s.direct_sampling:
-                assert s.image_start_hz == bands.ADC_RATE_HZ - s.stop_hz, s.id
-                assert s.image_stop_hz == bands.ADC_RATE_HZ - s.start_hz, s.id
+                assert s.image_start_hz == bands.ADC_RATE_HZ - s.capture_stop_hz, s.id
+                assert s.image_stop_hz == bands.ADC_RATE_HZ - s.capture_start_hz, s.id
             else:
                 # Above 24 MHz the tuner is in circuit and there is no fold to report.
                 assert (s.image_start_hz, s.image_stop_hz) == (0, 0), s.id
+
+    def test_the_image_is_measured_off_the_frame_and_not_the_button(self) -> None:
+        """A frame is the PASSBAND, and `mw`'s reaches 2.139 MHz under a button that
+        says 1.700 — so an image derived from the section edges leaves ~440 kHz of
+        folded band unmentioned at each end. What sits in `mw`'s missing margin is CB:
+        26.965-27.405 lands at 1.395-1.835, most of it above the section's own top
+        edge and all of it inside the picture."""
+        mw = bands.by_id("mw")
+        assert mw is not None
+
+        assert (mw.image_start_hz, mw.image_stop_hz) == (26_661_000, 28_709_000)
+        # The edges-only answer, which is the one this replaced.
+        assert mw.image_start_hz < bands.ADC_RATE_HZ - mw.stop_hz
+        assert mw.image_stop_hz > bands.ADC_RATE_HZ - mw.start_hz
+        assert mw.image_start_hz <= 27_405_000 <= mw.image_stop_hz  # the CB channels
 
     def test_the_duty_cycle_falls_with_hop_count(self) -> None:
         """The number that justifies splitting bands at all."""
@@ -405,7 +421,9 @@ class TestTheRouteThatServesTheTable:
         # honesty: 256 kS/s over 1024 bins is 250 Hz, exactly, and the image it carries
         # is named rather than flagged.
         assert (wwv.sample_rate_hz, wwv.fft_bins, wwv.bin_hz) == (256_000, 1_024, 250)
-        assert (wwv.image_start_hz, wwv.image_stop_hz) == (18_700_000, 18_900_000)
+        # Off the passband, not the button: 256 kS/s centred on 10.000 MHz digitises
+        # 9.872-10.128, which folds with 18.672-18.928.
+        assert (wwv.image_start_hz, wwv.image_stop_hz) == (18_672_000, 18_928_000)
 
     async def test_it_reports_the_two_ranges_the_hardware_actually_has(self) -> None:
         """Not one range with a lower floor. Below `direct_max_hz` the tuner is bypassed

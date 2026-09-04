@@ -66,6 +66,12 @@ MAX_HZ = 1_766_000_000
 #: with no hardware mod. `-E direct` is the I branch, which this board does not wire —
 #: which is also why `rtl_power` can never sweep down here: it hardcodes mode 1.
 DIRECT_MIN_HZ = 100_000
+#: The RTL2832U's ADC clock, and half of it: the top of the FIRST Nyquist zone. Mirrored
+#: from `jbrain/sdr/bands.py` (`ADC_RATE_HZ`, `NYQUIST_HZ`) for the reason `MIN_HZ` is —
+#: this process is the one that opens the device, so a bound that lives only in the
+#: caller is not a bound once there is a second caller.
+ADC_RATE_HZ = 28_800_000
+NYQUIST_HZ = ADC_RATE_HZ // 2
 MODES = {
     "fm": "fm",
     "nfm": "fm",
@@ -281,6 +287,31 @@ class SessionGone(RuntimeError):
     """This session was released, so it may not relaunch anything."""
 
 
+def aliased_refusal(frequency_hz: int) -> str | None:
+    """Why direct sampling cannot honestly tune here, or None.
+
+    THE GAP BETWEEN THE TWO FLOORS. `demod_args` puts everything below `MIN_HZ` on
+    `-E direct2`, where the ADC samples at 28.8 MHz and the first Nyquist zone ends at
+    14.4 MHz. Between 14.4 and 24 MHz the tuner is out of circuit and the request lands
+    in the SECOND zone, which folds: ask for 18.1 MHz and the radio hands back 10.7 MHz,
+    mirrored, with sideband sense inverted. Right signal path, wrong station, and
+    nothing in the audio says so — which is why this is a refusal rather than a note.
+
+    Only the sidecar can state the whole rule, because only the sidecar knows both that
+    `direct2` was chosen and what clock it implies (docs/plans/SDR_IQ_SPECTRUM_PLAN.md
+    §8, "a pre-existing bug this makes visible"). Above `MIN_HZ` the R820T2 is back in
+    circuit and mixes properly, so there is nothing here to refuse."""
+    if NYQUIST_HZ < frequency_hz < MIN_HZ:
+        image = ADC_RATE_HZ - frequency_hz
+        return (
+            f"{frequency_hz / 1e6:.3f} MHz cannot be tuned: below "
+            f"{MIN_HZ / 1e6:.0f} MHz this radio bypasses its tuner and samples at "
+            f"{ADC_RATE_HZ / 1e6:.1f} MHz, so anything above {NYQUIST_HZ / 1e6:.1f} MHz "
+            f"folds — you would hear {image / 1e6:.3f} MHz instead."
+        )
+    return None
+
+
 def validate(frequency_hz: int, mode: str) -> str:
     """Bound the tuning request and return rtl_fm's demodulator name.
 
@@ -291,6 +322,9 @@ def validate(frequency_hz: int, mode: str) -> str:
         raise SdrError(
             f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
+    aliased = aliased_refusal(frequency_hz)
+    if aliased is not None:
+        raise SdrError(aliased)
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
@@ -509,6 +543,31 @@ class Sweep:
             "bin_hz": self.bin_hz,
             "seconds": self.seconds,
         }
+
+
+def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
+    """Why the engine behind a live spectrum cannot draw that range, or None.
+
+    F8 opened the HF band rows one wave before F6 replaces this engine, so a shortwave
+    spectrum can now reach a tool that cannot serve one: `rtl_power -D` hardcodes direct
+    sampling mode 1, the I branch, and this hardware wires Q. The refusal belongs to the
+    ENGINE rather than to the route, because the same range is perfectly viewable the
+    moment F6 lands and a route-level floor would have to be found and removed again.
+    Delete this with the engine, not before (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6).
+
+    A SENTENCE RETURNED, not an exception raised, because the two callers refuse at
+    different moments. Starting has nothing to lose, so `_start_spectrum_pipeline` can
+    ask on its way up; a RETUNE has a running picture and a held radio to protect, so
+    `resweep` has to ask before `_restart` tears either of them down. One reading, two
+    call sites — the alternative is the guard drifting into two floors that disagree.
+    """
+    if sweep is not None and sweep.start_hz < MIN_HZ:
+        return (
+            f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs the I/Q engine, "
+            f"which this build does not have yet — the sweep tool cannot reach the "
+            f"ADC branch this radio wires. Listening there works."
+        )
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -923,19 +982,13 @@ class Session:
         stderr. No encoder — there is no audio on this path at all."""
         if shutil.which("rtl_power") is None:
             raise SdrError("rtl_power is not installed in this image")
-        # F8 opened the HF band rows before F6 replaced this engine, so a shortwave
-        # spectrum can now reach a tool that cannot serve one: `rtl_power -D` hardcodes
-        # direct sampling mode 1, the I branch, and this hardware wires Q. The guard
-        # belongs HERE rather than in the route because the refusal is a fact about
-        # rtl_power, not about the radio — the same range is perfectly viewable the
-        # moment F6 lands, and a route-level floor would have to be found and removed
-        # again. Delete this with the engine, not before.
-        if self.sweep is not None and self.sweep.start_hz < MIN_HZ:
-            raise SdrError(
-                f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs the I/Q engine, "
-                f"which this build does not have yet — the sweep tool cannot reach the "
-                f"ADC branch this radio wires. Listening there works."
-            )
+        # The engine cannot draw shortwave until F6 lands. Asked here as well as in
+        # `resweep` because this is the START path — reached from `__init__`, where
+        # there is no session yet and nothing to lose by finding out late. A retune
+        # cannot afford that, which is why the reading lives in one function.
+        unservable = spectrum_engine_refusal(self.sweep)
+        if unservable is not None:
+            raise SdrError(unservable)
         try:
             self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1487,9 +1540,20 @@ KISSPORT {self.kiss_port}
         centre so the omnibox keeps naming something true.
 
         Viewers stay attached across it and are told nothing: every frame says which
-        band it covers, so the picture simply starts describing the new one."""
+        band it covers, so the picture simply starts describing the new one.
+
+        **Everything that can refuse is asked BEFORE `_restart`, which destroys first.**
+        `_restart` kills the pipeline and applies the new range before it relaunches, so
+        a check that fires from inside the relaunch fires on a session whose old picture
+        is already dead and whose `sweep` already names the range that cannot be served
+        — `alive` then goes false and the next `Tuner._reap` stops the session and drops
+        the lease. The owner tapped a band they were told they could have and lost the
+        waterfall AND the radio. Refusing up here leaves the old picture running."""
         if self.purpose not in SWEEPING:
             raise SdrError(f"a {self.purpose} session has no range to move")
+        unservable = spectrum_engine_refusal(sweep)
+        if unservable is not None:
+            raise SdrError(unservable)
 
         def apply() -> None:
             self.sweep = sweep
@@ -1509,7 +1573,15 @@ KISSPORT {self.kiss_port}
         restarts — after which the next caller for that serial is allowed through and
         two processes fight over one radio. That is the "garbled audio rather than an
         error" outcome the whole per-radio rule exists to prevent, so the guard belongs
-        here rather than in the route, where the window is."""
+        here rather than in the route, where the window is.
+
+        The same ordering is why VALIDATION cannot live in here, and callers must do it
+        first: by the time `_start_pipeline` runs, `_kill` has already happened and
+        `apply` has already written the new tuning, so anything this raises kills a
+        session that was working rather than refusing a request that was not. `tune`
+        validates through `validate()` and `resweep` through `spectrum_engine_refusal`,
+        both above the call — the guard here is about a session RELEASED underneath us,
+        which is the one thing no caller can check in advance."""
         with self._lock:
             if self._released:
                 raise SessionGone("that session has been released")
