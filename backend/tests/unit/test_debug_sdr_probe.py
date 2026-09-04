@@ -10,9 +10,12 @@ matters, not the list nobody scrolls to.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
-from jbrain.api.debug import _sdr_verdict
+import httpx
+
+from jbrain.api.debug import _sdr_verdict, sdr_probe
 
 
 def _dongle(serial: str, node: str, **over: Any) -> dict[str, Any]:
@@ -106,3 +109,27 @@ def test_a_dongle_held_by_something_else_still_counts_the_others() -> None:
     assert out.ready is False
     assert "usbfs" in out.summary
     assert "and 1 other" in out.summary
+
+
+async def test_a_scan_that_does_not_answer_is_an_answer_not_a_500() -> None:
+    """MEASURED 2026-09-04: a USB port reset made the bus read slow enough to time out,
+    and this route replied with a 500 and a traceback — during the exact minute the owner
+    most needed to know what was on the bus, and with no terminal to look with
+    (CLAUDE.md #10). "Cannot tell" is a real state this shape already carries."""
+
+    class _Unreachable:
+        async def get(self, _path: str, **_kw: Any) -> Any:
+            raise httpx.ReadTimeout("the bus is busy re-enumerating")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(),
+        app=SimpleNamespace(state=SimpleNamespace(supervisor_client=_Unreachable())),
+    )
+
+    out = await sdr_probe(request, SimpleNamespace(supervisor_token="t"), object())  # type: ignore[arg-type]
+
+    assert out.ready is False
+    assert out.sysfs_readable is False
+    assert "Cannot tell" in out.summary
+    # And it says the one thing that is actually true of a reset in progress.
+    assert "re-enumerating" in out.next_step

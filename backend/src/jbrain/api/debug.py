@@ -1536,6 +1536,16 @@ class SdrProbeOut(BaseModel):
     devices: list[SdrDeviceOut]
 
 
+async def _usb_scan(request: Request, settings: Any) -> dict[str, Any]:
+    """The supervisor's raw USB scan. Raises `httpx.HTTPError` — the two callers want
+    opposite things from a failure, so neither gets it swallowed here."""
+    resp = await _supervisor(request).get(
+        "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    resp.raise_for_status()
+    return cast(dict[str, Any], resp.json())
+
+
 def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
     """Turn the supervisor's raw USB scan into an answer to one question: can this
     box drive an SDR yet, and if not, what is in the way?
@@ -1672,11 +1682,25 @@ async def sdr_probe(request: Request, settings: SettingsDep, _p: DebugDep) -> Sd
     the blacklist step fixes; `next_step` says so rather than leaving the reader to
     know it."""
     request.state.debug_detail = "sdr usb probe"
-    resp = await _supervisor(request).get(
-        "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
-    )
-    resp.raise_for_status()
-    return _sdr_verdict(cast(dict[str, Any], resp.json()))
+    try:
+        scan = await _usb_scan(request, settings)
+    except httpx.HTTPError as unreachable:
+        # MEASURED 2026-09-04: a USB port reset makes the bus read slow enough to time
+        # out, and this route answered the owner with a 500 and a traceback — during the
+        # exact minute they most needed to know what was on the bus. "Cannot tell" is a
+        # real state this shape already carries; a 500 is not an answer at all.
+        return SdrProbeOut(
+            found=False,
+            ready=False,
+            summary=f"Cannot tell — the USB scan did not answer ({type(unreachable).__name__}).",
+            next_step="Try again in a moment. A scan that times out is normal while a "
+            "device is re-enumerating, which a reset causes on purpose.",
+            sysfs_readable=False,
+            usb_device_count=0,
+            sdrs=[],
+            devices=[],
+        )
+    return _sdr_verdict(scan)
 
 
 class SdrCaptureOut(BaseModel):
@@ -1967,6 +1991,14 @@ async def sdr_listen_debug(
     )
 
 
+#: How long a USB port reset may take before the api stops waiting. MEASURED: the ioctl
+#: outran the ordinary 30 s sidecar timeout on a device that was in trouble, which is
+#: exactly the device anyone resets — the kernel waits on a port that may never answer,
+#: and the wait is the operation rather than a hang. Generous, and still bounded: a
+#: request held for ever is its own fault.
+RESET_TIMEOUT_S = 120.0
+
+
 @router.post("/sdr/reset")
 async def sdr_reset_debug(
     request: Request,
@@ -1981,17 +2013,15 @@ async def sdr_reset_debug(
     that has stopped answering would be unreachable from a handed-over token — which is
     the situation it was written in: the dongle was already broken and nobody was home."""
     request.state.debug_detail = f"sdr reset {serial}"
-    scan = await _supervisor(request).get(
-        "/usb", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
-    )
-    scan.raise_for_status()
-    node = nodes_in(cast(dict[str, Any], scan.json())).get(serial)
+    node = nodes_in(await _usb_scan(request, settings)).get(serial)
     if node is None:
         raise HTTPException(
             status_code=404,
             detail=f"No radio {serial} in the USB scan, so there is no device to reset.",
         )
-    return await _sdr_post(settings, "/reset", {"serial": serial, "device_node": node})
+    return await _sdr_post(
+        settings, "/reset", {"serial": serial, "device_node": node}, wait_s=RESET_TIMEOUT_S
+    )
 
 
 @router.post("/sdr/stop")
@@ -2014,11 +2044,26 @@ def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:
         return fallback
 
 
-async def _sdr_post(settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
+async def _sdr_post(
+    settings: Any, path: str, body: dict[str, Any], wait_s: float = 30.0
+) -> dict[str, Any]:
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
-    async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=30.0) as client:
-        resp = await client.post(path, json=body)
+    try:
+        async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=wait_s) as client:
+            resp = await client.post(path, json=body)
+    except httpx.TimeoutException as slow:
+        # NOT "it failed". MEASURED 2026-09-04: a `USBDEVFS_RESET` outran the 30 s
+        # default and the owner got a 500 with a traceback for an operation that had in
+        # fact HAPPENED — the device left the bus. Saying "the radio did not reset" would
+        # have been worse than the traceback, because it is false. What a timeout here
+        # licenses is "look again", and nothing more.
+        raise HTTPException(
+            status_code=504,
+            detail=f"The radio has not answered yet ({type(slow).__name__}). Whatever was "
+            f"asked for may still be happening — read the radio list again in a moment "
+            f"rather than assuming it did not.",
+        ) from slow
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail=_sidecar_detail(resp, "The radio is busy."))
     if resp.status_code != 200:

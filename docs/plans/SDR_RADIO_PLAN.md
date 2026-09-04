@@ -441,6 +441,24 @@ dongle keeps logging. Reachable from the PWA (**Radios → the radio → Reset t
 and from a handed-over token (`scripts/debug-connect.sh sdr-reset`). CLAUDE.md #10 asks
 for terminal dependencies to be designed out rather than documented; this is one.
 
+**RUN ON THE BOX 2026-09-04, and it did not go well.** The reset was issued against
+`77192819` and the dongle **left the bus and did not come back** — 13 USB devices before,
+12 after, the serial absent from the scan entirely rather than present-and-unreadable.
+Two things follow, and both are recorded because the second is the more useful:
+
+- **It is evidence for the power theory, not the SIGKILL one.** A healthy device returns
+  from `USBDEVFS_RESET` in moments; one that cannot complete enumeration afterwards is
+  one that is not drawing what it needs, or is failing. Nothing was lost in capability —
+  the radio was already unopenable — but the state changed from "present and useless" to
+  "absent", and only a re-powered port (a re-plug or a reboot) brings that back.
+- **Two defects surfaced with it**, both since fixed: the ioctl outran the api's ordinary
+  30 s sidecar timeout, so an operation that HAD happened came back as a 500 with a
+  traceback (`RESET_TIMEOUT_S`, and a 504 that says "look again" rather than "it
+  failed" — the honest reading of a timeout, and the only one that is not a lie here);
+  and `GET /api/debug/sdr` threw outright when the supervisor's `/usb` read timed out,
+  which is precisely what a bus does while a device re-enumerates. It now answers
+  "cannot tell", a state that shape already carried.
+
 **And the cause may have been ours.** `_kill` sent SIGKILL with no SIGTERM first, and
 both tools install a handler that cancels the pending async USB transfer and CLOSES the
 device. SIGKILL never runs it, leaving the RTL2832U with transfers submitted — a known
