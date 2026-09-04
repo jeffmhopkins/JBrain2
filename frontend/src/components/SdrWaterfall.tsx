@@ -16,6 +16,7 @@
 // produce because it no longer holds the numbers.
 
 import { useEffect, useRef, useState } from "react";
+import { mhz } from "../mhz";
 import {
   type SpectrumRow,
   type SpectrumState,
@@ -149,11 +150,6 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       </p>
     </div>
   );
-}
-
-function mhz(hz: number): string {
-  const at = hz / 1_000_000;
-  return at >= 100 ? at.toFixed(2) : at.toFixed(3);
 }
 
 function khz(hz: number): string {

@@ -2718,8 +2718,12 @@ export const api = {
     return (await response.json()) as SdrState;
   },
 
-  async sdrListen(frequencyMhz: number, mode: string): Promise<SdrListening> {
-    const query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}&mode=${encodeURIComponent(mode)}`;
+  // `serial` names WHICH radio, and the api honours it or refuses by name. It comes
+  // from a screen where the radio is the object; omitted, the server picks a general
+  // one exactly as it always did.
+  async sdrListen(frequencyMhz: number, mode: string, serial?: string): Promise<SdrListening> {
+    let query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}&mode=${encodeURIComponent(mode)}`;
+    if (serial) query += `&serial=${encodeURIComponent(serial)}`;
     const response = await request(`/api/sdr/listen?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
   },
@@ -2774,9 +2778,14 @@ export const api = {
     return (await response.json()) as AprsStationDetail;
   },
 
-  async setAprsLogging(enabled: boolean, frequencyMhz?: number): Promise<AprsToggleResult> {
+  async setAprsLogging(
+    enabled: boolean,
+    frequencyMhz?: number,
+    serial?: string,
+  ): Promise<AprsToggleResult> {
     let query = `enabled=${enabled ? "true" : "false"}`;
     if (frequencyMhz !== undefined) query += `&frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
+    if (serial) query += `&serial=${encodeURIComponent(serial)}`;
     const response = await request(`/api/sdr/aprs?${query}`, { method: "POST" });
     return (await response.json()) as AprsToggleResult;
   },
@@ -2819,10 +2828,10 @@ export const api = {
   // The live waterfall. A band SECTION or an explicit range — the second is the expert
   // path, and reaches anywhere the sweep tool can. The rows themselves arrive on an
   // EventSource (sdrSpectrum.ts), not through here.
-  async sdrSpectrumStart(range: SpectrumRange): Promise<SdrListening> {
-    const response = await request(`/api/sdr/spectrum?${spectrumQuery(range)}`, {
-      method: "POST",
-    });
+  async sdrSpectrumStart(range: SpectrumRange, serial?: string): Promise<SdrListening> {
+    let query = spectrumQuery(range);
+    if (serial) query += `&serial=${encodeURIComponent(serial)}`;
+    const response = await request(`/api/sdr/spectrum?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
   },
 

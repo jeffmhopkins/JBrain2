@@ -30,29 +30,32 @@ import {
   receiverHealth,
 } from "../aprsLog";
 import { AprsStations } from "../components/AprsStations";
-import { SdrSpectrumTab } from "../components/SdrSpectrumTab";
-import { SdrTunerControls } from "../components/SdrTunerSheet";
-import { type SdrListening, sessionFor, useSdrSession } from "../sdrSession";
+import { SdrRadiosTab } from "../components/SdrRadiosTab";
+import { sessionFor, useSdrSession } from "../sdrSession";
 
-type Tab = "tuner" | "spectrum" | "aprs" | "recordings";
+type Tab = "radios" | "aprs" | "recordings";
 
 const POLL_MS = 5000;
 
 const TAB_LABEL: Record<Tab, string> = {
-  tuner: "Tuner",
-  // Its own tab only until the launcher's chosen shape lands — there a spectrum is one
-  // of the jobs a RADIO can be given, not a place of its own (SdrSpectrumTab.tsx).
-  spectrum: "Spectrum",
+  // Shape A: the RADIO is the object, so the first tab is a roster of what each one is
+  // doing and its job is chosen inside it. There is no Tuner tab and no Spectrum tab —
+  // both were places where a job lived apart from the radio running it
+  // (docs/mocks/sdr-launcher/README.md).
+  radios: "Radios",
   aprs: "APRS",
   recordings: "Recordings",
 };
 
 export function RadioScreen({ onClose }: { onClose: () => void }) {
+  // APRS, not the first tab, and deliberately: the roster answers "what is each radio
+  // doing", which is a question the owner asks when they want to CHANGE something. The
+  // log answers "is the thing that runs all day still working", which is why this
+  // screen is usually opened at all.
   const [tab, setTab] = useState<Tab>("aprs");
   const [log, setLog] = useState<AprsLogState | null>(null);
   const [commands, setCommands] = useState<AprsCommandState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   // One timer for the whole tab. The roster follows this counter rather than owning a
   // second interval, so the station list and the health line above it can never be
   // reading the channel at two different moments.
@@ -70,7 +73,6 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
   // panel, replaced "Stop APRS logging" with a button that could only no-op, and
   // printed the TUNER's elapsed time as how long APRS had held the radio.
   const logging = sessionFor(sdr, "aprs");
-  const listening = sessionFor(sdr, "listen");
 
   // A poll in flight when the next tick fires, or when a toggle finishes, can land out
   // of order and paint a state the box has already left. The sequence number makes a
@@ -117,20 +119,6 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
     })();
   }, []);
 
-  async function toggle(enabled: boolean) {
-    setBusy(true);
-    try {
-      await api.setAprsLogging(enabled);
-      await refresh();
-      setError(null);
-    } catch (err) {
-      // The 409 names which job holds the radio, and the two need opposite answers.
-      setError(err instanceof ApiError ? err.message : "Couldn't change APRS logging.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     // `subscreen` is what makes this a full-screen layer OVER the launcher. The
     // launcher deliberately stays open beneath a card — dismissing the card reveals it
@@ -149,7 +137,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
             instead, which is a second answer to a question the design system had
             already settled. */}
         <div className="seg-tabs" role="tablist" aria-label="Radio">
-          {(["tuner", "spectrum", "aprs", "recordings"] as Tab[]).map((id) => (
+          {(["radios", "aprs", "recordings"] as Tab[]).map((id) => (
             <button
               key={id}
               type="button"
@@ -170,24 +158,13 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
             log={log}
             commands={commands}
             error={error}
-            busy={busy}
-            listening={listening !== null}
             heldFor={logging?.elapsed_s ?? null}
-            onToggle={toggle}
+            onOpenRadios={() => setTab("radios")}
           />
         )}
-        {tab === "tuner" && (
-          <TunerTab
-            logging={logging}
-            listening={listening}
-            busy={busy}
-            onFree={() => toggle(false)}
-            // Releasing from here leaves the tab on its idle state; the lease poll
-            // publishes the change, so nothing local needs clearing.
-            onReleased={() => void refresh()}
-          />
+        {tab === "radios" && (
+          <SdrRadiosTab tick={tick} log={log} onOpenAprs={() => setTab("aprs")} />
         )}
-        {tab === "spectrum" && <SdrSpectrumTab />}
         {tab === "recordings" && (
           <p className="radio-empty">Recordings arrive in a later wave. Nothing is stored yet.</p>
         )}
@@ -200,20 +177,14 @@ function AprsTab({
   log,
   commands,
   error,
-  busy,
-  listening,
   heldFor,
   tick,
   owner,
-  onToggle,
+  onOpenRadios,
 }: {
   log: AprsLogState | null;
   commands: AprsCommandState | null;
   error: string | null;
-  busy: boolean;
-  /** Whether a session is holding a radio to LISTEN — asked per job rather than off
-   *  `listening`, which is whichever session the omnibox should draw. */
-  listening: boolean;
   /** Seconds the APRS session has held ITS radio. Was the tuner's elapsed time, which
    *  on a two-dongle box is a different session on a different dongle. */
   heldFor: number | null;
@@ -221,7 +192,8 @@ function AprsTab({
   tick: number;
   /** The owner's callsign from Settings, for pinning their own stations. */
   owner: string | null;
-  onToggle: (enabled: boolean) => void;
+  /** Take me to the switch. There is exactly one, and it is on the radio. */
+  onOpenRadios: () => void;
 }) {
   // The error has to come BEFORE the loading return. It used to sit after it, so a
   // first load that failed left this tab on "Reading the log…" for ever with the
@@ -255,60 +227,27 @@ function AprsTab({
         </p>
       )}
 
+      {/* THE SWITCH LIVES ON THE RADIO (docs/mocks/sdr-launcher/README.md, shape A).
+          It used to be here, decided on a one-dongle box where "which radio" was not a
+          question; it is now. What is left here is a pointer, never a second control —
+          two switches over one state is how one of them ends up lying, which is the
+          failure this whole surface is written against (APRS_CONTROL_PLAN.md). The
+          contention panel went with it: which jobs a radio may take, and why not, is
+          said on the radio's own job control before the tap. */}
       {log.logging ? (
-        // LOGGING wins over contention, and must: with a radio each, a listening session
-        // exists at the same time as this one. Testing the listening session first left
-        // the owner looking at the contention panel while logging ran — "Stop APRS
-        // logging" replaced by a button whose only effect was a no-op 200.
-        <>
-          <button
-            type="button"
-            className="aprs-toggle aprs-toggle-on"
-            disabled={busy}
-            onClick={() => onToggle(false)}
-          >
-            Stop APRS logging
-          </button>
-          {heldFor !== null && (
-            <p className="radio-hint">
-              Holding a radio for {held(heldFor)}. Nothing else can use THAT radio until this is
-              released.
-            </p>
-          )}
-        </>
-      ) : listening ? (
-        // CONTENTION (docs/mocks/aprs/c-single-dongle.html, shape A). Reached only when
-        // nothing is logging: a listening session may be the reason APRS cannot start,
-        // and on a one-dongle box it always is. Say what holds a radio BEFORE the tap
-        // rather than after a raw lowercase 409. One CTA, because round 3's own review
-        // killed a duplicate here. The button is no longer a guess on a two-dongle box:
-        // if another radio is free the api takes it and this simply succeeds.
-        <div className="aprs-held" role="alert">
-          <b>The radio is listening.</b> Logging will take a free radio if this box has one —
-          otherwise release the listening session, or add a second dongle to do both.
-          <button
-            type="button"
-            className="aprs-take"
-            disabled={busy}
-            onClick={() => onToggle(true)}
-          >
-            Release &amp; log APRS
+        heldFor !== null && (
+          <p className="radio-hint">
+            Holding a radio for {held(heldFor)}. Nothing else can use THAT radio until it is
+            released — do that on the radio, under Radios.
+          </p>
+        )
+      ) : (
+        <div className="aprs-held">
+          <b>Nothing is logging.</b> APRS runs on a radio, so it is switched on there.
+          <button type="button" className="aprs-take" onClick={onOpenRadios}>
+            Choose a radio
           </button>
         </div>
-      ) : (
-        <>
-          <button
-            type="button"
-            className="aprs-toggle"
-            disabled={busy}
-            onClick={() => onToggle(true)}
-          >
-            Enable APRS logging
-          </button>
-          <p className="radio-hint">
-            Reserves the tuner until released — while it runs, the Tuner tab can't listen.
-          </p>
-        </>
       )}
 
       <CommandSummary commands={commands} logging={log.logging} />
@@ -416,56 +355,6 @@ function CommandSummary({
 function held(seconds: number): string {
   const mins = Math.max(0, Math.round(seconds / 60));
   return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
-
-function TunerTab({
-  logging,
-  listening,
-  busy,
-  onFree,
-  onReleased,
-}: {
-  /** The APRS session, or null. Was a bare "is anything logging": with a radio each,
-   *  that put "In use by APRS logging" over a tuner session that had its own dongle. */
-  logging: SdrListening | null;
-  /** The LISTENING session, asked per job. `sdr.listening` is whichever one the omnibox
-   *  should draw, which is not the same question. */
-  listening: SdrListening | null;
-  busy: boolean;
-  onFree: () => void;
-  onReleased: () => void;
-}) {
-  // Only when APRS is the reason there is nothing to tune. With two dongles both can be
-  // live at once, and the tuner controls are then the right thing to show.
-  if (logging !== null && listening === null) {
-    return (
-      <div className="aprs-held" role="alert">
-        <b>In use by APRS logging.</b> Release the logging session to listen here, or add a second
-        dongle to do both.
-        {/* The LOGGING session's elapsed time. It read the listening one's, which on a
-            two-dongle box is a different session on a different radio. */}
-        <> Held for {held(logging.elapsed_s)}.</>
-        {/* Disabled while busy: without it a double tap fires two releases, and the
-            second lands on a session that is already gone. */}
-        <button type="button" className="aprs-take" disabled={busy} onClick={onFree}>
-          Release &amp; listen
-        </button>
-      </div>
-    );
-  }
-  if (listening) {
-    // The REAL transport, not a description of it. This tab used to render frequency
-    // and mode as text and point at the composer's icon, which meant the one screen
-    // named "Radio" was the one place you could not work the radio. Same component the
-    // omnibox icon opens, so the two can never drift apart.
-    return <SdrTunerControls listening={listening} onReleased={onReleased} />;
-  }
-  return (
-    <div className="radio-tuner">
-      <div className="radio-tuner-freq">—</div>
-      <div className="radio-tuner-sub">Idle. Ask jerv to tune something, or use the composer.</div>
-    </div>
-  );
 }
 
 function clock(iso: string): string {

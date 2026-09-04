@@ -827,7 +827,11 @@ describe("the APRS tab", () => {
     expect(await screen.findByText(/nothing for \d+ min/)).toBeInTheDocument();
   });
 
-  it("offers the switch when logging is off, and says what it costs", async () => {
+  it("points at the radio instead of growing a second switch", async () => {
+    // The switch MOVED to the radio (docs/mocks/sdr-launcher/README.md, shape A). Two
+    // switches over one state is how one of them ends up lying, which is the failure
+    // this whole surface is written against (APRS_CONTROL_PLAN.md) — so what is left
+    // here is a pointer, and the tap has to actually land on the Radios tab.
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(
       log({ logging: false, packets: [] }) as never,
     );
@@ -835,37 +839,14 @@ describe("the APRS tab", () => {
       available: true,
       listening: null,
     });
-    const set = vi.spyOn(api, "setAprsLogging").mockResolvedValue({ logging: true, changed: true });
+    const set = vi.spyOn(api, "setAprsLogging");
 
     render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose a radio" }));
 
-    const button = await screen.findByRole("button", {
-      name: "Enable APRS logging",
-    });
-    // The cost is named where the switch is, not in a hint read earlier.
-    expect(screen.getByText(/Reserves the tuner until released/)).toBeInTheDocument();
-    fireEvent.click(button);
-    await waitFor(() => expect(set).toHaveBeenCalledWith(true));
-  });
-
-  it("surfaces which job holds the radio when the switch is refused", async () => {
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(
-      log({ logging: false, packets: [] }) as never,
-    );
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue({
-      available: true,
-      listening: null,
-    });
-    vi.spyOn(api, "setAprsLogging").mockRejectedValue(
-      new ApiError(409, "The radio is already listening"),
-    );
-
-    render(<RadioScreen onClose={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Enable APRS logging" }));
-
-    // Generic failure would leave the owner with no next move; the sidecar names the
-    // holder for exactly that reason and it must survive all the way to the screen.
-    expect(await screen.findByText(/already listening/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enable APRS logging" })).not.toBeInTheDocument();
+    expect(set).not.toHaveBeenCalled();
+    expect(await screen.findByRole("tab", { name: "Radios", selected: true })).toBeTruthy();
   });
 
   it("says the receiver is unreachable rather than switched off", async () => {
@@ -901,25 +882,6 @@ describe("the APRS tab", () => {
     expect(screen.queryByText("Reading the log…")).not.toBeInTheDocument();
   });
 
-  it("names the listening session BEFORE offering a switch that can only fail", async () => {
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(
-      log({ logging: false, packets: [] }) as never,
-    );
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("listen") as never);
-    const set = vi.spyOn(api, "setAprsLogging").mockResolvedValue({ logging: true, changed: true });
-
-    render(<RadioScreen onClose={() => {}} />);
-
-    // One dongle, one job (docs/mocks/aprs/c-single-dongle.html shape A). Offering
-    // "Enable APRS logging" here produced a raw lowercase 409 string AFTER the tap.
-    expect(await screen.findByText(/The radio is listening/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Enable APRS logging" })).not.toBeInTheDocument();
-
-    // Exactly one CTA — round 3's own review killed a duplicate here.
-    fireEvent.click(screen.getByRole("button", { name: /Release & log APRS/ }));
-    await waitFor(() => expect(set).toHaveBeenCalledWith(true));
-  });
-
   it("shows how long logging has held its radio", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
     vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
@@ -929,21 +891,19 @@ describe("the APRS tab", () => {
     expect(await screen.findByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();
   });
 
-  it("stays on the logging controls when the tuner takes the OTHER radio", async () => {
+  it("times the hold by the LOGGING session when the tuner has the other radio", async () => {
     // The bug this whole round exists to stop, at the surface the owner touches.
     // `listening` is the session the omnibox draws and it PREFERS the tuner, so reading
-    // its purpose here said "listening" while APRS logged: the tab put up the
-    // one-dongle contention panel, replaced "Stop APRS logging" with a button whose
-    // only effect was a no-op 200, and printed the TUNER's elapsed time as APRS's.
+    // its purpose here said "listening" while APRS logged — and this tab printed the
+    // TUNER's elapsed time as how long APRS had held a radio.
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
     vi.spyOn(api, "getSdrStatus").mockResolvedValue(twoRadios() as never);
 
     render(<RadioScreen onClose={() => {}} />);
 
-    expect(await screen.findByRole("button", { name: "Stop APRS logging" })).toBeInTheDocument();
-    expect(screen.queryByText(/The radio is listening/)).not.toBeInTheDocument();
-    // ...and the elapsed time is the APRS session's, not the tuner's 30 s.
-    expect(screen.getByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();
+    // 1h 12m is the APRS session's, not the tuner's 30 s.
+    expect(await screen.findByText(/Holding a radio for 1h 12m/)).toBeInTheDocument();
+    expect(screen.queryByText(/Holding a radio for 0m/)).not.toBeInTheDocument();
   });
 
   it("keeps the decode rate on screen", async () => {
@@ -1059,27 +1019,6 @@ describe("the APRS tab", () => {
   });
 });
 
-describe("the Tuner tab", () => {
-  it("says when APRS is holding the radio, and offers it back", async () => {
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
-    const set = vi
-      .spyOn(api, "setAprsLogging")
-      .mockResolvedValue({ logging: false, changed: true });
-
-    render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("KE8XYZ-9");
-    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
-
-    expect(screen.getByText(/In use by APRS logging/)).toBeInTheDocument();
-    // The mock states the elapsed hold; without it "release this" is a decision made
-    // with no idea whether the session started a minute or a day ago.
-    expect(screen.getByText(/Held for 1h 12m/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Release & listen/ }));
-    await waitFor(() => expect(set).toHaveBeenCalledWith(false));
-  });
-});
-
 describe("the screen's shell", () => {
   it("covers the launcher rather than letting it show through", async () => {
     vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
@@ -1106,78 +1045,15 @@ describe("the screen's shell", () => {
     const tabbar = container.querySelector('[role="tablist"]');
     expect(tabbar).not.toBeNull();
     expect(tabbar?.classList.contains("seg-tabs")).toBe(true);
-    // Four: Tuner, Spectrum, APRS, Recordings. Spectrum is a tab only until the
-    // launcher's chosen shape lands, where a spectrum is a job a RADIO is given.
-    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(4);
+    // Three: Radios, APRS, Recordings. Shape A makes the RADIO the object, so there is
+    // no Tuner tab and no Spectrum tab — both were places where a job lived apart from
+    // the radio running it (docs/mocks/sdr-launcher/README.md).
+    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(3);
     expect(container.querySelector(".radio-tabs")).toBeNull();
     // And the roster's range control REUSES it rather than cloning it — the near-identical
     // copy under a different class name is precisely what this test is written against,
     // and it would have slipped past a count of the whole document.
     expect(container.querySelectorAll(".seg-tabs")).toHaveLength(2);
     expect(container.querySelector(".aprs-windows")).toBeNull();
-  });
-});
-
-describe("the Tuner tab", () => {
-  it("mounts the real transport, not a description of it", async () => {
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(
-      log({ logging: false, packets: [] }) as never,
-    );
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("listen") as never);
-
-    render(<RadioScreen onClose={() => {}} />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Tuner" }));
-
-    // The one screen called "Radio" used to be the one place you could not work the
-    // radio: it printed frequency and mode and pointed at the composer's icon. These
-    // are the omnibox sheet's own controls, mounted here.
-    expect(screen.getByRole("button", { name: /Tap to enter a frequency/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
-  });
-
-  it("still hands the radio back when APRS is holding it", async () => {
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
-    const set = vi
-      .spyOn(api, "setAprsLogging")
-      .mockResolvedValue({ logging: false, changed: true });
-
-    render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("KE8XYZ-9");
-    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
-
-    // A logging session is not audible, so the transport would be meaningless here —
-    // the handoff is the only useful control.
-    expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Release & listen/ }));
-    await waitFor(() => expect(set).toHaveBeenCalledWith(false));
-  });
-
-  it("shows the tuner controls when APRS is on the OTHER radio", async () => {
-    // The same bug as the APRS tab, mirrored. APRS logging is no longer a reason there
-    // is nothing to tune — it is a reason only when it holds the radio the tuner wants,
-    // which on a two-dongle box it does not.
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(twoRadios() as never);
-
-    render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("KE8XYZ-9");
-    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
-
-    expect(screen.queryByText(/In use by APRS logging/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
-  });
-
-  it("times the handoff panel by the LOGGING session, not the tuner's", async () => {
-    // It printed `listening.elapsed_s`, which is a different session on a different
-    // dongle the moment there are two.
-    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
-    vi.spyOn(api, "getSdrStatus").mockResolvedValue(lease("aprs") as never);
-
-    render(<RadioScreen onClose={() => {}} />);
-    await screen.findByText("KE8XYZ-9");
-    fireEvent.click(screen.getByRole("tab", { name: "Tuner" }));
-
-    expect(screen.getByText(/Held for 1h 12m/)).toBeInTheDocument();
   });
 });

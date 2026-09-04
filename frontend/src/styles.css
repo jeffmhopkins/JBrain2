@@ -25892,3 +25892,119 @@ button.task-band:active {
   color: var(--accent);
   font-size: var(--fs-secondary);
 }
+
+/* --- the Radios tab (SdrRadiosTab.tsx, shape A) ---------------------------------- */
+.rcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 11px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+.rcard-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.rname {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.rser {
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.rdesc {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.rstate {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.rstate .bcaret {
+  margin-left: auto;
+}
+.rused {
+  margin-left: auto;
+}
+/* The state dot. `idle` is deliberately the unfilled one: a radio doing nothing is not
+   a fault, and colouring it would put a warning on the ordinary case. */
+.dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.dot.on {
+  background: var(--ok);
+}
+.dot.warn {
+  background: var(--warn);
+}
+.dot.bad {
+  background: var(--danger);
+}
+.rdetail-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.rdetail-title {
+  margin: 0;
+  font-size: var(--fs-note);
+  font-weight: 600;
+}
+.jobs {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+.jobs .lbl {
+  padding: 0;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.jobs button {
+  flex: 1;
+  padding: 9px 4px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.jobs button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.jobs button:disabled {
+  opacity: 0.4;
+}
+.why {
+  margin: 5px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.jobsurface {
+  margin-top: 14px;
+}

@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b✅(**both halves** — naming, roles and `-d <serial>`; then one session per device, so APRS and the tuner run at once) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`).
+> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b✅(**both halves** — naming, roles and `-d <serial>`; then one session per device, so APRS and the tuner run at once) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`), and `c-single-dongle`'s switch placement was **superseded 2026-09-04** by the launcher's own round (`../mocks/sdr-launcher/`): the switch is now a job on a radio. One state, never two switches, unchanged.
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -124,10 +124,24 @@ Still open here: no route above the sidecar can *start* an APRS session — that
 `sdr_aprs_logging`, and until it lands the capability is reachable only from inside the
 `radio` network.
 
-**GUI gate closed 2026-09-02: a switch in the APRS tab.** "Enable APRS logging" lives
-in the APRS tab; the Tuner tab reads *in use by APRS logging* and offers the handoff
-back. Binding spec `../mocks/aprs/c-single-dongle.html`. It also survives P0b unchanged —
-the contention stops happening rather than the control changing.
+**GUI gate closed 2026-09-02: a switch in the APRS tab.** "Enable APRS logging" lived
+in the APRS tab; the Tuner tab read *in use by APRS logging* and offered the handoff
+back. Binding spec `../mocks/aprs/c-single-dongle.html`.
+
+**SUPERSEDED 2026-09-04 — the switch moved to the radio.** That round was decided on a
+**one-dongle box**, where "which radio" was not a question and a radio-wide job selector
+was explicitly rejected as answering nothing. P0b made it a question, and the owner was
+asked again rather than the change being inferred: the launcher's round chose **shape A**
+(`../mocks/sdr-launcher/`), where the radio is the object and its job — Listen / APRS /
+Spectrum / Idle — is chosen inside it. So "Enable APRS logging" is now a job on a radio,
+and the Tuner tab's handoff panel is gone with it: which jobs a radio may take, and why
+not, is said on that radio's own control before the tap.
+
+**What did NOT change is the rule this section exists for: one state, never two
+switches.** The APRS tab keeps its log, its health line, its roster and its command
+tasks, and where the switch was it now carries a POINTER to the radio. A second control
+over the same state is how one of them ends up lying, and that is still the failure
+everything here is written against.
 
 ### P0b · Second tuner, addressable — **shipped 2026-09-04**
 
@@ -403,15 +417,16 @@ event the phone produces — with no second geofence code path in existence.
 **GUI gate closed 2026-09-02: shape A**, a tab of the Radio launcher (Tuner / APRS /
 Recordings). Binding spec `../mocks/aprs/a-launcher-shape.html`.
 
-**Landed.** A Radio launcher tile and screen with Tuner / APRS / Recordings tabs. The
-APRS tab shows the heard log, the health line, and the logging switch; the Tuner tab
-reads *in use by APRS logging* and offers the handoff back. Packets render badged as
-**heard** — a stranger's transmission with a forgeable callsign — which is where the
-trust-tier rule stops being a line in a plan and meets the owner's eye.
+**Landed.** A Radio launcher tile and screen. Packets render badged as **heard** — a
+stranger's transmission with a forgeable callsign — which is where the trust-tier rule
+stops being a line in a plan and meets the owner's eye.
 
-The Tuner tab reflects state rather than duplicating the composer's tuner sheet, which
-is the approved surface for tuning (`../mocks/sdr-tuner/`). Recordings is a later wave
-and says so.
+**The tabs are now Radios / APRS / Recordings (2026-09-04).** They were Tuner / APRS /
+Recordings, and the launcher's own GUI round replaced that with shape A: the radio is
+the object, so the tuner's transport and the APRS switch are both jobs chosen inside a
+radio rather than tabs of their own. The transport is still the composer's own
+`SdrTunerControls`, mounted where the radio is listening — reflected, never duplicated
+(`../mocks/sdr-tuner/`). Recordings is a later wave and says so.
 
 An independent review caught four ways this screen could be confidently wrong about the
 radio — a failed first load spinning on "Reading the log…" for ever with the error
