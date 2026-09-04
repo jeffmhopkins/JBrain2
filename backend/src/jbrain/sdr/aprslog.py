@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.sdr.classify import classify
+from jbrain.sdr.health import session_for
 
 log = structlog.get_logger(__name__)
 
@@ -119,8 +120,11 @@ class AprsLog:
             health: dict[str, Any] = resp.json()
         except (httpx.HTTPError, ValueError):
             return False
-        session = health.get("listening") or {}
-        return bool(session.get("purpose") == "aprs")
+        # `sessions`, not `listening`. This decides whether the drain ATTACHES, and
+        # `listening` now prefers the tuner's session — so opening the tuner sheet
+        # while APRS logged made this answer False, the drain detach, and every frame
+        # the radio kept decoding go unstored, with no error anywhere.
+        return bool(session_for(health, "aprs"))
 
     async def _drain(self, client: httpx.AsyncClient) -> None:
         """Read frames until the stream ends, storing each one.

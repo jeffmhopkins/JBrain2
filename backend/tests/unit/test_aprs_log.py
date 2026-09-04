@@ -152,6 +152,23 @@ class _Sidecar:
         return httpx.Response(404)
 
 
+class _TwoRadios(_Sidecar):
+    """APRS on the long wire, the tuner on the desk whip — the measured two-dongle box.
+
+    `listening` is the TUNER's session here, because that is the one the omnibox draws.
+    Only `sessions` says APRS is running."""
+
+    def __init__(self, lines: list[str] | None = None) -> None:
+        super().__init__(purpose="aprs", lines=lines)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/healthz":
+            return super().handler(request)
+        tuner = {"purpose": "listen", "session_id": "s-tuner"}
+        aprs = {"purpose": "aprs", "session_id": "s-aprs"}
+        return httpx.Response(200, json={"listening": tuner, "sessions": [tuner, aprs]})
+
+
 def _client_factory(sidecar: _Sidecar, monkeypatch: pytest.MonkeyPatch) -> None:
     real = httpx.AsyncClient
 
@@ -202,6 +219,27 @@ async def test_a_logging_session_is_drained_and_its_rows_stored(
 
     assert sidecar.streamed is True
     # The keep-alive and the garbage line are skipped; the one real frame is stored.
+    assert [r["src"] for r in stored] == ["KE8XYZ-9"]
+
+
+async def test_the_drain_stays_attached_when_the_tuner_takes_the_OTHER_radio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The quietest way this could have failed.
+
+    With a session per radio, `listening` is the one the omnibox draws and prefers the
+    tuner. This check read it, so opening the tuner sheet while APRS logged made the
+    drain decide nothing was logging — it detached, and every frame the radio kept
+    decoding went unstored. No error, no log line: a busy channel that looks quiet."""
+    sidecar = _TwoRadios(lines=[json.dumps(_ROW)])
+    _client_factory(sidecar, monkeypatch)
+    stored: list[dict[str, Any]] = []
+    logger = AprsLog(maker=None, base_url="http://sdr:8000")  # type: ignore[arg-type]
+    monkeypatch.setattr(logger, "_store", lambda row: _remember(stored, row))
+
+    await logger.tick()
+
+    assert sidecar.streamed is True
     assert [r["src"] for r in stored] == ["KE8XYZ-9"]
 
 

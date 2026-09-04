@@ -92,7 +92,11 @@ class _Sink:
 def sidecar(monkeypatch) -> Iterator[str]:
     monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
     monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-    server.TUNER.stop()
+    # A FRESH registry per test rather than a stopped one. `TUNER.stop()` releases the
+    # sessions but deliberately not the capture reservations — an in-flight rtl_fm still
+    # has the device open, and freeing its key would let the next session collide with a
+    # process that is still running. That is right in production and leaks between tests.
+    monkeypatch.setattr(server, "TUNER", listen.Tuner())
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -463,3 +467,207 @@ def test_a_sweep_that_overruns_is_stopped_and_says_so(
         sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
     )
     assert free == 200
+
+
+# --- two radios, over the wire ------------------------------------------------------
+
+
+WHIP, WIRE = "09022796", "77192819"
+
+
+def test_APRS_and_the_tuner_run_on_different_radios_at_once(sidecar: str) -> None:
+    """The whole point of P0b. With one slot, turning APRS logging on meant the tuner
+    sheet answered 409 — on a box with a second dongle sitting idle."""
+    logging_ = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    listening = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert logging_[0] == 200 and listening[0] == 200
+    _, health = _get(sidecar, "/healthz")
+    assert {s["serial"] for s in health["sessions"]} == {WHIP, WIRE}
+
+
+def test_healthz_reports_every_session_not_just_the_one_the_omnibox_draws(
+    sidecar: str,
+) -> None:
+    """`listening` keeps its shape because the PWA's omnibox reads it and draws one
+    icon. `sessions` is the whole truth beside it: a caller that asked `listening`
+    whether APRS was running got the right answer only when nothing else held a radio.
+    """
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+
+    _, health = _get(sidecar, "/healthz")
+
+    assert health["listening"]["serial"] == WHIP  # the tuner, not the service
+    assert [s["purpose"] for s in health["sessions"]] == ["listen", "aprs"]  # by serial
+
+
+def test_the_same_radio_is_still_refused_by_name(sidecar: str) -> None:
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+
+    status, body = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WIRE},
+    )
+
+    assert status == 409
+    assert WIRE in body["detail"] and "logging APRS" in body["detail"]
+
+
+def test_releasing_one_radio_leaves_the_other_logging(sidecar: str) -> None:
+    """Release is per session, and has to stay that way: the tuner sheet's Release
+    button must not turn APRS logging off as a side effect."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    listening = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )[1]
+
+    assert _post(sidecar, "/listen/stop", {"session_id": listening["session_id"]})[0] == 200
+
+    _, health = _get(sidecar, "/healthz")
+    assert [s["serial"] for s in health["sessions"]] == [WIRE]
+
+
+def test_packets_come_from_the_APRS_radio_while_the_tuner_holds_the_other(
+    sidecar: str,
+) -> None:
+    """The route used to ask for "the session" and check its purpose. With two, the one
+    it happened to get was the tuner's — so the owner watching packets was told the
+    radio was not logging while it was."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+
+    with urllib.request.urlopen(sidecar + "/listen/packets", timeout=5) as resp:
+        assert resp.status == 200
+
+
+def test_a_capture_and_a_session_on_different_radios_do_not_collide(
+    sidecar: str,
+) -> None:
+    """The capture path holds a radio without being a session. It used to take a global
+    lock, so recording off one dongle refused a capture on the other — and `start` never
+    consulted that lock at all, so a session could open a dongle mid-recording."""
+    server.TUNER.reserve(WIRE, "recording")
+
+    free = _post(
+        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP}
+    )
+    taken = _post(
+        sidecar, "/listen/start", {"frequency_hz": 144_390_000, "mode": "fm", "serial": WIRE}
+    )
+
+    assert free[0] == 200
+    assert taken[0] == 409 and "recording" in taken[1]["detail"]
+
+
+def test_healthz_busy_still_means_a_capture_is_running(sidecar: str) -> None:
+    """It has never meant "a session exists" — `listening` answers that — and a change
+    of meaning here would read as a permanently busy radio in the PWA."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+    assert _get(sidecar, "/healthz")[1]["busy"] is False
+
+    assert server.TUNER.reserve(WIRE, "recording") is None
+    assert _get(sidecar, "/healthz")[1]["busy"] is True
+
+
+def test_an_unnamed_stop_releases_the_tuner_and_leaves_APRS_logging(sidecar: str) -> None:
+    """jerv's "release the radio" and the debug console's stop both send no id. With one
+    radio that could only mean one thing; with two, releasing whichever came first would
+    stop a log the owner armed on a schedule — silently, and reporting success."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert _post(sidecar, "/listen/stop", {"session_id": None})[1] == {"stopped": True}
+
+    _, health = _get(sidecar, "/healthz")
+    assert [s["purpose"] for s in health["sessions"]] == ["aprs"]
+
+
+def test_an_unnamed_stop_on_a_one_dongle_box_still_releases_whatever_is_there(
+    sidecar: str,
+) -> None:
+    """The historical behaviour, which must not change: with exactly one session there
+    is nothing to choose between, so a caller naming nothing gets what they meant even
+    when it is a service."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs"},
+    )
+
+    assert _post(sidecar, "/listen/stop", {"session_id": None})[1] == {"stopped": True}
+    assert _get(sidecar, "/healthz")[1]["sessions"] == []
+
+
+def test_an_unnamed_stop_never_picks_between_two_services(sidecar: str) -> None:
+    """Nothing a person said identifies one of them, and guessing is how a control ends
+    up doing something different each press. `stopped: false` sends the caller back to
+    the switch that owns the session."""
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+    # Started directly: `/sweep` blocks until rtl_power exits, and what matters here is
+    # a second session existing, not how it got there.
+    server.TUNER.start(
+        146_000_000,
+        "fm",
+        None,
+        purpose=listen.PURPOSE_SURVEY,
+        sweep=listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300),
+        serial=WHIP,
+    )
+
+    assert _post(sidecar, "/listen/stop", {"session_id": None})[1] == {"stopped": False}
+
+
+def test_an_unnamed_stop_with_nothing_running_is_not_an_error(sidecar: str) -> None:
+    assert _post(sidecar, "/listen/stop", {"session_id": None})[1] == {"stopped": False}

@@ -924,3 +924,231 @@ class TestSweepBounds:
         # A range has no one frequency, and showing the low edge would read as a tuner
         # parked somewhere it is not.
         assert listen.Sweep.of(144e6, 148e6, 5000, 60).centre_hz == 146_000_000
+
+
+class TestOneSessionPerRadio:
+    """Two dongles means two radios, and the box should use both at once.
+
+    MEASURED 2026-09-04: with 09022796 on a desk whip and 77192819 on a long wire,
+    turning APRS logging on took the only session slot — so opening the tuner got a 409
+    naming a radio it was not asking for, and the second dongle sat idle. The slot was
+    the box's, not the radio's, which is only the same thing when there is one.
+    """
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        tuner = listen.Tuner()
+        yield tuner
+        tuner.stop()
+
+    def test_two_radios_run_at_once(self, tuner) -> None:
+        logging_ = tuner.start(
+            144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="77192819"
+        )
+        listening = tuner.start(146_520_000, "fm", None, serial="09022796")
+
+        assert {s.serial for s in tuner.sessions()} == {"77192819", "09022796"}
+        assert logging_.session_id != listening.session_id
+
+    def test_the_same_radio_twice_is_still_refused(self, tuner) -> None:
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                    serial="77192819")
+
+        with pytest.raises(listen.SdrBusy) as refused:
+            tuner.start(146_520_000, "fm", None, serial="77192819")
+
+        # The message names the radio, because on a two-dongle box "the radio is busy"
+        # is a sentence the owner cannot act on.
+        assert "77192819" in str(refused.value)
+        assert "logging APRS" in str(refused.value)
+
+    def test_an_unnamed_session_blocks_every_radio(self, tuner) -> None:
+        """The load-bearing case. A session started with no `-d` opens whatever
+        librtlsdr enumerates first, so nothing can prove it is NOT on the radio the
+        next caller wants. Letting the named one through would put two processes on one
+        dongle, which fails as garbled audio rather than as an error."""
+        tuner.start(146_520_000, "fm", None)
+
+        with pytest.raises(listen.SdrBusy):
+            tuner.start(144_390_000, "fm", None, serial="77192819")
+
+    def test_an_unnamed_request_is_blocked_by_any_named_session(self, tuner) -> None:
+        """And the other direction, which is the same argument read backwards."""
+        tuner.start(144_390_000, "fm", None, serial="77192819")
+
+        with pytest.raises(listen.SdrBusy):
+            tuner.start(146_520_000, "fm", None)
+
+    def test_a_one_dongle_box_still_allows_exactly_one_session(self, tuner) -> None:
+        """No serial anywhere is what every box did before this existed, and it must
+        keep behaving identically."""
+        tuner.start(146_520_000, "fm", None)
+
+        with pytest.raises(listen.SdrBusy):
+            tuner.start(162_400_000, "fm", None)
+
+    def test_releasing_one_radio_leaves_the_other_running(self, tuner) -> None:
+        keep = tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                           serial="77192819")
+        drop = tuner.start(146_520_000, "fm", None, serial="09022796")
+
+        assert tuner.stop(drop.session_id) is True
+
+        assert [s.id for s in tuner.sessions()] == [keep.session_id]
+
+    def test_stopping_with_no_id_stops_EVERY_radio(self, tuner) -> None:
+        """It used to mean "the one". With several, an arbitrary pick would be a
+        control that does something different each time it is pressed."""
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                    serial="77192819")
+        tuner.start(146_520_000, "fm", None, serial="09022796")
+
+        assert tuner.stop() is True
+        assert tuner.sessions() == []
+
+    def test_for_purpose_finds_the_radio_doing_that_job(self, tuner) -> None:
+        """What the packets and captions routes need: "the session" is no longer one
+        thing, so a purpose-specific stream has to ask for its own."""
+        aprs = tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                           serial="77192819")
+        tuner.start(146_520_000, "fm", None, serial="09022796")
+
+        assert tuner.for_purpose(listen.PURPOSE_APRS).id == aprs.session_id
+        assert tuner.for_purpose(listen.PURPOSE_SURVEY) is None
+
+    def test_current_prefers_the_tuner_over_a_service(self, tuner) -> None:
+        """The omnibox draws ONE icon, so `current` has to pick — and pick the same way
+        twice, or "which session is showing" changes between two reads that changed
+        nothing. Order is what a person is most likely asking about."""
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                    serial="77192819")
+        listening = tuner.start(146_520_000, "fm", None, serial="09022796")
+
+        assert tuner.current().id == listening.session_id
+        # ...and naming a radio asks about that radio, not about the box.
+        assert tuner.current("77192819").purpose == listen.PURPOSE_APRS
+        assert tuner.current("nosuchserial") is None
+
+    def test_sessions_are_listed_in_a_stable_order(self, tuner) -> None:
+        """Sorted by serial rather than by whoever started first, so a list the owner
+        reads twice does not reorder itself."""
+        for serial in ("77192819", "09022796", "40000123"):
+            tuner.start(146_520_000, "fm", None, serial=serial)
+
+        assert [s.serial for s in tuner.sessions()] == [
+            "09022796", "40000123", "77192819"
+        ]
+
+    def test_a_dead_session_stops_holding_its_radio(self, tuner) -> None:
+        """Unplugged, or the driver reclaimed it. A dead session must not hold a radio
+        against the next caller — and with per-radio keys the reap has to drop the
+        right key rather than the only one."""
+        held = tuner.start(144_390_000, "fm", None, serial="77192819")
+        keep = tuner.start(146_520_000, "fm", None, serial="09022796")
+        tuner.find(held.session_id)._rtl.kill()
+
+        fresh = tuner.start(145_000_000, "fm", None, serial="77192819")
+
+        assert {s.id for s in tuner.sessions()} == {keep.session_id, fresh.session_id}
+
+
+class TestCaptureAndSessionsShareOneRegistry:
+    """A one-shot capture holds a radio without being a session, and the two used to be
+    tracked separately — a global `threading.Lock` beside the tuner's single slot.
+
+    That seam leaked in BOTH directions: the lock was per box, so a capture on the long
+    wire refused while something recorded off the desk whip; and `Tuner.start` never
+    consulted it at all, so a listening session could open a dongle mid-recording. One
+    registry under one lock is what makes both true, and makes them true atomically —
+    checking the tuner and then taking a separate lock leaves a window between.
+    """
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        tuner = listen.Tuner()
+        yield tuner
+        tuner.stop()
+
+    def test_a_reservation_blocks_a_session_on_that_radio(self, tuner) -> None:
+        """The direction that was simply missing before."""
+        assert tuner.reserve("77192819", "recording") is None
+
+        with pytest.raises(listen.SdrBusy) as refused:
+            tuner.start(144_390_000, "fm", None, serial="77192819")
+
+        assert "recording" in str(refused.value)
+
+    def test_a_session_blocks_a_reservation_on_that_radio(self, tuner) -> None:
+        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS,
+                    serial="77192819")
+
+        busy = tuner.reserve("77192819", "recording")
+
+        assert isinstance(busy, listen.SdrBusy)
+        assert "logging APRS" in str(busy)
+
+    def test_another_radio_is_free_during_a_capture(self, tuner) -> None:
+        """The refusal with no physical cause: one radio recording is not a reason to
+        refuse the other, whether the other caller wants to record or to listen."""
+        tuner.reserve("77192819", "recording")
+
+        assert tuner.start(146_520_000, "fm", None, serial="09022796") is not None
+        assert tuner.reserve("40000123", "recording") is None
+
+    def test_an_unnamed_capture_holds_everything(self, tuner) -> None:
+        assert tuner.reserve(None, "recording") is None
+
+        assert tuner.reserve("77192819", "recording") is not None
+        with pytest.raises(listen.SdrBusy):
+            tuner.start(146_520_000, "fm", None, serial="09022796")
+
+    def test_releasing_the_reservation_frees_the_radio(self, tuner) -> None:
+        tuner.reserve("77192819", "recording")
+        tuner.unreserve("77192819")
+
+        assert tuner.start(144_390_000, "fm", None, serial="77192819") is not None
+
+    def test_reserved_is_what_healthz_calls_busy(self, tuner) -> None:
+        """`/healthz`'s `busy` has always meant "a capture is running" — not "a session
+        exists", which `listening` already answers."""
+        assert tuner.reserved() is False
+        tuner.start(146_520_000, "fm", None, serial="09022796")
+        assert tuner.reserved() is False
+
+        tuner.reserve("77192819", "recording")
+        assert tuner.reserved() is True
+
+
+class TestBlockingKey:
+    """The rule itself, stated once because two things hold radios.
+
+    A capture and a session both open a device, and a rule they could disagree about is
+    a rule that eventually puts both of them on one dongle.
+    """
+
+    def test_the_same_radio_blocks(self) -> None:
+        assert listen.blocking_key({"a", "b"}, "a") == "a"
+
+    def test_a_free_radio_does_not(self) -> None:
+        assert listen.blocking_key({"a"}, "b") is None
+
+    def test_an_unnamed_holder_blocks_a_named_request(self) -> None:
+        assert listen.blocking_key({listen.ANY_DEVICE}, "b") == listen.ANY_DEVICE
+
+    def test_a_named_holder_blocks_an_unnamed_request(self) -> None:
+        assert listen.blocking_key({"b"}, listen.ANY_DEVICE) == "b"
+
+    def test_nothing_held_blocks_nothing(self) -> None:
+        assert listen.blocking_key(set(), listen.ANY_DEVICE) is None
+        assert listen.blocking_key(set(), "a") is None
+
+    def test_which_holder_is_named_does_not_depend_on_insertion_order(self) -> None:
+        """Enough entries that a set's iteration order is not sorted by luck: with two
+        it can be, and a test that passes by luck is one that stops catching this."""
+        held = {"h", "c", "f", "a", "d", "g", "b", "e"}
+
+        assert listen.blocking_key(held, listen.ANY_DEVICE) == "a"

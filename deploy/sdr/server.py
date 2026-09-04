@@ -32,7 +32,6 @@ import queue
 import shutil
 import struct
 import subprocess
-import threading
 import time
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -72,16 +71,19 @@ NARROW_RATE = 16_000
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wbfm capture rate
 
 MAX_SECONDS = 120
-_LOCK = threading.Lock()
 
-# The one live listening session this box can have. Separate from _LOCK, which
-# guards the one-shot `capture` path: a capture and a listen both want the tuner,
-# so each refuses while the other holds it.
+
+# Every radio this box is holding and what for: the live sessions, plus the one-shot
+# `capture` path, which reserves a radio without being a session. ONE registry because
+# the two used to be two, and the seam showed — capture refused while a session held the
+# radio, but `start` never looked at the capture lock, so a listen could open a dongle
+# mid-recording. Per radio, so APRS on the long wire and the tuner on the desk whip run
+# at once rather than taking turns.
 TUNER = Tuner()
 
 
 class SdrBusy(RuntimeError):
-    """Another capture holds the tuner. One radio, one caller."""
+    """Something else holds the radio this call would open. One radio, one caller."""
 
 
 class SdrError(RuntimeError):
@@ -118,9 +120,9 @@ def capture(
 ) -> dict[str, Any]:
     """Tune, record `seconds` of audio, return a WAV plus what was heard.
 
-    Holds the single-tuner lock for the whole capture and refuses rather than queues:
-    a caller waiting an unknown time on a radio someone else is using is worse than a
-    caller told plainly that it is busy."""
+    Reserves the radio for the whole capture and refuses rather than queues: a caller
+    waiting an unknown time on a radio someone else is using is worse than a caller
+    told plainly that it is busy."""
     if not MIN_HZ <= freq_hz <= MAX_HZ:
         raise SdrError(
             f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
@@ -130,12 +132,12 @@ def capture(
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
     seconds = max(0.5, min(float(seconds), MAX_SECONDS))
 
-    live = TUNER.current()
-    if live is not None:
-        held = PURPOSE_LABEL.get(live.purpose, "in use")
-        raise SdrBusy(f"the radio is busy — it is {held}")
-    if not _LOCK.acquire(blocking=False):
-        raise SdrBusy("the radio is busy with another capture")
+    # Per RADIO, not per box: a capture on one dongle is no reason to refuse one on
+    # another. An unnamed capture still collides with everything, because it opens
+    # whatever librtlsdr enumerates first (see `listen.blocking_key`).
+    busy = TUNER.reserve(serial, "recording")
+    if busy is not None:
+        raise SdrBusy(str(busy))
     try:
         rate = NARROW_RATE
         cmd = ["rtl_fm", "-f", str(freq_hz), "-M", MODES[key]]
@@ -179,7 +181,7 @@ def capture(
             "wav": _wav(pcm, rate),
         }
     finally:
-        _LOCK.release()
+        TUNER.unreserve(serial)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -214,14 +216,22 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "rtl_fm": shutil.which("rtl_fm") is not None,
                 "ffmpeg": shutil.which("ffmpeg") is not None,
-                "busy": _LOCK.locked(),
+                "busy": TUNER.reserved(),
                 # What jobs this sidecar knows how to hold the tuner for. Advertised
                 # because an OLDER sidecar ignores an unknown `purpose` and returns 200
                 # with a plain listening session — so "turn APRS logging on" against a
                 # box that has not been updated would succeed, log nothing, and report
                 # success. A caller can check here instead of trusting a 200.
                 "purposes": list(PURPOSES),
+                # ONE session, for the omnibox, which draws one icon. Kept as-is: the
+                # api's SdrStatusOut.listening is what the PWA reads, and reshaping it
+                # is a GUI change, not a sidecar one.
                 "listening": session.info().as_dict() if session is not None else None,
+                # ...and the whole truth beside it, because with a radio each for APRS
+                # and the tuner, "the session" is no longer a thing that exists. A
+                # caller that asks `listening` whether APRS is running now gets the
+                # right answer only when nothing else is holding a radio.
+                "sessions": [s.info().as_dict() for s in TUNER.sessions()],
             },
         )
 
@@ -240,7 +250,10 @@ class Handler(BaseHTTPRequestHandler):
         `<audio>` element wants from a live source. A listener can arrive at ANY point
         in the session — the tuner sheet opens and closes many times over one lease —
         and MP3's self-framing is what makes that work (deploy/sdr/listen.py)."""
-        session = TUNER.current()
+        # The LISTENING session specifically. With several radios in use "the session"
+        # is no longer one thing, and streaming an APRS lease's audio to the tuner sheet
+        # would hand the owner 1200-baud AFSK where they expected a voice.
+        session = TUNER.for_purpose(PURPOSE_LISTEN)
         if session is None:
             self._json(409, {"detail": "nothing is listening"})
             return
@@ -272,7 +285,7 @@ class Handler(BaseHTTPRequestHandler):
         Framing rather than one-WAV-per-request because the interesting property is
         CONTINUITY: a captioner that has to re-request loses the audio between calls,
         and the gap always lands mid-sentence."""
-        session = TUNER.current()
+        session = TUNER.for_purpose(PURPOSE_LISTEN)
         if session is None:
             self._json(409, {"detail": "nothing is listening"})
             return
@@ -313,7 +326,12 @@ class Handler(BaseHTTPRequestHandler):
         so a quiet channel does not look like a dead socket. A quiet channel is the
         NORMAL case here — a packet frequency can go minutes between frames — which is
         why the keep-alive matters more on this route than on the audio one."""
-        session = TUNER.current()
+        # Ask for the APRS session by name. Reading "the" session and then checking its
+        # purpose answered "nothing is logging" whenever the tuner happened to hold a
+        # DIFFERENT radio — which is now an ordinary state rather than an impossible one.
+        session = TUNER.for_purpose(PURPOSE_APRS)
+        if session is None:
+            session = TUNER.current()
         if session is None:
             self._json(409, {"detail": "the radio is idle — nothing is logging APRS"})
             return
@@ -413,8 +431,8 @@ class Handler(BaseHTTPRequestHandler):
         deadline = time.time() + sweep.seconds + SWEEP_SETTLE_S
         stopped_early = True
         while time.time() < deadline:
-            held = TUNER.current()
-            if held is None or held.id != info.session_id:
+            held = TUNER.find(info.session_id)
+            if held is None:
                 stopped_early = False
                 break
             time.sleep(0.25)
@@ -466,7 +484,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, info.as_dict())
 
     def _tune(self, body: dict[str, Any]) -> None:
-        session = TUNER.current()
+        # By id when the caller names one — with several radios live, "retune the
+        # session" is not a request that identifies anything. Falling back to the
+        # listening session keeps a one-radio caller working unchanged.
+        wanted = body.get("session_id")
+        session = TUNER.find(str(wanted)) if wanted else TUNER.for_purpose(PURPOSE_LISTEN)
+        if session is None and not wanted:
+            session = TUNER.current()
         if session is not None and session.purpose != PURPOSE_LISTEN:
             # Retuning a logging session would move the packet channel to wherever the
             # tuner sheet asked for, leave the lease claiming to be logging APRS, and
@@ -495,6 +519,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, session.info().as_dict())
 
+    def _stop(self, body: dict[str, Any]) -> None:
+        """Release one session. Naming none used to be unambiguous; now it is a choice.
+
+        With one radio there was one session, so "release the radio" could not mean
+        anything else. With a radio each for APRS and the tuner, releasing whatever
+        happens to be first would let jerv's "release the radio" stop a log the owner
+        armed on a schedule — a silent loss, in the direction that looks like success.
+
+        So an unnamed stop takes the LISTENING session, which is what a person means,
+        and falls back to the only session when there is exactly one — which is every
+        one-dongle box, and keeps them byte-identical. It never picks between two
+        services: stopping a service is that service's own switch, by id.
+        """
+        session_id = body.get("session_id")
+        if session_id is None:
+            chosen = TUNER.for_purpose(PURPOSE_LISTEN)
+            if chosen is None:
+                live = TUNER.sessions()
+                chosen = live[0] if len(live) == 1 else None
+            if chosen is None:
+                self._json(200, {"stopped": False})
+                return
+            session_id = chosen.id
+        self._json(200, {"stopped": TUNER.stop(str(session_id))})
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
         route = self.path.split("?")[0]
         if route in ("/listen/start", "/listen/tune", "/listen/stop"):
@@ -506,8 +555,7 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/listen/tune":
                 self._tune(body)
             else:
-                stopped = TUNER.stop(body.get("session_id"))
-                self._json(200, {"stopped": stopped})
+                self._stop(body)
             return
         if route == "/sweep":
             self._sweep()

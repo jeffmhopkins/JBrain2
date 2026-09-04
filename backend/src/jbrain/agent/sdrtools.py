@@ -23,6 +23,7 @@ import httpx
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext
+from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import refusal
 from jbrain.sdr.roles import GENERAL, Choice
 from jbrain.sdr.tuner import MAX_MHZ, MIN_MHZ
@@ -157,14 +158,19 @@ def build_sdr_handlers(
                 "This box's radio service is too old to log APRS — it needs the update "
                 "that adds packet decoding. Nothing was changed."
             )
-        session = health.get("listening") or {}
-        already = session.get("purpose") == PURPOSE_APRS
+        # `sessions`, not `listening`: with a radio each for APRS and the tuner,
+        # `listening` is the tuner's — so this reported "APRS logging is already off"
+        # while it was running, and turning it "on" started a second one.
+        session = session_for(health, PURPOSE_APRS)
+        already = bool(session)
 
         if not enabled:
             if not already:
                 return "APRS logging is already off."
             # Stop THIS session by id. Without that, "turn logging off" would release a
-            # listening session the owner had started, on a box with one tuner.
+            # listening session the owner had started — which on a one-dongle box is the
+            # only session there is, and on a two-dongle box is the one the owner can
+            # see in the tuner sheet.
             status, body = await _call("/listen/stop", {"session_id": session.get("session_id")})
             if status != 200:
                 return f"Couldn't stop APRS logging: {body.get('detail', 'unknown error')}"

@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-03 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
+> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -227,9 +227,10 @@ instruction they cannot follow (rule 10). Plug the radio in, run Update, the ser
 appears. The one cost is a second copy of the USB id list in shell, which a test pins
 against `KNOWN_SDR_IDS` so drift fails CI rather than silently disabling the radio.
 
-Two design points carried from earlier waves: the sidecar holds a **lock** and refuses a
-second caller with `409` rather than queueing (one tuner — an unknown wait is worse than
-a plain no), and the capture reports **`peak`/`heard_something`** alongside the
+Two design points carried from earlier waves: the sidecar refuses a second caller with
+`409` rather than queueing (an unknown wait on a radio someone else is using is worse
+than a plain no) — **per radio** since `APRS_CONTROL_PLAN.md` P0b, so the refusal names
+the dongle and a second one is genuinely a second tuner; and the capture reports **`peak`/`heard_something`** alongside the
 transcript, because a dead antenna and a working capture of silence produce audio of
 identical length and whisper will confabulate words over noise.
 

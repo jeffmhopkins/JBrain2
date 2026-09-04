@@ -334,6 +334,99 @@ async def test_a_listening_session_is_not_logging(monkeypatch: pytest.MonkeyPatc
     assert out["logging"] is False and out["reachable"] is True
 
 
+# --- two radios at once ---------------------------------------------------------------
+#
+# The sidecar holds a session per RADIO now, so `listening` is no longer "the session":
+# it is the one the omnibox should draw, and it prefers the tuner. Every question these
+# routes ask about APRS has to go to `sessions` instead, or opening the tuner sheet turns
+# the switch off in front of the owner while logging carries on.
+
+
+def _both(aprs_id: str = "s-aprs") -> dict[str, Any]:
+    """APRS on the long wire, the tuner on the desk whip — the measured two-dongle box."""
+    return {
+        "purposes": ["listen", "aprs"],
+        "listening": {
+            "purpose": "listen",
+            "session_id": "s-tuner",
+            "frequency_hz": 146_520_000,
+            "serial": "09022796",
+        },
+        "sessions": [
+            {
+                "purpose": "listen",
+                "session_id": "s-tuner",
+                "frequency_hz": 146_520_000,
+                "serial": "09022796",
+            },
+            {
+                "purpose": "aprs",
+                "session_id": aprs_id,
+                "frequency_hz": 144_390_000,
+                "serial": "77192819",
+            },
+        ],
+    }
+
+
+async def test_the_log_reads_logging_while_the_tuner_holds_the_other_radio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = await _packets(monkeypatch, _Sidecar(health=_both()), [_row()])
+
+    assert out["logging"] is True
+    # ...and the frequency shown is the APRS radio's, not whatever the tuner is on.
+    assert out["frequency_hz"] == 144_390_000
+
+
+async def test_turning_it_on_while_already_logging_does_not_start_a_second_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reading `listening` here said "not logging", so this took a radio and started a
+    duplicate APRS session — every frame stored twice."""
+    box = _Sidecar(health=_both())
+    box.install(monkeypatch)
+
+    out = await _aprs(True)
+
+    assert out == {"logging": True, "changed": False, "frequency_hz": 144_390_000}
+    assert box.posts == []
+
+
+async def test_turning_it_off_stops_the_APRS_session_not_the_tuners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The id is what makes this safe, and reading `listening` supplied the WRONG id —
+    so "turn APRS logging off" would have released the tuner the owner was using and
+    left logging running."""
+    box = _Sidecar(health=_both("abc123"))
+    box.install(monkeypatch)
+
+    out = await _aprs(False)
+
+    assert out == {"logging": False, "changed": True}
+    assert box.posts == [("/listen/stop", {"session_id": "abc123"})]
+
+
+async def test_a_tuner_session_left_behind_does_not_read_as_still_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stop raced and the re-check has to ask whether APRS is *still* running. A
+    check that only looked at `listening` would see the tuner and refuse with "the radio
+    changed under us" — an error for the case that worked."""
+    tuner_only = {
+        "purposes": ["listen", "aprs"],
+        "listening": {"purpose": "listen", "session_id": "s-tuner"},
+        "sessions": [{"purpose": "listen", "session_id": "s-tuner"}],
+    }
+    box = _Sidecar(health=_both(), stop={"stopped": False}, health_after=tuner_only)
+    box.install(monkeypatch)
+
+    out = await _aprs(False)
+
+    assert out == {"logging": False, "changed": False}
+
+
 # --- what is armed, and what has been tried ------------------------------------------
 
 

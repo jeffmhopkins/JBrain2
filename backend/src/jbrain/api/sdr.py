@@ -42,6 +42,7 @@ from jbrain.db.session import scoped_session
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
+from jbrain.sdr.health import session_for
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
@@ -202,7 +203,7 @@ async def packets(
     renders them as untrusted."""
     base = _base(settings)
     health = await _health(base)
-    session = (health.get("listening") or {}) if health else {}
+    session = session_for(health, APRS_PURPOSE)
     rows = await AprsReader(maker).recent(ctx_for(owner), limit=limit)
     return {
         # `logging` answers "is something receiving"; `reachable` answers "do we know".
@@ -210,7 +211,7 @@ async def packets(
         # one — a dead receiver looking exactly like a quiet channel, which is the
         # confusion this whole surface exists to prevent.
         "reachable": health is not None,
-        "logging": session.get("purpose") == APRS_PURPOSE,
+        "logging": bool(session),
         "frequency_hz": session.get("frequency_hz") if session else None,
         # A third way this surface can lie, alongside `reachable` and `logging`: the radio
         # decodes, the drain runs, and every row fails to store. `_store` swallows its
@@ -506,8 +507,8 @@ async def aprs_logging(
         # flip the switch to off in front of the owner while logging, if it is running,
         # carries on — the switch lying in the direction that looks harmless.
         raise HTTPException(status_code=502, detail="the radio isn't reachable")
-    session = health.get("listening") or {}
-    logging_now = session.get("purpose") == APRS_PURPOSE
+    session = session_for(health, APRS_PURPOSE)
+    logging_now = bool(session)
 
     if not enabled:
         if not logging_now:
@@ -520,8 +521,7 @@ async def aprs_logging(
             # what they asked for, and if a new session took the tuner, reporting "off"
             # is how a timed window leaves it held all day.
             after = await _health(base)
-            still = ((after.get("listening") or {}) if after else {}).get("purpose")
-            if still == APRS_PURPOSE:
+            if session_for(after, APRS_PURPOSE):
                 raise HTTPException(status_code=409, detail="the radio changed under us")
             return {"logging": False, "changed": False}
         return {"logging": False, "changed": True}
@@ -548,7 +548,7 @@ async def aprs_logging(
     if body.get("purpose") != APRS_PURPOSE:
         # A sidecar too old to understand `purpose` IGNORES it and returns 200 with a
         # plain LISTENING session. Without this the switch says logging is on while
-        # nothing decodes and the one tuner sits held on 144.39.
+        # nothing decodes and a tuner sits held on 144.39.
         raise HTTPException(
             status_code=502,
             detail="the radio software is too old to log APRS — nothing was changed",

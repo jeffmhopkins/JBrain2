@@ -245,6 +245,52 @@ async def test_turning_it_off_never_releases_a_listening_session(tools) -> None:
     assert "already off" in out
 
 
+def _two_radios(aprs_id: str = "s-aprs"):
+    """A two-dongle box: APRS on the long wire, the tuner on the desk whip.
+
+    `listening` is the TUNER's session, because that is the one the omnibox draws. This
+    tool read that field, so it reported "APRS logging is already off" while it ran —
+    and "turn it off" would have released the tuner instead."""
+    posts: list[tuple[str, dict[str, Any]]] = []
+    tuner = {"purpose": "listen", "session_id": "s-tuner", "frequency_hz": 146_520_000}
+    aprs = {"purpose": "aprs", "session_id": aprs_id, "frequency_hz": 144_390_000}
+
+    def route(path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+        req = httpx.Request("POST", f"http://sdr:8000{path}")
+        if path == "/healthz":
+            return httpx.Response(
+                200,
+                json={
+                    "purposes": ["listen", "aprs"],
+                    "listening": tuner,
+                    "sessions": [tuner, aprs],
+                },
+                request=req,
+            )
+        posts.append((path, body or {}))
+        return httpx.Response(200, json={"stopped": True, "session_id": "new"}, request=req)
+
+    return route, posts
+
+
+async def test_logging_is_seen_even_when_the_tuner_holds_the_other_radio(tools) -> None:
+    route, posts = _two_radios()
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": True}, None)
+
+    assert posts == []  # no second APRS session started on top of the running one
+    assert "already on" in out
+
+
+async def test_turning_it_off_stops_the_APRS_session_not_the_tuners(tools) -> None:
+    route, posts = _two_radios(aprs_id="abc123")
+
+    out = await tools(lambda p, b: route(p, b))["sdr_aprs_logging"]({"enabled": False}, None)
+
+    assert posts[0] == ("/listen/stop", {"session_id": "abc123"})
+    assert "off" in out
+
+
 async def test_it_refuses_a_sidecar_too_old_to_log_rather_than_succeeding_at_nothing(
     tools,
 ) -> None:

@@ -1,11 +1,12 @@
 """The live listening session: one tuned radio, streamed as MP3 while it runs.
 
-This is the lease made real. The box has exactly one tuner, so there is at most one
-Session at a time and everything else is told 409 rather than queued — an unknown
-wait on a radio someone else is using is worse than a plain no
-(docs/plans/SDR_RADIO_PLAN.md §4.2). The session's EXISTENCE is what the omnibox
-icon reads, so "is a session running" and "does the owner see a radio icon" are the
-same fact rather than two that can disagree.
+This is the lease made real. One Session per RADIO, and a second caller for a radio
+already held is told 409 rather than queued — an unknown wait on a radio someone else
+is using is worse than a plain no (docs/plans/SDR_RADIO_PLAN.md §4.2). It was one
+Session per BOX until APRS_CONTROL_PLAN.md P0b, which is the same thing while there is
+one dongle and is what made APRS logging and the tuner take turns once there were two.
+The session's EXISTENCE is what the omnibox icon reads, so "is a session running" and
+"does the owner see a radio icon" are the same fact rather than two that can disagree.
 
 **Why two subprocesses.** `rtl_fm` emits raw signed-16-bit mono PCM; browsers do not
 play that. We could pipe rtl_fm straight into the encoder, but then nothing can see
@@ -143,7 +144,8 @@ _SUB_QUEUE_CHUNKS = 64
 
 
 class SdrBusy(RuntimeError):
-    """The tuner is already held. One radio, one session."""
+    """This radio is already held. One radio, one session — and a holder that named no
+    radio holds them all, because nothing can prove which one it opened."""
 
 
 class SdrError(RuntimeError):
@@ -196,6 +198,40 @@ def validate_serial(serial: object) -> str | None:
     if not isinstance(serial, str) or not SERIAL_RE.match(serial):
         raise SdrError(f"{serial!r} is not a usable device serial")
     return serial
+
+
+#: The device key a session with no serial takes. Not a serial, and cannot collide with
+#: one: `validate_serial` requires at least one character.
+ANY_DEVICE = ""
+
+
+def blocking_key(held: object, key: str) -> str | None:
+    """Which held device stops `key` from being taken, if any.
+
+    **An UNNAMED holder conflicts with everything, and so does an unnamed request.** A
+    session or capture started with no serial opens whichever device librtlsdr
+    enumerates first, so nothing can prove it is not on the radio a second caller is
+    asking for. Refusing is the only honest answer: the alternative is two processes
+    fighting over one dongle, which fails as garbled audio rather than as an error. In
+    practice the api resolves a serial whenever it can see the USB scan, so this is the
+    one-dongle box — where one holder was always the limit — and the scan-unreachable
+    case, where caution is the point.
+
+    One function because there are two things that hold a radio (a pipeline session and
+    a one-shot capture) and they must agree; the rule stated twice is a rule that can
+    disagree with itself, and the symptom would be the two of them on one dongle.
+
+    Sorted, so "which one is blocking" does not depend on dict insertion order — the
+    same reason the radio list is sorted by serial.
+    """
+    keys = sorted(held)  # type: ignore[call-overload]
+    if key in keys:
+        return key
+    if ANY_DEVICE in keys:
+        return ANY_DEVICE
+    if key == ANY_DEVICE and keys:
+        return keys[0]
+    return None
 
 
 def validate_purpose(purpose: str) -> str:
@@ -950,11 +986,97 @@ KISSPORT {self.kiss_port}
 
 
 class Tuner:
-    """Holds the one session the box can have, and refuses a second."""
+    """Every session the box is holding, one per RADIO.
+
+    Was one slot, which is what made APRS logging and the tuner take turns on a box with
+    two dongles plugged in. Now keyed by serial, so a service on the long wire and the
+    tuner on the desk whip run at once and the 409 is per device rather than global.
+
+    **An UNNAMED session conflicts with everything.** A session started with no serial
+    opens whichever device librtlsdr enumerates first, so nothing can prove it is not on
+    the radio a second caller is asking for. Refusing is the only honest answer: the
+    alternative is two processes fighting over one dongle, which fails as garbled audio
+    rather than as an error. In practice the api resolves a serial whenever it can see
+    the USB scan, so this is the one-dongle box — where one session was always the
+    limit — and the scan-unreachable case, where caution is the point.
+    """
+
+    #: The key an unnamed session takes; see `blocking_key`, which the capture path in
+    #: server.py shares so the two holders of a radio cannot disagree about who blocks.
+    ANY = ANY_DEVICE
 
     def __init__(self) -> None:
-        self._session: Session | None = None
+        self._sessions: dict[str, Session] = {}
+        # Radios held by something that is NOT a session: the one-shot capture path,
+        # which runs rtl_fm to completion rather than keeping a pipeline. Key → what it
+        # is doing, for the refusal message. Here rather than behind its own lock in
+        # server.py because that is what it WAS, and a capture could then start on a
+        # radio a session held only because capture checked first — while a session
+        # could start on a radio a capture held, because `start` never checked at all.
+        # One registry under one lock makes both directions true and neither racy.
+        self._reserved: dict[str, str] = {}
         self._lock = threading.Lock()
+
+    def _reap(self) -> None:
+        """Drop sessions whose pipeline died (device unplugged, driver reclaimed it).
+
+        Caller holds the lock. A dead session must not hold a radio against the next
+        caller, and must not be reported as live."""
+        for key, session in list(self._sessions.items()):
+            if not session.alive:
+                session.stop()
+                self._sessions.pop(key, None)
+
+    def _holders(self) -> dict[str, str]:
+        """Every held radio → what is holding it, in the words a refusal uses. Caller
+        holds the lock."""
+        held = {
+            key: PURPOSE_LABEL.get(s.purpose, "in use") for key, s in self._sessions.items()
+        }
+        held.update(self._reserved)
+        return held
+
+    def _blocker(self, key: str) -> tuple[str, str] | None:
+        """The radio key that stops `key` from being taken, and what holds it. Caller
+        holds the lock."""
+        held = self._holders()
+        hit = blocking_key(held, key)
+        return None if hit is None else (hit, held[hit])
+
+    def _busy(self, key: str) -> SdrBusy | None:
+        """The refusal to raise for `key`, or None if it is free. Caller holds the
+        lock."""
+        blocker = self._blocker(key)
+        if blocker is None:
+            return None
+        which = f" ({blocker[0]})" if blocker[0] else ""
+        return SdrBusy(f"the radio{which} is already {blocker[1]}")
+
+    def reserve(self, serial: str | None, doing: str) -> SdrBusy | None:
+        """Hold a radio for something that is not a session; None means it is yours.
+
+        Returns the refusal rather than a bool so the caller never has to ask a second
+        time what blocked it — between the two questions the answer can change, and a
+        message naming the wrong holder is worse than no message.
+
+        Never blocks: a caller waiting an unknown time on a radio someone else is using
+        is worse than a plain no (docs/plans/SDR_RADIO_PLAN.md §4.2)."""
+        key = serial or self.ANY
+        with self._lock:
+            self._reap()
+            busy = self._busy(key)
+            if busy is None:
+                self._reserved[key] = doing
+            return busy
+
+    def unreserve(self, serial: str | None) -> None:
+        with self._lock:
+            self._reserved.pop(serial or self.ANY, None)
+
+    def reserved(self) -> bool:
+        """Whether anything holds a radio outside a session — `/healthz`'s `busy`."""
+        with self._lock:
+            return bool(self._reserved)
 
     def start(
         self,
@@ -966,31 +1088,64 @@ class Tuner:
         serial: str | None = None,
     ) -> SessionInfo:
         validate_purpose(purpose)
+        key = serial or self.ANY
         with self._lock:
-            if self._session is not None and self._session.alive:
-                held = PURPOSE_LABEL.get(self._session.purpose, "in use")
-                raise SdrBusy(f"the radio is already {held}")
-            if self._session is not None:
-                self._session.stop()  # a dead session must not block a new one
-            self._session = Session(frequency_hz, mode, gain, purpose, sweep, serial)
-            return self._session.info()
+            self._reap()
+            busy = self._busy(key)
+            if busy is not None:
+                raise busy
+            session = Session(frequency_hz, mode, gain, purpose, sweep, serial)
+            self._sessions[key] = session
+            return session.info()
 
-    def current(self) -> Session | None:
+    def sessions(self) -> list[Session]:
+        """Every live session, in serial order so the list is stable to read."""
         with self._lock:
-            if self._session is not None and not self._session.alive:
-                # rtl_fm died (device unplugged, driver reclaimed it). Report idle
-                # rather than a session that cannot produce audio.
-                self._session.stop()
-                self._session = None
-            return self._session
+            self._reap()
+            return [self._sessions[k] for k in sorted(self._sessions)]
+
+    def current(self, serial: str | None = None) -> Session | None:
+        """One session: the named radio's, or the one worth showing.
+
+        With no serial this answers for the omnibox, which draws ONE icon: prefer what a
+        person is most likely asking about — the tuner they opened — then a service, then
+        a sweep. Deterministic rather than arbitrary, because "which session is showing"
+        must not change between two reads that changed nothing."""
+        live = self.sessions()
+        if serial is not None:
+            return next((s for s in live if s.serial == serial), None)
+        if not live:
+            return None
+        order = {PURPOSE_LISTEN: 0, PURPOSE_APRS: 1, PURPOSE_SURVEY: 2}
+        return min(live, key=lambda s: (order.get(s.purpose, 3), s.serial or ""))
+
+    def find(self, session_id: str) -> Session | None:
+        """The session with this id, whichever radio it is on."""
+        return next((s for s in self.sessions() if s.id == session_id), None)
+
+    def for_purpose(self, purpose: str) -> Session | None:
+        """The session holding a radio for this job — what a purpose-specific route
+        (packets, captions) needs now that "the session" is no longer one thing."""
+        return next((s for s in self.sessions() if s.purpose == purpose), None)
 
     def stop(self, session_id: str | None = None) -> bool:
+        """Release one session, or every session when no id is given.
+
+        No id used to mean "the one"; with several it has to mean ALL, because the
+        alternative — releasing an arbitrary one — is a control that does something
+        different each time it is pressed."""
         with self._lock:
-            session = self._session
-            if session is None:
-                return False
-            if session_id is not None and session_id != session.id:
-                return False
-            session.stop()
-            self._session = None
-            return True
+            self._reap()
+            if session_id is None:
+                if not self._sessions:
+                    return False
+                for session in list(self._sessions.values()):
+                    session.stop()
+                self._sessions.clear()
+                return True
+            for key, session in list(self._sessions.items()):
+                if session.id == session_id:
+                    session.stop()
+                    self._sessions.pop(key, None)
+                    return True
+            return False
