@@ -319,6 +319,49 @@ The launcher and the omnibox tuner divide by depth, not duplication: the tuner i
 the quick control while chatting; the launcher owns what needs screen area — the
 waterfall and the recordings library.
 
+### S4c — the live waterfall ✅ *(shipped on-branch 2026-09-04)*
+
+**A waterfall is a radio held open, not a measurement that ends.** So it is a lease
+purpose of its own — `spectrum` — rather than a flag on `survey`: the same `rtl_power`
+with no exit timer and its CSV on stdout, read line by line and fanned out to viewers as
+rows are measured. A survey ends by itself and is then reduced; this keeps being drawn,
+and the two are released differently and named differently in a refusal.
+
+**1 fps, at any width** (the owner's choice, 2026-09-04). `bands.py` already carried a
+`fast` tier — one hop, `rtl_sdr` + FFT, ~10 fps, the radio never looking away — and it
+is deliberately NOT built yet: the streamed-`rtl_power` tier serves every span including
+the narrow ones, and building the fast path first would have shipped a picture that
+worked only on bands narrow enough to fit one hop.
+
+What the picture says about itself is load-bearing rather than decoration: past one hop
+`rtl_power` retunes within each interval, so any given frequency is watched for a
+fraction of that second and a burst can fall between visits. The tab prints the section's
+`duty` from the server, because a waterfall that hid that would look identical to one
+that could not miss anything.
+
+Three decisions worth keeping:
+
+- **The colour scale is calibrated once, then held.** Re-taking it per row renormalises
+  the picture around whatever is on the air, so a carrier appearing darkens the noise
+  floor and a band going quiet blooms — exactly the two changes the owner is watching
+  for, erased by the act of watching. The percentiles and the ramp are `waterfall_png`'s,
+  so a still image of a sweep and the live picture of the same band are the same picture.
+  (This is why no new DESIGN.md colour token was needed, which the mock round had left
+  open.)
+- **No delay is applied to the rows.** Captions are held ~8.3 s to match the ear; an
+  early sketch said the waterfall should be too. It should not — a spectrum session is
+  its own purpose on its own radio and produces no audio, so there is nothing to align
+  with. Alignment becomes a real question the day one radio both demodulates and draws,
+  which is the `fast` tier above.
+- **Shortwave listens and cannot be drawn.** `rtl_power` hardcodes direct-sampling mode
+  1 — the ADC's I branch — while this hardware wires Q, so the band picker disables those
+  rows with the reason on them rather than offering a tap that ends in a 400.
+
+**The Spectrum TAB is interim.** The launcher's chosen shape makes the radio the object,
+so a spectrum is one of the jobs chosen inside a radio. That restructure needs the api to
+honour a NAMED radio — `/sdr/spectrum` today takes whichever general radio `roles.py`
+picks — so it is its own wave, and the tab is built out of the pieces shape A wants.
+
 ## 6. Interfaces
 
 ### Agent tools
@@ -478,8 +521,22 @@ take, debug should be able to give back.
 
 `GET /api/sdr/status` · `POST /api/sdr/tune` · `POST /api/sdr/listen` (start/stop) ·
 `POST /api/sdr/record` (start/stop) · `GET /api/sdr/audio` (chunked MP3, D6) ·
-`WS /api/sdr/waterfall` (binary power bins, D5) · `GET /api/sdr/recordings` ·
-`GET /api/sdr/captions` (SSE live transcription, opt-in).
+`GET /api/sdr/bands` (the band table) · `POST /api/sdr/spectrum` ·
+`POST /api/sdr/spectrum/tune` · `GET /api/sdr/spectrum` (SSE waterfall rows) ·
+`GET /api/sdr/recordings` · `GET /api/sdr/captions` (SSE live transcription, opt-in).
+
+**The waterfall is SSE, not the WebSocket D5 assumed (2026-09-04).** The traffic is
+one-directional — rows out, nothing in — and a socket would have brought its own
+handshake auth and its own CSWSH gate (`api/live.py`) to carry no message it needs.
+Retuning is a POST, which is where it belongs: the picture and the control are separate
+concerns with separate failures. As SSE it inherits the owner session, the same proxy
+hop the audio takes, and `EventSource`'s own reconnect.
+
+**Each row carries its own range**, so a retune needs no protocol event at all: the next
+row simply describes a different band, and a client that draws what each row says is
+already correct. That is what lets `POST /api/sdr/spectrum/tune` move the picture on the
+session it already holds — the radio is never released in between, which is the window
+in which something else takes the dongle because the owner changed band.
 
 **Live captions (2026-09-02).** Whisper is not a streaming model, so the sidecar cuts
 the live PCM it already holds into segments on the quiet gaps between transmissions

@@ -63,7 +63,16 @@ Three behaviours are drawn from measurement, not decoration:
 
 ## Not decided here
 
-The live spectrum's own surface (P1 is a 1 fps waterfall from streamed `rtl_power`);
-**landscape**, which would be this app's first orientation-aware screen and is
-deliberately not proposed; and the waterfall's colour ramp, which needs a DESIGN.md
-token that does not exist yet.
+**Landscape**, which would be this app's first orientation-aware screen and is
+deliberately not proposed.
+
+Two things listed here as undecided have since been settled, both in
+`../../plans/SDR_RADIO_PLAN.md` S4c:
+
+- **The live spectrum's own surface** shipped 2026-09-04 as a 1 fps waterfall from
+  streamed `rtl_power`, built out of the pieces this shape wants — the band sheet, the
+  picture, and the session as the state. It is an interim TAB rather than a job inside a
+  radio, because shape A needs the api to honour a named radio and that is its own wave.
+- **The waterfall's colour ramp** needed no new DESIGN.md token after all: it is
+  `sweep.waterfall_png`'s ramp and percentiles, so a still image of a sweep and the live
+  picture of the same band are the same picture.

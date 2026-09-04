@@ -12,9 +12,11 @@ which is the only part of this that cannot be solved by sharing a module.
 
 **24 MHz is not the hardware's floor.** It is the R820T2's native tuner range, and the
 SMArt v5 is sold as 100 kHz-1.75 GHz because the RTL2832U's ADC can be fed directly,
-bypassing the tuner — how every RTL-SDR reaches HF. Nothing here enables that: no
-direct-sampling flag is passed anywhere in `deploy/sdr/`. So this is what the SOFTWARE
-reaches today, and lowering it alone would only move the refusal one layer down.
+bypassing the tuner — how every RTL-SDR reaches HF. `deploy/sdr/listen.py` passes
+`-E direct2` below `MIN_MHZ` and the whole range LISTENS. What does not follow down
+there is everything the tuner provides: no gain control, no `rtl_power`, and images
+above 14.4 MHz. `direct_sampling` and `sweepable` are how a caller asks which of those
+apply, rather than comparing against a floor and guessing.
 """
 
 from __future__ import annotations
@@ -89,6 +91,54 @@ def out_of_range(mhz: float) -> str | None:
         return f"{mhz:g} MHz is above what this radio reaches ({MAX_MHZ:g} MHz)."
     if mhz < DIRECT_MIN_MHZ:
         return f"{mhz:g} MHz is below what this radio reaches ({DIRECT_MIN_MHZ:g} MHz)."
+    return None
+
+
+#: The most bins one waterfall row carries. Mirrors the sidecar's `SPECTRUM_MAX_BINS`,
+#: for the reason the tuner range is mirrored: the sidecar ships in a different container
+#: and imports nothing from here. The sidecar refuses a wider frame too, so this copy
+#: only decides whether the owner gets a coarser picture or a 502.
+SPECTRUM_MAX_BINS = 4096
+
+#: The widest span rtl_power is allowed, mirroring `MAX_SWEEP_SPAN_HZ` in the sidecar.
+MAX_SPAN_MHZ = 60.0
+
+
+def live_bin_hz(span_hz: int, want_hz: int) -> int:
+    """The bin width a live view of `span_hz` can actually be drawn at.
+
+    COARSENED, not refused. A live spectrum is the one place the owner asks for a whole
+    band at once, and "that is too wide" is a worse answer than a coarser picture they
+    can then zoom into — the frame carries its own bin width, so a coarse row draws
+    correctly without anything downstream being told.
+
+    Coarsened by DOUBLING rather than by dividing the span, because rtl_power grants the
+    largest power-of-two division of its per-hop bandwidth that is no coarser than what
+    it was asked for (`bands.sweep_bin_hz` says the same). Walking the sequence the tool
+    will itself land on beats computing an exact number it will not honour."""
+    bin_hz = max(1, want_hz)
+    while span_hz // bin_hz > SPECTRUM_MAX_BINS:
+        bin_hz *= 2
+    return bin_hz
+
+
+def viewable(start_mhz: float, stop_mhz: float) -> str | None:
+    """Why a live spectrum cannot cover this range, or None. One sentence, as ever.
+
+    A superset of `sweepable` on both edges — the picture is rtl_power, so everything
+    that stops a sweep stops a waterfall — plus the span ceiling, which a single
+    frequency cannot violate and a range can."""
+    if stop_mhz <= start_mhz:
+        return "a waterfall needs a range, not a single frequency."
+    for edge in (start_mhz, stop_mhz):
+        refusal = sweepable(edge)
+        if refusal:
+            return refusal
+    if stop_mhz - start_mhz > MAX_SPAN_MHZ:
+        return (
+            f"{stop_mhz - start_mhz:g} MHz at once is wider than the radio can sweep "
+            f"({MAX_SPAN_MHZ:g} MHz). Pick a section of it."
+        )
     return None
 
 
