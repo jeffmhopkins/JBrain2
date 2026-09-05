@@ -298,10 +298,7 @@ def hop_centres(start_hz: int, plan: tuple[int, int, int]) -> list[int]:
     rate_hz, bins, hops = plan
     usable = hop_usable_bins(bins)
     width = bin_width_hz(rate_hz, bins)
-    return [
-        int(round(start_hz + (index * usable + usable / 2) * width))
-        for index in range(hops)
-    ]
+    return [int(round(start_hz + (index * usable + usable / 2) * width)) for index in range(hops)]
 
 
 @dataclass(frozen=True, slots=True)
