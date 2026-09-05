@@ -107,8 +107,10 @@ class _FakeDevice:
         self.bufflen = radio.DEFAULT_BUFFLEN_BYTES
         self._k = 0  # sample counter, so the tone's phase survives across reads
         self._noise = np.random.default_rng(20260905)
-        # Samples of disturbed output still owed after the last retune.
+        # Samples of disturbed output still owed after the last retune, and how many
+        # there were, so the decay can be indexed by how far through it is.
         self._settling = 0
+        self._settle_total = 0
         self._last_read = time.monotonic()
         self._overflow_due = 0
         # Gain, modelled because nothing in the engine ever set it and the probe now
@@ -135,6 +137,7 @@ class _FakeDevice:
         self._say("setFrequency", direction, channel, name, hz)
         if hz != self.center:
             self._settling = int(self.rate * self.driver.retune_settle_s)
+            self._settle_total = self._settling
         self.center = hz
 
     def getGainMode(self, direction: int, channel: int) -> bool:
@@ -235,7 +238,20 @@ class _FakeDevice:
                 # which is what `_window_levels` watches for and why it can measure a
                 # settle on a band with nothing on it.
                 spoilt = min(self._settling, elems)
-                block[:spoilt] *= SETTLING_GAIN
+                if self.driver.settling_step:
+                    # The pathological shape, and the reason it is offered: a level that
+                    # is WRONG BUT STEADY defeats any rule that stops when the level
+                    # stops moving, because it never moves. The adaptive discard is
+                    # supposed to SAY so rather than stop early and be quick about it.
+                    block[:spoilt] *= SETTLING_GAIN
+                else:
+                    # The ordinary shape: a settle DECAYS toward the true level. Ramped
+                    # across the whole window and indexed by how much is still owed, so
+                    # it stays continuous across reads of any size.
+                    total = max(self._settle_total, 1)
+                    done = total - self._settling
+                    at = (np.arange(spoilt, dtype=np.float64) + done) / total
+                    block[:spoilt] *= 1.0 + (SETTLING_GAIN - 1.0) * (1.0 - at)
                 self._settling -= spoilt
             view[:elems] = block.astype(np.complex64)
         self._say("readStream", elems)
@@ -262,6 +278,7 @@ class _FakeDriver:
         silent_reads: int = 0,
         retune_settle_s: float = radio.SETTLE_S,
         gain_auto: bool = True,
+        settling_step: bool = False,
         make_raises: Exception | None = None,
         unmake_raises: Exception | None = None,
     ) -> None:
@@ -284,6 +301,9 @@ class _FakeDriver:
         # librtlsdr's own default is automatic, which is exactly the fault the probe
         # now reports — so a fake modelling a CORRECTLY configured radio must say so.
         self.gain_auto = gain_auto
+        # Whether the retune transient is a STEP (wrong but steady) rather than a decay.
+        # The hard case for a discard that stops when the level stops moving.
+        self.settling_step = settling_step
         self.make_raises = make_raises
         self.unmake_raises = unmake_raises
         self.devices: list[_FakeDevice] = []
@@ -1116,11 +1136,10 @@ def test_a_radio_that_needs_a_moment_is_not_reported_deaf() -> None:
     The verdict now comes from the last of several frames, and `settled` records that
     the first had nothing in it. Before this the probe called a live radio deaf and
     said so about the owner's antenna."""
-    # More silence than the opening barrier can absorb. The discard is adaptive now and
-    # REFUSES to stop on silence, so a short silent start never reaches `_capture` at
-    # all — which is better, and would make this regression test vacuous if the silence
-    # were short enough for the barrier to swallow whole.
-    driver = _FakeDriver(silent_reads=14)
+    # More silence than the opening barrier absorbs. The barrier discards 150 ms now
+    # rather than 50, so a silent start short enough to fall inside it never reaches
+    # `_capture` at all — which would leave this regression test asserting nothing.
+    driver = _FakeDriver(silent_reads=4)
 
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
         verdict = radio._capture(rig, 64)
@@ -1351,27 +1370,59 @@ def test_a_flush_that_settles_at_once_leaves_the_transient_with_the_tuner() -> N
     )
 
 
-def test_the_discard_stops_when_the_level_stops_moving_not_at_a_fixed_time() -> None:
+def test_the_discard_covers_the_measured_worst_case_not_the_median() -> None:
     """MEASURED on the box: a retune disturbs the output for 59.7 ms typically and
-    131.2 ms at worst. Discarding the worst case would pay 131 ms eleven times on the FM
-    dial; discarding until the level actually steadies pays the median instead."""
-    driver = _FakeDriver(retune_settle_s=0.0)
+    131.2 ms at WORST, so a discard sized to the median leaves every slower hop reading
+    the frequency it came from."""
+    driver = _FakeDriver()
 
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
         dropped = rig.barrier()
 
-    # Far short of the cap, because the fake's output is steady from the first slice.
-    assert 0 < dropped < int(RATE * radio.SETTLE_S)
+    assert dropped == int(RATE * radio.SETTLE_S)
+    assert radio.SETTLE_S * 1000 > 131.2
 
 
-def test_the_discard_refuses_to_mistake_silence_for_a_settled_band() -> None:
-    """Silence is PERFECTLY steady, which is the trap: the direct-sampling branch
-    delivers empty reads before it starts, and stopping there would hand back the
-    silence as a settled band. A receiver with no noise floor is not receiving."""
-    driver = _FakeDriver(silent_reads=10_000)
+def test_a_transient_that_is_wrong_but_steady_defeats_a_level_based_stopping_rule() -> (
+    None
+):
+    """Why the discard is FIXED rather than adaptive, kept as a test because the
+    adaptive version was written, shipped and reverted in one day.
+
+    A discard cannot know the new frequency's settled level — that is the thing it is
+    waiting for — so the only rule available to it is "has the level stopped moving".
+    A transient that steps to a wrong level and HOLDS satisfies that immediately. It is
+    not a tuning problem: without a reference there is nothing to have arrived at."""
+    driver = _FakeDriver(settling_step=True)
 
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
-        dropped = rig.barrier()
+        rig.retune(center_hz=CENTER + RATE)
+        levels = radio._window_levels(
+            rig.read(radio.SETTLE_WINDOW * 4).samples, radio.SETTLE_WINDOW
+        )
 
-    # It ran to the cap rather than stopping on the first flat pair.
-    assert dropped >= int(RATE * radio.SETTLE_S) - radio.SETTLE_SLICE
+    # Flat to well inside any "stopped moving" tolerance, and still not the real level.
+    assert float(np.max(levels) - np.min(levels)) < 0.5
+
+
+def test_a_discard_that_leaves_the_transient_behind_is_a_finding() -> None:
+    """The check on the FIX, not on the radio. The discard's stopping rule is weaker
+    than the one that measured the settle: it asks whether the level has stopped MOVING,
+    because the new frequency's settled level is exactly what it cannot know. A slow
+    transient satisfies that while still failing "has it arrived" — which would put the
+    stale samples back, the very bug the discard exists to remove."""
+    findings = radio._barrier_findings(
+        {"measured": True, "worst_ms": 41.0, "window_us": 213.0, "hold_ms": 10.0}
+    )
+
+    assert findings and "STOPS EARLY" in findings[0]
+
+
+def test_a_discard_that_leaves_nothing_behind_is_not_a_finding() -> None:
+    """Below the method's own resolution there is nothing left to report."""
+    assert (
+        radio._barrier_findings(
+            {"measured": True, "worst_ms": 0.0, "window_us": 213.0, "hold_ms": 10.0}
+        )
+        == []
+    )
