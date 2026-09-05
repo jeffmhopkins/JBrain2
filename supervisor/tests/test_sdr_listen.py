@@ -2615,7 +2615,9 @@ def test_the_radio_is_tuned_above_the_station_by_the_snapped_offset(iq_tuner) ->
     is silence, from code that looks right in both places."""
     iq_tuner.start(146_940_000, "fm", None)
     try:
-        chain = demod.Demodulator("fm", listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ))
+        chain = demod.Demodulator(
+            "fm", listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ)
+        )
         assert iq_tuner.opened[0].center_hz == 146_940_000 + int(chain.offset_hz)
     finally:
         iq_tuner.stop()

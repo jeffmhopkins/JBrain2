@@ -495,7 +495,9 @@ class Demodulator:
             prev[0] = self._last
             prev[1:] = baseband[:-1]
             self._last = baseband[-1]
-            product = baseband * np.conj(prev)
+            # Typed explicitly: `np.conj` widens to an unknown-dtype array, and the
+            # `.imag`/`.real` below then have no attribute to resolve against.
+            product: np.ndarray = baseband * np.conj(prev)
             # Scaled so full deviation is full scale. Peak advance per sample is
             # 2*pi*dev/rate radians, so dividing by pi puts a deviation of half the
             # IF's Nyquist at unity — which for a channel filtered to `channel_half`

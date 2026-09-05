@@ -160,8 +160,9 @@ def test_a_quiet_row_carries_an_empty_list_not_a_missing_key() -> None:
 
 def test_a_dip_inside_a_carrier_does_not_split_it_into_two_stations() -> None:
     """REPORTED by the owner: "sometimes one signal will produce 2-3 overlapping peak
-    detections". A real carrier is contiguous, but noise drops the odd bin inside it back
-    under the threshold, and a rule that split on one bin reported one station twice."""
+    detections". A real carrier is contiguous, but noise drops the odd bin inside it
+    back under the threshold, and a rule that split on one bin reported one station
+    twice."""
     row = _flat(400)
     for index in range(100, 112):
         row[index] = -50.0

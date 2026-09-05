@@ -210,8 +210,12 @@ def test_am_removes_the_carrier():
     """An unmodulated carrier is a constant envelope, and constant is DC. If the DC
     blocker were missing this would come out as a rail, not as silence."""
     built = demod.Demodulator("am", CAPTURE_HZ)
-    for _ in range(6):  # the blocker's estimate is smoothed; give it a moment
-        out = built.feed(np.full(240_000, 0.5, dtype=np.complex64))
+    carrier = np.full(240_000, 0.5, dtype=np.complex64)
+    # Several buffers: the blocker's window is 512 audio samples, so the first one is
+    # still filling it and its output is the ramp rather than the answer.
+    out = built.feed(carrier)
+    for _ in range(5):
+        out = built.feed(carrier)
     assert out.peak < 0.05
 
 
