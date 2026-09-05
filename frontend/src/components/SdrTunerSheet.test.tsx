@@ -39,7 +39,7 @@ const LISTENING: SdrListening = {
   gain: null,
   started_at: 1_700_000_000,
   elapsed_s: 72,
-  peak: 0.42,
+  audio_peak: 0.42,
   listeners: 1,
 };
 
@@ -246,7 +246,7 @@ describe("the tuner sheet", () => {
   });
 
   it("shows no signal meter — the tape is the level display", () => {
-    render(<SdrTunerSheet listening={{ ...LISTENING, peak: 0.42 }} onClose={() => {}} />);
+    render(<SdrTunerSheet listening={{ ...LISTENING, audio_peak: 0.42 }} onClose={() => {}} />);
 
     // The meter reported `peak`, which is the loudest sample of the DEMODULATED AUDIO,
     // not reception strength: on an empty FM channel rtl_fm emits loud hiss, so it read

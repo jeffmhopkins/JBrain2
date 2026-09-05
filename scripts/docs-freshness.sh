@@ -50,7 +50,10 @@ done < <( { find "$DOCS" -name '*.md' 2>/dev/null; [ -f "$ROOT/CLAUDE.md" ] && e
 
 # R4 — a plan doc whose header Waves are all done (✅) but whose Status is not
 # Shipped/archived should be archived. Activates once a doc carries the header.
-EMPTY_BOX='◻|◻️|⬜|▫️|▢|◯|❌|🔲|\[ \]'
+# 🟡 counts as UNFINISHED, and that was a hole: a wave half shipped is the state this
+# repo's plans spend most of their life in, and without it a plan whose every wave was
+# 🟡 read as ready to archive — the one thing this rule exists to catch.
+EMPTY_BOX='◻|◻️|⬜|▫️|▢|◯|❌|🔲|🟡|🟠|\[ \]'
 while IFS= read -r f; do
   case "$f" in */archive/*) continue;; esac
   header="$(head -n 8 "$f" || true)"

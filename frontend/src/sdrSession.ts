@@ -35,7 +35,13 @@ export interface SdrListening {
    *  clock NOW, which is what anchors the audio timeline for caption timing. */
   started_at: number;
   elapsed_s: number;
-  peak: number;
+  /** Loudest sample of the DEMODULATED AUDIO, 0..1 of full scale — **not a signal
+   *  level**, and not comparable with the waterfall's dBFS, which is a different
+   *  quantity in different units (SDR_IQ_SPECTRUM_PLAN F9). It was once drawn as a
+   *  signal meter in the tuner sheet, which is precisely the reading it does not
+   *  support: idle airband AM sits at 0.21 because the tuner's AGC amplifies its own
+   *  noise. Nothing renders it today; the name is what keeps it that way. */
+  audio_peak: number;
   listeners: number;
 }
 

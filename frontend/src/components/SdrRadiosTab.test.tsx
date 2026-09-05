@@ -79,7 +79,7 @@ function session(over: Record<string, unknown> = {}) {
     gain: null,
     started_at: 0,
     elapsed_s: 30,
-    peak: 0,
+    audio_peak: 0,
     listeners: 0,
     ...over,
   };

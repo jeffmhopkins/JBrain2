@@ -180,7 +180,13 @@ def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
 
 
 def _peak(pcm: bytes) -> float:
-    """Loudest sample as a 0..1 fraction of full scale.
+    """Loudest sample of the DEMODULATED AUDIO, as a 0..1 fraction of full scale.
+
+    **Not a signal level** (F9). It is measured after `rtl_fm`'s discriminator, AGC,
+    squelch and de-emphasis, so it is not comparable with the spectrum path's true
+    dBFS — nor even across the radio's own two signal paths, since idle airband AM
+    reads 0.21 off the tuner's AGC amplifying its own noise while HF has no gain stage
+    to do that. The wire field is `audio_peak` for exactly that reason.
 
     The cheapest honest answer to "is anything actually coming out of the radio?" —
     a tuned-but-silent capture and a capture of a dead port look identical in a WAV
@@ -278,7 +284,7 @@ def capture(
             "mode": key,
             "seconds": round(len(pcm) / 2 / rate, 2),
             "sample_rate": rate,
-            "peak": _peak(pcm),
+            "audio_peak": _peak(pcm),
             "device_log": text.strip()[-2000:],
             "wav": _wav(pcm, rate),
         }

@@ -3,7 +3,9 @@
 What matters here is not the happy path — it is that the route reports honestly when
 the radio produced nothing, when another caller holds it, and when there is no radio
 at all. A capture of a dead antenna and a capture of a silent-but-working one have the
-same duration, so `peak`/`heard_something` is the signal that tells them apart.
+same duration, so `audio_peak`/`heard_something` is the signal that tells them apart.
+Named for what it measures since F9: it is the loudest sample of the DEMODULATED AUDIO,
+not a signal level, and the spectrum path's dBFS is a different quantity entirely.
 """
 
 import json
@@ -96,7 +98,7 @@ async def test_a_live_capture_reports_the_level_and_the_transcript(
     _sidecar(
         monkeypatch,
         lambda _p, _b: _wav_response(
-            {"mode": "wbfm", "seconds": 8.0, "peak": 0.62, "device_log": "Tuned to 99.3 MHz"}
+            {"mode": "wbfm", "seconds": 8.0, "audio_peak": 0.62, "device_log": "Tuned to 99.3 MHz"}
         ),
     )
 
@@ -113,7 +115,7 @@ async def test_a_live_capture_reports_the_level_and_the_transcript(
 
     assert out.frequency_hz == 99_300_000
     assert out.heard_something is True
-    assert out.peak == 0.62
+    assert out.audio_peak == 0.62
     assert out.transcript == "you're listening to the Space Coast"
     assert out.transcript_error is None
 
@@ -123,7 +125,7 @@ async def test_a_silent_capture_is_reported_as_such(monkeypatch: pytest.MonkeyPa
     # Whisper will happily invent words over noise, so the level is the honest read.
     _sidecar(
         monkeypatch,
-        lambda _p, _b: _wav_response({"mode": "fm", "seconds": 8.0, "peak": 0.0008}),
+        lambda _p, _b: _wav_response({"mode": "fm", "seconds": 8.0, "audio_peak": 0.0008}),
     )
 
     async def fake_transcribe(*_a, **_k):
@@ -181,7 +183,9 @@ async def test_a_transcription_failure_never_loses_the_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The audio is the expensive part; a whisper problem must not discard it.
-    _sidecar(monkeypatch, lambda _p, _b: _wav_response({"mode": "fm", "seconds": 8.0, "peak": 0.4}))
+    _sidecar(
+        monkeypatch, lambda _p, _b: _wav_response({"mode": "fm", "seconds": 8.0, "audio_peak": 0.4})
+    )
 
     async def boom(*_a, **_k):
         raise RuntimeError("model not loaded")
@@ -205,7 +209,7 @@ async def test_the_frequency_reaching_the_sidecar_is_hz_never_a_url(
     def handler(path, body):
         seen["path"] = path
         seen["body"] = body
-        return _wav_response({"mode": "fm", "seconds": 4.0, "peak": 0.3})
+        return _wav_response({"mode": "fm", "seconds": 4.0, "audio_peak": 0.3})
 
     _sidecar(monkeypatch, handler)
 
@@ -224,7 +228,8 @@ async def test_a_box_without_whisper_still_returns_the_audio_and_says_why(
     # from app.state is exactly how the first on-box capture came back untranscribed
     # while the radio itself worked.
     _sidecar(
-        monkeypatch, lambda _p, _b: _wav_response({"mode": "wbfm", "seconds": 8.0, "peak": 0.42})
+        monkeypatch,
+        lambda _p, _b: _wav_response({"mode": "wbfm", "seconds": 8.0, "audio_peak": 0.42}),
     )
 
     out = await _capture(whisper="", frequency_mhz=99.3, mode="wbfm")

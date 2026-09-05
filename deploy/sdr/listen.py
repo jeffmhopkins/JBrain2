@@ -757,7 +757,15 @@ class SessionInfo:
     mode: str
     gain: str | None
     started_at: float
-    peak: float
+    #: The loudest sample of the DEMODULATED AUDIO, 0..1 of full scale. **Not a signal
+    #: level and not comparable to anything the spectrum path reports** (F9). This is
+    #: what came out of `rtl_fm`'s discriminator after AGC, squelch and de-emphasis, so
+    #: it answers "is audio coming out of the radio" and nothing about RF power: idle
+    #: airband AM reads 0.21 because the tuner's AGC amplifies its own noise, while HF
+    #: has no gain stage to do that. The spectrum path measures true dBFS per bin
+    #: (`iq.Spectrum.db`), which is a different quantity in different units, and the
+    #: name says which one this is so nothing re-surfaces it as a meter again.
+    audio_peak: float
     listeners: int
     purpose: str = PURPOSE_LISTEN
     serial: str | None = None
@@ -777,7 +785,7 @@ class SessionInfo:
             "serial": self.serial,
             "started_at": self.started_at,
             "elapsed_s": round(time.time() - self.started_at, 1),
-            "peak": round(self.peak, 4),
+            "audio_peak": round(self.audio_peak, 4),
             "listeners": self.listeners,
             "sweep": self.sweep,
         }
@@ -831,7 +839,7 @@ class Session:
             frequency_hz = self.sweep.centre_hz
         self.frequency_hz = frequency_hz
         self.mode = validate(frequency_hz, mode)
-        self.peak = 0.0
+        self.audio_peak = 0.0
         self._subs: set[queue.Queue[bytes | None]] = set()
         # Captioning subscribers. Segmenting only runs while at least one is attached,
         # so a session nobody is captioning does no extra work at all.
@@ -1583,7 +1591,7 @@ KISSPORT {self.kiss_port}
                 if not chunk:
                     break
                 level = _peak(chunk)
-                self.peak = level
+                self.audio_peak = level
                 self._accumulate(chunk, level)
                 enc.stdin.write(chunk)
                 enc.stdin.flush()
@@ -1680,7 +1688,7 @@ KISSPORT {self.kiss_port}
         def apply() -> None:
             self.frequency_hz = frequency_hz
             self.mode = wanted
-            self.peak = 0.0
+            self.audio_peak = 0.0
 
         self._restart(apply)
 
@@ -1853,7 +1861,7 @@ KISSPORT {self.kiss_port}
             mode=self.mode,
             gain=self.gain,
             started_at=self.started_at,
-            peak=self.peak,
+            audio_peak=self.audio_peak,
             listeners=listeners,
             purpose=self.purpose,
             serial=self.serial,
