@@ -1283,6 +1283,21 @@ class Session:
             raise RadioUnavailable(str(busy)) from busy
         except radio.RadioError as failed:
             raise RadioUnavailable(str(failed)) from failed
+        # THE GAIN, which this path dropped on the floor when it was written. `rtl_fm`
+        # hands the tuner to its own AGC unless `-g` names a value
+        # (`verbose_auto_gain`), and `radio.Radio.open` touches the gain not at all —
+        # so a listening session on this engine ran at whatever librtlsdr left the
+        # dongle at, MEASURED as 0.0 dB, the bottom of a 0-49.6 dB range. On air that
+        # is a receiver barely hearing a transmitter a mile away: 162.550 (NOAA, always
+        # on, strong) came back 7.9 dB over its own row median, and a narrowband FM
+        # discriminator fed almost nothing produces almost pure noise — which, being
+        # blind to amplitude, arrives at FULL SCALE. Parity with `rtl_fm` is the fix:
+        # the owner's gain when they chose one, the radio's own loop when they did not.
+        # Suppressed broadly, as `radio.gain_state` is and for its reason: a driver
+        # that will not take a gain is a setting this session does without, not a
+        # reason to refuse to play.
+        with contextlib.suppress(Exception):
+            held.set_gain(float(self.gain) if self.gain else None)
         self._radio = held
         self._demod = chain
         self._tuning = iq.Spectrometer(TUNING_BINS, chain.if_rate_hz)

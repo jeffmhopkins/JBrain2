@@ -139,6 +139,23 @@ LISTEN_PROBE_MAX_S = 20.0
 RTL_POWER_CEILING_FPS = 1.5
 
 
+def _channel_floor(frame: "listen.Frame") -> float:
+    """The noise this channel sits on, from the bins OUTSIDE the passband.
+
+    Not the row's median, which is what this reported first and which is not a noise
+    floor on a channel view: the row is cropped to twice the passband, so the signal
+    fills half of it and the median lands on the signal's own shoulder. Measured
+    2026-09-05 that made 162.550 — NOAA weather, transmitting continuously — read
+    7.9 dB "over the floor", which sounds like a dead receiver and is really a
+    reference taken from inside the thing being measured.
+
+    The outer bins are the honest reference: they are past the demodulator's passband
+    by construction, so nothing the radio is listening to is in them."""
+    edge = (len(frame.db) - int(frame.passband_hz / frame.bin_hz)) // 2
+    outside = frame.db[:edge] + frame.db[-edge:] if edge > 0 else list(frame.db)
+    return sorted(outside)[len(outside) // 2] if outside else 0.0
+
+
 def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
     """Where the signal in a channel row actually sits, as an offset from `middle`.
 
@@ -226,7 +243,8 @@ def _listen_verdict(
             "centre_hz": round(middle, 1),
             "strongest_offset_hz": round(offset, 1),
             "strongest_db": round(latest.db[loudest], 1),
-            "floor_db": round(sorted(latest.db)[len(latest.db) // 2], 1),
+            "floor_db": round(_channel_floor(latest), 1),
+            "snr_db": round(latest.db[loudest] - _channel_floor(latest), 1),
         }
         if abs(middle - session.frequency_hz) > latest.bin_hz:
             # The offset-tuning failure, and the reason this number is reported rather
