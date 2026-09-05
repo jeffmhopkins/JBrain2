@@ -25853,7 +25853,7 @@ button.task-band:active {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  color: var(--text-1);
+  color: var(--text);
 }
 .wf-sig {
   margin-top: 6px;
@@ -25880,7 +25880,7 @@ button.task-band:active {
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-seg);
   overflow: hidden;
 }
 /* A real <legend> so the group is named for a screen reader, taken out of the flow
@@ -25904,12 +25904,12 @@ button.task-band:active {
 }
 .wf-seg button.on {
   background: var(--surface-2);
-  color: var(--text-1);
+  color: var(--text);
 }
 .wf-clear {
   padding: 3px 9px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-seg);
   background: transparent;
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -25934,7 +25934,7 @@ button.task-band:active {
   gap: 5px;
   padding: 2px 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: transparent;
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
@@ -25957,7 +25957,7 @@ button.wf-sigpill {
 }
 .wf-sighz {
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text);
 }
 .wf-siglist li.held .wf-sighz {
   font-weight: 500;
