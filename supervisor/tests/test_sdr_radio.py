@@ -74,6 +74,20 @@ class _Result:
         self.flags = flags
 
 
+class _FakeRange:
+    """SoapySDR hands back a Range object, not a tuple."""
+
+    def __init__(self, low: float, high: float) -> None:
+        self._low = low
+        self._high = high
+
+    def minimum(self) -> float:
+        return self._low
+
+    def maximum(self) -> float:
+        return self._high
+
+
 class _FakeDevice:
     """A radio that remembers what it was asked, in order, and hands back a tone.
 
@@ -100,6 +114,8 @@ class _FakeDevice:
         # Gain, modelled because nothing in the engine ever set it and the probe now
         # says so. Automatic is librtlsdr's own default, which is the whole point.
         self.gain_auto = driver.gain_auto
+        # Not 0.0: the bottom of the range is now a finding, and this fake stands in
+        # for a radio configured the way a receiver should be.
         self.gain_db = 28.0
 
     # --- the log ---------------------------------------------------------------
@@ -130,6 +146,9 @@ class _FakeDevice:
 
     def getGain(self, direction: int, channel: int) -> float:
         return self.gain_db
+
+    def getGainRange(self, direction: int, channel: int) -> Any:
+        return _FakeRange(0.0, 49.6)
 
     def setGain(self, direction: int, channel: int, value: float) -> None:
         self._say("setGain", value)
@@ -1283,3 +1302,46 @@ def test_the_settle_is_asked_again_with_the_gain_nailed_down() -> None:
     assert out["retune_settle_fixed_gain"]["was_automatic"] is True
     # Given back, not left fixed: the next reading would otherwise be of our own change.
     assert out["gain"]["automatic"] is True
+
+
+def test_a_gain_pinned_to_the_bottom_of_its_range_is_a_finding() -> None:
+    """MEASURED on the box: manual mode at 0.0 dB, the floor of a 0-49.6 dB range.
+    Nothing in this engine sets the gain, so that is a default rather than a choice,
+    and it costs every weak signal on every band."""
+    findings = radio._gain_findings(
+        {"automatic": False, "gain_db": 0.0, "gain_min_db": 0.0, "gain_max_db": 49.6}
+    )
+
+    assert findings and "BOTTOM of its" in findings[0]
+    assert (
+        radio._gain_findings(
+            {
+                "automatic": False,
+                "gain_db": 28.0,
+                "gain_min_db": 0.0,
+                "gain_max_db": 49.6,
+            }
+        )
+        == []
+    )
+
+
+def test_a_transient_surviving_a_flush_with_no_retune_is_the_flushs() -> None:
+    """The control that separates a hop's two halves. If the output is still disturbed
+    with the radio sitting exactly where it was, `activateStream` is what every hop
+    waits for and discarding longer after each retune cannot be the fix."""
+    findings = radio._flush_findings(
+        {"measured": True, "settle_ms": 60.8}, {"measured": True, "settle_ms": 58.0}
+    )
+
+    assert findings and "the transient is the FLUSH" in findings[0]
+
+
+def test_a_flush_that_settles_at_once_leaves_the_transient_with_the_tuner() -> None:
+    """The other answer, and the one that keeps the settle a retune cost."""
+    assert (
+        radio._flush_findings(
+            {"measured": True, "settle_ms": 60.8}, {"measured": True, "settle_ms": 0.4}
+        )
+        == []
+    )

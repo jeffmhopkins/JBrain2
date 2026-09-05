@@ -1080,8 +1080,37 @@ and handed back afterwards, because a probe that leaves the radio configured dif
 from how it found it makes the next reading a lie. If the settle collapses with the gain
 fixed, it was never a relock, and the fix is the one a spectrum instrument wants anyway.
 
-That measurement is pending on the box. `SETTLE_S` stays 0.05 until it answers, because
-the two outcomes call for different constants.
+**It answered, and it falsified the suspect.** The tuner was already in **manual** mode,
+so there was no gain loop to blame, and fixing the gain moved the median from 60.8 ms to
+51.4 — a nudge, not a collapse.
+
+| | median ms | worst ms |
+| --- | --- | --- |
+| as configured | 60.8 | 133.3 |
+| gain fixed at 30 dB | 51.4 | 123.7 |
+
+What the run did find is a different defect: the gain reads **0.0 dB, the bottom of the
+tuner's 0-49.6 dB range**. Nothing in this engine has ever set it, so that is a driver
+default rather than a choice, and it costs every weak signal on every band. It is a
+finding now.
+
+#### The next suspect, and the control that can convict it
+
+So what disturbs a *live* stream for 60 ms, when the flush empties the pipeline and an
+R820T2 locks in under a millisecond? Note what a hop actually does: it **retunes AND it
+flushes**, and every reading so far has done both together, so none of them can say which
+half owns the transient.
+
+`settle_after_flush` is the control: the same stopwatch, but the disturbance is
+`activateStream` with **no frequency change at all**. If the output is still disturbed
+with the radio sitting exactly where it was, then the flush is what every hop waits for,
+the tuner is innocent, and the fix is to **stop flushing every hop** rather than to
+discard for longer after each one. That would also be the cheap fix, since the flush
+itself measures 0.02 ms — it is not the flush's own cost, it is what the stream does
+afterwards.
+
+`SETTLE_S` stays 0.05 until that answers. Two outcomes, two different right constants,
+and the suspect before this one was wrong.
 
 ## 8. Deliberately not in this plan
 
