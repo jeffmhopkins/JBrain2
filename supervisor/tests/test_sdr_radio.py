@@ -1159,3 +1159,41 @@ def test_one_wild_slice_is_not_mistaken_for_a_transient() -> None:
     smoothed = radio._smooth(levels, radio.SETTLE_SMOOTH)
 
     assert float(np.max(np.abs(smoothed))) == 0.0
+
+
+def test_a_settle_longer_than_the_span_is_reported_as_unknown_not_as_the_span() -> None:
+    """MEASURED on the box, 2026-09-05: an 80 ms span reported "80.0 ms at worst" on the
+    tuner path, and 80.0 was the span. A stopwatch shorter than the event it times
+    cannot time it, and a reading equal to its own window is not a measurement — saying
+    so is the difference between a number and an artefact of the method."""
+    findings = radio._settle_findings(
+        {
+            "settle_ms": 80.0,
+            "worst_ms": 80.0,
+            "configured_ms": 50.0,
+            "window_us": 213.0,
+            "span_ms": 80.0,
+            "saturated": 3,
+            "trials": 7,
+        }
+    )
+
+    assert findings and "AT LEAST" in findings[0]
+    assert "still unknown" in findings[0]
+
+
+def test_one_late_excursion_does_not_report_the_whole_block_as_a_transient() -> None:
+    """The rule that replaced "one past the last slice outside tolerance". Over a span
+    long enough to hold the transient, something late always wanders out — a station
+    fading, a gain step — and the old rule read every one of those as the radio still
+    settling, which is how a reading saturates at its own span."""
+    off = np.zeros(400, dtype=bool)
+    off[:20] = True  # the real transient, at the start where a transient lives
+    off[300] = True  # drift, long after the radio settled
+
+    assert radio._settled_index(off, hold=40) == 20
+
+
+def test_a_block_that_never_goes_quiet_has_no_settled_index() -> None:
+    """None rather than a number, so the caller reports "at least the span"."""
+    assert radio._settled_index(np.ones(400, dtype=bool), hold=40) is None
