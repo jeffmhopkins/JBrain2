@@ -234,6 +234,28 @@ class _Soapy:
         return f"api {self._sdr.getAPIVersion()} abi {self._sdr.getABIVersion()}"
 
 
+def _answered(step: str, run: Any) -> dict[str, Any]:
+    """Run one of the probe's checks and answer for it, whatever it does.
+
+    MEASURED 2026-09-05: the first hardware run raised a call-shape error inside one
+    check, and because the guards around the others were narrow — `(RadioError,
+    ValueError)`, which an `AttributeError` from a wrong SWIG signature sails past — the
+    whole probe came back as a single 502 and six questions went unasked. A probe exists
+    to answer all seven in ONE run, on hardware that is not always at hand, so the guard
+    has to be as wide as the mistakes it is looking for."""
+    _log(f"probe: {step}")
+    try:
+        got = run()
+    except Exception as failed:  # noqa: BLE001 - the whole point; see above
+        _log(f"probe: {step} FAILED {type(failed).__name__}: {failed}")
+        return {
+            "works": False,
+            "error": f"{type(failed).__name__}: {failed}",
+            "where": step,
+        }
+    return got if isinstance(got, dict) else {"works": True, "value": got}
+
+
 def _log(message: str) -> None:
     print(f"[radio] {message}", flush=True)  # noqa: T201 - the container log is the trail
 
@@ -902,7 +924,7 @@ def _probe(
         driver=drv,
         doing="probing the radio",
     ) as radio:
-        out["selection"] = _selection(radio, found)
+        out["selection"] = _answered("selection", lambda: _selection(radio, found))
         if out["selection"].get("selects_by_serial") is False:
             findings.append(
                 "`serial=` did NOT open the radio it named — every per-radio claim "
@@ -924,7 +946,7 @@ def _probe(
                 "branch is the claim this engine's HF half rests on."
             )
 
-        out["bufflen"] = _callback_period(radio)
+        out["bufflen"] = _answered("bufflen", lambda: _callback_period(radio))
         if not out["bufflen"].get("took"):
             findings.append(
                 f"`bufflen` did NOT take: buffers measured "
@@ -933,7 +955,7 @@ def _probe(
                 f"silent fallback to {DEFAULT_BUFFLEN_BYTES} bytes."
             )
 
-        out["capture"] = _capture(radio, bins)
+        out["capture"] = _answered("capture", lambda: _capture(radio, bins))
 
         # A retune ON THE LIVE STREAM, with the stream handle checked for identity
         # either side: a rebuild would hand back a different one.
@@ -942,12 +964,12 @@ def _probe(
         live: dict[str, Any] = {"from_hz": center_hz, "to_hz": moved_hz}
         try:
             live["discarded"] = radio.retune(center_hz=moved_hz)
-            live["capture"] = _capture(radio, bins)
+            live["capture"] = _answered("retuned capture", lambda: _capture(radio, bins))
             live["stream_rebuilt"] = radio.stream_token != before
             live["works"] = not live["stream_rebuilt"]
-        except (RadioError, ValueError) as failed:
+        except Exception as failed:  # noqa: BLE001 - one claim, not the probe
             live["works"] = False
-            live["error"] = str(failed)
+            live["error"] = f"{type(failed).__name__}: {failed}"
         out["live_retune"] = live
         if not live.get("works"):
             findings.append(
@@ -966,9 +988,9 @@ def _probe(
                 row["stream_rebuilt"] = radio.stream_token != before
                 row["samples"] = radio.read(radio.samples_per_buffer).samples.size
                 row["works"] = not row["stream_rebuilt"]
-            except (RadioError, ValueError) as failed:
+            except Exception as failed:  # noqa: BLE001 - one rate, not the probe
                 row["works"] = False
-                row["error"] = str(failed)
+                row["error"] = f"{type(failed).__name__}: {failed}"
             rates.append(row)
         out["rates"] = rates
         if not all(row.get("works") for row in rates):

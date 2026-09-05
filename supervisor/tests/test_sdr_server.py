@@ -1589,3 +1589,46 @@ def test_the_probe_refuses_what_the_radio_cannot_do(sidecar: str, monkeypatch) -
 
     assert seen == []
     assert server.TUNER.reserved() is False
+
+
+def test_the_probe_has_let_go_of_the_radio_before_it_answers(
+    sidecar: str, monkeypatch
+) -> None:
+    """The lease must be back BEFORE the response is written, not in a `finally` after.
+
+    Sending first leaves a window where the caller holds a 200 and the radio is still
+    reserved, so anything acting on that answer meets a 409 for a hold that is already
+    over. It surfaced as a test that passed alone and failed in a full run — the same
+    race, won and lost by timing. `capture` has always released before answering.
+
+    The ORDER is asserted, not the outcome. Checking `reserved()` after the response
+    comes back only races the server thread again: the first version of this test passed
+    against the unfixed code, because unreserve usually wins. Recording which of the two
+    happened first cannot be won by being fast."""
+    _probe_stub(monkeypatch)
+    order: list[str] = []
+
+    real_unreserve = server.TUNER.unreserve
+    real_json = server.Handler._json
+
+    def watched_unreserve(serial):
+        order.append("released")
+        return real_unreserve(serial)
+
+    def watched_json(self, code, body):
+        order.append(f"answered {code}")
+        return real_json(self, code, body)
+
+    monkeypatch.setattr(server.TUNER, "unreserve", watched_unreserve)
+    monkeypatch.setattr(server.Handler, "_json", watched_json)
+
+    status, _ = _post(
+        sidecar,
+        "/soapy/probe",
+        {"serial": WIRE, "center_hz": 10_000_000, "rate_hz": 256_000, "bins": 1024},
+    )
+
+    assert status == 200
+    assert order == ["released", "answered 200"], (
+        f"the probe answered while still holding the radio: {order}"
+    )
