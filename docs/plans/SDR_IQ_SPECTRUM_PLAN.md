@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-04 (rev 4) · **Waves:** F0🟡 F1✅ F2✅ F3✅ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0🟡 F1✅ F2✅ F3✅ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -491,6 +491,44 @@ invalidated". With a dongle: Soapy enumerates it and `serial=` selects the right
 `direct_samp=2` returns Q-branch samples; **frequency and rate change on a live stream**;
 `SOAPY_SDR_OVERFLOW` is really reported under induced backpressure; and the retune barrier
 (§3) is measured rather than assumed. F1, F2, F4 and F5 need no radio.
+
+⚠ **F0 is blocked on an open that will not happen, and the first theory about it was
+wrong.** MEASURED on the box (2026-09-05, SoapySDR **api 0.8.0**): enumeration returns
+both dongles — `driver=rtlsdr`, `serial` `77192819` and `09022796`, tuner and product
+strings all present — and `make({"driver": "rtlsdr", "serial": "09022796"})`, a filter
+matching one of those rows exactly, answers `SoapySDR::Device::make() no match`. It fails
+identically with no serial, so it is not the filter and not `serial=` selection.
+
+The first theory was the SWIG call shape, and it is **falsified**: against SoapySDR 0.8.1
+with `soapysdr-module-rtlsdr` installed and **no hardware attached**, `Device(dict)`,
+`Device.make(dict)`, `Device("driver=rtlsdr")` and `Device(KwargsFromString(...))` all
+reach the driver's own factory and raise `No RTL-SDR devices found!` — the DRIVER's
+sentence. So `make() no match` is raised before any factory runs, and the call shape
+cannot be what separates a working open from this one. The diagnostic in `radio.py` was
+rewritten around what can: what the process has **loaded** (`listModules`), and what
+`enumerate` answers for the **exact args** `make` rejects. Those two readings split the
+remaining space into three fixes that are nothing like each other — a driver module
+missing from this process (packaging), a filter that does open (code here), or the same
+args answered two ways (inside `make`, and neither of the above).
+
+⟲ **And the error itself was then reproduced away from the box, which narrows it much
+further.** On that same 0.8.1 with the module present and no hardware:
+
+| asked | answer |
+| --- | --- |
+| `{"driver": "nosuchdriver"}` | `SoapySDR::Device::make() no match` |
+| `{"driver": "rtlsdr", "serial": "09022796"}` | `rtlsdr_get_index_by_serial(09022796) - -2` |
+| `{"serial": "09022796"}` | `no driver specified and no enumeration results` |
+
+`make() no match` is what a **driver name nobody ever registered** raises. A registered
+driver that simply has no hardware raises its OWN sentence instead, and a filter with no
+`driver` key raises a third. So the box's answer says the `rtlsdr` **factory** is not
+registered in that process — which cannot be squared with enumeration returning two
+rtlsdr rows from the same process, and that irreconcilability is the finding rather than
+a loose end. The probe therefore carries a **control**: a deliberately bogus driver name
+alongside the real one. If the two answers are identical, `rtlsdr` is as unregistered as
+a name nobody wrote, and no filter and no call shape can fix it. `getLoaderResult` is
+read for the same reason — a module can be listed and have registered nothing.
 
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg

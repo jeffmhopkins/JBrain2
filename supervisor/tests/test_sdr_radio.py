@@ -650,3 +650,237 @@ def test_a_driver_whose_version_call_fails_still_gets_probed() -> None:
     assert "unavailable" in out["soapy"] and "getAPIVersion" in out["soapy"]
     # It got PAST the version call to a real answer about enumeration.
     assert "enumerated no rtlsdr device" in out["summary"]
+
+
+def test_a_registry_with_no_rtlsdr_module_is_named_as_packaging() -> None:
+    """The one diagnosis whose fix is not in this repo at all.
+
+    If `make` has no rtlsdr factory registered, enumeration cannot be answering from
+    the same place, and no filter or call shape will ever help."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["/usr/lib/SoapySDR/modules0.8/libaudioSupport.so"]
+            },
+            "filters": [
+                {"filter": "driver only", "enumerate": "2", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "packaging, not code" in finding
+
+
+def test_a_filter_that_opens_wins_over_every_other_reading() -> None:
+    """The only outcome that names a fix in this file, so it is reported ahead of the
+    contradiction it would otherwise be described as."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver only", "enumerate": "2", "make": "no match"},
+                {
+                    "filter": "the enumeration row itself",
+                    "enumerate": "1",
+                    "make": "opened",
+                },
+            ],
+        }
+    )
+
+    assert "the enumeration row itself" in finding
+
+
+def test_enumerate_and_make_disagreeing_points_inside_make() -> None:
+    """The measured state on the box: the driver is loaded, the args list devices, and
+    the same args will not open one. Nothing this file passes is wrong."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "inside make()" in finding
+
+
+def test_a_diagnosis_that_enumerates_nothing_blames_the_bus() -> None:
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver only", "enumerate": "0", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "the driver or the bus" in finding
+
+
+def test_an_unreadable_environment_is_not_a_packaging_verdict() -> None:
+    """`modules` is a STRING when the call raised, and the old membership test would
+    have read `rtl` out of an error message — or worse, out of its absence."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": "RuntimeError: listModules is not a thing here"},
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "packaging" not in finding
+    assert "inside make()" in finding
+
+
+def test_a_module_that_registered_nothing_is_the_answer_ahead_of_everything() -> None:
+    """A module can be on the search path, be listed, and have registered nothing. That
+    is the one state where `enumerate` and `make` can honestly disagree, so it is read
+    before the contradiction it would otherwise be described as."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["/usr/lib/SoapySDR/modules0.8/librtlsdrSupport.so"],
+                "module_errors": {
+                    "/usr/lib/SoapySDR/modules0.8/librtlsdrSupport.so": "ABI mismatch",
+                },
+            },
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "registered NOTHING" in finding and "ABI mismatch" in finding
+
+
+def test_another_modules_loader_error_is_not_mistaken_for_the_rtlsdr_one() -> None:
+    """The audio module fails to load on a box with no sound card and always will. It
+    has nothing to do with a radio that will not open."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["librtlsdrSupport.so", "libaudioSupport.so"],
+                "module_errors": {"libaudioSupport.so": "no such device"},
+            },
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "registered NOTHING" not in finding
+    assert "inside make()" in finding
+
+
+def test_failing_exactly_like_a_name_nobody_wrote_means_unregistered() -> None:
+    """MEASURED against SoapySDR 0.8.1: `make() no match` is what a driver name that
+    does not exist raises, while a REGISTERED driver with no hardware raises the
+    driver's own sentence instead. Matching the control is therefore not a
+    coincidence — it is the reading, and it beats every other one because no filter
+    and no call shape can fix it."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {
+                    "filter": radio.CONTROL_FILTER,
+                    "enumerate": "0",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+                {
+                    "filter": "driver + serial",
+                    "enumerate": "1",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" in finding
+
+
+def test_rtlsdr_failing_differently_from_the_control_is_not_that() -> None:
+    """The driver's own error means it IS registered and did run, so the contradiction
+    stands and the next place to look is elsewhere."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {
+                    "filter": radio.CONTROL_FILTER,
+                    "enumerate": "0",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+                {
+                    "filter": "driver + serial",
+                    "enumerate": "1",
+                    "make": "rtlsdr_get_index_by_serial(09022796) - -2",
+                },
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" not in finding
+    assert "inside make()" in finding
+
+
+def test_the_control_opening_a_device_is_never_read_as_a_verdict() -> None:
+    """It cannot happen, and if it somehow did, the control has proved nothing."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {"filter": radio.CONTROL_FILTER, "enumerate": "0", "make": "opened"},
+                {"filter": "driver + serial", "enumerate": "1", "make": "opened"},
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" not in finding
+    assert "DID open it" in finding
+
+
+def test_the_linked_library_reading_names_real_mapped_objects() -> None:
+    """It reads this process's own map, so it works anywhere and needs no SoapySDR —
+    which is the point: the reading has to survive the very fault it is hunting."""
+    mapped = radio._linked_soapy()
+
+    assert isinstance(mapped, list)
+    assert all(isinstance(path, str) for path in mapped)
+    # No SoapySDR here, so nothing matches — and an empty answer is an answer.
+    assert not any("unreadable" in path for path in mapped)
+
+
+def test_asking_the_cxx_tool_survives_it_not_being_there() -> None:
+    """This runs in an environment with no SoapySDRUtil, which is the case the reading
+    has to survive: a diagnosis that raises while diagnosing is worse than none."""
+    said = radio._soapy_util("--find=driver=rtlsdr")
+
+    assert isinstance(said, str) and said
+    # Either the tool is absent (an OSError, named) or it ran and reported.
+    assert said.startswith("rc=") or "Error" in said
+
+
+def test_the_cxx_tool_is_never_invoked_through_a_shell() -> None:
+    """It runs as root beside the radio, so argv stays a list and the path stays
+    ours — never a string a shell would re-read."""
+    seen: dict[str, Any] = {}
+
+    def _fake_run(argv: list[str], **kwargs: Any) -> None:
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        raise OSError("not here")
+
+    original = radio.subprocess.run
+    radio.subprocess.run = _fake_run  # type: ignore[assignment]
+    try:
+        radio._soapy_util("--find=driver=rtlsdr")
+    finally:
+        radio.subprocess.run = original  # type: ignore[assignment]
+
+    assert seen["argv"] == [radio.SOAPY_UTIL, "--find=driver=rtlsdr"]
+    assert "shell" not in seen["kwargs"]
+    assert seen["kwargs"]["timeout"] == radio.UTIL_TIMEOUT_S
