@@ -884,6 +884,8 @@ class SessionInfo:
     #: back silently and keeps working, which is right, but an owner with no terminal
     #: then has no way to tell a fallback from a preference (CLAUDE.md #10).
     engine: str = "rtl_fm"
+    #: USB buffers dropped under this session. See `Session.overflows`.
+    overflows: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -899,6 +901,7 @@ class SessionInfo:
             "listeners": self.listeners,
             "sweep": self.sweep,
             "engine": self.engine,
+            "overflows": self.overflows,
         }
 
 
@@ -973,6 +976,13 @@ class Session:
         #: Which engine the running pipeline actually is. Written by whichever start
         #: path wins, so a runtime fallback is visible rather than inferred.
         self.engine = "rtl_fm"
+        #: USB buffers the driver threw away under this session, cumulative. The FIFO
+        #: filling means the samples either side of the gap are not adjacent in time —
+        #: on a waterfall that is one row slightly wrong, but on AUDIO it is a click,
+        #: which is why it became worth reporting only once the sound started coming
+        #: from our own stream. Stays zero on the `rtl_fm` path, which has no such
+        #: signal to give: libusb simply stops resubmitting and the drop is silent.
+        self.overflows = 0
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -1316,6 +1326,7 @@ class Session:
         try:
             while not self._stopping and held.alive:
                 reading = held.read(want)
+                self.overflows += reading.overflows
                 audio = chain.feed(reading.samples)
                 if audio.pcm.size:
                     chunk = audio.tobytes()
@@ -2221,6 +2232,7 @@ KISSPORT {self.kiss_port}
             serial=self.serial,
             sweep=self.sweep.as_dict() if self.sweep is not None else None,
             engine=self.engine,
+            overflows=self.overflows,
         )
 
 
