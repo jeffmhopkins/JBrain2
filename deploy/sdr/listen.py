@@ -56,7 +56,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import iq
 import packets
+import radio
 
 #: What the R820T2 TUNER reaches. Not the floor of the radio — see DIRECT_MIN_HZ.
 MIN_HZ = 24_000_000
@@ -145,6 +147,12 @@ SPECTRUM_QUEUE = 4
 # on — so this is where "any width" stops being free. A caller that wants more span
 # asks for coarser bins.
 SPECTRUM_MAX_BINS = 4096
+#: Segments Welch-averaged into one I/Q waterfall row. Eight trades a little time
+#: resolution for a floor steady enough to read a weak carrier off — the same averaging
+#: the F0 probe uses, and the reason its 99.3 MHz capture showed 29 dB of headroom
+#: rather than a noisy 10. It also sets the frame rate: `rate / (bins * 8)` is 73 fps at
+#: 2.4 MS/s and 4000 bins, so the limit on this path is the wire, never the radio.
+IQ_SEGMENTS = 8
 #: Whether `stdbuf` is here to make rtl_power's stdout line-buffered. Resolved once, at
 #: import, rather than per launch: it is a property of the image, and a `which` on every
 #: retune is a syscall for an answer that cannot have changed.
@@ -281,6 +289,17 @@ class SdrBusy(RuntimeError):
 
 class SdrError(RuntimeError):
     """The radio could not be tuned, or the pipeline could not start."""
+
+
+class RadioUnavailable(SdrError):
+    """The I/Q engine could not have the radio.
+
+    A KIND of `SdrError`, not a sibling: where it is not caught it must refuse like any
+    other sidecar failure — a subclass of `RuntimeError` would have escaped every
+    `except SdrError` on the way out and become a 500 with a traceback instead of a
+    sentence. It has its own name so the spectrum path can catch exactly this one and
+    fall back rather than refuse (CLAUDE.md #10: no terminal, so no revert-and-rebuild
+    to get a picture back), which a bare `except SdrError` would over-reach into."""
 
 
 class SessionGone(RuntimeError):
@@ -467,17 +486,24 @@ class Sweep:
 
     start_hz: int
     stop_hz: int
-    bin_hz: int
+    bin_hz: int | float
     seconds: float
+    #: The ONE-HOP capture the api chose for this range — `(rate_hz, bins)` — or None
+    #: when no single capture covers it and `rtl_power` must hop instead. Decided there
+    #: rather than here because `bands.LIVE_CAPTURES` is the band table, and a second
+    #: copy of it in the sidecar is two tables that will disagree. When it is present,
+    #: `bin_hz` is exactly `rate / bins` and the I/Q engine is what draws the picture.
+    capture: tuple[int, int] | None = None
 
     @staticmethod
     def of(
         start_hz: int,
         stop_hz: int,
-        bin_hz: int,
+        bin_hz: int | float,
         seconds: float,
         *,
         direct_ok: bool = False,
+        capture: tuple[int, int] | None = None,
     ) -> "Sweep":
         """`direct_ok` says WHICH ENGINE is asking, and it is the only thing that
         changes the floor.
@@ -522,8 +548,17 @@ class Sweep:
             # if one ever does not. Were that to slip, a frame would declare a bin width
             # the transform never used — worse than a refusal, because nothing downstream
             # can tell (§6.14).
-            bin_hz=max(MIN_SWEEP_BIN_HZ, min(int(bin_hz), MAX_SWEEP_BIN_HZ)),
+            # NOT clamped when the api named a capture: `rate / bins` is then the width
+            # the transform actually uses, and clamping it would make the frame declare
+            # a width nothing computed (§6.14). The clamp exists for rtl_power's tier,
+            # where the width is a request rather than a fact.
+            bin_hz=(
+                bin_hz
+                if capture is not None
+                else max(MIN_SWEEP_BIN_HZ, min(int(bin_hz), MAX_SWEEP_BIN_HZ))
+            ),
             seconds=max(1.0, min(float(seconds), MAX_SWEEP_SECONDS)),
+            capture=capture,
         )
 
     @property
@@ -537,23 +572,31 @@ class Sweep:
         return (self.start_hz + self.stop_hz) // 2
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "start_hz": self.start_hz,
             "stop_hz": self.stop_hz,
             "bin_hz": self.bin_hz,
             "seconds": self.seconds,
         }
+        if self.capture is not None:
+            out["rate_hz"], out["bins"] = self.capture
+        return out
 
 
 def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
     """Why the engine behind a live spectrum cannot draw that range, or None.
 
-    F8 opened the HF band rows one wave before F6 replaces this engine, so a shortwave
-    spectrum can now reach a tool that cannot serve one: `rtl_power -D` hardcodes direct
-    sampling mode 1, the I branch, and this hardware wires Q. The refusal belongs to the
-    ENGINE rather than to the route, because the same range is perfectly viewable the
-    moment F6 lands and a route-level floor would have to be found and removed again.
-    Delete this with the engine, not before (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6).
+    The refusal belongs to the ENGINE rather than to the route, and F6 is why that
+    distinction earned its keep: the same shortwave range that had to be refused while
+    `rtl_power` was the only engine is drawn by the I/Q one, and a route-level floor
+    would have had to be found and removed again. What is left is narrower and still
+    real — `rtl_power -D` hardcodes direct sampling mode 1, the ADC's I branch, and this
+    board wires Q, so a shortwave range too WIDE for one I/Q capture still has no engine
+    that can honestly draw it (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6, F8).
+
+    Whether anything is actually ARRIVING on shortwave is a separate question and
+    deliberately not asked here: F0 measured a dead HF input on this box, and that shows
+    up as an empty picture the owner can see rather than as a sentence about software.
 
     A SENTENCE RETURNED, not an exception raised, because the two callers refuse at
     different moments. Starting has nothing to lose, so `_start_spectrum_pipeline` can
@@ -561,13 +604,21 @@ def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
     `resweep` has to ask before `_restart` tears either of them down. One reading, two
     call sites — the alternative is the guard drifting into two floors that disagree.
     """
-    if sweep is not None and sweep.start_hz < MIN_HZ:
-        return (
-            f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs the I/Q engine, "
-            f"which this build does not have yet — the sweep tool cannot reach the "
-            f"ADC branch this radio wires. Listening there works."
-        )
-    return None
+    if sweep is None or sweep.start_hz >= MIN_HZ:
+        return None
+    if sweep.capture is not None:
+        # F6: the I/Q engine sets `direct_samp` at runtime and reaches the branch this
+        # board wires, so shortwave is the engine's to draw. Whether anything ARRIVES
+        # there is the antenna's business and shows up as an empty picture rather than
+        # as a refusal — F0 measured a dead HF input on this box, and a refusal would
+        # hide that behind a sentence about software instead of showing it.
+        return None
+    return (
+        f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs one capture the I/Q "
+        f"engine can draw, and this range needs several hops — which only the sweep "
+        f"tool does, and it cannot reach the ADC branch this radio wires. Listening "
+        f"there works."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,11 +638,15 @@ class Frame:
 
     at: float
     start_hz: int
-    bin_hz: int
+    # `int | float` since F6: the I/Q engine's width is `rate / bins`, which is exact
+    # for every pairing in `bands.LIVE_CAPTURES` and a float for anything else. Rounding
+    # it would make the frame declare a width the transform never used, and the PWA
+    # compares this value exactly (§6.13).
+    bin_hz: int | float
     db: list[float]
 
     @property
-    def stop_hz(self) -> int:
+    def stop_hz(self) -> int | float:
         return self.start_hz + len(self.db) * self.bin_hz
 
     def as_dict(self) -> dict[str, Any]:
@@ -789,6 +844,11 @@ class Session:
         # waterfall opens on a blank canvas for up to a whole interval, which reads as a
         # radio that did not start.
         self._last: Frame | None = None
+        # The I/Q engine's open radio and its transform, or None on the rtl_power path.
+        # `_kill` walks processes and this is not one, so teardown reaches it by name —
+        # and a Radio left open is exactly the leak `/reset` must not fire under.
+        self._radio: "radio.Radio | None" = None
+        self._spectrometer: "iq.Spectrometer | None" = None
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -978,17 +1038,42 @@ class Session:
         return [*cmd, "-"]
 
     def _start_spectrum_pipeline(self) -> None:
-        """One process and two threads: rows out of stdout, the retune plan out of
-        stderr. No encoder — there is no audio on this path at all."""
-        if shutil.which("rtl_power") is None:
-            raise SdrError("rtl_power is not installed in this image")
-        # The engine cannot draw shortwave until F6 lands. Asked here as well as in
-        # `resweep` because this is the START path — reached from `__init__`, where
-        # there is no session yet and nothing to lose by finding out late. A retune
-        # cannot afford that, which is why the reading lives in one function.
+        """Whichever engine can draw this range: the I/Q one first, rtl_power behind it.
+
+        The api names a one-hop capture when the band table has one, and that IS the
+        engine choice — the band table lives in one place and the sidecar executes what
+        it was handed (F6). A range too wide for one capture has no capture named, and
+        rtl_power hops it exactly as before.
+
+        **The fallback is a runtime one, and that is CLAUDE.md #10.** If the I/Q engine
+        cannot open the radio on this box, an owner with no terminal must not need a
+        revert and a rebuild to get a picture back — so a failure here drops to
+        rtl_power for any range rtl_power can serve, and says so in the log. Only a
+        range rtl_power cannot serve at all keeps the I/Q failure, because there the
+        alternative is not a worse picture but a false one."""
+        # Asked here as well as in `resweep` because this is the START path — reached
+        # from `__init__`, where there is no session yet and nothing to lose by finding
+        # out late. A retune cannot afford that, which is why the reading lives in one
+        # function.
         unservable = spectrum_engine_refusal(self.sweep)
         if unservable is not None:
             raise SdrError(unservable)
+        assert self.sweep is not None
+        if self.sweep.capture is not None:
+            try:
+                self._start_iq_spectrum()
+            except RadioUnavailable as failed:
+                if self.sweep.start_hz < MIN_HZ:
+                    raise
+                print(  # noqa: T201
+                    f"[spectrum] the I/Q engine would not start ({failed}); "
+                    f"falling back to rtl_power for this session",
+                    flush=True,
+                )
+            else:
+                return
+        if shutil.which("rtl_power") is None:
+            raise SdrError("rtl_power is not installed in this image")
         try:
             self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1002,6 +1087,67 @@ class Session:
         ]
         for thread in self._threads:
             thread.start()
+
+    def _start_iq_spectrum(self) -> None:
+        """Open the radio ourselves and transform its samples here. One thread.
+
+        No subprocess, so there is no CSV to parse, no `stdbuf` to trust and no hop
+        plan on stderr — and no `_rtl` either, which is why teardown has to reach this
+        handle explicitly rather than through `_kill`'s process loop."""
+        assert self.sweep is not None and self.sweep.capture is not None
+        rate_hz, bins = self.sweep.capture
+        centre = self.sweep.centre_hz
+        try:
+            self._radio = radio.Radio.open(
+                rate_hz=rate_hz,
+                center_hz=centre,
+                serial=self.serial,
+                direct=centre < radio.DIRECT_MAX_HZ,
+                doing=PURPOSE_LABEL[PURPOSE_SPECTRUM],
+            )
+        except radio.RadioBusy as busy:
+            raise RadioUnavailable(str(busy)) from busy
+        except radio.RadioError as failed:
+            raise RadioUnavailable(str(failed)) from failed
+        self._spectrometer = iq.Spectrometer(bins, rate_hz)
+        self._threads = [threading.Thread(target=self._pump_iq_spectrum, daemon=True)]
+        for thread in self._threads:
+            thread.start()
+
+    def _pump_iq_spectrum(self) -> None:
+        """Raw I/Q -> our own FFT -> every viewer, as fast as the radio delivers.
+
+        No interval and no sleep: `read` blocks until the samples exist, so the frame
+        rate is the capture's own — `rate / (bins * segments)` — rather than a number
+        this file picks. That is the whole point of owning the samples.
+
+        A read that fails ENDS the session's picture rather than retrying forever: the
+        radio is gone, or the stream stopped answering, and a waterfall that keeps
+        painting the last row is worse than one that stops."""
+        held, spectrometer = self._radio, self._spectrometer
+        if held is None or spectrometer is None:
+            return
+        want = spectrometer.n * IQ_SEGMENTS
+        try:
+            while not self._stopping and held.alive:
+                reading = held.read(want)
+                spectrum = spectrometer.frame(reading.samples, held.center_hz)
+                self._publish_frame(
+                    Frame(
+                        at=reading.at,
+                        start_hz=int(spectrum.start_hz),
+                        bin_hz=spectrum.bin_hz,
+                        # Unrounded: `as_dict` is where the wire's one decimal is
+                        # applied, and rounding twice just does the work twice while
+                        # denying any other reader the precision it was handed.
+                        db=spectrum.db_list(),
+                    )
+                )
+        except (radio.RadioError, ValueError):
+            pass  # a stop, or the radio went away; teardown is `_kill`'s job
+        finally:
+            if not self._restarting:
+                self._end_frames()
 
     def _pump_spectrum(self) -> None:
         """rtl_power's CSV -> whole frames -> every viewer."""
@@ -1511,6 +1657,14 @@ KISSPORT {self.kiss_port}
                 # radio, so park it and let `reap_survivors` keep trying.
                 _park(proc)
         self._rtl = self._enc = None
+        held, self._radio, self._spectrometer = self._radio, None, None
+        if held is not None:
+            # A close that FAILS keeps its registry entry inside `radio.py`, so the
+            # handle stays discoverable and `/reset` still refuses rather than firing a
+            # port reset under it. Nothing here can act on the failure, and raising
+            # would abort a teardown with a direwolf config still to unlink.
+            with contextlib.suppress(radio.RadioError):
+                held.close()
         # The per-session direwolf config would otherwise accumulate in /tmp for the
         # life of the container, one file per lease taken.
         with contextlib.suppress(OSError):
@@ -1680,6 +1834,12 @@ KISSPORT {self.kiss_port}
         while decoding nothing, and the owner's only clue would have been a log that
         stopped growing. `current()` reaps a dead session, so this is what turns a
         silent death into an idle radio the owner can see."""
+        # The I/Q engine holds a radio instead of running a process, so there is no
+        # `poll()` to ask and the process test would call a healthy session dead — after
+        # which `current()` reaps it and the waterfall it is feeding disappears. What
+        # "still doing its job" means there is the open device (F6).
+        if self._radio is not None:
+            return self._radio.alive
         if self._rtl is None or self._rtl.poll() is not None:
             return False
         return self._enc is None or self._enc.poll() is None

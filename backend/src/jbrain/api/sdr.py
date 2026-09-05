@@ -879,14 +879,33 @@ DEFAULT_SPECTRUM_BIN_HZ = 25_000
 #: ~3.6 kB, relayed on the api's own event loop and rounded bin by bin in pure Python,
 #: for a picture no finer than the tool's own `%.2f` bin width can honestly label.
 #: So the table's exact width is held back until the engine that produces it exists.
-SPECTRUM_ENGINE_IS_IQ = False
+#: Flipped by F6, which is what makes the exact width safe: `_span` now names the
+#: capture that produces it, `spectrum_start` and `spectrum_tune` send that capture to
+#: the sidecar, and the sidecar's I/Q engine is what transforms it. Set this back to
+#: False and every session returns to rtl_power's ladder in one line — the sidecar falls
+#: back on its own when a radio will not open (CLAUDE.md #10), so this is the deliberate
+#: switch rather than the safety net.
+SPECTRUM_ENGINE_IS_IQ = True
+
+
+def _capture_body(capture: tuple[int, int] | None) -> dict[str, int]:
+    """The capture as wire fields, or nothing at all.
+
+    Absent rather than null when there is no one-hop capture, so a sidecar that predates
+    F6 sees exactly the body it saw before and hops the range with rtl_power. The engine
+    choice travels as the presence of these two fields — there is no third state, and no
+    flag to keep in step on both sides."""
+    if capture is None:
+        return {}
+    rate_hz, bins = capture
+    return {"rate_hz": rate_hz, "bins": bins}
 
 
 def _span(
     section: str | None,
     start_mhz: float | None,
     stop_mhz: float | None,
-) -> tuple[int, int, int | float]:
+) -> tuple[int, int, int | float, tuple[int, int] | None]:
     """The range a live spectrum should cover, and the bin width that draws it.
 
     A section, or explicit edges: a section carries settings someone chose for that
@@ -928,17 +947,17 @@ def _span(
         # is the fact they most need said in words.
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
     if SPECTRUM_ENGINE_IS_IQ:
-        # F6 onwards: the width is ours, and the frame is exactly `rate / N` wide.
-        if found is not None and found.live_bin_hz:
-            return start_hz, stop_hz, found.live_bin_hz
+        # F6 onwards the width is ours, and the frame is exactly `rate / N` wide. The
+        # CAPTURE comes back with it rather than being re-derived by the caller, because
+        # the width and the engine that produces it have to be ONE decision: a width of
+        # `rate / N` handed to rtl_power is the 4097-column frame §6.4 describes.
         capture = bands.capture_for(start_hz, stop_hz)
         if capture is not None:
-            return start_hz, stop_hz, bands.bin_width_hz(*capture)
-    # rtl_power's tier — today that is every tier, and after F6 only the spans too wide
-    # for one capture: several hops, one row a second, and a bin width the tool picks
-    # off its own power-of-two ladder.
+            return start_hz, stop_hz, bands.bin_width_hz(*capture), capture
+    # rtl_power's tier — after F6 only the spans too wide for one capture: several hops,
+    # one row a second, and a bin width the tool picks off its own power-of-two ladder.
     want = found.sweep_bin_hz if found is not None else DEFAULT_SPECTRUM_BIN_HZ
-    return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want)
+    return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want), None
 
 
 @router.post("/spectrum")
@@ -957,21 +976,19 @@ async def spectrum_start(
     Naming none takes a GENERAL radio, like the tuner: one the owner reserved for a
     service is not one a waterfall may borrow because that service is momentarily idle.
     Naming one is the launcher asking for THAT radio."""
-    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz)
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
-    return await _post(
-        settings,
-        "/listen/start",
-        {
-            "purpose": SPECTRUM_PURPOSE,
-            "start_hz": start_hz,
-            "stop_hz": stop_hz,
-            "bin_hz": chosen_bin,
-            "gain": gain,
-            "serial": chosen.serial,
-        },
-    )
+    body: dict[str, Any] = {
+        "purpose": SPECTRUM_PURPOSE,
+        "start_hz": start_hz,
+        "stop_hz": stop_hz,
+        "bin_hz": chosen_bin,
+        "gain": gain,
+        "serial": chosen.serial,
+    }
+    body.update(_capture_body(capture))
+    return await _post(settings, "/listen/start", body)
 
 
 @router.post("/spectrum/tune")
@@ -988,12 +1005,13 @@ async def spectrum_tune(
     Not stop-and-start: releasing the radio between two bands is a window in which
     anything else may take it, and the owner would find their waterfall gone because
     they changed band. The session id survives, so the picture does not blink."""
-    start_hz, stop_hz, chosen_bin = _span(section, start_mhz, stop_mhz)
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
     body: dict[str, Any] = {
         "start_hz": start_hz,
         "stop_hz": stop_hz,
         "bin_hz": chosen_bin,
     }
+    body.update(_capture_body(capture))
     if session_id is not None:
         body["session_id"] = session_id
     return await _post(settings, "/listen/tune", body)
