@@ -204,21 +204,95 @@ export function reduce(db: readonly number[], columns: number, extent = 0): Floa
   return out;
 }
 
+export function stackFor(fps: number | null, displayRows: number): number {
+  /* How many arriving rows share one row of pixels.
+   *
+   *  `HISTORY_SECONDS` of a 10 fps stream is 1800 rows and a phone shows about 440
+   *  device pixel rows, so the picture is squeezed about four to one — and until this
+   *  existed that squeeze was `drawImage`'s to make. Which is the twinkle `reduce`
+   *  already argues about, on the other axis: the browser blends whichever source rows
+   *  its filter phase lands on, the content shifts one row every frame, so the blend
+   *  membership rotates and a row whose numbers never moved is drawn differently each
+   *  time. MEASURED by the owner, twice: "cycles of pixels changing as scroll happens".
+   *
+   *  Deciding it here makes the vertical what the horizontal already is — a reduction
+   *  with a rule — and lets the draw be 1:1, which is the only thing that makes a
+   *  SCROLLING picture stable. A constant scale factor is not enough: it fixes the
+   *  mapping, but the data moves through it. */
+  if (displayRows <= 0) return 1;
+  const wanted = Math.round(HISTORY_SECONDS * Math.min(fps ?? ASSUMED_FPS, MAX_FPS));
+  return Math.max(1, Math.round(wanted / displayRows));
+}
+
+export function holdInto(
+  into: Float64Array,
+  db: readonly number[],
+  columns: number,
+  extent = 0,
+): Float64Array {
+  /* One row max-held into an accumulator, for the rows that share a pixel row.
+   *
+   *  Max rather than mean for the reason `reduce` gives about bins: a carrier present
+   *  in one of four rows is the thing being looked for, and a mean buries it. */
+  const reduced = reduce(db, columns, extent);
+  for (let x = 0; x < columns; x += 1) {
+    const value = reduced[x] as number;
+    const held = into[x] as number;
+    if (value > held) into[x] = value;
+  }
+  return into;
+}
+
+export function shadeRow(
+  reduced: Float64Array,
+  columns: number,
+  scale: Scale,
+): Uint8ClampedArray<ArrayBuffer> {
+  /* One already-reduced row into one row of pixels.
+   *
+   *  Split out because the live path now arrives holding a max-held accumulator rather
+   *  than a `SpectrumRow`: the rows sharing a pixel row are reduced as they land, so
+   *  the ring is written once per pixel row instead of once per measurement. */
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(columns * 4));
+  for (let x = 0; x < columns; x += 1) {
+    const value = reduced[x] as number;
+    // A column no bin reached is a frame that lost a block. Left transparent, because
+    // painting its floor colour would claim a measurement that was not taken.
+    if (!Number.isFinite(value)) continue;
+    const [r, g, b] = shade(value, scale);
+    const at = x * 4;
+    pixels[at] = r;
+    pixels[at + 1] = g;
+    pixels[at + 2] = b;
+    pixels[at + 3] = 255;
+  }
+  return pixels;
+}
+
 export function paint(
   rows: readonly SpectrumRow[],
   columns: number,
   height: number,
   scale: Scale,
   extent = 0,
+  stack = 1,
 ): Uint8ClampedArray<ArrayBuffer> {
   // An explicit ArrayBuffer, not the default: `ImageData` refuses a view that might sit
   // on a SharedArrayBuffer, and the inferred type is the union of both.
   const pixels = new Uint8ClampedArray(new ArrayBuffer(columns * height * 4));
-  for (let age = 0; age < height && age < rows.length; age += 1) {
+  const deep = Math.max(1, Math.floor(stack));
+  for (let age = 0; age < height && age * deep < rows.length; age += 1) {
     // `age` counts back from the live edge; `y` puts it that far above the bottom.
     const y = height - 1 - age;
-    const row = rows[age] as SpectrumRow;
-    const reduced = reduce(row.db, columns, extent);
+    // The `deep` arriving rows that share this pixel row, max-held together — the
+    // vertical twin of `reduce`, and for the same reason: a reduction the browser would
+    // otherwise make with its resampler's phase instead of with the measurements.
+    const reduced = new Float64Array(columns).fill(Number.NEGATIVE_INFINITY);
+    for (let n = 0; n < deep; n += 1) {
+      const row = rows[age * deep + n];
+      if (row === undefined) break;
+      holdInto(reduced, row.db, columns, extent);
+    }
     for (let x = 0; x < columns; x += 1) {
       // A column no bin reached is a frame that lost a block. Left transparent, because
       // painting its floor colour would claim a measurement that was not taken.

@@ -941,8 +941,35 @@ convention, and not a preference: a carrier occupying one bin of five is the thi
 looked for, and a mean buries it four fifths of the way into the noise. It gathers per
 column rather than scattering per bin, so a narrow band on a wide display cannot come out
 striped. The ring is unwrapped 1:1 into a scratch canvas and drawn **once**, at a scale
-that does not depend on the head. What is on screen can then only change when the
-measurements do, which is what the owner asked for.
+that does not depend on the head.
+
+#### That fixed half of it, and the claim that it fixed all of it was wrong
+
+The sentence this section used to end on — *"what is on screen can then only change when
+the measurements do"* — did not survive the owner looking again. Zoomed in, the picture
+still "goes through cycles of pixels changing as scroll happens".
+
+Because **a constant scale factor is not the same as a stable picture.** It fixes the
+mapping; the data moves through it. `HISTORY_SECONDS` of a 10 fps stream is 1800 rows and
+the box shows a few hundred device pixel rows, so the vertical draw was a ~4:1 downscale —
+and every frame each row shifts down one source row, so which four rows a display pixel
+blends **rotates**, and a row whose numbers never moved is drawn differently each time.
+The period of that rotation is the beat between the two heights, which is exactly the
+"cycles" reported.
+
+Which is `reduce`'s own argument, on the axis nobody had applied it to: *the pixel's value
+must depend on the measurement, not on a resampling decision.* So the vertical is now a
+reduction with a rule, like the horizontal. `stackFor` says how many arriving rows share a
+pixel row; they are **max-held** into one (a carrier present in one row of four is the
+thing being looked for, and a mean buries it); the ring is the display's height, one slot
+per pixel row; and the draw is **1:1 on both axes with smoothing off**. A scrolling
+picture is stable in that arrangement and in no other.
+
+No row is dropped to achieve it — a partial group waits in an accumulator and reaches the
+picture when it completes, so the three minutes of history survive a display that has no
+1800 pixel rows to put them in. It also fixed a pre-layout bug found on the way: the ring
+is sized from `clientHeight`, which is 0 until the box is laid out, so the picture was
+briefly built one pixel tall and regrouped when layout arrived.
 
 ### The settle is measured now, not assumed
 
