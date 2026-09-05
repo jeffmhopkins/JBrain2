@@ -25838,6 +25838,10 @@ button.task-band:active {
   border-left-style: dashed;
   opacity: 0.5;
 }
+.wf-mark b.flip {
+  left: auto;
+  right: 3px;
+}
 .wf-mark b {
   position: absolute;
   top: 2px;

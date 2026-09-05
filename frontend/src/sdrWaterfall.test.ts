@@ -16,6 +16,7 @@ import {
   historyRows,
   paint,
   reduce,
+  rowPixelsFor,
   shade,
 } from "./sdrWaterfall";
 
@@ -275,5 +276,31 @@ describe("reduce", () => {
     const columns = reduce(db, 37);
 
     expect(Math.max(...columns)).toBe(-10);
+  });
+});
+
+describe("how tall one measurement row is drawn", () => {
+  it("gives a slow stream whole pixels rather than one", () => {
+    // MEASURED by the owner: at one row a second on the FM dial, one device pixel per
+    // row left the picture nearly empty — seven minutes to fill a phone's height, where
+    // the ring it replaced showed the same forty seconds two and a half times taller.
+    expect(rowPixelsFor(180, 440)).toBe(2);
+  });
+
+  it("is always an integer, which is what keeps the draw 1:1", () => {
+    // A fractional row height resamples on every scroll, which is the twinkle.
+    for (const wanted of [7, 40, 180, 900, 1800]) {
+      const px = rowPixelsFor(wanted, 440);
+      expect(Number.isInteger(px)).toBe(true);
+      expect(px).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("never goes below one, however much history is wanted", () => {
+    expect(rowPixelsFor(5000, 440)).toBe(1);
+  });
+
+  it("does not draw fat blocks for a very slow stream", () => {
+    expect(rowPixelsFor(1, 440)).toBeLessThanOrEqual(4);
   });
 });

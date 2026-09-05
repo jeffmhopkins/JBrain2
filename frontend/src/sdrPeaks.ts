@@ -94,3 +94,34 @@ export function positionOf(hz: number, row: SpectrumRow): number | null {
 export function visiblePeaks(held: readonly HeldPeak[], mode: "live" | "held"): HeldPeak[] {
   return mode === "live" ? held.filter((peak) => peak.live) : [...held];
 }
+
+/** How much of the picture's width one label needs to itself. A frequency is six
+ *  characters at micro size, which on a phone's 360 CSS pixels is about a twelfth of the
+ *  span — so anything closer than this overlaps the one beside it. */
+const LABEL_SHARE = 0.085;
+
+/** Which markers get to carry their frequency.
+ *
+ *  MEASURED by the owner, on the FM dial in a city: fourteen stations across 20 MHz put
+ *  labels on top of each other, and the middle of the band read as
+ *  `99 30001309106 923 66204.105…` — text that is worse than no text, because it looks
+ *  like a measurement.
+ *
+ *  Every marker keeps its LINE. Only the label is rationed, strongest first, so what a
+ *  glance can read is the loudest thing in each part of the band and the rest are still
+ *  drawn where they are. The list underneath carries all of them, which is what a label
+ *  is short for anyway. */
+export function labelled(
+  placed: readonly { peak: { hz: number; db: number }; at: number }[],
+): Set<number> {
+  const taken: number[] = [];
+  const out = new Set<number>();
+  // Strongest first so a crowded stretch keeps the signal worth naming, rather than
+  // whichever of them happens to sit furthest left.
+  for (const { peak, at } of [...placed].sort((a, b) => b.peak.db - a.peak.db)) {
+    if (taken.some((other) => Math.abs(other - at) < LABEL_SHARE)) continue;
+    taken.push(at);
+    out.add(peak.hz);
+  }
+  return out;
+}

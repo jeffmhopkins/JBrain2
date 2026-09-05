@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { type HeldPeak, mergePeaks, positionOf, visiblePeaks } from "./sdrPeaks";
+import { type HeldPeak, labelled, mergePeaks, positionOf, visiblePeaks } from "./sdrPeaks";
 import type { SpectrumRow } from "./sdrSpectrum";
 
 function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): SpectrumRow {
@@ -117,5 +117,39 @@ describe("placing a marker on the picture", () => {
     // signal at a frequency that was never measured.
     expect(positionOf(50_000_000, row([]))).toBeNull();
     expect(positionOf(200_000_000, row([]))).toBeNull();
+  });
+});
+
+describe("which markers carry their frequency", () => {
+  const at = (hz: number, db: number, position: number) => ({
+    peak: { hz, db },
+    at: position,
+  });
+
+  it("drops a label that would sit on top of its neighbour", () => {
+    // MEASURED by the owner on a city FM dial: fourteen stations across 20 MHz put
+    // labels on top of each other and the middle read as `99 30001309106 923 66204.105…`
+    // — text that is worse than none, because it looks like a measurement.
+    const named = labelled([
+      at(100_000_000, -40, 0.5),
+      at(100_100_000, -50, 0.52),
+      at(100_200_000, -60, 0.54),
+    ]);
+
+    expect(named.size).toBe(1);
+    expect(named.has(100_000_000)).toBe(true);
+  });
+
+  it("keeps the strongest when a stretch is crowded, not the leftmost", () => {
+    // What a glance should read is the loudest thing in that part of the band.
+    const named = labelled([at(100_000_000, -70, 0.5), at(100_100_000, -30, 0.52)]);
+
+    expect([...named]).toEqual([100_100_000]);
+  });
+
+  it("labels everything when there is room", () => {
+    const named = labelled([at(100_000_000, -40, 0.1), at(105_000_000, -50, 0.9)]);
+
+    expect(named.size).toBe(2);
   });
 });

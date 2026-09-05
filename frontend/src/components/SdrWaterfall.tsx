@@ -35,7 +35,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { khz, mhz } from "../mhz";
-import { type HeldPeak, mergePeaks, positionOf, visiblePeaks } from "../sdrPeaks";
+import { type HeldPeak, labelled, mergePeaks, positionOf, visiblePeaks } from "../sdrPeaks";
 import {
   type SpectrumRow,
   type SpectrumState,
@@ -48,8 +48,10 @@ import {
   calibrate,
   calibrated,
   frameRate,
+  historyRows,
   holdInto,
   paint,
+  rowPixelsFor,
   shadeRow,
   stackFor,
 } from "../sdrWaterfall";
@@ -138,6 +140,9 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     let stack = 1;
     let pending: Float64Array | null = null;
     let pendingCount = 0;
+    // Device pixel rows per measurement row. An INTEGER, so the draw stays a whole-pixel
+    // scale and a scroll still cannot resample it — see `rowPixelsFor`.
+    let rowPx = 1;
 
     const fit = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -175,7 +180,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // shifts down one source row each frame, so a filter's blend membership rotates
       // and a row whose numbers never changed is drawn differently each time.
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(flat, 0, 0, bins, rows, 0, 0, canvas.width, canvas.height);
+      // An INTEGER scale, anchored at the BOTTOM where the newest row is: `rows * rowPx`
+      // can fall a pixel or two short of the canvas, and the slack belongs at the top
+      // where the oldest history is rather than under the live edge.
+      const tall = rows * rowPx;
+      ctx.drawImage(flat, 0, 0, bins, rows, 0, canvas.height - tall, canvas.width, tall);
     };
 
     // One paint a frame at most. `frame` doubles as the "already asked" flag, so rows
@@ -241,7 +250,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // The offscreen is display-width, so a resize changes what a column means. The
       // ring cannot be rescaled without inventing measurements, and `history` is
       // exactly what it is kept for.
-      if (reshape(Math.max(1, canvas.width), Math.max(1, canvas.height))) repaint();
+      // The ring's row count follows the canvas through `rowPx`, which the next row
+      // recomputes; a resize only has to make the WIDTH right, since a column's meaning
+      // changes with it and the ring cannot be rescaled without inventing measurements.
+      if (reshape(Math.max(1, canvas.width), Math.max(1, Math.floor(canvas.height / rowPx))))
+        repaint();
       show();
     };
     fit();
@@ -275,10 +288,17 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // The measured rate drifts by a percent or two between frames, and re-grouping for
       // that would repaint the whole picture every row for a change nobody can see. Only
       // a real move is worth it: a tier change is a factor of ten.
-      const deep = stackFor(rate, Math.max(1, canvas.height));
+      const displayRows = Math.max(1, canvas.height);
+      const wanted = historyRows(rate, row.db.length);
+      // A row gets whole pixels, and the ring is however many of those fit. One device
+      // pixel per row is 1:1 and also unreadable at a row a second, which is what the
+      // owner saw: a picture that takes seven minutes to fill.
+      const nextRowPx = rowPixelsFor(wanted, displayRows);
+      const nextRows = Math.max(1, Math.floor(displayRows / nextRowPx));
+      const deep = stackFor(rate, nextRows);
       const regroup = stack === 0 || Math.abs(deep - stack) > Math.max(1, stack / 4);
       const nextStack = regroup ? deep : stack;
-      const keep = nextStack * Math.max(1, canvas.height);
+      const keep = nextStack * nextRows;
       if (history.length > keep) history.length = keep;
       const said = rate === null ? null : Math.round(rate);
       if (said !== saidFps) {
@@ -292,9 +312,13 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // bins to columns itself (max-hold), so nothing downstream has to guess which of
       // five bins a pixel means. A resize therefore reshapes and repaints, which is the
       // cost of that — paid on a resize rather than on every frame.
-      let full = reshape(Math.max(1, canvas.width), Math.max(1, canvas.height));
+      let full = reshape(Math.max(1, canvas.width), nextRows);
       if (nextStack !== stack) {
         stack = nextStack;
+        full = true;
+      }
+      if (nextRowPx !== rowPx) {
+        rowPx = nextRowPx;
         full = true;
       }
       // A band's widest row is its extent: a frame that lost a block is short, and the
@@ -351,6 +375,9 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
         .map((peak) => ({ peak, at: positionOf(peak.hz, band) }))
         .filter((m): m is { peak: HeldPeak; at: number } => m.at !== null)
     : [];
+  // Every marker keeps its line; only the labels are rationed, because on a city FM dial
+  // fourteen of them across 20 MHz overlap into text that looks like a measurement.
+  const named = labelled(placed);
   return (
     <div className="wf">
       <div className="wf-stack">
@@ -373,7 +400,12 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
                 className={peak.live ? "wf-mark" : "wf-mark held"}
                 style={{ left: `${at * 100}%` }}
               >
-                <b>{mhz(peak.hz)}</b>
+                {/* Past the right edge the label hangs to the LEFT of its line, or it
+                    would run off the picture — which is what the far right of a full
+                    dial did. */}
+                {named.has(peak.hz) ? (
+                  <b className={at > 0.82 ? "flip" : undefined}>{mhz(peak.hz)}</b>
+                ) : null}
               </span>
             ))}
           </div>
