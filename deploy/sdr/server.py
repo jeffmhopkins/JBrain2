@@ -621,14 +621,19 @@ class Handler(BaseHTTPRequestHandler):
 
         Each row carries its own range (`listen.Frame`), so the api relays lines without
         understanding them and a retune needs no message of its own."""
-        session = TUNER.for_purpose(PURPOSE_SPECTRUM)
+        # Whichever session is DRAWING, not only a spectrum one: a listening session on
+        # the I/Q engine publishes the tuning view of the channel it is demodulating
+        # through this same seam, because it is the same `Frame` measured off the same
+        # samples. Each row says which band it covers, so a reader needs no warning
+        # that it is now looking at 32 kHz of one channel rather than 20 MHz of a dial.
+        session = TUNER.drawing()
         if session is None:
             held = TUNER.sessions()
             if held:
                 # Name the holder rather than saying "idle", which is false and sends
                 # the owner looking for a radio that is plainly in use.
                 doing = PURPOSE_LABEL.get(held[0].purpose, "in use")
-                detail = f"the radio is {doing}, not watching the spectrum"
+                detail = f"the radio is {doing} and is not drawing anything"
                 self._json(409, {"detail": detail})
                 return
             self._json(409, {"detail": "nothing is watching the spectrum"})

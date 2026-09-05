@@ -40,6 +40,7 @@ def _load():
 
 listen = _load()
 usbdev = importlib.import_module("usbdev")
+demod = importlib.import_module("demod")
 
 
 class _FakeProc:
@@ -2518,3 +2519,204 @@ def test_a_sweep_carries_its_hop_count_on_the_wire() -> None:
     assert swept.hops == 11
     assert swept.as_dict()["hops"] == 11
     assert listen.Sweep.of(144e6, 148e6, 5000, 60).hops == 1
+
+
+# --- the I/Q listening path: one radio, audio AND the tuning view --------------------
+#
+# The pipeline is faked at the RADIO seam here rather than the subprocess one, because
+# that is the seam this path actually has. `radio.py` and `demod.py` are each tested
+# against their own fakes and synthetic signals; what is left for these — and what
+# nothing else can catch — is the WIRING: that the radio is opened above the station by
+# the offset the demodulator snapped to, that the audio reaches the encoder, that the
+# tuning row is centred on the station rather than on the radio, and that a box where
+# the I/Q engine will not start still gets sound.
+
+
+class _FakeRadio:
+    """A radio that hands back an FM carrier, and remembers how it was tuned."""
+
+    def __init__(self, center_hz: int, *, station_hz: int) -> None:
+        self.center_hz = center_hz
+        self.alive = True
+        self.closed = False
+        self.reads = 0
+        # The station sits `center - station` BELOW the radio's centre, which is what
+        # the demodulator's mixer has to take back out.
+        self._offset = station_hz - center_hz
+        self._phase = 0.0
+
+    def read(self, samples: int):
+        self.reads += 1
+        n = int(samples)
+        t = (np.arange(n, dtype=np.float64) + self._phase) / listen.LISTEN_CAPTURE_HZ
+        self._phase += n
+        # A carrier at the station, deviated by a 1 kHz tone: something the
+        # discriminator can actually recover, so silent audio means a broken chain.
+        freq = self._offset + 3_000.0 * np.sin(2.0 * np.pi * 1_000.0 * t)
+        phase = 2.0 * np.pi * np.cumsum(freq) / listen.LISTEN_CAPTURE_HZ
+        return listen.radio.Reading(
+            samples=np.exp(1j * phase).astype(np.complex64),
+            at=time.time(),
+            reads=1,
+            overflows=0,
+            timeouts=0,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+        self.alive = False
+
+
+@pytest.fixture
+def iq_tuner(monkeypatch: pytest.MonkeyPatch):
+    """A Tuner whose listening sessions get the I/Q engine and a synthetic radio."""
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+    opened: list[_FakeRadio] = []
+
+    def _open(*, center_hz: int, **kwargs: Any) -> _FakeRadio:
+        # 146.94 is what every test here tunes to; the fake needs to know where the
+        # station is to put a carrier there.
+        made = _FakeRadio(center_hz, station_hz=kwargs.pop("station_hz", 146_940_000))
+        opened.append(made)
+        return made
+
+    monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+    tuner = listen.Tuner()
+    tuner.opened = opened  # type: ignore[attr-defined]
+    return tuner
+
+
+def _wait_for(predicate, timeout: float = 4.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_the_iq_engine_takes_the_listen_session(iq_tuner) -> None:
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        assert info.engine == "iq"
+        assert info.as_dict()["engine"] == "iq"
+    finally:
+        iq_tuner.stop()
+
+
+def test_the_radio_is_tuned_above_the_station_by_the_snapped_offset(iq_tuner) -> None:
+    """The offset the MIXER settled on, not the one that was requested.
+
+    `_Mixer` rounds to a whole division of the sample rate so its tone is a short
+    repeating table. Opening the radio at the requested offset while mixing by the
+    snapped one leaves the station a few kHz off centre — which on a narrowband channel
+    is silence, from code that looks right in both places."""
+    iq_tuner.start(146_940_000, "fm", None)
+    try:
+        chain = demod.Demodulator("fm", listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ))
+        assert iq_tuner.opened[0].center_hz == 146_940_000 + int(chain.offset_hz)
+    finally:
+        iq_tuner.stop()
+
+
+def test_audio_reaches_the_encoder(iq_tuner) -> None:
+    """The whole reason the output format was kept: ffmpeg is unchanged."""
+    written: list[bytes] = []
+
+    class _Recorder(_Sink):
+        def write(self, b: bytes) -> int:
+            written.append(bytes(b))
+            return len(b)
+
+    class _RecordingProc(_FakeProc):
+        def __init__(self, *a: Any, **k: Any) -> None:
+            super().__init__(*a, **k)
+            self.stdin = _Recorder()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(listen.subprocess, "Popen", _RecordingProc)
+        iq_tuner.start(146_940_000, "fm", None)
+        try:
+            assert _wait_for(lambda: sum(len(c) for c in written) > 3_000)
+            # int16 mono: an odd byte count would mean a sample was cut in half.
+            assert sum(len(c) for c in written) % 2 == 0
+        finally:
+            iq_tuner.stop()
+
+
+def test_the_level_meter_hears_the_carrier(iq_tuner) -> None:
+    """A silent meter on a fully-modulated carrier is the symptom of every wiring
+    mistake in this path at once — wrong offset, dead mixer, filters not connected."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert _wait_for(lambda: session.audio_peak > 0.1)
+        assert session.audio_peak <= 1.0
+    finally:
+        iq_tuner.stop()
+
+
+def test_the_tuning_row_is_centred_on_the_station(iq_tuner) -> None:
+    """Centred on what is being LISTENED to, not on where the radio is pointed.
+
+    The radio sits 240 kHz above the station; the mixer takes that back out, so the
+    baseband — and every row measured from it — is about the station."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        sub = session.subscribe_frames()
+        frame = sub.get(timeout=5)
+        assert frame is not None
+        middle = frame.start_hz + (frame.stop_hz - frame.start_hz) / 2
+        assert middle == pytest.approx(146_940_000, abs=frame.bin_hz)
+    finally:
+        iq_tuner.stop()
+
+
+def test_the_tuning_row_is_cropped_to_twice_the_passband(iq_tuner) -> None:
+    """The span the mock settled on, and the passband the picture shades.
+
+    A narrowband channel is 16 kHz of a 48 kHz IF, so the row is the middle 32 kHz —
+    which makes the shaded band exactly the middle half, whatever the mode."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        frame = session.subscribe_frames().get(timeout=5)
+        assert frame is not None
+        assert frame.passband_hz == pytest.approx(16_000.0)
+        span = frame.stop_hz - frame.start_hz
+        assert span == pytest.approx(2 * frame.passband_hz, rel=0.05)
+        assert frame.as_dict()["passband_hz"] == pytest.approx(16_000.0)
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_listening_session_is_what_the_frames_route_finds(iq_tuner) -> None:
+    """Before this the frames route only looked for a spectrum session, so the one
+    surface that most wants a picture was the one that could not be given one."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None and session.draws_frames
+        assert iq_tuner.drawing() is session
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_box_where_the_iq_engine_will_not_start_still_gets_audio(
+    monkeypatch: pytest.MonkeyPatch, tuner
+) -> None:
+    """CLAUDE.md #10 in a test. The owner has no terminal, so a build where SoapySDR
+    cannot open the dongle must not need a revert to get sound back — it drops to
+    rtl_fm, keeps working, and SAYS which engine it is on."""
+    info = tuner.start(146_940_000, "fm", None)
+    try:
+        assert info.engine == "rtl_fm"
+        assert tuner.drawing() is None  # rtl_fm draws nothing, and does not pretend to
+    finally:
+        tuner.stop()

@@ -23,7 +23,15 @@ import {
 function row(db: number[], startHz = 144_000_000, binHz = 25_000): SpectrumRow {
   // No peaks: this file is about the COLOUR arithmetic, and a fixture that carried
   // findings would be asserting on a rule tested where it lives (test_sdr_peaks.py).
-  return { at: 0, startHz, stopHz: startHz + db.length * binHz, binHz, db, peaks: [] };
+  return {
+    at: 0,
+    startHz,
+    stopHz: startHz + db.length * binHz,
+    binHz,
+    db,
+    peaks: [],
+    passbandHz: 0,
+  };
 }
 
 /** `count` rows a `gap` apart on the box clock, NEWEST FIRST — the order the waterfall

@@ -30,7 +30,7 @@
       "y": 0,
       "w": 390,
       "h": 844,
-      "title": "Until it is wired"
+      "title": "Fallback engine"
     }
   ],
   "annotations": [
@@ -60,7 +60,7 @@
       "x": 1470,
       "y": -250,
       "w": 390,
-      "text": "SETTLED, not a fork. deploy/sdr/demod.py demodulates the same I/Q the waterfall is drawn from: 10% of one core for narrow FM audio + the full waterfall + this strip, 16% for wide FM. So one radio does all three. This artboard is only the interim state, until that engine replaces the rtl_fm subprocess in listen.py."
+      "text": "SETTLED AND SHIPPED. deploy/sdr/demod.py demodulates the same I/Q the strip is drawn from - 10% of one core for narrow FM audio plus the full waterfall plus this strip - and listen.py now runs it. This artboard is the FALLBACK: if the box cannot open the dongle for its own samples it drops to rtl_fm, which demodulates out of reach, and the screen says so rather than leaving a gap."
     }
   ],
   "launch": {

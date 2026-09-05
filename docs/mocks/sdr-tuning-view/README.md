@@ -70,8 +70,11 @@ The strip is better than free. `Audio.baseband` is the decimated complex stream,
 the whole 2.4 MHz capture, at 0.15 ms. The narrow view is not a zoom into the wideband
 row; it is a sharper picture that the wideband row cannot produce.
 
-`Unavailable.dc.html` stays as the **interim** state: until that engine replaces the
-`rtl_fm` subprocess in `listen.py`, the strip really does need the second radio.
+That engine is now wired into `listen.py`, so the strip comes off the radio you are
+already listening on. `Unavailable.dc.html` stays as the **fallback** state: if the box
+cannot open the dongle for its own samples it drops to `rtl_fm`, which demodulates out
+of reach, and the Listen screen says so rather than leaving a gap where a picture
+should be.
 
 ## Regenerating
 

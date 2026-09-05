@@ -23,6 +23,7 @@ function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): Spect
     stopHz: 108_000_000,
     binHz,
     db: [],
+    passbandHz: 0,
     peaks: peaks.map((p) => ({ ...p, overDb: 12 })),
   };
 }

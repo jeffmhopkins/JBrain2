@@ -26186,3 +26186,85 @@ button.wf-sigpill {
 .radio-reset:disabled {
   opacity: 0.4;
 }
+
+/* --- The tuning view (docs/mocks/sdr-tuning-view) --------------------------------- */
+/* A short spectrum of the CHANNEL being listened to, drawn from the same samples the
+   audio is demodulated from. The label carries the span and the passband because both
+   are mode-dependent — a narrowband channel is a third of its 48 kHz IF, a broadcast
+   station three quarters of its 240 kHz one — so neither can be printed in the markup. */
+.tv-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tv-span {
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.tv-chart {
+  position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  /* The canvas is an inline element by default, so its line box leaves a few pixels of
+     background below it that read as a misaligned border. */
+  line-height: 0;
+}
+.tv-chart canvas {
+  display: block;
+  width: 100%;
+  height: 78px;
+}
+/* Inset on the picture rather than given a row of its own, the same move
+   `.sdr-face-elapsed` makes on the tape: it is a reading about the chart, and the
+   corner it sits in is one the trace does not reach. */
+.tv-lvl {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  z-index: 1;
+  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.tv-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.tv-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 2px 0;
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Amber, not the accent: it reports a condition to act on rather than offering a
+   choice, and it is the only control on this surface that appears because something
+   is wrong. */
+.tv-nudge {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
+  padding: 3px 9px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-pill);
+  background: var(--amber-tint);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+}

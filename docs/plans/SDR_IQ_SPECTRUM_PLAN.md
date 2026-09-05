@@ -1279,10 +1279,29 @@ for a tenth of a core. Three findings worth carrying:
    have a real RF level to build a squelch on, which `rtl_fm`'s audio-level one never
    had.
 
-What is left is the wiring, not the physics: a session that opens one `Radio` and feeds
-both `Spectrometer` and `Demodulator`, replacing the `rtl_fm` subprocess at that single
-`read`. The **narrow tuning view** (`docs/mocks/sdr-tuning-view/`) is the first surface
-that wants it.
+**Wired the same day.** A listening session now opens one `Radio`, feeds
+`Demodulator` and a 512-bin `Spectrometer` off the same buffer, and writes PCM into the
+unchanged ffmpeg pipe (`listen.Session._start_iq_listen` / `_pump_iq_listen`). Three
+things carry the design:
+
+- **A runtime fallback to `rtl_fm`**, exactly as `_start_spectrum_pipeline` falls back
+  to `rtl_power` and for the same reason: an owner with no terminal must not need a
+  revert and a rebuild to get AUDIO back. `SessionInfo.engine` says which one is
+  running, because a silent fallback is right and an invisible one is not.
+- **Offset tuning.** The radio sits `LISTEN_OFFSET_HZ` above the station and the mixer
+  takes it back out, so the RTL2832U's own DC/LO spike is not sitting on the carrier —
+  or in the middle of the tuning view drawn from the same samples. `Demodulator` snaps
+  the offset to a whole division of the rate and REPORTS what it snapped to; opening
+  the radio at the requested offset while mixing by the snapped one is silence on a
+  narrowband channel, from code that looks right in both places.
+- **The frames route follows the drawing, not the purpose.** `Tuner.drawing()` prefers
+  a spectrum session and falls back to any session publishing rows, so the listening
+  radio's channel view reaches the same stream. `Frame.passband_hz` is what tells a
+  band row from a channel row on the wire — zero on a band — and the PWA requires it
+  before drawing a row as a tuning view.
+
+The surface is `frontend/src/components/SdrTuningView.tsx`, reading the row through
+`sdrTuning.ts`; the binding spec is `docs/mocks/sdr-tuning-view/`.
 
 **A real scanner** — cheap once `iq.py` exists, and a follow-on rather than a hidden extra.
 
