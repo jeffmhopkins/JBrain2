@@ -900,6 +900,76 @@ scanner transcript is involved it is external-corpus material and may never reac
 as instructions (`APRS_CONTROL_PLAN`'s two-tier rule). A packet becoming a prompt is
 prompt injection with an antenna.
 
+## 7b. F11 — wide bands hop on our own engine, and the picture stops twinkling
+
+**Added after F6 shipped and the owner watched it.** Two findings from the same session,
+one measured and one seen.
+
+**Wide bands were still `rtl_power`'s, and they did not have to be.** F6 scoped itself to
+one-hop captures, so 88-108 MHz and 144-148 MHz — the only two sections of 31 — kept
+sweeping at a row a second. That second is not the cost of hopping: it is
+`if (interval < 1) interval = 1;` in the tool's own C. F0 had already measured the thing
+that makes hopping ours — **frequency changes on a live stream with no rebuild** — so a
+wide span is now several captures stitched into one row. `bands.hop_plan` walks an FFT
+ladder finest-first against a frame budget, and each hop contributes only the trusted
+middle of its capture (`TRUSTED_FILL`), because a capture's edges sit in the tuner's IF
+rolloff and drawing them puts the receiver's own filter shape on screen as a dip at every
+seam. On the FM dial that lands at **9,375 Hz bins where `rtl_power` gave 19,531** —
+finer AND faster, which is the argument for owning the samples in one line.
+
+Only the tuner side. Below 24 MHz every hop's centre would have to satisfy the Nyquist
+window on its own (§4), and a plan that ignored that would draw a picture made of folded
+images that looked perfectly plausible.
+
+**Rows are held to 10 fps, by averaging harder rather than by dropping.** The engine
+measured 31.9 fps; everything downstream was sized for ten (§5's 5,704 B gzipped per
+frame is ~0.46 Mbit/s there, ~1.45 at thirty-two, plus thirty 4096-element JSON parses a
+second on a phone). `segments_for` sizes a row to last `1 / TARGET_FPS`, so the samples
+that arrive are all used: discarding them would buy nothing and cost the noise floor.
+
+**And the twinkle was ours.** The owner reported a still picture shimmering as it
+scrolled, and it was two compounding resampling faults in the PWA. Horizontally, 4096
+bins were handed to `drawImage` to squeeze into ~800 device pixels, so a pixel showed a
+bilinear blend of two of the five bins under it — chosen by the filter's phase rather
+than by the measurement. Vertically, the ring was drawn as **two** scaled draws split at
+the write head, and the head advances every row: both halves' scale factors, and with
+them the resampler's phase, changed on **every frame**, so a row whose numbers had not
+moved was resampled differently each time.
+
+`reduce` now maps bins to columns here, by **max-hold** — the spectrum-display
+convention, and not a preference: a carrier occupying one bin of five is the thing being
+looked for, and a mean buries it four fifths of the way into the noise. It gathers per
+column rather than scattering per bin, so a narrow band on a wide display cannot come out
+striped. The ring is unwrapped 1:1 into a scratch canvas and drawn **once**, at a scale
+that does not depend on the head. What is on screen can then only change when the
+measurements do, which is what the owner asked for.
+
+### The settle is measured now, not assumed
+
+`SETTLE_S = 0.05` was chosen when the barrier was written and never checked, and F11
+made it the most expensive constant in the engine: a hop's samples are microseconds and
+its discard is milliseconds, so this one number decides whether the FM dial redraws
+twice a second or twenty times.
+
+`soapy-probe` measures it. Zero discard, then one continuous block, sliced — a stopwatch
+made of sample indices rather than of a clock, so there is no scheduling jitter between
+a sample and its age. The settled level comes from the same radio moments earlier, and
+the transient is where the slice-by-slice level stops differing from it by more than
+that level's own deviation.
+
+Two methodological corrections were needed to make it a measurement rather than a
+statistic. The deviation is a **MAD**, not a standard deviation, because one wild slice
+moves `std` enough to hide the transient it is measuring. And the series is **smoothed
+with a running median** first: three sigma over several hundred slices puts a handful
+past the line by chance, and taking the last of those reported a whole 62 ms block as a
+transient — measured off a fake that had none at all. A real transient is never isolated;
+an outlier always is.
+
+The verdict is asymmetric on purpose. **Too short is a correctness fault** — the first
+samples of every hop are then the previous hop's, drawn at a frequency they are not on,
+and a waterfall built that way is confidently wrong rather than merely slow. **Too long
+is only speed**, and it is what a wide band's frame rate is spent on.
+
 ## 8. Deliberately not in this plan
 
 **Replacing `rtl_fm` with a numpy demodulator.** Affordable — NFM demod is ~1.5 ms per

@@ -15,6 +15,7 @@ import {
   frameRate,
   historyRows,
   paint,
+  reduce,
   shade,
 } from "./sdrWaterfall";
 
@@ -25,7 +26,10 @@ function row(db: number[], startHz = 144_000_000, binHz = 25_000): SpectrumRow {
 /** `count` rows a `gap` apart on the box clock, NEWEST FIRST — the order the waterfall
  *  holds its history in, and the order everything below reads it in. */
 function stream(count: number, gap: number): SpectrumRow[] {
-  return [...Array(count).keys()].map((i) => ({ ...row([-70, -60]), at: 1000 - i * gap }));
+  return [...Array(count).keys()].map((i) => ({
+    ...row([-70, -60]),
+    at: 1000 - i * gap,
+  }));
 }
 
 describe("the colour window", () => {
@@ -205,7 +209,9 @@ describe("painting a picture", () => {
   it("leaves the tail of a short row transparent rather than filling it", () => {
     // A frame that lost a block is a missing measurement, not a quiet one. Painting the
     // floor colour there would claim a reading that was never taken.
-    const pixels = paint([row([-40, -40])], 4, 1, scale);
+    // `extent` is the band's full width; the row carries only half of it. Without that
+    // the two bins it does have would be stretched across the whole picture.
+    const pixels = paint([row([-40, -40])], 4, 1, scale, 4);
 
     expect(pixels[3]).toBe(255);
     expect(pixels[7]).toBe(255);
@@ -215,5 +221,57 @@ describe("painting a picture", () => {
 
   it("fills exactly the buffer an ImageData of that size wants", () => {
     expect(paint([row([-40, -50, -60])], 3, 4, scale).length).toBe(3 * 4 * 4);
+  });
+});
+
+describe("reduce", () => {
+  it("gives a column the same value however the picture is scrolled", () => {
+    // The twinkle, stated as a test. A column is a pure function of the bins under it,
+    // so nothing about when or how often it is drawn can change what it shows —
+    // which is what a browser resampler could not promise, because its answer depended
+    // on a filter phase that moved with the ring's write head.
+    const db = Array.from({ length: 4096 }, (_, i) => -60 + (i % 7));
+
+    const once = reduce(db, 800);
+    const again = reduce(db, 800);
+
+    expect(Array.from(again)).toEqual(Array.from(once));
+  });
+
+  it("keeps a carrier that is narrower than a pixel", () => {
+    // Max-hold rather than mean, and this is why: at five bins a pixel a mean puts a
+    // real transmitter four fifths of the way back into the noise, so the one thing
+    // the owner is looking for is the thing the averaging removes.
+    const db = new Array(4096).fill(-90);
+    db[2001] = -20;
+
+    const columns = reduce(db, 800);
+
+    expect(Math.max(...columns)).toBe(-20);
+  });
+
+  it("leaves no column empty when there are more pixels than bins", () => {
+    // A narrow band on a wide display. Scattering bins into columns — the obvious loop
+    // — strands every second column and stripes the picture.
+    const columns = reduce([-40, -50, -60], 12);
+
+    expect(Array.from(columns).every(Number.isFinite)).toBe(true);
+  });
+
+  it("treats a bin nobody measured as absent rather than as quiet", () => {
+    // NaN is a dropped block. Painting it — or letting it win a max — would claim a
+    // reading that was never taken.
+    const columns = reduce([Number.NaN, Number.NaN], 1);
+
+    expect(Number.isFinite(columns[0] as number)).toBe(false);
+  });
+
+  it("covers every bin, so a signal cannot fall between two columns", () => {
+    const db = new Array(1000).fill(-90);
+    db[999] = -10; // the very last bin, the one an off-by-one loses
+
+    const columns = reduce(db, 37);
+
+    expect(Math.max(...columns)).toBe(-10);
   });
 });

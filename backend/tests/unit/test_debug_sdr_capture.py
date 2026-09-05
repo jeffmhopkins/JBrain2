@@ -250,7 +250,7 @@ def test_the_spectrum_probe_sends_the_capture_the_real_route_would() -> None:
     start_hz, stop_hz, bin_hz, capture = sdr_api._span("2m-ssb", None, None)
 
     assert capture is not None
-    rate_hz, fft_bins = capture
+    rate_hz, fft_bins, _hops = capture
     # What the probe puts on the wire, and what its verdict then checks the frames against.
     assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins)
     assert (start_hz, stop_hz) == (144_100_000, 144_300_000)

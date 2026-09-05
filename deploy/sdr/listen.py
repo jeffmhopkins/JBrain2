@@ -56,6 +56,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 import iq
 import packets
 import radio
@@ -153,6 +155,54 @@ SPECTRUM_MAX_BINS = 4096
 #: rather than a noisy 10. It also sets the frame rate: `rate / (bins * 8)` is 73 fps at
 #: 2.4 MS/s and 4000 bins, so the limit on this path is the wire, never the radio.
 IQ_SEGMENTS = 8
+#: Rows per second on the wire. Not a limit of the engine — it measured 31.9 fps on the
+#: box — but of everything downstream: the plan's own budget is 5,704 B gzipped per
+#: frame, so 31.9 fps is ~1.45 Mbit/s per viewer against the ~0.46 it was sized for,
+#: plus thirty 4096-element JSON parses a second on a phone. Ten was the number every
+#: F5 decision was made against (`SPECTRUM_QUEUE = 4` is 0.4 s of slack at ten and
+#: 0.125 s at thirty-two).
+TARGET_FPS = 10.0
+#: The most a single frame may average. Bounds the read buffer, and past this the row
+#: is a long enough exposure that a burst inside it is smeared rather than seen.
+MAX_IQ_SEGMENTS = 128
+#: Segments per HOP. Small on purpose: a hopping sweep is already time-limited by the
+#: retunes, so averaging harder inside a hop buys noise performance at the price of the
+#: one thing that is scarce here.
+HOP_SEGMENTS = 4
+
+
+def segments_for(bins: int, rate_hz: int) -> int:
+    """How many segments to average so a row takes about `1 / TARGET_FPS`.
+
+    Slowing to the wire budget by AVERAGING MORE rather than by throwing frames away:
+    the samples arrive either way, so discarding them buys nothing and costs the noise
+    floor. A row that averages 100 ms is exactly what a 10 fps row should be, and the
+    floor it reports is steadier than one built from a tenth of the data."""
+    if bins <= 0 or rate_hz <= 0:
+        return IQ_SEGMENTS
+    want = round(rate_hz / (bins * TARGET_FPS))
+    return max(IQ_SEGMENTS, min(int(want), MAX_IQ_SEGMENTS))
+
+
+def hop_usable_bins(bins: int) -> int:
+    """The trusted middle of one hop, in bins, and always EVEN.
+
+    The same 5/6 the api plans against (`bands.TRUSTED_FILL`), duplicated for the reason
+    every other constant here is: `deploy/sdr/` ships in its own container and imports
+    nothing from the backend. Even, because the hop's centre sits on the boundary
+    between its two middle bins and a half-bin error accumulates across a dozen hops."""
+    return (bins * 5 // 6) // 2 * 2
+
+
+def hop_centres(start_hz: int, rate_hz: int, bins: int, hops: int) -> list[int]:
+    """Where each hop tunes, so the trusted middles tile with no gap and no overlap."""
+    usable = hop_usable_bins(bins)
+    width = iq.bin_width_hz(rate_hz, bins)
+    return [
+        int(round(start_hz + (index * usable + usable / 2) * width))
+        for index in range(hops)
+    ]
+
 #: Whether `stdbuf` is here to make rtl_power's stdout line-buffered. Resolved once, at
 #: import, rather than per launch: it is a property of the image, and a `which` on every
 #: retune is a syscall for an answer that cannot have changed.
@@ -494,6 +544,11 @@ class Sweep:
     #: copy of it in the sidecar is two tables that will disagree. When it is present,
     #: `bin_hz` is exactly `rate / bins` and the I/Q engine is what draws the picture.
     capture: tuple[int, int] | None = None
+    #: How many captures the span takes. 1 is one tuning; more is a stitched sweep
+    #: (F11), where each hop contributes the trusted middle of its own capture. The
+    #: engine retunes on the LIVE stream between them, which is what F0 measured and
+    #: what makes this faster than the tool it replaces rather than merely different.
+    hops: int = 1
 
     @staticmethod
     def of(
@@ -504,6 +559,7 @@ class Sweep:
         *,
         direct_ok: bool = False,
         capture: tuple[int, int] | None = None,
+        hops: int = 1,
     ) -> "Sweep":
         """`direct_ok` says WHICH ENGINE is asking, and it is the only thing that
         changes the floor.
@@ -559,6 +615,7 @@ class Sweep:
             ),
             seconds=max(1.0, min(float(seconds), MAX_SWEEP_SECONDS)),
             capture=capture,
+            hops=max(1, int(hops)),
         )
 
     @property
@@ -580,6 +637,7 @@ class Sweep:
         }
         if self.capture is not None:
             out["rate_hz"], out["bins"] = self.capture
+            out["hops"] = self.hops
         return out
 
 
@@ -1133,29 +1191,82 @@ class Session:
         radio is gone, or the stream stopped answering, and a waterfall that keeps
         painting the last row is worse than one that stops."""
         held, spectrometer = self._radio, self._spectrometer
-        if held is None or spectrometer is None:
+        sweep = self.sweep
+        if held is None or spectrometer is None or sweep is None:
             return
-        want = spectrometer.n * IQ_SEGMENTS
         try:
-            while not self._stopping and held.alive:
-                reading = held.read(want)
-                spectrum = spectrometer.frame(reading.samples, held.center_hz)
-                self._publish_frame(
-                    Frame(
-                        at=reading.at,
-                        start_hz=int(spectrum.start_hz),
-                        bin_hz=spectrum.bin_hz,
-                        # Unrounded: `as_dict` is where the wire's one decimal is
-                        # applied, and rounding twice just does the work twice while
-                        # denying any other reader the precision it was handed.
-                        db=spectrum.db_list(),
-                    )
-                )
+            if sweep.hops > 1:
+                self._sweep_hops(held, spectrometer, sweep)
+            else:
+                self._stare(held, spectrometer)
         except (radio.RadioError, ValueError):
             pass  # a stop, or the radio went away; teardown is `_kill`'s job
         finally:
             if not self._restarting:
                 self._end_frames()
+
+    def _stare(self, held: "radio.Radio", spectrometer: "iq.Spectrometer") -> None:
+        """One tuning, rows as fast as the frame budget allows."""
+        want = spectrometer.n * segments_for(spectrometer.n, held.rate_hz)
+        while not self._stopping and held.alive:
+            reading = held.read(want)
+            spectrum = spectrometer.frame(reading.samples, held.center_hz)
+            self._publish_frame(
+                Frame(
+                    at=reading.at,
+                    start_hz=int(spectrum.start_hz),
+                    bin_hz=spectrum.bin_hz,
+                    # Unrounded: `as_dict` is where the wire's one decimal is applied,
+                    # and rounding twice just does the work twice while denying any
+                    # other reader the precision it was handed.
+                    db=spectrum.db_list(),
+                )
+            )
+
+    def _sweep_hops(
+        self, held: "radio.Radio", spectrometer: "iq.Spectrometer", sweep: Sweep
+    ) -> None:
+        """Several captures, retuned on the LIVE stream, stitched into one row.
+
+        This is what `rtl_power` was doing and why it was slow — except its one row a
+        second is not the cost of hopping, it is `if (interval < 1) interval = 1;` in
+        its own C. Here the cost is real and visible: each hop pays a retune barrier,
+        and the samples are the cheap part.
+
+        Each hop contributes only the TRUSTED MIDDLE of its capture, because a
+        capture's edges sit in the tuner's IF rolloff and drawing them puts a dip at
+        every hop seam — the picture then shows the receiver's own filter shape as if
+        it were the band. The centres are derived from the same arithmetic as the
+        placement, so a hop cannot own bins it was not tuned for."""
+        assert sweep.capture is not None
+        rate_hz, bins = sweep.capture
+        usable = hop_usable_bins(bins)
+        edge = (bins - usable) // 2
+        segments = HOP_SEGMENTS
+        want = bins * segments
+        row = np.full(usable * sweep.hops, iq.DB_FLOOR, dtype=np.float64)
+        centres = hop_centres(sweep.start_hz, rate_hz, bins, sweep.hops)
+        while not self._stopping and held.alive:
+            at = 0.0
+            for index, centre in enumerate(centres):
+                if self._stopping or not held.alive:
+                    return
+                if held.center_hz != centre:
+                    held.retune(center_hz=centre)
+                reading = held.read(want)
+                at = at or reading.at
+                spectrum = spectrometer.frame(reading.samples, centre)
+                row[index * usable : (index + 1) * usable] = spectrum.db[
+                    edge : edge + usable
+                ]
+            self._publish_frame(
+                Frame(
+                    at=at,
+                    start_hz=sweep.start_hz,
+                    bin_hz=spectrometer.bin_hz,
+                    db=row.tolist(),
+                )
+            )
 
     def _pump_spectrum(self) -> None:
         """rtl_power's CSV -> whole frames -> every viewer."""

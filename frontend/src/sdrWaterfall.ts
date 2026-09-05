@@ -159,25 +159,73 @@ export function shade(db: number, scale: Scale): [number, number, number] {
  *  it. They are ABOVE the live edge now, which is also why the fill has to be indexed
  *  from the bottom rather than the picture simply being flipped: a half-full waterfall
  *  drawn upside down would put its blank half over the newest rows. */
+export function reduce(db: readonly number[], columns: number, extent = 0): Float64Array {
+  /* Bins to pixel columns, by MAX-HOLD, computed here rather than by the browser.
+   *
+   *  A 4096-bin frame across 800 device pixels is five bins a pixel, and the question
+   *  is which of the five the pixel shows. Left to `drawImage`, the answer is a
+   *  bilinear blend of two of them chosen by the filter's phase — so the pixel's value
+   *  depends on a resampling decision rather than on the measurement, and it CHANGES
+   *  when anything about the draw changes. That is the twinkle: noise resampled
+   *  differently on each paint.
+   *
+   *  Max rather than mean, which is the spectrum-display convention and not a
+   *  preference: a carrier occupying one bin of five is the thing the owner is looking
+   *  for, and a mean buries it four-fifths of the way into the noise. Max-hold makes a
+   *  narrow signal survive being made narrower than a pixel.
+   *
+   *  Deterministic by construction: the same bins always produce the same column, so a
+   *  column can only change when its numbers do.
+   *
+   *  `extent` is the band's FULL width in bins, which is not always this row's own: a
+   *  frame that lost a block arrives short, and its tail must stay transparent rather
+   *  than be stretched across the picture, which would claim a measurement never taken.
+   *  Zero means "as wide as this row", for a caller with only one row to go on. */
+  const out = new Float64Array(columns).fill(Number.NEGATIVE_INFINITY);
+  const width = extent > 0 ? extent : db.length;
+  if (width === 0 || columns <= 0) return out;
+  for (let x = 0; x < columns; x += 1) {
+    // GATHERED per column rather than scattered per bin. Scattering is the obvious loop
+    // and it fails in the other direction: a 1024-bin band on a 1600-pixel display
+    // leaves every second column untouched, so the picture comes out striped.
+    const lo = Math.floor((x * width) / columns);
+    // At least one bin per column, so no column is empty for want of one.
+    const hi = Math.max(lo + 1, Math.floor(((x + 1) * width) / columns));
+    let best = Number.NEGATIVE_INFINITY;
+    for (let bin = lo; bin < hi && bin < db.length; bin += 1) {
+      const value = db[bin] as number;
+      // NaN is a bin nobody measured — a dropped block, not a quiet one — and must
+      // neither win a max nor be painted. `>` is already false for NaN, which is why
+      // this reads as though it ignored the case it handles.
+      if (value > best) best = value;
+    }
+    out[x] = best;
+  }
+  return out;
+}
+
 export function paint(
   rows: readonly SpectrumRow[],
-  bins: number,
+  columns: number,
   height: number,
   scale: Scale,
+  extent = 0,
 ): Uint8ClampedArray<ArrayBuffer> {
   // An explicit ArrayBuffer, not the default: `ImageData` refuses a view that might sit
   // on a SharedArrayBuffer, and the inferred type is the union of both.
-  const pixels = new Uint8ClampedArray(new ArrayBuffer(bins * height * 4));
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(columns * height * 4));
   for (let age = 0; age < height && age < rows.length; age += 1) {
     // `age` counts back from the live edge; `y` puts it that far above the bottom.
     const y = height - 1 - age;
     const row = rows[age] as SpectrumRow;
-    for (let x = 0; x < bins; x += 1) {
-      // A row narrower than the canvas is a frame that lost a block. Left transparent,
-      // because painting its floor colour would claim a measurement that was not taken.
-      if (x >= row.db.length) continue;
-      const [r, g, b] = shade(row.db[x] as number, scale);
-      const at = (y * bins + x) * 4;
+    const reduced = reduce(row.db, columns, extent);
+    for (let x = 0; x < columns; x += 1) {
+      // A column no bin reached is a frame that lost a block. Left transparent, because
+      // painting its floor colour would claim a measurement that was not taken.
+      const value = reduced[x] as number;
+      if (!Number.isFinite(value)) continue;
+      const [r, g, b] = shade(value, scale);
+      const at = (y * columns + x) * 4;
       pixels[at] = r;
       pixels[at + 1] = g;
       pixels[at + 2] = b;

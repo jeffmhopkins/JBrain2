@@ -227,6 +227,15 @@ def _capture_of(body: dict[str, Any]) -> tuple[int, int] | None:
     return rate, bins
 
 
+def _hops_of(body: dict[str, Any]) -> int:
+    """How many captures the span takes. Absent means one, which is what every caller
+    before F11 meant — and reading it as more would sweep a band nobody asked for."""
+    try:
+        return max(1, int(body.get("hops") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
@@ -251,6 +260,7 @@ def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
         seconds=float(body.get("seconds", 60)),
         direct_ok=direct_ok,
         capture=_capture_of(body),
+        hops=_hops_of(body),
     )
     floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
     if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):

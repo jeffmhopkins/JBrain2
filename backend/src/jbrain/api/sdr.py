@@ -888,24 +888,28 @@ DEFAULT_SPECTRUM_BIN_HZ = 25_000
 SPECTRUM_ENGINE_IS_IQ = True
 
 
-def _capture_body(capture: tuple[int, int] | None) -> dict[str, int]:
+def _capture_body(capture: tuple[int, int, int] | None) -> dict[str, int]:
     """The capture as wire fields, or nothing at all.
 
-    Absent rather than null when there is no one-hop capture, so a sidecar that predates
-    F6 sees exactly the body it saw before and hops the range with rtl_power. The engine
-    choice travels as the presence of these two fields — there is no third state, and no
-    flag to keep in step on both sides."""
+    Absent rather than null when no I/Q capture covers the range, so a sidecar that
+    predates F6 sees exactly the body it saw before and sweeps with rtl_power. The
+    engine choice travels as the presence of these fields — there is no flag to keep in
+    step on both sides.
+
+    `hops` is 1 for a single capture and more for a stitched sweep (F11). It is sent
+    always rather than only when it is interesting, because a sidecar reading it as
+    absent would sweep 20 MHz at one tuning and draw the wrong band confidently."""
     if capture is None:
         return {}
-    rate_hz, bins = capture
-    return {"rate_hz": rate_hz, "bins": bins}
+    rate_hz, bins, hops = capture
+    return {"rate_hz": rate_hz, "bins": bins, "hops": hops}
 
 
 def _span(
     section: str | None,
     start_mhz: float | None,
     stop_mhz: float | None,
-) -> tuple[int, int, int | float, tuple[int, int] | None]:
+) -> tuple[int, int, int | float, tuple[int, int, int] | None]:
     """The range a live spectrum should cover, and the bin width that draws it.
 
     A section, or explicit edges: a section carries settings someone chose for that
@@ -953,9 +957,27 @@ def _span(
         # `rate / N` handed to rtl_power is the 4097-column frame §6.4 describes.
         capture = bands.capture_for(start_hz, stop_hz)
         if capture is not None:
-            return start_hz, stop_hz, bands.bin_width_hz(*capture), capture
-    # rtl_power's tier — after F6 only the spans too wide for one capture: several hops,
-    # one row a second, and a bin width the tool picks off its own power-of-two ladder.
+            rate_hz, fft_bins = capture
+            return (
+                start_hz,
+                stop_hz,
+                bands.bin_width_hz(rate_hz, fft_bins),
+                (
+                    rate_hz,
+                    fft_bins,
+                    1,
+                ),
+            )
+        # F11: too wide for one capture is not the same as too wide for this engine.
+        # The retune works on a live stream (F0), so a wide span is several captures
+        # stitched — finer bins than rtl_power gives AND without its one-second clamp.
+        hopped = bands.hop_plan(start_hz, stop_hz)
+        if hopped is not None:
+            rate_hz, fft_bins, _hops = hopped
+            return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), hopped
+    # rtl_power's tier — after F11 only the spans no I/Q capture plan covers at all:
+    # a wide SHORTWAVE range, where every hop would have to satisfy the Nyquist window
+    # separately, and a hand-typed span wider than the hop budget.
     want = found.sweep_bin_hz if found is not None else DEFAULT_SPECTRUM_BIN_HZ
     return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want), None
 

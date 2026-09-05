@@ -2378,12 +2378,16 @@ class TestIQSpectrumEngine:
         """The happy path, end to end through the real `iq.Spectrometer`: samples in,
         one self-describing row out, at the width the capture makes and not the width
         anyone asked for."""
-        rate_hz, fft_bins = 2_400_000, 4_000
+        rate_hz_outer = rate_hz = 2_400_000
+        fft_bins = 4_000
         opened: dict[str, Any] = {}
 
         class _OneFrameRadio:
             alive = True
             center_hz = 146_000_000
+            # The frame budget is derived from the rate now (`segments_for`), so a fake
+            # radio has to have one — a row is sized to last 1/TARGET_FPS.
+            rate_hz = rate_hz_outer
 
             def read(self, samples: int) -> Any:
                 tone = np.exp(
@@ -2451,3 +2455,66 @@ def test_the_audio_level_is_named_for_what_it_measures() -> None:
 
     assert body["audio_peak"] == 0.42
     assert "peak" not in body
+
+
+# --- F11: wide bands stitched from hops, and the wire held to 10 fps ----------------
+
+
+def test_a_row_is_sized_to_the_wire_budget_not_to_the_radio() -> None:
+    """The engine measured 31.9 fps on the box, and everything downstream was sized for
+    ten: the plan's own budget is 5,704 B gzipped per frame, so 31.9 fps is ~1.45 Mbit/s
+    per viewer against ~0.46, plus thirty 4096-element JSON parses a second on a phone.
+
+    Slowed by AVERAGING MORE, not by discarding: the samples arrive either way, so
+    throwing them away buys nothing and costs the noise floor."""
+    # 2.4 MS/s over 4000 bins is 600 raw rows/s; ten a second needs 60 of them.
+    assert listen.segments_for(4_000, 2_400_000) == 60
+    # 256 kS/s over 1024 is 250/s; 25 segments is ten rows a second.
+    assert listen.segments_for(1_024, 256_000) == 25
+
+
+def test_the_averaging_never_drops_below_what_it_was_before() -> None:
+    """A very slow capture would otherwise compute fewer than 8 segments and report a
+    noisier floor than the engine did before this cap existed."""
+    assert listen.segments_for(4_096, 256_000) == listen.IQ_SEGMENTS
+
+
+def test_the_averaging_is_bounded_so_one_row_cannot_swallow_a_burst() -> None:
+    assert listen.segments_for(64, 3_200_000) == listen.MAX_IQ_SEGMENTS
+
+
+def test_hops_tile_their_trusted_middles_with_no_gap_and_no_overlap() -> None:
+    """Each hop contributes only the middle of its capture, because a capture's edges
+    sit in the tuner's IF rolloff — drawing them puts a dip at every seam and shows the
+    receiver's own filter shape as if it were the band."""
+    rate_hz, bins, hops = 2_400_000, 256, 11
+    usable = listen.hop_usable_bins(bins)
+    width = listen.iq.bin_width_hz(rate_hz, bins)
+
+    centres = listen.hop_centres(88_000_000, rate_hz, bins, hops)
+
+    assert len(centres) == hops
+    # Each hop's window starts exactly where the previous one ended.
+    for index, centre in enumerate(centres):
+        low = centre - (usable / 2) * width
+        assert low == pytest.approx(88_000_000 + index * usable * width, abs=1.0)
+
+
+def test_the_usable_middle_is_always_even() -> None:
+    """The hop's centre sits on the boundary between its two middle bins, so an odd
+    count cannot be placed symmetrically — and half a bin per hop accumulates into an
+    axis that drifts from its own label."""
+    for bins in (64, 128, 256, 512, 1024, 2048, 4096):
+        assert listen.hop_usable_bins(bins) % 2 == 0
+
+
+def test_a_sweep_carries_its_hop_count_on_the_wire() -> None:
+    """Absent means one, which is what every caller before F11 meant. A sidecar reading
+    it as more would sweep a band nobody asked for."""
+    swept = listen.Sweep.of(
+        88_000_000, 108_000_000, 9375, 60, capture=(2_400_000, 256), hops=11
+    )
+
+    assert swept.hops == 11
+    assert swept.as_dict()["hops"] == 11
+    assert listen.Sweep.of(144e6, 148e6, 5000, 60).hops == 1

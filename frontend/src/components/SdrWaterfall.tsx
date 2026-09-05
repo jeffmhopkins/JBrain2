@@ -84,12 +84,22 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     const off = document.createElement("canvas");
     const offCtx = off.getContext("2d");
     if (!offCtx) return;
+    // The ring unwrapped into reading order, so the display draw is a single scale
+    // rather than two that move against each other. Sized in `blit`.
+    const flat = document.createElement("canvas");
+    const flatCtx = flat.getContext("2d");
+    if (!flatCtx) return;
 
     let history: SpectrumRow[] = [];
     let scale: Scale | null = null;
     let frozen = false;
     let bins = 0;
     let rows = 0;
+    // The band's full width in BINS, which `bins` no longer is — that is the
+    // picture's width in device pixels now. Kept apart because a frame that lost a
+    // block arrives short, and its tail has to stay transparent rather than be
+    // stretched over the picture (`reduce`'s `extent`).
+    let extent = 0;
     // The ring's write head: the slot the next row goes in, which is also the slot the
     // OLDEST row is in, which is therefore the top of the picture. One index carries all
     // three because a full ring is exactly that identity.
@@ -105,19 +115,27 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
 
     const blit = () => {
       if (bins === 0 || rows === 0) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // Smoothed, not nearest: a bin is rarely a whole number of pixels wide, and hard
-      // edges on a resampled column read as structure the radio did not measure.
-      ctx.imageSmoothingEnabled = true;
-      // Two draws, because the ring's oldest row is not its first. The split is rounded
-      // to a whole device pixel so the halves meet exactly rather than leaving a hairline
-      // of background between them.
+      // **Unwrap the ring 1:1 first, then scale ONCE.** The obvious version draws the
+      // ring's two arcs straight to the display, and that is what made a still picture
+      // twinkle: the split moves down one row every frame, so each half's vertical
+      // scale factor — and with it the resampler's phase — changed on every paint. A
+      // row whose numbers had not moved was resampled differently each time.
+      //
+      // Here both arc copies are exact (same width, same height, no filter can run),
+      // and the single draw that follows has a scale factor of `rows / height` that
+      // does not depend on `head` at all. What is on screen can then only change when
+      // the measurements do.
+      flat.width = bins;
+      flat.height = rows;
       const above = rows - head;
-      const split = Math.round((above / rows) * canvas.height);
-      if (above > 0) ctx.drawImage(off, 0, head, bins, above, 0, 0, canvas.width, split);
-      if (head > 0) {
-        ctx.drawImage(off, 0, 0, bins, head, 0, split, canvas.width, canvas.height - split);
-      }
+      if (above > 0) flatCtx.drawImage(off, 0, head, bins, above, 0, 0, bins, above);
+      if (head > 0) flatCtx.drawImage(off, 0, 0, bins, head, 0, above, bins, head);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Horizontally this is 1:1 — `bins` IS the device width, because `paint` already
+      // reduced the frame's bins to columns by max-hold rather than leaving the choice
+      // to a filter. Only the vertical is scaled, and only by a constant.
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(flat, 0, 0, bins, rows, 0, 0, canvas.width, canvas.height);
     };
 
     // One paint a frame at most. `frame` doubles as the "already asked" flag, so rows
@@ -142,7 +160,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
 
     const repaint = () => {
       if (bins === 0 || rows === 0 || scale === null) return;
-      offCtx.putImageData(new ImageData(paint(history, bins, rows, scale), bins, rows), 0, 0);
+      offCtx.putImageData(
+        new ImageData(paint(history, bins, rows, scale, extent), bins, rows),
+        0,
+        0,
+      );
       // `paint` lays the newest row at the bottom and the blanks above it — which is the
       // ring read from slot 0, so a full repaint is also how the head gets re-zeroed.
       head = 0;
@@ -150,12 +172,16 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
 
     const append = (row: SpectrumRow) => {
       if (scale === null) return;
-      offCtx.putImageData(new ImageData(paint([row], bins, 1, scale), bins, 1), 0, head);
+      offCtx.putImageData(new ImageData(paint([row], bins, 1, scale, extent), bins, 1), 0, head);
       head = (head + 1) % rows;
     };
 
     const onResize = () => {
       fit();
+      // The offscreen is display-width, so a resize changes what a column means. The
+      // ring cannot be rescaled without inventing measurements, and `history` is
+      // exactly what it is kept for.
+      if (reshape(Math.max(1, canvas.width), rows)) repaint();
       show();
     };
     fit();
@@ -169,6 +195,7 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // different frequency and its colour window is a different noise floor.
       if (!sameBand(history[0] ?? null, row)) {
         history = [];
+        extent = 0;
         scale = null;
         frozen = false;
         setBand(row);
@@ -190,7 +217,18 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
 
       // A rate learned mid-stream changes how tall the picture is, and the ring cannot
       // be resized without losing it — which is what `history` is kept for.
-      let full = reshape(row.db.length, keep);
+      // The picture is built at DISPLAY width now, not at bin width: `paint` reduces
+      // bins to columns itself (max-hold), so nothing downstream has to guess which of
+      // five bins a pixel means. A resize therefore reshapes and repaints, which is the
+      // cost of that — paid on a resize rather than on every frame.
+      let full = reshape(Math.max(1, canvas.width), keep);
+      // A band's widest row is its extent: a frame that lost a block is short, and the
+      // one after it usually is not. Taking the max means a dropped block leaves a gap
+      // rather than resizing the whole picture around its absence.
+      if (row.db.length > extent) {
+        extent = row.db.length;
+        full = true;
+      }
       if (!frozen) {
         if (calibrated(history)) {
           frozen = true;
@@ -243,7 +281,8 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
           // off until the rows have shown one rather than guessed at, because which
           // engine is behind the stream is exactly what it would be guessing.
           <>
-            {bins} bins of {khz(band.binHz)} kHz{fps === null ? null : ` · ${rateNote(fps)}`}
+            {bins} bins of {khz(band.binHz)} kHz
+            {fps === null ? null : ` · ${rateNote(fps)}`}
           </>
         ) : (
           "Waiting for the first row…"

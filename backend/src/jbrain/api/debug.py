@@ -2176,7 +2176,10 @@ async def sdr_spectrum_probe(
         "serial": serial,
     }
     if capture is not None:
-        body["rate_hz"], body["bins"] = capture
+        # Three since F11, and the hop count has to travel with the rest: a sidecar
+        # reading it as absent would sweep a wide span at one tuning and draw the
+        # wrong band confidently.
+        body["rate_hz"], body["bins"], body["hops"] = capture
     return await _sdr_post(settings, "/spectrum/probe", body, wait_s=SPECTRUM_PROBE_TIMEOUT_S)
 
 

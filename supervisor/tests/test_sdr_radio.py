@@ -60,6 +60,10 @@ RATE = 256_000
 #: About -57 dBFS against the fake's unit tone — a floor a real dongle would
 #: recognise, far enough under the carrier to leave every SNR assertion intact.
 NOISE_AMPLITUDE = 1e-3
+#: What a relocking tuner does to the output level while it settles. Well outside
+#: the noise, because a transient this measurement could not see would make the
+#: fake agree with any constant at all.
+SETTLING_GAIN = 0.25
 
 
 class _Result:
@@ -89,6 +93,8 @@ class _FakeDevice:
         self.bufflen = radio.DEFAULT_BUFFLEN_BYTES
         self._k = 0  # sample counter, so the tone's phase survives across reads
         self._noise = np.random.default_rng(20260905)
+        # Samples of disturbed output still owed after the last retune.
+        self._settling = 0
         self._last_read = time.monotonic()
         self._overflow_due = 0
 
@@ -107,6 +113,8 @@ class _FakeDevice:
 
     def setFrequency(self, direction: int, channel: int, name: str, hz: float) -> None:
         self._say("setFrequency", direction, channel, name, hz)
+        if hz != self.center:
+            self._settling = int(self.rate * self.driver.retune_settle_s)
         self.center = hz
 
     def writeSetting(self, key: str, value: str) -> None:
@@ -184,7 +192,15 @@ class _FakeDevice:
             self.driver.silent_reads -= 1
             view[:elems] = 0.0
         else:
-            view[:elems] = (tone + NOISE_AMPLITUDE * noise).astype(np.complex64)
+            block = tone + NOISE_AMPLITUDE * noise
+            if self._settling > 0:
+                # A relocking tuner does not go quiet, it goes WRONG: the level moves,
+                # which is what `_window_levels` watches for and why it can measure a
+                # settle on a band with nothing on it.
+                spoilt = min(self._settling, elems)
+                block[:spoilt] *= SETTLING_GAIN
+                self._settling -= spoilt
+            view[:elems] = block.astype(np.complex64)
         self._say("readStream", elems)
         return _Result(elems)
 
@@ -207,6 +223,7 @@ class _FakeDriver:
         overflow_after_s: float = 1e9,
         stale_center_hz: float = 1.0,
         silent_reads: int = 0,
+        retune_settle_s: float = radio.SETTLE_S,
         make_raises: Exception | None = None,
         unmake_raises: Exception | None = None,
     ) -> None:
@@ -221,6 +238,11 @@ class _FakeDriver:
         # direct-sampling branch on real hardware does this, and a probe that judged
         # one frame called a live radio deaf because of it.
         self.silent_reads = silent_reads
+        # How long this radio's output is disturbed after a retune. Modelled
+        # because it is the number a hopping sweep is made of, and the probe now
+        # measures it: a fake with no transient at all would make the measurement
+        # untestable in the one direction that matters.
+        self.retune_settle_s = retune_settle_s
         self.make_raises = make_raises
         self.unmake_raises = unmake_raises
         self.devices: list[_FakeDevice] = []
@@ -1072,3 +1094,68 @@ def test_a_radio_that_is_silent_throughout_is_still_reported_dead() -> None:
 
     assert verdict["dead"] is True
     assert verdict["settled"] is False
+
+
+def test_the_settle_is_measured_against_what_the_radio_actually_needs() -> None:
+    """`SETTLE_S` was chosen and never measured, and it is the whole cost of a hopping
+    sweep: the samples in a hop are microseconds and the discard is milliseconds, so
+    this one number decides whether a wide band redraws twice a second or twenty
+    times."""
+    driver = _FakeDriver(retune_settle_s=0.05)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        settle = radio._settle_after_retune(rig, CENTER + RATE)
+
+    assert settle["measured"] is True
+    # Within one slice of the transient the fake really has — the resolution this
+    # method has, which is what its window length buys.
+    assert settle["settle_ms"] == pytest.approx(50.0, abs=settle["window_us"] / 1000.0)
+
+
+def test_a_radio_that_settles_far_faster_says_the_constant_is_costing_speed() -> None:
+    """The finding that matters for a hopping sweep: every hop pays the difference."""
+    findings = radio._settle_findings(
+        {"settle_ms": 2.0, "worst_ms": 3.0, "configured_ms": 50.0, "window_us": 213.0}
+    )
+
+    assert findings and "every hop pays the difference" in findings[0]
+
+
+def test_a_radio_that_needs_longer_is_a_correctness_fault_not_a_speed_one() -> None:
+    """Too short is worse than too long, and the sentence has to say why: the first
+    samples of a hop are then the PREVIOUS hop's, drawn at a frequency they are not on.
+    A waterfall built that way is confidently wrong rather than merely slow."""
+    findings = radio._settle_findings(
+        {"settle_ms": 70.0, "worst_ms": 80.0, "configured_ms": 50.0, "window_us": 213.0}
+    )
+
+    assert findings and "wrong frequency" in findings[0]
+
+
+def test_a_settle_that_agrees_within_a_slice_is_not_a_finding() -> None:
+    """The resolution this method has is one window. Reporting a disagreement smaller
+    than that would be reporting the method rather than the radio."""
+    assert (
+        radio._settle_findings(
+            {
+                "settle_ms": 50.1,
+                "worst_ms": 50.13,
+                "configured_ms": 50.0,
+                "window_us": 213.0,
+            }
+        )
+        == []
+    )
+
+
+def test_one_wild_slice_is_not_mistaken_for_a_transient() -> None:
+    """Three sigma over several hundred slices puts a handful past the line by chance,
+    and taking the last of those reported a whole 62 ms block as a transient — measured
+    off a fake that had none. The running median is what makes the reading survive its
+    own statistics."""
+    levels = np.zeros(200)
+    levels[150] = 99.0  # one outlier, late, exactly where it did the most damage
+
+    smoothed = radio._smooth(levels, radio.SETTLE_SMOOTH)
+
+    assert float(np.max(np.abs(smoothed))) == 0.0
