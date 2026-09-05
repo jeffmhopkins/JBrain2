@@ -1,6 +1,6 @@
 // The band table as the PWA sees it (`jbrain/sdr/bands.py`, `GET /api/sdr/bands`).
 //
-// **Nothing here is recomputed.** `hops`, `surveyable`, `direct_sampling` and `mirrored`
+// **Nothing here is recomputed.** `hops`, `surveyable`, `bin_hz` and the image edges
 // follow from the frequency and the hardware, and a screen that worked them out itself
 // would be a second implementation of the physics — free to disagree with the radio that
 // actually runs. Every field arrives from the server; this file only names them and says
@@ -38,12 +38,28 @@ export interface BandSection {
    *  the server, never derived here — see the note at the top of this file. */
   duty: number;
   /** False for every HF section: `rtl_power` hardcodes the ADC branch this hardware
-   *  does not wire, so shortwave listens perfectly and cannot be drawn. */
+   *  does not wire, so shortwave can be listened to and — once the I/Q engine lands —
+   *  watched live, and never SURVEYED. It is no longer the same question as whether a
+   *  waterfall can be drawn — see `whyNotLive`. */
   surveyable: boolean;
   /** True below 24 MHz, where the tuner is bypassed — and so where there is no gain
    *  control at all, because the tuner is powered down. */
   direct_sampling: boolean;
-  mirrored: boolean;
+  /** What the radio digitises to draw this section in one hop, and 0 on the tiers
+   *  rtl_power still serves. The picture is this WIDE, not as wide as the section. */
+  sample_rate_hz: number;
+  /** Bins in one live row — derived from the rate so `bin_hz` divides exactly, and
+   *  deliberately not a fixed 4096. */
+  fft_bins: number;
+  /** `sample_rate_hz / fft_bins`, and 0 on the rtl_power tiers. Never rounded: the
+   *  server refuses a pairing that does not divide, so a fraction arriving here would
+   *  mean a frame mislabelled at its top edge. */
+  bin_hz: number;
+  /** The band that folds onto this one, reversed, and 0 where none does. The ADC
+   *  samples at 28.8 MHz, so everything at `28.8 MHz − f` is SUMMED into the same bins;
+   *  no software separates the two, which is why the honest thing is to name it. */
+  image_start_hz: number;
+  image_stop_hz: number;
   channels: BandChannel[];
 }
 
@@ -64,7 +80,6 @@ export interface SpectrumRange {
   section?: string;
   startMhz?: number;
   stopMhz?: number;
-  binHz?: number;
 }
 
 /** The sections grouped by band, in table order — which is browsing order: everyday
@@ -94,14 +109,45 @@ export function sectionAt(
 
 /** Why this section cannot be drawn as a waterfall, or null.
  *
- *  A READING of what the server will answer, not a second rule: the route refuses the
- *  same thing in the same words. It exists so the picker can disable the row instead of
- *  offering a tap that ends in an error. */
+ *  A READING of what the server will answer, not a second rule: the sidecar refuses the
+ *  same thing in the same words, and the route hands that sentence back as a 400. It
+ *  exists so the picker can disable the row instead of offering a tap that ends in an
+ *  error — and, on the spectrum, a tap that ends in an error is expensive: it costs the
+ *  waterfall that was already running.
+ *
+ *  **It no longer asks `surveyable`.** That flag is `rtl_power`'s answer to a different
+ *  question — whether the band can be SURVEYED — and asking it here kept ten shortwave
+ *  rows greyed out with a reason that was about the wrong tool. */
 export function whyNotLive(section: BandSection): string | null {
-  if (!section.surveyable) {
-    return "shortwave cannot be swept — the sweep tool cannot use the direct path";
+  // ⏳ TRANSITIONAL — the one line in this file that mirrors a rule instead of reading
+  // a field, and it is here because the waves landed out of order. F8 opened the HF
+  // rows before F6 swapped the engine behind them, so the sidecar is still `rtl_power`
+  // and `listen.spectrum_engine_refusal` still refuses everything below 24 MHz — the
+  // tool hardcodes the ADC branch this board does not wire. Returning null here would
+  // make this file's own promise false: the picker would offer ten rows the box answers
+  // with a 400. DELETE THIS WITH THAT GUARD, in the same wave, and the check below —
+  // which is the real F6-era rule — is what remains.
+  if (section.direct_sampling) {
+    return "shortwave needs the I/Q engine, which this build doesn't have yet";
+  }
+  if (section.direct_sampling && !section.sample_rate_hz) {
+    return "below 24 MHz a waterfall is one capture, and this range is wider than one";
   }
   return null;
+}
+
+/** The reversed image this section carries, in an operator's words, or null.
+ *
+ *  The honesty `mirrored` was supposed to buy and never did: it was false for every
+ *  shortwave row while every one of them carries a fold of `28.8 MHz − f` summed into
+ *  the same bins. Nothing in software can pull the two apart, so the only thing worth
+ *  saying is which band is in there — otherwise a strong station at 21.4 MHz reads as
+ *  a mystery signal on 40 m. */
+export function imageNote(section: BandSection): string | null {
+  if (!section.image_stop_hz) return null;
+  const from = section.image_start_hz / 1_000_000;
+  const to = section.image_stop_hz / 1_000_000;
+  return `Carries a reversed image of ${from.toFixed(2)}–${to.toFixed(2)} MHz.`;
 }
 
 /** What a section's live tier costs the picture, in an operator's words.

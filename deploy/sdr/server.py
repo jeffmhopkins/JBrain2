@@ -18,10 +18,12 @@ frequency and a mode, both validated against the tuner's real range before they 
 here, and validated again below. The `stream.py` SSRF guard is untouched by any of
 this — see §4.4 of the plan.
 
-Zero new Python dependencies: the HTTP surface is `http.server` from the stdlib and
-the radio work is `rtl_fm` (from the `rtl-sdr` package) over a pipe. What comes back
-is a 16 kHz mono WAV, which is exactly what whisper wants — no resampling stage, a
-convenience of rtl_fm's native output rather than a coincidence.
+Dependencies are APT ONLY, NO PIP — a rule that used to say stdlib-only, and
+`Dockerfile.sdr` argues the weakening. The HTTP surface is `http.server` from the
+stdlib, the radio work is `rtl_fm` (from the `rtl-sdr` package) over a pipe, and numpy
+and SoapySDR come from Debian for the spectrum path. What rtl_fm hands back is a 16 kHz
+mono WAV, which is exactly what whisper wants — no resampling stage, a convenience of
+its native output rather than a coincidence.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
 import listen
+import radio
 import usbdev
 from listen import (
     PURPOSE_APRS,
@@ -81,6 +84,11 @@ NARROW_RATE = 16_000
 WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wbfm capture rate
 
 MAX_SECONDS = 120
+#: How long rtl_fm gets to run its SIGTERM handler — cancel the USB transfer, close the
+#: device — before a capture escalates to SIGKILL. The handler needs milliseconds; this
+#: is slack for a loaded box, and it matches the live path's own grace in
+#: `listen.Session._kill` so the two cannot drift into different teardown behaviour.
+_SHUTDOWN_GRACE_S = 2
 
 
 # Every radio this box is holding and what for: the live sessions, plus the one-shot
@@ -111,12 +119,18 @@ def _wav(pcm: bytes, rate: int) -> bytes:
     return buf.getvalue()
 
 
-def _range_of(body: dict[str, Any]) -> listen.Sweep:
+def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
     Shared by the one-shot `/sweep` and by starting or moving a live spectrum, so the
     three cannot drift apart on what a legal range is — the tuner's limits are a fact
     about the radio, not about which route asked.
+
+    `direct_ok` is the one thing that DOES depend on which route asked, because it is a
+    fact about the engine rather than about the radio: `rtl_power` hardcodes the wrong
+    ADC branch and can never see below `MIN_HZ`, while the live spectrum's own FFT sets
+    direct sampling mode 2 at runtime and can. Passed through rather than decided here,
+    so the floor and the reason for it stay in one place (`listen.Sweep.of`).
 
     `seconds` is how long a SURVEY runs and means nothing to a live spectrum, which
     runs until it is released. It is parsed either way rather than made conditional:
@@ -127,11 +141,13 @@ def _range_of(body: dict[str, Any]) -> listen.Sweep:
         stop_hz=int(body.get("stop_hz", 0)),
         bin_hz=int(body.get("bin_hz", 25_000)),
         seconds=float(body.get("seconds", 60)),
+        direct_ok=direct_ok,
     )
-    if not (MIN_HZ <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
+    floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
+    if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
         raise ListenError(
-            f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the tuner's range "
-            f"({MIN_HZ}-{MAX_HZ} Hz)"
+            f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the radio's range "
+            f"({floor}-{MAX_HZ} Hz)"
         )
     return sweep
 
@@ -162,6 +178,14 @@ def capture(
         raise SdrError(
             f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
+    # A capture is meant to be a sample of what a session would hear, so it has to
+    # refuse what a session refuses: between 14.4 and 24 MHz `demod_args` bypasses the
+    # tuner and the request folds onto the first Nyquist zone. Shared with `listen`
+    # rather than restated, for the reason `demod_args` itself is shared — the two
+    # drifting apart is how a capture comes back sounding unlike the live audio.
+    aliased = listen.aliased_refusal(freq_hz)
+    if aliased is not None:
+        raise SdrError(aliased)
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
@@ -186,16 +210,35 @@ def capture(
         cmd += listen.demod_args(key, gain, freq_hz)
         cmd += ["-"]
 
-        # rtl_fm streams until killed, so the timeout IS the recording length. A
-        # generous kill margin covers device open + tuner settle on a cold radio.
+        # rtl_fm streams until stopped, so the timeout IS the recording length and the
+        # timeout branch is the NORMAL path, taken by every capture that records
+        # anything at all.
+        #
+        # Which is why this cannot be `subprocess.run(timeout=...)`: on timeout CPython
+        # calls `process.kill()` — SIGKILL — and `listen.Session._kill` exists to spell
+        # out what that does to this hardware. rtl_fm installs a handler that cancels
+        # the pending async USB transfer and CLOSES THE DEVICE; SIGKILL never runs it,
+        # the RTL2832U is left with transfers submitted, and a dongle torn down that way
+        # can stop answering the descriptor reads librtlsdr enumerates with — after
+        # which every `-d <serial>` lookup fails and the radio reads as absent while
+        # sysfs still lists it. The live path has been careful about this since it was
+        # written; capture was quietly doing the opposite on every single run.
+        #
+        # So: SIGTERM, let the handler close the device, and keep SIGKILL for a tool
+        # that has genuinely wedged. `communicate` is resumed rather than restarted —
+        # it keeps what it has already read, which is the recording.
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, timeout=seconds, check=False
-            )
-            pcm, err = proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as expired:
-            pcm = expired.stdout or b""
-            err = expired.stderr or b""
+            pcm, err = proc.communicate(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                pcm, err = proc.communicate(timeout=_SHUTDOWN_GRACE_S)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                pcm, err = proc.communicate()
 
         text = err.decode("utf-8", "replace")
         if not pcm:
@@ -449,9 +492,9 @@ class Handler(BaseHTTPRequestHandler):
         """Run one band sweep and return the CSV rtl_power wrote.
 
         The sidecar's whole job here is the RADIO: hold the lease, run the sweep, hand
-        back the numbers. It does not reduce them and it does not draw them, because
-        `Dockerfile.sdr` forbids the pip install a plotting stack would need — and the
-        api already carries Pillow for exactly this kind of work. Sending the raw CSV
+        back the numbers. It does not reduce them and it does not draw them: a plotting
+        stack is exactly what `Dockerfile.sdr`'s apt-only, no-pip rule still refuses —
+        and the api already carries Pillow for exactly this kind of work. Sending the raw CSV
         also means a better reduction can be run over an old sweep later, the same
         reasoning that keeps `raw` on every APRS row.
 
@@ -580,6 +623,28 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"detail": str(busy)})
             return
         try:
+            # The lease is not the whole answer any more. It knows about child processes
+            # and TTL reservations; it cannot see an IN-PROCESS device handle, and the
+            # leak case is exactly the dangerous one — the lease believes the radio is
+            # free (that is what leaked means), so the ioctl would fire from the very
+            # process still holding the usbfs fd with interface 0 claimed. The device
+            # then re-enumerates at a new node, the orphaned libusb handle goes ENODEV
+            # and is never closed, and nothing in `radio.py` learns. Asked through the
+            # SAME `blocking_key` the lease uses, so an unnamed handle blocks every
+            # radio here exactly as an unnamed session does there.
+            open_here = listen.blocking_key(radio.holders(), named or listen.ANY_DEVICE)
+            if open_here is not None:
+                doing = radio.holders().get(open_here, "in use")
+                self._json(
+                    409,
+                    {
+                        "detail": f"the radio ({open_here or 'unnamed'}) is still open "
+                        f"in this process ({doing}), and a port reset would strand that "
+                        f"handle at a new node. Stop that job first — or, if nothing "
+                        f"will, restart the sdr service."
+                    },
+                )
+                return
             usbdev.reset(node)
         except ValueError as bad:
             self._json(400, {"detail": str(bad)})
@@ -598,6 +663,68 @@ class Handler(BaseHTTPRequestHandler):
         # free address — so the caller is told to look again rather than reuse it.
         self._json(200, {"reset": True, "serial": named, "was": node})
 
+    def _soapy_probe(self, body: dict[str, Any]) -> None:
+        """F0's questions, asked of a real dongle, answered as a verdict.
+
+        Everything `radio.py` is written against — enumeration, `serial=` selection,
+        `direct_samp=2`, live retune and live rate change with no stream rebuild, a real
+        `SOAPY_SDR_OVERFLOW` under induced backpressure, the achieved rate against the
+        requested one, and whether `bufflen` actually took — is a claim read off source
+        and datasheets. This is where hardware retires them, and the owner has no
+        terminal to run `SoapySDRUtil` from (CLAUDE.md #10).
+
+        THROUGH THE LEASE, like every other holder here, so a probe cannot run under a
+        live session and a session cannot start under a probe. Released in a `finally`
+        for the reason `capture` is: a claim staked and not returned refuses that radio
+        until the TTL lapses."""
+        try:
+            named = listen.validate_serial(body.get("serial"))
+            center_hz = int(body.get("center_hz") or radio.PROBE_CENTER_HZ)
+            rate_hz = int(body.get("rate_hz") or radio.PROBE_RATE_HZ)
+            bins = int(body.get("bins") or radio.PROBE_BINS)
+        except (ListenError, TypeError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        if not listen.DIRECT_MIN_HZ <= center_hz <= MAX_HZ:
+            self._json(
+                400,
+                {"detail": f"{center_hz} Hz is outside the radio's range "
+                 f"({listen.DIRECT_MIN_HZ}-{MAX_HZ} Hz)"},
+            )
+            return
+        # The legal rates are librtlsdr's, not ours: it rejects everything outside
+        # 225001-300000 and 900001-3200000, and a probe asking for one gets the driver's
+        # own refusal, which is more informative than a bound restated here. These two
+        # only keep the request from allocating something absurd.
+        if not 225_000 <= rate_hz <= 3_200_000:
+            self._json(400, {"detail": f"{rate_hz} S/s is not a rate this radio takes"})
+            return
+        if not 16 <= bins <= 8_192:
+            self._json(400, {"detail": f"{bins} bins is outside 16-8192"})
+            return
+        busy = TUNER.reserve(named, "probing the radio")
+        if busy is not None:
+            self._json(409, {"detail": str(busy)})
+            return
+        try:
+            self._json(
+                200,
+                radio.probe(
+                    serial=named, center_hz=center_hz, rate_hz=rate_hz, bins=bins
+                ),
+            )
+        except radio.RadioBusy as held:
+            self._json(409, {"detail": str(held)})
+        except radio.RadioError as failed:
+            # 502 rather than 500: the radio answered badly (or not at all), which is
+            # the same class of failure as a sidecar refusing a sweep, and the sentence
+            # is the useful part.
+            self._json(502, {"detail": str(failed)})
+        except ValueError as bad:
+            self._json(400, {"detail": str(bad)})
+        finally:
+            TUNER.unreserve(named)
+
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
         # exactly that, so the default keeps them byte-identical.
@@ -605,7 +732,10 @@ class Handler(BaseHTTPRequestHandler):
         sweep = None
         if purpose in SWEEPING:
             try:
-                sweep = _range_of(body)
+                # Per PURPOSE, because the two sweeping purposes run different engines:
+                # `survey` is rtl_power and cannot see shortwave at all, `spectrum` does
+                # its own FFT off raw I/Q and can.
+                sweep = _range_of(body, direct_ok=purpose == PURPOSE_SPECTRUM)
             except (TypeError, ValueError) as bad:
                 self._json(400, {"detail": f"a range needs numbers: {bad}"})
                 return
@@ -696,7 +826,8 @@ class Handler(BaseHTTPRequestHandler):
         leased, the session id stays good, the viewers stay attached — and a second route
         would be a second place for the released-session race to be got wrong."""
         try:
-            sweep = _range_of(body)
+            # Only a live spectrum is ever resweept, and that engine reaches shortwave.
+            sweep = _range_of(body, direct_ok=True)
         except (TypeError, ValueError) as bad:
             self._json(400, {"detail": f"a range needs numbers: {bad}"})
             return
@@ -776,6 +907,11 @@ class Handler(BaseHTTPRequestHandler):
             if body is not None:
                 self._reset(body)
             return
+        if route == "/soapy/probe":
+            body = self._body()
+            if body is not None:
+                self._soapy_probe(body)
+            return
         if route != "/capture":
             self._json(404, {"detail": "not found"})
             return
@@ -811,10 +947,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(wav)
 
-    def log_message(self, fmt: str, *args: Any) -> None:
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        # `format`, shadowing the builtin, because that is what BaseHTTPRequestHandler
+        # names this parameter and a caller passing it by keyword would otherwise miss.
+        #
         # Default logging writes to stderr per request; the container log is the
         # audit trail we want, so keep it but without the noisy address prefix.
-        print(f"[sdr] {fmt % args}", flush=True)  # noqa: T201
+        print(f"[sdr] {format % args}", flush=True)  # noqa: T201
 
 
 def main() -> None:

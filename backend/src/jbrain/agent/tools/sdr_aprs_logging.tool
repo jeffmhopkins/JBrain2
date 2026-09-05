@@ -1,6 +1,6 @@
 ---
 name: sdr_aprs_logging
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -16,10 +16,10 @@ params:
 Turn APRS packet logging on or off. Use it when the owner asks to start or stop
 logging packets, watch APRS, or free the radio from it.
 
-APRS logging RESERVES THE RADIO. The box has one tuner, so while it is logging
-nothing can be listened to, and starting it will be refused if something else holds
-the radio — say which job has it and let the owner decide. Turning logging off frees
-the radio; it will never stop a listening session the owner started.
+APRS logging TAKES A RADIO for packets — that radio can't be listened to until logging
+is off, but another radio, if there is one, stays free. A refusal names the radio and
+the job holding it; that is not an error, so say which and let the owner decide. Turning
+logging off frees that radio only; it never stops a listening session the owner started.
 
 Safe to repeat: turning it on when it is already on succeeds and changes nothing.
 Always report back the state you actually ended up in, which is what this returns —

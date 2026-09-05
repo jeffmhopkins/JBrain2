@@ -22,7 +22,6 @@ import urllib.request
 from collections.abc import Iterator
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest import mock
 
@@ -365,8 +364,8 @@ def test_a_sweep_holds_the_radio_and_returns_its_rows(
     """The happy path, and the shape the api reduces.
 
     The sidecar hands back the CSV rtl_power wrote and does NOT draw it: the image work
-    needs a plotting stack, `Dockerfile.sdr` forbids the pip install that would bring
-    one, and the api already carries Pillow."""
+    needs a plotting stack, which `Dockerfile.sdr`'s apt-only, no-pip rule refuses, and
+    the api already carries Pillow."""
     _sweeping(
         monkeypatch, csv="2026-09-03, 15:00:00, 144000000, 144005000, 5000, 12, -71.2\n"
     )
@@ -866,14 +865,63 @@ def _capture(base: str, body: dict[str, Any]) -> tuple[int, dict[str, str]]:
         return err.code, {"detail": (json.loads(err.read() or b"{}")).get("detail", "")}
 
 
-def _recording(monkeypatch, pcm: bytes = b"\x00\x10" * 8000) -> None:
-    """rtl_fm that records instantly. The real one streams until the timeout fires, so
-    a test driving the route would otherwise wait out the whole capture."""
+class _Recorder:
+    """rtl_fm as `capture` actually drives it: it streams until it is STOPPED.
 
-    def run(cmd, **_kw):
-        return SimpleNamespace(stdout=pcm, stderr=b"", args=cmd)
+    So the first `communicate` always times out — that is the normal path, not the
+    error one — and what the recording is worth depends on how it is then asked to
+    stop. This fake remembers the signals in order, which is the whole of what
+    `test_a_capture_closes_the_device_before_it_kills_it` can check without a radio."""
 
-    monkeypatch.setattr(server.subprocess, "run", run)
+    def __init__(self, cmd, pcm: bytes, deaf: bool = False) -> None:
+        self.args = cmd
+        # A superset of `_FakeProc`, because patching `Popen` patches it for the whole
+        # process: a test that starts a SESSION while a capture fake is installed gets
+        # one of these, and its pumps read these attributes.
+        self.stdout = _Empty()
+        self.stderr = _Empty()
+        self.stdin = _Sink()
+        self.returncode = None
+        self.signals: list[str] = []
+        self._pcm = pcm
+        self._deaf = deaf  # ignores SIGTERM, so the escalation has to happen
+        self._stopped = False
+
+    def communicate(self, timeout: float | None = None):
+        if not self._stopped:
+            raise server.subprocess.TimeoutExpired(self.args, timeout or 0)
+        return self._pcm, b""
+
+    def terminate(self) -> None:
+        self.signals.append("terminate")
+        self._stopped = not self._deaf
+
+    def kill(self) -> None:
+        self.signals.append("kill")
+        self._stopped = True
+
+    def poll(self) -> int | None:
+        return 0 if self._stopped else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def _recording(
+    monkeypatch, pcm: bytes = b"\x00\x10" * 8000, deaf: bool = False
+) -> list[_Recorder]:
+    """rtl_fm that records instantly. The real one streams until it is stopped, so a
+    test driving the route would otherwise wait out the whole capture.
+
+    Returns the list it spawns into, so a caller can inspect how it was torn down."""
+    made: list[_Recorder] = []
+
+    def popen(cmd, **_kw):
+        made.append(_Recorder(cmd, pcm, deaf))
+        return made[-1]
+
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    return made
 
 
 def test_a_capture_names_the_radio_it_was_told_to_open(
@@ -881,14 +929,7 @@ def test_a_capture_names_the_radio_it_was_told_to_open(
 ) -> None:
     """The serial has to reach BOTH the reservation and rtl_fm's argv. Nothing drove
     this route, so the whole serial-to-key plumbing ran only in production."""
-    seen: list[list[str]] = []
-    _recording(monkeypatch)
-    real = server.subprocess.run
-    monkeypatch.setattr(
-        server.subprocess,
-        "run",
-        lambda cmd, **kw: (seen.append(cmd), real(cmd, **kw))[1],
-    )
+    made = _recording(monkeypatch)
 
     status, _ = _capture(
         sidecar,
@@ -896,7 +937,8 @@ def test_a_capture_names_the_radio_it_was_told_to_open(
     )
 
     assert status == 200
-    arg = seen[0][seen[0].index("-d") + 1]
+    cmd = made[0].args
+    arg = cmd[cmd.index("-d") + 1]
     # BARE, not `serial=X`: librtlsdr's verbose_device_search has no key=value form.
     assert arg == WHIP and "=" not in arg
 
@@ -932,6 +974,26 @@ def test_a_capture_releases_its_radio_even_when_rtl_fm_produces_nothing(
     )
 
     assert status == 400
+    assert _get(sidecar, "/healthz")[1]["busy"] is False
+
+
+def test_a_capture_of_the_second_Nyquist_zone_is_refused_like_a_session(
+    sidecar: str, monkeypatch
+) -> None:
+    """A capture is meant to be a sample of what a session would hear, so it has to
+    refuse what a session refuses. Between 14.4 and 24 MHz the tuner is bypassed and the
+    ADC's 28.8 MHz clock folds the request: this would have returned a healthy-looking
+    WAV of 10.7 MHz, `peak` and all, for a request that named 18.1."""
+    _recording(monkeypatch)
+
+    status, body = _capture(
+        sidecar,
+        {"frequency_hz": 18_100_000, "seconds": 1, "mode": "usb", "serial": WHIP},
+    )
+
+    assert status == 400
+    assert "10.700 MHz" in body["detail"]
+    # And the radio it never opened is not left reserved.
     assert _get(sidecar, "/healthz")[1]["busy"] is False
 
 
@@ -1043,11 +1105,41 @@ def test_a_spectrum_session_is_started_by_its_range_not_a_frequency(
     assert body["frequency_hz"] == 144_100_000
 
 
-def test_a_spectrum_outside_the_tuner_s_range_is_refused_in_words(sidecar: str) -> None:
-    status, body = _start_spectrum(sidecar, start_hz=1_000_000, stop_hz=2_000_000)
+def test_a_spectrum_reaches_shortwave_where_a_SURVEY_of_it_does_not(
+    sidecar: str, monkeypatch
+) -> None:
+    """One range, two engines, two answers — which is the point of splitting the guard
+    per purpose rather than per frequency. `rtl_power` hardcodes the ADC branch this
+    board does not wire and can never see 40 m; the live spectrum does its own FFT and
+    sets direct sampling mode 2, so the same numbers are a picture there.
+
+    **Both are refused today, and the two refusals are the assertion.** F8 opened the
+    band before F6 replaced the spectrum engine, so what a shortwave spectrum meets is
+    no longer the tuner floor — it is the engine saying it is still rtl_power. That
+    distinction is the whole wave: the guards now answer per PURPOSE, and the last
+    thing in the way is a fact about the tool rather than about the radio. When F6
+    lands this becomes a 200 and the second half of the test stands unchanged."""
+    status, spectrum = _start_spectrum(sidecar, start_hz=7_000_000, stop_hz=7_300_000)
 
     assert status == 400
-    assert "cannot go below" in body["detail"]
+    assert "I/Q engine" in spectrum["detail"], "the band guard, not the engine, refused"
+    assert "cannot go below" not in spectrum["detail"]
+
+    _sweeping(monkeypatch)
+    status, refused = _post(
+        sidecar, "/sweep", {"start_hz": 7_000_000, "stop_hz": 7_300_000}
+    )
+
+    assert status == 400
+    assert "cannot go below" in refused["detail"]
+
+
+def test_a_spectrum_below_what_the_ADC_reaches_is_still_refused(sidecar: str) -> None:
+    """The floor moved down to the board's own; it did not go away."""
+    status, body = _start_spectrum(sidecar, start_hz=20_000, stop_hz=90_000)
+
+    assert status == 400
+    assert "below what this radio reaches" in body["detail"]
 
 
 def test_a_spectrum_with_no_range_is_refused_rather_than_run(sidecar: str) -> None:
@@ -1119,6 +1211,41 @@ def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> N
     assert body["session_id"] == started["session_id"]
     assert body["sweep"]["start_hz"] == 440_000_000
     assert body["frequency_hz"] == 440_100_000
+
+
+def test_a_refused_shortwave_move_costs_a_sentence_and_not_the_radio(
+    sidecar: str,
+) -> None:
+    """The whole tap, end to end: watching 2 m, ask for 40 m, get a 400.
+
+    `_resweep` passes `direct_ok=True` unconditionally, so the range is legal all the
+    way down to the engine — which is still `rtl_power` until F6, and cannot serve it.
+    What the owner must be left with is the picture they already had: the 400 is the
+    cheap half, and the expensive half is that the session, the lease and the old range
+    are all exactly where they were. When F6 lands this becomes a 200."""
+    _, started = _start_spectrum(sidecar)
+
+    status, refused = _post(
+        sidecar,
+        "/listen/tune",
+        {
+            "session_id": started["session_id"],
+            "start_hz": 7_125_000,
+            "stop_hz": 7_300_000,
+            "bin_hz": 250,
+        },
+    )
+
+    assert status == 400
+    assert "I/Q engine" in refused["detail"]
+    # Not a 409, which is what a session reaped out from under the sheet would look
+    # like — and the sheet would then have to start a new one to get a picture back.
+    status, health = _get(sidecar, "/healthz")
+    assert status == 200
+    live = health["sessions"]
+    assert [s["session_id"] for s in live] == [started["session_id"]]
+    assert live[0]["purpose"] == "spectrum"
+    assert live[0]["sweep"]["start_hz"] == 144_000_000
 
 
 def test_an_unnamed_move_with_a_range_finds_the_waterfall_not_the_tuner(
@@ -1284,3 +1411,181 @@ def test_a_node_that_is_not_a_device_node_is_refused(sidecar: str) -> None:
     status, _ = _post(sidecar, "/reset", {"serial": WIRE, "device_node": "/etc/passwd"})
 
     assert status == 400
+
+
+def test_a_capture_closes_the_device_before_it_kills_it(
+    sidecar: str, monkeypatch
+) -> None:
+    """The capture path SIGKILLed rtl_fm on every single recording, and that is the one
+    thing `listen.Session._kill` exists to spell out as forbidden.
+
+    `subprocess.run(timeout=...)` calls `process.kill()` when the timeout fires — and
+    for this route the timeout IS the recording length, so the normal path was the
+    fatal one. rtl_fm's SIGTERM handler cancels the pending async USB transfer and
+    CLOSES the device; SIGKILL never runs it, and a dongle torn off a submitted
+    transfer can stop answering the descriptor reads librtlsdr enumerates with. The
+    symptom is a radio that reads as absent while sysfs still lists it by name — which
+    is the state one of this box's two dongles is in."""
+    made = _recording(monkeypatch)
+
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert status == 200
+    assert made[0].signals == ["terminate"], "a capture must never SIGKILL a live radio"
+
+
+def test_a_capture_still_escalates_to_a_kill_for_a_wedged_tool(
+    sidecar: str, monkeypatch
+) -> None:
+    """Politeness is not patience. SIGTERM first, but a tool that ignores it must not
+    hold the radio for ever — the grace is bounded and the kill is still there."""
+    made = _recording(monkeypatch, deaf=True)
+
+    status, _ = _capture(
+        sidecar,
+        {"frequency_hz": 99_300_000, "seconds": 1, "mode": "wbfm", "serial": WHIP},
+    )
+
+    assert status == 200
+    assert made[0].signals == ["terminate", "kill"]
+
+
+# --- the in-process device handle, which the lease cannot see -------------------------
+
+
+def test_a_reset_is_refused_while_a_device_handle_is_open_here(
+    sidecar: str, monkeypatch
+) -> None:
+    """The lease knows about child processes and TTL reservations; it does not know
+    about a device handle held INSIDE this process, and that is exactly the dangerous
+    case: `USBDEVFS_RESET` fired from the process still holding the usbfs fd with
+    interface 0 claimed re-enumerates the device at a new node, leaves the orphaned
+    libusb handle at ENODEV, and nothing in `radio.py` ever learns
+    (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §3)."""
+    hit: list[str] = []
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", hit.append)
+    monkeypatch.setattr(sys.modules["radio"], "holders", lambda: {WIRE: "reading I/Q"})
+
+    status, body = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 409
+    assert "still open in this process" in body["detail"]
+    assert "restart the sdr service" in body["detail"]
+    assert hit == []
+    # The OTHER dongle is untouched: this is one handle, not a global stop.
+    status, _ = _post(
+        sidecar, "/reset", {"serial": WHIP, "device_node": "/dev/bus/usb/003/011"}
+    )
+    assert status == 200
+
+
+def test_an_unnamed_device_handle_blocks_a_reset_of_either_radio(
+    sidecar: str, monkeypatch
+) -> None:
+    """A handle opened with no serial takes whichever device librtlsdr enumerated
+    first, so nothing can prove it is not on the radio the reset is aimed at — the same
+    rule the lease applies to an unnamed session, asked through the same function."""
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", lambda _n: None)
+    monkeypatch.setattr(sys.modules["radio"], "holders", lambda: {"": "reading I/Q"})
+
+    for serial in (WHIP, WIRE):
+        status, body = _post(
+            sidecar, "/reset", {"serial": serial, "device_node": "/dev/bus/usb/003/010"}
+        )
+        assert status == 409
+        assert "unnamed" in body["detail"]
+
+
+# --- the F0 probe ---------------------------------------------------------------------
+
+
+def _probe_stub(monkeypatch, result: Any = None, raises: Exception | None = None):
+    """Stand in for `radio.probe`, recording what the route asked and what the lease
+    said while it ran. The probe itself is covered against a fake device in
+    `test_sdr_radio.py`; what is under test here is the lease and the wire."""
+    seen: list[dict[str, Any]] = []
+
+    def _run(**kwargs: Any) -> dict[str, Any]:
+        seen.append({**kwargs, "reserved_during": server.TUNER.reserved()})
+        if raises is not None:
+            raise raises
+        return result or {"ok": True, "summary": "every claim held"}
+
+    monkeypatch.setattr(sys.modules["radio"], "probe", _run)
+    return seen
+
+
+def test_the_probe_takes_the_radio_and_gives_it_back(sidecar: str, monkeypatch) -> None:
+    """Through the LEASE, like every other holder here, so it cannot run under a live
+    session and a session cannot start under it — and released in a `finally`, because
+    a claim staked and not returned refuses that radio until the TTL lapses."""
+    seen = _probe_stub(monkeypatch)
+
+    status, body = _post(
+        sidecar,
+        "/soapy/probe",
+        {"serial": WIRE, "center_hz": 10_000_000, "rate_hz": 256_000, "bins": 1024},
+    )
+
+    assert status == 200
+    assert body["ok"] is True
+    assert seen[0]["serial"] == WIRE
+    assert seen[0]["center_hz"] == 10_000_000
+    assert seen[0]["bins"] == 1024
+    assert seen[0]["reserved_during"] is True, "the probe ran without holding the radio"
+    assert server.TUNER.reserved() is False
+
+
+def test_the_probe_is_refused_while_something_else_holds_that_radio(
+    sidecar: str, monkeypatch
+) -> None:
+    seen = _probe_stub(monkeypatch)
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+
+    status, body = _post(sidecar, "/soapy/probe", {"serial": WIRE})
+
+    assert status == 409
+    assert "logging APRS" in body["detail"]
+    assert seen == []
+
+
+def test_a_probe_that_the_radio_fails_still_releases_it(
+    sidecar: str, monkeypatch
+) -> None:
+    """The failure path is the one that leaks a lease, so it is the one worth a test."""
+    radio_mod = sys.modules["radio"]
+    _probe_stub(monkeypatch, raises=radio_mod.RadioError("the radio would not open"))
+
+    status, body = _post(sidecar, "/soapy/probe", {"serial": WHIP})
+
+    assert status == 502
+    assert "would not open" in body["detail"]
+    assert server.TUNER.reserved() is False
+
+
+def test_the_probe_refuses_what_the_radio_cannot_do(sidecar: str, monkeypatch) -> None:
+    """Bounded here as well as in the api, for the reason `validate_serial` is: a bound
+    that lives only in the caller is not a bound once there is a second caller, and
+    this process has its own HTTP surface."""
+    seen = _probe_stub(monkeypatch)
+
+    for body in (
+        {"center_hz": 2_000_000_000},
+        {"rate_hz": 50_000},
+        {"bins": 100_000},
+        {"serial": {"not": "a serial"}},
+    ):
+        status, _ = _post(sidecar, "/soapy/probe", body)
+        assert status == 400, body
+
+    assert seen == []
+    assert server.TUNER.reserved() is False

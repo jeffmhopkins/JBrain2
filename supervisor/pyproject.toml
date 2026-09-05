@@ -13,6 +13,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "httpx>=0.27",
+    # The sidecar's numpy, in the DEV extra because the supervisor suite loads
+    # deploy/sdr/*.py by path (CLAUDE.md #8: a sidecar dependency IS a dev-env
+    # dependency). Pinned to the SERIES Debian trixie ships as python3-numpy
+    # (1:2.2.4+ds-1), not just the major: `~=2.2` floats to 2.4/2.5, and CI
+    # proving an API the image cannot have is the failure this pin exists to
+    # stop. Bump it when the image's Debian does.
+    "numpy~=2.2.4",
     "pyright>=1.1",
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -34,11 +41,31 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["src", "tests"]
+# `../deploy/sdr` is IN the include: the sidecar is typechecked by nothing else — no
+# ruff config, no pyright config of its own — and the execution environment below was
+# dead configuration until this line existed, describing files pyright never opened.
+# It is this package's job because this package's pytest already loads those files by
+# path (CLAUDE.md #8).
+include = ["src", "tests", "../deploy/sdr"]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
+
+# How to read the sdr sidecar's tree, three facts about which are invisible from here.
+# They import each other by BARE NAME off one image WORKDIR, hence `extraPaths`. And
+# `SoapySDR` is an apt package present in the image and in no venv, so
+# reportMissingImports would flag an import that is correct; deferring it into a function
+# body does not help, pyright resolves those too. What proves a sidecar import really
+# resolves is `Dockerfile.sdr`'s build-time `import server, SoapySDR, numpy`, which CI
+# now runs on every PR that touches it.
+[[tool.pyright.executionEnvironments]]
+root = "../deploy/sdr"
+extraPaths = ["../deploy/sdr"]
+reportMissingImports = "none"
+# The sidecar runs on Debian trixie's CPython, not the supervisor's 3.11 floor — the
+# rebase to `debian:trixie-slim` is what put an interpreter version in two places.
+pythonVersion = "3.13"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

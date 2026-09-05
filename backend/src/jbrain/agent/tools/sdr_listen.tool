@@ -1,6 +1,6 @@
 ---
 name: sdr_listen
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -17,10 +17,10 @@ Tune the owner's radio and start listening. Use this when they ask to listen to 
 station, a frequency, or a band — "put on 99.3", "listen to the weather radio",
 "what's on the air band".
 
-The box has ONE tuner, so this takes it. If something else already holds it you get
-back what it is doing — listening, or logging APRS — and the owner has to release it
-first. Say which job has it, because the two need different answers from them. That is
-not an error to retry — say so and let them decide.
+This takes a radio — the box can have more than one, and the lease is per radio. A
+refusal names the radio and the job holding it: listening, logging APRS, sweeping the
+band, or watching the spectrum. Say which radio and which job, because each has its own
+switch and another radio may still be free. Not an error to retry — let them decide.
 
 Starting a session puts a RADIO ICON in the owner's composer. That icon is the whole
 control surface: tapping it opens a tuner where they can retune, hear the audio, see

@@ -1388,6 +1388,31 @@ class TestShortwave:
         with pytest.raises(listen.SdrError):
             listen.validate(50_000, "am")
 
+    def test_the_second_Nyquist_zone_is_refused_rather_than_mis_tuned(self) -> None:
+        """The gap between the two floors, and the reason this is a refusal.
+
+        `demod_args` bypasses the tuner for everything below 24 MHz, but the ADC clocks
+        at 28.8 MHz — so the honest range down there stops at 14.4 MHz. Ask for 18.1 and
+        the radio hands back 10.7, mirrored: the request succeeds, the session reports
+        healthy, the level meter moves, and the owner is listening to a different
+        station with nothing anywhere saying so. The PWA's own floor used to hide this
+        by refusing everything below 24 MHz; F8 lowered it to 0.1 and left the hole
+        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §8)."""
+        with pytest.raises(listen.SdrError) as refused:
+            listen.validate(18_100_000, "usb")
+
+        # The sentence has to carry the number the owner would otherwise be hearing,
+        # because "out of range" is not true — the radio tunes it, at the wrong place.
+        assert "10.700 MHz" in str(refused.value)
+        assert "14.4 MHz" in str(refused.value)
+
+    def test_the_zone_boundaries_themselves_stay_legal(self) -> None:
+        """The first zone ends AT 14.4 MHz and the tuner comes back AT 24, so both
+        edges are reachable and neither folds. A guard that took one of them would cost
+        a real band for nothing."""
+        assert listen.validate(listen.NYQUIST_HZ, "usb") == "usb"
+        assert listen.validate(listen.MIN_HZ, "fm") == "fm"
+
     def test_a_sweep_refuses_to_go_there_and_says_why(self) -> None:
         """Not a policy. `rtl_power -D` hardcodes direct sampling mode 1 — the I branch
         — so on this board it would tune something and measure nothing. A flat,
@@ -1397,6 +1422,23 @@ class TestShortwave:
 
         assert "cannot go below" in str(refused.value)
         assert "still listen" in str(refused.value)
+
+    def test_the_SAME_range_is_accepted_for_the_engine_that_can_see_it(self) -> None:
+        """The whole of F8, in one pair of calls. The refusal above is `rtl_power`'s and
+        was never the radio's: the live spectrum does its own FFT off raw I/Q and sets
+        direct sampling mode 2 — the ADC branch this board wires — so 40 m is a picture
+        for that engine and still not a survey for the tool."""
+        sweep = listen.Sweep.of(7_000_000, 7_300_000, 250, 60, direct_ok=True)
+
+        assert sweep.start_hz == 7_000_000
+
+    def test_even_the_direct_path_stops_at_what_the_ADC_reaches(self) -> None:
+        """`direct_ok` moves the floor, it does not remove it. Below DIRECT_MIN_HZ the
+        board's diplexer feeds the ADC nothing at all."""
+        with pytest.raises(listen.SdrError) as refused:
+            listen.Sweep.of(50_000, 200_000, 250, 60, direct_ok=True)
+
+        assert "below what this radio reaches" in str(refused.value)
 
     def test_a_sweep_above_the_tuner_is_unaffected(self) -> None:
         sweep = listen.Sweep.of(144_000_000, 148_000_000, 5_000, 60)
@@ -1790,6 +1832,44 @@ class TestTheLiveSpectrum:
         frame = sub.get(timeout=5)
         assert frame is not None and frame.start_hz == 440_000_000
 
+    def test_a_refused_shortwave_retune_leaves_the_picture_running(
+        self, tuner, feed
+    ) -> None:
+        """The tap that must not cost the owner their radio.
+
+        F8 opened the ten HF rows one wave before F6 replaces the engine, so "watching
+        2 m, tap 40 m" is now one tap: the band sheet offers it, the route passes it
+        through, and the sidecar refuses it. Refusing from inside the relaunch would
+        refuse AFTER `_restart` had killed the pipeline and written the new range —
+        `alive` false, the next `Tuner._reap` stopping the session and dropping the
+        lease, and the error toast landing on a screen that had just lost the waterfall
+        AND the radio. Validated before anything is destroyed, the tap costs a sentence.
+        """
+        session = self._start(tuner)
+        sub = session.subscribe_frames()
+
+        with pytest.raises(listen.SdrError) as refused:
+            session.resweep(
+                listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True)
+            )
+
+        assert "I/Q engine" in str(refused.value)
+        # Still running, still leased, and still the session the omnibox names —
+        # `current()` takes the lock and reaps, so this is the reaper's own verdict.
+        assert session.alive
+        assert tuner.current() is not None
+        assert tuner.for_purpose(listen.PURPOSE_SPECTRUM) is session
+        # And still pointed where it was. A refused move moves NOTHING: a session left
+        # holding the range it was refused would draw 2 m rows under a 40 m label.
+        assert session.sweep is not None and session.sweep.start_hz == 144_000_000
+        assert session.frequency_hz == 144_100_000
+        # The viewer was never disconnected either — no sentinel, and the picture it is
+        # already watching keeps arriving.
+        feed.emit(_row("2026-09-04, 13:01:00", 144_000_000, 25_000, -70.0))
+        feed.emit(_row("2026-09-04, 13:01:01", 144_000_000, 25_000, -71.0))
+        frame = sub.get(timeout=5)
+        assert frame is not None and frame.start_hz == 144_000_000
+
     def test_moving_a_released_spectrum_is_refused_not_relaunched(self, tuner) -> None:
         """The race `Session._restart` exists for: a relaunch here spawns an rtl_power
         for a session no longer in the registry — unreapable, and holding the dongle
@@ -2040,3 +2120,112 @@ class TestTheUsbReset:
             usbdev.reset("/dev/bus/usb/003/010")
 
         assert closed == [7]
+
+
+class _Tracked(_FakeProc):
+    """A fake process that records itself, so a test can ask what is still running."""
+
+    made: ClassVar[list[_Tracked]] = []
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        _Tracked.made.append(self)
+
+    @property
+    def running(self) -> bool:
+        return not self._dead
+
+
+@pytest.fixture
+def tracking(monkeypatch: pytest.MonkeyPatch):
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    _Tracked.made = []
+    monkeypatch.setattr(listen.subprocess, "Popen", _Tracked)
+    return listen.Tuner()
+
+
+def test_a_stop_during_a_retune_does_not_strand_the_relaunched_radio(tracking) -> None:
+    """The bug this closes, seen on the box on 2026-09-04.
+
+    `_restart` checked `_released` under the lock and then let go of it to do the work.
+    A `stop()` landing in that window killed the OLD pipeline (already down) and popped
+    the session — and the pipeline `_start_pipeline` spawned a moment later held the
+    dongle with nothing left in the program pointing at it. It ran for hours, printing
+    `[rtl_fm] Error: dropped samples` because `_stopping` was already true when its
+    pumps started so nothing drained its stdout, while `/healthz` and the PWA both said
+    the radio was idle. The only cure was restarting the container."""
+    tracking.start(99_300_000, "wbfm", None)
+    session = tracking.current()
+    assert session is not None
+    spawn = session._start_pipeline
+
+    def stop_lands_mid_relaunch() -> None:
+        # Exactly the interleaving: the guard has passed, the old pipeline is down, and
+        # the release happens before the new one exists to be killed.
+        session.stop()
+        spawn()
+
+    session._start_pipeline = stop_lands_mid_relaunch  # type: ignore[method-assign]
+
+    with pytest.raises(listen.SessionGone):
+        session.tune(107_100_000, "wbfm")
+
+    still_up = [p for p in _Tracked.made if p.running]
+    assert not still_up, "a released session left a process holding the radio"
+
+
+def test_a_process_that_survives_its_kill_is_retried_not_forgotten(tracking) -> None:
+    """`_kill` clears `_rtl`/`_enc` so `alive` can go false, which is right for the
+    SESSION and wrong for the process: a survivor holds the radio while every
+    `blocking_key` believes it is free, and nothing left can still reach it."""
+
+    class _Unkillable(_Tracked):
+        def terminate(self) -> None:
+            self.signals = getattr(self, "signals", 0) + 1
+
+        kill = terminate
+
+    unkillable = _Unkillable()
+    listen._park(unkillable)
+
+    assert listen.reap_survivors() == 1, "a survivor must stay parked, not be dropped"
+
+    unkillable._dead = True  # it finally went
+
+    assert listen.reap_survivors() == 0
+    assert listen._survivors == []
+
+
+def test_reaping_sessions_also_retries_stranded_processes(tracking) -> None:
+    """Wired onto the session sweep deliberately: a parked process is one holding a
+    radio the sweep is about to report as free, so that is exactly when to try again."""
+    tracking.start(99_300_000, "wbfm", None)
+    stranded = _Tracked()
+    listen._park(stranded)
+
+    tracking.current()  # takes the lock and reaps
+
+    assert not stranded.running and listen._survivors == []
+
+
+def test_an_hf_spectrum_is_refused_while_rtl_power_is_still_the_engine(tuner) -> None:
+    """F8 opened the HF band rows one wave before F6 replaces this engine.
+
+    `rtl_power -D` hardcodes direct sampling mode 1 — the I branch — and this hardware
+    wires Q, so the tool would tune something and measure nothing. The refusal has to
+    live on the ENGINE rather than in the route: the same range becomes viewable the
+    moment the I/Q engine lands, and a floor in the route would have to be hunted down
+    and removed again. This test is the reminder to delete both together."""
+    with pytest.raises(listen.SdrError) as refused:
+        tuner.start(
+            7_200_000,
+            "fm",
+            None,
+            purpose=listen.PURPOSE_SPECTRUM,
+            sweep=listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True),
+        )
+
+    assert "I/Q engine" in str(refused.value)
+    # Above the tuner floor is untouched: this guard is about the ENGINE, not the band.
+    assert tuner.current() is None

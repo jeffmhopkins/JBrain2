@@ -1,21 +1,104 @@
-// How a waterfall turns dB into colour. The arithmetic only — no canvas, no React.
+// How a waterfall turns dB into colour, and how many rows a picture of it is worth.
+// The arithmetic only — no canvas, no React.
 //
 // Kept apart from the component because this is the half that can be wrong in a way
 // nobody sees: a scale a few dB off does not throw, it just paints a band that looks
 // empty. It is also the half that has to MATCH `sweep.waterfall_png`, so a still image
 // of a sweep and the live picture of the same band are the same picture.
+//
+// **Everything here is sized in SECONDS, not in rows.** A row was a second when the
+// only engine was `rtl_power`, whose interval is an int clamped at 1 in the C. The I/Q
+// engine runs the same stream at ~10 fps, so a constant counted in rows silently means
+// a tenth of what it says: "three minutes of history" becomes eighteen seconds and
+// "calibrated over eight seconds" becomes eight tenths of one. Both are measured off
+// the box's own clock, which every row carries.
 
 import type { SpectrumRow } from "./sdrSpectrum";
 
-/** How many rows are taken before the colour scale is frozen.
+/** How much history the picture holds, and how long the colour scale is taken over.
+ *  Three minutes is long enough that a net or a repeater conversation is visible as a
+ *  shape; eight seconds is long enough for a stable percentile and short enough that
+ *  the first sight of a band is not painted flat. */
+export const HISTORY_SECONDS = 180;
+export const CALIBRATION_SECONDS = 8;
+
+/** The scale is not frozen off fewer rows than this however long they took, because a
+ *  percentile of two rows is a percentile of whatever happened twice. */
+const CALIBRATION_MIN_ROWS = 8;
+
+/** The rate assumed until the stream has shown one: the `rtl_power` tier, which is what
+ *  this picture has always been sized for. Guessing fast and being wrong would allocate
+ *  a canvas ten times too tall on a stream that never fills it. */
+const ASSUMED_FPS = 1;
+/** The fastest rate the picture will size itself for. §2 of the I/Q plan puts the fast
+ *  tier at ~10 fps; anything above that is a clock that glitched, and a canvas sized off
+ *  it is memory spent on a stream the box cannot produce. */
+const MAX_FPS = 10;
+/** Gaps needed before a rate is believed. Four is enough for a median to survive one
+ *  stalled frame, and at 1 fps it is over in five seconds. */
+const RATE_GAPS = 4;
+/** A floor, so a pathologically wide row cannot leave a picture with no height at all. */
+const MIN_ROWS = 8;
+/** The canvas the ring buffer lives on is `bins x rows`, and a browser refuses one past
+ *  a few million pixels. At the sidecar's own 4096-bin ceiling and 10 fps the picture
+ *  wants 7.4 M, so this does not bind today — it is here so that finer bins (plan F7)
+ *  cost history rather than costing the picture entirely. */
+const MAX_PIXELS = 8_000_000;
+
+export interface Scale {
+  lowDb: number;
+  highDb: number;
+}
+
+/** The rate the stream is actually running at, in rows a second, or null while too few
+ *  rows have arrived to say.
+ *
+ *  Measured off `Frame.at` — the box's clock, stamped when the row was measured — rather
+ *  than off arrival times, which a WAN bunches up and a reconnect reorders. The MEDIAN
+ *  gap, not the mean: one stalled frame or one retune barrier leaves a single huge gap,
+ *  and an average over it would halve the history the picture keeps. Rows are newest
+ *  first, the order the component holds them in. */
+export function frameRate(rows: readonly SpectrumRow[]): number | null {
+  const gaps: number[] = [];
+  for (let i = 1; i < rows.length && gaps.length < RATE_GAPS; i += 1) {
+    const gap = (rows[i - 1] as SpectrumRow).at - (rows[i] as SpectrumRow).at;
+    // A row with no clock on it stamps `at` 0, so a gap of zero or less is not a fast
+    // stream — it is a stream that cannot be timed, and it must not read as one.
+    if (Number.isFinite(gap) && gap > 0) gaps.push(gap);
+  }
+  if (gaps.length < RATE_GAPS) return null;
+  gaps.sort((a, b) => a - b);
+  const middle = gaps[Math.floor(gaps.length / 2)] as number;
+  return 1 / middle;
+}
+
+/** How many rows are three minutes at this rate, for a picture this wide. */
+export function historyRows(fps: number | null, bins: number): number {
+  const wanted = Math.round(HISTORY_SECONDS * Math.min(fps ?? ASSUMED_FPS, MAX_FPS));
+  const budget = bins > 0 ? Math.floor(MAX_PIXELS / bins) : wanted;
+  return Math.max(MIN_ROWS, Math.min(wanted, budget));
+}
+
+/** Whether the colour window has been given long enough to be held.
  *
  *  **The scale is calibrated once, then held.** Re-taking it every row is the obvious
  *  thing and it is wrong: the picture then renormalises around whatever is on the air,
  *  so a strong carrier appearing makes the noise floor go dark and a band that has gone
  *  quiet blooms — exactly the two changes the owner is watching for, erased by the act
- *  of watching. Eight rows is enough for a stable percentile and is over in eight
- *  seconds. */
-export const CALIBRATION_ROWS = 8;
+ *  of watching.
+ *
+ *  Freezing it too EARLY is the opposite failure and the worse one, because it is
+ *  silent: a radio that has just retuned is still settling, and a window taken off eight
+ *  tenths of a second of that paints the whole rest of the session wrong. So the test is
+ *  the span of box clock the rows cover, not how many of them there are. A stream whose
+ *  rows carry no usable clock falls back to the row count, which is what this file did
+ *  when a row could only ever be a second. */
+export function calibrated(rows: readonly SpectrumRow[]): boolean {
+  if (rows.length < CALIBRATION_MIN_ROWS) return false;
+  const span = (rows[0] as SpectrumRow).at - (rows[rows.length - 1] as SpectrumRow).at;
+  if (!Number.isFinite(span) || span <= 0) return true;
+  return span >= CALIBRATION_SECONDS;
+}
 
 /** Where the palette starts, as a percentile of the calibration rows. The same figures
  *  `sweep.waterfall_png` uses, because it is the same gesture: not a sensitivity
@@ -27,11 +110,6 @@ const CEIL_PERCENTILE = 0.995;
  *  measuring its own noise) has almost no spread, and a palette stretched across it
  *  turns rounding into a light show. */
 const MIN_SPAN_DB = 12;
-
-export interface Scale {
-  lowDb: number;
-  highDb: number;
-}
 
 function percentile(sorted: number[], fraction: number): number {
   if (sorted.length === 0) return 0;

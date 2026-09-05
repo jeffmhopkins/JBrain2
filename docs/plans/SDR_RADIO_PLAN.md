@@ -201,8 +201,10 @@ privileged one — the same property `host_kernel_write` already relies on for
 
 ### S0b-ii — the sidecar + client, then the gate
 
-**Built.** The `sdr` image (`python:3.12-slim` + the `rtl-sdr` apt package; the service
-is stdlib `http.server` piping to `rtl_fm`, so there are no new Python dependencies),
+**Built.** The `sdr` image (then `python:3.12-slim` + the `rtl-sdr` apt package, the
+service stdlib `http.server` piping to `rtl_fm` — `SDR_IQ_SPECTRUM_PLAN.md` F1 has since
+rebased it onto `debian:trixie-slim` and taken numpy + SoapySDR from apt, so the image's
+rule reads apt-only-no-pip rather than stdlib-only),
 the profile-guarded compose service with the whole `/dev/bus/usb` tree passed through on
 the egress-free `radio` network, a pinned `sdr_url` on the api, and
 `POST /api/debug/sdr/capture` — tune, record, transcribe, in one console command.
@@ -743,19 +745,27 @@ is flat because whisper.cpp pads every clip to a 30 s window. Residency is still
 ## 9. Out of scope (named, not silently dropped)
 
 - **Transmit.** The hardware cannot, and the tools will not pretend otherwise.
-- **HF below 24 MHz — LISTENING SHIPPED 2026-09-04; SWEEPING NEVER WILL.** The open
-  question here ("whether `rtl_power` can even be put into that mode") is answered, and
-  the answer is no. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` — the
-  ADC's **I branch** — while the NESDR SMArt v5 wires **Q** through its on-board
-  diplexer (Nooelec's datasheet block diagram; no hardware mod, which is what makes this
-  a software gap rather than a hardware one). `rtl_fm` lets the branch be chosen, so
-  `-E direct2` reaches it and listening works. Sweeping would need a patched C tool and
-  therefore a compiler in the image, and is deferred.
+- **HF below 24 MHz — LISTENING SHIPPED 2026-09-04; `rtl_power` SWEEPING NEVER WILL.**
+  The open question here ("whether `rtl_power` can even be put into that mode") is
+  answered, and the answer is no. `rtl_power -D` hardcodes
+  `verbose_direct_sampling(dev, 1)` — the ADC's **I branch** — while the NESDR SMArt v5
+  wires **Q** through its on-board diplexer (Nooelec's datasheet block diagram; no
+  hardware mod, which is what makes this a software gap rather than a hardware one).
+  `rtl_fm` lets the branch be chosen, so `-E direct2` reaches it and listening works.
+  Sweeping would need a patched C tool and therefore a compiler in the image.
+  ⟲ **"And therefore no waterfall either" was the wrong conclusion, and
+  `SDR_IQ_SPECTRUM_PLAN.md` F8 removed it.** That inference held only while the picture
+  WAS `rtl_power`; the live tier now reads raw I/Q and does its own FFT, which sets
+  direct sampling mode 2 at runtime. So `tuner.sweepable` (the survey) and
+  `tuner.viewable` (the picture) are two predicates with two answers, and shortwave is
+  drawable and still not surveyable.
   The range is modelled as **two paths, not one lower floor** (`jbrain/sdr/tuner.py`):
-  below the tuner it is powered down entirely, so there is **no gain control** at all,
-  and above 14.4 MHz — the first Nyquist zone at the ADC's 28.8 MHz — signals arrive
-  **mirrored** with the sidebands swapped. All three facts are carried in the band table
-  rather than discovered as failures.
+  below the tuner it is powered down entirely, so there is **no gain control** at all.
+  ⟲ The third fact this used to state — a `mirrored` flag above 14.4 MHz — was both
+  dead and mis-stated, and F4 replaced it: every section stops at or below 14.35 MHz so
+  the flag was False for all ten HF rows, while **all ten carry a reversed image** of
+  `28.8 MHz − f` summed into the same bins. The band table now names the folded band
+  (`image_start_hz`/`image_stop_hz`) instead of raising a flag nothing ever set.
 - **Trunked / P25 systems.** Needs OP25 or trunk-recorder — a substantially larger lift.
   Worth knowing that much local public-safety traffic is now trunked and often
   encrypted, so S0 may find little clear voice depending on the county. Encrypted

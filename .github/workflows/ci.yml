@@ -50,6 +50,14 @@ jobs:
               # only the sidecar ran no test that covers it — which is exactly how a
               # change to the tuner lease could reach main uncovered.
               - 'deploy/sdr/**'
+              # Its image and its compose service, for the same reason one step out:
+              # test_deploy_scripts.py asserts on both files, and the supervisor job is
+              # the only place `docker build -f deploy/Dockerfile.sdr` runs on a PR. The
+              # sdr image is built ON THE BOX (compose gives the service `build:`, not an
+              # image to pull), so without this gate the first check of a broken
+              # Dockerfile is the owner's Ops -> Update, on a box with no terminal.
+              - 'deploy/Dockerfile.sdr'
+              - 'deploy/docker-compose.yml'
               - '.github/workflows/ci.yml'
             jcode:
               - 'jcode/**'
@@ -251,7 +259,7 @@ jobs:
   supervisor:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # ~20s observed
+    timeout-minutes: 20  # ~20s of checks, plus a few minutes for the sdr image build
     defaults:
       run:
         working-directory: supervisor
@@ -272,6 +280,16 @@ jobs:
         run: uv run pyright
       - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
         run: uv run pytest
+      # The sdr sidecar's image, built (not pushed) as a PR gate. It belongs here rather
+      # than in `images`, which is `if: github.event_name == 'push'` and so post-merge
+      # only — and post-merge is too late for the one image the box builds itself. The
+      # build is the ONLY check of the sidecar's apt stack: the Dockerfile's own RUN
+      # asserts `import server, SoapySDR, numpy` and the radio tools, and SoapySDR is
+      # apt-only, so it can be proved nowhere else in CI. `working-directory: .` because
+      # the job defaults to `supervisor/` and the image's context is the repo root.
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.sdr .
 
   # The jcode control server (opt-in code mode) — a Python service tested like the
   # supervisor: its unit tests run against fakes (no SDK, no model, no network), so

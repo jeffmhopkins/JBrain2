@@ -7,10 +7,25 @@
 
 import { describe, expect, it } from "vitest";
 import type { SpectrumRow } from "./sdrSpectrum";
-import { CALIBRATION_ROWS, calibrate, paint, shade } from "./sdrWaterfall";
+import {
+  CALIBRATION_SECONDS,
+  HISTORY_SECONDS,
+  calibrate,
+  calibrated,
+  frameRate,
+  historyRows,
+  paint,
+  shade,
+} from "./sdrWaterfall";
 
 function row(db: number[], startHz = 144_000_000, binHz = 25_000): SpectrumRow {
   return { at: 0, startHz, stopHz: startHz + db.length * binHz, binHz, db };
+}
+
+/** `count` rows a `gap` apart on the box clock, NEWEST FIRST — the order the waterfall
+ *  holds its history in, and the order everything below reads it in. */
+function stream(count: number, gap: number): SpectrumRow[] {
+  return [...Array(count).keys()].map((i) => ({ ...row([-70, -60]), at: 1000 - i * gap }));
 }
 
 describe("the colour window", () => {
@@ -47,7 +62,98 @@ describe("the colour window", () => {
 
   it("is taken from a handful of rows, not one", () => {
     // One row of a bursty band is whatever happened in that second.
-    expect(CALIBRATION_ROWS).toBeGreaterThan(1);
+    expect(calibrated(stream(1, 1))).toBe(false);
+  });
+});
+
+describe("how fast the rows are coming", () => {
+  it("says nothing until it has seen enough gaps to mean it", () => {
+    // Sizing a three-minute canvas off one gap would let a single late frame decide how
+    // much history the picture keeps.
+    expect(frameRate(stream(3, 0.1))).toBeNull();
+  });
+
+  it("reads the rtl_power tier and the I/Q tier off the same rows", () => {
+    expect(frameRate(stream(8, 1))).toBeCloseTo(1);
+    expect(frameRate(stream(8, 0.1))).toBeCloseTo(10);
+  });
+
+  it("survives one stalled frame, because it takes the median gap", () => {
+    // A retune barrier or a reconnect leaves a single huge gap. An average over it would
+    // halve the history the picture keeps for the next three minutes.
+    const rows = stream(8, 0.1);
+    (rows[3] as SpectrumRow).at -= 5;
+    for (let i = 4; i < rows.length; i += 1) (rows[i] as SpectrumRow).at -= 5;
+
+    expect(frameRate(rows)).toBeCloseTo(10);
+  });
+
+  it("refuses to time a stream whose rows carry no clock", () => {
+    // `at` defaults to 0 on a row that did not carry one. Zero gaps are not an infinitely
+    // fast stream, and reading them as one would ask for an unbounded canvas.
+    expect(frameRate(stream(8, 0))).toBeNull();
+  });
+});
+
+describe("how much history is three minutes", () => {
+  it("is the same 180 rows it always was on a one-a-second stream", () => {
+    expect(historyRows(1, 512)).toBe(HISTORY_SECONDS);
+  });
+
+  it("is ten times that when the rows come ten times as fast", () => {
+    // The bug this replaces: a constant 180 rows meant eighteen seconds at 10 fps, while
+    // the comment beside it still said three minutes.
+    expect(historyRows(10, 512)).toBe(HISTORY_SECONDS * 10);
+  });
+
+  it("assumes the slow tier until a rate is known", () => {
+    // The first rows arrive before any gap has been measured. Guessing fast would
+    // allocate a canvas ten times too tall for a stream that never fills it.
+    expect(historyRows(null, 512)).toBe(HISTORY_SECONDS);
+  });
+
+  it("will not size a canvas off a clock that glitched", () => {
+    expect(historyRows(1000, 512)).toBe(HISTORY_SECONDS * 10);
+  });
+
+  it("spends history rather than asking for a canvas the browser refuses", () => {
+    // Finer bins (plan F7) multiply into the same pixel budget as more rows do.
+    const wide = historyRows(10, 4096);
+    const wider = historyRows(10, 1_000_000);
+
+    expect(wide).toBe(HISTORY_SECONDS * 10); // 4096 x 1800 fits, so nothing is given up
+    expect(wider).toBeLessThan(wide);
+    expect(wider).toBeGreaterThan(0);
+  });
+});
+
+describe("holding the colour window", () => {
+  it("is not frozen off eight tenths of a second", () => {
+    // The bug this replaces: eight ROWS is eight seconds at 1 fps and 0.8 s at 10 fps —
+    // well inside the settling window after a retune. Freeze a bad window there and the
+    // whole session is painted wrong, silently.
+    expect(calibrated(stream(8, 0.1))).toBe(false);
+  });
+
+  it("is frozen once the rows cover eight seconds, at either rate", () => {
+    expect(calibrated(stream(9, 1))).toBe(true);
+    expect(calibrated(stream(81, 0.1))).toBe(true);
+    expect(calibrated(stream(80, 0.1))).toBe(false);
+  });
+
+  it("still wants a handful of rows however long they took", () => {
+    // Two rows a minute apart span the window and are still two readings.
+    expect(calibrated(stream(2, 60))).toBe(false);
+  });
+
+  it("falls back to counting rows when the stream carries no clock", () => {
+    // Otherwise the window is re-taken forever and the picture renormalises around
+    // whatever is on the air — the failure the freeze exists to prevent.
+    expect(calibrated(stream(8, 0))).toBe(true);
+  });
+
+  it("holds the window for a whole calibration window, not a token one", () => {
+    expect(CALIBRATION_SECONDS).toBeGreaterThanOrEqual(8);
   });
 });
 

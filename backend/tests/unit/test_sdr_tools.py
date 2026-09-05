@@ -6,11 +6,14 @@ tuner surface in front of the owner. What matters is that it takes the lease, sa
 so plainly when it cannot, and points at the icon rather than narrating settings.
 """
 
+import ast
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from jbrain.agent import sdrtools
 from jbrain.agent.sdrtools import build_sdr_handlers
 
 
@@ -407,3 +410,111 @@ async def test_a_stop_that_stopped_nothing_is_not_reported_as_off(tools) -> None
 
     assert "may still be on" in out
     assert "is off" not in out
+
+
+# --- what the DESCRIPTIONS claim -----------------------------------------------------
+# The prose is the only part of a tool the model reads before it acts, and it drifts
+# silently: nothing runs it. Two claims here went stale and shipped — a box with one
+# tuner (the lease has been per radio since APRS_CONTROL_PLAN P0b) and a refusal that
+# can only name one of two jobs (there are four). These are the guards for both.
+
+
+_TOOLS = Path(__file__).resolve().parents[2] / "src" / "jbrain" / "agent" / "tools"
+_LISTEN_PY = Path(__file__).resolve().parents[3] / "deploy" / "sdr" / "listen.py"
+
+#: Ways of saying the thing that must survive a rewrite: taking a radio does not take
+#: them all, because the lease is per radio and the box may have several.
+#:
+#: **Positive on purpose.** This replaced a regex that BLACKLISTED "one tuner" and its
+#: neighbours, which is the wrong shape of guard twice over. It missed every rewrite
+#: that drops the number — "APRS logging reserves the tuner, so while it is logging
+#: nothing else can be listened to" says something MORE wrong and matches nothing —
+#: while failing correct sentences like "if the box has one radio this takes it; with
+#: two, another stays free". A guard that fires on true prose and passes false prose
+#: does not protect the claim, it selects for guard-shaped writing. Any new wording is
+#: welcome here; what is not welcome is a description that says nothing about the
+#: other radio.
+_PER_RADIO = ("per radio", "another radio", "other radio", "another stays free")
+
+
+def _flow(path: Path) -> str:
+    """A description as the model reads it. The file is hand-wrapped; the model sees
+    one run of prose — so match on that, and a rewrap is not a test failure."""
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def _purpose_labels() -> list[str]:
+    """The phrases a sidecar refusal can name, read from the sidecar's own source.
+
+    Parsed rather than imported: `deploy/sdr/` is not on the backend's path (it is the
+    sidecar image), and hardcoding the list here would be the same drift one file over.
+    """
+    tree = ast.parse(_LISTEN_PY.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "PURPOSE_LABEL" for t in node.targets):
+            continue
+        assert isinstance(node.value, ast.Dict)
+        held = [v for v in node.value.values if isinstance(v, ast.Constant)]
+        return [v.value for v in held if isinstance(v.value, str)]
+    raise AssertionError(f"PURPOSE_LABEL is gone from {_LISTEN_PY}")
+
+
+def test_every_tool_that_takes_a_radio_says_the_others_stay_free() -> None:
+    """It has two, and the lease has been per radio since APRS_CONTROL_PLAN P0b.
+
+    `sdr_listen` and `sdr_aprs_logging` both said otherwise for a release: the second
+    one told the model "while it is logging nothing can be listened to" while its own
+    handler, in `sdrtools.py`, returned "another dongle, if this box has one, is still
+    free". What the model does with that is report a radio busy while the other one
+    sits idle — so the claim these tools must CARRY is the per-radio one, and a
+    description that has gone quiet about it is the drift worth failing on."""
+    silent = []
+    for name in ("sdr_listen", "sdr_aprs_logging"):
+        said = _flow(_TOOLS / f"{name}.tool").lower()
+        if not any(phrase in said for phrase in _PER_RADIO):
+            silent.append(name)
+
+    assert silent == [], f"tools that never tell the model the lease is per radio: {silent}"
+
+
+def test_the_radio_module_docstring_says_it_too() -> None:
+    """It is the file that does the per-radio resolving, so it was the sharpest case:
+    the false sentence sat in the docstring of the module whose code contradicts it."""
+    doc = (sdrtools.__doc__ or "").lower()
+
+    assert any(phrase in doc for phrase in _PER_RADIO)
+    assert "for_purpose" in doc  # the thing that actually decides which radio
+
+
+def test_sdr_listen_names_every_job_a_refusal_can_name() -> None:
+    """A refusal quotes the sidecar's own label, so a job the description has never
+    heard of arrives as an unexplained sentence. `sdr_listen` is where the four are
+    enumerated; when a fifth purpose lands in `listen.py`, this is what says so."""
+    labels = _purpose_labels()
+    described = _flow(_TOOLS / "sdr_listen.tool")
+
+    assert len(labels) == len(set(labels)) >= 4
+    missing = [label for label in labels if label not in described]
+    assert missing == [], f"sdr_listen.tool never mentions: {missing}"
+
+
+def test_the_radio_tools_agree_a_refusal_is_recoverable() -> None:
+    """The three things true of every refusal: it names a radio, it names the job, and
+    it is not an error — the owner may have another radio free, so retrying after they
+    act is the point rather than a mistake."""
+    for name in ("sdr_listen", "sdr_aprs_logging"):
+        text = _flow(_TOOLS / f"{name}.tool")
+        assert "refusal names the radio" in text, name
+        assert "not an error" in text.lower(), name
+
+
+def test_sdr_stop_says_it_only_stops_listening() -> None:
+    """Its handler passes `session_id: None`, which the sidecar reads as the LISTENING
+    session — never a service. The handler already degrades correctly; the description
+    used to promise more than it does."""
+    text = _flow(_TOOLS / "sdr_stop.tool")
+
+    assert "listening only" in text
+    assert "own switch" in text  # the answer the handler actually returns

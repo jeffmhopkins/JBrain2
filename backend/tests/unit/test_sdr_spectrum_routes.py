@@ -2,10 +2,11 @@
 
 What is worth testing here is not "does it proxy" — it is the arithmetic and the
 refusals, because both are things the owner meets as a picture that is wrong rather
-than as an error. A span too fine to send has to be COARSENED rather than refused, a
-band that cannot be swept has to say so in a sentence, and moving the picture to
-another band must never release the radio in between — that window is how a waterfall
-disappears because someone changed band.
+than as an error. A one-hop band has to get the bin width its own capture produces, a
+span too wide for one capture has to fall back to the tool that can hop, a refusal has
+to arrive as a sentence, and moving the picture to another band must never release the
+radio in between — that window is how a waterfall disappears because someone changed
+band.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from fastapi import HTTPException
 from jbrain.api import sdr as sdr_api
 from jbrain.sdr import bands
 from jbrain.sdr.roles import Radio
-from jbrain.sdr.tuner import SPECTRUM_MAX_BINS
+from jbrain.sdr.tuner import live_bin_hz
 
 # Typed `Any` so the fakes can stand in for `SettingsDep`/`OwnerDep` without a
 # `type: ignore` on every call — the routes read two attributes off each.
@@ -50,48 +51,140 @@ def _request(disconnected: bool = False) -> Any:
 # --- the range ------------------------------------------------------------------
 
 
-def test_a_named_section_brings_its_own_bin_width() -> None:
-    """The width someone chose while reading a band plan beats anything this route
-    could compute from the span alone (`bands.sweep_bin_hz`)."""
-    section = bands.by_id("fm-broadcast")
+def test_a_one_hop_section_carries_the_bin_width_ITS_capture_will_produce() -> None:
+    """Not a number anyone typed and not one rtl_power granted: `air-tower` is captured
+    at 2.4 MS/s over 4000 bins, so a bin is 600 Hz EXACTLY. The pairing is chosen for
+    that (`bands.LIVE_CAPTURES`) — at 4096 bins the same rate is 585.9375 Hz, and a
+    frame rounding that to 586 is 256 Hz out at its top edge with nothing able to tell.
+
+    The table says it; F6 is what puts it on the wire, and `_span` holds it back until
+    then (see the test below). This is the row, not the request."""
+    section = bands.by_id("air-tower")
     assert section is not None
 
-    start, stop, bin_hz = sdr_api._span("fm-broadcast", None, None, None)
+    start, stop, _bin_hz = sdr_api._span("air-tower", None, None)
 
     assert (start, stop) == (section.start_hz, section.stop_hz)
-    assert bin_hz == section.sweep_bin_hz
+    assert (section.sample_rate_hz, section.fft_bins) == (2_400_000, 4_000)
+    assert section.live_bin_hz == 600
+    assert isinstance(section.live_bin_hz, int)  # exact, so `sameBand` can compare it
 
 
-def test_an_explicit_range_is_the_expert_way_in() -> None:
-    start, stop, bin_hz = sdr_api._span(None, 144.0, 148.0, 5_000)
+def test_the_fast_tier_never_asks_rtl_power_for_sub_kilohertz_bins() -> None:
+    """**Transitional, and F6 deletes it with `SPECTRUM_ENGINE_IS_IQ`.**
 
-    assert (start, stop, bin_hz) == (144_000_000, 148_000_000, 5_000)
+    The table's `rate / N` is 250-600 Hz, and until the I/Q engine exists that number
+    is handed to `rtl_power -f start:stop:bin`, which honours it: `air-tower` goes from
+    512 bins a frame to 4096, and `csv_dbm` prints `i1..i2` INCLUSIVE and then repeats
+    `avg[i2]`, so the block is 4097 columns. That is ~29 kB per frame instead of ~3.6,
+    relayed on the api's own event loop and rounded value by value in pure Python, for
+    a picture no finer than the `%.2f` bin width the tool prints — 488.28 read back as
+    488, putting a 4096-bin frame ~1150 Hz out at the top. All cost, no benefit, on the
+    engine the width was not computed for.
+
+    Asserted as a floor rather than as an exact number so it survives a re-tabling: no
+    fast section may ask the running engine for a bin finer than a kilohertz."""
+    if sdr_api.SPECTRUM_ENGINE_IS_IQ:  # pragma: no cover - F6 deletes this whole test
+        pytest.skip("the I/Q engine computes the width itself; the ladder is gone")
+
+    fast = [s for s in bands.SECTIONS if s.live == bands.LIVE_FAST]
+    assert fast, "the table lost its one-hop sections"
+    for section in fast:
+        _start, _stop, bin_hz = sdr_api._span(section.id, None, None)
+
+        assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz), section.id
+        assert bin_hz >= 1_000, section.id
+        # And the width the tool would really emit, which is what crosses the wire.
+        assert (section.span_hz // bin_hz) + 1 <= bands.LIVE_MAX_BINS, section.id
 
 
-def test_a_range_too_fine_to_send_is_coarsened_not_refused() -> None:
-    """A live view is where the owner asks for a whole band at once. "Too wide" is a
-    worse answer than a coarser picture they can zoom into — and the row carries its
-    own bin width, so nothing downstream has to be told."""
-    _start, _stop, bin_hz = sdr_api._span(None, 144.0, 148.0, 100)
+def test_a_multi_hop_section_still_gets_rtl_powers_own_ladder() -> None:
+    """20 MHz of FM broadcast is more than one capture, so it is still swept — hops, one
+    row a second, and a bin width the tool picks. Keeping that here is the point of
+    splitting the two tiers rather than pretending one engine serves both."""
+    section = bands.by_id("fm-broadcast")
+    assert section is not None
+    assert section.sample_rate_hz == 0
 
-    assert 4_000_000 // bin_hz <= SPECTRUM_MAX_BINS
-    assert bin_hz == 1_600  # 100 Hz doubled until the frame fits
+    _start, _stop, bin_hz = sdr_api._span("fm-broadcast", None, None)
+
+    assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz)
 
 
-def test_shortwave_is_refused_in_words_not_a_validation_blob() -> None:
-    """The one surface an owner with no terminal has (CLAUDE.md #10). HF listens
-    perfectly and cannot be swept, and that difference has to be said."""
+def test_an_explicit_range_is_the_section_it_names_in_numbers() -> None:
+    """The expert path and the band button must produce the SAME picture, or the width
+    of a bin depends on how the owner asked for the band.
+
+    Covered on the rows where the two paths USED to disagree, which is the whole point:
+    a derived answer takes the smallest capture that covers the range, while a curated
+    row may deliberately name a larger one — `mw` is sampled at 2.048 MS/s so that
+    `R/2 <= fc` holds and the picture does not fold, where the derived answer is 1.6.
+    On the slow tier the same split ran the other way: a hand-typed 144.0-148.0 got the
+    25 kHz default while the `2m-all` button got the 5 kHz the row asks for."""
+    for section_id, (start_mhz, stop_mhz) in {
+        "mw": (0.53, 1.70),
+        "murs": (151.8, 154.65),
+        "2m-all": (144.0, 148.0),
+        "2m-ssb": (144.1, 144.3),
+    }.items():
+        section = bands.by_id(section_id)
+        assert section is not None
+
+        typed = sdr_api._span(None, start_mhz, stop_mhz)
+        pressed = sdr_api._span(section_id, None, None)
+
+        assert typed == pressed, section_id
+
+
+def test_a_range_that_is_no_section_still_gets_a_derived_answer() -> None:
+    """The lookup is EXACT, not nearest. 430-435 MHz is nobody's curated row, so it
+    takes the default rather than inheriting settings chosen for a band it only
+    overlaps — a rate picked for 2 MHz would draw a 5 MHz span's edges inside the IF
+    rolloff, which reads as a dead band edge."""
+    assert bands.by_edges(430_000_000, 435_000_000) is None
+
+    _start, _stop, bin_hz = sdr_api._span(None, 430.0, 435.0)
+
+    assert bin_hz == live_bin_hz(5_000_000, sdr_api.DEFAULT_SPECTRUM_BIN_HZ)
+
+
+def test_a_hand_entered_range_too_wide_for_one_capture_falls_back_to_the_tool() -> None:
+    # 4 MHz is two hops however the owner asked for it, so this is rtl_power's ladder
+    # in both engines — and the range is `2m-all`'s, so it is that row's width.
+    whole = bands.by_id("2m-all")
+    assert whole is not None
+
+    _start, _stop, bin_hz = sdr_api._span(None, 144.0, 148.0)
+
+    assert bin_hz == live_bin_hz(4_000_000, whole.sweep_bin_hz)
+
+
+def test_shortwave_is_drawn_rather_than_refused() -> None:
+    """F8. It used to come back "a sweep cannot go below 24 MHz" — true of rtl_power and
+    of nothing else. The live engine reads raw I/Q and sets direct sampling mode 2, so
+    40 m is a picture now, at the width its own capture makes."""
+    forty = bands.by_id("40m")
+    assert forty is not None
+
+    start, stop, _bin_hz = sdr_api._span("40m", None, None)
+
+    assert (start, stop) == (7_125_000, 7_300_000)
+    assert forty.live_bin_hz == 250  # 256 kS/s over 1024 bins, once F6 transforms it
+
+
+def test_shortwave_wider_than_one_capture_is_refused_in_words() -> None:
+    """The one surface an owner with no terminal has (CLAUDE.md #10). The refusal down
+    here is narrower than it was, and it has to say which limit it hit."""
     with pytest.raises(HTTPException) as raised:
-        sdr_api._span(None, 7.0, 7.3, None)
+        sdr_api._span(None, 3.0, 8.0)
 
     assert raised.value.status_code == 400
-    assert "cannot go below" in str(raised.value.detail)
-    assert "still listen" in str(raised.value.detail)
+    assert "more than one capture" in str(raised.value.detail)
 
 
 def test_a_span_wider_than_the_radio_can_sweep_says_so() -> None:
     with pytest.raises(HTTPException) as raised:
-        sdr_api._span(None, 400.0, 500.0, None)
+        sdr_api._span(None, 400.0, 500.0)
 
     assert raised.value.status_code == 400
     assert "Pick a section" in str(raised.value.detail)
@@ -99,14 +192,14 @@ def test_a_span_wider_than_the_radio_can_sweep_says_so() -> None:
 
 def test_a_section_that_does_not_exist_is_a_404() -> None:
     with pytest.raises(HTTPException) as raised:
-        sdr_api._span("no-such-band", None, None, None)
+        sdr_api._span("no-such-band", None, None)
 
     assert raised.value.status_code == 404
 
 
 def test_a_waterfall_with_no_range_at_all_is_refused() -> None:
     with pytest.raises(HTTPException) as raised:
-        sdr_api._span(None, None, None, None)
+        sdr_api._span(None, None, None)
 
     assert raised.value.status_code == 400
     assert "band section" in str(raised.value.detail)

@@ -76,7 +76,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, sweepable
+from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range, sweepable
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1867,6 +1867,19 @@ async def sdr_sweep(
     return JobSubmitOut(job_id=job_id)
 
 
+def _receivable(frequency_mhz: float) -> None:
+    """Refuse a frequency the radio would answer with a DIFFERENT one — the debug twin
+    of `api/sdr.py`'s `_tunable`, and needed here for the same reason the owner routes
+    need it: the `Query` bounds check the ENDS, and 14.4-24 MHz sits inside them and is
+    reached by neither path. Below 24 MHz the sidecar tunes with `-E direct2`, and
+    direct sampling folds the second Nyquist zone back onto the first, so 18.1 MHz is
+    received as 10.7 (SDR_IQ_SPECTRUM_PLAN §8). A capture from there transcribes
+    cleanly and names the wrong band."""
+    refusal = out_of_range(frequency_mhz)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
+
+
 @router.post("/sdr/capture")
 async def sdr_capture(
     request: Request,
@@ -1891,6 +1904,7 @@ async def sdr_capture(
     transcript of an empty band is whisper hallucinating on noise, so judge the audio by
     `peak` first and the words second."""
     request.state.debug_detail = f"sdr capture {frequency_mhz} MHz {mode}"
+    _receivable(frequency_mhz)
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
 
@@ -1979,6 +1993,7 @@ async def sdr_listen_debug(
     session is what makes the composer's tuner icon appear at all: there would be no
     way to exercise the surface except through the agent."""
     request.state.debug_detail = f"sdr listen {frequency_mhz} MHz {mode}"
+    _receivable(frequency_mhz)
     return await _sdr_post(
         settings,
         "/listen/start",
@@ -2021,6 +2036,76 @@ async def sdr_reset_debug(
         )
     return await _sdr_post(
         settings, "/reset", {"serial": serial, "device_node": node}, wait_s=RESET_TIMEOUT_S
+    )
+
+
+#: How long a Soapy probe may take before the api stops waiting. It opens a device,
+#: times a dozen USB buffers, retunes four times and then deliberately starves the
+#: stream for a second — seconds of real work, where the 30 s default assumes a call
+#: that either answers or has failed.
+SOAPY_PROBE_TIMEOUT_S = 120.0
+
+
+@router.post("/sdr/soapy-probe")
+async def sdr_soapy_probe(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = 10.0,
+    rate_hz: Annotated[int, Query(ge=225_000, le=3_200_000)] = 256_000,
+    bins: Annotated[int, Query(ge=16, le=8192)] = 1024,
+    serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
+) -> dict[str, Any]:
+    """**Does this radio really behave the way the I/Q spectrum engine assumes?**
+
+    The F0 spike of `docs/plans/SDR_IQ_SPECTRUM_PLAN.md`, run from the console because
+    the owner has no terminal to run `SoapySDRUtil` from (CLAUDE.md #10). It drives
+    `deploy/sdr/radio.py` against a real dongle and returns a VERDICT — `ok`, a one-line
+    `summary`, and a `findings` list naming any claim that did not hold — with the
+    evidence under it rather than instead of it.
+
+    Seven claims, each of which the engine is already written against: SoapySDR
+    enumerates the dongles; `serial=` opens the one it names (everything per-radio in
+    this system depends on that); `direct_samp=2` reads back as 2, which is the whole
+    shortwave story; `setFrequency` and `setSampleRate` work ON A LIVE STREAM with no
+    rebuild, which is why pan and zoom stop blanking; `SOAPY_SDR_OVERFLOW` really is
+    reported under induced backpressure, where `rtl_sdr` dropped samples silently; the
+    achieved sample rate comes back off librtlsdr's divider unchanged; and — the one
+    nothing else can answer — **`bufflen` actually took**, measured as a callback
+    period, because librtlsdr replaces a bad value silently and `getStreamMTU` reports
+    the value that was asked for rather than the one in use.
+
+    It also captures one frame through `iq.py` and reports the peak bin against the
+    frame's own median, so the default of 10 MHz is a WWV check: a carrier well clear of
+    the floor there is the direct-sampling path working end to end.
+
+    **TAKES A RADIO** through the same lease as every other holder, so it is refused
+    with a 409 while something else has that dongle and released the moment it is done.
+    `serial` picks which one — the point of the probe on a two-dongle box — and defaults
+    to whichever the resolver would give a general job."""
+    request.state.debug_detail = f"sdr soapy probe {frequency_mhz} MHz"
+    _receivable(frequency_mhz)
+    if serial is not None:
+        # Checked against the scan for `sdr_reset_debug`'s reason: a serial that names
+        # no device would otherwise reach the sidecar and come back as a driver-level
+        # "could not open", which reads like a broken radio rather than a typo.
+        if serial not in nodes_in(await _usb_scan(request, settings)):
+            raise HTTPException(
+                status_code=404,
+                detail=f"No radio {serial} in the USB scan, so there is nothing to probe.",
+            )
+    else:
+        serial = await _radio(request, settings, GENERAL)
+    return await _sdr_post(
+        settings,
+        "/soapy/probe",
+        {
+            "serial": serial,
+            "center_hz": int(round(frequency_mhz * 1_000_000)),
+            "rate_hz": rate_hz,
+            "bins": bins,
+        },
+        wait_s=SOAPY_PROBE_TIMEOUT_S,
     )
 
 

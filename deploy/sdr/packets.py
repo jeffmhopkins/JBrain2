@@ -3,7 +3,8 @@
 Direwolf does the hard half — bit sync, NRZI, HDLC, the CRC — and hands finished
 frames over a KISS TCP socket. This module is only the last step: unwrap KISS, split
 an AX.25 UI frame into its addresses and its information field, and hand back
-something storable. Stdlib only, like the rest of this sidecar.
+something storable — stdlib only, because direwolf does the DSP and nothing here
+needs the numpy that `Dockerfile.sdr`'s apt-only rule now allows.
 
 **Why parse here rather than in the api.** The KISS client lives here, and `/listen/
 packets` mirrors `/listen/segments` by shipping self-describing JSON rather than

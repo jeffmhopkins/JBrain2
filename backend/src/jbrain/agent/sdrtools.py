@@ -1,4 +1,4 @@
-"""jerv's radio tools: take the tuner, and hand it back.
+"""jerv's radio tools: take a radio, and hand it back.
 
 `sdr_listen` is what makes the omnibox radio icon appear. That is not incidental —
 the icon exists only while a session holds the tuner (the icon IS the lease,
@@ -6,9 +6,10 @@ docs/plans/SDR_RADIO_PLAN.md D7), so a tool that takes the lease is the only thi
 that can put the control surface in front of the owner. Without it the tuner sheet
 is unreachable: nothing else on the box starts a session.
 
-The box has ONE tuner, so `sdr_listen` returns a plain, recoverable "the radio is
-busy" rather than waiting. Telling the model the radio is held lets it say so;
-queueing it behind an unknown wait would just look like a hang.
+The lease is PER RADIO and the box may have several, so `resolve.for_purpose` picks
+which one before anything is taken, and a refusal names that radio and the job holding
+it — `sdr_listen` returns it plainly rather than waiting. Telling the model which radio
+is held lets it say so; queueing behind an unknown wait would just look like a hang.
 
 Frequency and mode only — never a URL, and bounded here as well as in the api and
 the sidecar. The `stream.py` SSRF guard is untouched by this path (§4.4).
@@ -123,12 +124,12 @@ def build_sdr_handlers(
             },
         )
         if status == 409:
-            # PASS THE SIDECAR'S REASON THROUGH. It names which job holds the tuner,
-            # and the two jobs need opposite advice — "release it to listen" against
-            # "release it to log". A hardcoded "already listening" here was worse than
-            # generic: while the radio was logging APRS it was simply false, and it
-            # overwrote the only answer that told the owner which switch to throw
-            # (docs/plans/APRS_CONTROL_PLAN.md P0).
+            # PASS THE SIDECAR'S REASON THROUGH. It names the radio and the job
+            # holding it, and the jobs need opposite advice — "release it to listen"
+            # against "release it to log". A hardcoded "already listening" here was
+            # worse than generic: while the radio was logging APRS it was simply false,
+            # and it overwrote the only answer that told the owner which switch to
+            # throw (docs/plans/APRS_CONTROL_PLAN.md P0).
             held = str(body.get("detail") or "the radio is already in use")
             return (
                 f"{held[:1].upper()}{held[1:]}. The owner can release it from the "

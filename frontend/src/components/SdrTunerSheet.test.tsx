@@ -118,8 +118,75 @@ describe("the tuner sheet", () => {
     fireEvent.keyDown(field, { key: "Enter" });
 
     // The message names the range: a bare refusal leaves the owner guessing at it.
-    expect(await screen.findByText("This radio tunes 24-1766 MHz.")).toBeInTheDocument();
+    expect(await screen.findByText("This radio tunes 0.1-1766 MHz.")).toBeInTheDocument();
     expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("refuses the second Nyquist zone, which lowering the floor exposed", async () => {
+    // 14.4-24 MHz is the hole between the two floors. Below 24 the tuner is powered
+    // down and the ADC samples at 28.8 MHz, so a request for 18.1 is answered with
+    // 10.7, mirrored — a session that reports healthy, a level meter that moves, and a
+    // completely different station. There is nothing in the audio to notice it by,
+    // which is why this is a refusal and not a warning.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "18.1" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    // The number the owner would have been hearing is IN the sentence: "out of range"
+    // would be a lie, because the radio tunes it — just not where it says.
+    expect(await screen.findByText(/10\.700 MHz instead/)).toBeInTheDocument();
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("refuses to STEP into that zone as well, one tap at a time", async () => {
+    // The steppers reach it too, and a guard on only the typed field is a guard on
+    // neither: from 14.395 MHz a single tap of the AM step crosses the line.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(
+      <SdrTunerSheet
+        listening={{ ...LISTENING, frequency_hz: 14_395_000, mode: "am" }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    expect(await screen.findByText(/Nothing between 14.4 and 24 MHz/)).toBeInTheDocument();
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("still steps freely on the honest side of the line", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(
+      <SdrTunerSheet
+        listening={{ ...LISTENING, frequency_hz: 14_395_000, mode: "am" }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Tune down" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(14.385, undefined, "abc123"));
+  });
+
+  it("lets shortwave through, because the radio reaches it by bypassing the tuner", async () => {
+    // This field refused everything under 24 MHz — the R820T2 TUNER's floor, retyped
+    // here — while `rtl_fm -E direct2` has been listening down to 100 kHz all along and
+    // every route behind it bounds on the radio's real floor. A duplicated bound
+    // refusing what the box can do is the bug class `jbrain/sdr/tuner.py` exists to end.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerSheet listening={LISTENING} onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enter a frequency/ }));
+    const field = screen.getByRole("textbox", { name: "Frequency in MHz" });
+    fireEvent.change(field, { target: { value: "9.6" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(9.6, undefined, "abc123"));
   });
 
   it("keeps the frequency field open when something steals focus", async () => {

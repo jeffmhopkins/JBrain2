@@ -1,10 +1,30 @@
 # The `sdr` sidecar: tune a USB software-defined radio, return audio
 # (docs/plans/SDR_RADIO_PLAN.md, S0b-ii).
 #
-# `python:3.12-slim` rather than a from-scratch image because the whole service is
-# stdlib — `http.server` plus a pipe to rtl_fm — so the base IS the dependency set.
-# No pip install at all: a radio sidecar that pulled a Python SDR stack would be
-# carrying a second implementation of what librtlsdr already does.
+# `debian:trixie-slim` rather than `python:3.12-slim`, and the difference is smaller
+# than it sounds: the python image IS trixie — same rtl-sdr, same ffmpeg, same
+# direwolf — so this rebase changes the INTERPRETER and nothing else, for +37 MB.
+# It is forced by one fact: Debian's `python3-soapysdr` is a CPython 3.13 ABI
+# extension, which a 3.12 image cannot load at any price (SDR_IQ_SPECTRUM_PLAN §3).
+#
+# THE DEPENDENCY RULE, WEAKENED ON PURPOSE. This image was stdlib-only; it is now
+# APT ONLY, NO PIP. That is a real weakening rather than a restoration — the old rule
+# refused "a Python SDR stack" by name and `python3-soapysdr` is one. What survives is
+# the part that was doing the work: nothing arrives outside the distribution's ABI
+# contract. Still refused — SoapySDR via pip (a second, differently-built binding
+# beside the apt one), `pyrtlsdr` (it ships a forked librtlsdr, so two drivers would
+# disagree about enumeration on a two-dongle box), csdr, GNU Radio (+759 MB, 242
+# packages, and a terminal emulator on a headless machine), and a plotting stack for
+# reduction the api's Pillow already does. Two exceptions, each earning it:
+#   numpy     — the FFT librtlsdr deliberately does not provide. The only spectrum in
+#               the rtl-sdr package is `rtl_power`, whose C clamps the interval to
+#               `if (interval < 1) interval = 1` — one second is a floor, so ~10 fps
+#               is not a flag away, it needs an FFT of our own.
+#   SoapySDR  — the device abstraction that makes retune a register write on a LIVE
+#               stream (no re-open, no blank canvas between bands) and an overrun a
+#               return code. Under `rtl_sdr` an overrun is silent: libusb stops
+#               resubmitting, the RTL2832U's FIFO drops, and no message is printed
+#               for anyone to scrape.
 #
 # EGRESS-FREE by topology: compose puts this on a network declared `internal: true`,
 # so the container has no route off the box. A receiver has no reason to reach the
@@ -15,10 +35,18 @@
 # solve a problem this container does not have: it is egress-free, holds no owner
 # data, and its whole job is to open one USB device. The GPU services join host GIDs
 # because they must run as a non-root user for other reasons; this one need not.
-FROM python:3.12-slim
+FROM debian:trixie-slim
 
-# rtl-sdr brings librtlsdr plus rtl_fm / rtl_power / rtl_test. usbutils is not
-# needed — enumeration happens through sysfs in the supervisor, not here.
+# rtl-sdr brings librtlsdr plus rtl_fm / rtl_sdr / rtl_power / rtl_test. usbutils is
+# not needed — enumeration happens through sysfs in the supervisor, not here.
+#
+# python3 + python3-numpy come from apt for the ABI reason above: Debian builds its
+# SoapySDR binding against the interpreter it ships, and a pip numpy beside a Debian
+# one is two array implementations in one image. python3-soapysdr is the binding,
+# soapysdr-module-rtlsdr the driver behind it (without the module the binding
+# enumerates nothing), and soapysdr-tools is `SoapySDRUtil --probe` — the one-line
+# answer to "does the container see the dongle" from the owner's debug console, on a
+# box whose owner has no terminal (CLAUDE.md #10).
 #
 # ffmpeg is the encoder for the LIVE listening path: rtl_fm emits raw PCM, which no
 # browser plays, and MP3 is what an ordinary <audio> element accepts from a chunked
@@ -32,13 +60,22 @@ FROM python:3.12-slim
 # the same reason ffmpeg is — a real dependency on an opt-in profile, taken rather than
 # hand-rolling a demodulator.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends rtl-sdr ffmpeg direwolf \
+    && apt-get install -y --no-install-recommends \
+        python3 python3-numpy python3-soapysdr soapysdr-module-rtlsdr soapysdr-tools \
+        rtl-sdr ffmpeg direwolf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY deploy/sdr/server.py ./server.py
 COPY deploy/sdr/listen.py ./listen.py
 COPY deploy/sdr/packets.py ./packets.py
+# The spectrum engine, in two halves that are separate for one reason: `radio.py`
+# imports SoapySDR (deferred, inside a function) and `iq.py` imports nothing but numpy,
+# so the physics stays testable on a machine with no dongle. Both are copied even though
+# only `radio.py` is imported today — a sidecar module missing from this list fails at
+# the build gate below, which is exactly where it should fail.
+COPY deploy/sdr/radio.py ./radio.py
+COPY deploy/sdr/iq.py ./iq.py
 # The USB port reset — the one recovery for a dongle that has stopped answering, and
 # the reason the owner never has to walk to the box for one (docs/runbooks/DEBUG_ACCESS.md).
 COPY deploy/sdr/usbdev.py ./usbdev.py
@@ -46,15 +83,21 @@ COPY deploy/sdr/usbdev.py ./usbdev.py
 # Fail the BUILD, not the first capture: this is the check that would have caught a
 # sidecar shipping without its radio tools, whose only on-box symptom is a capture
 # failing three layers away from the cause (the htmlrender image learned this the
-# hard way — see its Dockerfile).
-RUN python -c "import server" && command -v rtl_fm >/dev/null \
+# hard way — see its Dockerfile). SoapySDR and numpy are imported here for the same
+# reason: an ABI mismatch between the binding and the interpreter is a build fact,
+# and the alternative place to discover it is the owner's Ops -> Update.
+RUN python3 -c "import server, SoapySDR, numpy" \
+    && command -v rtl_fm >/dev/null \
+    && command -v rtl_sdr >/dev/null \
     && command -v ffmpeg >/dev/null \
     && command -v direwolf >/dev/null \
     && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3lame
 
 EXPOSE 8000
 
+# `python3`, not `python`: Debian ships no unversioned interpreter, so the name that
+# worked on the python image is a container that exits immediately here.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+    CMD ["python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
 
-CMD ["python", "server.py"]
+CMD ["python3", "server.py"]

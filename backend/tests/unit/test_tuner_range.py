@@ -18,15 +18,16 @@ import re
 
 import pytest
 
+from jbrain.sdr.bands import LIVE_MAX_BINS, MIN_LIVE_BIN_HZ
 from jbrain.sdr.tuner import (
     DIRECT_MIN_MHZ,
     MAX_MHZ,
     MAX_SPAN_MHZ,
     MIN_MHZ,
-    SPECTRUM_MAX_BINS,
     live_bin_hz,
     nodes_in,
     serials_in,
+    sweepable,
     viewable,
 )
 
@@ -56,8 +57,13 @@ def test_the_api_refuses_exactly_what_the_sidecar_refuses() -> None:
     # way: a sidecar that carried a smaller frame cap would refuse — as a 502 — a live
     # spectrum the api had already coarsened to fit, and one that allowed a wider span
     # would let the api hand back a picture nothing here believes it asked for.
-    assert _constant("SPECTRUM_MAX_BINS") == SPECTRUM_MAX_BINS
+    assert _constant("SPECTRUM_MAX_BINS") == LIVE_MAX_BINS
     assert _constant("MAX_SWEEP_SPAN_HZ") == MAX_SPAN_MHZ * 1_000_000
+    # The bin-width floor the band table's capture ladder is held above. It CLAMPS in
+    # the sidecar rather than raising, so a table that drifted under it would ship
+    # frames declaring a width the transform never used — a wrong picture nothing
+    # contradicts, which is why the two copies are compared here (§6.14).
+    assert _constant("MIN_SWEEP_BIN_HZ") == MIN_LIVE_BIN_HZ
 
 
 def test_no_source_file_writes_the_tuner_range_as_a_literal() -> None:
@@ -137,17 +143,23 @@ class TestReadingTheUsbScan:
 
 
 class TestWhatALiveViewCanCover:
-    """A waterfall is rtl_power, so everything that stops a sweep stops a picture — plus
-    one bound a single frequency cannot violate and a range can."""
+    """A waterfall is no longer rtl_power on every tier, and this is where that shows.
+
+    The one-hop picture reads raw I/Q and does its own FFT, which reaches shortwave
+    through direct sampling mode 2 — the ADC branch this board wires and the one
+    `rtl_power -D` cannot select. So `viewable` and `sweepable` stopped being the same
+    question, and the refusals below 24 MHz became narrower rather than absent.
+    """
 
     def test_a_row_too_fine_to_send_is_coarsened_by_doubling(self) -> None:
-        # Doubling rather than dividing the span, because rtl_power grants the largest
-        # power-of-two division of its per-hop bandwidth no coarser than what it was
-        # asked for: an exact quotient is a number the tool will not honour.
+        # rtl_power's ladder, and only its: the multi-hop tier is still swept by the
+        # tool, which grants the largest power-of-two division of its per-hop bandwidth
+        # no coarser than what it was asked for. An exact quotient is a number it will
+        # not honour — which is exactly why the one-hop tier no longer comes here.
         assert live_bin_hz(4_000_000, 100) == 1_600
-        assert SPECTRUM_MAX_BINS >= 4_000_000 // 1_600
+        assert LIVE_MAX_BINS >= 4_000_000 // 1_600
         # ...and 800 really was too fine.
-        assert SPECTRUM_MAX_BINS < 4_000_000 // 800
+        assert LIVE_MAX_BINS < 4_000_000 // 800
 
     def test_a_bin_that_already_fits_is_left_alone(self) -> None:
         assert live_bin_hz(4_000_000, 25_000) == 25_000
@@ -155,15 +167,44 @@ class TestWhatALiveViewCanCover:
     def test_a_nonsense_bin_does_not_divide_by_zero(self) -> None:
         assert live_bin_hz(4_000_000, 0) > 0
 
-    def test_shortwave_cannot_be_drawn_even_though_it_can_be_heard(self) -> None:
-        refusal = viewable(7.0, 7.3)
+    def test_shortwave_can_now_be_drawn_though_it_still_cannot_be_swept(self) -> None:
+        """The whole of F8 in two lines. The same 300 kHz of 40 m is a picture and not
+        a survey, because the two run different engines and only one of them can be put
+        into the ADC mode this board needs."""
+        assert viewable(7.0, 7.3) is None
 
+        refusal = sweepable(7.0)
         assert refusal and "still listen" in refusal
 
-    def test_an_edge_that_dips_below_the_tuner_is_caught(self) -> None:
-        # BOTH edges, because a range straddling 24 MHz measures nothing across the
-        # bottom half and reports a plausible flat floor there.
-        assert viewable(20.0, 30.0) is not None
+    def test_shortwave_wider_than_one_capture_is_refused_in_those_words(self) -> None:
+        """Not "cannot be swept" — that is no longer why. Below 24 MHz the picture is
+        one capture or nothing, because the thing that stitches hops together is the
+        tool that cannot go down there."""
+        refusal = viewable(3.0, 8.0)
+
+        assert refusal and "more than one capture" in refusal
+
+    def test_a_range_that_crosses_the_tuner_floor_says_which_line_it_crossed(
+        self,
+    ) -> None:
+        # BOTH edges, and for a reason bandwidth cannot express: the tuner is powered
+        # down on one side of 24 MHz and in circuit on the other, so no single capture
+        # covers both halves however narrow the range is.
+        refusal = viewable(10.0, 30.0)
+
+        assert refusal and "changes signal path" in refusal
+        assert viewable(23.9, 24.1) is not None
+
+    def test_an_edge_in_the_second_nyquist_zone_is_refused_by_name(self) -> None:
+        """14.4-24 MHz passes every bound and is reachable by neither path: the tuner
+        is bypassed down there and direct sampling folds `28.8 − f` onto it. A range
+        starting at 20 MHz would be drawn as one starting at 8.8, so the refusal says
+        which frequency the radio would really have given."""
+        refusal = viewable(20.0, 30.0)
+
+        assert refusal and "8.8 MHz" in refusal
+
+    def test_an_edge_the_radio_cannot_reach_at_all_is_still_caught(self) -> None:
         assert viewable(30.0, 1800.0) is not None
 
     def test_a_span_wider_than_the_sweep_allows_names_the_ceiling(self) -> None:

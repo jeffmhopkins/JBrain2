@@ -1241,6 +1241,44 @@ def test_the_sdr_image_installs_the_radio_tools() -> None:
     assert "command -v rtl_fm" in dockerfile
 
 
+def test_every_sidecar_module_is_copied_into_the_sdr_image() -> None:
+    """A sibling module left out of the COPY list is invisible until the build.
+
+    `deploy/sdr/` is one WORKDIR whose modules import each other by bare name, and the
+    Dockerfile copies them one line at a time. Adding a module and forgetting the line
+    breaks `import server` at the build gate — on the ONE image the owner builds on
+    their own box during Ops -> Update, with no terminal to read the failure with
+    (CLAUDE.md #10). Cheaper to assert here."""
+    dockerfile = (DEPLOY / "Dockerfile.sdr").read_text()
+
+    for module in sorted((DEPLOY / "sdr").glob("*.py")):
+        assert f"COPY deploy/sdr/{module.name} " in dockerfile, module.name
+
+
+def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:
+    """The one thing `docker build` cannot catch, on the one image the owner builds.
+
+    A build runs the RUN layers and never runs `CMD` or `HEALTHCHECK`, so the whole
+    import gate can pass on an image that exits the instant it starts: `debian:trixie`
+    ships no unversioned `python`, and this file used to sit on `python:3.12-slim`,
+    where `python` worked. There is no CI job that starts this container — it is built
+    on the box during Ops -> Update — so a regression of that one word surfaces as a
+    failed update to an owner with no terminal (CLAUDE.md #10). Asserted as text
+    because text is all that exists to assert.
+    """
+    dockerfile = (DEPLOY / "Dockerfile.sdr").read_text()
+
+    assert 'CMD ["python3", "server.py"]' in dockerfile
+    healthcheck = dockerfile[dockerfile.index("\nHEALTHCHECK") :]
+    assert '"python3"' in healthcheck
+    assert "/healthz" in healthcheck  # the endpoint compose waits on
+    # `python` alone, wherever the image would RUN one: the exact regression this
+    # guards, and it is invisible until the container is started.
+    for line in dockerfile.splitlines():
+        if line.startswith(("CMD", "ENTRYPOINT", "HEALTHCHECK")) or '"python' in line:
+            assert '"python"' not in line, line
+
+
 def _sdr_present(tmp_path: Path, devices: list[tuple[str, str]]) -> int:
     """Run update-inner.sh's sdr_present against a fake /sys/bus/usb/devices tree."""
     body = UPDATE.read_text()
