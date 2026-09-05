@@ -105,23 +105,31 @@ WIRE_BYTES_PER_SAMPLE = 2
 #: third draft of the plan specified the barrier as this alone, which cannot work — the
 #: software backlog's quantum is a whole USB buffer, orders of magnitude bigger. It is
 #: the SECOND step, and it is small because the first one did the heavy lifting.
-#: MEASURED on the box, 2026-09-05, and no longer a guess: a retune disturbs the output
-#: for 59.7 ms typically and 131.2 ms at WORST, while a flush with no frequency change
-#: disturbs it for 0.0. So this covers the worst case with margin, and it is fixed rather
-#: than adaptive on purpose.
+#: How many USB buffers the driver may queue. **This is the retune settle**, and that is
+#: a measurement rather than a theory: `queue_ladder` on the box, 2026-09-05, at 2.4 MS/s
+#: with a 10.27 ms buffer period —
 #:
-#: An adaptive discard was tried and REVERTED the same day. It stopped when the level
-#: stopped moving, because the new frequency's settled level is exactly what a discard
-#: cannot know — and that rule cannot tell "settled" from "steadily WRONG". A transient
-#: that steps to a wrong level and holds satisfies it immediately, which is not a tuning
-#: problem but the rule being unsound: without a reference there is nothing to have
-#: arrived AT. The fake's step-shaped transient says so, and it costs a hop's worth of
-#: correctness to find out on air.
+#:     driver default (15)   57 ms median, 113 ms worst
+#:     buffers=4              0 ms median,  20 ms worst
+#:     buffers=2             10 ms median,  10 ms worst
+#:     asyncBuffs=4          51 ms median, 113 ms worst   (no effect — wrong knob)
 #:
-#: The price is real and belongs here rather than in a commit message: eleven hops on
-#: the FM dial pay this once each, so a 20 MHz span redraws about twice a second. Making
-#: that faster means FEWER HOPS, not a shorter discard.
-SETTLE_S = 0.15
+#: So the transient a hop waits out was pre-retune data already handed to the kernel,
+#: sitting in a queue 154 ms deep, and it was never the tuner: an R820T2's PLL locks in
+#: well under a millisecond, which is why 60 ms never made sense. Three earlier suspects
+#: died on the way — USB backlog reachable by the flush (the flush disturbs nothing at
+#: all, 0.0 ms), the gain (already manual), and an adaptive discard (its stopping rule
+#: cannot tell settled from steadily wrong).
+#:
+#: Four rather than two, for the slack: four buffers is 41 ms of grace before the ring
+#: overruns, on a box that also runs LLM inference, and the settle it costs is 20 ms
+#: against 10. Overflow is reported rather than silent (F0), so this is a number that
+#: says something when it is wrong.
+QUEUE_BUFFERS = 4
+#: What is left to discard after a retune once the queue is shallow. MEASURED: 20.5 ms
+#: worst at `QUEUE_BUFFERS`, so this covers it with margin — and it is a fifth of the
+#: 0.15 s it replaced, which is the FM dial's frame rate handed back.
+SETTLE_S = 0.03
 
 #: `readStream`'s per-call timeout. Ten buffers at the slowest rate: long enough that an
 #: ordinary scheduling hiccup is not an event, short enough that a dead stream is.
@@ -721,7 +729,11 @@ class Radio:
                 # median and 134 ms worst on BOTH dongles, against a ring the driver
                 # sizes at 15 buffers of 10.27 ms = 154 ms — so the number to change
                 # may be this one rather than the discard that hides it.
-                {"bufflen": str(self.bufflen_bytes), **self.stream_args},
+                {
+                    "bufflen": str(self.bufflen_bytes),
+                    "buffers": str(QUEUE_BUFFERS),
+                    **self.stream_args,
+                },
             )
             device.activateStream(self._stream)
         except Exception as failed:
@@ -1754,10 +1766,12 @@ def _diagnosis_finding(diag: dict[str, Any]) -> str:
 #: SoapyRTLSDR offers more than one spelling for "how many buffers" and only one of them
 #: reaches librtlsdr's `rtlsdr_read_async`; which is a question for the box.
 QUEUE_LADDER: tuple[tuple[str, dict[str, str]], ...] = (
-    ("driver default", {}),
+    # The control is SPELLED OUT rather than left empty: the engine sets `buffers` now,
+    # so `{}` would inherit the answer instead of measuring against the driver's own 15.
+    ("driver default (15)", {"buffers": "15"}),
+    ("buffers=8", {"buffers": "8"}),
     ("buffers=4", {"buffers": "4"}),
-    ("asyncBuffs=4", {"asyncBuffs": "4"}),
-    ("buffers=2,asyncBuffs=2", {"buffers": "2", "asyncBuffs": "2"}),
+    ("buffers=2", {"buffers": "2"}),
 )
 
 
@@ -1806,14 +1820,14 @@ def _queue_ladder(
 
 def _queue_findings(rungs: list[dict[str, Any]]) -> list[str]:
     """Say it plainly when a stream argument buys back the whole frame rate."""
-    base = next((r for r in rungs if r.get("at") == "driver default"), None)
+    base = next((r for r in rungs if str(r.get("at", "")).startswith("driver")), None)
     if base is None or base.get("worst_ms") is None:
         return []
     worst = float(base["worst_ms"])
     better = [
         r
         for r in rungs
-        if r.get("at") != "driver default"
+        if not str(r.get("at", "")).startswith("driver")
         and r.get("worst_ms") is not None
         and float(r["worst_ms"]) < worst * 0.6
     ]

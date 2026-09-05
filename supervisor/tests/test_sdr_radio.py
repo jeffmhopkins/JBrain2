@@ -377,7 +377,13 @@ def test_the_bufflen_reaches_the_stream_as_a_setup_argument() -> None:
     driver = _FakeDriver()
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
         setup = next(c for c in driver.log if c[0] == "setupStream")
-        assert setup[4] == {"bufflen": str(radio.BUFFLEN_BYTES)}
+        # `buffers` rides along beside it now, and for a measured reason: it IS the
+        # retune settle (`queue_ladder`), so a stream that lost it would lose the FM
+        # dial's frame rate silently.
+        assert setup[4] == {
+            "bufflen": str(radio.BUFFLEN_BYTES),
+            "buffers": str(radio.QUEUE_BUFFERS),
+        }
         assert ("writeSetting", "bufflen", str(radio.BUFFLEN_BYTES)) not in driver.log
         assert rig.samples_per_buffer == radio.BUFFLEN_BYTES // 2
 
@@ -1371,16 +1377,16 @@ def test_a_flush_that_settles_at_once_leaves_the_transient_with_the_tuner() -> N
 
 
 def test_the_discard_covers_the_measured_worst_case_not_the_median() -> None:
-    """MEASURED on the box: a retune disturbs the output for 59.7 ms typically and
-    131.2 ms at WORST, so a discard sized to the median leaves every slower hop reading
-    the frequency it came from."""
+    """MEASURED on the box: with the queue shallow the retune transient is 20.5 ms at
+    WORST, so a discard sized to the median would leave every slower hop reading the
+    frequency it came from."""
     driver = _FakeDriver()
 
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
         dropped = rig.barrier()
 
     assert dropped == int(RATE * radio.SETTLE_S)
-    assert radio.SETTLE_S * 1000 > 131.2
+    assert radio.SETTLE_S * 1000 > 20.5
 
 
 def test_a_transient_that_is_wrong_but_steady_defeats_a_level_based_stopping_rule() -> (
@@ -1474,3 +1480,35 @@ def test_a_queue_depth_that_changes_nothing_leaves_the_blame_with_the_tuner() ->
         )
         == []
     )
+
+
+def test_the_stream_asks_for_a_shallow_queue_because_that_IS_the_settle() -> None:
+    """MEASURED by `queue_ladder` on the box: 15 buffers gives a 113 ms worst-case
+    settle, 4 gives 20, 2 gives 10 — and `asyncBuffs` moves nothing, so `buffers` is the
+    knob. The transient a hop waits out was pre-retune data already handed to the
+    kernel, not the tuner: an R820T2's PLL locks in well under a millisecond.
+
+    Asserted at the `setupStream` call because that is the only place it can be set, and
+    a default that silently stopped being passed would take the frame rate with it."""
+    driver = _FakeDriver()
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER):
+        pass
+
+    args = next(call[4] for call in driver.log if call[0] == "setupStream")
+    assert args["buffers"] == str(radio.QUEUE_BUFFERS)
+    assert radio.QUEUE_BUFFERS < 15
+
+
+def test_a_caller_can_still_override_the_queue_depth() -> None:
+    """The ladder measures against the driver's own 15, which it can only do by asking
+    for it — `{}` would inherit the engine's answer instead of measuring it."""
+    driver = _FakeDriver()
+
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=CENTER, stream_args={"buffers": "15"}
+    ):
+        pass
+
+    args = next(call[4] for call in driver.log if call[0] == "setupStream")
+    assert args["buffers"] == "15"
