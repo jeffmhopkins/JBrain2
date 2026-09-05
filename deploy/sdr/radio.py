@@ -126,6 +126,9 @@ WIRE_BYTES_PER_SAMPLE = 2
 #: against 10. Overflow is reported rather than silent (F0), so this is a number that
 #: says something when it is wrong.
 QUEUE_BUFFERS = 4
+#: How much a shallower queue must save per hop before the probe suggests it. A halving
+#: that saves four milliseconds is a halving and is also nothing, eleven times a row.
+QUEUE_WORTH_MS = 5.0
 #: What is left to discard after a retune once the queue is shallow. MEASURED: 20.5 ms
 #: worst at `QUEUE_BUFFERS`, so this covers it with margin — and it is a fifth of the
 #: 0.15 s it replaced, which is the FM dial's frame rate handed back.
@@ -1467,11 +1470,15 @@ def _settle_findings(settle: dict[str, Any]) -> list[str]:
             f"{configured} ms is configured, so a hop can carry the previous hop's "
             f"samples and draw them at the wrong frequency"
         ]
-    if measured * 4 < configured:
+    # Against the WORST, not the median. With the queue shallow the median is 0.0, and
+    # `0 * 4 < configured` is true of every constant there could ever be — so this fired
+    # on a radio whose settle it was correctly covering, which is a probe crying wolf
+    # about its own success.
+    if worst * 4 < configured and worst + resolution < configured:
         return [
-            f"the retune settle is {configured} ms and the radio needed {measured} — "
-            f"every hop pays the difference, so a wide band redraws several times "
-            f"slower than this radio can manage"
+            f"the retune settle is {configured} ms and the radio needed {worst} at its "
+            f"worst — every hop pays the difference, so a wide band redraws several "
+            f"times slower than this radio can manage"
         ]
     return []
 
@@ -1504,6 +1511,11 @@ def _flush_findings(hop: dict[str, Any], flush: dict[str, Any]) -> list[str]:
         return []
     moved = float(hop["settle_ms"])
     still = float(flush["settle_ms"])
+    # Nothing to apportion. `still >= moved * 0.5` is true of 0.0 against 0.0, so once
+    # the queue fix removed the transient this blamed the flush for a fault that no
+    # longer existed — in the same breath as reporting "0.0 ms against 0.0 ms".
+    if still <= float(flush.get("window_us") or 0.0) / 1000.0:
+        return []
     if still >= moved * 0.5:
         return [
             f"the transient is the FLUSH, not the retune: a flush with no frequency "
@@ -1824,21 +1836,37 @@ def _queue_findings(rungs: list[dict[str, Any]]) -> list[str]:
     if base is None or base.get("worst_ms") is None:
         return []
     worst = float(base["worst_ms"])
+    # Against what the engine ACTUALLY uses, not against the driver's 15. The control
+    # rung exists to keep the comparison honest, but recommending a change already made
+    # is how a probe tells you to do something twice — and it did, reporting `buffers=2`
+    # as news on a box already running `buffers=4`.
+    mine = next((r for r in rungs if r.get("at") == f"buffers={QUEUE_BUFFERS}"), None)
+    if mine is None or mine.get("worst_ms") is None:
+        return []
+    have = float(mine["worst_ms"])
+    if have >= worst * 0.6:
+        return [
+            f"the queue depth is NOT what the settle is made of on this radio: "
+            f"`buffers={QUEUE_BUFFERS}` still reads {have} ms worst against {worst} ms "
+            f"at the driver's 15, so the transient is somewhere else"
+        ]
+    # Halved AND worth at least a few milliseconds a hop. Ratio alone fires on a
+    # difference nobody would act on — 8.1 ms against 4.1 is a halving and is also
+    # nothing, eleven times a row.
     better = [
         r
         for r in rungs
-        if not str(r.get("at", "")).startswith("driver")
-        and r.get("worst_ms") is not None
-        and float(r["worst_ms"]) < worst * 0.6
+        if r.get("worst_ms") is not None
+        and float(r["worst_ms"]) < have * 0.5
+        and have - float(r["worst_ms"]) >= QUEUE_WORTH_MS
     ]
     if not better:
         return []
     best = min(better, key=lambda r: float(r["worst_ms"]))
     return [
-        f"the retune settle is the USB QUEUE, not the tuner: `{best['at']}` takes the "
-        f"worst case from {worst} ms to {best['worst_ms']} ms, so the discard that "
-        f"currently costs the FM dial its frame rate is paying for a queue depth "
-        f"nothing needs"
+        f"a shallower queue is still on the table: `{best['at']}` reads "
+        f"{best['worst_ms']} ms worst against the {have} ms `buffers={QUEUE_BUFFERS}` "
+        f"gives — worth the trade only if the ring can spare the slack"
     ]
 
 

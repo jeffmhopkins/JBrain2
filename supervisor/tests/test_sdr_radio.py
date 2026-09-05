@@ -111,6 +111,11 @@ class _FakeDevice:
         # there were, so the decay can be indexed by how far through it is.
         self._settling = 0
         self._settle_total = 0
+        # How many USB buffers this stream was given. librtlsdr's own default until
+        # `setupStream` says otherwise, and it SCALES THE TRANSIENT — which is the thing
+        # `queue_ladder` measured on the box: the settle is pre-retune data sitting in
+        # this queue, so a fake that ignored it could not test the ladder at all.
+        self.buffers = 15
         self._last_read = time.monotonic()
         self._overflow_due = 0
         # Gain, modelled because nothing in the engine ever set it and the probe now
@@ -136,7 +141,8 @@ class _FakeDevice:
     def setFrequency(self, direction: int, channel: int, name: str, hz: float) -> None:
         self._say("setFrequency", direction, channel, name, hz)
         if hz != self.center:
-            self._settling = int(self.rate * self.driver.retune_settle_s)
+            deep = max(1, self.buffers) / 15
+            self._settling = int(self.rate * self.driver.retune_settle_s * deep)
             self._settle_total = self._settling
         self.center = hz
 
@@ -179,6 +185,7 @@ class _FakeDevice:
         asked = int(args.get("bufflen", 0))
         honoured = asked > 0 and asked % 512 == 0 and not self.driver.ignores_bufflen
         self.bufflen = asked if honoured else radio.DEFAULT_BUFFLEN_BYTES
+        self.buffers = int(args.get("buffers", 15) or 15)
         self.stream = object()
         return self.stream
 
@@ -1173,9 +1180,14 @@ def test_the_settle_is_measured_against_what_the_radio_actually_needs() -> None:
     sweep: the samples in a hop are microseconds and the discard is milliseconds, so
     this one number decides whether a wide band redraws twice a second or twenty
     times."""
+    # At the DRIVER's queue depth, so the fake's transient is the 50 ms the test names
+    # rather than the fraction of it a shallow queue leaves — the scaling is the thing
+    # `queue_ladder` measured, and it would otherwise silently rewrite this arithmetic.
     driver = _FakeDriver(retune_settle_s=0.05)
 
-    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=CENTER, stream_args={"buffers": "15"}
+    ) as rig:
         settle = radio._settle_after_retune(rig, CENTER + RATE)
 
     assert settle["measured"] is True
@@ -1453,33 +1465,35 @@ def test_the_queue_ladder_tries_each_buffer_argument_on_its_own() -> None:
     assert radio._open == {}
 
 
-def test_a_queue_depth_that_buys_back_the_frame_rate_is_a_finding() -> None:
-    """The whole point of the ladder. If a stream argument takes the worst case from
-    134 ms to 40, the discard the FM dial is paying for is buying a queue nothing
-    needs — and that is the difference between a 20 MHz span at a third of a frame a
-    second and one that is watchable."""
+def test_a_queue_depth_that_would_buy_back_more_is_still_offered() -> None:
+    """The ladder's job after the fix landed. It found the answer (`buffers=4` took the
+    worst case from 113 ms to 20) and that answer is now the engine's default — so what
+    is left worth saying is whether going FURTHER would pay, judged against what is in
+    use rather than against the driver's 15."""
     findings = radio._queue_findings(
         [
-            {"at": "driver default", "settle_ms": 61.0, "worst_ms": 134.0},
-            {"at": "buffers=4", "settle_ms": 18.0, "worst_ms": 40.0},
+            {"at": "driver default (15)", "worst_ms": 113.0},
+            {"at": f"buffers={radio.QUEUE_BUFFERS}", "worst_ms": 40.0},
+            {"at": "buffers=1", "worst_ms": 4.0},
         ]
     )
 
-    assert findings and "the USB QUEUE, not the tuner" in findings[0]
+    assert findings and "still on the table" in findings[0]
 
 
 def test_a_queue_depth_that_changes_nothing_leaves_the_blame_with_the_tuner() -> None:
     """The other answer, and it is worth having: it would mean a 20 MHz span really is
-    slow on this hardware, rather than slow because of a setting."""
-    assert (
-        radio._queue_findings(
-            [
-                {"at": "driver default", "settle_ms": 61.0, "worst_ms": 134.0},
-                {"at": "buffers=4", "settle_ms": 60.0, "worst_ms": 130.0},
-            ]
-        )
-        == []
+    slow on this hardware, rather than slow because of a setting. It has to keep being
+    sayable AFTER the shallow queue became the default, which is what the control rung
+    is for — a radio where it stopped working would otherwise look fine."""
+    findings = radio._queue_findings(
+        [
+            {"at": "driver default (15)", "worst_ms": 134.0},
+            {"at": f"buffers={radio.QUEUE_BUFFERS}", "worst_ms": 130.0},
+        ]
     )
+
+    assert findings and "NOT what the settle is made of" in findings[0]
 
 
 def test_the_stream_asks_for_a_shallow_queue_because_that_IS_the_settle() -> None:
@@ -1512,3 +1526,69 @@ def test_a_caller_can_still_override_the_queue_depth() -> None:
 
     args = next(call[4] for call in driver.log if call[0] == "setupStream")
     assert args["buffers"] == "15"
+
+
+def test_a_settle_the_barrier_already_covers_is_not_a_speed_finding() -> None:
+    """MEASURED after the queue fix: median 0.0 ms, worst 10.7, configured 30. The rule
+    compared the MEDIAN, and `0 * 4 < anything` is true of every constant there could
+    be — so the probe cried wolf about its own success on the very run that proved it
+    worked."""
+    assert (
+        radio._settle_findings(
+            {
+                "settle_ms": 0.0,
+                "worst_ms": 10.7,
+                "configured_ms": 30.0,
+                "window_us": 213.0,
+            }
+        )
+        == []
+    )
+
+
+def test_a_settle_far_shorter_than_the_constant_is_still_a_speed_finding() -> None:
+    """The rule still has to fire when the discard really is buying nothing."""
+    findings = radio._settle_findings(
+        {"settle_ms": 1.0, "worst_ms": 2.0, "configured_ms": 150.0, "window_us": 213.0}
+    )
+
+    assert findings and "every hop pays the difference" in findings[0]
+
+
+def test_no_transient_at_all_does_not_get_blamed_on_the_flush() -> None:
+    """`still >= moved * 0.5` is true of 0.0 against 0.0, so once the queue fix removed
+    the transient the probe blamed the flush for a fault that no longer existed — while
+    reporting "0.0 ms against 0.0 ms" in the same sentence."""
+    assert (
+        radio._flush_findings(
+            {"measured": True, "settle_ms": 0.0},
+            {"measured": True, "settle_ms": 0.0, "window_us": 213.0},
+        )
+        == []
+    )
+
+
+def test_the_ladder_judges_against_the_depth_the_engine_uses_not_the_drivers() -> None:
+    """Recommending a change already made is how a probe tells you to do a thing twice,
+    and it did: it reported `buffers=2` as news on a box already at `buffers=4`."""
+    rungs = [
+        {"at": "driver default (15)", "worst_ms": 121.4},
+        {"at": f"buffers={radio.QUEUE_BUFFERS}", "worst_ms": 20.5},
+        {"at": "buffers=2", "worst_ms": 10.5},
+    ]
+
+    # 10.5 is not half of 20.5, so there is nothing worth recommending.
+    assert radio._queue_findings(rungs) == []
+
+
+def test_the_ladder_says_so_when_the_queue_is_NOT_the_settle() -> None:
+    """The answer that would send the search somewhere else, and it has to survive the
+    fix being in place — the control rung is what keeps it measurable."""
+    findings = radio._queue_findings(
+        [
+            {"at": "driver default (15)", "worst_ms": 113.0},
+            {"at": f"buffers={radio.QUEUE_BUFFERS}", "worst_ms": 110.0},
+        ]
+    )
+
+    assert findings and "NOT what the settle is made of" in findings[0]
