@@ -599,6 +599,27 @@ and it is now the one F0 answer still outstanding. **F6 does not wait on it** �
 engine swap is proven for everything above 24 MHz, which is where the live waterfall
 lives; only the HF half of §4's promise is gated.
 
+⟲ **RETRACTED, and by the engine F6 shipped.** The `spectrum-probe` route added after
+F6 puts a real live session on the same dongle at the same frequency and rate, and 40 m
+comes back **alive**: `engine: iq`, 96 frames in 3.09 s (**31.07 fps**), 1024 bins of
+exactly 250 Hz, floor **-51.5 dBFS** with a peak 6.8 dB over it. Re-running the F0
+probe at that same 7.2125 MHz still answers `dead` — a DC spike at +3.0 dBFS with a
+median at `DB_FLOOR`.
+
+Both cannot be true of the radio, so one was true of the READING, and the single frame
+is the weaker measurement: the streaming engine is also what the owner actually sees.
+So the conclusion above — "nothing is reaching the ADC below 24 MHz", "the antenna or a
+board that does not wire the Q branch" — **was wrong**, and it was reported to the owner
+as a hardware fault before the engine existed to contradict it. `_capture` now reads
+ten frames the way the engine does, judges the last, and reports `settled` when the
+first was empty and a later one was not; the `dead` sentence no longer names a cause it
+cannot know. Whether the HF path needs a settle or something else differs between the
+two readings is what the next run measures rather than assumes.
+
+The lesson is the same one this plan has now learned three times: **a reading taken
+differently from how the system reads is not a measurement of the system.** The call
+shape, the sandbox with no hardware, and now a single frame against a stream.
+
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
 direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,

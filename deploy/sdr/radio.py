@@ -882,6 +882,12 @@ DIRECT_MAX_HZ = 24_000_000
 PROBE_CENTER_HZ = 10_000_000
 PROBE_RATE_HZ = 256_000
 PROBE_BINS = 1_024
+#: Frames to read before judging. More than one because a single frame taken shortly
+#: after the direct-sampling branch is switched reported a dead radio that the streaming
+#: engine, on the same dongle at the same frequency, found perfectly alive — see
+#: `_capture`. Ten is a third of a second at 256 kS/s: long enough to outlast a settle,
+#: short enough that the probe is still an aside.
+PROBE_CAPTURE_FRAMES = 10
 #: Segments to Welch-average for the probe's one reading. Eight is 32 ms at 256 kS/s —
 #: enough to pull a carrier clear of the noise, short enough to be an aside.
 PROBE_SEGMENTS = 8
@@ -935,15 +941,41 @@ def _reading_verdict(spectrum: iq.Spectrum) -> dict[str, Any]:
 
 
 def _capture(radio: Radio, bins: int) -> dict[str, Any]:
-    """Read one frame and run it through `iq.py` — the real engine, not a rehearsal."""
-    reading = radio.read(bins * PROBE_SEGMENTS)
+    """Read SEVERAL frames and judge the last — the way the engine reads, not a snapshot.
+
+    MEASURED 2026-09-05, and the reason this is no longer one frame. On the same radio
+    at the same frequency, rate and bin count, under `direct_samp=2` at 7.2125 MHz:
+
+        this probe, one frame     a DC spike and a median at DB_FLOOR — `dead`
+        the live spectrum engine  a -51.5 dBFS floor with a peak 6.8 dB over it
+
+    Both cannot be true of the radio, so one of them was true of the READING. A single
+    frame taken shortly after the branch is switched is the weaker measurement, and the
+    engine — which streams — is what the owner actually sees. So the probe now reads
+    like the engine and reports `settled`: whether the FIRST frame was dead while the
+    last was not. That turns "is this radio deaf on HF" from an inference into a
+    measurement, which is the whole job of this file."""
     spectrometer = iq.Spectrometer(bins, radio.rate_hz)
-    verdict = _reading_verdict(spectrometer.frame(reading.samples, radio.center_hz))
+    verdict: dict[str, Any] = {}
+    first_dead: bool | None = None
+    overflows = reads = 0
+    for _ in range(PROBE_CAPTURE_FRAMES):
+        reading = radio.read(bins * PROBE_SEGMENTS)
+        overflows += reading.overflows
+        reads += reading.reads
+        verdict = _reading_verdict(spectrometer.frame(reading.samples, radio.center_hz))
+        if first_dead is None:
+            first_dead = bool(verdict["dead"])
     verdict.update(
         center_hz=radio.center_hz,
         direct_sampling=radio.direct,
-        overflows=reading.overflows,
-        reads=reading.reads,
+        overflows=overflows,
+        reads=reads,
+        frames=PROBE_CAPTURE_FRAMES,
+        # True when the radio needed a moment: the first frame had nothing in it and a
+        # later one did. Not a fault — a fact about how long after the branch switch a
+        # reading means anything, and one nothing else in this system measures.
+        settled=bool(first_dead) and not verdict["dead"],
     )
     return verdict
 
@@ -1355,13 +1387,20 @@ def _probe_open(
             )
 
     peak = out.get("capture", {})
+    if peak.get("settled"):
+        findings.append(
+            "The FIRST frame after the branch was switched had nothing in it and a "
+            "later one did, so a reading taken immediately here means nothing. Anything "
+            "that captures one frame and judges it — including this probe before "
+            "2026-09-05 — will call this radio deaf when it is not."
+        )
     if peak.get("dead"):
         findings.append(
-            f"Nothing is reaching the ADC at {peak.get('center_hz')} Hz: the frame is a "
-            f"DC spike at {peak.get('dc_db')} dBFS and every other bin is empty, so "
-            "there is no noise floor to measure against. Under `direct_samp` that is "
-            "the antenna or the board's HF input, not this code — the same capture at "
-            "VHF finds a real floor and a real carrier."
+            f"Nothing reached the ADC at {peak.get('center_hz')} Hz in "
+            f"{peak.get('frames')} frames: a DC spike at {peak.get('dc_db')} dBFS with "
+            "no noise floor under it. A receiver with no noise floor is not receiving, "
+            "and after this many frames it is not a settle — look at the antenna and, "
+            "under `direct_samp`, at whether the board wires that branch at all."
         )
     out["findings"] = findings
     out["ok"] = not findings
