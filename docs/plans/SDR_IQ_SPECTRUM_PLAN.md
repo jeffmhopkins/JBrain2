@@ -944,6 +944,32 @@ striped. The ring is unwrapped 1:1 into a scratch canvas and drawn **once**, at 
 that does not depend on the head. What is on screen can then only change when the
 measurements do, which is what the owner asked for.
 
+### The settle is measured now, not assumed
+
+`SETTLE_S = 0.05` was chosen when the barrier was written and never checked, and F11
+made it the most expensive constant in the engine: a hop's samples are microseconds and
+its discard is milliseconds, so this one number decides whether the FM dial redraws
+twice a second or twenty times.
+
+`soapy-probe` measures it. Zero discard, then one continuous block, sliced — a stopwatch
+made of sample indices rather than of a clock, so there is no scheduling jitter between
+a sample and its age. The settled level comes from the same radio moments earlier, and
+the transient is where the slice-by-slice level stops differing from it by more than
+that level's own deviation.
+
+Two methodological corrections were needed to make it a measurement rather than a
+statistic. The deviation is a **MAD**, not a standard deviation, because one wild slice
+moves `std` enough to hide the transient it is measuring. And the series is **smoothed
+with a running median** first: three sigma over several hundred slices puts a handful
+past the line by chance, and taking the last of those reported a whole 62 ms block as a
+transient — measured off a fake that had none at all. A real transient is never isolated;
+an outlier always is.
+
+The verdict is asymmetric on purpose. **Too short is a correctness fault** — the first
+samples of every hop are then the previous hop's, drawn at a frequency they are not on,
+and a waterfall built that way is confidently wrong rather than merely slow. **Too long
+is only speed**, and it is what a wide band's frame rate is spent on.
+
 ## 8. Deliberately not in this plan
 
 **Replacing `rtl_fm` with a numpy demodulator.** Affordable — NFM demod is ~1.5 ms per

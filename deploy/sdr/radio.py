@@ -876,6 +876,10 @@ class Radio:
 #: same reason `ANY_DEVICE` is — this module imports no sibling that will import it back.
 DIRECT_MAX_HZ = 24_000_000
 
+#: What the R820T2 reaches. The same figure as `listen.MAX_HZ`, copied for the reason
+#: `DIRECT_MAX_HZ` is: this module imports no sibling that will import it back.
+MAX_TUNE_HZ = 1_766_000_000
+
 #: WWV on 10 MHz: a carrier that is either there or not, on a frequency that is a fact
 #: rather than a guess, reached through the direct-sampling branch this engine's whole
 #: shortwave claim rests on. 256 kS/s over 1024 bins is 250 Hz exactly.
@@ -1017,6 +1021,155 @@ def _callback_period(radio: Radio) -> dict[str, Any]:
         "fallback_ms": round(fallback_ms, 2),
         "reads": len(gaps),
     }
+
+
+#: One block, read straight after a retune with the timed discard switched off, and
+#: sliced afterwards. Reading it in one go rather than as many small reads is what makes
+#: the timing exact: a sample's age is its index over the rate, with no scheduling
+#: jitter between it and a clock.
+SETTLE_SPAN_S = 0.08
+#: Samples per slice. 512 at 2.4 MS/s is 213 us — fine enough to place a settle to a
+#: fraction of a millisecond, long enough that a slice's mean power is a number rather
+#: than a coin toss.
+SETTLE_WINDOW = 512
+#: How many times to do it. The transient is a hardware event and varies; one reading
+#: would be an anecdote, and the median of a handful is what a constant should be set
+#: from.
+SETTLE_TRIALS = 7
+#: How far a slice may sit from the settled level and still count as settled, in
+#: multiples of the settled level's OWN slice-to-slice deviation. Three sigma, so
+#: ordinary noise does not read as a transient and a real one is not missed.
+SETTLE_SIGMA = 3.0
+#: Slices in the running median. Five is enough to make an isolated outlier
+#: impossible and short enough that it cannot hide a transient worth discarding.
+SETTLE_SMOOTH = 5
+
+
+def _window_levels(samples: np.ndarray, window: int) -> np.ndarray:
+    """Mean power per slice, in dB. The cheapest thing that moves when a tuner relocks.
+
+    Power rather than a spectrum on purpose: two noise bands can have indistinguishable
+    SHAPES, so a settle measured by comparing spectra would be unmeasurable exactly
+    where it is least interesting. What a relocking tuner does to its output level is
+    visible whatever is on the air."""
+    usable = (samples.size // window) * window
+    if usable < window:
+        return np.empty(0, dtype=np.float64)
+    blocks = samples[:usable].reshape(-1, window)
+    power = np.mean(np.abs(blocks.astype(np.complex128)) ** 2, axis=1)
+    return 10.0 * np.log10(np.maximum(power, iq._POWER_FLOOR))
+
+
+def _smooth(levels: np.ndarray, width: int) -> np.ndarray:
+    """A running median, so one wild slice cannot be mistaken for a transient."""
+    if levels.size < width or width < 2:
+        return levels
+    pad = width // 2
+    padded = np.pad(levels, pad, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, width)
+    return np.median(windows, axis=-1)[: levels.size]
+
+
+def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
+    """How long the radio really needs after a retune, against what we assume.
+
+    `SETTLE_S` was chosen, never measured, and it is the whole cost of a hopping sweep:
+    the samples in a hop are microseconds and the discard is milliseconds, so this one
+    number decides whether a wide band redraws twice a second or twenty times. Measuring
+    it is therefore worth more than any other tuning in this engine.
+
+    The method is a discard of zero and a stopwatch made of sample indices. Tune away,
+    tune back with the timed discard switched OFF, read one continuous block, and find
+    where its slice-by-slice level stops differing from the settled level by more than
+    the settled level's own deviation. Everything before that point is the transient the
+    discard exists to hide."""
+    home = radio.center_hz
+    radio.retune(center_hz=home, settle_s=SETTLE_S * 4)
+    steady = _window_levels(radio.read(int(radio.rate_hz * SETTLE_SPAN_S)).samples,
+                            SETTLE_WINDOW)
+    if steady.size < 4:
+        return {"measured": False, "detail": "too few slices to establish a settled level"}
+    level = float(np.median(steady))
+    # MAD rather than a standard deviation, and scaled to be comparable with one: a
+    # single wild slice moves `std` enough to hide the transient it is measuring, and
+    # the whole point is to be unmoved by outliers.
+    sigma = float(np.median(np.abs(steady - level))) * 1.4826 or 1e-6
+    tolerance = SETTLE_SIGMA * sigma
+    took: list[float] = []
+    for _ in range(SETTLE_TRIALS):
+        radio.retune(center_hz=other_hz, settle_s=SETTLE_S * 4)
+        # The measurement itself: no timed discard, so the block starts at the instant
+        # the flush ends and carries the transient in its first samples.
+        radio.retune(center_hz=home, settle_s=0.0)
+        levels = _window_levels(
+            radio.read(int(radio.rate_hz * SETTLE_SPAN_S)).samples, SETTLE_WINDOW
+        )
+        if levels.size == 0:
+            continue
+        off = np.abs(_smooth(levels, SETTLE_SMOOTH) - level) > tolerance
+        # The LAST slice still off, not the first one on: a transient that crosses the
+        # line and comes back has not finished, and taking the first would report a
+        # settle shorter than the radio needs.
+        #
+        # Which is exactly why the series is SMOOTHED first. Three sigma over several
+        # hundred slices puts a handful beyond the line by chance, and taking the last
+        # of those reported the whole block as a transient — a 62 ms settle measured off
+        # a fake with no transient in it at all. A median over five slices cannot be
+        # moved by an isolated one, and a real transient is never isolated.
+        unsettled = int(np.max(np.nonzero(off)[0]) + 1) if bool(np.any(off)) else 0
+        took.append(unsettled * SETTLE_WINDOW / radio.rate_hz * 1000.0)
+    radio.retune(center_hz=home, settle_s=SETTLE_S)
+    if not took:
+        return {"measured": False, "detail": "the stream delivered nothing to time"}
+    took.sort()
+    return {
+        "measured": True,
+        "settle_ms": round(took[len(took) // 2], 3),
+        "worst_ms": round(took[-1], 3),
+        "configured_ms": round(SETTLE_S * 1000.0, 3),
+        "window_us": round(SETTLE_WINDOW / radio.rate_hz * 1e6, 1),
+        "steady_sigma_db": round(sigma, 3),
+        "trials": len(took),
+    }
+
+
+def _elsewhere(center_hz: int, rate_hz: int, direct: bool) -> int:
+    """Somewhere far enough to be a real retune, and still somewhere this radio goes.
+
+    A hop is a retune of about one capture's width, so the measurement should be one
+    too — a settle measured across a ten-megahertz jump would be answering a question
+    nobody asks of it."""
+    away = center_hz + rate_hz
+    ceiling = DIRECT_MAX_HZ if direct else MAX_TUNE_HZ
+    return away if away < ceiling else center_hz - rate_hz
+
+
+def _settle_findings(settle: dict[str, Any]) -> list[str]:
+    """Say it when the constant and the radio disagree, in the direction it matters.
+
+    TOO SHORT is a correctness fault: the first samples of every hop are then the
+    previous hop's tail, and a waterfall built from them draws signals at frequencies
+    they are not on. TOO LONG is only a speed fault, but it is the one that decides
+    whether a wide band is watchable."""
+    measured = float(settle["settle_ms"])
+    configured = float(settle["configured_ms"])
+    worst = float(settle.get("worst_ms") or measured)
+    # A difference smaller than one slice is not a difference: that is the resolution
+    # this measurement HAS, and reporting inside it would be reporting the method.
+    resolution = float(settle.get("window_us") or 0.0) / 1000.0
+    if worst > configured + resolution:
+        return [
+            f"the retune settle is too SHORT: the radio needed {worst} ms at worst and "
+            f"{configured} ms is configured, so a hop can carry the previous hop's "
+            f"samples and draw them at the wrong frequency"
+        ]
+    if measured * 4 < configured:
+        return [
+            f"the retune settle is {configured} ms and the radio needed {measured} — "
+            f"every hop pays the difference, so a wide band redraws several times "
+            f"slower than this radio can manage"
+        ]
+    return []
 
 
 def _selection(radio: Radio, found: list[dict[str, str]]) -> dict[str, Any]:
@@ -1318,6 +1471,18 @@ def _probe_open(
             )
 
         out["capture"] = _answered("capture", lambda: _capture(radio, bins))
+
+        # The one number a hopping sweep is made of. Measured rather than assumed
+        # because `SETTLE_S` was chosen, and a hop pays it once per hop: at 50 ms an
+        # eleven-hop FM sweep cannot beat two rows a second however fast the samples
+        # arrive, and at 5 ms it manages fifteen.
+        out["retune_settle"] = _answered(
+            "retune_settle",
+            lambda: _settle_after_retune(radio, _elsewhere(center_hz, rate_hz, direct)),
+        )
+        settle = out["retune_settle"]
+        if settle.get("measured") and settle.get("settle_ms") is not None:
+            findings.extend(_settle_findings(settle))
 
         # A retune ON THE LIVE STREAM, with the stream handle checked for identity
         # either side: a rebuild would hand back a different one.
