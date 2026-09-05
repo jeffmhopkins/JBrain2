@@ -746,6 +746,12 @@ class Frame:
     #: quarters of its 240 kHz one — so a client that derived it would have to know the
     #: mode, the IF and the crop. Zero on a band row, which has no passband.
     passband_hz: float = 0.0
+    #: How far apart the stations on this band are — the raster from `bands.py`, 200 kHz
+    #: on the FM dial and 25 kHz on the 2 m plan. Carried for the same reason
+    #: `passband_hz` is: only the box knows it, and without it a viewer holding peaks
+    #: across rows cannot tell ONE station whose loudest bin wanders from TWO stations
+    #: that are genuinely apart. Zero when the band has no raster.
+    channel_hz: int = 0
 
     @property
     def stop_hz(self) -> int | float:
@@ -764,6 +770,7 @@ class Frame:
             "db": [round(v, 1) for v in self.db],
             "peaks": self.peaks,
             "passband_hz": self.passband_hz,
+            "channel_hz": self.channel_hz,
         }
 
 
@@ -1534,6 +1541,11 @@ class Session:
                 self._end_frames()
 
     def _publish_frame(self, frame: Frame) -> None:
+        # Stamped at the one seam every engine passes through, exactly as the peaks are
+        # and for the same reason: a row that did not carry it would be a row the viewer
+        # has to guess the band for.
+        if self.sweep is not None and self.sweep.channel_hz and not frame.channel_hz:
+            frame = dataclasses.replace(frame, channel_hz=self.sweep.channel_hz)
         # Signals found HERE rather than at the three places a frame is built: both
         # engines and the stitcher pass through this one seam, so no path can publish a
         # row whose peaks nobody looked for — and a viewer cannot disagree with the
@@ -2232,6 +2244,20 @@ KISSPORT {self.kiss_port}
         while decoding nothing, and the owner's only clue would have been a log that
         stopped growing. `current()` reaps a dead session, so this is what turns a
         silent death into an idle radio the owner can see."""
+        # A session BETWEEN pipelines is not dead, and saying otherwise cost the owner
+        # their radio. `_restart` kills the old pipeline before it builds the new one,
+        # and on the I/Q path there is no `_rtl` process for the test below to fall
+        # through to — so for however long `Radio.open` takes, this answered False.
+        #
+        # MEASURED on the box 2026-09-05: a retune while LISTENING reaped the session
+        # mid-restart. The PWA went idle, the next tune came back "that session is no
+        # longer the live one", and the orphaned session kept its threads running and
+        # its dongle open — the phantom-holding-the-radio hazard `_restart`'s own
+        # docstring warns about, arriving through a different door. The window exists
+        # for `rtl_fm` too; opening a device rather than spawning a process is what
+        # widened it from microseconds to half a second and made it fire every time.
+        if self._restarting:
+            return True
         # The I/Q engine holds a radio instead of running a process, so there is no
         # `poll()` to ask and the process test would call a healthy session dead — after
         # which `current()` reaps it and the waterfall it is feeding disappears. What

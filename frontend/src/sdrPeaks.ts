@@ -22,11 +22,24 @@ import type { SpectrumPeak, SpectrumRow } from "./sdrSpectrum";
  *  and the weakest go first: what a held list is for is remembering what was there. */
 export const MAX_HELD = 200;
 
-/** How far apart two peaks may be and still be the same signal, in bins. A carrier
- *  wanders a bin or two between rows as noise moves which bin of its own skirt is
- *  strongest, and a rule that required exactness would report that as a new station on
- *  every row — the flicker this file exists to remove, reintroduced by its own matcher. */
+/** How far apart two peaks may be and still be the same signal, in bins — the floor
+ *  used when the band has no channel raster. A carrier wanders a bin or two between
+ *  rows as noise moves which bin of its own skirt is strongest, and a rule that
+ *  required exactness would report that as a new station on every row. */
 const SAME_SIGNAL_BINS = 3;
+
+/** ...and as a share of the CHANNEL RASTER, which is what actually decides it.
+ *
+ *  REPORTED by the owner on the FM dial: 84 "signals" for a band with perhaps twenty
+ *  stations on it, four pills for 96.5 alone at 96.438 / 96.475 / 96.503 / 96.541. A
+ *  broadcast station is 180 kHz wide and its loudest bin wanders across that width from
+ *  row to row, so three bins of 9.4 kHz — 28 kHz — matched almost nothing and every row
+ *  added a station that was already there.
+ *
+ *  0.6 of the raster is 120 kHz on the dial, which covers the wander, and it cannot
+ *  merge two real neighbours because the raster is what they are spaced by: 96.5 and
+ *  96.7 stay two signals. On the 2 m plan it is 15 kHz of a 25 kHz channel. */
+const SAME_SIGNAL_SHARE = 0.6;
 
 export interface HeldPeak extends SpectrumPeak {
   /** Box clock of the newest row this was seen in. */
@@ -41,10 +54,13 @@ export interface HeldPeak extends SpectrumPeak {
  *  clock, and holding them against the browser's would drift against the very timestamps
  *  being compared. */
 export function mergePeaks(held: readonly HeldPeak[], row: SpectrumRow): HeldPeak[] {
-  const tolerance = Math.max(row.binHz, 1) * SAME_SIGNAL_BINS;
+  const tolerance = Math.max(
+    Math.max(row.binHz, 1) * SAME_SIGNAL_BINS,
+    row.channelHz * SAME_SIGNAL_SHARE,
+  );
   const now = row.at;
   const kept: HeldPeak[] = [];
-  const claimed = new Set<HeldPeak>();
+  const claimed = new Map<HeldPeak, SpectrumPeak>();
 
   for (const found of row.peaks) {
     // The CLOSEST held signal within tolerance, not the first: two real stations a few
@@ -59,23 +75,42 @@ export function mergePeaks(held: readonly HeldPeak[], row: SpectrumRow): HeldPea
         match = candidate;
       }
     }
-    if (match) claimed.add(match);
-    kept.push({ ...found, seen: now, live: true });
+    if (match) claimed.set(match, found);
+    else kept.push({ ...found, seen: now, live: true });
   }
 
   for (const candidate of held) {
-    // Absent from this row, and KEPT anyway. Held has no timer: a band watched for an
-    // hour should still be able to say what went through it, and an expiry means the
-    // answer depends on when you happened to look. Clearing is the owner's, and a
-    // retune clears it too — those markers belong to a band this picture no longer
-    // covers.
-    if (!claimed.has(candidate)) kept.push({ ...candidate, live: false });
+    const found = claimed.get(candidate);
+    if (found === undefined) {
+      // Absent from this row, and KEPT anyway. Held has no timer: a band watched for an
+      // hour should still be able to say what went through it, and an expiry means the
+      // answer depends on when you happened to look. Clearing is the owner's, and a
+      // retune clears it too — those markers belong to a band this picture no longer
+      // covers.
+      kept.push({ ...candidate, live: false });
+      continue;
+    }
+    // A MATCHED signal keeps the frequency of its STRONGEST sighting, and this is what
+    // makes a held pill tappable. It used to take the newest row's frequency instead,
+    // so the number under the owner's thumb changed ten times a second and a
+    // tap-then-confirm could not land twice on the same one. The strongest sighting is
+    // also the best estimate of where the station actually is: the wander is noise
+    // moving which bin of the skirt wins, and the skirt is loudest at the middle.
+    kept.push(
+      found.db > candidate.db
+        ? { ...found, seen: now, live: true }
+        : { ...candidate, db: candidate.db, seen: now, live: true },
+    );
   }
 
-  kept.sort((a, b) => b.db - a.db);
-  // The weakest go first if it ever comes to that: the point of holding is remembering
-  // what was there, and the loudest is the likeliest to be wanted.
-  return kept.length > MAX_HELD ? kept.slice(0, MAX_HELD) : kept;
+  // Evicted by STRENGTH, then ordered by FREQUENCY. Two different questions: which to
+  // forget when the list is full is about what is worth remembering, and what order to
+  // read them in is about finding one — and a dial is read in frequency order. Sorting
+  // the display by level meant every pill moved whenever a level wobbled, which is the
+  // other half of why they could not be tapped twice.
+  const survivors =
+    kept.length > MAX_HELD ? [...kept].sort((a, b) => b.db - a.db).slice(0, MAX_HELD) : kept;
+  return survivors.sort((a, b) => a.hz - b.hz);
 }
 
 /** Where a signal sits across the picture, 0 to 1, or null when it is off the edge.

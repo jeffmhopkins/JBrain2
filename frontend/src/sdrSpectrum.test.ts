@@ -49,6 +49,7 @@ describe("reading a row", () => {
       // says this row is a BAND and not a tuned channel, so the tuning view knows not
       // to draw it (sdrTuning.tuningOf).
       passbandHz: 0,
+      channelHz: 0,
     });
   });
 

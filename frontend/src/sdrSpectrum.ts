@@ -46,6 +46,11 @@ export interface SpectrumRow {
    *  now carries both kinds, and each row says which it is rather than the reader
    *  having to know what the radio was asked for. */
   passbandHz: number;
+  /** How far apart the stations on this band are — 200 kHz on the FM dial, 25 kHz on
+   *  the 2 m plan. Only the box knows the raster, and without it a viewer holding
+   *  peaks across rows cannot tell ONE station whose loudest bin wanders from TWO that
+   *  are genuinely apart. Zero when the band has no raster. */
+  channelHz: number;
 }
 
 export interface SpectrumState {
@@ -102,6 +107,10 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
     passbandHz:
       typeof payload.passband_hz === "number" && Number.isFinite(payload.passband_hz)
         ? Math.max(0, payload.passband_hz)
+        : 0,
+    channelHz:
+      typeof payload.channel_hz === "number" && Number.isFinite(payload.channel_hz)
+        ? Math.max(0, payload.channel_hz)
         : 0,
   };
 }

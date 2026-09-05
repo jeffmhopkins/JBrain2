@@ -31,6 +31,7 @@ function row(db: number[], startHz = 144_000_000, binHz = 25_000): SpectrumRow {
     db,
     peaks: [],
     passbandHz: 0,
+    channelHz: 0,
   };
 }
 

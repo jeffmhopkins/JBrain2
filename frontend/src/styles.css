@@ -26268,3 +26268,21 @@ button.wf-sigpill {
   color: var(--warn);
   font-size: var(--fs-micro);
 }
+
+/* A signal the newest row found, against one being remembered. A DOT on the live ones
+   rather than a "gone" tag on the rest: on a band wide enough to hop, the radio visits
+   each hop for a fraction of a second, so a station transmitting continuously is absent
+   from twenty-one rows out of twenty-two and the tag was on almost everything. */
+.wf-signow {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.wf-sighint {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
