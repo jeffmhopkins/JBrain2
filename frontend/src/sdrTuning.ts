@@ -33,6 +33,21 @@ export const EDGE_DOWN_DB = 6;
  *  does not have. One bin either side is the honest floor. */
 export const CENTRED_BINS = 1;
 
+/** ...and the same tolerance as a share of the PASSBAND, whichever is wider.
+ *
+ *  MEASURED ON AIR 2026-09-05, and this constant exists because the bin rule alone was
+ *  wrong on the broadcast dial. An FM signal's INSTANTANEOUS spectrum is not symmetric
+ *  — the carrier is swinging, which is what modulation is — so on a station 180 kHz
+ *  wide the loudest part of any one 100 ms frame wanders tens of kHz either way.
+ *  104.1, tuned exactly, read 39 kHz "high"; 96.5 read 2.3 kHz "low" on the same pass.
+ *  Against one bin of tolerance both would have put a caret and a "Centre it" prompt
+ *  on a station that is precisely where it should be.
+ *
+ *  5% of the passband is 800 Hz on a narrowband channel — still a real tuning error
+ *  there — and 9 kHz on a broadcast one, which with the averaging below covers the
+ *  wander without hiding a mistune worth acting on. */
+export const CENTRED_SHARE = 0.05;
+
 export interface Tuning {
   /** How far the signal sits from the tuned frequency. Positive is high. */
   offsetHz: number;
@@ -64,6 +79,23 @@ function median(values: number[]): number {
     : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
+/** The noise this channel sits on, from the bins OUTSIDE the passband.
+ *
+ *  Not the row's median, which is what this used first and which is not a noise floor
+ *  on a channel view: the row is cropped to twice the passband, so on a broadcast
+ *  station 180 kHz wide in a 240 kHz row the signal is two thirds of the bins and the
+ *  median lands inside it. The reading then came back NULL — "nothing in this channel"
+ *  on a station reading 40 dB over the noise.
+ *
+ *  This mirrors `_channel_floor` in the sidecar's `server.py` deliberately: the probe
+ *  and the picture answer "is it centred?" for the same rows, and a floor measured
+ *  differently in the two places is a disagreement waiting for the marginal case. */
+function floorOf(row: SpectrumRow): number {
+  const edge = Math.floor((row.db.length - row.passbandHz / row.binHz) / 2);
+  if (edge <= 0) return median(row.db);
+  return median([...row.db.slice(0, edge), ...row.db.slice(row.db.length - edge)]);
+}
+
 /** What is in this channel, or null when nothing is.
  *
  *  `tunedHz` is passed rather than derived from the row's midpoint because they are
@@ -81,7 +113,7 @@ export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
     }
   }
   if (peakAt < 0) return null;
-  const floor = median(row.db);
+  const floor = floorOf(row);
   const over = Number.isFinite(floor) ? peak - floor : 0;
   if (!(over >= SIGNAL_OVER_DB)) return null;
 
@@ -103,7 +135,8 @@ export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
   const inside = Math.max(0, Math.min(toHz, half) - Math.max(fromHz, -half) + row.binHz);
   return {
     offsetHz,
-    centred: Math.abs(offsetHz) <= CENTRED_BINS * row.binHz,
+    centred:
+      Math.abs(offsetHz) <= Math.max(CENTRED_BINS * row.binHz, CENTRED_SHARE * row.passbandHz),
     fromHz,
     toHz,
     peakDb: peak,
