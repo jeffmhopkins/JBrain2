@@ -227,6 +227,47 @@ class _Soapy:
     def make(self, args: dict[str, str]) -> Device:
         return self._sdr.Device(args)  # type: ignore[no-any-return]
 
+    def open_shapes(self, args: dict[str, str]) -> list[dict[str, str]]:
+        """Try every plausible way to ask SoapySDR for a device; say which one opened.
+
+        MEASURED 2026-09-05, and the reason this exists: enumeration returns two dongles
+        with their serials, and `Device({"driver": "rtlsdr", "serial": "09022796"})` —
+        a filter that matches one of them exactly — answers `make() no match`. It fails
+        identically with no serial at all, so it is not the filter. That leaves HOW the
+        binding is being asked, and the candidates are all one-liners whose difference
+        no amount of reading settles, because the SWIG layer's typemaps are what decide.
+
+        A diagnostic, not a fallback: nothing in the live path calls this. The engine
+        keeps ONE documented shape (`make`), and when the box says which shape works
+        that is the one it gets pinned to. Shipping a loop that quietly tries four ways
+        to open a radio would turn a bug into a behaviour nobody could reason about."""
+        sdr = self._sdr
+        joined = ",".join(f"{k}={v}" for k, v in args.items())
+        shapes: list[tuple[str, Any]] = [
+            ("Device(dict)", lambda: sdr.Device(args)),
+            ("Device.make(dict)", lambda: sdr.Device.make(args)),
+            (f"Device({joined!r})", lambda: sdr.Device(joined)),
+            ("Device(KwargsFromString)", lambda: sdr.Device(sdr.KwargsFromString(joined))),
+        ]
+        # The full enumeration row, not a filter built by hand. Some find functions are
+        # happier being handed back exactly what they produced.
+        for found in self.enumerate({"driver": args.get("driver", "rtlsdr")}):
+            if not args.get("serial") or found.get("serial") == args.get("serial"):
+                shapes.append(("Device(enumerate row)", lambda row=found: sdr.Device(row)))
+                break
+        tried: list[dict[str, str]] = []
+        for name, call in shapes:
+            try:
+                device = call()
+            except Exception as failed:  # noqa: BLE001 - naming the failure IS the job
+                tried.append({"shape": name, "opened": "no", "error": f"{failed}"[:160]})
+                continue
+            tried.append({"shape": name, "opened": "yes"})
+            with contextlib.suppress(Exception):
+                self.unmake(device)
+            break
+        return tried
+
     def unmake(self, device: Device) -> None:
         self._sdr.Device.unmake(device)
 
@@ -938,6 +979,18 @@ def _probe(
             "against the filter in the message: a wrong filter and an unloaded driver "
             "look identical from the error alone and have opposite fixes.",
         ]
+        # When the filter provably matches the enumeration and the open still fails, the
+        # remaining variable is how the binding is ASKED. Walk the shapes and say which
+        # one works, so the fix is a measurement rather than a fifth guess.
+        shapes = getattr(drv, "open_shapes", None)
+        if shapes is not None:
+            asked = {"driver": "rtlsdr"} | ({"serial": serial} if serial else {})
+            out["open_shapes"] = shapes(asked)
+            worked = [row["shape"] for row in out["open_shapes"] if row.get("opened") == "yes"]
+            out["findings"].append(
+                f"Shape that opened it: {worked[0]}" if worked
+                else "No shape opened it — the driver or the device, not the binding."
+            )
         out["elapsed_s"] = round(time.monotonic() - started, 2)
         return out
 
