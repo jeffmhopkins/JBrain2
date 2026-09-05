@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 from unittest import mock
 
+import numpy as np
 import pytest
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
@@ -2229,3 +2230,201 @@ def test_an_hf_spectrum_is_refused_while_rtl_power_is_still_the_engine(tuner) ->
     assert "I/Q engine" in str(refused.value)
     # Above the tuner floor is untouched: this guard is about the ENGINE, not the band.
     assert tuner.current() is None
+
+
+# --- F6: the I/Q engine, and the fallback that must survive it ----------------------
+
+
+def test_a_named_capture_keeps_its_exact_width_through_the_clamp() -> None:
+    """`MIN_SWEEP_BIN_HZ` is rtl_power's floor, and clamping an I/Q width to it would
+    make the frame declare a width the transform never used — invisibly, because
+    nothing downstream can tell (§6.14). 250 Hz is under that floor and is exactly what
+    256 kS/s over 1024 bins produces."""
+    swept = listen.Sweep.of(
+        7_125_000, 7_300_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
+    )
+
+    assert swept.bin_hz == 250
+    assert swept.capture == (256_000, 1_024)
+    assert swept.as_dict()["rate_hz"] == 256_000
+    assert swept.as_dict()["bins"] == 1_024
+
+
+def test_a_sweep_with_no_capture_still_gets_rtl_powers_floor() -> None:
+    """The clamp is not gone, it is scoped: where the width is a REQUEST to a tool
+    rather than a fact about a transform, it still applies."""
+    swept = listen.Sweep.of(144_000_000, 148_000_000, 1, 60)
+
+    assert swept.bin_hz == listen.MIN_SWEEP_BIN_HZ
+    assert swept.capture is None
+    assert "rate_hz" not in swept.as_dict()
+
+
+def test_shortwave_with_a_capture_is_no_longer_refused() -> None:
+    """F6. The refusal belonged to the ENGINE: `rtl_power -D` hardcodes the I branch
+    and this board wires Q. The I/Q engine sets mode 2 at runtime, so a range it can
+    draw in one capture is its to draw."""
+    swept = listen.Sweep.of(
+        7_125_000, 7_300_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
+    )
+
+    assert listen.spectrum_engine_refusal(swept) is None
+
+
+def test_shortwave_too_wide_for_one_capture_is_still_refused_and_says_why() -> None:
+    """Several hops is rtl_power's job, and rtl_power cannot see down there at all. The
+    sentence has to name WHICH limit it hit, because the owner has no terminal to look
+    with (CLAUDE.md #10)."""
+    swept = listen.Sweep.of(3_000_000, 8_000_000, 25_000, 60, direct_ok=True)
+
+    refusal = listen.spectrum_engine_refusal(swept)
+
+    assert refusal is not None
+    assert "several hops" in refusal
+    assert "Listening there works" in refusal
+
+
+def test_a_frame_carries_a_fractional_width_without_rounding_it() -> None:
+    """`rate / bins` is exact for every pairing in the band table and a float for
+    anything else. Rounding 585.9375 to 586 puts the top of the frame 256 Hz out with
+    nothing able to tell, and the PWA compares this value exactly (§6.13)."""
+    frame = listen.Frame(at=0.0, start_hz=100_000_000, bin_hz=585.9375, db=[-40.0] * 4)
+
+    assert frame.bin_hz == 585.9375
+    assert frame.stop_hz == 100_000_000 + 4 * 585.9375
+    assert frame.as_dict()["bin_hz"] == 585.9375
+
+
+class TestIQSpectrumEngine:
+    """F6: the sidecar transforms the samples itself, and falls back when it cannot.
+
+    The fallback is the load-bearing part. An owner with no terminal must not need a
+    revert and a rebuild to get a picture back if the I/Q engine will not open a radio
+    on their box (CLAUDE.md #10), so a failure drops to rtl_power wherever rtl_power
+    can serve the range — and keeps the failure only where it cannot, because there the
+    alternative is not a worse picture but a false one."""
+
+    @pytest.fixture
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        _instant(monkeypatch)
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        tuner = listen.Tuner()
+        yield tuner
+        tuner.stop()
+
+    @staticmethod
+    def _refuse_to_open(monkeypatch: pytest.MonkeyPatch, why: Exception) -> None:
+        def _open(**_kwargs: Any) -> Any:
+            raise why
+
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+
+    def test_a_radio_that_will_not_open_falls_back_to_rtl_power(
+        self, tuner, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        """VHF: rtl_power can serve it, so the picture comes back rather than the
+        session failing. And it SAYS so, because a silent downgrade is a waterfall
+        that is quietly a tenth of the frame rate it claims."""
+        self._refuse_to_open(monkeypatch, listen.radio.RadioError("no such device"))
+        swept = listen.Sweep.of(
+            144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
+        )
+
+        info = tuner.start(
+            146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+        )
+
+        assert info.as_dict()["purpose"] == listen.PURPOSE_SPECTRUM
+        assert "falling back to rtl_power" in capsys.readouterr().out
+
+    def test_shortwave_keeps_the_failure_instead_of_drawing_a_lie(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one range where falling back is worse than failing: `rtl_power -D`
+        hardcodes the ADC's I branch and this board wires Q, so it would tune something
+        and measure nothing — a flat, plausible, meaningless waterfall."""
+        self._refuse_to_open(monkeypatch, listen.radio.RadioError("no such device"))
+        swept = listen.Sweep.of(
+            7_125_000, 7_300_000, 250, 300, direct_ok=True, capture=(256_000, 1_024)
+        )
+
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                7_212_500, "usb", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+            )
+
+        assert "no such device" in str(refused.value)
+
+    def test_a_busy_radio_is_a_fallback_too_not_a_crash(
+        self, tuner, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        """`RadioBusy` is a different exception from `RadioError` and would have escaped
+        an `except RadioError` written from the happy path."""
+        self._refuse_to_open(monkeypatch, listen.radio.RadioBusy("held by aprs"))
+        swept = listen.Sweep.of(
+            144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
+        )
+
+        tuner.start(
+            146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+        )
+
+        assert "falling back to rtl_power" in capsys.readouterr().out
+
+    def test_the_engine_publishes_frames_it_transformed_itself(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The happy path, end to end through the real `iq.Spectrometer`: samples in,
+        one self-describing row out, at the width the capture makes and not the width
+        anyone asked for."""
+        rate_hz, fft_bins = 2_400_000, 4_000
+        opened: dict[str, Any] = {}
+
+        class _OneFrameRadio:
+            alive = True
+            center_hz = 146_000_000
+
+            def read(self, samples: int) -> Any:
+                tone = np.exp(
+                    2.0j * np.pi * (rate_hz / 8.0) * np.arange(samples) / rate_hz
+                )
+                noise = np.random.default_rng(7).standard_normal(samples)
+                return listen.radio.Reading(
+                    samples=(tone + 1e-3 * noise).astype(np.complex64),
+                    at=1234.5,
+                    reads=1,
+                    overflows=0,
+                    timeouts=0,
+                )
+
+            def close(self) -> None:
+                opened["closed"] = True
+
+        def _open(**kwargs: Any) -> Any:
+            opened.update(kwargs)
+            return _OneFrameRadio()
+
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+        swept = listen.Sweep.of(
+            144_000_000, 144_400_000, 600, 300, capture=(rate_hz, fft_bins)
+        )
+
+        tuner.start(
+            146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+        )
+        session = tuner.current()
+        assert session is not None
+        frame = session.subscribe_frames().get(timeout=5)
+
+        assert frame is not None
+        # 2.4 MS/s over 4000 bins is 600 Hz EXACTLY, which is why this pairing is in
+        # the table: an inexact one would put a float on the wire (§6.13).
+        assert frame.bin_hz == 600
+        assert len(frame.db) == fft_bins
+        # Self-describing: the row says where it is, so a retune needs no
+        # protocol event at all.
+        assert frame.start_hz == 146_000_000 - (rate_hz // 2)
+        # And it opened the radio the capture named, not a rate of its own choosing.
+        assert opened["rate_hz"] == rate_hz
+        assert opened["direct"] is False

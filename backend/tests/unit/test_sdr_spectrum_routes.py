@@ -62,9 +62,12 @@ def test_a_one_hop_section_carries_the_bin_width_ITS_capture_will_produce() -> N
     section = bands.by_id("air-tower")
     assert section is not None
 
-    start, stop, _bin_hz = sdr_api._span("air-tower", None, None)
+    start, stop, bin_hz, capture = sdr_api._span("air-tower", None, None)
 
     assert (start, stop) == (section.start_hz, section.stop_hz)
+    # F6 put it on the wire: the width IS the capture's, and the capture travels with it.
+    assert capture == (2_400_000, 4_000)
+    assert bin_hz == 600
     assert (section.sample_rate_hz, section.fft_bins) == (2_400_000, 4_000)
     assert section.live_bin_hz == 600
     assert isinstance(section.live_bin_hz, int)  # exact, so `sameBand` can compare it
@@ -90,7 +93,7 @@ def test_the_fast_tier_never_asks_rtl_power_for_sub_kilohertz_bins() -> None:
     fast = [s for s in bands.SECTIONS if s.live == bands.LIVE_FAST]
     assert fast, "the table lost its one-hop sections"
     for section in fast:
-        _start, _stop, bin_hz = sdr_api._span(section.id, None, None)
+        _start, _stop, bin_hz, _capture = sdr_api._span(section.id, None, None)
 
         assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz), section.id
         assert bin_hz >= 1_000, section.id
@@ -106,9 +109,11 @@ def test_a_multi_hop_section_still_gets_rtl_powers_own_ladder() -> None:
     assert section is not None
     assert section.sample_rate_hz == 0
 
-    _start, _stop, bin_hz = sdr_api._span("fm-broadcast", None, None)
+    _start, _stop, bin_hz, capture = sdr_api._span("fm-broadcast", None, None)
 
     assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz)
+    # No capture named, which is how the sidecar knows to hop it with rtl_power.
+    assert capture is None
 
 
 def test_an_explicit_range_is_the_section_it_names_in_numbers() -> None:
@@ -143,9 +148,10 @@ def test_a_range_that_is_no_section_still_gets_a_derived_answer() -> None:
     rolloff, which reads as a dead band edge."""
     assert bands.by_edges(430_000_000, 435_000_000) is None
 
-    _start, _stop, bin_hz = sdr_api._span(None, 430.0, 435.0)
+    _start, _stop, bin_hz, capture = sdr_api._span(None, 430.0, 435.0)
 
     assert bin_hz == live_bin_hz(5_000_000, sdr_api.DEFAULT_SPECTRUM_BIN_HZ)
+    assert capture is None
 
 
 def test_a_hand_entered_range_too_wide_for_one_capture_falls_back_to_the_tool() -> None:
@@ -154,9 +160,10 @@ def test_a_hand_entered_range_too_wide_for_one_capture_falls_back_to_the_tool() 
     whole = bands.by_id("2m-all")
     assert whole is not None
 
-    _start, _stop, bin_hz = sdr_api._span(None, 144.0, 148.0)
+    _start, _stop, bin_hz, capture = sdr_api._span(None, 144.0, 148.0)
 
     assert bin_hz == live_bin_hz(4_000_000, whole.sweep_bin_hz)
+    assert capture is None
 
 
 def test_shortwave_is_drawn_rather_than_refused() -> None:
@@ -166,10 +173,12 @@ def test_shortwave_is_drawn_rather_than_refused() -> None:
     forty = bands.by_id("40m")
     assert forty is not None
 
-    start, stop, _bin_hz = sdr_api._span("40m", None, None)
+    start, stop, bin_hz, capture = sdr_api._span("40m", None, None)
 
     assert (start, stop) == (7_125_000, 7_300_000)
-    assert forty.live_bin_hz == 250  # 256 kS/s over 1024 bins, once F6 transforms it
+    assert forty.live_bin_hz == 250
+    # F6 transforms it: 256 kS/s over 1024 bins, and the sidecar is told exactly that.
+    assert (bin_hz, capture) == (250, (256_000, 1_024))
 
 
 def test_shortwave_wider_than_one_capture_is_refused_in_words() -> None:
@@ -444,3 +453,34 @@ async def test_a_viewer_who_left_stops_the_relay(monkeypatch: pytest.MonkeyPatch
     out = await sdr_api.spectrum(_request(disconnected=True), _settings(), OWNER)
 
     assert await _collect(out) == []
+
+
+def test_a_one_hop_range_sends_the_capture_to_the_sidecar() -> None:
+    """The engine choice travels as the PRESENCE of these two fields. There is no flag
+    on the wire and no third state, so the two sides cannot fall out of step about which
+    engine is drawing — which is how a `rate / N` width once reached rtl_power and came
+    back 4097 columns wide (§6.4)."""
+    assert sdr_api._capture_body((2_400_000, 4_000)) == {
+        "rate_hz": 2_400_000,
+        "bins": 4_000,
+    }
+
+
+def test_a_multi_hop_range_sends_no_capture_fields_at_all() -> None:
+    """Absent rather than null: a sidecar that predates F6 then sees exactly the body it
+    saw before, and hops the range with rtl_power as it always did."""
+    assert sdr_api._capture_body(None) == {}
+
+
+def test_the_width_and_the_engine_are_one_decision() -> None:
+    """The invariant that makes the wire contract safe. An exact `rate / N` width is
+    only ever sent WITH the capture that produces it, and rtl_power's ladder width is
+    only ever sent without one. Asserted across the whole table rather than on a row,
+    because the failure it guards is a single row drifting."""
+    for section in bands.SECTIONS:
+        _start, _stop, bin_hz, capture = sdr_api._span(section.id, None, None)
+
+        if capture is None:
+            continue
+        rate_hz, fft_bins = capture
+        assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id

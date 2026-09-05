@@ -119,6 +119,32 @@ def _wav(pcm: bytes, rate: int) -> bytes:
     return buf.getvalue()
 
 
+def _bin_hz_of(body: dict[str, Any]) -> int | float:
+    """The requested width, kept exact when it is not an integer.
+
+    `int()` here would have rounded 585.9375 to 585 and made the frame declare a width
+    the transform never used — invisibly, because nothing downstream can tell (§6.13).
+    Every pairing in `bands.LIVE_CAPTURES` divides exactly, so this is the guard for
+    the day one does not rather than a case that happens today."""
+    want = body.get("bin_hz", 25_000)
+    return int(want) if float(want).is_integer() else float(want)
+
+
+def _capture_of(body: dict[str, Any]) -> tuple[int, int] | None:
+    """The one-hop capture the api chose, or None to leave this to rtl_power.
+
+    Both halves or neither: a rate with no bin count cannot size a transform, and a bin
+    count with no rate cannot place one. A caller that sends half of it gets the
+    rtl_power path, which is the same answer it got before F6 rather than a failure."""
+    rate, bins = body.get("rate_hz"), body.get("bins")
+    if rate is None or bins is None:
+        return None
+    rate, bins = int(rate), int(bins)
+    if rate <= 0 or bins <= 0:
+        return None
+    return rate, bins
+
+
 def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
@@ -139,9 +165,10 @@ def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     sweep = listen.Sweep.of(
         start_hz=int(body.get("start_hz", 0)),
         stop_hz=int(body.get("stop_hz", 0)),
-        bin_hz=int(body.get("bin_hz", 25_000)),
+        bin_hz=_bin_hz_of(body),
         seconds=float(body.get("seconds", 60)),
         direct_ok=direct_ok,
+        capture=_capture_of(body),
     )
     floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
     if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):

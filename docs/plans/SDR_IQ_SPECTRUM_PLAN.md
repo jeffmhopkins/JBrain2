@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9◻️ F10🟡
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -657,7 +657,24 @@ otherwise F6 ships 737k `shade()` calls per frame to a phone. Decouple paint fro
 re-derive `ROWS` and `CALIBRATION_ROWS` from *seconds* and the live frame rate; make
 `start_hz`/`bin_hz` stable so `sameBand` cannot flap.
 
-**F6 — the `spectrum` purpose switches engine.** `Frame` unchanged. The wire budget is
+**F6 — the `spectrum` purpose switches engine.** ✅ **SHIPPED.** The engine choice
+travels as a **one-hop capture** the api names — `rate_hz` and `bins`, from
+`bands.capture_for` — rather than as a flag both sides must keep in step. `_span`
+returns the width and the capture that produces it *together*, because a `rate / N`
+width handed to `rtl_power` is the 4097-column frame §6.4 describes; a range with no
+single capture sends neither field and hops exactly as before, so a sidecar that
+predates this sees the body it always saw. The sidecar's `Sweep` carries it, and
+`bin_hz` is **not clamped** when a capture named it — clamping a fact about a transform
+to `rtl_power`'s floor is how a frame ends up declaring a width nothing computed
+(§6.14). `Frame.bin_hz` widened to `int | float` (§6.13). Two consequences that were
+not in the wave as written and are load-bearing: `Session.alive` tested a subprocess,
+so an I/Q session — which holds a radio and runs no process — would have been reaped by
+`current()` the moment it started; and `_kill` walks processes, so the open `Radio` is
+closed by name, since a leaked handle is what `/reset` must not fire under (§6.18).
+The fallback is `RadioUnavailable`, a **subclass** of `SdrError` so that where it is
+not caught it refuses like anything else instead of becoming a 500.
+
+ `Frame` unchanged. The wire budget is
 decided here against the **post-gzip** number (§5), not the raw one. Overflow and the
 retune barrier surface as stream conditions the way `dutyNote` surfaces hop cost.
 ⟲⟲ Ships behind a **runtime fallback to `rtl_power`** — if the new engine misbehaves on
