@@ -1116,7 +1116,11 @@ def test_a_radio_that_needs_a_moment_is_not_reported_deaf() -> None:
     The verdict now comes from the last of several frames, and `settled` records that
     the first had nothing in it. Before this the probe called a live radio deaf and
     said so about the owner's antenna."""
-    driver = _FakeDriver(silent_reads=2)
+    # More silence than the opening barrier can absorb. The discard is adaptive now and
+    # REFUSES to stop on silence, so a short silent start never reaches `_capture` at
+    # all — which is better, and would make this regression test vacuous if the silence
+    # were short enough for the barrier to swallow whole.
+    driver = _FakeDriver(silent_reads=14)
 
     with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
         verdict = radio._capture(rig, 64)
@@ -1345,3 +1349,29 @@ def test_a_flush_that_settles_at_once_leaves_the_transient_with_the_tuner() -> N
         )
         == []
     )
+
+
+def test_the_discard_stops_when_the_level_stops_moving_not_at_a_fixed_time() -> None:
+    """MEASURED on the box: a retune disturbs the output for 59.7 ms typically and
+    131.2 ms at worst. Discarding the worst case would pay 131 ms eleven times on the FM
+    dial; discarding until the level actually steadies pays the median instead."""
+    driver = _FakeDriver(retune_settle_s=0.0)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        dropped = rig.barrier()
+
+    # Far short of the cap, because the fake's output is steady from the first slice.
+    assert 0 < dropped < int(RATE * radio.SETTLE_S)
+
+
+def test_the_discard_refuses_to_mistake_silence_for_a_settled_band() -> None:
+    """Silence is PERFECTLY steady, which is the trap: the direct-sampling branch
+    delivers empty reads before it starts, and stopping there would hand back the
+    silence as a settled band. A receiver with no noise floor is not receiving."""
+    driver = _FakeDriver(silent_reads=10_000)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        dropped = rig.barrier()
+
+    # It ran to the cap rather than stopping on the first flat pair.
+    assert dropped >= int(RATE * radio.SETTLE_S) - radio.SETTLE_SLICE
