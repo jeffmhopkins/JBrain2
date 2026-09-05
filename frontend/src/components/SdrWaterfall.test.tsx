@@ -351,6 +351,20 @@ describe("the signals under the picture", () => {
     expect(screen.getByText("+18.4 dB")).toBeTruthy();
   });
 
+  it("clears the held signals when asked, and only when asked", () => {
+    // Held has no timer, so Clear is the only thing that empties it — a band watched
+    // for an hour should still be able to say what went through it.
+    const stream = watching();
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+    send(stream, 1600, { peaks: [] });
+
+    expect(screen.getAllByText("144.075").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(screen.queryAllByText("144.075")).toHaveLength(0);
+  });
+
   it("holds a signal that stopped, and says it is gone", () => {
     // A repeater keys up and drops. One marker that appears and goes, not one that
     // vanishes between words — which is what makes a live list unreadable.

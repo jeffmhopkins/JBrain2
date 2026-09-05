@@ -25906,6 +25906,15 @@ button.task-band:active {
   background: var(--surface-2);
   color: var(--text-1);
 }
+.wf-clear {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  cursor: pointer;
+}
 .wf-siglist {
   margin: 5px 0 0;
   padding: 0;

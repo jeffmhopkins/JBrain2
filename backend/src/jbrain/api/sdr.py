@@ -1046,6 +1046,12 @@ async def spectrum_tune(
         "bin_hz": chosen_bin,
     }
     body.update(_capture_body(capture))
+    # The new band's channel raster, exactly as `spectrum_start` sends it. Missing here
+    # was a real fault rather than a tidiness one: picking a band from the sheet RETUNES
+    # rather than restarts, so the sidecar kept a raster of 0 and only touching bins were
+    # one signal — which split a 200 kHz FM carrier at any one-bin dip and reported one
+    # station two or three times. Reported by the owner, seen on the FM dial.
+    body["channel_hz"] = _channel_hz(section, start_hz, stop_hz)
     if session_id is not None:
         body["session_id"] = session_id
     return await _post(settings, "/listen/tune", body)

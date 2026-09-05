@@ -88,6 +88,10 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   // What is on the air, and which reading of it is on screen. `held` is the whole set
   // including what has stopped; the toggle chooses what is drawn from it.
   const [signals, setSignals] = useState<HeldPeak[]>([]);
+  // The held set lives in a ref as well as in state: the row handler folds into it ten
+  // times a second (state would re-render as often), and Clear has to reach the same
+  // object the handler is accumulating into.
+  const heldRef = useRef<HeldPeak[]>([]);
   const [marks, setMarks] = useState<"off" | "live" | "held">("held");
 
   useEffect(() => {
@@ -130,7 +134,6 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     // cheap, publishing is a re-render and is not. Kept in the effect for the same
     // reason the ring is — the picture is on a canvas precisely so that ten rows a
     // second cost ten paints and no reconciliation.
-    let held: HeldPeak[] = [];
     let saidKey = "";
     let saidAt = 0;
     // How many arriving rows share one row of pixels, and the max-hold they are
@@ -273,7 +276,7 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
         frozen = false;
         // The signals were the OLD band's. Holding them across a retune would draw
         // markers at frequencies this picture does not cover.
-        held = [];
+        heldRef.current = [];
         saidKey = "";
         setSignals([]);
         setBand(row);
@@ -338,7 +341,8 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
           full = true;
         }
       }
-      held = mergePeaks(held, row);
+      heldRef.current = mergePeaks(heldRef.current, row);
+      const held = heldRef.current;
       // Published when the SET changes — a signal appearing or stopping is when a marker
       // has to move — plus a slow heartbeat so the listed levels do not go stale. A row
       // that only changed a decibel redraws nothing, which is the point.
@@ -378,6 +382,10 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   // Every marker keeps its line; only the labels are rationed, because on a city FM dial
   // fourteen of them across 20 MHz overlap into text that looks like a measurement.
   const named = labelled(placed);
+  const clear = () => {
+    heldRef.current = [];
+    setSignals([]);
+  };
   return (
     <div className="wf">
       <div className="wf-stack">
@@ -439,6 +447,14 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
                 </button>
               ))}
             </fieldset>
+            {/* Held keeps what it has seen until this is pressed: a band watched for an
+                hour should still be able to say what went through it, and an expiry
+                would make the answer depend on when you happened to look. */}
+            {marks === "held" && signals.length ? (
+              <button type="button" className="wf-clear" onClick={clear}>
+                Clear
+              </button>
+            ) : null}
           </div>
           {marks === "off" ? null : placed.length ? (
             <ul className="wf-siglist">
@@ -456,7 +472,7 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
             <p className="wf-signone">
               {marks === "live"
                 ? "Nothing above the noise right now."
-                : "Nothing above the noise recently."}
+                : "Nothing above the noise since this band was tuned."}
             </p>
           )}
         </div>

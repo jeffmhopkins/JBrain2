@@ -6,7 +6,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { type HeldPeak, labelled, mergePeaks, positionOf, visiblePeaks } from "./sdrPeaks";
+import {
+  type HeldPeak,
+  MAX_HELD,
+  labelled,
+  mergePeaks,
+  positionOf,
+  visiblePeaks,
+} from "./sdrPeaks";
 import type { SpectrumRow } from "./sdrSpectrum";
 
 function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): SpectrumRow {
@@ -43,18 +50,36 @@ describe("holding a signal across rows", () => {
     expect(later[0]).toMatchObject({ hz: 100_000_000, live: false, seen: 100 });
   });
 
-  it("forgets a signal once it has been gone long enough", () => {
+  it("holds until it is cleared, however long the signal has been gone", () => {
+    // No timer. A band watched for an hour should still be able to say what went
+    // through it, and an expiry makes the answer depend on when you happened to look.
     const seen = mergePeaks([], row([{ hz: 100_000_000, db: -50 }], 100));
 
-    expect(mergePeaks(seen, row([], 100 + 21))).toEqual([]);
+    const muchLater = mergePeaks(seen, row([], 100 + 3600));
+
+    expect(muchLater).toHaveLength(1);
+    expect(muchLater[0]).toMatchObject({ hz: 100_000_000, live: false });
   });
 
-  it("drops what it remembers when the clock goes backwards", () => {
-    // A retune or a reconnect restarts the clock, and `now - seen` is then not a
-    // duration at all — a held marker would otherwise sit there forever.
+  it("keeps what it has seen when the clock goes backwards", () => {
+    // A reconnect restarts the box clock. With no expiry there is no arithmetic on it
+    // to go wrong, and the band check is what clears a picture that moved.
     const seen = mergePeaks([], row([{ hz: 100_000_000, db: -50 }], 500));
 
-    expect(mergePeaks(seen, row([], 100))).toEqual([]);
+    expect(mergePeaks(seen, row([], 100))).toHaveLength(1);
+  });
+
+  it("is bounded, and drops the weakest when it has to be", () => {
+    // Held has no timer, so this is the only bound — a wideband scan left all night
+    // would otherwise accumulate without limit. The point of holding is remembering
+    // what was there, so the loudest survive.
+    let held = mergePeaks([], row([{ hz: 90_000_000, db: -10 }], 100));
+    for (let n = 0; n < MAX_HELD + 20; n += 1) {
+      held = mergePeaks(held, row([{ hz: 91_000_000 + n * 100_000, db: -80 }], 101 + n));
+    }
+
+    expect(held).toHaveLength(MAX_HELD);
+    expect(held[0]).toMatchObject({ hz: 90_000_000 });
   });
 
   it("does not let one held marker claim two real stations", () => {
