@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from jbrain.api import debug
+from jbrain.sdr import bands
 
 
 class _Settings:
@@ -237,3 +238,19 @@ async def test_a_box_without_whisper_still_returns_the_audio_and_says_why(
     assert out.heard_something is True
     assert out.transcript is None
     assert "whisper_url unset" in (out.transcript_error or "")
+
+
+def test_the_spectrum_probe_sends_the_capture_the_real_route_would() -> None:
+    """It runs the REAL decision rather than a copy of it. `_span` is what
+    `POST /api/sdr/spectrum` calls, so a bug in the width or the capture shows up in
+    the probe instead of hiding behind a probe that chose differently — which is the
+    whole reason this is not a second implementation."""
+    from jbrain.api import sdr as sdr_api
+
+    start_hz, stop_hz, bin_hz, capture = sdr_api._span("2m-ssb", None, None)
+
+    assert capture is not None
+    rate_hz, fft_bins = capture
+    # What the probe puts on the wire, and what its verdict then checks the frames against.
+    assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins)
+    assert (start_hz, stop_hz) == (144_100_000, 144_300_000)

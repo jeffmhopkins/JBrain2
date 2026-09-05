@@ -42,6 +42,7 @@ from jbrain.agent.grounding import (
 )
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import llm_settings
+from jbrain.api import sdr as sdr_api
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
 from jbrain.db.session import SessionContext, scoped_session
@@ -2116,6 +2117,67 @@ async def sdr_soapy_probe(
         },
         wait_s=SOAPY_PROBE_TIMEOUT_S,
     )
+
+
+SPECTRUM_PROBE_TIMEOUT_S = 60.0
+
+
+@router.post("/sdr/spectrum-probe")
+async def sdr_spectrum_probe(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    section: Annotated[str | None, Query(max_length=48)] = None,
+    start_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    stop_mhz: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
+    seconds: Annotated[float, Query(ge=1.0, le=15.0)] = 3.0,
+    serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
+) -> dict[str, Any]:
+    """**Did the engine swap actually work on this radio?** F6's twin of `soapy-probe`.
+
+    A live spectrum is an owner route behind a websocket, so until this existed the only
+    way to see whether F6 worked on real hardware was for the owner to open the Radio
+    tab and look. An owner with no terminal cannot be the test harness for their own box
+    (CLAUDE.md #10), and "it renders" is not a measurement of a frame rate or a bin
+    width anyway.
+
+    It runs the REAL decision rather than a copy of it: `_span` picks the range, the
+    width and the one-hop capture exactly as `POST /api/sdr/spectrum` does, so a bug in
+    that choice shows up here instead of hiding behind a probe that chose differently.
+    The sidecar then starts a genuine spectrum session, watches it for a few seconds and
+    gives the radio back.
+
+    Three claims it can fail, each invisible from anywhere else. **Which engine ran** —
+    the sidecar drops to `rtl_power` at runtime when a radio will not open, and a silent
+    downgrade is a waterfall quietly at a tenth of the rate it claims. **Whether
+    `bin_hz` on the wire is exactly `rate / bins`** — a frame declaring a width the
+    transform never used is the one failure nothing downstream can see. **What the frame
+    rate really is** — `rtl_power` clamps its interval to a second in its own C, so a
+    measured rate above that IS the ceiling being gone, and no static reading proves it.
+
+    **TAKES A RADIO** for those seconds through the same lease as everything else: a 409
+    names the holder, and the session is released even when the probe fails, because the
+    owner has no terminal to free a radio a diagnostic walked away from."""
+    request.state.debug_detail = f"sdr spectrum probe {section or f'{start_mhz}-{stop_mhz}'}"
+    start_hz, stop_hz, chosen_bin, capture = sdr_api._span(section, start_mhz, stop_mhz)  # noqa: SLF001
+    if serial is not None:
+        if serial not in nodes_in(await _usb_scan(request, settings)):
+            raise HTTPException(
+                status_code=404,
+                detail=f"No radio {serial} in the USB scan, so there is nothing to probe.",
+            )
+    else:
+        serial = await _radio(request, settings, GENERAL)
+    body: dict[str, Any] = {
+        "start_hz": start_hz,
+        "stop_hz": stop_hz,
+        "bin_hz": chosen_bin,
+        "seconds": seconds,
+        "serial": serial,
+    }
+    if capture is not None:
+        body["rate_hz"], body["bins"] = capture
+    return await _sdr_post(settings, "/spectrum/probe", body, wait_s=SPECTRUM_PROBE_TIMEOUT_S)
 
 
 @router.post("/sdr/stop")

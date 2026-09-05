@@ -41,6 +41,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
+import iq
 import listen
 import radio
 import usbdev
@@ -117,6 +118,87 @@ def _wav(pcm: bytes, rate: int) -> bytes:
         out.setframerate(rate)
         out.writeframes(pcm)
     return buf.getvalue()
+
+
+#: How long a spectrum probe watches by default, and the most it will. Seconds, not
+#: minutes: it holds the radio the whole time, and every question it answers — which
+#: engine ran, whether the width is exact, what the frame rate is — is answered by the
+#: first few frames. The cap is what stops a caller turning a diagnostic into a lease.
+SPECTRUM_PROBE_S = 3.0
+SPECTRUM_PROBE_MAX_S = 15.0
+#: Above this a live spectrum is running faster than `rtl_power` can, whose interval is
+#: clamped to `>= 1s` in its own C. Not a target, a DISCRIMINATOR: it is how a frame
+#: rate tells you which engine produced it, independently of what the session says.
+RTL_POWER_CEILING_FPS = 1.5
+
+
+def _spectrum_verdict(
+    sweep: listen.Sweep, frames: list[listen.Frame], elapsed: float, engine: str
+) -> dict[str, Any]:
+    """What the frames say, as claims that can fail rather than a dump of numbers."""
+    findings: list[str] = []
+    out: dict[str, Any] = {
+        "engine": engine,
+        "requested": sweep.as_dict(),
+        "frames": len(frames),
+        "elapsed_s": elapsed,
+        "fps": round(len(frames) / elapsed, 2) if elapsed > 0 else 0.0,
+    }
+    if not frames:
+        out["ok"] = False
+        out["summary"] = f"the {engine} engine produced no frames in {elapsed}s"
+        out["findings"] = [
+            "No waterfall row arrived at all — the picture an owner would see is blank."
+        ]
+        return out
+    last = frames[-1]
+    out["frame"] = {
+        "start_hz": last.start_hz,
+        "stop_hz": last.stop_hz,
+        "bin_hz": last.bin_hz,
+        "bins": len(last.db),
+    }
+    if sweep.capture is not None:
+        rate_hz, fft_bins = sweep.capture
+        want = iq.bin_width_hz(rate_hz, fft_bins)
+        out["frame"]["expected_bin_hz"] = want
+        if last.bin_hz != want:
+            findings.append(
+                f"the frame declares {last.bin_hz} Hz bins and the capture produces "
+                f"{want} — a width nothing computed, which nothing downstream can see"
+            )
+        if len(last.db) != fft_bins:
+            findings.append(
+                f"{len(last.db)} bins per frame against the {fft_bins} the capture asks "
+                f"for — the transform is not the one the api chose"
+            )
+        if engine != "iq":
+            findings.append(
+                f"a one-hop capture was named and the {engine} engine ran anyway — the "
+                f"radio would not open, so this is the runtime fallback, not the engine"
+            )
+        elif out["fps"] <= RTL_POWER_CEILING_FPS:
+            findings.append(
+                f"{out['fps']} fps is no better than rtl_power's own one-second clamp, "
+                f"which is the ceiling this engine exists to remove"
+            )
+    finite = [v for v in last.db if v > iq.DB_FLOOR]
+    if not finite:
+        findings.append(
+            "every bin is at the zero-magnitude floor — nothing is reaching the ADC, "
+            "which is the antenna or the input rather than this engine"
+        )
+    else:
+        ordered = sorted(finite)
+        out["frame"]["floor_db"] = round(ordered[len(ordered) // 2], 1)
+        out["frame"]["peak_db"] = round(ordered[-1], 1)
+    out["findings"] = findings
+    out["ok"] = not findings
+    out["summary"] = (
+        f"{engine} engine, {len(frames)} frames in {elapsed}s ({out['fps']} fps), "
+        f"{out['frame'].get('bins')} bins of {last.bin_hz} Hz"
+    )
+    return out
 
 
 def _bin_hz_of(body: dict[str, Any]) -> int | float:
@@ -773,6 +855,97 @@ class Handler(BaseHTTPRequestHandler):
             TUNER.unreserve(named)
         self._json(code, answer)
 
+    def _spectrum_probe(self, body: dict[str, Any]) -> None:
+        """Does the LIVE SPECTRUM really behave the way F6 claims, on this radio?
+
+        `soapy/probe` retires the claims `radio.py` is written against; this retires the
+        ones the ENGINE is, and there is no other way to ask. A live spectrum is an
+        owner route behind a websocket, so before this the only way to see whether F6
+        worked on real hardware was for the owner to open the Radio tab and look — and
+        an owner with no terminal cannot be the test harness for their own box
+        (CLAUDE.md #10). It answers three questions nothing else can:
+
+        **Which engine actually ran.** The api names a one-hop capture and the sidecar
+        drops to `rtl_power` at RUNTIME when a radio will not open, so the engine in use
+        is a fact about this moment rather than about the request — and a silent
+        downgrade is a waterfall quietly at a tenth of the frame rate it claims.
+
+        **Whether `bin_hz` on the wire is exactly `rate / bins`.** The whole of F7 and
+        the reason the width stopped being negotiated with a tool; a frame that declares
+        a width the transform never used is the one failure nothing downstream can see.
+
+        **What the frame rate really is.** `rtl_power` clamps its interval to one second
+        in C, which is the ceiling this plan exists to remove. A measured rate above
+        that IS the removal, and it cannot be inferred from anything static.
+
+        Runs for a few seconds and RELEASES, through the same lease as everything
+        else — so it is refused with a 409 naming the holder, and it never leaves a
+        session behind on a box whose owner cannot go and stop one."""
+        try:
+            sweep = _range_of(body, direct_ok=True)
+            seconds = float(body.get("seconds") or SPECTRUM_PROBE_S)
+            named = listen.validate_serial(body.get("serial"))
+        except (ListenError, TypeError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        seconds = max(1.0, min(seconds, SPECTRUM_PROBE_MAX_S))
+        try:
+            info = TUNER.start(
+                sweep.centre_hz,
+                "fm",
+                body.get("gain"),
+                purpose=PURPOSE_SPECTRUM,
+                sweep=sweep,
+                serial=named,
+            )
+        except SdrBusy as busy:
+            self._json(409, {"detail": str(busy)})
+            return
+        except (SdrError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        try:
+            answer = self._watch_spectrum(sweep, seconds, info.session_id)
+        finally:
+            # Released here, not by the caller: a probe that leaves the radio held is
+            # worse than one that fails, because the owner has no terminal to free it
+            # from and the next thing to ask for a radio meets a 409 about a probe that
+            # already answered.
+            with contextlib.suppress(Exception):
+                TUNER.stop(info.session_id)
+        self._json(200, answer)
+
+    def _watch_spectrum(
+        self, sweep: listen.Sweep, seconds: float, session_id: str
+    ) -> dict[str, Any]:
+        """Collect frames for `seconds` and reduce them to a verdict."""
+        session = TUNER.current()
+        if session is None or session.id != session_id:
+            return {
+                "ok": False,
+                "summary": "the spectrum session was gone before a frame arrived",
+                "findings": ["nothing held the radio by the time the probe looked"],
+            }
+        engine = "iq" if session._radio is not None else "rtl_power"  # noqa: SLF001
+        sub = session.subscribe_frames()
+        frames: list[listen.Frame] = []
+        started = time.monotonic()
+        deadline = started + seconds
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    frame = sub.get(timeout=max(0.1, deadline - time.monotonic()))
+                except queue.Empty:
+                    break
+                if frame is None:
+                    break
+                frames.append(frame)
+        finally:
+            session.unsubscribe_frames(sub)
+        elapsed = round(time.monotonic() - started, 2)
+        return _spectrum_verdict(sweep, frames, elapsed, engine)
+
+
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
         # exactly that, so the default keeps them byte-identical.
@@ -959,6 +1132,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if body is not None:
                 self._soapy_probe(body)
+            return
+        if route == "/spectrum/probe":
+            body = self._body()
+            if body is not None:
+                self._spectrum_probe(body)
             return
         if route != "/capture":
             self._json(404, {"detail": "not found"})

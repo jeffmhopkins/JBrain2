@@ -35,6 +35,7 @@ server = importlib.util.module_from_spec(_spec)
 sys.modules["sdr_server"] = server
 _spec.loader.exec_module(server)
 listen = sys.modules["listen"]
+iq = sys.modules["iq"]
 
 
 class _FakeProc:
@@ -1632,3 +1633,88 @@ def test_the_probe_has_let_go_of_the_radio_before_it_answers(
     assert order == ["released", "answered 200"], (
         f"the probe answered while still holding the radio: {order}"
     )
+
+
+# --- F6's own probe: did the engine swap work on this radio? ------------------------
+
+
+def _frame(bin_hz: int | float, bins: int, start_hz: int = 144_000_000) -> Any:
+    return listen.Frame(
+        at=0.0, start_hz=start_hz, bin_hz=bin_hz, db=[-44.0] * (bins - 1) + [-15.0]
+    )
+
+
+def _sweep_with_capture() -> Any:
+    return listen.Sweep.of(
+        144_000_000, 144_400_000, 600, 60, capture=(2_400_000, 4_000)
+    )
+
+
+def test_the_probe_reports_the_engine_that_actually_ran() -> None:
+    """The sidecar drops to rtl_power at RUNTIME when a radio will not open, so the
+    engine in use is a fact about this moment rather than about the request — and a
+    silent downgrade is a waterfall quietly at a tenth of the rate it claims."""
+    verdict = server._spectrum_verdict(
+        _sweep_with_capture(), [_frame(600, 4_000)] * 30, 3.0, "rtl_power"
+    )
+
+    assert verdict["ok"] is False
+    assert any("runtime fallback" in f for f in verdict["findings"])
+
+
+def test_a_width_the_transform_never_used_is_a_finding() -> None:
+    """The one failure nothing downstream can see: the PWA draws bin `i` at
+    `start + i * bin_hz` and believes whatever the frame says."""
+    verdict = server._spectrum_verdict(
+        _sweep_with_capture(), [_frame(586, 4_000)] * 30, 3.0, "iq"
+    )
+
+    assert verdict["ok"] is False
+    assert any("nothing computed" in f for f in verdict["findings"])
+
+
+def test_a_frame_rate_no_better_than_rtl_power_is_a_finding() -> None:
+    """`rtl_power` clamps its interval to `>= 1s` in its own C, and removing that
+    ceiling is what this whole plan is for. One frame a second from the I/Q engine
+    means the ceiling is still there, wearing the new engine's name."""
+    verdict = server._spectrum_verdict(
+        _sweep_with_capture(), [_frame(600, 4_000)] * 3, 3.0, "iq"
+    )
+
+    assert verdict["ok"] is False
+    assert any("rtl_power's own one-second clamp" in f for f in verdict["findings"])
+
+
+def test_a_healthy_run_passes_and_says_what_it_measured() -> None:
+    verdict = server._spectrum_verdict(
+        _sweep_with_capture(), [_frame(600, 4_000)] * 219, 3.0, "iq"
+    )
+
+    assert verdict["ok"] is True
+    assert verdict["findings"] == []
+    assert verdict["fps"] == 73.0
+    assert verdict["frame"]["floor_db"] == -44.0
+    assert verdict["frame"]["peak_db"] == -15.0
+
+
+def test_no_frames_at_all_is_the_blank_picture_an_owner_would_see() -> None:
+    verdict = server._spectrum_verdict(_sweep_with_capture(), [], 3.0, "iq")
+
+    assert verdict["ok"] is False
+    assert "no frames" in verdict["summary"]
+
+
+def test_a_frame_with_nothing_in_it_blames_the_antenna_not_the_engine() -> None:
+    """The measured HF state on this box. It is not the engine's failure and must not
+    read as one, or the next reader goes looking in the wrong place."""
+    dead = listen.Frame(
+        at=0.0, start_hz=7_125_000, bin_hz=250, db=[iq.DB_FLOOR] * 1_024
+    )
+    swept = listen.Sweep.of(
+        7_125_000, 7_381_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
+    )
+
+    verdict = server._spectrum_verdict(swept, [dead] * 60, 3.0, "iq")
+
+    assert verdict["ok"] is False
+    assert any("antenna or the input" in f for f in verdict["findings"])
