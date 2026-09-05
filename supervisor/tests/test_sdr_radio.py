@@ -578,7 +578,12 @@ def test_the_probe_names_a_radio_that_selection_missed(monkeypatch) -> None:
 
 def test_the_probe_gives_the_radio_back_even_when_it_throws(monkeypatch) -> None:
     """It holds a real device handle, so an exception on the way through is exactly the
-    path that would leave one behind."""
+    path that would leave one behind.
+
+    The throw no longer escapes — a probe that raises answers none of its seven
+    questions, and MEASURED 2026-09-05 its message did not survive the edge — but the
+    release is the property this test was written for and it still holds. Both are
+    asserted: a verdict that cost the radio would be worse than the exception was."""
     driver = _FakeDriver()
     monkeypatch.setattr(
         _FakeDevice,
@@ -586,9 +591,10 @@ def test_the_probe_gives_the_radio_back_even_when_it_throws(monkeypatch) -> None
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("the radio fell over")),
     )
 
-    with pytest.raises(RuntimeError):
-        radio.probe(serial=WHIP, center_hz=CENTER, rate_hz=RATE, driver=driver)
+    out = radio.probe(serial=WHIP, center_hz=CENTER, rate_hz=RATE, driver=driver)
 
+    assert out["ok"] is False
+    assert "the radio fell over" in out["summary"]
     assert radio.holders() == {}
     assert driver.devices[0].unmade is True
 
@@ -601,3 +607,46 @@ def test_the_probe_says_so_when_nothing_is_plugged_in() -> None:
     assert out["ok"] is False
     assert "enumerated no rtlsdr device" in out["summary"]
     assert driver.kinds() == ["enumerate"]
+
+
+def test_a_probe_that_breaks_returns_a_verdict_rather_than_an_exception() -> None:
+    """MEASURED 2026-09-05: the first real-hardware run raised inside `probe`, came back
+    as a 502, and the sentence was replaced by the edge's own error page before it
+    reached the console — so the one call shape that failed was invisible from the only
+    surface the owner has (CLAUDE.md #10).
+
+    A probe answers seven questions; one that raises answers none of them, and the
+    verdict is the whole contract. Every escape is a finding now, and the traceback goes
+    to the container log where `logs sdr` can reach it."""
+
+    class _Exploding:
+        def version(self) -> str:
+            return "api 0.8.0 abi 0.8"
+
+        def enumerate(self, _args):
+            raise RuntimeError("SWIG says no")
+
+    out = radio.probe(driver=_Exploding())  # type: ignore[arg-type]
+
+    assert out["ok"] is False
+    assert "SWIG says no" in out["summary"]
+    assert any("SWIG says no" in f for f in out["findings"])
+
+
+def test_a_driver_whose_version_call_fails_still_gets_probed() -> None:
+    """`version()` is the FIRST call the probe makes, so an exception there used to take
+    the whole verdict down before a single claim was tested."""
+
+    class _NoVersion:
+        def version(self) -> str:
+            raise AttributeError("getAPIVersion missing")
+
+        def enumerate(self, _args):
+            return []
+
+    out = radio.probe(driver=_NoVersion())  # type: ignore[arg-type]
+
+    assert out["ok"] is False
+    assert "unavailable" in out["soapy"] and "getAPIVersion" in out["soapy"]
+    # It got PAST the version call to a real answer about enumeration.
+    assert "enumerated no rtlsdr device" in out["summary"]

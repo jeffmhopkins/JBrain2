@@ -261,6 +261,15 @@ def capture(
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, body: dict[str, Any]) -> None:
+        # Every refusal goes to the log as well as down the wire, because MEASURED
+        # 2026-09-05 the wire is not enough: a 502 from here reached the owner's console
+        # as the edge's own error page with `detail` stripped, so the reason existed
+        # only in a response nobody could read. 4xx survives that trip and 5xx does not
+        # (docs/runbooks/DEBUG_ACCESS.md), and the container log survives both — it is
+        # the one channel `logs sdr` can always reach.
+        if code >= 400:
+            said = body.get("detail") or body.get("summary") or body
+            print(f"[sdr] {code} {self.path.split('?')[0]}: {said}", flush=True)  # noqa: T201
         raw = json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -706,24 +715,30 @@ class Handler(BaseHTTPRequestHandler):
         if busy is not None:
             self._json(409, {"detail": str(busy)})
             return
+        # The lease is given back BEFORE the response is written, not in a `finally`
+        # after it. Sending first leaves a window in which the caller has a 200 in hand
+        # and the radio is still reserved, so anything acting on that answer — a session,
+        # a second probe — meets a 409 for a hold that is already over. `capture` has
+        # always released before it answered; this did not, and the seam showed up as a
+        # test that passed alone and failed in a full run.
+        code: int = 200
+        answer: dict[str, Any]
         try:
-            self._json(
-                200,
-                radio.probe(
-                    serial=named, center_hz=center_hz, rate_hz=rate_hz, bins=bins
-                ),
+            answer = radio.probe(
+                serial=named, center_hz=center_hz, rate_hz=rate_hz, bins=bins
             )
         except radio.RadioBusy as held:
-            self._json(409, {"detail": str(held)})
+            code, answer = 409, {"detail": str(held)}
         except radio.RadioError as failed:
             # 502 rather than 500: the radio answered badly (or not at all), which is
             # the same class of failure as a sidecar refusing a sweep, and the sentence
             # is the useful part.
-            self._json(502, {"detail": str(failed)})
+            code, answer = 502, {"detail": str(failed)}
         except ValueError as bad:
-            self._json(400, {"detail": str(bad)})
+            code, answer = 400, {"detail": str(bad)}
         finally:
             TUNER.unreserve(named)
+        self._json(code, answer)
 
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means

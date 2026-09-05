@@ -67,6 +67,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -233,8 +234,42 @@ class _Soapy:
         return f"api {self._sdr.getAPIVersion()} abi {self._sdr.getABIVersion()}"
 
 
+def _answered(step: str, run: Any) -> dict[str, Any]:
+    """Run one of the probe's checks and answer for it, whatever it does.
+
+    MEASURED 2026-09-05: the first hardware run raised a call-shape error inside one
+    check, and because the guards around the others were narrow — `(RadioError,
+    ValueError)`, which an `AttributeError` from a wrong SWIG signature sails past — the
+    whole probe came back as a single 502 and six questions went unasked. A probe exists
+    to answer all seven in ONE run, on hardware that is not always at hand, so the guard
+    has to be as wide as the mistakes it is looking for."""
+    _log(f"probe: {step}")
+    try:
+        got = run()
+    except Exception as failed:  # noqa: BLE001 - the whole point; see above
+        _log(f"probe: {step} FAILED {type(failed).__name__}: {failed}")
+        return {
+            "works": False,
+            "error": f"{type(failed).__name__}: {failed}",
+            "where": step,
+        }
+    return got if isinstance(got, dict) else {"works": True, "value": got}
+
+
 def _log(message: str) -> None:
     print(f"[radio] {message}", flush=True)  # noqa: T201 - the container log is the trail
+
+
+def _version_or_error(drv: Driver) -> str:
+    """The driver's version, or why it could not be asked.
+
+    Reported rather than raised because it is the FIRST call the probe makes: a binding
+    mismatch here would otherwise take down the whole verdict before a single claim was
+    tested, which is the failure the wrapper in `probe` exists to stop."""
+    try:
+        return drv.version()
+    except Exception as failed:  # noqa: BLE001 - a version string is not worth a 502
+        return f"unavailable: {type(failed).__name__}: {failed}"
 
 
 def validate_bufflen(bufflen_bytes: int) -> int:
@@ -818,12 +853,45 @@ def probe(
     Each check is caught on its own: a probe that stops at the first failure answers one
     question and hides six, and the whole point of running it is to come back with the
     full list."""
+    try:
+        return _probe(
+            serial=serial, center_hz=center_hz, rate_hz=rate_hz, bins=bins, driver=driver
+        )
+    except Exception as broke:  # noqa: BLE001 - a verdict is the whole contract
+        # A probe that raises answers NOTHING, and its message then has to survive the
+        # api, the tunnel and the edge to be read — which MEASURED 2026-09-05 it does
+        # not: a 502 reached the console as Cloudflare's own error page with the
+        # sentence stripped, so the one call shape that failed was invisible from the
+        # only surface the owner has (CLAUDE.md #10). Every escape becomes a finding
+        # here, and the traceback goes to the log where `logs sdr` can reach it.
+        _log(f"probe failed: {traceback.format_exc()}")
+        return {
+            "ok": False,
+            "serial": serial,
+            "summary": f"The probe itself failed: {type(broke).__name__}: {broke}",
+            "findings": [
+                f"{type(broke).__name__}: {broke}",
+                "This is the probe's own code, not a verdict about the radio — the "
+                "traceback is in `logs sdr`.",
+            ],
+            "traceback": traceback.format_exc()[-1500:],
+        }
+
+
+def _probe(
+    *,
+    serial: str | None,
+    center_hz: int,
+    rate_hz: int,
+    bins: int,
+    driver: Driver | None,
+) -> dict[str, Any]:
     started = time.monotonic()
     drv = driver if driver is not None else _Soapy()
     findings: list[str] = []
     out: dict[str, Any] = {
         "serial": serial,
-        "soapy": drv.version(),
+        "soapy": _version_or_error(drv),
         "requested": {
             "center_hz": center_hz,
             "rate_hz": rate_hz,
@@ -831,7 +899,14 @@ def probe(
             "direct_sampling": center_hz < DIRECT_MAX_HZ,
         },
     }
-    found = drv.enumerate({"driver": "rtlsdr"})
+    try:
+        found = drv.enumerate({"driver": "rtlsdr"})
+    except Exception as failed:  # noqa: BLE001 - see the wrapper above
+        out["ok"] = False
+        out["summary"] = f"SoapySDR could not enumerate: {type(failed).__name__}: {failed}"
+        out["findings"] = [f"enumerate() raised {type(failed).__name__}: {failed}"]
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
     out["enumerate"] = {"count": len(found), "devices": found}
     if not found:
         out["ok"] = False
@@ -849,7 +924,7 @@ def probe(
         driver=drv,
         doing="probing the radio",
     ) as radio:
-        out["selection"] = _selection(radio, found)
+        out["selection"] = _answered("selection", lambda: _selection(radio, found))
         if out["selection"].get("selects_by_serial") is False:
             findings.append(
                 "`serial=` did NOT open the radio it named — every per-radio claim "
@@ -871,7 +946,7 @@ def probe(
                 "branch is the claim this engine's HF half rests on."
             )
 
-        out["bufflen"] = _callback_period(radio)
+        out["bufflen"] = _answered("bufflen", lambda: _callback_period(radio))
         if not out["bufflen"].get("took"):
             findings.append(
                 f"`bufflen` did NOT take: buffers measured "
@@ -880,7 +955,7 @@ def probe(
                 f"silent fallback to {DEFAULT_BUFFLEN_BYTES} bytes."
             )
 
-        out["capture"] = _capture(radio, bins)
+        out["capture"] = _answered("capture", lambda: _capture(radio, bins))
 
         # A retune ON THE LIVE STREAM, with the stream handle checked for identity
         # either side: a rebuild would hand back a different one.
@@ -889,12 +964,12 @@ def probe(
         live: dict[str, Any] = {"from_hz": center_hz, "to_hz": moved_hz}
         try:
             live["discarded"] = radio.retune(center_hz=moved_hz)
-            live["capture"] = _capture(radio, bins)
+            live["capture"] = _answered("retuned capture", lambda: _capture(radio, bins))
             live["stream_rebuilt"] = radio.stream_token != before
             live["works"] = not live["stream_rebuilt"]
-        except (RadioError, ValueError) as failed:
+        except Exception as failed:  # noqa: BLE001 - one claim, not the probe
             live["works"] = False
-            live["error"] = str(failed)
+            live["error"] = f"{type(failed).__name__}: {failed}"
         out["live_retune"] = live
         if not live.get("works"):
             findings.append(
@@ -913,9 +988,9 @@ def probe(
                 row["stream_rebuilt"] = radio.stream_token != before
                 row["samples"] = radio.read(radio.samples_per_buffer).samples.size
                 row["works"] = not row["stream_rebuilt"]
-            except (RadioError, ValueError) as failed:
+            except Exception as failed:  # noqa: BLE001 - one rate, not the probe
                 row["works"] = False
-                row["error"] = str(failed)
+                row["error"] = f"{type(failed).__name__}: {failed}"
             rates.append(row)
         out["rates"] = rates
         if not all(row.get("works") for row in rates):
