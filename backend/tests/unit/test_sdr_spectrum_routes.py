@@ -66,7 +66,7 @@ def test_a_one_hop_section_carries_the_bin_width_ITS_capture_will_produce() -> N
 
     assert (start, stop) == (section.start_hz, section.stop_hz)
     # F6 put it on the wire: the width IS the capture's, and the capture travels with it.
-    assert capture == (2_400_000, 4_000)
+    assert capture == (2_400_000, 4_000, 1)
     assert bin_hz == 600
     assert (section.sample_rate_hz, section.fft_bins) == (2_400_000, 4_000)
     assert section.live_bin_hz == 600
@@ -111,9 +111,10 @@ def test_a_multi_hop_section_still_gets_rtl_powers_own_ladder() -> None:
 
     _start, _stop, bin_hz, capture = sdr_api._span("fm-broadcast", None, None)
 
-    assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz)
-    # No capture named, which is how the sidecar knows to hop it with rtl_power.
-    assert capture is None
+    # F11: 20 MHz is 11 hops on OUR engine now, at 9375 Hz bins where the tool gave
+    # 19531 — so the capture IS named, with the hop count beside it.
+    assert capture == (2_400_000, 256, 11)
+    assert bin_hz == 9375
 
 
 def test_an_explicit_range_is_the_section_it_names_in_numbers() -> None:
@@ -150,11 +151,13 @@ def test_a_range_that_is_no_section_still_gets_a_derived_answer() -> None:
 
     _start, _stop, bin_hz, capture = sdr_api._span(None, 430.0, 435.0)
 
-    assert bin_hz == live_bin_hz(5_000_000, sdr_api.DEFAULT_SPECTRUM_BIN_HZ)
-    assert capture is None
+    # F11: 5 MHz is three hops on our own engine, so the derived answer is now the
+    # capture's own width rather than rtl_power's ladder.
+    assert capture == (2_400_000, 1_024, 3)
+    assert bin_hz == 2343.75
 
 
-def test_a_hand_entered_range_too_wide_for_one_capture_falls_back_to_the_tool() -> None:
+def test_a_hand_entered_range_too_wide_for_one_capture_is_hopped() -> None:
     # 4 MHz is two hops however the owner asked for it, so this is rtl_power's ladder
     # in both engines — and the range is `2m-all`'s, so it is that row's width.
     whole = bands.by_id("2m-all")
@@ -162,8 +165,10 @@ def test_a_hand_entered_range_too_wide_for_one_capture_falls_back_to_the_tool() 
 
     _start, _stop, bin_hz, capture = sdr_api._span(None, 144.0, 148.0)
 
-    assert bin_hz == live_bin_hz(4_000_000, whole.sweep_bin_hz)
-    assert capture is None
+    # F11: the same three hops the band button gets, because both ask the same question
+    # of the same row — which is what the equality test above this one is for.
+    assert capture == (2_400_000, 1_024, 3)
+    assert bin_hz == 2343.75
 
 
 def test_shortwave_is_drawn_rather_than_refused() -> None:
@@ -178,7 +183,7 @@ def test_shortwave_is_drawn_rather_than_refused() -> None:
     assert (start, stop) == (7_125_000, 7_300_000)
     assert forty.live_bin_hz == 250
     # F6 transforms it: 256 kS/s over 1024 bins, and the sidecar is told exactly that.
-    assert (bin_hz, capture) == (250, (256_000, 1_024))
+    assert (bin_hz, capture) == (250, (256_000, 1_024, 1))
 
 
 def test_shortwave_wider_than_one_capture_is_refused_in_words() -> None:
@@ -460,9 +465,10 @@ def test_a_one_hop_range_sends_the_capture_to_the_sidecar() -> None:
     on the wire and no third state, so the two sides cannot fall out of step about which
     engine is drawing — which is how a `rate / N` width once reached rtl_power and came
     back 4097 columns wide (§6.4)."""
-    assert sdr_api._capture_body((2_400_000, 4_000)) == {
+    assert sdr_api._capture_body((2_400_000, 4_000, 1)) == {
         "rate_hz": 2_400_000,
         "bins": 4_000,
+        "hops": 1,
     }
 
 
@@ -482,5 +488,62 @@ def test_the_width_and_the_engine_are_one_decision() -> None:
 
         if capture is None:
             continue
-        rate_hz, fft_bins = capture
+        rate_hz, fft_bins, _hops = capture
+        assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id
+
+
+# --- F11: wide bands hop on the I/Q engine rather than falling to rtl_power ---------
+
+
+def test_the_two_bands_that_needed_a_tool_now_hop_on_our_own_engine() -> None:
+    """`rtl_power`'s one row a second is not the cost of hopping — it is
+    `if (interval < 1) interval = 1;` in its own C. The retune works on a live stream
+    (F0), so a wide span is several captures stitched, and the bins come out FINER than
+    the tool gave: 9,375 Hz across the FM dial where rtl_power gave 19,531."""
+    rate_hz, bins, hops = bands.hop_plan(88_000_000, 108_000_000)  # type: ignore[misc]
+
+    assert (rate_hz, bins, hops) == (2_400_000, 256, 11)
+    assert bands.bin_width_hz(rate_hz, bins) == 9375
+    # And it fits the frame budget it was planned against.
+    assert bands.hop_usable_bins(bins) * hops <= bands.LIVE_MAX_BINS
+
+
+def test_a_span_one_capture_covers_is_never_hopped() -> None:
+    """Hopping costs a retune per hop and measures each bin once a sweep. Where one
+    tuning covers the range, doing it in several is strictly worse."""
+    assert bands.capture_for(144_100_000, 144_300_000) is not None
+    assert bands.hop_plan(144_100_000, 144_300_000) is None
+
+
+def test_wide_shortwave_is_still_refused_rather_than_folded() -> None:
+    """Below 24 MHz the ADC is fed directly and each hop's centre would have to satisfy
+    the Nyquist window on its own; a plan that ignored that would draw a picture made
+    of folded images and look perfectly plausible."""
+    assert bands.hop_plan(3_000_000, 8_000_000) is None
+
+
+def test_a_hopped_span_sends_its_plan_to_the_sidecar(mocker: Any = None) -> None:
+    """The engine choice and the hop count travel together. `hops` is sent always, not
+    only when interesting: a sidecar reading it as absent would sweep 20 MHz at one
+    tuning and draw the wrong band confidently."""
+    _start, _stop, bin_hz, capture = sdr_api._span("fm-broadcast", None, None)
+
+    assert capture == (2_400_000, 256, 11)
+    assert bin_hz == 9375
+    assert sdr_api._capture_body(capture) == {
+        "rate_hz": 2_400_000,
+        "bins": 256,
+        "hops": 11,
+    }
+
+
+def test_every_hopped_section_still_declares_the_width_it_will_produce() -> None:
+    """The invariant that survives F11: an exact `rate / bins` width is only ever sent
+    with the capture that produces it, hopped or not."""
+    for section in bands.SECTIONS:
+        _start, _stop, bin_hz, capture = sdr_api._span(section.id, None, None)
+
+        if capture is None:
+            continue
+        rate_hz, fft_bins, _hops = capture
         assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id

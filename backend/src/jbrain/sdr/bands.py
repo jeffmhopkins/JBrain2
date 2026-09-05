@@ -226,6 +226,84 @@ def capture_for(start_hz: int, stop_hz: int) -> tuple[int, int] | None:
     return None
 
 
+#: The rate a hopping sweep captures each hop at. The widest this radio takes without
+#: leaving librtlsdr's legal set, so it needs the fewest hops — and the hop count is
+#: what a sweep's frame rate is made of, because the retune between hops costs far more
+#: than the samples do.
+HOP_RATE_HZ = 2_400_000
+#: FFT sizes a hop may use, finest first. A hop sweep is an OVERVIEW: the whole point is
+#: seeing 20 MHz at once, and 600 Hz bins across that is 33,000 columns nobody asked for
+#: and nothing can draw. The planner takes the finest that fits the frame budget.
+HOP_BINS_LADDER = (4096, 2048, 1024, 512, 256, 128, 64)
+#: More hops than this and the picture is too old at one end to be one picture: each bin
+#: is measured once per sweep, so a 30-hop sweep is a 30-way time smear pretending to be
+#: an instant.
+MAX_HOPS = 16
+
+
+def hop_plan(
+    start_hz: int, stop_hz: int, max_bins: int = LIVE_MAX_BINS
+) -> tuple[int, int, int] | None:
+    """`(rate, bins per hop, hops)` for a span too wide for one capture, or None.
+
+    The I/Q engine can retune on a LIVE stream with no rebuild — F0 measured that on
+    this hardware — so a wide span is several captures stitched into one row rather
+    than a job for `rtl_power`. That matters because `rtl_power`'s one row a second is
+    not a property of hopping: it is `if (interval < 1) interval = 1;` in its own C,
+    and this engine has no such clamp.
+
+    Only the tuner side. Below 24 MHz the ADC is fed directly and each hop's centre
+    would have to satisfy the Nyquist window separately (`window_holds`); a wide
+    shortwave span stays refused rather than being drawn from hops that fold. Above it,
+    every hop is the same tuner doing what it already does.
+
+    The bin count is chosen against a FRAME BUDGET rather than for resolution. Each hop
+    contributes only the trusted middle of its capture (`TRUSTED_FILL`), so the total
+    is `hops * usable`, and the ladder is walked finest-first for the best picture that
+    still fits. On 88-108 MHz that lands at 9,375 Hz bins where `rtl_power` gives
+    19,531 — finer AND faster, which is the whole argument for owning the samples."""
+    span = stop_hz - start_hz
+    if span <= 0 or capture_for(start_hz, stop_hz) is not None:
+        return None
+    if start_hz < DIRECT_SAMPLING_MAX_HZ:
+        return None
+    for bins in HOP_BINS_LADDER:
+        usable = hop_usable_bins(bins)
+        if usable <= 0:
+            continue
+        width = bin_width_hz(HOP_RATE_HZ, bins)
+        hops = -(-span // int(usable * width)) if width else 0
+        if hops < 2 or hops > MAX_HOPS:
+            continue
+        if usable * hops <= max_bins:
+            return HOP_RATE_HZ, bins, int(hops)
+    return None
+
+
+def hop_usable_bins(bins: int) -> int:
+    """The trusted middle of one hop's capture, in bins, and always EVEN.
+
+    Even because the hop's centre sits on the boundary between its two middle bins, so
+    an odd count cannot be placed symmetrically around it — and a half-bin offset that
+    accumulates across a dozen hops is a picture whose axis drifts from its own label."""
+    numerator, denominator = TRUSTED_FILL
+    return (bins * numerator // denominator) // 2 * 2
+
+
+def hop_centres(start_hz: int, plan: tuple[int, int, int]) -> list[int]:
+    """Where to tune for each hop, so the trusted middles tile without gap or overlap.
+
+    Derived from the same arithmetic the stitcher uses rather than from the span, so
+    the two cannot disagree about which bin a hop owns."""
+    rate_hz, bins, hops = plan
+    usable = hop_usable_bins(bins)
+    width = bin_width_hz(rate_hz, bins)
+    return [
+        int(round(start_hz + (index * usable + usable / 2) * width))
+        for index in range(hops)
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class Channel:
     """A named fixed frequency inside a section.
