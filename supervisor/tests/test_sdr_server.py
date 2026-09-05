@@ -1451,3 +1451,141 @@ def test_a_capture_still_escalates_to_a_kill_for_a_wedged_tool(
 
     assert status == 200
     assert made[0].signals == ["terminate", "kill"]
+
+
+# --- the in-process device handle, which the lease cannot see -------------------------
+
+
+def test_a_reset_is_refused_while_a_device_handle_is_open_here(
+    sidecar: str, monkeypatch
+) -> None:
+    """The lease knows about child processes and TTL reservations; it does not know
+    about a device handle held INSIDE this process, and that is exactly the dangerous
+    case: `USBDEVFS_RESET` fired from the process still holding the usbfs fd with
+    interface 0 claimed re-enumerates the device at a new node, leaves the orphaned
+    libusb handle at ENODEV, and nothing in `radio.py` ever learns
+    (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §3)."""
+    hit: list[str] = []
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", hit.append)
+    monkeypatch.setattr(sys.modules["radio"], "holders", lambda: {WIRE: "reading I/Q"})
+
+    status, body = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+
+    assert status == 409
+    assert "still open in this process" in body["detail"]
+    assert "restart the sdr service" in body["detail"]
+    assert hit == []
+    # The OTHER dongle is untouched: this is one handle, not a global stop.
+    status, _ = _post(
+        sidecar, "/reset", {"serial": WHIP, "device_node": "/dev/bus/usb/003/011"}
+    )
+    assert status == 200
+
+
+def test_an_unnamed_device_handle_blocks_a_reset_of_either_radio(
+    sidecar: str, monkeypatch
+) -> None:
+    """A handle opened with no serial takes whichever device librtlsdr enumerated
+    first, so nothing can prove it is not on the radio the reset is aimed at — the same
+    rule the lease applies to an unnamed session, asked through the same function."""
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", lambda _n: None)
+    monkeypatch.setattr(sys.modules["radio"], "holders", lambda: {"": "reading I/Q"})
+
+    for serial in (WHIP, WIRE):
+        status, body = _post(
+            sidecar, "/reset", {"serial": serial, "device_node": "/dev/bus/usb/003/010"}
+        )
+        assert status == 409
+        assert "unnamed" in body["detail"]
+
+
+# --- the F0 probe ---------------------------------------------------------------------
+
+
+def _probe_stub(monkeypatch, result: Any = None, raises: Exception | None = None):
+    """Stand in for `radio.probe`, recording what the route asked and what the lease
+    said while it ran. The probe itself is covered against a fake device in
+    `test_sdr_radio.py`; what is under test here is the lease and the wire."""
+    seen: list[dict[str, Any]] = []
+
+    def _run(**kwargs: Any) -> dict[str, Any]:
+        seen.append({**kwargs, "reserved_during": server.TUNER.reserved()})
+        if raises is not None:
+            raise raises
+        return result or {"ok": True, "summary": "every claim held"}
+
+    monkeypatch.setattr(sys.modules["radio"], "probe", _run)
+    return seen
+
+
+def test_the_probe_takes_the_radio_and_gives_it_back(sidecar: str, monkeypatch) -> None:
+    """Through the LEASE, like every other holder here, so it cannot run under a live
+    session and a session cannot start under it — and released in a `finally`, because
+    a claim staked and not returned refuses that radio until the TTL lapses."""
+    seen = _probe_stub(monkeypatch)
+
+    status, body = _post(
+        sidecar,
+        "/soapy/probe",
+        {"serial": WIRE, "center_hz": 10_000_000, "rate_hz": 256_000, "bins": 1024},
+    )
+
+    assert status == 200
+    assert body["ok"] is True
+    assert seen[0]["serial"] == WIRE
+    assert seen[0]["center_hz"] == 10_000_000
+    assert seen[0]["bins"] == 1024
+    assert seen[0]["reserved_during"] is True, "the probe ran without holding the radio"
+    assert server.TUNER.reserved() is False
+
+
+def test_the_probe_is_refused_while_something_else_holds_that_radio(
+    sidecar: str, monkeypatch
+) -> None:
+    seen = _probe_stub(monkeypatch)
+    _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
+    )
+
+    status, body = _post(sidecar, "/soapy/probe", {"serial": WIRE})
+
+    assert status == 409
+    assert "logging APRS" in body["detail"]
+    assert seen == []
+
+
+def test_a_probe_that_the_radio_fails_still_releases_it(
+    sidecar: str, monkeypatch
+) -> None:
+    """The failure path is the one that leaks a lease, so it is the one worth a test."""
+    radio_mod = sys.modules["radio"]
+    _probe_stub(monkeypatch, raises=radio_mod.RadioError("the radio would not open"))
+
+    status, body = _post(sidecar, "/soapy/probe", {"serial": WHIP})
+
+    assert status == 502
+    assert "would not open" in body["detail"]
+    assert server.TUNER.reserved() is False
+
+
+def test_the_probe_refuses_what_the_radio_cannot_do(sidecar: str, monkeypatch) -> None:
+    """Bounded here as well as in the api, for the reason `validate_serial` is: a bound
+    that lives only in the caller is not a bound once there is a second caller, and
+    this process has its own HTTP surface."""
+    seen = _probe_stub(monkeypatch)
+
+    for body in (
+        {"center_hz": 2_000_000_000},
+        {"rate_hz": 50_000},
+        {"bins": 100_000},
+        {"serial": {"not": "a serial"}},
+    ):
+        status, _ = _post(sidecar, "/soapy/probe", body)
+        assert status == 400, body
+
+    assert seen == []
+    assert server.TUNER.reserved() is False

@@ -42,6 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
 import listen
+import radio
 import usbdev
 from listen import (
     PURPOSE_APRS,
@@ -622,6 +623,28 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"detail": str(busy)})
             return
         try:
+            # The lease is not the whole answer any more. It knows about child processes
+            # and TTL reservations; it cannot see an IN-PROCESS device handle, and the
+            # leak case is exactly the dangerous one — the lease believes the radio is
+            # free (that is what leaked means), so the ioctl would fire from the very
+            # process still holding the usbfs fd with interface 0 claimed. The device
+            # then re-enumerates at a new node, the orphaned libusb handle goes ENODEV
+            # and is never closed, and nothing in `radio.py` learns. Asked through the
+            # SAME `blocking_key` the lease uses, so an unnamed handle blocks every
+            # radio here exactly as an unnamed session does there.
+            open_here = listen.blocking_key(radio.holders(), named or listen.ANY_DEVICE)
+            if open_here is not None:
+                doing = radio.holders().get(open_here, "in use")
+                self._json(
+                    409,
+                    {
+                        "detail": f"the radio ({open_here or 'unnamed'}) is still open "
+                        f"in this process ({doing}), and a port reset would strand that "
+                        f"handle at a new node. Stop that job first — or, if nothing "
+                        f"will, restart the sdr service."
+                    },
+                )
+                return
             usbdev.reset(node)
         except ValueError as bad:
             self._json(400, {"detail": str(bad)})
@@ -639,6 +662,68 @@ class Handler(BaseHTTPRequestHandler):
         # The node number changes as a result — a reset device comes back at the next
         # free address — so the caller is told to look again rather than reuse it.
         self._json(200, {"reset": True, "serial": named, "was": node})
+
+    def _soapy_probe(self, body: dict[str, Any]) -> None:
+        """F0's questions, asked of a real dongle, answered as a verdict.
+
+        Everything `radio.py` is written against — enumeration, `serial=` selection,
+        `direct_samp=2`, live retune and live rate change with no stream rebuild, a real
+        `SOAPY_SDR_OVERFLOW` under induced backpressure, the achieved rate against the
+        requested one, and whether `bufflen` actually took — is a claim read off source
+        and datasheets. This is where hardware retires them, and the owner has no
+        terminal to run `SoapySDRUtil` from (CLAUDE.md #10).
+
+        THROUGH THE LEASE, like every other holder here, so a probe cannot run under a
+        live session and a session cannot start under a probe. Released in a `finally`
+        for the reason `capture` is: a claim staked and not returned refuses that radio
+        until the TTL lapses."""
+        try:
+            named = listen.validate_serial(body.get("serial"))
+            center_hz = int(body.get("center_hz") or radio.PROBE_CENTER_HZ)
+            rate_hz = int(body.get("rate_hz") or radio.PROBE_RATE_HZ)
+            bins = int(body.get("bins") or radio.PROBE_BINS)
+        except (ListenError, TypeError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        if not listen.DIRECT_MIN_HZ <= center_hz <= MAX_HZ:
+            self._json(
+                400,
+                {"detail": f"{center_hz} Hz is outside the radio's range "
+                 f"({listen.DIRECT_MIN_HZ}-{MAX_HZ} Hz)"},
+            )
+            return
+        # The legal rates are librtlsdr's, not ours: it rejects everything outside
+        # 225001-300000 and 900001-3200000, and a probe asking for one gets the driver's
+        # own refusal, which is more informative than a bound restated here. These two
+        # only keep the request from allocating something absurd.
+        if not 225_000 <= rate_hz <= 3_200_000:
+            self._json(400, {"detail": f"{rate_hz} S/s is not a rate this radio takes"})
+            return
+        if not 16 <= bins <= 8_192:
+            self._json(400, {"detail": f"{bins} bins is outside 16-8192"})
+            return
+        busy = TUNER.reserve(named, "probing the radio")
+        if busy is not None:
+            self._json(409, {"detail": str(busy)})
+            return
+        try:
+            self._json(
+                200,
+                radio.probe(
+                    serial=named, center_hz=center_hz, rate_hz=rate_hz, bins=bins
+                ),
+            )
+        except radio.RadioBusy as held:
+            self._json(409, {"detail": str(held)})
+        except radio.RadioError as failed:
+            # 502 rather than 500: the radio answered badly (or not at all), which is
+            # the same class of failure as a sidecar refusing a sweep, and the sentence
+            # is the useful part.
+            self._json(502, {"detail": str(failed)})
+        except ValueError as bad:
+            self._json(400, {"detail": str(bad)})
+        finally:
+            TUNER.unreserve(named)
 
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
@@ -821,6 +906,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if body is not None:
                 self._reset(body)
+            return
+        if route == "/soapy/probe":
+            body = self._body()
+            if body is not None:
+                self._soapy_probe(body)
             return
         if route != "/capture":
             self._json(404, {"detail": "not found"})

@@ -1241,6 +1241,20 @@ def test_the_sdr_image_installs_the_radio_tools() -> None:
     assert "command -v rtl_fm" in dockerfile
 
 
+def test_every_sidecar_module_is_copied_into_the_sdr_image() -> None:
+    """A sibling module left out of the COPY list is invisible until the build.
+
+    `deploy/sdr/` is one WORKDIR whose modules import each other by bare name, and the
+    Dockerfile copies them one line at a time. Adding a module and forgetting the line
+    breaks `import server` at the build gate — on the ONE image the owner builds on
+    their own box during Ops -> Update, with no terminal to read the failure with
+    (CLAUDE.md #10). Cheaper to assert here."""
+    dockerfile = (DEPLOY / "Dockerfile.sdr").read_text()
+
+    for module in sorted((DEPLOY / "sdr").glob("*.py")):
+        assert f"COPY deploy/sdr/{module.name} " in dockerfile, module.name
+
+
 def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:
     """The one thing `docker build` cannot catch, on the one image the owner builds.
 

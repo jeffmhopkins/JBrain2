@@ -46,6 +46,16 @@
 #      --channel-khz is how wide a signal is HERE — 15 on 2m, 25 on 70cm/airband/marine,
 #      200 on FM broadcast, thousands on a cellular carrier. Off the narrowband bands
 #      it is not optional: it sizes the neighbourhood `steady` judges a bin against.)
+#   scripts/debug-connect.sh soapy-probe [--serial S] [--mhz 10.0] [--rate 256000] [--bins 1024]
+#     (F0 of SDR_IQ_SPECTRUM_PLAN: does this radio really behave the way the I/Q spectrum
+#      engine assumes? Returns a VERDICT — `ok`, a one-line summary, and `findings` naming
+#      any claim that did not hold: does `serial=` open the radio it names, does
+#      `direct_samp=2` take, do frequency AND rate change on a LIVE stream with no rebuild,
+#      is SOAPY_SDR_OVERFLOW really reported under induced backpressure, does the achieved
+#      rate match the requested one, and — the one nothing else can answer — did `bufflen`
+#      actually take, measured as a callback period. Also captures one frame through the
+#      real FFT, so the 10 MHz default is a WWV check. TAKES THE RADIO for a few seconds
+#      through the same lease as everything else; run it once per dongle with --serial.)
 #   scripts/debug-connect.sh sdr-reset <serial>       # re-enumerate one dongle
 #     (The software equivalent of unplugging it. An RTL-SDR left with transfers pending
 #      can stay on the bus and stop answering descriptor reads — every lookup by serial
@@ -516,6 +526,21 @@ PY
     else
       _call POST /api/debug/sdr/stop | _pp
     fi ;;
+
+  soapy-probe) # [--serial S] [--mhz M] [--rate S/s] [--bins N] — F0's questions, asked of a dongle
+    SER=; MHZ=10.0; RATE=256000; BINS=1024
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --serial) SER="$2"; shift 2 ;;
+        --mhz) MHZ="$2"; shift 2 ;;
+        --rate) RATE="$2"; shift 2 ;;
+        --bins) BINS="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    q="frequency_mhz=$MHZ&rate_hz=$RATE&bins=$BINS"
+    [ -n "$SER" ] && q="$q&serial=$SER"
+    _call POST "/api/debug/sdr/soapy-probe?$q" | _pp ;;
 
   sdr-reset) # <serial> — re-enumerate one dongle, for one that has stopped answering
     ser="${1:?usage: debug-connect.sh sdr-reset <serial>}"

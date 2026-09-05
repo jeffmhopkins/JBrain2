@@ -69,6 +69,13 @@ WORKDIR /app
 COPY deploy/sdr/server.py ./server.py
 COPY deploy/sdr/listen.py ./listen.py
 COPY deploy/sdr/packets.py ./packets.py
+# The spectrum engine, in two halves that are separate for one reason: `radio.py`
+# imports SoapySDR (deferred, inside a function) and `iq.py` imports nothing but numpy,
+# so the physics stays testable on a machine with no dongle. Both are copied even though
+# only `radio.py` is imported today — a sidecar module missing from this list fails at
+# the build gate below, which is exactly where it should fail.
+COPY deploy/sdr/radio.py ./radio.py
+COPY deploy/sdr/iq.py ./iq.py
 # The USB port reset — the one recovery for a dongle that has stopped answering, and
 # the reason the owner never has to walk to the box for one (docs/runbooks/DEBUG_ACCESS.md).
 COPY deploy/sdr/usbdev.py ./usbdev.py
