@@ -695,6 +695,22 @@ closed by name, since a leaked handle is what `/reset` must not fire under (§6.
 The fallback is `RadioUnavailable`, a **subclass** of `SdrError` so that where it is
 not caught it refuses like anything else instead of becoming a 500.
 
+✅ **MEASURED on the box 2026-09-05**, through `spectrum-probe`, which runs the real
+route's own decision rather than a copy of it:
+
+| section | engine | frames | fps | bins × width |
+| --- | --- | --- | --- | --- |
+| `2m-ssb` (200 kHz, one hop) | **iq** | 96 in 3.01 s | **31.89** | 4096 × exactly 250 Hz |
+| `40m` (175 kHz, one hop, HF) | **iq** | 96 in 3.09 s | **31.07** | 1024 × exactly 250 Hz |
+| `fm-broadcast` (20 MHz, multi-hop) | `rtl_power` | 4 in 4.0 s | 1.00 | 1032 × 19531 Hz |
+
+Every claim the wave rests on, one reading each. The width is `rate / bins` **exactly**
+on both one-hop rows (1,024,000/4096 and 256,000/1024 are both 250). The multi-hop row
+is sent no capture and keeps rtl_power's own ladder width, which is the tier split
+working rather than a fallback firing. And **31.9 fps against a tool clamped to 1 fps
+in its own C** is the ceiling this plan was written to remove, measured gone — with a
+-60.1 dBFS floor under it, so those are real frames rather than empty ones.
+
  `Frame` unchanged. The wire budget is
 decided here against the **post-gzip** number (§5), not the raw one. Overflow and the
 retune barrier surface as stream conditions the way `dutyNote` surfaces hop cost.
