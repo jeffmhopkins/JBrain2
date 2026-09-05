@@ -156,3 +156,49 @@ def test_a_quiet_row_carries_an_empty_list_not_a_missing_key() -> None:
     frame = listen.Frame(at=1.0, start_hz=88_000_000, bin_hz=9375, db=_flat(50))
 
     assert frame.as_dict()["peaks"] == []
+
+
+def test_a_dip_inside_a_carrier_does_not_split_it_into_two_stations() -> None:
+    """REPORTED by the owner: "sometimes one signal will produce 2-3 overlapping peak
+    detections". A real carrier is contiguous, but noise drops the odd bin inside it
+    back under the threshold, and a rule that split on one bin reported one station
+    twice."""
+    row = _flat(400)
+    for index in range(100, 112):
+        row[index] = -50.0
+    row[105] = -70.0  # one bin of the carrier dips into the noise
+
+    found = peaks.find(row, 88_000_000, 9375, channel_hz=0)
+
+    assert len(found) == 1
+
+
+def test_the_band_plan_widens_the_fold_and_cannot_narrow_it() -> None:
+    """`channel_hz` zero means the caller did not say — which is what a RETUNE used to
+    leave the sidecar with, and it is not a licence to split every carrier."""
+    assert peaks.MIN_FOLD_BINS >= 3
+    row = _flat(400)
+    for index in range(100, 110):
+        row[index] = -50.0
+    row[104] = -70.0  # a bin of the carrier back in the noise
+
+    assert len(peaks.find(row, 88_000_000, 9375, channel_hz=200_000)) == 1
+    assert len(peaks.find(row, 88_000_000, 9375, channel_hz=0)) == 1
+
+
+def test_a_carrier_wider_than_its_own_baseline_window_hides_itself() -> None:
+    """Why `channel_hz` reaching the sidecar is a CORRECTNESS matter and not a
+    refinement. The baseline window is 400 kHz when nobody says otherwise, and a 200 kHz
+    FM carrier is half of that — so the median it is judged against is the carrier, and
+    it stands 0 dB above itself. The band plan makes the window 21 channels wide, where
+    one signal is under 5% of it.
+
+    Pinned as a test because it is the failure `bands.py` already reasoned about and the
+    one a retune reintroduced by dropping the raster."""
+    row = _flat(400)
+    # 24 bins is ~225 kHz, wider than half of a 400 kHz baseline window.
+    for index in range(100, 124):
+        row[index] = -50.0
+
+    assert peaks.find(row, 88_000_000, 9375, channel_hz=0) == []
+    assert len(peaks.find(row, 88_000_000, 9375, channel_hz=200_000)) == 1

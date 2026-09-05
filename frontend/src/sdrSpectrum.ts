@@ -40,6 +40,12 @@ export interface SpectrumRow {
   /** Strongest first. Empty is a real answer — a quiet band — and is what a build
    *  without peak finding also sends, which is why nothing here treats it as unknown. */
   peaks: SpectrumPeak[];
+  /** How wide the DEMODULATOR's passband is, when this row is a tuned CHANNEL rather
+   *  than a band. Zero on a band row and on any row from a box that predates the
+   *  demodulator, which is exactly the test for "is this a tuning view?" — one stream
+   *  now carries both kinds, and each row says which it is rather than the reader
+   *  having to know what the radio was asked for. */
+  passbandHz: number;
 }
 
 export interface SpectrumState {
@@ -93,6 +99,10 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
     binHz: bin,
     db: values,
     peaks: parsePeaks(payload.peaks),
+    passbandHz:
+      typeof payload.passband_hz === "number" && Number.isFinite(payload.passband_hz)
+        ? Math.max(0, payload.passband_hz)
+        : 0,
   };
 }
 

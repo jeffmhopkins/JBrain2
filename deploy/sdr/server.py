@@ -126,10 +126,126 @@ def _wav(pcm: bytes, rate: int) -> bytes:
 #: first few frames. The cap is what stops a caller turning a diagnostic into a lease.
 SPECTRUM_PROBE_S = 3.0
 SPECTRUM_PROBE_MAX_S = 15.0
+
+#: How long a LISTEN probe holds the radio, and the most it will. Longer than the
+#: spectrum one's default because what it is measuring is continuity: a dropped USB
+#: buffer is a click rather than a missing row, and a two-second look is too short to
+#: say whether a stream that started cleanly stays clean.
+LISTEN_PROBE_S = 5.0
+LISTEN_PROBE_MAX_S = 20.0
 #: Above this a live spectrum is running faster than `rtl_power` can, whose interval is
 #: clamped to `>= 1s` in its own C. Not a target, a DISCRIMINATOR: it is how a frame
 #: rate tells you which engine produced it, independently of what the session says.
 RTL_POWER_CEILING_FPS = 1.5
+
+
+def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
+    """Where the signal in a channel row actually sits, as an offset from `middle`.
+
+    The MIDPOINT OF THE 6 dB SHOULDERS, not the argmax, and the same rule
+    `frontend/src/sdrTuning.ts` draws with — deliberately the same, because a probe
+    that measured "is it centred?" differently from the picture would disagree with it
+    on exactly the marginal cases both exist to catch.
+
+    The argmax is not usable here: an FM carrier's top is flat, so the loudest bin is
+    wherever the noise happened to peak across a plateau a hundred bins wide, and on a
+    32 kHz row that is an answer up to a third of the view out. It would fire the
+    "mixer and tuning disagree" finding on a healthy radio and mask a real offset error
+    on a sick one.
+
+    Walks OUT from the peak rather than scanning the row, so a second signal inside the
+    view is not swept into the first one's width."""
+    peak_at = max(range(len(frame.db)), key=lambda i: frame.db[i])
+    edge = frame.db[peak_at] - 6.0
+    low = peak_at
+    while low > 0 and frame.db[low - 1] >= edge:
+        low -= 1
+    high = peak_at
+    while high < len(frame.db) - 1 and frame.db[high + 1] >= edge:
+        high += 1
+    centre_bin = (low + high) / 2.0
+    return frame.start_hz + (centre_bin + 0.5) * frame.bin_hz - middle, peak_at
+
+
+def _listen_verdict(
+    session: "listen.Session",
+    frames: list["listen.Frame"],
+    peaks_seen: list[float],
+    elapsed: float,
+) -> dict[str, Any]:
+    """What the session says, as claims that can fail rather than a dump of numbers.
+
+    Every finding names something an owner or a maintainer could act on. A probe that
+    printed twelve numbers and no verdict would leave the reading of them to whoever
+    remembered what each was supposed to be."""
+    findings: list[str] = []
+    loud = max(peaks_seen) if peaks_seen else 0.0
+    out: dict[str, Any] = {
+        "engine": session.engine,
+        "frequency_hz": session.frequency_hz,
+        "mode": session.mode,
+        "seconds": elapsed,
+        "audio_peak_max": round(loud, 4),
+        "audio_peak_mean": round(sum(peaks_seen) / len(peaks_seen), 4) if peaks_seen else 0.0,
+        "overflows": session.overflows,
+        "frames": len(frames),
+        "fps": round(len(frames) / elapsed, 2) if elapsed > 0 else 0.0,
+    }
+    if session.engine != "iq":
+        findings.append(
+            f"the {session.engine} engine is running, so this radio could not be opened "
+            f"for its own samples — there is no tuning view and the audio is a subprocess"
+        )
+    if loud <= 0.001:
+        findings.append("no audio came out at all: the chain ran and produced silence")
+    elif loud >= 0.999:
+        # Not merely loud: `Audio.peak` is measured BEFORE the clip, so a chain at
+        # exactly full scale is one whose gain is too high for this signal rather than
+        # one that happens to be receiving a strong station.
+        findings.append(
+            f"audio reached full scale ({loud:.3f}) — the demodulator is clipping, "
+            f"which on FM means the deviation scaling is too high for this signal"
+        )
+    if session.overflows:
+        findings.append(
+            f"{session.overflows} USB buffers were dropped in {elapsed} s: the samples "
+            f"either side of each are not adjacent in time, which is an audible click"
+        )
+    if session.engine == "iq" and not frames:
+        findings.append("the engine ran but published no tuning rows")
+    latest = frames[-1] if frames else None
+    if latest is not None:
+        span = latest.stop_hz - latest.start_hz
+        middle = latest.start_hz + span / 2
+        offset, loudest = _channel_centre(latest, middle)
+        out["view"] = {
+            "span_hz": round(span, 1),
+            "passband_hz": latest.passband_hz,
+            "bins": len(latest.db),
+            "bin_hz": latest.bin_hz,
+            "centre_hz": round(middle, 1),
+            "strongest_offset_hz": round(offset, 1),
+            "strongest_db": round(latest.db[loudest], 1),
+            "floor_db": round(sorted(latest.db)[len(latest.db) // 2], 1),
+        }
+        if abs(middle - session.frequency_hz) > latest.bin_hz:
+            # The offset-tuning failure, and the reason this number is reported rather
+            # than assumed: the radio sits above the station and the mixer takes that
+            # back out, so a row centred anywhere else means the two disagree.
+            findings.append(
+                f"the row is centred on {middle:.0f} Hz but the radio is tuned to "
+                f"{session.frequency_hz} — the mixer and the tuning disagree"
+            )
+        if not latest.passband_hz:
+            findings.append("the rows carry no passband, so the PWA will not draw them")
+    out["findings"] = findings
+    out["ok"] = not findings
+    out["summary"] = (
+        f"{session.engine} engine, {out['fps']} fps, peak {out['audio_peak_max']}"
+        if not findings
+        else findings[0]
+    )
+    return out
 
 
 def _spectrum_verdict(
@@ -621,14 +737,19 @@ class Handler(BaseHTTPRequestHandler):
 
         Each row carries its own range (`listen.Frame`), so the api relays lines without
         understanding them and a retune needs no message of its own."""
-        session = TUNER.for_purpose(PURPOSE_SPECTRUM)
+        # Whichever session is DRAWING, not only a spectrum one: a listening session on
+        # the I/Q engine publishes the tuning view of the channel it is demodulating
+        # through this same seam, because it is the same `Frame` measured off the same
+        # samples. Each row says which band it covers, so a reader needs no warning
+        # that it is now looking at 32 kHz of one channel rather than 20 MHz of a dial.
+        session = TUNER.drawing()
         if session is None:
             held = TUNER.sessions()
             if held:
                 # Name the holder rather than saying "idle", which is false and sends
                 # the owner looking for a radio that is plainly in use.
                 doing = PURPOSE_LABEL.get(held[0].purpose, "in use")
-                detail = f"the radio is {doing}, not watching the spectrum"
+                detail = f"the radio is {doing} and is not drawing anything"
                 self._json(409, {"detail": detail})
                 return
             self._json(409, {"detail": "nothing is watching the spectrum"})
@@ -989,6 +1110,109 @@ class Handler(BaseHTTPRequestHandler):
         return _spectrum_verdict(sweep, frames, elapsed, engine)
 
 
+    def _listen_probe(self, body: dict[str, Any]) -> None:
+        """Does the NUMPY DEMODULATOR really work on this radio?
+
+        The twin of `_spectrum_probe`, one layer over: that one retires the claims the
+        spectrum engine is written against, this retires the ones `demod.py` is. Both
+        exist for the same reason — listening is an owner route and the audio is an MP3
+        stream, so before this the only way to know whether the demodulator worked on
+        real hardware was for the owner to press play and listen, and an owner with no
+        terminal cannot be the test harness for their own box (CLAUDE.md #10).
+
+        Four things it can catch, none of them visible anywhere else and none of them
+        provable against the synthetic signals `test_sdr_demod.py` uses:
+
+        **Which engine ran.** The listen pipeline drops to `rtl_fm` at RUNTIME when a
+        radio will not open for our own samples. That fallback is right and its
+        silence is not: on `rtl_fm` there is no tuning view at all, and nothing else
+        says why.
+
+        **Whether the station is where the offset says.** The radio is tuned
+        `LISTEN_OFFSET_HZ` above it and the mixer takes that back out. Get the two out
+        of step and a narrowband channel is silence — so the probe reports where the
+        strongest bin actually landed, and a quarter of a megahertz of error is not
+        subtle.
+
+        **Whether the audio is a signal or a rail.** A peak pinned at 1.0 is a chain
+        clipping, a peak at 0.0 is one not connected; both look like "it ran".
+
+        **Whether the stream stays continuous.** `Reading.overflows` counts USB buffers
+        the driver threw away, which on a waterfall is one row slightly wrong and on
+        audio is an audible click. This is the one measurement a fake radio cannot
+        produce, and the reason `QUEUE_BUFFERS` is worth re-examining now that the same
+        stream has to run continuously rather than in frames.
+
+        **TAKES A RADIO** for those seconds through the same lease as everything else,
+        and releases it even when the probe fails."""
+        try:
+            mhz = float(body.get("mhz") or 0.0)
+            mode = str(body.get("mode") or "fm")
+            seconds = float(body.get("seconds") or LISTEN_PROBE_S)
+            named = listen.validate_serial(body.get("serial"))
+        except (ListenError, TypeError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        seconds = max(1.0, min(seconds, LISTEN_PROBE_MAX_S))
+        try:
+            info = TUNER.start(
+                int(round(mhz * 1_000_000)),
+                mode,
+                body.get("gain"),
+                purpose=PURPOSE_LISTEN,
+                serial=named,
+            )
+        except SdrBusy as busy:
+            self._json(409, {"detail": str(busy)})
+            return
+        except (SdrError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        try:
+            answer = self._watch_listen(seconds, info.session_id)
+        finally:
+            with contextlib.suppress(Exception):
+                TUNER.stop(info.session_id)
+        self._json(200, answer)
+
+    def _watch_listen(self, seconds: float, session_id: str) -> dict[str, Any]:
+        """Hold a listening session for `seconds` and reduce it to a verdict."""
+        session = TUNER.find(session_id)
+        if session is None:
+            return {
+                "ok": False,
+                "engine": None,
+                "summary": "the session was gone before the probe looked",
+                "findings": ["nothing held the radio by the time the probe looked"],
+            }
+        sub = session.subscribe_frames() if session.draws_frames else None
+        frames: list[listen.Frame] = []
+        peaks_seen: list[float] = []
+        started = time.monotonic()
+        deadline = started + seconds
+        try:
+            while time.monotonic() < deadline:
+                left = max(0.05, deadline - time.monotonic())
+                if sub is None:
+                    time.sleep(min(0.1, left))
+                else:
+                    try:
+                        frame = sub.get(timeout=left)
+                    except queue.Empty:
+                        break
+                    if frame is None:
+                        break
+                    frames.append(frame)
+                # Sampled alongside the frames rather than once at the end: a peak read
+                # after the fact is whatever the last buffer happened to hold, and a
+                # channel that was loud for four seconds and quiet for the fifth would
+                # read as silent.
+                peaks_seen.append(session.audio_peak)
+        finally:
+            if sub is not None:
+                session.unsubscribe_frames(sub)
+        return _listen_verdict(session, frames, peaks_seen, round(time.monotonic() - started, 2))
+
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
         # exactly that, so the default keeps them byte-identical.
@@ -1180,6 +1404,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if body is not None:
                 self._spectrum_probe(body)
+            return
+        if route == "/listen/probe":
+            body = self._body()
+            if body is not None:
+                self._listen_probe(body)
             return
         if route != "/capture":
             self._json(404, {"detail": "not found"})

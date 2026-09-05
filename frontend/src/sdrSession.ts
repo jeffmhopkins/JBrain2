@@ -31,6 +31,12 @@ export interface SdrListening {
    *  for the purposes that really are a single frequency. `frequency_hz` carries the
    *  midpoint of this, which is the only frequency a span has. */
   sweep?: { start_hz: number; stop_hz: number; bin_hz: number; seconds: number } | null;
+  /** Which engine the sidecar ACTUALLY started — `iq` when it is demodulating the
+   *  samples itself, `rtl_fm` / `rtl_power` when a subprocess is doing it. Reported
+   *  because the choice is made at runtime and can fall back (deploy/sdr/listen.py),
+   *  and because only the `iq` engine can draw the channel it is listening to. Absent
+   *  on a sidecar older than the demodulator. */
+  engine?: string;
   /** The box's clock when this session started. With `elapsed_s` it gives the box's
    *  clock NOW, which is what anchors the audio timeline for caption timing. */
   started_at: number;

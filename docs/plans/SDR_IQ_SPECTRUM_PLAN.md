@@ -1243,12 +1243,65 @@ the driver's own default.
 
 ## 8. Deliberately not in this plan
 
-**Replacing `rtl_fm` with a numpy demodulator.** Affordable — NFM demod is ~1.5 ms per
-100 ms of I/Q — and it would give one radio spectrum *and* audio with one dB scale
-everywhere. The blast radius is why not: that PCM is the substrate for `_peak`, the
-segment cutter, whisper captions, the direwolf feed and the recordings library. Six
-features to re-validate for simultaneity that **two dongles already buy**, since the lease
-is per-radio. SoapySDR does not foreclose it, which is part of why it is the right base.
+**~~Replacing `rtl_fm` with a numpy demodulator.~~** ✅ **The engine is built and
+measured** (`deploy/sdr/demod.py`, 2026-09-05). This entry used to argue the blast
+radius was six features to re-validate for simultaneity that two dongles already buy.
+That was wrong twice over, and the owner said so: *"I feel like you can pull off
+spectrum and audio from one radio — this is done all the time."* They are right. Every
+SDR application does exactly this, and the obstacle was never the hardware or the
+physics — it was that `rtl_fm` is a **separate process that opens the dongle
+exclusively**. "One radio, one job" is a constraint this codebase imposed on itself.
+
+The blast radius was overstated too. `_pump_pcm` reads a chunk from `rtl_fm`'s stdout,
+measures it, accumulates it and writes it to ffmpeg — so `_peak`, the segment cutter,
+whisper captions, the MP3 encoder and the direwolf feed are all downstream of **one
+`read`**, and they take s16le mono at 16 kHz. `demod.py` emits exactly that. They are
+unaffected by construction, not by re-validation.
+
+Measured on a 100 ms frame of 2.4 MS/s, against real time:
+
+| | demod | + wideband FFT | + zoom FFT | total |
+| --- | --- | --- | --- | --- |
+| narrow FM / AM | 5.4% | 4.5% | 0.1% | **10.0% of one core** |
+| wide FM | 11.7% | 4.5% | 0.1% | **16.3% of one core** |
+
+So one radio gives audio, the full waterfall **and** the narrow tuning view together,
+for a tenth of a core. Three findings worth carrying:
+
+1. **The IF is the tuning view.** `Audio.baseband` is the decimated complex stream, so
+   a 512-point FFT of it resolves 94 Hz — six times finer than a 4000-bin transform of
+   the whole 2.4 MHz capture, and it costs 0.15 ms. The narrow view is not a zoom into
+   the wideband row; it is better than one, and nearly free.
+2. **2 400 000 S/s serves every mode.** It divides both the 48 kHz narrowband IF and
+   the 240 kHz wide-FM one, so nothing has to change capture rate to change mode.
+3. **An FM discriminator is blind to amplitude**, so an empty channel demodulates to
+   full-scale noise. That is parity — `demod_args` passes no `-l` either — but we now
+   have a real RF level to build a squelch on, which `rtl_fm`'s audio-level one never
+   had.
+
+**Wired the same day.** A listening session now opens one `Radio`, feeds
+`Demodulator` and a 512-bin `Spectrometer` off the same buffer, and writes PCM into the
+unchanged ffmpeg pipe (`listen.Session._start_iq_listen` / `_pump_iq_listen`). Three
+things carry the design:
+
+- **A runtime fallback to `rtl_fm`**, exactly as `_start_spectrum_pipeline` falls back
+  to `rtl_power` and for the same reason: an owner with no terminal must not need a
+  revert and a rebuild to get AUDIO back. `SessionInfo.engine` says which one is
+  running, because a silent fallback is right and an invisible one is not.
+- **Offset tuning.** The radio sits `LISTEN_OFFSET_HZ` above the station and the mixer
+  takes it back out, so the RTL2832U's own DC/LO spike is not sitting on the carrier —
+  or in the middle of the tuning view drawn from the same samples. `Demodulator` snaps
+  the offset to a whole division of the rate and REPORTS what it snapped to; opening
+  the radio at the requested offset while mixing by the snapped one is silence on a
+  narrowband channel, from code that looks right in both places.
+- **The frames route follows the drawing, not the purpose.** `Tuner.drawing()` prefers
+  a spectrum session and falls back to any session publishing rows, so the listening
+  radio's channel view reaches the same stream. `Frame.passband_hz` is what tells a
+  band row from a channel row on the wire — zero on a band — and the PWA requires it
+  before drawing a row as a tuning view.
+
+The surface is `frontend/src/components/SdrTuningView.tsx`, reading the row through
+`sdrTuning.ts`; the binding spec is `docs/mocks/sdr-tuning-view/`.
 
 **A real scanner** — cheap once `iq.py` exists, and a follow-on rather than a hidden extra.
 

@@ -204,6 +204,27 @@ export function reduce(db: readonly number[], columns: number, extent = 0): Floa
   return out;
 }
 
+/** The most device pixels one measurement row may occupy. A very slow stream would
+ *  otherwise draw fat blocks; four keeps a one-row-a-second band legible without them. */
+const MAX_ROW_PIXELS = 4;
+
+export function rowPixelsFor(wantedRows: number, displayRows: number): number {
+  /* How many device pixel rows one measurement gets.
+   *
+   *  An INTEGER, and that is the whole point: a scrolling picture is only stable when a
+   *  row lands on whole pixels, so this is what keeps the 1:1 property while letting the
+   *  history be denser than one pixel per row. MEASURED by the owner: at one row a
+   *  second on the FM dial, one device pixel per row left the picture nearly empty —
+   *  seven minutes to fill a phone's height, where the ring it replaced showed the same
+   *  forty seconds two and a half times taller.
+   *
+   *  Rounded rather than floored so a stream that wants 2.4 pixels a row gets 2 and not
+   *  1: the cost of rounding up is a slightly shorter history, and the cost of rounding
+   *  down is a picture that reads as broken. */
+  if (wantedRows <= 0 || displayRows <= 0) return 1;
+  return Math.max(1, Math.min(MAX_ROW_PIXELS, Math.round(displayRows / wantedRows)));
+}
+
 export function stackFor(fps: number | null, displayRows: number): number {
   /* How many arriving rows share one row of pixels.
    *

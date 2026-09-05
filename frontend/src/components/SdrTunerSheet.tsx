@@ -19,8 +19,10 @@ import {
   subscribeSdrCaptions,
 } from "../sdrCaptions";
 import type { SdrListening } from "../sdrSession";
+import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
 import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
+import { SdrTuningView } from "./SdrTuningView";
 import { Sheet } from "./Sheet";
 import { PauseIcon, PlayIcon } from "./icons";
 
@@ -138,6 +140,17 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     setPlaying(isSdrPlaying());
     return subscribeSdrAudio(setPlaying);
   }, []);
+
+  // The tuning view's rows come off the same stream the waterfall uses, and only the
+  // I/Q engine publishes them — `rtl_fm` demodulates in a subprocess we cannot see
+  // into, so on that engine there is nothing to draw and the strip is not mounted at
+  // all. Opening the stream anyway would hold a socket against a 409.
+  const drawing = listening.engine === "iq";
+  useEffect(() => {
+    if (!drawing) return;
+    startSdrSpectrum();
+    return () => stopSdrSpectrum();
+  }, [drawing]);
 
   // Captions hold a whisper model resident on the box's GPU next to the chat model,
   // so they are opt-in and stop with the sheet rather than running unattended.
@@ -332,6 +345,25 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           </button>
         ))}
       </div>
+
+      {listening.engine !== undefined && listening.engine !== "iq" && (
+        // Said rather than left blank, because the owner has no terminal (CLAUDE.md
+        // #10): a strip that is simply missing looks like a build without the feature,
+        // and this is the one state where knowing WHICH engine is running is the whole
+        // diagnosis. The sidecar falls back on its own so the audio keeps working.
+        <p className="radio-hint">
+          No tuning view on this radio: the box could not open it for its own samples and fell back
+          to rtl_fm, which demodulates out of reach. The sound is unaffected.
+        </p>
+      )}
+      {drawing && (
+        <SdrTuningView
+          frequencyHz={listening.frequency_hz}
+          onTune={(hz) =>
+            void act(() => api.sdrTune(hz / 1_000_000, undefined, listening.session_id))
+          }
+        />
+      )}
 
       {/* Live radio is playing or it is not: there is no timeline to scrub, which is
           why the native transport sat at 0:00 / 0:00. Pausing drops the connection and

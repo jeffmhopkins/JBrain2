@@ -6,7 +6,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { type HeldPeak, mergePeaks, positionOf, visiblePeaks } from "./sdrPeaks";
+import {
+  type HeldPeak,
+  MAX_HELD,
+  labelled,
+  mergePeaks,
+  positionOf,
+  visiblePeaks,
+} from "./sdrPeaks";
 import type { SpectrumRow } from "./sdrSpectrum";
 
 function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): SpectrumRow {
@@ -16,6 +23,7 @@ function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): Spect
     stopHz: 108_000_000,
     binHz,
     db: [],
+    passbandHz: 0,
     peaks: peaks.map((p) => ({ ...p, overDb: 12 })),
   };
 }
@@ -43,18 +51,36 @@ describe("holding a signal across rows", () => {
     expect(later[0]).toMatchObject({ hz: 100_000_000, live: false, seen: 100 });
   });
 
-  it("forgets a signal once it has been gone long enough", () => {
+  it("holds until it is cleared, however long the signal has been gone", () => {
+    // No timer. A band watched for an hour should still be able to say what went
+    // through it, and an expiry makes the answer depend on when you happened to look.
     const seen = mergePeaks([], row([{ hz: 100_000_000, db: -50 }], 100));
 
-    expect(mergePeaks(seen, row([], 100 + 21))).toEqual([]);
+    const muchLater = mergePeaks(seen, row([], 100 + 3600));
+
+    expect(muchLater).toHaveLength(1);
+    expect(muchLater[0]).toMatchObject({ hz: 100_000_000, live: false });
   });
 
-  it("drops what it remembers when the clock goes backwards", () => {
-    // A retune or a reconnect restarts the clock, and `now - seen` is then not a
-    // duration at all — a held marker would otherwise sit there forever.
+  it("keeps what it has seen when the clock goes backwards", () => {
+    // A reconnect restarts the box clock. With no expiry there is no arithmetic on it
+    // to go wrong, and the band check is what clears a picture that moved.
     const seen = mergePeaks([], row([{ hz: 100_000_000, db: -50 }], 500));
 
-    expect(mergePeaks(seen, row([], 100))).toEqual([]);
+    expect(mergePeaks(seen, row([], 100))).toHaveLength(1);
+  });
+
+  it("is bounded, and drops the weakest when it has to be", () => {
+    // Held has no timer, so this is the only bound — a wideband scan left all night
+    // would otherwise accumulate without limit. The point of holding is remembering
+    // what was there, so the loudest survive.
+    let held = mergePeaks([], row([{ hz: 90_000_000, db: -10 }], 100));
+    for (let n = 0; n < MAX_HELD + 20; n += 1) {
+      held = mergePeaks(held, row([{ hz: 91_000_000 + n * 100_000, db: -80 }], 101 + n));
+    }
+
+    expect(held).toHaveLength(MAX_HELD);
+    expect(held[0]).toMatchObject({ hz: 90_000_000 });
   });
 
   it("does not let one held marker claim two real stations", () => {
@@ -117,5 +143,39 @@ describe("placing a marker on the picture", () => {
     // signal at a frequency that was never measured.
     expect(positionOf(50_000_000, row([]))).toBeNull();
     expect(positionOf(200_000_000, row([]))).toBeNull();
+  });
+});
+
+describe("which markers carry their frequency", () => {
+  const at = (hz: number, db: number, position: number) => ({
+    peak: { hz, db },
+    at: position,
+  });
+
+  it("drops a label that would sit on top of its neighbour", () => {
+    // MEASURED by the owner on a city FM dial: fourteen stations across 20 MHz put
+    // labels on top of each other and the middle read as `99 30001309106 923 66204.105…`
+    // — text that is worse than none, because it looks like a measurement.
+    const named = labelled([
+      at(100_000_000, -40, 0.5),
+      at(100_100_000, -50, 0.52),
+      at(100_200_000, -60, 0.54),
+    ]);
+
+    expect(named.size).toBe(1);
+    expect(named.has(100_000_000)).toBe(true);
+  });
+
+  it("keeps the strongest when a stretch is crowded, not the leftmost", () => {
+    // What a glance should read is the loudest thing in that part of the band.
+    const named = labelled([at(100_000_000, -70, 0.5), at(100_100_000, -30, 0.52)]);
+
+    expect([...named]).toEqual([100_100_000]);
+  });
+
+  it("labels everything when there is room", () => {
+    const named = labelled([at(100_000_000, -40, 0.1), at(105_000_000, -50, 0.9)]);
+
+    expect(named.size).toBe(2);
   });
 });

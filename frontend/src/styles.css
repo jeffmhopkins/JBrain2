@@ -25838,6 +25838,10 @@ button.task-band:active {
   border-left-style: dashed;
   opacity: 0.5;
 }
+.wf-mark b.flip {
+  left: auto;
+  right: 3px;
+}
 .wf-mark b {
   position: absolute;
   top: 2px;
@@ -25849,7 +25853,7 @@ button.task-band:active {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  color: var(--text-1);
+  color: var(--text);
 }
 .wf-sig {
   margin-top: 6px;
@@ -25876,7 +25880,7 @@ button.task-band:active {
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-seg);
   overflow: hidden;
 }
 /* A real <legend> so the group is named for a screen reader, taken out of the flow
@@ -25900,7 +25904,16 @@ button.task-band:active {
 }
 .wf-seg button.on {
   background: var(--surface-2);
-  color: var(--text-1);
+  color: var(--text);
+}
+.wf-clear {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  background: transparent;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  cursor: pointer;
 }
 .wf-siglist {
   margin: 5px 0 0;
@@ -25912,23 +25925,39 @@ button.task-band:active {
 }
 .wf-siglist li {
   display: flex;
+}
+/* The pill itself, which is a button when there is a radio to send it to. Same shape
+   either way, so the list does not change size when tuning is unavailable. */
+.wf-sigpill {
+  display: flex;
   align-items: baseline;
   gap: 5px;
   padding: 2px 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
+  background: transparent;
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  color: inherit;
+}
+button.wf-sigpill {
+  cursor: pointer;
+}
+/* Armed, per DESIGN.md's arm-then-confirm: the pill says what the second tap does
+   rather than a dialog opening over the picture being read. */
+.wf-sigpill.armed {
+  border-color: var(--accent);
 }
 /* A signal that has stopped reads as remembered rather than as present: the list is
    most useful when "on the air now" and "was a moment ago" are told apart at a glance. */
-.wf-siglist li.held {
+.wf-siglist li.held .wf-sigpill {
   border-style: dashed;
   color: var(--text-3);
 }
 .wf-sighz {
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text);
 }
 .wf-siglist li.held .wf-sighz {
   font-weight: 500;
@@ -26156,4 +26185,86 @@ button.task-band:active {
 }
 .radio-reset:disabled {
   opacity: 0.4;
+}
+
+/* --- The tuning view (docs/mocks/sdr-tuning-view) --------------------------------- */
+/* A short spectrum of the CHANNEL being listened to, drawn from the same samples the
+   audio is demodulated from. The label carries the span and the passband because both
+   are mode-dependent — a narrowband channel is a third of its 48 kHz IF, a broadcast
+   station three quarters of its 240 kHz one — so neither can be printed in the markup. */
+.tv-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tv-span {
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.tv-chart {
+  position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  /* The canvas is an inline element by default, so its line box leaves a few pixels of
+     background below it that read as a misaligned border. */
+  line-height: 0;
+}
+.tv-chart canvas {
+  display: block;
+  width: 100%;
+  height: 78px;
+}
+/* Inset on the picture rather than given a row of its own, the same move
+   `.sdr-face-elapsed` makes on the tape: it is a reading about the chart, and the
+   corner it sits in is one the trace does not reach. */
+.tv-lvl {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  z-index: 1;
+  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.tv-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.tv-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 2px 0;
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Amber, not the accent: it reports a condition to act on rather than offering a
+   choice, and it is the only control on this surface that appears because something
+   is wrong. */
+.tv-nudge {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
+  padding: 3px 9px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-pill);
+  background: var(--amber-tint);
+  color: var(--warn);
+  font-size: var(--fs-micro);
 }

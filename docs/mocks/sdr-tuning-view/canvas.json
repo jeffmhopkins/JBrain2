@@ -1,0 +1,69 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Centred"
+    },
+    {
+      "file": "Offtune.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Off tune"
+    },
+    {
+      "file": "Wide.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Broadcast FM"
+    },
+    {
+      "file": "Unavailable.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Fallback engine"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "span-rule",
+      "x": 0,
+      "y": -250,
+      "w": 390,
+      "text": "SPAN = 2x the demodulator passband, so the shaded band is ALWAYS the middle half. rtl_fm runs narrowband at -s 16000 and wideband at -s 192000, so NFM/AM get a 32 kHz view and broadcast FM a 384 kHz one. The alternative was 2x the channel spacing (50 / 400 kHz) - it shows the adjacent channel but loses the fixed middle-half reference."
+    },
+    {
+      "id": "off-tune",
+      "x": 490,
+      "y": -250,
+      "w": 390,
+      "text": "Why the strip earns its height: 6.2 kHz off a 25 kHz channel is inaudible as a fault - the audio just sounds thin - but half the signal sitting outside the shading is unmissable. The caret is amber and tapping Centre it retunes to the peak."
+    },
+    {
+      "id": "wide",
+      "x": 980,
+      "y": -250,
+      "w": 390,
+      "text": "On the broadcast dial the same rule puts the neighbours exactly at the frame edges: 192 kHz half-span, 200 kHz raster. Tuning between two stations is then visible rather than guessed at."
+    },
+    {
+      "id": "fork",
+      "x": 1470,
+      "y": -250,
+      "w": 390,
+      "text": "SETTLED AND SHIPPED. deploy/sdr/demod.py demodulates the same I/Q the strip is drawn from - 10% of one core for narrow FM audio plus the full waterfall plus this strip - and listen.py now runs it. This artboard is the FALLBACK: if the box cannot open the dongle for its own samples it drops to rtl_fm, which demodulates out of reach, and the screen says so rather than leaving a gap."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

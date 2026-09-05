@@ -37,6 +37,12 @@ BASELINE_MIN_BINS = 11
 #: wants looking at rather than a list that wants reading, and the cap bounds both the
 #: frame every viewer receives and the work done per row.
 MAX_PEAKS = 24
+#: The narrowest gap that may still be one signal, in bins, when no band plan says
+#: otherwise. A real carrier is contiguous, but noise drops the odd bin inside it back
+#: under the threshold, and a rule that split on one bin reported one station two or
+#: three times — seen by the owner on the FM dial. Three bins is far narrower than any
+#: channel and far wider than a bin of noise.
+MIN_FOLD_BINS = 3
 
 
 def _median(values: list[float]) -> float:
@@ -106,7 +112,10 @@ def find(
     # did not say, and then only touching bins are the same signal — a 16 kHz
     # transmission in a 9 kHz row would otherwise read as several stations a few kHz
     # apart, which is not a thing that happens.
-    apart = max(1, int(max(channel_hz, 0) // bin_hz) or 1)
+    # Never below `MIN_FOLD_BINS`: `channel_hz` zero means the caller did not say, and
+    # "only touching bins" is a rule that splits a carrier the moment noise dips one bin
+    # inside it. The band plan widens this; it can no longer narrow it to nothing.
+    apart = max(MIN_FOLD_BINS, int(max(channel_hz, 0) // bin_hz))
     signals: list[tuple[int, float, float]] = []
     cluster: list[tuple[int, float, float]] = []
     for entry in over:

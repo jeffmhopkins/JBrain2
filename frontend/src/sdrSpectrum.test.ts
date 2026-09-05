@@ -45,7 +45,28 @@ describe("reading a row", () => {
       // Empty rather than absent: a quiet band and an older box look the same on the
       // wire, and nothing downstream should have to tell them apart.
       peaks: [],
+      // Zero rather than absent, for the same reason and with a second job: it is what
+      // says this row is a BAND and not a tuned channel, so the tuning view knows not
+      // to draw it (sdrTuning.tuningOf).
+      passbandHz: 0,
     });
+  });
+
+  it("reads the passband that marks a row as a tuned channel", () => {
+    // The same stream now carries two kinds of row: a BAND from a spectrum session and
+    // a CHANNEL from a listening one, which is the tuning view. `passband_hz` is the
+    // only thing that tells them apart, and a channel row drawn as a band — or the
+    // reverse — is a picture of somewhere else with a plausible axis on it.
+    expect(parseRow(frame({ passband_hz: 16_000 }))).toMatchObject({ passbandHz: 16_000 });
+  });
+
+  it("treats a missing or nonsense passband as a band row", () => {
+    // A box older than the demodulator sends none, and a row that has been mangled must
+    // not become a channel view centred on nothing.
+    expect(parseRow(frame())).toMatchObject({ passbandHz: 0 });
+    expect(parseRow(frame({ passband_hz: "wide" }))).toMatchObject({ passbandHz: 0 });
+    expect(parseRow(frame({ passband_hz: -5 }))).toMatchObject({ passbandHz: 0 });
+    expect(parseRow(frame({ passband_hz: Number.NaN }))).toMatchObject({ passbandHz: 0 });
   });
 
   it("derives the top edge from the array, not from what the row claims", () => {

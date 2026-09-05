@@ -68,6 +68,13 @@
 #      frame rate really is. Above ~1.5 fps is the rtl_power ceiling being gone.
 #      `--from/--to` takes a hand-typed range instead of a curated section. TAKES A
 #      RADIO for those seconds.)
+#   scripts/debug-connect.sh listen-probe --mhz 146.94 [--mode fm] [--seconds 5] [--serial S]
+#     (Does the NUMPY DEMODULATOR work on this radio? The twin of spectrum-probe, and
+#      the only way to ask without being the owner pressing play: which engine really
+#      ran, whether the station landed where the offset tuning says it should, whether
+#      the audio is a signal rather than silence or a rail, and how many USB buffers
+#      the driver threw away — one row slightly wrong on a waterfall, an audible click
+#      on audio. TAKES A RADIO for those seconds and gives it back.)
 #   scripts/debug-connect.sh sdr-reset <serial>       # re-enumerate one dongle
 #     (The software equivalent of unplugging it. An RTL-SDR left with transfers pending
 #      can stay on the bus and stop answering descriptor reads — every lookup by serial
@@ -612,6 +619,23 @@ PY
 
   update-status) # [tail] — the running (or last) update's state and log tail
     _call GET "/api/debug/update/status?tail=${1:-200}" | _pp ;;
+
+  listen-probe)
+    mhz=""; mode="fm"; secs="5"; serial=""
+    while [ $# -gt 1 ]; do
+      case "$2" in
+        --mhz) mhz="$3"; shift 2 ;;
+        --mode) mode="$3"; shift 2 ;;
+        --seconds) secs="$3"; shift 2 ;;
+        --serial) serial="$3"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--serial S]" >&2; exit 2; }
+    q="mhz=$mhz&mode=$mode&seconds=$secs"
+    [ -n "$serial" ] && q="$q&serial=$serial"
+    _call POST "/api/debug/sdr/listen-probe?$q" | _pp
+    ;;
 
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

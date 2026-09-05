@@ -60,6 +60,7 @@ import numpy as np
 
 import peaks
 
+import demod
 import iq
 import packets
 import radio
@@ -164,6 +165,27 @@ IQ_SEGMENTS = 8
 #: F5 decision was made against (`SPECTRUM_QUEUE = 4` is 0.4 s of slack at ten and
 #: 0.125 s at thirty-two).
 TARGET_FPS = 10.0
+
+#: What a LISTENING session captures when it demodulates for itself. One rate for every
+#: mode, which is the property `demod.IF_RATE_HZ` was chosen around: 2 400 000 divides
+#: both the 48 kHz narrowband IF and the 240 kHz wide-FM one, so changing mode never
+#: changes the capture and a retune never has to re-open the stream at a new rate.
+LISTEN_CAPTURE_HZ = 2_400_000
+
+#: How far ABOVE the station the radio is tuned, with the offset taken back out in
+#: software (`demod.Demodulator(offset_hz=...)`). Tuning the LO onto the station would
+#: sit the RTL2832U's own DC/LO-leakage spike exactly on the carrier — a birdie in the
+#: middle of the thing you are listening to, and a spike in the middle of the tuning
+#: view drawn from the same samples. `_Mixer` snaps this to a whole division of the
+#: rate; 240 kHz already is one, and it is well inside the 5/6 of the capture the
+#: R820T2's IF filter passes flat.
+LISTEN_OFFSET_HZ = 240_000
+
+#: Bins in the tuning view's transform. 512 over a 48 kHz IF is 93.75 Hz — six times
+#: finer than the 600 Hz a 4000-bin transform of the whole 2.4 MHz capture gives, for
+#: 0.15 ms of work. The narrow view is not a zoom into a wideband row; it is the row a
+#: wideband transform cannot produce.
+TUNING_BINS = 512
 #: The most a single frame may average. Bounds the read buffer, and past this the row
 #: is a long enough exposure that a burst inside it is smeared rather than seen.
 MAX_IQ_SEGMENTS = 128
@@ -717,6 +739,13 @@ class Frame:
     #: agent's tools and the picture must not be able to disagree about what was on the
     #: air, and only one of them is looking. Empty is a real answer — a quiet band.
     peaks: list[dict[str, Any]] = field(default_factory=list)
+    #: How wide the DEMODULATOR's passband is, for a row that is a tuned channel rather
+    #: than a band. This is what the tuning view shades, and it rides on the frame for
+    #: `start_hz`'s reason: the fraction of the row it covers is not a constant — a
+    #: narrowband channel is a third of its 48 kHz IF and a broadcast station is three
+    #: quarters of its 240 kHz one — so a client that derived it would have to know the
+    #: mode, the IF and the crop. Zero on a band row, which has no passband.
+    passband_hz: float = 0.0
 
     @property
     def stop_hz(self) -> int | float:
@@ -734,6 +763,7 @@ class Frame:
             # character per bin on every frame of every viewer's stream.
             "db": [round(v, 1) for v in self.db],
             "peaks": self.peaks,
+            "passband_hz": self.passband_hz,
         }
 
 
@@ -848,6 +878,14 @@ class SessionInfo:
     #: a tuner parked somewhere it is not, and gives a waterfall no way to label its own
     #: axis. None for the purposes that really are one frequency.
     sweep: dict[str, Any] | None = None
+    #: Which engine is actually running — `iq` for our own samples, `rtl_fm`/`rtl_power`
+    #: for a subprocess. Reported because both paths can serve the same request and the
+    #: choice is made at RUNTIME: a box where SoapySDR will not open the dongle falls
+    #: back silently and keeps working, which is right, but an owner with no terminal
+    #: then has no way to tell a fallback from a preference (CLAUDE.md #10).
+    engine: str = "rtl_fm"
+    #: USB buffers dropped under this session. See `Session.overflows`.
+    overflows: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -862,6 +900,8 @@ class SessionInfo:
             "audio_peak": round(self.audio_peak, 4),
             "listeners": self.listeners,
             "sweep": self.sweep,
+            "engine": self.engine,
+            "overflows": self.overflows,
         }
 
 
@@ -931,6 +971,18 @@ class Session:
         # and a Radio left open is exactly the leak `/reset` must not fire under.
         self._radio: "radio.Radio | None" = None
         self._spectrometer: "iq.Spectrometer | None" = None
+        self._demod: "demod.Demodulator | None" = None
+        self._tuning: "iq.Spectrometer | None" = None
+        #: Which engine the running pipeline actually is. Written by whichever start
+        #: path wins, so a runtime fallback is visible rather than inferred.
+        self.engine = "rtl_fm"
+        #: USB buffers the driver threw away under this session, cumulative. The FIFO
+        #: filling means the samples either side of the gap are not adjacent in time —
+        #: on a waterfall that is one row slightly wrong, but on AUDIO it is a click,
+        #: which is why it became worth reporting only once the sound started coming
+        #: from our own stream. Stays zero on the `rtl_fm` path, which has no such
+        #: signal to give: libusb simply stops resubmitting and the drop is silent.
+        self.overflows = 0
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -989,6 +1041,22 @@ class Session:
         if self.purpose == PURPOSE_SPECTRUM:
             self._start_spectrum_pipeline()
             return
+        try:
+            self._start_iq_listen()
+        except (RadioUnavailable, demod.DemodError, SdrError) as failed:
+            # The same runtime fallback `_start_spectrum_pipeline` makes, for the same
+            # reason: an owner with no terminal (CLAUDE.md #10) must not need a revert
+            # and a rebuild to get AUDIO back. `rtl_fm` can serve every listen request
+            # this one can, so dropping to it costs the tuning view and nothing else.
+            self._kill()
+            print(  # noqa: T201
+                f"[listen] the I/Q demodulator would not start ({failed}); "
+                f"falling back to rtl_fm for this session",
+                flush=True,
+            )
+        else:
+            return
+        self.engine = "rtl_fm"
         if shutil.which("rtl_fm") is None:
             raise SdrError("rtl_fm is not installed in this image")
         if shutil.which("ffmpeg") is None:
@@ -1170,6 +1238,141 @@ class Session:
         for thread in self._threads:
             thread.start()
 
+    def _start_iq_listen(self) -> None:
+        """Open the radio ourselves, demodulate its samples, and draw the channel.
+
+        The whole point of the exercise: ONE radio produces the audio and the picture,
+        because they come from the same buffer. `rtl_fm` could not do this only because
+        it is a separate process that opens the dongle exclusively — "one radio, one
+        job" was a rule this codebase imposed on itself, not a property of the hardware
+        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §8).
+
+        ffmpeg is still here and unchanged. `demod.Demodulator` emits the same signed
+        16-bit mono at `AUDIO_RATE` that `rtl_fm` wrote on its stdout, so the encoder,
+        the level meter, the segment cutter, the captions and every listener behind them
+        are the same code reading the same bytes.
+
+        Everything that can fail happens BEFORE any thread starts, so a failure leaves
+        nothing running for `_start_pipeline`'s fallback to race."""
+        if shutil.which("ffmpeg") is None:
+            raise SdrError("ffmpeg is not installed in this image")
+        direct = self.frequency_hz < radio.DIRECT_MAX_HZ
+        try:
+            # No offset on the direct path: the tuner is powered down, so there is no
+            # LO and no leakage spike to dodge, and the mixer would only cost work.
+            chain = demod.Demodulator(
+                self.mode,
+                LISTEN_CAPTURE_HZ,
+                offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+            )
+        except demod.DemodError as bad:
+            raise RadioUnavailable(f"this build cannot demodulate {self.mode}: {bad}") from bad
+        try:
+            held = radio.Radio.open(
+                rate_hz=LISTEN_CAPTURE_HZ,
+                # The radio sits `offset_hz` ABOVE the station and the mixer takes it
+                # back out. `chain.offset_hz` is what was SNAPPED to, not what was
+                # asked for — using the request here would leave the station a few kHz
+                # off centre, which on a narrowband channel is silence.
+                center_hz=self.frequency_hz + int(chain.offset_hz),
+                serial=self.serial,
+                direct=direct,
+                doing=PURPOSE_LABEL[PURPOSE_LISTEN],
+            )
+        except radio.RadioBusy as busy:
+            raise RadioUnavailable(str(busy)) from busy
+        except radio.RadioError as failed:
+            raise RadioUnavailable(str(failed)) from failed
+        self._radio = held
+        self._demod = chain
+        self._tuning = iq.Spectrometer(TUNING_BINS, chain.if_rate_hz)
+        try:
+            self._enc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                self._enc_cmd(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            raise SdrError(f"could not start the encoder: {exc}") from exc
+        self.engine = "iq"
+        self._threads = [
+            threading.Thread(target=self._pump_iq_listen, daemon=True),
+            threading.Thread(target=self._pump_audio, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _pump_iq_listen(self) -> None:
+        """Raw I/Q -> audio into ffmpeg, and the same buffer -> the tuning view.
+
+        One `read` feeds both, which is the difference this whole path exists to make:
+        the picture is not a second measurement that could disagree with the sound, it
+        is the same samples looked at twice.
+
+        A frame is 100 ms, matching `TARGET_FPS`. That is the audio's latency too, and
+        it is nothing against what the MP3 encoder and the browser already buffer.
+
+        A read that fails ENDS the session rather than retrying forever, exactly as the
+        spectrum pump does: the radio is gone, and audio that keeps flowing from a
+        stopped stream would be silence presented as a working receiver."""
+        held, chain, tuning = self._radio, self._demod, self._tuning
+        enc = self._enc
+        if held is None or chain is None or tuning is None:
+            return
+        if enc is None or enc.stdin is None:
+            return
+        want = max(TUNING_BINS, int(LISTEN_CAPTURE_HZ / TARGET_FPS))
+        try:
+            while not self._stopping and held.alive:
+                reading = held.read(want)
+                self.overflows += reading.overflows
+                audio = chain.feed(reading.samples)
+                if audio.pcm.size:
+                    chunk = audio.tobytes()
+                    # Clamped because `Audio.peak` is measured BEFORE the clip, so an
+                    # over-deviated signal reads above 1.0 — while `audio_peak` is
+                    # documented as a fraction of full scale, and a meter that can read
+                    # 1.4 is a meter with no top.
+                    self.audio_peak = min(1.0, audio.peak)
+                    self._accumulate(chunk, self.audio_peak)
+                    enc.stdin.write(chunk)
+                    enc.stdin.flush()
+                if audio.baseband.size >= tuning.n:
+                    self._publish_frame(
+                        self._tuning_frame(
+                            tuning.frame(audio.baseband, self.frequency_hz, at=reading.at),
+                            2.0 * chain.channel_half_hz,
+                        )
+                    )
+        except (radio.RadioError, ValueError, BrokenPipeError, OSError):
+            pass  # a stop, or the radio went away; teardown is `_kill`'s job
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                if enc.stdin is not None:
+                    enc.stdin.close()
+            if not self._restarting:
+                self._end_frames()
+
+    def _tuning_frame(self, spectrum: "iq.Spectrum", passband_hz: float) -> Frame:
+        """The channel's own spectrum, cropped to twice what the demodulator hears.
+
+        Twice the passband is the span the mock settled on
+        (docs/mocks/sdr-tuning-view/), and cropping to it is what makes the shaded band
+        a fixed fraction of the picture — the property that turns "am I centred?" into
+        a shape rather than a number. It is not always achievable: wide FM's 180 kHz
+        passband is three quarters of its 240 kHz IF, so the crop is a no-op there and
+        the frame carries `passband_hz` rather than a promise about the fraction."""
+        keep = min(spectrum.bins, max(TUNING_BINS // 8, int(round(2.0 * passband_hz / spectrum.bin_hz))))
+        first = (spectrum.bins - keep) // 2
+        return Frame(
+            at=spectrum.at,
+            start_hz=int(spectrum.start_hz + first * spectrum.bin_hz),
+            bin_hz=spectrum.bin_hz,
+            db=spectrum.db[first : first + keep].tolist(),
+            passband_hz=passband_hz,
+        )
+
     def _start_iq_spectrum(self) -> None:
         """Open the radio ourselves and transform its samples here. One thread.
 
@@ -1310,15 +1513,24 @@ class Session:
         # engines and the stitcher pass through this one seam, so no path can publish a
         # row whose peaks nobody looked for — and a viewer cannot disagree with the
         # agent about what was on the air, because neither of them decides.
-        frame = dataclasses.replace(
-            frame,
-            peaks=peaks.find(
-                frame.db,
-                frame.start_hz,
-                frame.bin_hz,
-                channel_hz=self.sweep.channel_hz if self.sweep else 0,
-            ),
-        )
+        if not frame.passband_hz:
+            frame = dataclasses.replace(
+                frame,
+                peaks=peaks.find(
+                    frame.db,
+                    frame.start_hz,
+                    frame.bin_hz,
+                    channel_hz=self.sweep.channel_hz if self.sweep else 0,
+                ),
+            )
+        # A CHANNEL row is left without peaks on purpose. `peaks.find` answers "what
+        # stands above the noise across this BAND", and its baseline is a rolling median
+        # over `BASELINE_SPAN_HZ` — 400 kHz, which on a 32 kHz row is the whole picture.
+        # A signal filling 40% of the row drags that median onto itself and either
+        # vanishes or reports an edge, and a measurement computed by the wrong rule is
+        # worse than none: it would reach the agent's tools as fact. What a channel row
+        # is for is answered by `frontend/src/sdrTuning.ts`, which asks the narrower
+        # question the row can actually support.
         with self._lock:
             self._last = frame
             subs = list(self._frames)
@@ -1806,6 +2018,7 @@ KISSPORT {self.kiss_port}
                 _park(proc)
         self._rtl = self._enc = None
         held, self._radio, self._spectrometer = self._radio, None, None
+        self._demod = self._tuning = None
         if held is not None:
             # A close that FAILS keeps its registry entry inside `radio.py`, so the
             # handle stays discoverable and `/reset` still refuses rather than firing a
@@ -1819,6 +2032,18 @@ KISSPORT {self.kiss_port}
             os.unlink(f"/tmp/direwolf-{self.id}.conf")  # noqa: S108 - written by this session
 
     # ---- public surface -------------------------------------------------------
+
+    @property
+    def draws_frames(self) -> bool:
+        """Whether this session publishes waterfall rows at all.
+
+        A property rather than a purpose test, because for a listening session the
+        answer is decided at RUNTIME: the I/Q engine draws the channel it demodulates
+        and `rtl_fm` cannot, and which one is running depends on whether SoapySDR would
+        open the dongle on this box."""
+        if self.purpose == PURPOSE_SPECTRUM:
+            return True
+        return self.purpose == PURPOSE_LISTEN and self.engine == "iq"
 
     def tune(self, frequency_hz: int, mode: str | None = None) -> None:
         """Retune in place. Restarts the pipeline but keeps the session id, its
@@ -2006,6 +2231,8 @@ KISSPORT {self.kiss_port}
             purpose=self.purpose,
             serial=self.serial,
             sweep=self.sweep.as_dict() if self.sweep is not None else None,
+            engine=self.engine,
+            overflows=self.overflows,
         )
 
 
@@ -2191,6 +2418,18 @@ class Tuner:
     def find(self, session_id: str) -> Session | None:
         """The session with this id, whichever radio it is on."""
         return next((s for s in self.sessions() if s.id == session_id), None)
+
+    def drawing(self) -> Session | None:
+        """The session publishing waterfall rows, whatever it is holding a radio for.
+
+        A live spectrum first, because that is a session whose ONLY output is the
+        picture. A listening session on the I/Q engine draws too — the tuning view of
+        the channel it is demodulating — and before this the frames route could not
+        reach it, so the one surface that most wants a picture was the one that could
+        not be given one."""
+        return self.for_purpose(PURPOSE_SPECTRUM) or next(
+            (s for s in self.sessions() if s.draws_frames), None
+        )
 
     def for_purpose(self, purpose: str) -> Session | None:
         """The session holding a radio for this job — what a purpose-specific route

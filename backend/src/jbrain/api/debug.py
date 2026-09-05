@@ -2183,6 +2183,43 @@ async def sdr_spectrum_probe(
     return await _sdr_post(settings, "/spectrum/probe", body, wait_s=SPECTRUM_PROBE_TIMEOUT_S)
 
 
+@router.post("/sdr/listen-probe")
+async def sdr_listen_probe(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
+    mode: Annotated[str, Query(max_length=8, pattern=r"^[a-z]+$")] = "fm",
+    seconds: Annotated[float, Query(ge=1.0, le=20.0)] = 5.0,
+    serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
+) -> dict[str, Any]:
+    """**Does the numpy demodulator work on this radio?** The twin of `spectrum-probe`.
+
+    Listening is an owner route and the audio is an MP3 stream, so before this the only
+    way to know whether `demod.py` worked on real hardware was for the owner to press
+    play and listen — and an owner with no terminal cannot be the test harness for
+    their own box (CLAUDE.md #10).
+
+    It answers what the synthetic-signal tests cannot: which engine actually ran (the
+    listen pipeline falls back to `rtl_fm` at runtime and says nothing), whether the
+    station landed where the offset tuning says it should, whether the audio is a
+    signal rather than silence or a rail, and how many USB buffers the driver threw
+    away — which on a waterfall is one row slightly wrong and on audio is a click.
+
+    **TAKES A RADIO** for those seconds and releases it even on failure."""
+    request.state.debug_detail = f"sdr listen probe {mhz} {mode}"
+    if serial is not None:
+        if serial not in nodes_in(await _usb_scan(request, settings)):
+            raise HTTPException(
+                status_code=404,
+                detail=f"No radio {serial} in the USB scan, so there is nothing to probe.",
+            )
+    else:
+        serial = await _radio(request, settings, GENERAL)
+    body = {"mhz": mhz, "mode": mode, "seconds": seconds, "serial": serial}
+    return await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
+
+
 @router.post("/sdr/stop")
 async def sdr_stop_debug(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, Any]:
     """Release the radio. The composer's tuner icon disappears when it lands."""

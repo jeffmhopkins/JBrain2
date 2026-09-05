@@ -35,7 +35,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { khz, mhz } from "../mhz";
-import { type HeldPeak, mergePeaks, positionOf, visiblePeaks } from "../sdrPeaks";
+import { type HeldPeak, labelled, mergePeaks, positionOf, visiblePeaks } from "../sdrPeaks";
 import {
   type SpectrumRow,
   type SpectrumState,
@@ -48,8 +48,10 @@ import {
   calibrate,
   calibrated,
   frameRate,
+  historyRows,
   holdInto,
   paint,
+  rowPixelsFor,
   shadeRow,
   stackFor,
 } from "../sdrWaterfall";
@@ -74,7 +76,16 @@ function rateNote(fps: number): string {
  *  changing is what moves a marker; this is only so a dB reading is not a minute old. */
 const PEAKS_HEARTBEAT_S = 1;
 
-export function SdrWaterfall({ height = 220 }: { height?: number }) {
+export function SdrWaterfall({
+  height = 220,
+  onTune,
+}: {
+  height?: number;
+  /** Tune the radio to a signal the owner picked out of the list. Optional, because a
+   *  waterfall with nowhere to send the request is still a waterfall — and because job
+   *  switching belongs to the surface that owns the radio, not to the picture. */
+  onTune?: (hz: number) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // What the axis under the picture reads. React state, because it changes on a retune
   // rather than on every row, and re-rendering two labels a minute costs nothing.
@@ -86,7 +97,15 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   // What is on the air, and which reading of it is on screen. `held` is the whole set
   // including what has stopped; the toggle chooses what is drawn from it.
   const [signals, setSignals] = useState<HeldPeak[]>([]);
+  // The held set lives in a ref as well as in state: the row handler folds into it ten
+  // times a second (state would re-render as often), and Clear has to reach the same
+  // object the handler is accumulating into.
+  const heldRef = useRef<HeldPeak[]>([]);
   const [marks, setMarks] = useState<"off" | "live" | "held">("held");
+  // Arm-then-confirm, per DESIGN.md, because tuning is destructive here: it takes the
+  // radio off the waterfall. The pill morphs rather than opening a dialog over the
+  // picture the owner is reading.
+  const [armed, setArmed] = useState<number | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -128,7 +147,6 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     // cheap, publishing is a re-render and is not. Kept in the effect for the same
     // reason the ring is — the picture is on a canvas precisely so that ten rows a
     // second cost ten paints and no reconciliation.
-    let held: HeldPeak[] = [];
     let saidKey = "";
     let saidAt = 0;
     // How many arriving rows share one row of pixels, and the max-hold they are
@@ -138,6 +156,9 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     let stack = 1;
     let pending: Float64Array | null = null;
     let pendingCount = 0;
+    // Device pixel rows per measurement row. An INTEGER, so the draw stays a whole-pixel
+    // scale and a scroll still cannot resample it — see `rowPixelsFor`.
+    let rowPx = 1;
 
     const fit = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -175,7 +196,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // shifts down one source row each frame, so a filter's blend membership rotates
       // and a row whose numbers never changed is drawn differently each time.
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(flat, 0, 0, bins, rows, 0, 0, canvas.width, canvas.height);
+      // An INTEGER scale, anchored at the BOTTOM where the newest row is: `rows * rowPx`
+      // can fall a pixel or two short of the canvas, and the slack belongs at the top
+      // where the oldest history is rather than under the live edge.
+      const tall = rows * rowPx;
+      ctx.drawImage(flat, 0, 0, bins, rows, 0, canvas.height - tall, canvas.width, tall);
     };
 
     // One paint a frame at most. `frame` doubles as the "already asked" flag, so rows
@@ -241,7 +266,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // The offscreen is display-width, so a resize changes what a column means. The
       // ring cannot be rescaled without inventing measurements, and `history` is
       // exactly what it is kept for.
-      if (reshape(Math.max(1, canvas.width), Math.max(1, canvas.height))) repaint();
+      // The ring's row count follows the canvas through `rowPx`, which the next row
+      // recomputes; a resize only has to make the WIDTH right, since a column's meaning
+      // changes with it and the ring cannot be rescaled without inventing measurements.
+      if (reshape(Math.max(1, canvas.width), Math.max(1, Math.floor(canvas.height / rowPx))))
+        repaint();
       show();
     };
     fit();
@@ -260,7 +289,7 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
         frozen = false;
         // The signals were the OLD band's. Holding them across a retune would draw
         // markers at frequencies this picture does not cover.
-        held = [];
+        heldRef.current = [];
         saidKey = "";
         setSignals([]);
         setBand(row);
@@ -275,10 +304,17 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // The measured rate drifts by a percent or two between frames, and re-grouping for
       // that would repaint the whole picture every row for a change nobody can see. Only
       // a real move is worth it: a tier change is a factor of ten.
-      const deep = stackFor(rate, Math.max(1, canvas.height));
+      const displayRows = Math.max(1, canvas.height);
+      const wanted = historyRows(rate, row.db.length);
+      // A row gets whole pixels, and the ring is however many of those fit. One device
+      // pixel per row is 1:1 and also unreadable at a row a second, which is what the
+      // owner saw: a picture that takes seven minutes to fill.
+      const nextRowPx = rowPixelsFor(wanted, displayRows);
+      const nextRows = Math.max(1, Math.floor(displayRows / nextRowPx));
+      const deep = stackFor(rate, nextRows);
       const regroup = stack === 0 || Math.abs(deep - stack) > Math.max(1, stack / 4);
       const nextStack = regroup ? deep : stack;
-      const keep = nextStack * Math.max(1, canvas.height);
+      const keep = nextStack * nextRows;
       if (history.length > keep) history.length = keep;
       const said = rate === null ? null : Math.round(rate);
       if (said !== saidFps) {
@@ -292,9 +328,13 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // bins to columns itself (max-hold), so nothing downstream has to guess which of
       // five bins a pixel means. A resize therefore reshapes and repaints, which is the
       // cost of that — paid on a resize rather than on every frame.
-      let full = reshape(Math.max(1, canvas.width), Math.max(1, canvas.height));
+      let full = reshape(Math.max(1, canvas.width), nextRows);
       if (nextStack !== stack) {
         stack = nextStack;
+        full = true;
+      }
+      if (nextRowPx !== rowPx) {
+        rowPx = nextRowPx;
         full = true;
       }
       // A band's widest row is its extent: a frame that lost a block is short, and the
@@ -314,7 +354,8 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
           full = true;
         }
       }
-      held = mergePeaks(held, row);
+      heldRef.current = mergePeaks(heldRef.current, row);
+      const held = heldRef.current;
       // Published when the SET changes — a signal appearing or stopping is when a marker
       // has to move — plus a slow heartbeat so the listed levels do not go stale. A row
       // that only changed a decibel redraws nothing, which is the point.
@@ -351,6 +392,13 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
         .map((peak) => ({ peak, at: positionOf(peak.hz, band) }))
         .filter((m): m is { peak: HeldPeak; at: number } => m.at !== null)
     : [];
+  // Every marker keeps its line; only the labels are rationed, because on a city FM dial
+  // fourteen of them across 20 MHz overlap into text that looks like a measurement.
+  const named = labelled(placed);
+  const clear = () => {
+    heldRef.current = [];
+    setSignals([]);
+  };
   return (
     <div className="wf">
       <div className="wf-stack">
@@ -373,7 +421,12 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
                 className={peak.live ? "wf-mark" : "wf-mark held"}
                 style={{ left: `${at * 100}%` }}
               >
-                <b>{mhz(peak.hz)}</b>
+                {/* Past the right edge the label hangs to the LEFT of its line, or it
+                    would run off the picture — which is what the far right of a full
+                    dial did. */}
+                {named.has(peak.hz) ? (
+                  <b className={at > 0.82 ? "flip" : undefined}>{mhz(peak.hz)}</b>
+                ) : null}
               </span>
             ))}
           </div>
@@ -407,24 +460,63 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
                 </button>
               ))}
             </fieldset>
+            {/* Held keeps what it has seen until this is pressed: a band watched for an
+                hour should still be able to say what went through it, and an expiry
+                would make the answer depend on when you happened to look. */}
+            {marks === "held" && signals.length ? (
+              <button type="button" className="wf-clear" onClick={clear}>
+                Clear
+              </button>
+            ) : null}
           </div>
+          {armed !== null ? (
+            <p className="why" role="alert">
+              That stops the waterfall and listens on {mhz(armed)} MHz. Tap again to confirm.
+            </p>
+          ) : null}
           {marks === "off" ? null : placed.length ? (
             <ul className="wf-siglist">
-              {placed.map(({ peak }) => (
-                <li key={peak.hz} className={peak.live ? undefined : "held"}>
-                  <span className="wf-sighz">{mhz(peak.hz)}</span>
-                  {/* Over the noise AROUND it, which is what made it a signal — an
-                      absolute dBFS says nothing without the floor beside it. */}
-                  <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
-                  {peak.live ? null : <span className="wf-sigheld">gone</span>}
-                </li>
-              ))}
+              {placed.map(({ peak }) => {
+                const inside = (
+                  <>
+                    <span className="wf-sighz">{mhz(peak.hz)}</span>
+                    {/* Over the noise AROUND it, which is what made it a signal — an
+                        absolute dBFS says nothing without the floor beside it. */}
+                    <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
+                    {peak.live ? null : <span className="wf-sigheld">gone</span>}
+                  </>
+                );
+                const arm = armed === peak.hz;
+                return (
+                  <li key={peak.hz} className={peak.live ? undefined : "held"}>
+                    {onTune ? (
+                      <button
+                        type="button"
+                        className={arm ? "wf-sigpill armed" : "wf-sigpill"}
+                        aria-label={`Listen on ${mhz(peak.hz)} megahertz`}
+                        onClick={() => {
+                          if (!arm) {
+                            setArmed(peak.hz);
+                            return;
+                          }
+                          setArmed(null);
+                          onTune(peak.hz);
+                        }}
+                      >
+                        {arm ? <span className="wf-sighz">Listen here?</span> : inside}
+                      </button>
+                    ) : (
+                      <span className="wf-sigpill">{inside}</span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="wf-signone">
               {marks === "live"
                 ? "Nothing above the noise right now."
-                : "Nothing above the noise recently."}
+                : "Nothing above the noise since this band was tuned."}
             </p>
           )}
         </div>

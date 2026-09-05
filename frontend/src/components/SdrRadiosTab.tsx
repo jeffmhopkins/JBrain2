@@ -302,7 +302,20 @@ function RadioDetail({
         ) : job === "aprs" ? (
           <AprsJob log={log} onOpenAprs={onOpenAprs} />
         ) : job === "spectrum" ? (
-          <SdrSpectrumJob serial={radio.serial} session={session} onChanged={onChanged} />
+          <SdrSpectrumJob
+            serial={radio.serial}
+            session={session}
+            onChanged={onChanged}
+            onListen={(hz, mode) =>
+              // The same release-then-take as the job row, and for the same reason: the
+              // api names the SERIAL on the way back in, so the re-take asks for THIS
+              // radio rather than whichever is free.
+              void run(async () => {
+                await free();
+                await api.sdrListen(hz / 1_000_000, mode, radio.serial);
+              }, "Couldn't listen on that signal.")
+            }
+          />
         ) : (
           <p className="radio-hint">Idle — nothing is holding this radio.</p>
         )}

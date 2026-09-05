@@ -1743,3 +1743,94 @@ def test_the_spectrum_probe_says_what_the_rows_actually_found() -> None:
 
     assert verdict["signals"]["in_last_frame"] == 0
     assert verdict["signals"]["rows_with_any"] == 1
+
+
+# --- the listen probe's verdict -----------------------------------------------------
+#
+# The probe exists so an owner with no terminal is not the test harness for their own
+# box (CLAUDE.md #10), and its value is entirely in the FINDINGS: a dump of nine numbers
+# leaves the reading of them to whoever remembers what each was supposed to be. So what
+# is pinned here is that each failure it exists to catch produces a sentence.
+
+
+class _ProbeSession:
+    """Just enough session for `_listen_verdict` — it reads, it never drives."""
+
+    def __init__(self, **over: object) -> None:
+        self.engine = "iq"
+        self.frequency_hz = 146_940_000
+        self.mode = "fm"
+        self.overflows = 0
+        self.audio_peak = 0.4
+        for key, value in over.items():
+            setattr(self, key, value)
+
+
+def _probe_frame(*, centre_hz=146_940_000, passband_hz=16_000.0, peak_at=170):
+    """One tuning row: a floor with a bump in it, centred where the caller says."""
+    bins, bin_hz = 341, 93.75
+    db = [-78.0] * bins
+    for i in range(max(0, peak_at - 70), min(bins, peak_at + 70)):
+        db[i] = -34.0
+    return listen.Frame(
+        at=0.0,
+        start_hz=int(centre_hz - (bins / 2) * bin_hz),
+        bin_hz=bin_hz,
+        db=db,
+        passband_hz=passband_hz,
+    )
+
+
+def test_a_healthy_listen_probe_has_nothing_to_report() -> None:
+    verdict = server._listen_verdict(
+        _ProbeSession(), [_probe_frame()], [0.35, 0.41, 0.38], 5.0
+    )
+    assert verdict["ok"] is True
+    assert verdict["findings"] == []
+    assert verdict["engine"] == "iq"
+    assert verdict["view"]["passband_hz"] == 16_000.0
+
+
+def test_the_probe_names_a_silent_fallback_to_rtl_fm() -> None:
+    """The fallback is right; its silence is not. On rtl_fm there is no tuning view at
+    all, and nothing else on the box says why."""
+    verdict = server._listen_verdict(_ProbeSession(engine="rtl_fm"), [], [0.4], 5.0)
+    assert verdict["ok"] is False
+    assert "rtl_fm" in verdict["findings"][0]
+
+
+def test_the_probe_catches_silence_and_clipping_apart() -> None:
+    """Both look like "it ran" from outside, and they need opposite fixes."""
+    quiet = server._listen_verdict(_ProbeSession(), [_probe_frame()], [0.0, 0.0], 5.0)
+    assert any("silence" in f for f in quiet["findings"])
+    loud = server._listen_verdict(_ProbeSession(), [_probe_frame()], [1.0], 5.0)
+    assert any("clipping" in f for f in loud["findings"])
+
+
+def test_the_probe_reports_dropped_usb_buffers() -> None:
+    """The one measurement no fake radio can produce, and the reason the probe runs for
+    seconds rather than sampling once."""
+    verdict = server._listen_verdict(
+        _ProbeSession(overflows=7), [_probe_frame()], [0.4], 5.0
+    )
+    assert any("7 USB buffers" in f for f in verdict["findings"])
+
+
+def test_the_probe_catches_the_mixer_and_the_tuning_disagreeing() -> None:
+    """The offset-tuning failure this whole path is most exposed to: the radio sits
+    above the station and the mixer takes that back out, so a row centred anywhere but
+    the tuned frequency means the two are out of step — which on a narrowband channel
+    is silence, from code that reads correctly in both places."""
+    verdict = server._listen_verdict(
+        _ProbeSession(), [_probe_frame(centre_hz=147_180_000)], [0.4], 5.0
+    )
+    assert any("disagree" in f for f in verdict["findings"])
+
+
+def test_the_probe_finds_the_strongest_bin_relative_to_centre() -> None:
+    """What proves the station landed where the offset says. A quarter of a megahertz
+    of error is not subtle, and this is the number that would show it."""
+    verdict = server._listen_verdict(
+        _ProbeSession(), [_probe_frame(peak_at=170)], [0.4], 5.0
+    )
+    assert abs(verdict["view"]["strongest_offset_hz"]) < 200
