@@ -1027,7 +1027,11 @@ def _callback_period(radio: Radio) -> dict[str, Any]:
 #: sliced afterwards. Reading it in one go rather than as many small reads is what makes
 #: the timing exact: a sample's age is its index over the rate, with no scheduling
 #: jitter between it and a clock.
-SETTLE_SPAN_S = 0.08
+#:
+#: Five times the settle it checks, because a stopwatch shorter than the event cannot
+#: time it. MEASURED, 2026-09-05: the first version of this spanned 80 ms and reported
+#: "80.0 ms at worst" on the tuner path — which was the span, not the radio.
+SETTLE_SPAN_S = 0.4
 #: Samples per slice. 512 at 2.4 MS/s is 213 us — fine enough to place a settle to a
 #: fraction of a millisecond, long enough that a slice's mean power is a number rather
 #: than a coin toss.
@@ -1043,6 +1047,10 @@ SETTLE_SIGMA = 3.0
 #: Slices in the running median. Five is enough to make an isolated outlier
 #: impossible and short enough that it cannot hide a transient worth discarding.
 SETTLE_SMOOTH = 5
+#: How long the level must STAY inside the tolerance before the radio counts as settled.
+#: Ten milliseconds is longer than any relock and far shorter than the slow drift — a
+#: station fading, a gain step — that this rule exists to stop reading as a transient.
+SETTLE_HOLD_S = 0.01
 
 
 def _window_levels(samples: np.ndarray, window: int) -> np.ndarray:
@@ -1070,6 +1078,26 @@ def _smooth(levels: np.ndarray, width: int) -> np.ndarray:
     return np.median(windows, axis=-1)[: levels.size]
 
 
+def _settled_index(off: np.ndarray, hold: int) -> int | None:
+    """First slice from which the level stays inside tolerance for `hold` slices.
+
+    Deliberately not "one past the last slice outside it". That rule reports the whole
+    block whenever anything late wanders out, and over a span long enough to contain the
+    transient, something late always does — drift, a station fading — so the reading
+    saturates at the span and stops being a measurement. A sustained quiet run is what
+    settled MEANS, and it also cannot be fooled by a transient that crosses the line and
+    comes back, which is why the last-off rule was reached for in the first place.
+
+    None when no such run exists: the radio had not settled by the end of the block, and
+    the honest answer is "at least this span", not the span itself."""
+    if off.size < hold or hold < 1:
+        return None
+    # Zero `off` slices in [i, i + hold) is exactly a zero in the moving sum.
+    quiet = np.convolve(off.astype(np.int64), np.ones(hold, dtype=np.int64), "valid")
+    starts = np.nonzero(quiet == 0)[0]
+    return int(starts[0]) if starts.size else None
+
+
 def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
     """How long the radio really needs after a retune, against what we assume.
 
@@ -1095,7 +1123,11 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
     # the whole point is to be unmoved by outliers.
     sigma = float(np.median(np.abs(steady - level))) * 1.4826 or 1e-6
     tolerance = SETTLE_SIGMA * sigma
+    slice_ms = SETTLE_WINDOW / radio.rate_hz * 1000.0
+    hold = max(1, int(round(SETTLE_HOLD_S * 1000.0 / slice_ms)))
     took: list[float] = []
+    span_ms = 0.0
+    saturated = 0
     for _ in range(SETTLE_TRIALS):
         radio.retune(center_hz=other_hz, settle_s=SETTLE_S * 4)
         # The measurement itself: no timed discard, so the block starts at the instant
@@ -1106,18 +1138,18 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
         )
         if levels.size == 0:
             continue
+        span_ms = levels.size * slice_ms
+        # SMOOTHED first: three sigma over several hundred slices puts a handful beyond
+        # the line by chance, and a rule that trusts individual slices reported a whole
+        # 62 ms block as a transient — measured off a fake that had none. A median over
+        # five slices cannot be moved by an isolated one, and a transient never is.
         off = np.abs(_smooth(levels, SETTLE_SMOOTH) - level) > tolerance
-        # The LAST slice still off, not the first one on: a transient that crosses the
-        # line and comes back has not finished, and taking the first would report a
-        # settle shorter than the radio needs.
-        #
-        # Which is exactly why the series is SMOOTHED first. Three sigma over several
-        # hundred slices puts a handful beyond the line by chance, and taking the last
-        # of those reported the whole block as a transient — a 62 ms settle measured off
-        # a fake with no transient in it at all. A median over five slices cannot be
-        # moved by an isolated one, and a real transient is never isolated.
-        unsettled = int(np.max(np.nonzero(off)[0]) + 1) if bool(np.any(off)) else 0
-        took.append(unsettled * SETTLE_WINDOW / radio.rate_hz * 1000.0)
+        settled = _settled_index(off, hold)
+        if settled is None:
+            saturated += 1
+            took.append(span_ms)
+        else:
+            took.append(settled * slice_ms)
     radio.retune(center_hz=home, settle_s=SETTLE_S)
     if not took:
         return {"measured": False, "detail": "the stream delivered nothing to time"}
@@ -1130,6 +1162,11 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
         "window_us": round(SETTLE_WINDOW / radio.rate_hz * 1e6, 1),
         "steady_sigma_db": round(sigma, 3),
         "trials": len(took),
+        # The two numbers that say whether the reading is a measurement at all: a settle
+        # equal to the span is the stopwatch running out, not the radio settling.
+        "span_ms": round(span_ms, 3),
+        "hold_ms": round(hold * slice_ms, 3),
+        "saturated": saturated,
     }
 
 
@@ -1157,6 +1194,19 @@ def _settle_findings(settle: dict[str, Any]) -> list[str]:
     # A difference smaller than one slice is not a difference: that is the resolution
     # this measurement HAS, and reporting inside it would be reporting the method.
     resolution = float(settle.get("window_us") or 0.0) / 1000.0
+    # Said FIRST, because a saturated reading is not a number: the level never went
+    # quiet inside the block, so the settle is "at least the span" and the span is a
+    # property of this measurement. Reporting it as a measured figure would be
+    # reporting the stopwatch.
+    if settle.get("saturated"):
+        return [
+            f"the retune settle did NOT finish inside the {settle.get('span_ms')} ms "
+            f"this measurement watches, on {settle['saturated']} of "
+            f"{settle.get('trials')} trials: it is AT LEAST that against "
+            f"{configured} ms configured, so a hop can carry the previous hop's "
+            f"samples and draw them at the wrong frequency — and the real figure is "
+            f"still unknown, because the span has to exceed it to measure it"
+        ]
     if worst > configured + resolution:
         return [
             f"the retune settle is too SHORT: the radio needed {worst} ms at worst and "

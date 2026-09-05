@@ -970,6 +970,46 @@ samples of every hop are then the previous hop's, drawn at a frequency they are 
 and a waterfall built that way is confidently wrong rather than merely slow. **Too long
 is only speed**, and it is what a wide band's frame rate is spent on.
 
+#### What it read on the box, 2026-09-05, and the two ways the first run lied
+
+The first run of it, at the probe's defaults, said `settle_ms: 0.0` — and that reading
+was worthless for two reasons that are worth writing down, because both are ways a
+measurement can look like an answer.
+
+**It measured the wrong radio path.** The default `--mhz 10.0` is below 24 MHz, so the
+probe opened on the **direct-sampling branch, where the tuner is bypassed entirely** and
+a retune is close to a no-op. A hop sweep never runs there (§4: HF cannot be hopped at
+all). The number was real and irrelevant.
+
+**And it measured at the wrong rate.** The default `--rate 256000` makes a 512-sample
+slice 2 ms wide, so the stopwatch's own resolution was 2 ms and its `steady_sigma_db` was
+2.09 — a tolerance of 6.3 dB, coarse enough to miss a transient whole. The sweep runs at
+2.4 MS/s, where the slice is 213 µs and sigma came out at 0.175 dB.
+
+Asked on the path the sweep actually uses — `--mhz 100.1 --rate 2400000` — it answered
+`settle_ms: 62.72, worst_ms: 80.0` against 50 ms configured. **`worst_ms` was exactly
+`SETTLE_SPAN_S × 1000`.** The block was 80 ms long, so 80.0 did not mean "the radio took
+80 ms"; it meant the level had still not gone quiet when the samples ran out. A stopwatch
+shorter than the event cannot time it, and a reading equal to its own window is an
+artefact of the method rather than a measurement of the radio.
+
+Two changes make it answerable. The span is now **0.4 s**, five times the settle it is
+checking. And "settled" is no longer *one past the last slice outside tolerance* — over a
+span long enough to contain the transient, something late always wanders out (a station
+fading, a gain step), and that rule reads every one of those as the radio still settling,
+which is precisely how a reading saturates at its own span. It is now **the first slice
+from which the level stays inside tolerance for 10 ms** (`SETTLE_HOLD_S`), which is what
+settled means and is still immune to a transient that crosses the line and comes back.
+When no such run exists the probe reports `saturated` and says *at least* the span, never
+the span as a figure.
+
+The honest state of this number: **the settle on the tuner path is ≥ 80 ms, against 50 ms
+configured — too short, in the correctness direction** — and its true value awaits the
+widened measurement. Note what it is likely to be measuring: `barrier()` flushes the FIFO
+and only then discards by time, so what survives the flush is most plausibly USB
+transfers already in flight, and at the measured 10.33 ms per buffer, 80 ms is about
+eight of them — a backlog, not a PLL relock. The discard has to cover it either way.
+
 ## 8. Deliberately not in this plan
 
 **Replacing `rtl_fm` with a numpy demodulator.** Affordable — NFM demod is ~1.5 ms per
