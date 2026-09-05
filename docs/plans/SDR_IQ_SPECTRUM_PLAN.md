@@ -1109,8 +1109,41 @@ discard for longer after each one. That would also be the cheap fix, since the f
 itself measures 0.02 ms — it is not the flush's own cost, it is what the stream does
 afterwards.
 
-`SETTLE_S` stays 0.05 until that answers. Two outcomes, two different right constants,
-and the suspect before this one was wrong.
+**It answered, and the flush is innocent.**
+
+| disturbance | median ms | worst ms |
+| --- | --- | --- |
+| a whole hop (retune + flush) | 59.7 | 131.2 |
+| **a flush with no frequency change** | **0.0** | **0.0** |
+
+Zero on every trial. So the transient is the **tuner's**, it is real, and it survives
+three attempts to explain it away: not USB backlog (`bound: real-time`), not the gain
+(already manual), not the flush. A frequency change disturbs this radio's output for ~60
+ms typically — *after* `setFrequency` has already spent 32 ms returning.
+
+#### What that means, and what it costs
+
+**50 ms was never enough.** A hop keeps 1024 samples — 0.43 ms of signal — so a hop that
+discarded 50 ms of a 60 ms transient was reading the previous hop's frequency almost
+entirely. The wide-band waterfall has been drawing each hop's neighbour.
+
+**And it sets an honest floor on a hopping sweep.** FM broadcast is 20 MHz; a hop sees
+2.0 MHz (`TRUSTED_FILL`); so a row is ~11 looks, each costing ~32 ms of `setFrequency`
+plus the settle. That is about a second per row **on one dongle**, and no amount of
+tuning removes it — it is why `2m-all` (three hops) feels fast and the FM dial does not.
+
+So `SETTLE_S` becomes 0.15 — the measured worst case plus margin — but as a **cap on an
+adaptive discard**, not as a fixed cost. Paying the worst case eleven times a row is what
+would make the band unwatchable; the median is less than half of it. `_discard_until_
+steady` reads in 1.7 ms slices and stops when the level has held still for 8 ms, with no
+reference level, because the new frequency's level is exactly what is not known yet — the
+test is that the level has **stopped changing**, not that it matches anything.
+
+One trap, and an existing test caught it: **silence is perfectly steady.** The
+direct-sampling branch delivers empty reads before it starts, and a discard that stops
+when the level stops moving would have stopped there and handed back the silence as a
+settled band — the same failure that once had this probe calling a live radio deaf. A
+slice at the zero-magnitude floor now clears the run instead of extending it.
 
 ## 8. Deliberately not in this plan
 

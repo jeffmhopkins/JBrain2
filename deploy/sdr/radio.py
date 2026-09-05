@@ -105,7 +105,25 @@ WIRE_BYTES_PER_SAMPLE = 2
 #: third draft of the plan specified the barrier as this alone, which cannot work — the
 #: software backlog's quantum is a whole USB buffer, orders of magnitude bigger. It is
 #: the SECOND step, and it is small because the first one did the heavy lifting.
-SETTLE_S = 0.05
+#: MEASURED on the box, 2026-09-05, and no longer a guess: a retune disturbs the output
+#: for 59.7 ms typically and 131.2 ms at worst, while a flush with no frequency change
+#: disturbs it for 0.0. This is now the CAP on an adaptive discard rather than a fixed
+#: one — the worst case paid eleven times a row is what makes a wide band unwatchable,
+#: and the median is less than half of it.
+SETTLE_S = 0.15
+#: Samples per look while discarding. 4096 at 2.4 MS/s is 1.7 ms — fine enough to stop
+#: close to the real settle, coarse enough that its mean power is a number.
+SETTLE_SLICE = 4096
+#: How long the level must hold still before the discard stops.
+SETTLE_STABLE_S = 0.008
+#: How much the level may wander across that hold and still count as still, in dB.
+#: Wider than the steady deviation measured on the box (0.25 dB) so ordinary noise does
+#: not keep the discard running, tighter than any transient worth discarding.
+SETTLE_STABLE_DB = 0.8
+#: The level of a read with nothing in it. Silence is perfectly steady, so a discard
+#: that stops when the level stops moving has to know the difference between a settled
+#: band and a stream that has not started delivering yet.
+FLOOR_DB = 10.0 * np.log10(iq._POWER_FLOOR)
 
 #: `readStream`'s per-call timeout. Ten buffers at the slowest rate: long enough that an
 #: ordinary scheduling hiccup is not an event, short enough that a dead stream is.
@@ -808,8 +826,9 @@ class Radio:
         and the flush cannot reach samples that are still inside the RTL2832U."""
         device, stream = self._require()
         device.activateStream(stream)
-        settle = SETTLE_S if settle_s is None else float(settle_s)
-        drop = int(self._rate_hz * settle)
+        if settle_s is None:
+            return self._discard_until_steady(SETTLE_S)
+        drop = int(self._rate_hz * float(settle_s))
         if drop <= 0:
             return 0
         scratch = np.empty(min(drop, self.samples_per_buffer), dtype=np.complex64)
@@ -826,6 +845,58 @@ class Radio:
                 # worst a slightly stale first frame, while raising would turn a slow
                 # moment into a lost session.
                 _log(f"retune settle timed out with {dropped}/{drop} discarded")
+                break
+        return dropped
+
+    def _discard_until_steady(self, cap_s: float) -> int:
+        """Read past the retune transient, stopping when the level stops moving.
+
+        MEASURED on the box, 2026-09-05: a retune disturbs this radio's output for 59.7
+        ms typically and 131.2 ms at worst, while a FLUSH with no frequency change
+        disturbs it for 0.0 ms on every trial. So the transient is the TUNER's, it is
+        real, and 50 ms was never enough — a hop keeps 0.43 ms of signal, so a hop that
+        discarded 50 ms was reading the previous hop's frequency almost entirely.
+
+        Discarding the worst case instead would pay 131 ms eleven times on the FM dial.
+        This pays the actual settle, which is the median rather than the tail, and only
+        falls back to the cap when the level genuinely never steadies.
+
+        There is no reference level to compare against — the new frequency's level is
+        exactly what is not known yet — so the test is that the level has STOPPED
+        CHANGING, not that it matches anything."""
+        want = int(self._rate_hz * cap_s)
+        if want <= 0:
+            return 0
+        span = min(SETTLE_SLICE, want, self.samples_per_buffer)
+        if span <= 0:
+            return 0
+        hold = max(2, int(round(SETTLE_STABLE_S * self._rate_hz / span)))
+        scratch = np.empty(span, dtype=np.complex64)
+        levels: list[float] = []
+        dropped = 0
+        deadline = time.monotonic() + self._patience(want)
+        while dropped < want:
+            got = self.read_into(scratch[: min(span, want - dropped)])
+            if got > 0:
+                dropped += got
+                power = float(np.mean(np.abs(scratch[:got].astype(np.complex128)) ** 2))
+                level = 10.0 * np.log10(max(power, iq._POWER_FLOOR))
+                if level <= FLOOR_DB + SETTLE_STABLE_DB:
+                    # Silence is perfectly steady, which is exactly the trap: the
+                    # direct-sampling branch delivers empty reads before it starts, and
+                    # stopping there would hand back the silence as a settled band. A
+                    # receiver with no noise floor is not receiving, so the clock has
+                    # not started yet.
+                    levels.clear()
+                    continue
+                levels.append(level)
+                recent = levels[-hold:]
+                if len(recent) >= hold and max(recent) - min(recent) <= SETTLE_STABLE_DB:
+                    break
+            elif got not in (0, self._driver.OVERFLOW, self._driver.TIMEOUT):
+                raise RadioError(f"the stream failed during a retune (code {got})")
+            if time.monotonic() > deadline:
+                _log(f"retune settle timed out with {dropped}/{want} discarded")
                 break
         return dropped
 
