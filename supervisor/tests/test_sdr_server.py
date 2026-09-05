@@ -1783,7 +1783,7 @@ def _probe_frame(*, centre_hz=146_940_000, passband_hz=16_000.0, peak_at=170):
 
 def test_a_healthy_listen_probe_has_nothing_to_report() -> None:
     verdict = server._listen_verdict(
-        _ProbeSession(), [_probe_frame()], [0.35, 0.41, 0.38], 5.0
+        _ProbeSession(), [_probe_frame()], [0.35, 0.41, 0.38], [0.0], [0.2], 5.0
     )
     assert verdict["ok"] is True
     assert verdict["findings"] == []
@@ -1794,16 +1794,22 @@ def test_a_healthy_listen_probe_has_nothing_to_report() -> None:
 def test_the_probe_names_a_silent_fallback_to_rtl_fm() -> None:
     """The fallback is right; its silence is not. On rtl_fm there is no tuning view at
     all, and nothing else on the box says why."""
-    verdict = server._listen_verdict(_ProbeSession(engine="rtl_fm"), [], [0.4], 5.0)
+    verdict = server._listen_verdict(
+        _ProbeSession(engine="rtl_fm"), [], [0.4], [0.0], [0.2], 5.0
+    )
     assert verdict["ok"] is False
     assert "rtl_fm" in verdict["findings"][0]
 
 
 def test_the_probe_catches_silence_and_clipping_apart() -> None:
     """Both look like "it ran" from outside, and they need opposite fixes."""
-    quiet = server._listen_verdict(_ProbeSession(), [_probe_frame()], [0.0, 0.0], 5.0)
+    quiet = server._listen_verdict(
+        _ProbeSession(), [_probe_frame()], [0.0, 0.0], [0.0], [0.0], 5.0
+    )
     assert any("silence" in f for f in quiet["findings"])
-    loud = server._listen_verdict(_ProbeSession(), [_probe_frame()], [1.0], 5.0)
+    loud = server._listen_verdict(
+        _ProbeSession(), [_probe_frame()], [1.0], [0.4], [0.9], 5.0
+    )
     assert any("clipping" in f for f in loud["findings"])
 
 
@@ -1811,7 +1817,7 @@ def test_the_probe_reports_dropped_usb_buffers() -> None:
     """The one measurement no fake radio can produce, and the reason the probe runs for
     seconds rather than sampling once."""
     verdict = server._listen_verdict(
-        _ProbeSession(overflows=7), [_probe_frame()], [0.4], 5.0
+        _ProbeSession(overflows=7), [_probe_frame()], [0.4], [0.0], [0.2], 5.0
     )
     assert any("7 USB buffers" in f for f in verdict["findings"])
 
@@ -1822,7 +1828,7 @@ def test_the_probe_catches_the_mixer_and_the_tuning_disagreeing() -> None:
     the tuned frequency means the two are out of step — which on a narrowband channel
     is silence, from code that reads correctly in both places."""
     verdict = server._listen_verdict(
-        _ProbeSession(), [_probe_frame(centre_hz=147_180_000)], [0.4], 5.0
+        _ProbeSession(), [_probe_frame(centre_hz=147_180_000)], [0.4], [0.0], [0.2], 5.0
     )
     assert any("disagree" in f for f in verdict["findings"])
 
@@ -1831,6 +1837,21 @@ def test_the_probe_finds_the_strongest_bin_relative_to_centre() -> None:
     """What proves the station landed where the offset says. A quarter of a megahertz
     of error is not subtle, and this is the number that would show it."""
     verdict = server._listen_verdict(
-        _ProbeSession(), [_probe_frame(peak_at=170)], [0.4], 5.0
+        _ProbeSession(), [_probe_frame(peak_at=170)], [0.4], [0.0], [0.2], 5.0
     )
     assert abs(verdict["view"]["strongest_offset_hz"]) < 200
+
+
+def test_a_full_scale_peak_is_not_clipping_on_its_own() -> None:
+    """MEASURED ON AIR, and the reason this metric changed. An FM discriminator turns
+    every burst of noise that momentarily overpowers the carrier into a full-scale
+    impulse — the click a weak FM signal makes — so one sample in 1600 pins the peak
+    while the other 1599 are a perfectly good voice. The first version of this probe
+    read `peak >= 0.999` and called NOAA weather at 17 dB SNR a clipping demodulator."""
+    verdict = server._listen_verdict(
+        _ProbeSession(), [_probe_frame()], [1.0, 1.0], [0.0006], [0.21], 6.0
+    )
+    assert verdict["findings"] == []
+    assert verdict["ok"] is True
+    assert verdict["audio_peak_max"] == 1.0
+    assert verdict["clipped_fraction_max"] == 0.0006

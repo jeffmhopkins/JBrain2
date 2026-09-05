@@ -342,7 +342,21 @@ class Audio:
     #: `listen._peak` measures — computed here because the samples are already in a
     #: numpy array, where `listen`'s struct.unpack + max over a Python generator is
     #: the single most expensive thing in that pump.
+    #:
+    #: **It is a MAX, and on FM that makes it a poor answer to "is this clipping".**
+    #: A discriminator turns each burst of noise that momentarily overpowers the
+    #: carrier into a full-scale impulse — the click every FM receiver makes on a weak
+    #: signal — so one click in a buffer of 1600 samples pins this at 1.0 while the
+    #: other 1599 are a perfectly good voice. Measured on air: NOAA weather at 17 dB
+    #: SNR reads 1.0 on every buffer. Use `clipped` for that question.
     peak: float
+    #: What fraction of the buffer actually hit the rail, 0..1. THIS is the clipping
+    #: measure: a tenth of a percent is the impulse noise above, half is a chain whose
+    #: gain is wrong.
+    clipped: float
+    #: Root mean square of the buffer, 0..1 — how loud it really is, as against how
+    #: loud its single worst sample was.
+    rms: float
 
     def tobytes(self) -> bytes:
         return self.pcm.tobytes()
@@ -466,12 +480,12 @@ class Demodulator:
         stream = self._mixer.feed(iq)
         for stage in self._front:
             stream = stage.feed(stream)
-        pcm, peak = self._to_pcm(stream)
-        return Audio(pcm=pcm, baseband=stream, peak=peak)
+        pcm, peak, clipped, rms = self._to_pcm(stream)
+        return Audio(pcm=pcm, baseband=stream, peak=peak, clipped=clipped, rms=rms)
 
-    def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float]:
+    def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float, float, float]:
         if baseband.size == 0:
-            return np.zeros(0, dtype=np.int16), 0.0
+            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0
         audio = self._detect(baseband)
         audio = self._back.feed(audio)
         if np.iscomplexobj(audio):
@@ -482,13 +496,21 @@ class Demodulator:
         if self._dc is not None:
             audio = self._dc.feed(audio)
         if audio.size == 0:
-            return np.zeros(0, dtype=np.int16), 0.0
-        peak = float(np.max(np.abs(audio)))
+            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0
+        magnitude = np.abs(audio)
+        peak = float(np.max(magnitude))
+        clipped = float(np.count_nonzero(magnitude >= 1.0)) / float(audio.size)
+        rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
         # Clipped, not scaled to fit. An automatic gain that rescales per buffer makes
         # a quiet channel as loud as a strong one and destroys the only honest thing
         # the level meter reports; clipping is what a real receiver does when it is
         # overdriven, and it is audible as overdrive rather than invisible.
-        return np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16), peak
+        return (
+            np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16),
+            peak,
+            clipped,
+            rms,
+        )
 
     def _detect(self, baseband: np.ndarray) -> np.ndarray:
         """Complex channel to a real (or, for SSB, still-complex) audio signal."""
