@@ -57,6 +57,11 @@ CENTER = 10_000_000
 RATE = 256_000
 
 
+#: About -57 dBFS against the fake's unit tone — a floor a real dongle would
+#: recognise, far enough under the carrier to leave every SNR assertion intact.
+NOISE_AMPLITUDE = 1e-3
+
+
 class _Result:
     """`readStream`'s return: a count, or a negative SoapySDR error code."""
 
@@ -83,6 +88,7 @@ class _FakeDevice:
         self.unmade = False
         self.bufflen = radio.DEFAULT_BUFFLEN_BYTES
         self._k = 0  # sample counter, so the tone's phase survives across reads
+        self._noise = np.random.default_rng(20260905)
         self._last_read = time.monotonic()
         self._overflow_due = 0
 
@@ -165,9 +171,16 @@ class _FakeDevice:
         k = np.arange(self._k, self._k + elems, dtype=np.float64)
         self._k += elems
         offset = self.rate / 8.0 if self.rate else 0.0
-        view[:elems] = np.exp(2.0j * np.pi * offset * k / (self.rate or 1.0)).astype(
-            np.complex64
+        tone = np.exp(2.0j * np.pi * offset * k / (self.rate or 1.0))
+        # A real receiver always has a noise floor, and the probe now says so when it
+        # does not: a frame whose median has fallen to `iq.DB_FLOOR` is reported as
+        # nothing reaching the ADC. A noiseless tone would trip that on every run, so
+        # the fake grows the floor it was always missing. Seeded, so it stays a
+        # fixture rather than a source of flakes.
+        noise = self._noise.standard_normal(elems) + 1j * self._noise.standard_normal(
+            elems
         )
+        view[:elems] = (tone + NOISE_AMPLITUDE * noise).astype(np.complex64)
         self._say("readStream", elems)
         return _Result(elems)
 
@@ -957,3 +970,63 @@ def test_an_open_that_happened_outranks_the_control_reading() -> None:
     )
 
     assert finding == "A filter that DID open it: no filter at all."
+
+
+def _flat_db(bins: int, value: float) -> Any:
+    return np.full(bins, value, dtype=np.float64)
+
+
+def test_the_dc_spike_is_never_reported_as_the_signal() -> None:
+    """MEASURED on the box at 5.0, 7.15 and 10.0 MHz under direct_samp=2: the frame was
+    a DC delta and nothing else, and a plain argmax called it a 203 dB signal three
+    times without a murmur. Every direct-conversion receiver has that spike; a peak
+    sitting on the tuned bin is the receiver looking at itself."""
+    bins = 8
+    db = _flat_db(bins, -200.0)
+    db[bins // 2] = 3.0
+    spectrum = radio.iq.Spectrum(
+        at=0.0, start_hz=1_000_000, bin_hz=250, db=db, segments=8
+    )
+
+    verdict = radio._reading_verdict(spectrum)
+
+    assert verdict["dc_db"] == 3.0
+    assert verdict["peak_db"] == -200.0
+    assert verdict["peak_hz"] != 1_000_000 + (bins // 2) * 250
+    assert verdict["dead"] is True
+
+
+def test_a_live_frame_keeps_its_carrier_and_is_not_dead() -> None:
+    """The 99.3 MHz shape: a real floor with a carrier standing over it, and a DC spike
+    beside them that must not win."""
+    bins = 8
+    db = _flat_db(bins, -44.0)
+    db[bins // 2] = 3.0
+    db[2] = -15.6
+    spectrum = radio.iq.Spectrum(
+        at=0.0, start_hz=1_000_000, bin_hz=250, db=db, segments=8
+    )
+
+    verdict = radio._reading_verdict(spectrum)
+
+    assert verdict["peak_db"] == -15.6
+    assert verdict["peak_hz"] == 1_000_000 + 2 * 250
+    assert verdict["floor_db"] == -44.0
+    assert verdict["dead"] is False
+
+
+def test_a_peak_above_the_dc_bin_keeps_its_own_frequency() -> None:
+    """`np.delete` closes the gap, so every bin past the removed one shifts down and a
+    naive index would report the wrong frequency — quietly, and only on one half."""
+    bins = 8
+    db = _flat_db(bins, -44.0)
+    db[bins // 2] = 3.0
+    db[6] = -10.0
+    spectrum = radio.iq.Spectrum(
+        at=0.0, start_hz=1_000_000, bin_hz=250, db=db, segments=8
+    )
+
+    verdict = radio._reading_verdict(spectrum)
+
+    assert verdict["peak_db"] == -10.0
+    assert verdict["peak_hz"] == 1_000_000 + 6 * 250
