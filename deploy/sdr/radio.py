@@ -226,7 +226,23 @@ class _Soapy:
         return [dict(found) for found in self._sdr.Device.enumerate(args)]
 
     def make(self, args: dict[str, str]) -> Device:
-        return self._sdr.Device(args)  # type: ignore[no-any-return]
+        """Open by ARGS STRING, never by dict. MEASURED on the box, 2026-09-05.
+
+        With two dongles attached and the rtlsdr module registered:
+
+            Device({"driver": "rtlsdr", "serial": "09022796"})  make() no match
+            Device("driver=rtlsdr,serial=09022796")             OPENED
+
+        A dict carrying a `driver` key is what fails, and it fails only in `make` —
+        `enumerate` handed the SAME dict returns both devices, and a dict with no
+        `driver` key opens. So the binding's dict typemap produces a value that
+        compares equal inside one code path and not the other, and the string form,
+        which SoapySDR parses in C++ for itself, sidesteps the question entirely.
+
+        No radio serial or driver name contains `,` or `=`, so the join is unambiguous
+        for everything this file passes."""
+        joined = ",".join(f"{k}={v}" for k, v in args.items())
+        return self._sdr.Device(joined)  # type: ignore[no-any-return]
 
     def open_diagnosis(self, args: dict[str, str]) -> dict[str, Any]:
         """Say WHY `make` found no match, by asking the same question three ways.
@@ -322,13 +338,17 @@ class _Soapy:
         broken: dict[str, str] = {}
         for module in sdr.listModules():
             result = sdr.getLoaderResult(module)
-            # 0.8's binding hands this back as a Kwargs proxy in some builds and a
-            # plain string in others; empty means it loaded either way.
-            text = " ".join(f"{k}={v}" for k, v in dict(result).items()) if (
-                hasattr(result, "keys")
-            ) else str(result)
-            if text:
-                broken[str(module)] = text[:200]
+            # MEASURED and corrected: this is NOT an error string. It maps each driver
+            # the module registered to that driver's error, and a registered driver has
+            # an EMPTY one — the box returned `{"rtlsdr": ""}` for a module that had
+            # just registered rtlsdr perfectly well, and reading the keys called a
+            # success a failure. Only a non-empty value is a failure.
+            if hasattr(result, "keys"):
+                why = "; ".join(f"{k}: {v}" for k, v in dict(result).items() if v)
+            else:
+                why = str(result)
+            if why:
+                broken[str(module)] = why[:200]
         return broken
 
     def _filter_result(self, filt: dict[str, str]) -> dict[str, str]:
@@ -1154,12 +1174,21 @@ def _diagnosis_finding(diag: dict[str, Any]) -> str:
     is inside `make` rather than at anything this file passes it."""
     filters = [row for row in diag.get("filters", []) if isinstance(row, dict)]
     by_name = {row.get("filter"): row for row in filters}
+    # An open that HAPPENED outranks every inference about why the others did not.
+    # MEASURED: the control-matches reading fired on a box where the driver was
+    # registered and two other filters opened, and it was simply false. A filter or a
+    # shape that works is a fix; "no factory registered" was a story about the evidence.
+    opened = [
+        row["filter"] for row in filters if row.get("make") == "opened" and row["filter"]
+    ]
+    if opened:
+        return f"A filter that DID open it: {opened[0]}."
     control = by_name.get(CONTROL_FILTER, {}).get("make")
     named = by_name.get("driver + serial") or by_name.get("driver only") or {}
     if control and control != "opened" and named.get("make") == control:
         return (
-            "`rtlsdr` fails EXACTLY as a driver name that does not exist does, so no "
-            "rtlsdr factory is registered in this process — whatever enumeration found."
+            "Every filter tried fails EXACTLY as a driver name that does not exist "
+            "does, and none opened — so no rtlsdr factory answered in this process."
         )
     environment = diag.get("environment", {})
     broken = environment.get("module_errors")
@@ -1176,9 +1205,6 @@ def _diagnosis_finding(diag: dict[str, Any]) -> str:
             "No rtlsdr module is loaded in this process — enumeration is answering "
             "from somewhere `make` never looks, so this is packaging, not code."
         )
-    opened = [row["filter"] for row in filters if row.get("make") == "opened"]
-    if opened:
-        return f"A filter that DID open it: {opened[0]}."
     listing = [
         row["filter"] for row in filters
         if str(row.get("enumerate", "")).isdigit() and int(row["enumerate"]) > 0

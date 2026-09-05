@@ -799,7 +799,7 @@ def test_failing_exactly_like_a_name_nobody_wrote_means_unregistered() -> None:
         }
     )
 
-    assert "no rtlsdr factory is registered" in finding
+    assert "no rtlsdr factory answered" in finding
 
 
 def test_rtlsdr_failing_differently_from_the_control_is_not_that() -> None:
@@ -823,7 +823,7 @@ def test_rtlsdr_failing_differently_from_the_control_is_not_that() -> None:
         }
     )
 
-    assert "no rtlsdr factory is registered" not in finding
+    assert "no rtlsdr factory answered" not in finding
     assert "inside make()" in finding
 
 
@@ -839,7 +839,7 @@ def test_the_control_opening_a_device_is_never_read_as_a_verdict() -> None:
         }
     )
 
-    assert "no rtlsdr factory is registered" not in finding
+    assert "no rtlsdr factory answered" not in finding
     assert "DID open it" in finding
 
 
@@ -884,3 +884,76 @@ def test_the_cxx_tool_is_never_invoked_through_a_shell() -> None:
     assert seen["argv"] == [radio.SOAPY_UTIL, "--find=driver=rtlsdr"]
     assert "shell" not in seen["kwargs"]
     assert seen["kwargs"]["timeout"] == radio.UTIL_TIMEOUT_S
+
+
+class _RecordingSdr:
+    """Just enough SoapySDR to see WHAT `_Soapy.make` hands the binding."""
+
+    def __init__(self) -> None:
+        self.asked: list[object] = []
+
+    def Device(self, args: object) -> str:
+        self.asked.append(args)
+        return "device"
+
+
+def test_make_opens_by_args_string_not_by_dict() -> None:
+    """MEASURED on the box with two dongles attached and the module registered:
+
+        Device({"driver": "rtlsdr", "serial": "09022796"})   make() no match
+        Device("driver=rtlsdr,serial=09022796")              OPENED
+
+    A dict carrying a `driver` key is what fails, and only inside `make` — the same
+    dict enumerates both devices. This is the one call in the live path, so it is the
+    one that must not regress to a dict."""
+    soapy = radio._Soapy.__new__(radio._Soapy)
+    soapy._sdr = _RecordingSdr()  # type: ignore[assignment]
+
+    soapy.make({"driver": "rtlsdr", "serial": "09022796"})
+
+    assert soapy._sdr.asked == ["driver=rtlsdr,serial=09022796"]  # type: ignore[union-attr]
+
+
+def test_a_loader_result_naming_a_registered_driver_is_not_an_error() -> None:
+    """MEASURED and corrected: `getLoaderResult` maps each driver the module registered
+    to THAT DRIVER'S error, and a registered driver's error is empty. The box returned
+    `{"rtlsdr": ""}` for a module that had just registered rtlsdr perfectly well, and
+    reading the keys reported a success as a failure — in the headline finding."""
+
+    class _Sdr:
+        def listModules(self) -> list[str]:
+            return ["librtlsdrSupport.so", "libaudioSupport.so"]
+
+        def getLoaderResult(self, path: str) -> dict[str, str]:
+            return {"rtlsdr": ""} if "rtl" in path else {"audio": "no such device"}
+
+    soapy = radio._Soapy.__new__(radio._Soapy)
+    soapy._sdr = _Sdr()  # type: ignore[assignment]
+
+    assert soapy._module_errors() == {"libaudioSupport.so": "audio: no such device"}
+
+
+def test_an_open_that_happened_outranks_the_control_reading() -> None:
+    """MEASURED: the control-matches reading fired on a box where the driver WAS
+    registered and two other filters opened, and it was flatly false. A filter that
+    works is a fix; "no factory registered" was a story told about the evidence."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {"filter": "no filter at all", "enumerate": "2", "make": "opened"},
+                {
+                    "filter": radio.CONTROL_FILTER,
+                    "enumerate": "0",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+                {
+                    "filter": "driver + serial",
+                    "enumerate": "1",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+            ],
+        }
+    )
+
+    assert finding == "A filter that DID open it: no filter at all."

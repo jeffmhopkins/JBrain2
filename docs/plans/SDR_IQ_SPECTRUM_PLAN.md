@@ -530,6 +530,37 @@ alongside the real one. If the two answers are identical, `rtlsdr` is as unregis
 a name nobody wrote, and no filter and no call shape can fix it. `getLoaderResult` is
 read for the same reason — a module can be listed and have registered nothing.
 
+✅ **ANSWERED on the box, and the call-shape theory was right after all — my
+falsification of it was the wrong inference.** With both dongles attached and the
+module registered:
+
+| asked | `enumerate` | `make` |
+| --- | --- | --- |
+| `{}` | 2 | **opened** |
+| `{"driver": "definitelynotadriver"}` (control) | 0 | `make() no match` |
+| `{"driver": "rtlsdr"}` | 2 | `make() no match` |
+| `{"serial": "09022796"}` | 1 | `rtlsdr_get_index_by_serial() - -3` |
+| `{"driver": "rtlsdr", "serial": "09022796"}` | 1 | `make() no match` |
+| the enumeration row handed back | 1 | `make() no match` |
+| **`Device("driver=rtlsdr,serial=09022796")`** | — | **opened** |
+
+`SoapySDRUtil --find=driver=rtlsdr` lists both devices and probes both tuners, so the
+C++ side was never in doubt. **A dict carrying a `driver` key is what fails, and it
+fails only inside `make`** — the same dict enumerates both devices, and a dict with no
+`driver` key opens. The binding's dict typemap therefore yields a value that compares
+equal in one code path and not the other; the args-STRING form, which SoapySDR parses
+in C++ for itself, sidesteps it. `_Soapy.make` is pinned to the string.
+
+⚠ **Two readings in the diagnosis itself were wrong, and both are corrected.**
+`getLoaderResult` does not return an error string: it maps each driver the module
+REGISTERED to that driver's error, and a registered driver's error is empty — the box
+returned `{"rtlsdr": ""}` for a module that had just registered rtlsdr, and reading the
+keys reported that success as a failure. And the control-matches rule fired on a box
+where two other filters had opened, concluding "no factory registered" against its own
+evidence; an open that happened now outranks every inference about why others did not.
+The lesson is the same one as the call shape: **with no hardware attached every shape
+fails identically**, so a sandbox can falsify nothing about which one opens a radio.
+
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
 direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,
