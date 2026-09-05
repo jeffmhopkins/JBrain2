@@ -167,9 +167,17 @@ def _spectrum_verdict(
                 f"the frame declares {last.bin_hz} Hz bins and the capture produces "
                 f"{want} — a width nothing computed, which nothing downstream can see"
             )
-        if len(last.db) != fft_bins:
+        # A hopped row is several captures wide, and only the TRUSTED MIDDLE of each
+        # reaches it, so the count to check against is per-hop-usable times hops. The
+        # flat comparison against `fft_bins` called every correct hopped frame a fault
+        # — measured on fm-broadcast, 2026-09-05: "2332 bins against the 256 the
+        # capture asks for", where 2332 is exactly 11 hops of 212 usable bins.
+        expect = fft_bins
+        if sweep.hops > 1:
+            expect = listen.hop_usable_bins(fft_bins) * sweep.hops
+        if len(last.db) != expect:
             findings.append(
-                f"{len(last.db)} bins per frame against the {fft_bins} the capture asks "
+                f"{len(last.db)} bins per frame against the {expect} the capture asks "
                 f"for — the transform is not the one the api chose"
             )
         if engine != "iq":

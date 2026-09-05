@@ -1197,3 +1197,40 @@ def test_one_late_excursion_does_not_report_the_whole_block_as_a_transient() -> 
 def test_a_block_that_never_goes_quiet_has_no_settled_index() -> None:
     """None rather than a number, so the caller reports "at least the span"."""
     assert radio._settled_index(np.ones(400, dtype=bool), hold=40) is None
+
+
+def test_the_hop_cost_says_which_of_two_opposite_fixes_the_discard_calls_for() -> None:
+    """The FM dial hops eleven times a row and manages 1.0 fps, so a hop costs ~90 ms
+    while the samples it keeps are 0.4 ms of signal. Whether the discard is bounded by
+    real time or is a memcpy decides the fix — discard longer, or have less stale data
+    — and the two are opposite, so it is measured rather than assumed."""
+    driver = _FakeDriver(retune_settle_s=0.05)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        cost = radio._hop_cost(rig, CENTER + RATE, want=1024)
+
+    assert cost["hops"] == radio.HOP_COST_HOPS * len(radio.HOP_COST_SETTLES)
+    # A ladder, because one settle cannot distinguish the two: the bare flush is the
+    # fixed cost and the rest is what a discard adds on top of it.
+    assert set(cost["barrier_ms"]) == {"0", "50", "150"}
+    # Not pinned to either answer here. Wall-clock timing against a fake measures the
+    # fake, and the classification itself is tested on the pure function below.
+    assert cost["bound"] in {"real-time", "memcpy"}
+
+
+def test_a_discard_that_costs_nothing_reads_as_a_memcpy_not_as_real_time() -> None:
+    """The other answer, and the one that would let the settle cover the worst case for
+    free. Kept honest by a reading rather than by which outcome would be convenient."""
+    assert radio._hop_bound({"0": 0.1, "50": 0.4, "150": 0.5}) == "memcpy"
+    assert radio._hop_bound({"0": 1.2, "50": 51.0, "150": 152.0}) == "real-time"
+
+
+def test_the_hop_cost_is_a_reading_not_a_finding() -> None:
+    """Both answers describe a healthy radio. `findings` means a claim did not hold, and
+    putting an always-emitted sentence in it made every clean probe run look failed."""
+    driver = _FakeDriver(retune_settle_s=0.05)
+
+    out = radio.probe(driver=driver)
+
+    assert out["hop_cost"]["bound"] in {"real-time", "memcpy"}
+    assert not [say for say in out["findings"] if "wall clock" in say]

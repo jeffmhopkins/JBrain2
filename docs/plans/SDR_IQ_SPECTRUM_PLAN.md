@@ -1003,12 +1003,47 @@ settled means and is still immune to a transient that crosses the line and comes
 When no such run exists the probe reports `saturated` and says *at least* the span, never
 the span as a figure.
 
-The honest state of this number: **the settle on the tuner path is ≥ 80 ms, against 50 ms
-configured — too short, in the correctness direction** — and its true value awaits the
-widened measurement. Note what it is likely to be measuring: `barrier()` flushes the FIFO
-and only then discards by time, so what survives the flush is most plausibly USB
-transfers already in flight, and at the measured 10.33 ms per buffer, 80 ms is about
-eight of them — a backlog, not a PLL relock. The discard has to cover it either way.
+#### The number, and the bug it exposes
+
+Measured with the widened stopwatch on the box, 2026-09-05, at 100.1 MHz and 2.4 MS/s,
+`saturated: 0` — so these are readings rather than the window:
+
+| | ms |
+| --- | --- |
+| median settle | **61.2** |
+| worst of seven | **132.1** |
+| configured (`SETTLE_S`) | 50.0 |
+| span (headroom) | 400.0 |
+
+**50 ms is too short, and the consequence is not subtle.** A hop reads `bins × segments`
+samples — 1024 on the FM dial, which is 0.43 ms of signal. If ~11 ms of stale data
+typically remains after a 50 ms discard (61.2 − 50), then the whole of that 0.43 ms read
+is stale: **every hop is drawing the previous hop's spectrum.** The wide-band waterfall
+is systematically showing each hop's neighbour, and being fast about it.
+
+`spectrum-probe --section fm-broadcast` on the same deploy: `engine: iq`, `bin_hz: 9375`,
+2332 bins — F11's hop planning is doing exactly what it was built to do — **and 1.0 fps**,
+which is no better than the `rtl_power` ceiling the engine exists to remove. Eleven hops
+in a second is ~91 ms per hop, of which the samples are 0.43 ms. The frame rate is
+therefore almost entirely the barrier, and raising `SETTLE_S` to cover the measured worst
+case would take the FM dial to about **0.5 fps** — correct, and worse than what it
+replaced.
+
+That is why `SETTLE_S` is deliberately **not** changed yet. The two candidate fixes are
+opposite, and which one is right depends on a fact not yet measured: whether the discard
+is bounded by **real time** (the stale samples are still arriving, so every millisecond
+discarded is a millisecond off every hop, and the fix is to have less stale data — a
+shallower USB pipeline) or by **memcpy** (they are already captured in buffers and
+reading them is nearly free, so the settle can cover the worst case for nothing). Guessing
+would cost a deploy to learn nothing, so `soapy-probe` now reports `hop_cost`: a ladder of
+barriers timed at 0, 50 and 150 ms, with `setFrequency` and the read timed apart from
+them, and a `bound` of `real-time` or `memcpy`. It is a reading, not a finding — both
+answers describe a healthy radio.
+
+What the stale data most plausibly is: `barrier()` flushes the FIFO and only then discards
+by time, so what survives the flush is USB transfers already in flight. At the measured
+10.27 ms per buffer, the 61 ms median is about six of them and the 132 ms worst about
+thirteen — a pipeline depth, not a PLL relock.
 
 ## 8. Deliberately not in this plan
 

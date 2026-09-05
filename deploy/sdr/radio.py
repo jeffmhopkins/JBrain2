@@ -1181,6 +1181,91 @@ def _elsewhere(center_hz: int, rate_hz: int, direct: bool) -> int:
     return away if away < ceiling else center_hz - rate_hz
 
 
+#: Settles to time a barrier at. Zero is the flush alone, so the ladder says outright
+#: whether a discard is bounded by real time (it costs what it asks for) or by memcpy
+#: (the stale samples are already captured and reading them is nearly free). Those two
+#: answers call for opposite fixes, which is why guessing was not an option.
+HOP_COST_SETTLES = (0.0, 0.05, 0.15)
+#: Hops per settle. Enough that a median is not an anecdote, few enough that the probe
+#: hands the radio back promptly.
+HOP_COST_HOPS = 7
+
+
+def _hop_cost(radio: Radio, other_hz: int, want: int) -> dict[str, Any]:
+    """Where a hop's wall clock actually goes, phase by phase.
+
+    MEASURED on the box, 2026-09-05: the FM dial hops eleven times per row and manages
+    1.0 fps, so a hop costs about 90 ms — while the samples it keeps are 1024, which is
+    0.4 ms of signal. Something other than the signal is the entire frame rate.
+
+    `retune` is two operations with very different costs — a USB control transfer, then
+    a discard that may or may not be bounded by real time — so they are timed apart. A
+    fix aimed at the wrong phase would cost a deploy and learn nothing."""
+    home = radio.center_hz
+    tune: list[float] = []
+    read: list[float] = []
+    barrier: dict[str, list[float]] = {str(int(s * 1000)): [] for s in HOP_COST_SETTLES}
+    step = 0
+    for _ in range(HOP_COST_HOPS):
+        for settle in HOP_COST_SETTLES:
+            # Alternate, so every timing is a real move rather than a retune to where
+            # the radio already is — which the driver may well make free.
+            target = other_hz if step % 2 == 0 else home
+            step += 1
+            start = time.perf_counter()
+            radio._apply(center_hz=target)
+            tuned = time.perf_counter()
+            radio.barrier(settle)
+            barred = time.perf_counter()
+            radio.read(want)
+            done = time.perf_counter()
+            tune.append((tuned - start) * 1000.0)
+            barrier[str(int(settle * 1000))].append((barred - tuned) * 1000.0)
+            read.append((done - barred) * 1000.0)
+    radio.retune(center_hz=home)
+    paid = {key: _median_ms(got) for key, got in barrier.items()}
+    return {
+        "hops": step,
+        "want_samples": want,
+        "tune_ms": _median_ms(tune),
+        "read_ms": _median_ms(read),
+        "barrier_ms": paid,
+        # The interpretation, in the payload rather than in `findings`: both answers
+        # describe a healthy radio, and they call for opposite fixes.
+        "bound": _hop_bound(paid),
+    }
+
+
+def _median_ms(got: list[float]) -> float:
+    return round(float(np.median(got)), 3) if got else 0.0
+
+
+def _hop_bound(barrier: dict[str, float]) -> str:
+    """Which of the two opposite fixes the discard's cost calls for.
+
+    NOT a finding: both answers are healthy radios, and the probe's `findings` list
+    means a claim did not hold. This is the reading itself.
+
+    `real-time` — the settle costs what it asks for, so every millisecond of it comes
+    off every hop and discarding longer cannot be the fix; having less stale data has
+    to be. `memcpy` — the stale samples are already captured and reading them is nearly
+    free, so the settle can cover the worst case without costing frames."""
+    asked = 50.0
+    paid = float(barrier.get("50") or 0.0)
+    return "real-time" if paid >= asked * 0.5 else "memcpy"
+
+
+def _hop_dominant(cost: dict[str, Any]) -> str:
+    """The phase that owns a hop before any discard — eleven of it is every FM row."""
+    barrier = cost.get("barrier_ms") or {}
+    phases = [
+        (float(barrier.get("0") or 0.0), "flush"),
+        (float(cost.get("tune_ms") or 0.0), "setFrequency"),
+        (float(cost.get("read_ms") or 0.0), "read"),
+    ]
+    return max(phases)[1]
+
+
 def _settle_findings(settle: dict[str, Any]) -> list[str]:
     """Say it when the constant and the radio disagree, in the direction it matters.
 
@@ -1533,6 +1618,16 @@ def _probe_open(
         settle = out["retune_settle"]
         if settle.get("measured") and settle.get("settle_ms") is not None:
             findings.extend(_settle_findings(settle))
+
+        # And where the rest of a hop's time goes. The settle says how much stale data
+        # there is; this says what removing it COSTS, and the two together are the only
+        # way to choose between discarding longer and having less to discard.
+        out["hop_cost"] = _answered(
+            "hop_cost",
+            lambda: _hop_cost(radio, _elsewhere(center_hz, rate_hz, direct), bins * 4),
+        )
+        if out["hop_cost"].get("hops"):
+            out["hop_cost"]["dominant_phase"] = _hop_dominant(out["hop_cost"])
 
         # A retune ON THE LIVE STREAM, with the stream handle checked for identity
         # either side: a rebuild would hand back a different one.
