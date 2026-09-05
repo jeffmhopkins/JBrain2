@@ -983,6 +983,14 @@ class Session:
         #: from our own stream. Stays zero on the `rtl_fm` path, which has no such
         #: signal to give: libusb simply stops resubmitting and the drop is silent.
         self.overflows = 0
+        #: The last buffer's clipped fraction and RMS. `audio_peak` is a MAX, and on FM
+        #: one noise click pins it at full scale while the rest of the buffer is a
+        #: perfectly good voice — measured on air, NOAA weather at 17 dB SNR reads 1.0
+        #: on every buffer. These two are what "is it clipping" and "how loud is it"
+        #: actually reduce to. Zero on the `rtl_fm` path, which hands over bytes and no
+        #: statistics.
+        self.audio_clipped = 0.0
+        self.audio_rms = 0.0
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -1350,6 +1358,8 @@ class Session:
                     # documented as a fraction of full scale, and a meter that can read
                     # 1.4 is a meter with no top.
                     self.audio_peak = min(1.0, audio.peak)
+                    self.audio_clipped = audio.clipped
+                    self.audio_rms = audio.rms
                     self._accumulate(chunk, self.audio_peak)
                     enc.stdin.write(chunk)
                     enc.stdin.flush()

@@ -131,6 +131,11 @@ SPECTRUM_PROBE_MAX_S = 15.0
 #: spectrum one's default because what it is measuring is continuity: a dropped USB
 #: buffer is a click rather than a missing row, and a two-second look is too short to
 #: say whether a stream that started cleanly stays clean.
+#: How much of a buffer has to hit the rail before it is clipping rather than the
+#: impulse noise every FM receiver makes on a weak signal. A tenth of a percent is
+#: clicks; a percent is a chain whose gain is wrong.
+CLIPPING_FRACTION = 0.01
+
 LISTEN_PROBE_S = 5.0
 LISTEN_PROBE_MAX_S = 20.0
 #: Above this a live spectrum is running faster than `rtl_power` can, whose interval is
@@ -188,6 +193,8 @@ def _listen_verdict(
     session: "listen.Session",
     frames: list["listen.Frame"],
     peaks_seen: list[float],
+    clip_seen: list[float],
+    rms_seen: list[float],
     elapsed: float,
 ) -> dict[str, Any]:
     """What the session says, as claims that can fail rather than a dump of numbers.
@@ -197,6 +204,8 @@ def _listen_verdict(
     remembered what each was supposed to be."""
     findings: list[str] = []
     loud = max(peaks_seen) if peaks_seen else 0.0
+    clipped = max(clip_seen) if clip_seen else 0.0
+    level = max(rms_seen) if rms_seen else 0.0
     out: dict[str, Any] = {
         "engine": session.engine,
         "frequency_hz": session.frequency_hz,
@@ -204,6 +213,8 @@ def _listen_verdict(
         "seconds": elapsed,
         "audio_peak_max": round(loud, 4),
         "audio_peak_mean": round(sum(peaks_seen) / len(peaks_seen), 4) if peaks_seen else 0.0,
+        "audio_rms_max": round(level, 4),
+        "clipped_fraction_max": round(clipped, 5),
         "overflows": session.overflows,
         "frames": len(frames),
         "fps": round(len(frames) / elapsed, 2) if elapsed > 0 else 0.0,
@@ -215,13 +226,16 @@ def _listen_verdict(
         )
     if loud <= 0.001:
         findings.append("no audio came out at all: the chain ran and produced silence")
-    elif loud >= 0.999:
-        # Not merely loud: `Audio.peak` is measured BEFORE the clip, so a chain at
-        # exactly full scale is one whose gain is too high for this signal rather than
-        # one that happens to be receiving a strong station.
+    elif clipped >= CLIPPING_FRACTION:
+        # The FRACTION that hit the rail, not the peak. This asked `loud >= 0.999`
+        # first, which on FM is not a clipping test at all: a discriminator turns every
+        # burst of noise that momentarily overpowers the carrier into a full-scale
+        # impulse — the click a weak FM signal makes — so one sample in 1600 pins the
+        # peak while the rest is a good voice. Measured on air, that read "clipping" on
+        # NOAA weather at 17 dB SNR with 0.06% of samples actually at the rail.
         findings.append(
-            f"audio reached full scale ({loud:.3f}) — the demodulator is clipping, "
-            f"which on FM means the deviation scaling is too high for this signal"
+            f"{clipped * 100:.1f}% of samples hit the rail — the demodulator is "
+            f"clipping, which on FM means the deviation scaling is too high here"
         )
     if session.overflows:
         findings.append(
@@ -1206,6 +1220,8 @@ class Handler(BaseHTTPRequestHandler):
         sub = session.subscribe_frames() if session.draws_frames else None
         frames: list[listen.Frame] = []
         peaks_seen: list[float] = []
+        clip_seen: list[float] = []
+        rms_seen: list[float] = []
         started = time.monotonic()
         deadline = started + seconds
         try:
@@ -1226,10 +1242,19 @@ class Handler(BaseHTTPRequestHandler):
                 # channel that was loud for four seconds and quiet for the fifth would
                 # read as silent.
                 peaks_seen.append(session.audio_peak)
+                clip_seen.append(session.audio_clipped)
+                rms_seen.append(session.audio_rms)
         finally:
             if sub is not None:
                 session.unsubscribe_frames(sub)
-        return _listen_verdict(session, frames, peaks_seen, round(time.monotonic() - started, 2))
+        return _listen_verdict(
+            session,
+            frames,
+            peaks_seen,
+            clip_seen,
+            rms_seen,
+            round(time.monotonic() - started, 2),
+        )
 
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
