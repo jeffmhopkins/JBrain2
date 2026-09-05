@@ -25814,6 +25814,135 @@ button.task-band:active {
 .wf-bad {
   color: var(--danger);
 }
+/* Markers are DOM over the picture rather than pixels in it: the ring is drawn 1:1 on
+   both axes so a scroll cannot resample it, and painting labels into that would put
+   type through the same transform. */
+.wf-stack {
+  position: relative;
+}
+.wf-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wf-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The line is the element's own left edge, so `left` places the SIGNAL and not the
+     label's box — a centred label would put the mark half a word away from it. */
+  border-left: 1px solid var(--accent);
+  opacity: 0.85;
+}
+.wf-mark.held {
+  border-left-style: dashed;
+  opacity: 0.5;
+}
+.wf-mark b {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+.wf-sig {
+  margin-top: 6px;
+}
+.wf-sigbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wf-sightitle {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.wf-sigcount {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.wf-seg {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+/* A real <legend> so the group is named for a screen reader, taken out of the flow
+   because the control is three words wide and the name would double its height. */
+.wf-seg legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.wf-seg button {
+  padding: 3px 9px;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.wf-seg button.on {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.wf-siglist {
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.wf-siglist li {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+/* A signal that has stopped reads as remembered rather than as present: the list is
+   most useful when "on the air now" and "was a moment ago" are told apart at a glance. */
+.wf-siglist li.held {
+  border-style: dashed;
+  color: var(--text-3);
+}
+.wf-sighz {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.wf-siglist li.held .wf-sighz {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.wf-sigover,
+.wf-sigheld {
+  color: var(--text-3);
+}
+.wf-signone {
+  margin: 5px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
 
 /* --- the band picker (SdrBandSheet.tsx) ------------------------------------------ */
 .bandlist {
