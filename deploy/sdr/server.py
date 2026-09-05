@@ -132,9 +132,20 @@ SPECTRUM_PROBE_MAX_S = 15.0
 #: buffer is a click rather than a missing row, and a two-second look is too short to
 #: say whether a stream that started cleanly stays clean.
 #: How much of a buffer has to hit the rail before it is clipping rather than the
-#: impulse noise every FM receiver makes on a weak signal. A tenth of a percent is
-#: clicks; a percent is a chain whose gain is wrong.
-CLIPPING_FRACTION = 0.01
+#: impulse noise every FM receiver makes on a weak signal.
+#:
+#: MEASURED 2026-09-05, which is the only reason it is 5% and not a guess. This was 1%
+#: first and fired on a perfectly healthy weak signal. Against the same chain:
+#:
+#:   162.550 nfm, 14 dB SNR   1.0-1.25% clipped, RMS 0.40   <- clicks
+#:   96.5 / 99.3 / 104.1 wbfm, 31-40 dB SNR   0.0% clipped, peak 0.37-0.42
+#:
+#: Zero at high SNR with 60% of headroom to spare says the deviation scaling is right
+#: and the clipping at 14 dB is the noise, not the gain — and it did not move with the
+#: tuner gain either (1.00% on AGC, 1.19% at 40 dB), because a discriminator is blind
+#: to amplitude. A gain that really was too high is an order of magnitude worse than
+#: this: 1.5x deviation clips nearly half a sine.
+CLIPPING_FRACTION = 0.05
 
 LISTEN_PROBE_S = 5.0
 LISTEN_PROBE_MAX_S = 20.0
