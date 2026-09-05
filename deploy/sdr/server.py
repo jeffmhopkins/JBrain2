@@ -244,6 +244,18 @@ def _hops_of(body: dict[str, Any]) -> int:
         return 1
 
 
+def _channel_hz_of(body: dict[str, Any]) -> int:
+    """One channel's width on this band, from the api's band plan (`bands.py`).
+
+    Absent means the caller did not say, and `peaks.find` then treats only touching bins
+    as one signal — the honest answer without a band plan, and the one every caller
+    before this meant."""
+    try:
+        return max(0, int(body.get("channel_hz") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
@@ -269,6 +281,7 @@ def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
         direct_ok=direct_ok,
         capture=_capture_of(body),
         hops=_hops_of(body),
+        channel_hz=_channel_hz_of(body),
     )
     floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
     if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):

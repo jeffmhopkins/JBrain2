@@ -1010,7 +1010,19 @@ async def spectrum_start(
         "serial": chosen.serial,
     }
     body.update(_capture_body(capture))
+    # The band's channel raster, for the sidecar's per-row peak finding: it decides
+    # which adjacent bins are ONE signal, and it is a band-plan fact rather than
+    # anything the capture could imply — 200 kHz on the FM dial, 15 kHz on 2 m. Resolved
+    # the same way `_span` resolves the range, so a hand-typed pair of edges that IS a
+    # curated section gets that section's answer rather than a derived one.
+    body["channel_hz"] = _channel_hz(section, start_hz, stop_hz)
     return await _post(settings, "/listen/start", body)
+
+
+def _channel_hz(section: str | None, start_hz: int, stop_hz: int) -> int:
+    """One channel's width on the band being drawn, or 0 when no section owns it."""
+    found = bands.by_id(section) if section is not None else bands.by_edges(start_hz, stop_hz)
+    return int(getattr(found, "channel_hz", 0) or 0)
 
 
 @router.post("/spectrum/tune")

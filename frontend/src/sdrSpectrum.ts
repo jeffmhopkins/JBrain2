@@ -18,6 +18,18 @@
 // would only make the picture late.
 
 /** One waterfall row, exactly as the sidecar framed it (deploy/sdr/listen.py Frame). */
+/** One signal the sidecar found in a row: where it is, how strong, and how far it
+ *  stands above the noise around it.
+ *
+ *  Found on the box rather than here, and that is the point: the agent's tools read the
+ *  same frames, so "what is on the air" cannot have two answers depending on who asked.
+ *  `overDb` travels with it because it is what decided it was a signal at all. */
+export interface SpectrumPeak {
+  hz: number;
+  db: number;
+  overDb: number;
+}
+
 export interface SpectrumRow {
   /** Box clock when the row was measured. */
   at: number;
@@ -25,6 +37,9 @@ export interface SpectrumRow {
   stopHz: number;
   binHz: number;
   db: number[];
+  /** Strongest first. Empty is a real answer — a quiet band — and is what a build
+   *  without peak finding also sends, which is why nothing here treats it as unknown. */
+  peaks: SpectrumPeak[];
 }
 
 export interface SpectrumState {
@@ -77,7 +92,24 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
     stopHz: start + values.length * bin,
     binHz: bin,
     db: values,
+    peaks: parsePeaks(payload.peaks),
   };
+}
+
+/** The peaks off the wire, defensively: a row from an older box has none, and one bad
+ *  entry must not cost the row. Anything that is not three finite numbers is dropped
+ *  rather than drawn at a frequency it was never measured at. */
+function parsePeaks(raw: unknown): SpectrumPeak[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SpectrumPeak[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { hz, db, over_db: over } = entry as Record<string, unknown>;
+    if (typeof hz !== "number" || !Number.isFinite(hz)) continue;
+    if (typeof db !== "number" || !Number.isFinite(db)) continue;
+    out.push({ hz, db, overDb: typeof over === "number" && Number.isFinite(over) ? over : 0 });
+  }
+  return out;
 }
 
 /** Whether two rows describe the same band at the same resolution.
