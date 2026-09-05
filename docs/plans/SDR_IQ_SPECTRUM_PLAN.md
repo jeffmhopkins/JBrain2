@@ -1215,12 +1215,31 @@ If the transient is pre-retune data already handed to the kernel, then the 150 m
 is paying for a queue depth nothing here needs, and shrinking the queue buys the frame
 rate back **without** giving up the correctness.
 
-`queue_ladder` measures it rather than assuming it: a settle per candidate depth, with
-each candidate arg tried **alone** so the answer names which knob moved it — SoapyRTLSDR
-spells "how many buffers" more than one way and only one reaches librtlsdr's
-`rtlsdr_read_async`. Each rung opens its own radio, because a stream argument can only be
-set at `setupStream`. If nothing moves, that is worth knowing too: it would mean a 20 MHz
-span really is slow on this hardware rather than slow because of a setting.
+`queue_ladder` measured it rather than assuming it, and **it was the queue**:
+
+| stream args | settle median | worst |
+| --- | --- | --- |
+| driver default (15 buffers) | 56.7 ms | 113.5 ms |
+| `asyncBuffs=4` | 51.2 ms | 113.1 ms — *no effect, wrong knob* |
+| **`buffers=4`** | **0.0 ms** | **20.5 ms** |
+| **`buffers=2`** | **10.5 ms** | **10.5 ms** |
+
+The settle scales with the queue and nothing else. So the transient a hop waits out was
+**pre-retune data already handed to the kernel**, sitting in a queue 154 ms deep — and it
+was never the tuner, which is why 60 ms never made sense for a PLL that locks in under a
+millisecond. Four suspects were tried before this one stuck: USB backlog reachable by the
+flush (the flush disturbs nothing at all — 0.0 ms), the gain (already manual), an adaptive
+discard (its stopping rule cannot tell settled from steadily wrong), and the tuner itself.
+
+`QUEUE_BUFFERS = 4`, not 2, for the slack: four buffers is 41 ms of grace before the ring
+overruns on a box that also runs LLM inference, and it costs 20 ms of settle against 10.
+Overflow is reported rather than silent (F0), so the trade is one that says something when
+it is wrong. `SETTLE_S` follows it down to **0.03** — a fifth of the 0.15 it replaced,
+which is the FM dial's frame rate handed back.
+
+The ladder's control rung is spelled `buffers=15` rather than left empty, because the
+engine sets the depth now and `{}` would inherit the answer instead of measuring against
+the driver's own default.
 
 ## 8. Deliberately not in this plan
 
