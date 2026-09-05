@@ -1160,7 +1160,40 @@ So the discard is **fixed at 0.15 s**, covering the measured worst case with mar
 price belongs in the open: eleven hops pay it once each, so the FM dial redraws about
 **twice a second**, and making that faster means **fewer hops, not a shorter discard**.
 The measurement stayed — `settle_after_barrier` reports what is still disturbed after the
-real barrier has run, so this cannot regress quietly.
+real barrier has run, so this cannot regress quietly. **Verified on the box**: 0.0 ms
+median and 7.68 ms worst left behind, and the too-short finding is gone.
+
+#### But the price came in at 0.33 fps, and the arithmetic says why
+
+Correct, and **worse than the `rtl_power` this engine exists to replace**. `2m-all`
+(three hops) manages 1.97 fps on the same deploy, which is the same cost seen from the
+other end.
+
+Three numbers, all measured, and they fit together too well to ignore:
+
+| | |
+| --- | --- |
+| USB buffer period | 10.27 ms |
+| buffers the driver queues | 15 → **154 ms** |
+| retune settle | 61 ms median, **134 ms worst** |
+
+A settle distributed uniformly inside one queue depth is exactly what that describes —
+and 60 ms is not what an R820T2's PLL does, which is over in well under a millisecond.
+The same figures came back from **both dongles** (61.7 / 133.5 on the second), so it is
+systematic rather than one radio.
+
+So the suspect is now the thing this file's own comment already named: *"`buffers` is
+left at the driver's 15: the count is what bounds the backlog a retune has to flush."*
+If the transient is pre-retune data already handed to the kernel, then the 150 ms discard
+is paying for a queue depth nothing here needs, and shrinking the queue buys the frame
+rate back **without** giving up the correctness.
+
+`queue_ladder` measures it rather than assuming it: a settle per candidate depth, with
+each candidate arg tried **alone** so the answer names which knob moved it — SoapyRTLSDR
+spells "how many buffers" more than one way and only one reaches librtlsdr's
+`rtlsdr_read_async`. Each rung opens its own radio, because a stream argument can only be
+set at `setupStream`. If nothing moves, that is worth knowing too: it would mean a 20 MHz
+span really is slow on this hardware rather than slow because of a setting.
 
 ## 8. Deliberately not in this plan
 
