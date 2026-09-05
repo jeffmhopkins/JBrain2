@@ -67,6 +67,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -235,6 +236,18 @@ class _Soapy:
 
 def _log(message: str) -> None:
     print(f"[radio] {message}", flush=True)  # noqa: T201 - the container log is the trail
+
+
+def _version_or_error(drv: Driver) -> str:
+    """The driver's version, or why it could not be asked.
+
+    Reported rather than raised because it is the FIRST call the probe makes: a binding
+    mismatch here would otherwise take down the whole verdict before a single claim was
+    tested, which is the failure the wrapper in `probe` exists to stop."""
+    try:
+        return drv.version()
+    except Exception as failed:  # noqa: BLE001 - a version string is not worth a 502
+        return f"unavailable: {type(failed).__name__}: {failed}"
 
 
 def validate_bufflen(bufflen_bytes: int) -> int:
@@ -818,12 +831,45 @@ def probe(
     Each check is caught on its own: a probe that stops at the first failure answers one
     question and hides six, and the whole point of running it is to come back with the
     full list."""
+    try:
+        return _probe(
+            serial=serial, center_hz=center_hz, rate_hz=rate_hz, bins=bins, driver=driver
+        )
+    except Exception as broke:  # noqa: BLE001 - a verdict is the whole contract
+        # A probe that raises answers NOTHING, and its message then has to survive the
+        # api, the tunnel and the edge to be read — which MEASURED 2026-09-05 it does
+        # not: a 502 reached the console as Cloudflare's own error page with the
+        # sentence stripped, so the one call shape that failed was invisible from the
+        # only surface the owner has (CLAUDE.md #10). Every escape becomes a finding
+        # here, and the traceback goes to the log where `logs sdr` can reach it.
+        _log(f"probe failed: {traceback.format_exc()}")
+        return {
+            "ok": False,
+            "serial": serial,
+            "summary": f"The probe itself failed: {type(broke).__name__}: {broke}",
+            "findings": [
+                f"{type(broke).__name__}: {broke}",
+                "This is the probe's own code, not a verdict about the radio — the "
+                "traceback is in `logs sdr`.",
+            ],
+            "traceback": traceback.format_exc()[-1500:],
+        }
+
+
+def _probe(
+    *,
+    serial: str | None,
+    center_hz: int,
+    rate_hz: int,
+    bins: int,
+    driver: Driver | None,
+) -> dict[str, Any]:
     started = time.monotonic()
     drv = driver if driver is not None else _Soapy()
     findings: list[str] = []
     out: dict[str, Any] = {
         "serial": serial,
-        "soapy": drv.version(),
+        "soapy": _version_or_error(drv),
         "requested": {
             "center_hz": center_hz,
             "rate_hz": rate_hz,
@@ -831,7 +877,14 @@ def probe(
             "direct_sampling": center_hz < DIRECT_MAX_HZ,
         },
     }
-    found = drv.enumerate({"driver": "rtlsdr"})
+    try:
+        found = drv.enumerate({"driver": "rtlsdr"})
+    except Exception as failed:  # noqa: BLE001 - see the wrapper above
+        out["ok"] = False
+        out["summary"] = f"SoapySDR could not enumerate: {type(failed).__name__}: {failed}"
+        out["findings"] = [f"enumerate() raised {type(failed).__name__}: {failed}"]
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
     out["enumerate"] = {"count": len(found), "devices": found}
     if not found:
         out["ok"] = False
