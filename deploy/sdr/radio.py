@@ -227,20 +227,97 @@ class _Soapy:
     def make(self, args: dict[str, str]) -> Device:
         return self._sdr.Device(args)  # type: ignore[no-any-return]
 
-    def open_shapes(self, args: dict[str, str]) -> list[dict[str, str]]:
-        """Try every plausible way to ask SoapySDR for a device; say which one opened.
+    def open_diagnosis(self, args: dict[str, str]) -> dict[str, Any]:
+        """Say WHY `make` found no match, by asking the same question three ways.
 
-        MEASURED 2026-09-05, and the reason this exists: enumeration returns two dongles
-        with their serials, and `Device({"driver": "rtlsdr", "serial": "09022796"})` —
-        a filter that matches one of them exactly — answers `make() no match`. It fails
-        identically with no serial at all, so it is not the filter. That leaves HOW the
-        binding is being asked, and the candidates are all one-liners whose difference
-        no amount of reading settles, because the SWIG layer's typemaps are what decide.
+        MEASURED 2026-09-05 on the box: enumeration returns two dongles, driver
+        `rtlsdr`, both serials intact — and `make({"driver": "rtlsdr", "serial":
+        "09022796"})`, a filter matching one of them exactly, answers `make() no
+        match`. It fails the same way with no serial at all, so the filter is not it.
 
-        A diagnostic, not a fallback: nothing in the live path calls this. The engine
-        keeps ONE documented shape (`make`), and when the box says which shape works
-        that is the one it gets pinned to. Shipping a loop that quietly tries four ways
-        to open a radio would turn a bug into a behaviour nobody could reason about."""
+        The first draft of this blamed the SWIG call shape, and that was falsified
+        before it shipped. Against SoapySDR 0.8.1 with the rtlsdr module present and
+        NO hardware attached, all four shapes reach the driver's own factory and raise
+        `No RTL-SDR devices found!` — the DRIVER's sentence, not SoapySDR's. So
+        `make() no match` is raised before any factory runs, and a call shape cannot be
+        what separates them.
+
+        What can: which find functions this process has registered, and what
+        `enumerate` answers for the exact args `make` rejects. Both are read here. The
+        shapes are kept because they cost nothing and pin that result to the box's own
+        0.8.0 rather than to a 0.8.1 measured elsewhere.
+
+        A diagnostic, not a fallback: nothing in the live path calls it, and the engine
+        keeps one documented way to open a radio."""
+        serial = args.get("serial")
+        ladder: list[tuple[str, dict[str, str]]] = [
+            ("no filter at all", {}),
+            ("driver only", {"driver": "rtlsdr"}),
+        ]
+        if serial:
+            ladder.append(("serial only", {"serial": serial}))
+            ladder.append(("driver + serial", {"driver": "rtlsdr", "serial": serial}))
+        # Handed back exactly what enumeration produced, keys and all — the one filter
+        # that cannot be wrong about what this driver calls its own devices.
+        for row in self._rows():
+            if not serial or row.get("serial") == serial:
+                ladder.append(("the enumeration row itself", row))
+                break
+        return {
+            "environment": self._environment(),
+            "filters": [
+                {"filter": label} | self._filter_result(filt) for label, filt in ladder
+            ],
+            "shapes": self._shapes(args),
+        }
+
+    def _rows(self) -> list[dict[str, str]]:
+        try:
+            return self.enumerate({"driver": "rtlsdr"})
+        except Exception:  # noqa: BLE001 - a diagnosis must not die diagnosing
+            return []
+
+    def _environment(self) -> dict[str, Any]:
+        """What SoapySDR this process actually is, and what it has loaded.
+
+        `modules` is the decisive one: a registry with no rtlsdr entry means enumeration
+        is answering from somewhere `make` never looks, which is a packaging fault
+        rather than a code one."""
+        sdr = self._sdr
+        env: dict[str, Any] = {}
+        readings: list[tuple[str, Any]] = [
+            ("api", sdr.getAPIVersion),
+            ("abi", sdr.getABIVersion),
+            ("lib", sdr.getLibVersion),
+            ("root", sdr.getRootPath),
+            ("modules", lambda: [str(m) for m in sdr.listModules()]),
+            ("search_paths", lambda: [str(p) for p in sdr.listSearchPaths()]),
+        ]
+        for key, call in readings:
+            try:
+                env[key] = call()
+            except Exception as failed:  # noqa: BLE001 - name it, do not raise it
+                env[key] = f"{type(failed).__name__}: {failed}"[:160]
+        return env
+
+    def _filter_result(self, filt: dict[str, str]) -> dict[str, str]:
+        """`enumerate` and `make` on the SAME args, side by side.
+
+        They are supposed to agree. Where they do not, the disagreement is the finding."""
+        try:
+            listed = str(len(self.enumerate(filt)))
+        except Exception as failed:  # noqa: BLE001 - naming the failure IS the job
+            listed = f"raised {type(failed).__name__}: {failed}"[:120]
+        try:
+            device = self._sdr.Device(filt)
+        except Exception as failed:  # noqa: BLE001 - naming the failure IS the job
+            return {"enumerate": listed, "make": f"{failed}"[:160]}
+        with contextlib.suppress(Exception):
+            self.unmake(device)
+        return {"enumerate": listed, "make": "opened"}
+
+    def _shapes(self, args: dict[str, str]) -> list[dict[str, str]]:
+        """Every plausible way to ask the binding, in case 0.8.0 differs from 0.8.1."""
         sdr = self._sdr
         joined = ",".join(f"{k}={v}" for k, v in args.items())
         shapes: list[tuple[str, Any]] = [
@@ -249,12 +326,6 @@ class _Soapy:
             (f"Device({joined!r})", lambda: sdr.Device(joined)),
             ("Device(KwargsFromString)", lambda: sdr.Device(sdr.KwargsFromString(joined))),
         ]
-        # The full enumeration row, not a filter built by hand. Some find functions are
-        # happier being handed back exactly what they produced.
-        for found in self.enumerate({"driver": args.get("driver", "rtlsdr")}):
-            if not args.get("serial") or found.get("serial") == args.get("serial"):
-                shapes.append(("Device(enumerate row)", lambda row=found: sdr.Device(row)))
-                break
         tried: list[dict[str, str]] = []
         for name, call in shapes:
             try:
@@ -979,20 +1050,46 @@ def _probe(
             "against the filter in the message: a wrong filter and an unloaded driver "
             "look identical from the error alone and have opposite fixes.",
         ]
-        # When the filter provably matches the enumeration and the open still fails, the
-        # remaining variable is how the binding is ASKED. Walk the shapes and say which
-        # one works, so the fix is a measurement rather than a fifth guess.
-        shapes = getattr(drv, "open_shapes", None)
-        if shapes is not None:
+        # The filter provably matches the enumeration and the open still fails, so ask
+        # the same question three ways — what this process has LOADED, what `enumerate`
+        # says for the exact args `make` rejects, and every call shape — and let the
+        # measurement pick the fix instead of a fifth guess.
+        diagnose = getattr(drv, "open_diagnosis", None)
+        if diagnose is not None:
             asked = {"driver": "rtlsdr"} | ({"serial": serial} if serial else {})
-            out["open_shapes"] = shapes(asked)
-            worked = [row["shape"] for row in out["open_shapes"] if row.get("opened") == "yes"]
-            out["findings"].append(
-                f"Shape that opened it: {worked[0]}" if worked
-                else "No shape opened it — the driver or the device, not the binding."
-            )
+            out["open_diagnosis"] = diagnose(asked)
+            out["findings"].append(_diagnosis_finding(out["open_diagnosis"]))
         out["elapsed_s"] = round(time.monotonic() - started, 2)
         return out
+
+
+def _diagnosis_finding(diag: dict[str, Any]) -> str:
+    """One sentence naming what the diagnosis actually separated.
+
+    Ordered by how the fixes differ: a missing module is a packaging fault, a filter
+    that opens is a code fault, and `enumerate` and `make` disagreeing over the same
+    args is neither — it is SoapySDR contradicting itself, and the next place to look
+    is inside `make` rather than at anything this file passes it."""
+    modules = diag.get("environment", {}).get("modules")
+    if isinstance(modules, list) and not any("rtl" in m.lower() for m in modules):
+        return (
+            "No rtlsdr module is loaded in this process — enumeration is answering "
+            "from somewhere `make` never looks, so this is packaging, not code."
+        )
+    filters = [row for row in diag.get("filters", []) if isinstance(row, dict)]
+    opened = [row["filter"] for row in filters if row.get("make") == "opened"]
+    if opened:
+        return f"A filter that DID open it: {opened[0]}."
+    listing = [
+        row["filter"] for row in filters
+        if str(row.get("enumerate", "")).isdigit() and int(row["enumerate"]) > 0
+    ]
+    if listing:
+        return (
+            f"`{listing[0]}` enumerates and will not open — the same args answered two "
+            "ways, so the fault is inside make(), not in what this file passes it."
+        )
+    return "Nothing enumerated under any filter — the driver or the bus, not the binding."
 
 
 def _probe_open(

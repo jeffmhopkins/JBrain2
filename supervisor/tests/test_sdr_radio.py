@@ -650,3 +650,86 @@ def test_a_driver_whose_version_call_fails_still_gets_probed() -> None:
     assert "unavailable" in out["soapy"] and "getAPIVersion" in out["soapy"]
     # It got PAST the version call to a real answer about enumeration.
     assert "enumerated no rtlsdr device" in out["summary"]
+
+
+def test_a_registry_with_no_rtlsdr_module_is_named_as_packaging() -> None:
+    """The one diagnosis whose fix is not in this repo at all.
+
+    If `make` has no rtlsdr factory registered, enumeration cannot be answering from
+    the same place, and no filter or call shape will ever help."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["/usr/lib/SoapySDR/modules0.8/libaudioSupport.so"]
+            },
+            "filters": [
+                {"filter": "driver only", "enumerate": "2", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "packaging, not code" in finding
+
+
+def test_a_filter_that_opens_wins_over_every_other_reading() -> None:
+    """The only outcome that names a fix in this file, so it is reported ahead of the
+    contradiction it would otherwise be described as."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver only", "enumerate": "2", "make": "no match"},
+                {
+                    "filter": "the enumeration row itself",
+                    "enumerate": "1",
+                    "make": "opened",
+                },
+            ],
+        }
+    )
+
+    assert "the enumeration row itself" in finding
+
+
+def test_enumerate_and_make_disagreeing_points_inside_make() -> None:
+    """The measured state on the box: the driver is loaded, the args list devices, and
+    the same args will not open one. Nothing this file passes is wrong."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "inside make()" in finding
+
+
+def test_a_diagnosis_that_enumerates_nothing_blames_the_bus() -> None:
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"]},
+            "filters": [
+                {"filter": "driver only", "enumerate": "0", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "the driver or the bus" in finding
+
+
+def test_an_unreadable_environment_is_not_a_packaging_verdict() -> None:
+    """`modules` is a STRING when the call raised, and the old membership test would
+    have read `rtl` out of an error message — or worse, out of its absence."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": "RuntimeError: listModules is not a thing here"},
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "packaging" not in finding
+    assert "inside make()" in finding
