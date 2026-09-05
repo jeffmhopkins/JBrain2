@@ -621,19 +621,23 @@ PY
     _call GET "/api/debug/update/status?tail=${1:-200}" | _pp ;;
 
   listen-probe)
-    mhz=""; mode="fm"; secs="5"; serial=""
-    while [ $# -gt 1 ]; do
-      case "$2" in
-        --mhz) mhz="$3"; shift 2 ;;
-        --mode) mode="$3"; shift 2 ;;
-        --seconds) secs="$3"; shift 2 ;;
-        --serial) serial="$3"; shift 2 ;;
+    mhz=""; mode="fm"; secs="5"; serial=""; gain=""
+    # `$1` is already the first ARGUMENT here — the verb was shifted off above, which
+    # is what every other option-taking command in this file assumes.
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --mhz) mhz="$2"; shift 2 ;;
+        --mode) mode="$2"; shift 2 ;;
+        --seconds) secs="$2"; shift 2 ;;
+        --serial) serial="$2"; shift 2 ;;
+        --gain) gain="$2"; shift 2 ;;
         *) shift ;;
       esac
     done
-    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--serial S]" >&2; exit 2; }
+    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--gain dB] [--serial S]" >&2; exit 2; }
     q="mhz=$mhz&mode=$mode&seconds=$secs"
     [ -n "$serial" ] && q="$q&serial=$serial"
+    [ -n "$gain" ] && q="$q&gain=$gain"
     _call POST "/api/debug/sdr/listen-probe?$q" | _pp
     ;;
 

@@ -115,6 +115,13 @@ DC_BLOCK_TAPS = 512
 #: CLIPS, which is what an overdriven receiver does and is audible as such.
 FM_DEVIATION_HZ: dict[str, float] = {"fm": 5_000.0, "nfm": 5_000.0, "wbfm": 75_000.0}
 
+#: Headroom over full deviation. Without it the scaling above puts a fully-deviated
+#: signal at EXACTLY full scale, so a transmitter running a little hot — which is most
+#: of them — clips, and there is nothing left for the peaks that carry a voice's
+#: consonants. -3 dB is what a receiver leaves; the cost is audio a third quieter,
+#: which the player's own volume answers and clipping does not.
+FM_HEADROOM = 0.7
+
 #: Where an SSB passband sits relative to the suppressed carrier. 300–3400 Hz is the
 #: telephony band every SSB radio is built around; the filter is designed as a
 #: low-pass of half that width and shifted to the middle of it.
@@ -375,7 +382,7 @@ class Demodulator:
         self.audio_rate_hz = int(audio_rate_hz)
         self.channel_half_hz = CHANNEL_HALF_HZ[key]
         deviation = FM_DEVIATION_HZ.get(key)
-        self._gain = if_rate / (2.0 * deviation) if deviation else 1.0
+        self._gain = FM_HEADROOM * if_rate / (2.0 * deviation) if deviation else 1.0
 
         self._mixer = _Mixer(offset_hz, capture_rate_hz)
         #: The offset ACTUALLY used, after snapping to a whole division of the rate.

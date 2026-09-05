@@ -2540,6 +2540,8 @@ class _FakeRadio:
         self.alive = True
         self.closed = False
         self.reads = 0
+        self.gain_db: float | None = "unset"  # type: ignore[assignment]
+        self.gain_calls = 0
         # The station sits `center - station` BELOW the radio's centre, which is what
         # the demodulator's mixer has to take back out.
         self._offset = station_hz - center_hz
@@ -2561,6 +2563,10 @@ class _FakeRadio:
             overflows=0,
             timeouts=0,
         )
+
+    def set_gain(self, db: float | None) -> None:
+        self.gain_db = db
+        self.gain_calls += 1
 
     def close(self) -> None:
         self.closed = True
@@ -2722,3 +2728,27 @@ def test_a_box_where_the_iq_engine_will_not_start_still_gets_audio(
         assert tuner.drawing() is None  # rtl_fm draws nothing, and does not pretend to
     finally:
         tuner.stop()
+
+
+def test_the_gain_reaches_the_tuner(iq_tuner) -> None:
+    """The defect this path shipped with: it opened the radio and never touched the
+    gain, so a listening session ran at whatever librtlsdr left the dongle at —
+    MEASURED on the box as 0.0 dB, the bottom of a 0-49.6 dB range. `rtl_fm` hands the
+    tuner to its own AGC when no `-g` is given, so anything else is a silent
+    regression against the engine this replaces."""
+    iq_tuner.start(146_940_000, "fm", None)
+    try:
+        assert iq_tuner.opened[0].gain_calls == 1
+        assert iq_tuner.opened[0].gain_db is None  # None means the radio's own loop
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_chosen_gain_wins_over_the_radios_own_loop(iq_tuner) -> None:
+    """AGC is the DEFAULT, not the policy: an owner who names a gain gets it, which is
+    what makes a weak band workable and what `-g` did before."""
+    iq_tuner.start(146_940_000, "fm", "30.0")
+    try:
+        assert iq_tuner.opened[0].gain_db == 30.0
+    finally:
+        iq_tuner.stop()

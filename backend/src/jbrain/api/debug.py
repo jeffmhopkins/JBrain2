@@ -2192,6 +2192,7 @@ async def sdr_listen_probe(
     mode: Annotated[str, Query(max_length=8, pattern=r"^[a-z]+$")] = "fm",
     seconds: Annotated[float, Query(ge=1.0, le=20.0)] = 5.0,
     serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
+    gain: Annotated[str | None, Query(max_length=8, pattern=r"^[0-9.]+$")] = None,
 ) -> dict[str, Any]:
     """**Does the numpy demodulator work on this radio?** The twin of `spectrum-probe`.
 
@@ -2216,7 +2217,10 @@ async def sdr_listen_probe(
             )
     else:
         serial = await _radio(request, settings, GENERAL)
-    body = {"mhz": mhz, "mode": mode, "seconds": seconds, "serial": serial}
+    # `gain` travels because it is the thing most likely to be WRONG on a quiet band,
+    # and comparing two runs is the only way to tell a deaf receiver from a dead one.
+    # Absent hands the tuner to its own AGC, which is what `rtl_fm` does by default.
+    body = {"mhz": mhz, "mode": mode, "seconds": seconds, "serial": serial, "gain": gain}
     return await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
 
 
