@@ -55,6 +55,142 @@ def _default_mode(mhz: float) -> str:
 RadioPicker = Callable[[SessionContext, str], Awaitable[Choice]]
 
 
+#: The longest a signal measurement may hold the radio. Seconds, not minutes: the
+#: comment in `listen.py` about an agent asking for an hour "because nothing in its
+#: training says the radio is scarce" is about exactly this surface, and the sidecar's
+#: own 900 s ceiling is far too generous to be the only guard. It also has to finish
+#: inside `_call`'s timeout, since jerv has no way to wait on a job.
+MAX_SIGNAL_SECONDS = 10.0
+DEFAULT_SIGNAL_SECONDS = 3.0
+#: A measurement is about one frequency, so the span is one capture wide rather than a
+#: band: wide enough to show a carrier and its neighbours, narrow enough that the peak
+#: means something about the frequency that was asked for.
+SIGNAL_SPAN_HZ = 200_000
+#: What a measurement asks for when no curated capture covers the span. Fine enough to
+#: separate adjacent narrowband channels, coarse enough not to be noise.
+SIGNAL_BIN_HZ = 250
+
+
+def _bounded_seconds(raw: object) -> float:
+    try:
+        want = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_SIGNAL_SECONDS
+    return max(1.0, min(want, MAX_SIGNAL_SECONDS))
+
+
+def _signal_span(arguments: dict) -> tuple[int, int] | str:
+    """The range to measure, from a section or a frequency. A sentence when neither."""
+    named = arguments.get("section")
+    if named:
+        found = bands.by_id(str(named))
+        if found is None:
+            return f"No section called {named!r}. `sdr_read` with what=bands lists them."
+        return found.start_hz, found.stop_hz
+    try:
+        mhz = float(arguments.get("frequency_mhz"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "Give me a frequency in MHz, or a section id from `sdr_read`."
+    refused = out_of_range(mhz)
+    if refused:
+        return refused
+    centre = int(round(mhz * 1_000_000))
+    return centre - SIGNAL_SPAN_HZ // 2, centre + SIGNAL_SPAN_HZ // 2
+
+
+def _signal_capture(start_hz: int, stop_hz: int) -> dict[str, int]:
+    """The one-hop capture for this span, so the I/Q engine measures it rather than
+    `rtl_power` — which reports its own dB scale, not dBFS, and is the very confusion
+    F9 exists to stop."""
+    capture = bands.capture_for(start_hz, stop_hz)
+    if capture is None:
+        return {}
+    rate_hz, fft_bins = capture
+    return {"rate_hz": rate_hz, "bins": fft_bins}
+
+
+def _signal_bin_hz(start_hz: int, stop_hz: int) -> int | float:
+    capture = bands.capture_for(start_hz, stop_hz)
+    return bands.bin_width_hz(*capture) if capture is not None else SIGNAL_BIN_HZ
+
+
+def _signal_reading(body: dict[str, Any], start_hz: int, stop_hz: int) -> str:
+    """The measurement as a sentence about the MARGIN, not the raw level.
+
+    An absolute dBFS figure means little here — no calibrated gain, about seven
+    effective bits — so what carries information is how far the strongest bin stands
+    over the frame's own floor. That is the same relative standard `sweep.steady` is
+    calibrated on, where +6 dB found all 13 FM stations and nothing on a quiet band."""
+    frame = body.get("frame") or {}
+    span = f"{start_hz / 1e6:g}-{stop_hz / 1e6:g} MHz"
+    if not body.get("frames"):
+        return f"The radio gave me no measurement of {span} at all."
+    floor = frame.get("floor_db")
+    peak = frame.get("peak_db")
+    if floor is None or peak is None:
+        return (
+            f"Nothing measurable across {span}: no noise floor at all, which is the "
+            "antenna or the input rather than the band being quiet."
+        )
+    over = round(float(peak) - float(floor), 1)
+    where = frame.get("peak_hz")
+    at = f" at {float(where) / 1e6:.4f} MHz" if isinstance(where, int | float) else ""
+    verdict = "something is transmitting" if over >= 6.0 else "nothing is standing out of the noise"
+    return (
+        f"Across {span}: {verdict}. Strongest bin{at} is {peak} dBFS, "
+        f"{over} dB over a noise floor of {floor} dBFS."
+    )
+
+
+def _band_table() -> str:
+    """Every section, one line each. No channels — that is what asking for one is for."""
+    lines = [f"{len(bands.SECTIONS)} sections, region {bands.REGION}:"]
+    for section in bands.SECTIONS:
+        lines.append(
+            f"- {section.id}: {section.name}, "
+            f"{section.start_hz / 1e6:g}-{section.stop_hz / 1e6:g} MHz, "
+            f"{section.mode}, live={section.live}" + (f" — {section.note}" if section.note else "")
+        )
+    return "\n".join(lines)
+
+
+def _section_detail(section: bands.Section) -> str:
+    lines = [
+        f"{section.id}: {section.name} ({section.band})",
+        f"{section.start_hz / 1e6:g}-{section.stop_hz / 1e6:g} MHz, mode {section.mode}",
+        f"channel spacing {section.channel_hz or 0} Hz, tuning step {section.step_hz} Hz",
+        f"live={section.live}"
+        + (", continuous carriers" if section.continuous else ", intermittent traffic"),
+    ]
+    if section.note:
+        lines.append(section.note)
+    if section.channels:
+        lines.append("Named channels:")
+        lines.extend(
+            f"- {c.hz / 1e6:g} MHz {c.name}" + (f" — {c.note}" if c.note else "")
+            for c in section.channels
+        )
+    return "\n".join(lines)
+
+
+def _radio_roster(answered: tuple[int, dict[str, Any]]) -> str:
+    """Which dongles are attached and what each is doing, from the sidecar's own view."""
+    status, body = answered
+    if status != 200:
+        return "I couldn't reach the radio service to ask what is attached."
+    holding = body.get("holding")
+    rows = holding if isinstance(holding, list) else []
+    if not rows:
+        return "No radio is doing anything right now."
+    lines = ["Radios in use:"]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        serial = row.get("serial") or "(whichever enumerated first)"
+        lines.append(f"- {serial}: {row.get('purpose') or 'in use'}")
+    return "\n".join(lines)
+
+
 def build_sdr_handlers(
     base_url: str, pick_radio: RadioPicker | None = None
 ) -> dict[str, ToolHandler]:
@@ -252,8 +388,61 @@ def build_sdr_handlers(
             "its own switch, so tell me which you want turned off."
         )
 
+    async def sdr_read(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
+        """The band table and the radio roster. Takes no radio, so it never refuses.
+
+        One tool for two readings rather than two tools, which is `TOOL_CATALOG_PLAN`
+        W1's shape: the catalog is already back at its pre-W1 size, and two more names
+        for two lookups is how it got there."""
+        what = str(arguments.get("what") or "bands").lower()
+        if what == "radios":
+            return _radio_roster(await _get("/listen/current"))
+        if what != "bands":
+            return f"I can read `bands` or `radios`, not {what!r}."
+        wanted = arguments.get("section")
+        if wanted:
+            found = bands.by_id(str(wanted))
+            if found is None:
+                return f"No section called {wanted!r}. Ask with no section to see the whole table."
+            return _section_detail(found)
+        return _band_table()
+
+    async def sdr_signal(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """Power in dBFS, which is a number this system could not produce until F6.
+
+        The only level available before was the loudness of demodulated audio off the
+        discriminator — after AGC, squelch and de-emphasis, so not a signal level at
+        all and not comparable between the radio's two signal paths (F9)."""
+        span = _signal_span(arguments)
+        if isinstance(span, str):
+            return span
+        start_hz, stop_hz = span
+        seconds = _bounded_seconds(arguments.get("seconds"))
+        serial, refused = await _chosen(ctx, GENERAL)
+        if refused is not None:
+            return refused
+        status, body = await _call(
+            "/spectrum/probe",
+            {
+                "start_hz": start_hz,
+                "stop_hz": stop_hz,
+                "bin_hz": _signal_bin_hz(start_hz, stop_hz),
+                "seconds": seconds,
+                "serial": serial,
+                **_signal_capture(start_hz, stop_hz),
+            },
+        )
+        if status == 409:
+            held = str(body.get("detail") or "the radio is already in use")
+            return f"{held[:1].upper()}{held[1:]}. Another radio may be free."
+        if status != 200:
+            return f"Couldn't measure it: {body.get('detail', 'unknown error')}"
+        return _signal_reading(body, start_hz, stop_hz)
+
     return {
         "sdr_listen": sdr_listen,
         "sdr_stop": sdr_stop,
         "sdr_aprs_logging": sdr_aprs_logging,
+        "sdr_read": sdr_read,
+        "sdr_signal": sdr_signal,
     }
