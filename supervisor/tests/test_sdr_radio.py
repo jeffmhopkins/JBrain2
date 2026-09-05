@@ -773,3 +773,71 @@ def test_another_modules_loader_error_is_not_mistaken_for_the_rtlsdr_one() -> No
 
     assert "registered NOTHING" not in finding
     assert "inside make()" in finding
+
+
+def test_failing_exactly_like_a_name_nobody_wrote_means_unregistered() -> None:
+    """MEASURED against SoapySDR 0.8.1: `make() no match` is what a driver name that
+    does not exist raises, while a REGISTERED driver with no hardware raises the
+    driver's own sentence instead. Matching the control is therefore not a
+    coincidence — it is the reading, and it beats every other one because no filter
+    and no call shape can fix it."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {
+                    "filter": radio.CONTROL_FILTER,
+                    "enumerate": "0",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+                {
+                    "filter": "driver + serial",
+                    "enumerate": "1",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" in finding
+
+
+def test_rtlsdr_failing_differently_from_the_control_is_not_that() -> None:
+    """The driver's own error means it IS registered and did run, so the contradiction
+    stands and the next place to look is elsewhere."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {
+                    "filter": radio.CONTROL_FILTER,
+                    "enumerate": "0",
+                    "make": "SoapySDR::Device::make() no match",
+                },
+                {
+                    "filter": "driver + serial",
+                    "enumerate": "1",
+                    "make": "rtlsdr_get_index_by_serial(09022796) - -2",
+                },
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" not in finding
+    assert "inside make()" in finding
+
+
+def test_the_control_opening_a_device_is_never_read_as_a_verdict() -> None:
+    """It cannot happen, and if it somehow did, the control has proved nothing."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {"modules": ["librtlsdrSupport.so"], "module_errors": {}},
+            "filters": [
+                {"filter": radio.CONTROL_FILTER, "enumerate": "0", "make": "opened"},
+                {"filter": "driver + serial", "enumerate": "1", "make": "opened"},
+            ],
+        }
+    )
+
+    assert "no rtlsdr factory is registered" not in finding
+    assert "DID open it" in finding

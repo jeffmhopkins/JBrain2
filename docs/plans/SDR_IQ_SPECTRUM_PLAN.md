@@ -511,6 +511,25 @@ remaining space into three fixes that are nothing like each other — a driver m
 missing from this process (packaging), a filter that does open (code here), or the same
 args answered two ways (inside `make`, and neither of the above).
 
+⟲ **And the error itself was then reproduced away from the box, which narrows it much
+further.** On that same 0.8.1 with the module present and no hardware:
+
+| asked | answer |
+| --- | --- |
+| `{"driver": "nosuchdriver"}` | `SoapySDR::Device::make() no match` |
+| `{"driver": "rtlsdr", "serial": "09022796"}` | `rtlsdr_get_index_by_serial(09022796) - -2` |
+| `{"serial": "09022796"}` | `no driver specified and no enumeration results` |
+
+`make() no match` is what a **driver name nobody ever registered** raises. A registered
+driver that simply has no hardware raises its OWN sentence instead, and a filter with no
+`driver` key raises a third. So the box's answer says the `rtlsdr` **factory** is not
+registered in that process — which cannot be squared with enumeration returning two
+rtlsdr rows from the same process, and that irreconcilability is the finding rather than
+a loose end. The probe therefore carries a **control**: a deliberately bogus driver name
+alongside the real one. If the two answers are identical, `rtlsdr` is as unregistered as
+a name nobody wrote, and no filter and no call shape can fix it. `getLoaderResult` is
+read for the same reason — a module can be listed and have registered nothing.
+
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
 direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,
