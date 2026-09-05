@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0🟡 F1✅ F2✅ F3✅ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6◻️ F7✅ F8✅ F9◻️ F10🟡
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -560,6 +560,44 @@ where two other filters had opened, concluding "no factory registered" against i
 evidence; an open that happened now outranks every inference about why others did not.
 The lesson is the same one as the call shape: **with no hardware attached every shape
 fails identically**, so a sandbox can falsify nothing about which one opens a radio.
+
+### F0's answers, measured on the box 2026-09-05
+
+Both dongles, one probe run each. `ok: true`, no findings — and then a second look at
+the one number that was too good.
+
+| claim | answer |
+| --- | --- |
+| `serial=` selects the radio it names | ✅ `09022796` → index 1, `77192819` → index 0, each matching its enumeration index |
+| `direct_samp=2` takes | ✅ requested `2`, read back `2` |
+| **frequency changes on a LIVE stream** | ✅ 10.000 → 10.256 MHz, `stream_rebuilt: false` |
+| rate changes on a live stream | ✅ 256 k / 1.024 M / 2.4 M, every one exact, no rebuild |
+| `SOAPY_SDR_OVERFLOW` really reported | ✅ 1 s of induced backpressure → `reported: true`, 1 overflow, 0 timeouts |
+| achieved rate == requested | ✅ exact at all three |
+| **`bufflen` took** | ✅ **96.92–96.95 ms measured against 97.0 expected** — not the 512 ms default. The 1.9 fps ceiling this plan exists to remove is real, and it is gone. |
+
+The engine was then confirmed against a band that certainly has signal: at 99.3 MHz the
+frame has a floor of **-44.4 dBFS** with a carrier **28.9 dB** over it, and a live
+retune to 101.7 MHz lands on a station at 101.693 MHz, **30.2 dB** up. The I/Q path
+works end to end on real RF.
+
+⚠ **But nothing is reaching the ADC under direct sampling, and the probe called it a
+pass.** At 5.0, 7.15 and 10.0 MHz the capture is byte-for-byte the same reading: peak
+exactly on the tuned bin at exactly **+3.0 dBFS**, `floor_db` at **-200.0** — which is
+`iq.DB_FLOOR`, the zero-magnitude sentinel — and therefore a reported "203 dB over the
+floor". That is a DC delta with no noise floor at all, three times at three
+frequencies. A receiver with no noise floor is not receiving.
+
+Two things follow. The probe is fixed: the centre bin is excluded from the peak (every
+direct-conversion receiver has a DC offset spike exactly at the tuned frequency, so a
+peak there is the receiver looking at itself), `dc_db` is reported separately, and a
+frame whose median has fallen to `DB_FLOOR` is a **finding**, not a pass. And the
+remaining question is **hardware, not software**: either no HF antenna is on these
+dongles, or the NESDR SMArt v5 does not wire the Q branch to its input. §1's claim that
+"this hardware wires the Q branch" is prose inherited from `bands.py`, never measured,
+and it is now the one F0 answer still outstanding. **F6 does not wait on it** — the
+engine swap is proven for everything above 24 MHz, which is where the live waterfall
+lives; only the HF half of §4's promise is gated.
 
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg

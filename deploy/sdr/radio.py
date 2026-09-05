@@ -897,23 +897,40 @@ PROBE_BACKPRESSURE_S = 1.0
 
 
 def _reading_verdict(spectrum: iq.Spectrum) -> dict[str, Any]:
-    """One captured frame reduced to the two numbers that mean anything on their own.
+    """One captured frame reduced to the numbers that mean anything on their own.
 
     A peak in dBFS is uninterpretable by itself — the ADC has ~7 effective bits and no
     gain stage below 24 MHz — so it is reported against the frame's own median, which
     is the same relative standard `sweep.steady` uses and the reason a +6 dB rule was
-    calibratable at all."""
+    calibratable at all.
+
+    **The centre bin is excluded, and that is not a detail.** Every direct-conversion
+    receiver puts a DC offset spike exactly at the tuned frequency, so a peak there is
+    the receiver looking at itself. MEASURED 2026-09-05: at 5.0, 7.15 and 10.0 MHz
+    under `direct_samp=2` the frame was a DC delta and NOTHING else — peak exactly on
+    the tuned bin at exactly +3.0 dBFS, every other bin exactly zero — and a plain
+    argmax reported that as a 203 dB signal, three times, at three frequencies, without
+    a murmur. `dead` is what says so instead: a frame whose median has fallen to
+    `iq.DB_FLOOR` has no noise floor, and a receiver with no noise floor is not
+    receiving. The same probe at 99.3 MHz gives a floor of -44 dBFS and a station 29 dB
+    over it, which is what a live frame looks like."""
     db = spectrum.db
-    top = int(np.argmax(db))
-    floor = float(np.median(db))
+    dc = spectrum.bins // 2
+    without_dc = np.delete(db, dc)
+    top = int(np.argmax(without_dc))
+    # `delete` closed the gap, so anything at or past the removed bin shifted down one.
+    top_bin = top if top < dc else top + 1
+    floor = float(np.median(without_dc))
     return {
         "bins": spectrum.bins,
         "bin_hz": spectrum.bin_hz,
         "segments": spectrum.segments,
-        "peak_hz": float(spectrum.start_hz + top * spectrum.bin_hz),
-        "peak_db": round(float(db[top]), 1),
+        "peak_hz": float(spectrum.start_hz + top_bin * spectrum.bin_hz),
+        "peak_db": round(float(db[top_bin]), 1),
+        "dc_db": round(float(db[dc]), 1),
         "floor_db": round(floor, 1),
-        "above_floor_db": round(float(db[top]) - floor, 1),
+        "above_floor_db": round(float(db[top_bin]) - floor, 1),
+        "dead": floor <= iq.DB_FLOOR,
     }
 
 
@@ -1337,15 +1354,29 @@ def _probe_open(
                 "then an overrun is as silent here as it was under `rtl_sdr`."
             )
 
+    peak = out.get("capture", {})
+    if peak.get("dead"):
+        findings.append(
+            f"Nothing is reaching the ADC at {peak.get('center_hz')} Hz: the frame is a "
+            f"DC spike at {peak.get('dc_db')} dBFS and every other bin is empty, so "
+            "there is no noise floor to measure against. Under `direct_samp` that is "
+            "the antenna or the board's HF input, not this code — the same capture at "
+            "VHF finds a real floor and a real carrier."
+        )
     out["findings"] = findings
     out["ok"] = not findings
-    peak = out.get("capture", {})
+    reading = (
+        f"nothing but a DC spike at {peak.get('dc_db')} dBFS"
+        if peak.get("dead")
+        else (
+            f"peak {peak.get('peak_hz')} Hz at {peak.get('peak_db')} dBFS, "
+            f"{peak.get('above_floor_db')} dB over the frame's own floor"
+        )
+    )
     out["summary"] = (
         f"{len(found)} radio(s); {'every' if not findings else 'not every'} F0 claim "
         f"held. Buffers {out['bufflen'].get('callback_ms')} ms "
-        f"(wanted {out['bufflen'].get('expected_ms')}); peak "
-        f"{peak.get('peak_hz')} Hz at {peak.get('peak_db')} dBFS, "
-        f"{peak.get('above_floor_db')} dB over the frame's own floor."
+        f"(wanted {out['bufflen'].get('expected_ms')}); {reading}."
     )
     out["elapsed_s"] = round(time.monotonic() - started, 2)
     return out
