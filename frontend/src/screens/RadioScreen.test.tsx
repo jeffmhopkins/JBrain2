@@ -47,7 +47,7 @@ function lease(purpose: string, elapsed_s = 4320) {
       purpose,
       started_at: 0,
       elapsed_s,
-      peak: 0,
+      audio_peak: 0,
       listeners: 0,
     },
   };

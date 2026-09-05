@@ -112,7 +112,7 @@ def test_a_session_reports_what_the_tuner_ui_reads(tuner) -> None:
     assert body["mode"] == "wbfm"
     assert body["session_id"]
     assert body["listeners"] == 0
-    assert "elapsed_s" in body and "peak" in body
+    assert "elapsed_s" in body and "audio_peak" in body
 
 
 def test_a_second_listen_is_refused_not_queued(tuner) -> None:
@@ -2428,3 +2428,26 @@ class TestIQSpectrumEngine:
         # And it opened the radio the capture named, not a rate of its own choosing.
         assert opened["rate_hz"] == rate_hz
         assert opened["direct"] is False
+
+
+def test_the_audio_level_is_named_for_what_it_measures() -> None:
+    """F9. Two numbers in one surface, both once called `peak`, in different units,
+    measuring different things: this one is the loudest sample of the DEMODULATED AUDIO
+    after AGC, squelch and de-emphasis, and the spectrum path's is true dBFS per bin.
+    It was drawn as a signal meter once, which is the reading it cannot support — idle
+    airband AM sits at 0.21 off the tuner's AGC amplifying its own noise. The name on
+    the wire is what stops it being re-surfaced as one."""
+    info = listen.SessionInfo(
+        session_id="abc",
+        frequency_hz=99_300_000,
+        mode="wbfm",
+        gain=None,
+        started_at=time.time(),
+        audio_peak=0.42,
+        listeners=0,
+    )
+
+    body = info.as_dict()
+
+    assert body["audio_peak"] == 0.42
+    assert "peak" not in body

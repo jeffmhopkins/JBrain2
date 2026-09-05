@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9◻️ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -707,9 +707,19 @@ makes the feature *invisible* rather than merely broken — every other site at 
 produces an error the owner can see. Per purpose, so the `rtl_power` survey keeps
 refusing.
 
-**F9 — stop calling loudness a signal level.** The spectrum path reports true dBFS; the
-listening path keeps `rtl_fm`, so its `peak` stays audio loudness and is **labelled** as
-such. The two dB quantities are distinguished in the UI (§6.9).
+**F9 — stop calling loudness a signal level.** ✅ **SHIPPED.** The spectrum path reports
+true dBFS per bin; the listening path keeps `rtl_fm`, so its number stays audio loudness
+and is **named** for it — `peak` is `audio_peak` on the sidecar wire, on the debug
+capture route, and in the PWA's own type.
+
+⟲ The wave as written said "distinguished in the UI (§6.9)", and both halves of that were
+wrong. There is no §6.9 — the corrections section is a numbered list and its item 9 is
+about the survey path being safe — and the UI half was already done by DELETION: the
+tuner sheet's signal meter, which was the one place this number was ever drawn, came out
+before this wave was reached. What was actually left was the wire, where two numbers in
+one surface were both called `peak`, in different units, measuring different things.
+Renaming is the whole fix, and it is stronger than a label: nothing can re-surface
+`audio_peak` as a meter by accident.
 
 **F10 — the agent's half.** Everything above gives the BOX a capability. jerv reaches
 almost none of it, and two of the three tools it does have now describe a machine that

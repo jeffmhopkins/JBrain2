@@ -13,7 +13,7 @@ const LISTENING = {
   gain: null,
   started_at: 1_700_000_000,
   elapsed_s: 4,
-  peak: 0.42,
+  audio_peak: 0.42,
   listeners: 1,
 };
 

@@ -1713,7 +1713,11 @@ class SdrCaptureOut(BaseModel):
     frequency_mhz: float
     mode: str
     seconds: float
-    peak: float
+    #: Loudest sample of the DEMODULATED AUDIO, 0..1 of full scale — **not a signal
+    #: level** (F9). Named for what it is because the spectrum path now reports true
+    #: dBFS per bin, and two numbers both called "peak" in the same surface, in
+    #: different units, measuring different things, is how one gets read as the other.
+    audio_peak: float
     heard_something: bool
     transcript: str | None
     transcript_error: str | None
@@ -1966,16 +1970,16 @@ async def sdr_capture(
             except Exception as exc:  # noqa: BLE001 - report, never sink the capture
                 error = repr(exc)
 
-    peak = float(meta.get("peak") or 0.0)
+    audio_peak = float(meta.get("audio_peak") or 0.0)
     return SdrCaptureOut(
         frequency_hz=freq_hz,
         frequency_mhz=frequency_mhz,
         mode=meta.get("mode") or mode,
         seconds=float(meta.get("seconds") or 0.0),
-        peak=peak,
+        audio_peak=audio_peak,
         # 1% of full scale is comfortably above a quiet noise floor and well below any
         # real signal — enough to tell "the radio produced audio" from "it produced zeros".
-        heard_something=peak > 0.01,
+        heard_something=audio_peak > 0.01,
         transcript=transcript,
         transcript_error=error,
         device_log=str(meta.get("device_log") or ""),

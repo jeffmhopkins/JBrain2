@@ -28,7 +28,7 @@ function session(over: Partial<SdrListening> = {}): SdrListening {
     gain: null,
     started_at: 0,
     elapsed_s: 5,
-    peak: 0,
+    audio_peak: 0,
     listeners: 0,
     ...over,
   };
