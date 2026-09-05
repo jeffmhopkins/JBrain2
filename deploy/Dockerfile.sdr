@@ -76,6 +76,7 @@ COPY deploy/sdr/packets.py ./packets.py
 # the build gate below, which is exactly where it should fail.
 COPY deploy/sdr/radio.py ./radio.py
 COPY deploy/sdr/iq.py ./iq.py
+COPY deploy/sdr/demod.py ./demod.py
 # What stands above the noise in a row, found on the box so the picture and the agent
 # read one answer. Pure stdlib — `listen.py` imports it on every published frame.
 COPY deploy/sdr/peaks.py ./peaks.py

@@ -44,21 +44,34 @@ fraction then varies by band and the fixed middle-half reference is gone.
 not audible as a fault (the audio just sounds thin), but half a signal outside the
 shading is unmissable.
 
-## The open decision: one radio, one job
+## One radio does all three
 
-A picture and a sound cannot come off the same dongle. Listening runs `rtl_fm`; a
-spectrum runs the I/Q engine; the lease is per-dongle. So this feature is one of:
+An earlier draft of this README argued that a picture and a sound could not come off
+one dongle, and offered the second radio or a deferred numpy demodulator as a fork.
+That was wrong, and the owner said so: *"I feel like you can pull off spectrum and
+audio from one radio — this is done all the time."* They are right. Every SDR
+application does exactly this. The obstacle was never the hardware — it was that
+`rtl_fm` is a separate process that opens the dongle exclusively, so **"one radio, one
+job" was a constraint this codebase imposed on itself.**
 
-1. **The second dongle** (`Unavailable.dc.html`) — available today, and it is what
-   77192819 would stop doing APRS for. Honest, cheap, and the strip goes dark whenever
-   the other radio is busy.
-2. **Demodulate in numpy inside the I/Q engine** — one capture feeds both, so the strip
-   is always there. `docs/plans/SDR_IQ_SPECTRUM_PLAN.md` §8 defers this deliberately:
-   the PCM it would replace feeds the segment cutter, whisper captions, direwolf and
-   recordings.
+`deploy/sdr/demod.py` removes it. It takes the same complex samples the waterfall is
+drawn from and emits the same s16le mono PCM at 16 kHz that `rtl_fm` wrote, so the
+level meter, the segment cutter, whisper captions, the MP3 encoder and the direwolf
+feed are all unchanged — they sit downstream of a single `read` in
+`listen.Session._pump_pcm`. Measured on a 100 ms frame of 2.4 MS/s:
 
-Nothing here commits to either. The mock draws (1) because it is the state the box can
-actually reach, and the strip is identical under (2).
+| | demod | + wideband FFT | + zoom FFT | total |
+| --- | --- | --- | --- | --- |
+| narrow FM / AM | 5.4% | 4.5% | 0.1% | **10.0% of one core** |
+| wide FM | 11.7% | 4.5% | 0.1% | **16.3% of one core** |
+
+The strip is better than free. `Audio.baseband` is the decimated complex stream, so a
+512-point FFT of it resolves **94 Hz** — six times finer than a 4000-bin transform of
+the whole 2.4 MHz capture, at 0.15 ms. The narrow view is not a zoom into the wideband
+row; it is a sharper picture that the wideband row cannot produce.
+
+`Unavailable.dc.html` stays as the **interim** state: until that engine replaces the
+`rtl_fm` subprocess in `listen.py`, the strip really does need the second radio.
 
 ## Regenerating
 

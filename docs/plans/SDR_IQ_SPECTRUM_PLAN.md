@@ -1243,19 +1243,46 @@ the driver's own default.
 
 ## 8. Deliberately not in this plan
 
-**Replacing `rtl_fm` with a numpy demodulator.** Affordable — NFM demod is ~1.5 ms per
-100 ms of I/Q — and it would give one radio spectrum *and* audio with one dB scale
-everywhere. The blast radius is why not: that PCM is the substrate for `_peak`, the
-segment cutter, whisper captions, the direwolf feed and the recordings library. Six
-features to re-validate for simultaneity that **two dongles already buy**, since the lease
-is per-radio. SoapySDR does not foreclose it, which is part of why it is the right base.
+**~~Replacing `rtl_fm` with a numpy demodulator.~~** ✅ **The engine is built and
+measured** (`deploy/sdr/demod.py`, 2026-09-05). This entry used to argue the blast
+radius was six features to re-validate for simultaneity that two dongles already buy.
+That was wrong twice over, and the owner said so: *"I feel like you can pull off
+spectrum and audio from one radio — this is done all the time."* They are right. Every
+SDR application does exactly this, and the obstacle was never the hardware or the
+physics — it was that `rtl_fm` is a **separate process that opens the dongle
+exclusively**. "One radio, one job" is a constraint this codebase imposed on itself.
 
-The first feature that actually wants it is the **narrow tuning view** on the Listen
-screen — a spectrum strip spanning twice the demodulator passband, centred on the tuned
-frequency, mocked at `docs/mocks/sdr-tuning-view/`. Under two dongles the strip goes dark
-whenever radio B is busy; under a numpy demodulator it is always there. The mock draws
-the two-dongle state because that is what the box can reach today, and the strip is
-identical either way — so the decision can wait without holding the surface up.
+The blast radius was overstated too. `_pump_pcm` reads a chunk from `rtl_fm`'s stdout,
+measures it, accumulates it and writes it to ffmpeg — so `_peak`, the segment cutter,
+whisper captions, the MP3 encoder and the direwolf feed are all downstream of **one
+`read`**, and they take s16le mono at 16 kHz. `demod.py` emits exactly that. They are
+unaffected by construction, not by re-validation.
+
+Measured on a 100 ms frame of 2.4 MS/s, against real time:
+
+| | demod | + wideband FFT | + zoom FFT | total |
+| --- | --- | --- | --- | --- |
+| narrow FM / AM | 5.4% | 4.5% | 0.1% | **10.0% of one core** |
+| wide FM | 11.7% | 4.5% | 0.1% | **16.3% of one core** |
+
+So one radio gives audio, the full waterfall **and** the narrow tuning view together,
+for a tenth of a core. Three findings worth carrying:
+
+1. **The IF is the tuning view.** `Audio.baseband` is the decimated complex stream, so
+   a 512-point FFT of it resolves 94 Hz — six times finer than a 4000-bin transform of
+   the whole 2.4 MHz capture, and it costs 0.15 ms. The narrow view is not a zoom into
+   the wideband row; it is better than one, and nearly free.
+2. **2 400 000 S/s serves every mode.** It divides both the 48 kHz narrowband IF and
+   the 240 kHz wide-FM one, so nothing has to change capture rate to change mode.
+3. **An FM discriminator is blind to amplitude**, so an empty channel demodulates to
+   full-scale noise. That is parity — `demod_args` passes no `-l` either — but we now
+   have a real RF level to build a squelch on, which `rtl_fm`'s audio-level one never
+   had.
+
+What is left is the wiring, not the physics: a session that opens one `Radio` and feeds
+both `Spectrometer` and `Demodulator`, replacing the `rtl_fm` subprocess at that single
+`read`. The **narrow tuning view** (`docs/mocks/sdr-tuning-view/`) is the first surface
+that wants it.
 
 **A real scanner** — cheap once `iq.py` exists, and a follow-on rather than a hidden extra.
 

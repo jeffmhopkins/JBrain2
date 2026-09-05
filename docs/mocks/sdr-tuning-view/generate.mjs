@@ -358,7 +358,7 @@ writeFileSync(
 writeFileSync(
   `${OUT}/Unavailable.dc.html`,
   shell({
-    title: "Listen — the tuning view needs a second radio",
+    title: "Listen — the tuning view before the demodulator lands",
     freq: "146.940",
     mode: "fm",
     modes: { step: "25 kHz" },
@@ -367,9 +367,9 @@ writeFileSync(
     inner: `      <p class="sdr-label tv-label">Tuning<span class="tv-span">32 kHz view · 16 kHz passband</span></p>
       <div class="tv-off">
         <p>
-          A picture and a sound cannot come off the same dongle: listening runs
-          <b>rtl_fm</b>, the picture runs the <b>I/Q engine</b>, and one radio does one
-          job. <b>77192819</b> is free.
+          Until the demodulator is wired in, the picture needs the other radio:
+          listening runs <b>rtl_fm</b>, which holds this dongle to itself.
+          <b>77192819</b> is free.
         </p>
         <button class="tv-hand">Draw it on 77192819</button>
       </div>`,

@@ -1,9 +1,37 @@
 {
   "artboards": [
-    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Centred" },
-    { "file": "Offtune.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "Off tune" },
-    { "file": "Wide.dc.html", "x": 980, "y": 0, "w": 390, "h": 844, "title": "Broadcast FM" },
-    { "file": "Unavailable.dc.html", "x": 1470, "y": 0, "w": 390, "h": 844, "title": "One radio, one job" }
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Centred"
+    },
+    {
+      "file": "Offtune.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Off tune"
+    },
+    {
+      "file": "Wide.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Broadcast FM"
+    },
+    {
+      "file": "Unavailable.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Until it is wired"
+    }
   ],
   "annotations": [
     {
@@ -32,8 +60,10 @@
       "x": 1470,
       "y": -250,
       "w": 390,
-      "text": "THE DECISION. One radio, one job: rtl_fm holds the dongle, so today the picture needs the second one (shown). The other route is demodulating in numpy inside the I/Q engine - one capture feeds both - which plan section 8 defers. Blast radius: PCM feeds the segment cutter, whisper captions, direwolf and recordings."
+      "text": "SETTLED, not a fork. deploy/sdr/demod.py demodulates the same I/Q the waterfall is drawn from: 10% of one core for narrow FM audio + the full waterfall + this strip, 16% for wide FM. So one radio does all three. This artboard is only the interim state, until that engine replaces the rtl_fm subprocess in listen.py."
     }
   ],
-  "launch": { "view": "canvas" }
+  "launch": {
+    "view": "canvas"
+  }
 }
