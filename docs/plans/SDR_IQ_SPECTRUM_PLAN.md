@@ -620,6 +620,25 @@ The lesson is the same one this plan has now learned three times: **a reading ta
 differently from how the system reads is not a measurement of the system.** The call
 shape, the sandbox with no hardware, and now a single frame against a stream.
 
+✅ **ANSWERED, on the fixed probe.** At 7.2125 MHz under `direct_samp=2`, reading ten
+frames and judging the last:
+
+    dead: false   settled: TRUE   floor -51.4 dBFS   peak -45.5 dBFS (5.9 dB over)
+
+which matches the streaming engine's -51.5 / -44.7 on the same dongle to within a dB.
+The same probe at 99.3 MHz returns `settled: false` and a station 24.7 dB over a
+-44.3 dBFS floor, so the flag is specific to the branch rather than firing everywhere.
+
+**So the seventh claim holds too, and the cause is now measured rather than guessed:
+the direct-sampling branch needs a moment after it is switched.** The first frame after
+the switch has nothing in it; a later one does. Nothing else in this system measured
+that, which is why a single frame taken there produced a confident, wrong verdict about
+the owner's antenna. `settled` is reported as a finding for exactly that reason —
+`ok: false` on that run is the probe saying "read me carefully", not the radio failing.
+
+That completes F0: **all seven claims hold on this hardware**, and the shortwave premise
+§1 turns on — that the Q branch really does deliver samples here — is measured true.
+
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
 direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,
