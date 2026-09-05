@@ -81,6 +81,23 @@ class _FakeSupervisor:
         self.calls: list[tuple[str, dict]] = []
         # Service names (e.g. "jcode") whose /logs return 404 — a not-running peer.
         self.down: set[str] = set()
+        # POSTs, kept apart from `calls` so a test can assert a route CAUSED something
+        # rather than merely read it — the distinction the update trigger turns on.
+        self.posts: list[tuple[str, dict]] = []
+        # True once an update one-shot is "running", so a second trigger 409s the way
+        # the supervisor's own mutual exclusion over one-shots does.
+        self.update_running = False
+
+    async def post(
+        self, url: str, json: dict | None = None, headers: dict | None = None
+    ) -> _FakeResp:
+        self.posts.append((url, json or {}))
+        if url == "/update":
+            if self.update_running:
+                return _FakeResp(409, "")
+            self.update_running = True
+            return _FakeResp(202, "", json_body={"state": "running"})
+        return _FakeResp(404, "")
 
     async def get(
         self, url: str, params: dict | None = None, headers: dict | None = None
@@ -1256,3 +1273,64 @@ def test_replay_rejects_an_unknown_tool(debug_client: tuple[TestClient, str]) ->
     )
     assert resp.status_code == 400
     assert "not_a_real_tool" in resp.json()["detail"]
+
+
+def test_the_console_can_cause_an_update_not_only_watch_one(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """`/update/status` could always READ an update; nothing could start one.
+
+    So every deploy needed the owner at the PWA, which is a real cost when the thing
+    being deployed is the only way to answer a question about the hardware."""
+    client, key = debug_client
+
+    resp = client.post("/api/debug/update", headers=_auth(key))
+
+    assert resp.status_code == 202
+    assert ("/update", {}) in _state(client).supervisor_client.posts
+
+
+def test_the_update_trigger_takes_no_ref_at_all(debug_client: tuple[TestClient, str]) -> None:
+    """The security property, asserted rather than trusted to the docstring.
+
+    The supervisor builds whatever `main` is, so a token can only ask for what a merged
+    PR already put there. If a branch, tag or sha could be passed through, a capability
+    token would be remote code execution on the box — so the body must stay empty even
+    when a caller tries to supply one."""
+    client, key = debug_client
+
+    resp = client.post(
+        "/api/debug/update",
+        headers=_auth(key),
+        json={"ref": "attacker/branch", "sha": "deadbeef"},
+    )
+
+    assert resp.status_code == 202
+    url, body = _state(client).supervisor_client.posts[-1]
+    assert url == "/update"
+    assert body == {}, f"a ref reached the supervisor: {body}"
+
+
+def test_a_second_update_while_one_runs_is_refused(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The supervisor's own mutual exclusion over its one-shots, surfaced as a sentence
+    rather than a 500 — two updates racing the same working tree is how a box ends up
+    serving a half-built image."""
+    client, key = debug_client
+    assert client.post("/api/debug/update", headers=_auth(key)).status_code == 202
+
+    resp = client.post("/api/debug/update", headers=_auth(key))
+
+    assert resp.status_code == 409
+    assert "already running" in resp.json()["detail"]
+
+
+def test_the_update_trigger_requires_the_debug_token(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """It restarts services and rolls the box to current main, so it is exactly as
+    guarded as the rest of this surface and no less."""
+    client, _ = debug_client
+    assert client.post("/api/debug/update").status_code == 401
+    assert _state(client).supervisor_client.posts == []

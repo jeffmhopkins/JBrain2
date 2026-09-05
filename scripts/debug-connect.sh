@@ -62,6 +62,13 @@
 #      then fails while sysfs still lists it — and NOTHING else clears that: not a
 #      container restart, not a rebuild, not an update. Refused with a 409 while a
 #      session holds that radio; the other dongle is untouched.)
+#   scripts/debug-connect.sh update                    # pull main, rebuild, restart
+#   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
+#     (The Ops → Update button, reachable with a token. It takes NO ref: the supervisor
+#      builds whatever `main` is, so this can only deploy what a merged PR already put
+#      there — a token cannot choose the code it runs. 409 while one is already going.
+#      Read `version` afterwards, not just the status: a restart and a rebuild look the
+#      same from outside and only `git_sha` tells them apart.)
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
 
@@ -545,6 +552,16 @@ PY
   sdr-reset) # <serial> — re-enumerate one dongle, for one that has stopped answering
     ser="${1:?usage: debug-connect.sh sdr-reset <serial>}"
     _call POST "/api/debug/sdr/reset?serial=$ser" | _pp ;;
+
+  update) # pull main, rebuild, restart — the Ops → Update button, from here
+    # No ref to pass, deliberately: the supervisor builds whatever `main` is, so this
+    # can only deploy what a merged PR already put there. Poll `update-status` for the
+    # log tail and `version` for the git_sha actually serving — a restart and a rebuild
+    # look identical until you read that.
+    _call POST "/api/debug/update" | _pp ;;
+
+  update-status) # [tail] — the running (or last) update's state and log tail
+    _call GET "/api/debug/update/status?tail=${1:-200}" | _pp ;;
 
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

@@ -169,6 +169,11 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "host.read",
             "host.metrics",
             "web.fetch",
+            # Deploy: pull main, rebuild, restart (`POST /update`). Listed for the same
+            # reason `llm.gateway` is — a capability missing from this list reads as one
+            # the assistant may not use, and a session that believes it cannot deploy
+            # waits on a human for something it was handed the means to do.
+            "ops.update",
         ],
     )
 
@@ -2154,6 +2159,45 @@ async def _sdr_post(
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"sdr sidecar: {resp.text[:300]}")
     return cast(dict[str, Any], resp.json())
+
+
+@router.post("/update", status_code=202)
+async def start_update_debug(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """**Pull main, rebuild, restart** — the Ops → Update button, reachable with a token.
+
+    The console could already WATCH an update (`/update/status`) and not cause one, so
+    every deploy needed the owner at the PWA. That is a real cost when the thing being
+    deployed is the only way to answer a question about the hardware: a probe run costs
+    a merge, a tap and a wait, and the tap has to happen on someone else's schedule.
+
+    **It takes no ref, and that is the security property.** The supervisor's `/update`
+    builds whatever `main` is; there is no branch, tag or sha to pass, so a token cannot
+    choose the code it deploys — only ask for what a merged PR already put on `main`,
+    which is exactly what the button does. Widening this to an arbitrary ref would turn
+    a capability token into remote code execution on the box, and no amount of
+    operational convenience is worth that trade.
+
+    What it does grant is real and worth naming rather than burying: anyone holding a
+    live token can restart this box's services and roll it to current `main`. `DebugDep`
+    is uniform — there is no per-token scope on this surface — so it reaches every token
+    ever minted, not just new ones. The mitigation is the one the surface already has:
+    tokens are revocable, time-boxed and listed for the owner, so the answer to "who
+    holds one" is to revoke rather than to reason about it.
+
+    409 while an update is already running, which is the supervisor's own mutual
+    exclusion over its one-shots rather than a rule restated here. Poll `/update/status`
+    for the log tail, and `/version` to know the new build is actually serving — a
+    restart is not the same event as a rebuild, and only `git_sha` tells them apart."""
+    request.state.debug_detail = "update (pull main, rebuild, restart)"
+    resp = await _supervisor(request).post(
+        "/update", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="update already running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
 
 
 @router.get("/update/status")
