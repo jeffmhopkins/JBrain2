@@ -1250,6 +1250,13 @@ segment cutter, whisper captions, the direwolf feed and the recordings library. 
 features to re-validate for simultaneity that **two dongles already buy**, since the lease
 is per-radio. SoapySDR does not foreclose it, which is part of why it is the right base.
 
+The first feature that actually wants it is the **narrow tuning view** on the Listen
+screen — a spectrum strip spanning twice the demodulator passband, centred on the tuned
+frequency, mocked at `docs/mocks/sdr-tuning-view/`. Under two dongles the strip goes dark
+whenever radio B is busy; under a numpy demodulator it is always there. The mock draws
+the two-dongle state because that is what the box can reach today, and the strip is
+identical either way — so the decision can wait without holding the surface up.
+
 **A real scanner** — cheap once `iq.py` exists, and a follow-on rather than a hidden extra.
 
 **The multi-job-per-radio question.** It breaks the "one radio, one job" assumption

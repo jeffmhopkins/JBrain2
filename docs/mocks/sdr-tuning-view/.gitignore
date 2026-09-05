@@ -1,0 +1,7 @@
+# The seeded Claude Design canvas — 2.5 MB of editor payload with these artboards
+# embedded in it. Rebuild it from the working files rather than storing it:
+#   node <design skill>/seed-canvas.mjs --template <…>/payload.template.html \
+#     --out sdr-tuning-view.html --title "SDR Tuning View" \
+#     --artboard Main.dc.html --artboard Offtune.dc.html \
+#     --artboard Wide.dc.html --artboard Unavailable.dc.html --canvas canvas.json
+sdr-tuning-view.html
