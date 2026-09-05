@@ -65,6 +65,7 @@ ENODEV and is never closed, and nothing here would learn. `holders()` is what
 from __future__ import annotations
 
 import contextlib
+import subprocess
 import threading
 import time
 import traceback
@@ -301,6 +302,7 @@ class _Soapy:
             ("module_errors", self._module_errors),
             ("binding", lambda: str(getattr(sdr, "__file__", "?"))),
             ("linked", _linked_soapy),
+            ("util_find", lambda: _soapy_util("--find=driver=rtlsdr")),
         ]
         for key, call in readings:
             try:
@@ -1090,6 +1092,34 @@ def _probe(
             out["findings"].append(_diagnosis_finding(out["open_diagnosis"]))
         out["elapsed_s"] = round(time.monotonic() - started, 2)
         return out
+
+
+SOAPY_UTIL = "/usr/bin/SoapySDRUtil"
+UTIL_TIMEOUT_S = 20.0
+
+
+def _soapy_util(*argv: str) -> str:
+    """Ask the C++ tool the same question, in a process of its own.
+
+    `soapysdr-tools` is already in the image (Dockerfile.sdr). It links the same
+    libSoapySDR and loads the same modules, with none of the Python binding in front of
+    it — so it separates "this process is wrong" from "this image is wrong", which is
+    the one axis nothing else here can test. A different answer from the two would be
+    the finding; the same answer moves the fault below both.
+
+    Never a shell, and the arguments are ours: this runs as root beside the radio."""
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed argv, no shell, no caller input
+            [SOAPY_UTIL, *argv],
+            capture_output=True,
+            text=True,
+            timeout=UTIL_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as failed:
+        return f"{type(failed).__name__}: {failed}"[:200]
+    said = (done.stdout + done.stderr).strip()
+    return f"rc={done.returncode} {said}"[:1200]
 
 
 def _linked_soapy() -> list[str]:

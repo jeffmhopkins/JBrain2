@@ -852,3 +852,35 @@ def test_the_linked_library_reading_names_real_mapped_objects() -> None:
     assert all(isinstance(path, str) for path in mapped)
     # No SoapySDR here, so nothing matches — and an empty answer is an answer.
     assert not any("unreadable" in path for path in mapped)
+
+
+def test_asking_the_cxx_tool_survives_it_not_being_there() -> None:
+    """This runs in an environment with no SoapySDRUtil, which is the case the reading
+    has to survive: a diagnosis that raises while diagnosing is worse than none."""
+    said = radio._soapy_util("--find=driver=rtlsdr")
+
+    assert isinstance(said, str) and said
+    # Either the tool is absent (an OSError, named) or it ran and reported.
+    assert said.startswith("rc=") or "Error" in said
+
+
+def test_the_cxx_tool_is_never_invoked_through_a_shell() -> None:
+    """It runs as root beside the radio, so argv stays a list and the path stays
+    ours — never a string a shell would re-read."""
+    seen: dict[str, Any] = {}
+
+    def _fake_run(argv: list[str], **kwargs: Any) -> None:
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        raise OSError("not here")
+
+    original = radio.subprocess.run
+    radio.subprocess.run = _fake_run  # type: ignore[assignment]
+    try:
+        radio._soapy_util("--find=driver=rtlsdr")
+    finally:
+        radio.subprocess.run = original  # type: ignore[assignment]
+
+    assert seen["argv"] == [radio.SOAPY_UTIL, "--find=driver=rtlsdr"]
+    assert "shell" not in seen["kwargs"]
+    assert seen["kwargs"]["timeout"] == radio.UTIL_TIMEOUT_S
