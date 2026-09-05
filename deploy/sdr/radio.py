@@ -158,6 +158,14 @@ class Device(Protocol):
 
     def writeSetting(self, key: str, value: str) -> None: ...
 
+    def getGainMode(self, direction: int, channel: int) -> bool: ...
+
+    def setGainMode(self, direction: int, channel: int, automatic: bool) -> None: ...
+
+    def getGain(self, direction: int, channel: int) -> float: ...
+
+    def setGain(self, direction: int, channel: int, value: float) -> None: ...
+
     def readSetting(self, key: str) -> str: ...
 
     def getHardwareInfo(self) -> dict[str, str]: ...
@@ -718,6 +726,32 @@ class Radio:
         self._apply(center_hz=center_hz, rate_hz=rate_hz, direct=direct)
         return self.barrier(settle_s)
 
+    def gain_state(self) -> dict[str, Any]:
+        """What the gain is doing right now — its own loop, or a number we chose.
+
+        Suppressed rather than required, because a driver that cannot answer is a
+        reading this probe does without, not a reason to fail the whole run."""
+        device = self._require_device()
+        out: dict[str, Any] = {}
+        with contextlib.suppress(Exception):
+            out["automatic"] = bool(device.getGainMode(self._driver.RX, CHANNEL))
+        with contextlib.suppress(Exception):
+            out["gain_db"] = round(float(device.getGain(self._driver.RX, CHANNEL)), 2)
+        return out
+
+    def set_gain(self, db: float | None) -> None:
+        """Nail the gain down, or hand it back to the radio's own loop with None.
+
+        A spectrum instrument wants the first: a waterfall whose gain moves has a dB
+        scale that means nothing from row to row, and every hop seam becomes a gain
+        step drawn as if the band had changed."""
+        device = self._require_device()
+        if db is None:
+            device.setGainMode(self._driver.RX, CHANNEL, True)
+            return
+        device.setGainMode(self._driver.RX, CHANNEL, False)
+        device.setGain(self._driver.RX, CHANNEL, float(db))
+
     def _apply(
         self,
         *,
@@ -1076,6 +1110,33 @@ def _smooth(levels: np.ndarray, width: int) -> np.ndarray:
     padded = np.pad(levels, pad, mode="edge")
     windows = np.lib.stride_tricks.sliding_window_view(padded, width)
     return np.median(windows, axis=-1)[: levels.size]
+
+
+#: What to fix the gain at when the radio cannot say what it is currently using. Middle
+#: of the R820T2's range: high enough to see a band, low enough not to clip a strong one.
+SETTLE_FIXED_GAIN_DB = 30.0
+
+
+def _settle_fixed_gain(radio: Radio, other_hz: int) -> dict[str, Any]:
+    """The same stopwatch with the gain nailed down, so the two readings can be compared.
+
+    The question this answers is what the settle IS. What the stopwatch watches is a
+    LEVEL, and an automatic gain loop moves level for exactly the sort of duration
+    measured here — 61 ms median on the tuner path, where an R820T2's PLL locks in well
+    under a millisecond. If the settle collapses with the gain fixed, it was never a
+    relock and the fix is to fix the gain, which a spectrum instrument wants anyway."""
+    before = radio.gain_state()
+    radio.set_gain(float(before.get("gain_db") or SETTLE_FIXED_GAIN_DB))
+    try:
+        out = _settle_after_retune(radio, other_hz)
+    finally:
+        # Back to whatever it was, because a probe that leaves the radio configured
+        # differently from how it found it makes the NEXT reading a lie.
+        if before.get("automatic"):
+            radio.set_gain(None)
+    out["gain_db"] = radio.gain_state().get("gain_db")
+    out["was_automatic"] = before.get("automatic")
+    return out
 
 
 def _settled_index(off: np.ndarray, hold: int) -> int | None:
@@ -1618,6 +1679,21 @@ def _probe_open(
         settle = out["retune_settle"]
         if settle.get("measured") and settle.get("settle_ms") is not None:
             findings.extend(_settle_findings(settle))
+
+        out["gain"] = _answered("gain", radio.gain_state)
+        if out["gain"].get("automatic"):
+            findings.append(
+                "the tuner's gain is AUTOMATIC — nothing in this engine ever sets it. "
+                "A waterfall's dB scale then means nothing from row to row, and every "
+                "hop seam is a gain step drawn as if the band had changed."
+            )
+
+        # Is the settle a PLL relock or a gain loop re-converging? An R820T2 locks in
+        # well under a millisecond, and what the stopwatch watches is a LEVEL.
+        out["retune_settle_fixed_gain"] = _answered(
+            "retune_settle_fixed_gain",
+            lambda: _settle_fixed_gain(radio, _elsewhere(center_hz, rate_hz, direct)),
+        )
 
         # And where the rest of a hop's time goes. The settle says how much stale data
         # there is; this says what removing it COSTS, and the two together are the only

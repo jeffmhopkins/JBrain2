@@ -97,6 +97,10 @@ class _FakeDevice:
         self._settling = 0
         self._last_read = time.monotonic()
         self._overflow_due = 0
+        # Gain, modelled because nothing in the engine ever set it and the probe now
+        # says so. Automatic is librtlsdr's own default, which is the whole point.
+        self.gain_auto = driver.gain_auto
+        self.gain_db = 28.0
 
     # --- the log ---------------------------------------------------------------
     def _say(self, *call: Any) -> None:
@@ -116,6 +120,20 @@ class _FakeDevice:
         if hz != self.center:
             self._settling = int(self.rate * self.driver.retune_settle_s)
         self.center = hz
+
+    def getGainMode(self, direction: int, channel: int) -> bool:
+        return self.gain_auto
+
+    def setGainMode(self, direction: int, channel: int, automatic: bool) -> None:
+        self._say("setGainMode", automatic)
+        self.gain_auto = bool(automatic)
+
+    def getGain(self, direction: int, channel: int) -> float:
+        return self.gain_db
+
+    def setGain(self, direction: int, channel: int, value: float) -> None:
+        self._say("setGain", value)
+        self.gain_db = float(value)
 
     def writeSetting(self, key: str, value: str) -> None:
         self._say("writeSetting", key, value)
@@ -224,6 +242,7 @@ class _FakeDriver:
         stale_center_hz: float = 1.0,
         silent_reads: int = 0,
         retune_settle_s: float = radio.SETTLE_S,
+        gain_auto: bool = True,
         make_raises: Exception | None = None,
         unmake_raises: Exception | None = None,
     ) -> None:
@@ -243,6 +262,9 @@ class _FakeDriver:
         # measures it: a fake with no transient at all would make the measurement
         # untestable in the one direction that matters.
         self.retune_settle_s = retune_settle_s
+        # librtlsdr's own default is automatic, which is exactly the fault the probe
+        # now reports — so a fake modelling a CORRECTLY configured radio must say so.
+        self.gain_auto = gain_auto
         self.make_raises = make_raises
         self.unmake_raises = unmake_raises
         self.devices: list[_FakeDevice] = []
@@ -560,7 +582,9 @@ def test_the_probe_answers_every_f0_question(monkeypatch) -> None:
     is stamped with the centre the radio is on NOW rather than the one it started at."""
     monkeypatch.setattr(radio, "PROBE_BACKPRESSURE_S", 0.02)
     monkeypatch.setattr(radio, "PROBE_CALLBACK_READS", 4)
-    driver = _FakeDriver(paced=True, overflow_after_s=0.01)
+    # Gain fixed, because this test asserts NO findings and an automatic gain is now
+    # one of them — a radio configured the way a spectrum instrument needs it.
+    driver = _FakeDriver(paced=True, overflow_after_s=0.01, gain_auto=False)
 
     out = radio.probe(
         serial=WIRE, center_hz=CENTER, rate_hz=2_400_000, bins=4_000, driver=driver
@@ -1234,3 +1258,28 @@ def test_the_hop_cost_is_a_reading_not_a_finding() -> None:
 
     assert out["hop_cost"]["bound"] in {"real-time", "memcpy"}
     assert not [say for say in out["findings"] if "wall clock" in say]
+
+
+def test_an_automatic_gain_is_a_finding_on_a_spectrum_instrument() -> None:
+    """Nothing in this engine ever set the gain, so it runs at librtlsdr's default,
+    which is automatic. A waterfall whose gain moves has a dB scale that means nothing
+    from row to row, and on a hopped band every seam becomes a gain step drawn as if
+    the band itself had changed."""
+    out = radio.probe(driver=_FakeDriver(gain_auto=True))
+
+    assert out["gain"]["automatic"] is True
+    assert [say for say in out["findings"] if "gain is AUTOMATIC" in say]
+
+
+def test_the_settle_is_asked_again_with_the_gain_nailed_down() -> None:
+    """What the stopwatch watches is a LEVEL, and a gain loop moves level for exactly
+    the duration measured on the box — 61 ms, where an R820T2's PLL locks in well under
+    a millisecond. The A/B is what tells a relock from a re-convergence, and the probe
+    must hand the radio back configured as it found it either way."""
+    driver = _FakeDriver(gain_auto=True)
+
+    out = radio.probe(driver=driver)
+
+    assert out["retune_settle_fixed_gain"]["was_automatic"] is True
+    # Given back, not left fixed: the next reading would otherwise be of our own change.
+    assert out["gain"]["automatic"] is True
