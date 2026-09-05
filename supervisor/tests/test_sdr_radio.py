@@ -841,3 +841,14 @@ def test_the_control_opening_a_device_is_never_read_as_a_verdict() -> None:
 
     assert "no rtlsdr factory is registered" not in finding
     assert "DID open it" in finding
+
+
+def test_the_linked_library_reading_names_real_mapped_objects() -> None:
+    """It reads this process's own map, so it works anywhere and needs no SoapySDR —
+    which is the point: the reading has to survive the very fault it is hunting."""
+    mapped = radio._linked_soapy()
+
+    assert isinstance(mapped, list)
+    assert all(isinstance(path, str) for path in mapped)
+    # No SoapySDR here, so nothing matches — and an empty answer is an answer.
+    assert not any("unreadable" in path for path in mapped)

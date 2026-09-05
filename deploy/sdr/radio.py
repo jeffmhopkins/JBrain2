@@ -299,6 +299,8 @@ class _Soapy:
             ("modules", lambda: [str(m) for m in sdr.listModules()]),
             ("search_paths", lambda: [str(p) for p in sdr.listSearchPaths()]),
             ("module_errors", self._module_errors),
+            ("binding", lambda: str(getattr(sdr, "__file__", "?"))),
+            ("linked", _linked_soapy),
         ]
         for key, call in readings:
             try:
@@ -1088,6 +1090,25 @@ def _probe(
             out["findings"].append(_diagnosis_finding(out["open_diagnosis"]))
         out["elapsed_s"] = round(time.monotonic() - started, 2)
         return out
+
+
+def _linked_soapy() -> list[str]:
+    """Which libSoapySDR this process actually mapped, read from its own memory map.
+
+    Two of them — a distro binding against one library and something else against
+    another — would make `enumerate` and `make` genuinely different objects, and is the
+    only hypothesis left that explains a find function without a make function. It
+    costs one file read to rule in or out, and a whole deploy to discover it missing."""
+    try:
+        with open("/proc/self/maps", encoding="utf-8") as maps:
+            found = {
+                line.rsplit(" ", 1)[-1].strip()
+                for line in maps
+                if "libSoapySDR" in line or "_SoapySDR" in line
+            }
+    except OSError as unreadable:  # pragma: no cover - /proc is always there in the image
+        return [f"unreadable: {unreadable}"]
+    return sorted(found)
 
 
 CONTROL_FILTER = "a driver name that does not exist (control)"
