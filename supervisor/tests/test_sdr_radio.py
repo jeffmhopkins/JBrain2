@@ -1426,3 +1426,51 @@ def test_a_discard_that_leaves_nothing_behind_is_not_a_finding() -> None:
         )
         == []
     )
+
+
+def test_the_queue_ladder_tries_each_buffer_argument_on_its_own() -> None:
+    """MEASURED on BOTH dongles: the settle is 61 ms median and 134 ms worst, the USB
+    buffer period is 10.27 ms, and the driver queues 15 of them — 154 ms. A settle
+    uniformly distributed inside one queue depth is exactly what those three numbers
+    describe, and it is not what an R820T2's PLL does.
+
+    Each candidate is tried ALONE so the answer says which knob moved it: SoapyRTLSDR
+    spells "how many buffers" more than one way and only one reaches librtlsdr."""
+    driver = _FakeDriver()
+
+    rungs = radio._queue_ladder(driver, WIRE, CENTER, RATE, direct=False)
+
+    assert [rung["at"] for rung in rungs] == [at for at, _ in radio.QUEUE_LADDER]
+    assert all("settle_ms" in rung or "error" in rung for rung in rungs)
+    # Each rung opened and closed its own radio: a stream argument can only be set at
+    # setupStream, so they cannot share one, and a leak would strand the lease.
+    assert radio._open == {}
+
+
+def test_a_queue_depth_that_buys_back_the_frame_rate_is_a_finding() -> None:
+    """The whole point of the ladder. If a stream argument takes the worst case from
+    134 ms to 40, the discard the FM dial is paying for is buying a queue nothing
+    needs — and that is the difference between a 20 MHz span at a third of a frame a
+    second and one that is watchable."""
+    findings = radio._queue_findings(
+        [
+            {"at": "driver default", "settle_ms": 61.0, "worst_ms": 134.0},
+            {"at": "buffers=4", "settle_ms": 18.0, "worst_ms": 40.0},
+        ]
+    )
+
+    assert findings and "the USB QUEUE, not the tuner" in findings[0]
+
+
+def test_a_queue_depth_that_changes_nothing_leaves_the_blame_with_the_tuner() -> None:
+    """The other answer, and it is worth having: it would mean a 20 MHz span really is
+    slow on this hardware, rather than slow because of a setting."""
+    assert (
+        radio._queue_findings(
+            [
+                {"at": "driver default", "settle_ms": 61.0, "worst_ms": 134.0},
+                {"at": "buffers=4", "settle_ms": 60.0, "worst_ms": 130.0},
+            ]
+        )
+        == []
+    )

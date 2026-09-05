@@ -557,11 +557,18 @@ class Radio:
         *,
         serial: str | None,
         bufflen_bytes: int = BUFFLEN_BYTES,
+        stream_args: dict[str, str] | None = None,
         doing: str = "reading I/Q",
     ) -> None:
         self._driver = driver
         self.serial = serial
         self.key = serial or ANY_DEVICE
+        # Extra `setupStream` args, over and above `bufflen`. A parameter because the
+        # QUEUE DEPTH is the suspect behind the retune settle and the arg that sets it
+        # is not something to assume: SoapyRTLSDR offers more than one name for "how
+        # many buffers", and which one reaches librtlsdr's `rtlsdr_read_async` is a
+        # question for the box rather than for a docstring.
+        self.stream_args = dict(stream_args or {})
         self.bufflen_bytes = validate_bufflen(bufflen_bytes)
         self.samples_per_buffer = samples_per_buffer(self.bufflen_bytes)
         self._doing = doing
@@ -585,6 +592,7 @@ class Radio:
         serial: str | None = None,
         direct: bool = False,
         bufflen_bytes: int = BUFFLEN_BYTES,
+        stream_args: dict[str, str] | None = None,
         driver: Driver | None = None,
         doing: str = "reading I/Q",
     ) -> "Radio":
@@ -593,6 +601,7 @@ class Radio:
             driver if driver is not None else _Soapy(),
             serial=serial,
             bufflen_bytes=bufflen_bytes,
+            stream_args=stream_args,
             doing=doing,
         )
         _claim(radio.key, radio)
@@ -707,10 +716,12 @@ class Radio:
                 self._driver.CF32,
                 [CHANNEL],
                 # Validated in `validate_bufflen`, stringified because stream args are
-                # a string map. `buffers` is left at the driver's 15: the count is what
-                # bounds the backlog a retune has to flush, and 15 small ones is 1.5
-                # buffers' worth of latency rather than 15 large ones.
-                {"bufflen": str(self.bufflen_bytes)},
+                # a string map. The queue depth rides along in `stream_args` when a
+                # caller sets it: MEASURED 2026-09-05, the retune "settle" is 61 ms
+                # median and 134 ms worst on BOTH dongles, against a ring the driver
+                # sizes at 15 buffers of 10.27 ms = 154 ms — so the number to change
+                # may be this one rather than the discard that hides it.
+                {"bufflen": str(self.bufflen_bytes), **self.stream_args},
             )
             device.activateStream(self._stream)
         except Exception as failed:
@@ -1738,6 +1749,85 @@ def _diagnosis_finding(diag: dict[str, Any]) -> str:
     return "Nothing enumerated under any filter — the driver or the bus, not the binding."
 
 
+#: Queue depths to try, as `setupStream` args. The control first, then each candidate
+#: name on its own so the answer says WHICH knob moved it, then both together.
+#: SoapyRTLSDR offers more than one spelling for "how many buffers" and only one of them
+#: reaches librtlsdr's `rtlsdr_read_async`; which is a question for the box.
+QUEUE_LADDER: tuple[tuple[str, dict[str, str]], ...] = (
+    ("driver default", {}),
+    ("buffers=4", {"buffers": "4"}),
+    ("asyncBuffs=4", {"asyncBuffs": "4"}),
+    ("buffers=2,asyncBuffs=2", {"buffers": "2", "asyncBuffs": "2"}),
+)
+
+
+def _queue_ladder(
+    drv: Driver, serial: str | None, center_hz: int, rate_hz: int, direct: bool
+) -> list[dict[str, Any]]:
+    """Does the retune settle scale with the USB QUEUE DEPTH?
+
+    The arithmetic that prompted it, measured on both dongles: the settle is 61 ms
+    median and 134 ms worst, the USB buffer period is 10.27 ms, and the driver queues 15
+    of them — 154 ms. A settle uniformly distributed inside one queue depth is exactly
+    what those three numbers describe, and it is NOT what an R820T2's PLL does, which is
+    over in well under a millisecond.
+
+    If that is right, the settle is pre-retune data already handed to the kernel, the
+    fix is a shallower queue, and the 150 ms discard currently costing the FM dial its
+    frame rate is paying for a queue nobody needs this deep. If it is wrong the settle
+    will not move, and that is worth knowing too — it would mean the transient really is
+    the tuner and a 20 MHz span is simply slow on this hardware.
+
+    Each rung opens its own radio, because a stream argument can only be set at
+    `setupStream`. Sequential, and each closes before the next opens, so the lease the
+    caller holds is never doubled."""
+    rungs: list[dict[str, Any]] = []
+    for label, args in QUEUE_LADDER:
+        rung: dict[str, Any] = {"stream_args": args or {"(none)": "default"}, "at": label}
+        try:
+            with Radio.open(
+                rate_hz=rate_hz,
+                center_hz=center_hz,
+                serial=serial,
+                direct=direct,
+                driver=drv,
+                stream_args=args,
+                doing="probing the queue depth",
+            ) as rig:
+                rung["callback_ms"] = _callback_period(rig).get("callback_ms")
+                settle = _settle_after_retune(rig, _elsewhere(center_hz, rate_hz, direct))
+                rung["settle_ms"] = settle.get("settle_ms")
+                rung["worst_ms"] = settle.get("worst_ms")
+        except Exception as failed:  # noqa: BLE001 - one rung, not the ladder
+            rung["error"] = f"{type(failed).__name__}: {failed}"
+        rungs.append(rung)
+    return rungs
+
+
+def _queue_findings(rungs: list[dict[str, Any]]) -> list[str]:
+    """Say it plainly when a stream argument buys back the whole frame rate."""
+    base = next((r for r in rungs if r.get("at") == "driver default"), None)
+    if base is None or base.get("worst_ms") is None:
+        return []
+    worst = float(base["worst_ms"])
+    better = [
+        r
+        for r in rungs
+        if r.get("at") != "driver default"
+        and r.get("worst_ms") is not None
+        and float(r["worst_ms"]) < worst * 0.6
+    ]
+    if not better:
+        return []
+    best = min(better, key=lambda r: float(r["worst_ms"]))
+    return [
+        f"the retune settle is the USB QUEUE, not the tuner: `{best['at']}` takes the "
+        f"worst case from {worst} ms to {best['worst_ms']} ms, so the discard that "
+        f"currently costs the FM dial its frame rate is paying for a queue depth "
+        f"nothing needs"
+    ]
+
+
 def _probe_open(
     out: dict[str, Any],
     drv: Driver,
@@ -1927,6 +2017,14 @@ def _probe_open(
             "and after this many frames it is not a settle — look at the antenna and, "
             "under `direct_samp`, at whether the board wires that branch at all."
         )
+    # OUTSIDE the `with`, because a stream argument can only be set at `setupStream`,
+    # so each rung has to open its own radio and the probe's must be closed first.
+    out["queue_ladder"] = _answered(
+        "queue_ladder",
+        lambda: {"rungs": _queue_ladder(drv, serial, center_hz, rate_hz, direct)},
+    )
+    findings.extend(_queue_findings(out["queue_ladder"].get("rungs") or []))
+
     out["findings"] = findings
     out["ok"] = not findings
     reading = (

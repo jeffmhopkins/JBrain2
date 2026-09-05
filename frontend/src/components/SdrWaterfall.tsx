@@ -42,7 +42,16 @@ import {
   sdrSpectrum,
   subscribeSdrSpectrum,
 } from "../sdrSpectrum";
-import { type Scale, calibrate, calibrated, frameRate, historyRows, paint } from "../sdrWaterfall";
+import {
+  type Scale,
+  calibrate,
+  calibrated,
+  frameRate,
+  holdInto,
+  paint,
+  shadeRow,
+  stackFor,
+} from "../sdrWaterfall";
 
 /** Whether a provisional colour window is worth re-taking at this history length.
  *
@@ -106,11 +115,22 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     let head = 0;
     let frame = 0;
     let saidFps: number | null = null;
+    // How many arriving rows share one row of pixels, and the max-hold they are
+    // collected into. A row is never dropped: it lands in `pending` and reaches the
+    // picture when its group completes, which is what keeps 180 s of history on a
+    // display that has no 1800 pixel rows to put it in.
+    let stack = 1;
+    let pending: Float64Array | null = null;
+    let pendingCount = 0;
 
     const fit = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      // `clientHeight` is 0 until the box has been laid out, and the ring is sized from
+      // it now — so falling back to 1 would build a one-pixel-tall picture and group the
+      // whole history into it, then regroup once layout arrived. The prop IS the CSS
+      // height, so it is the right answer before layout can give one.
       canvas.width = Math.round((canvas.clientWidth || 1) * ratio);
-      canvas.height = Math.round((canvas.clientHeight || 1) * ratio);
+      canvas.height = Math.round((canvas.clientHeight || height) * ratio);
     };
 
     const blit = () => {
@@ -131,10 +151,14 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       if (above > 0) flatCtx.drawImage(off, 0, head, bins, above, 0, 0, bins, above);
       if (head > 0) flatCtx.drawImage(off, 0, 0, bins, head, 0, above, bins, head);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // Horizontally this is 1:1 — `bins` IS the device width, because `paint` already
-      // reduced the frame's bins to columns by max-hold rather than leaving the choice
-      // to a filter. Only the vertical is scaled, and only by a constant.
-      ctx.imageSmoothingEnabled = true;
+      // 1:1 on BOTH axes now, which is the only thing that makes a scrolling picture
+      // stable. `bins` is the device width because `paint` reduces bins to columns
+      // itself, and `rows` is the device height because it reduces arriving rows to
+      // pixel rows itself (`stackFor`). A constant scale factor was not enough and the
+      // owner saw why: it fixes the MAPPING, but the data moves through it — every row
+      // shifts down one source row each frame, so a filter's blend membership rotates
+      // and a row whose numbers never changed is drawn differently each time.
+      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(flat, 0, 0, bins, rows, 0, 0, canvas.width, canvas.height);
     };
 
@@ -155,25 +179,45 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       off.height = nextRows;
       bins = nextBins;
       rows = nextRows;
+      // A half-collected group belongs to the old geometry: its columns were reduced to
+      // a width that no longer exists.
+      pending = null;
+      pendingCount = 0;
       return true;
     };
 
     const repaint = () => {
       if (bins === 0 || rows === 0 || scale === null) return;
       offCtx.putImageData(
-        new ImageData(paint(history, bins, rows, scale, extent), bins, rows),
+        new ImageData(paint(history, bins, rows, scale, extent, stack), bins, rows),
         0,
         0,
       );
       // `paint` lays the newest row at the bottom and the blanks above it — which is the
       // ring read from slot 0, so a full repaint is also how the head gets re-zeroed.
+      // The grouping restarts with it, which is invisible and only happens on a resize
+      // or a recalibration — both of which rebuild the whole picture anyway.
       head = 0;
+      pending = null;
+      pendingCount = 0;
     };
 
     const append = (row: SpectrumRow) => {
       if (scale === null) return;
-      offCtx.putImageData(new ImageData(paint([row], bins, 1, scale, extent), bins, 1), 0, head);
+      if (pending === null) {
+        pending = new Float64Array(bins).fill(Number.NEGATIVE_INFINITY);
+        pendingCount = 0;
+      }
+      holdInto(pending, row.db, bins, extent);
+      pendingCount += 1;
+      // Held back until the group is full, so a pixel row is always the same number of
+      // measurements. Writing early and overwriting would make the newest row's colour
+      // change under the viewer as its group filled — a twinkle of its own.
+      if (pendingCount < stack) return;
+      offCtx.putImageData(new ImageData(shadeRow(pending, bins, scale), bins, 1), 0, head);
       head = (head + 1) % rows;
+      pending = null;
+      pendingCount = 0;
     };
 
     const onResize = () => {
@@ -181,7 +225,7 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // The offscreen is display-width, so a resize changes what a column means. The
       // ring cannot be rescaled without inventing measurements, and `history` is
       // exactly what it is kept for.
-      if (reshape(Math.max(1, canvas.width), rows)) repaint();
+      if (reshape(Math.max(1, canvas.width), Math.max(1, canvas.height))) repaint();
       show();
     };
     fit();
@@ -203,11 +247,17 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       history.unshift(row);
 
       const rate = frameRate(history);
-      // The measured rate drifts by a percent or two between frames, and re-sizing the
-      // ring for that would repaint the whole picture every row for a height nobody can
-      // see change. Only a real move is worth it: a tier change is a factor of ten.
-      const wanted = historyRows(rate, row.db.length);
-      const keep = rows === 0 || Math.abs(wanted - rows) > rows / 8 ? wanted : rows;
+      // The ring is the DISPLAY's height now, one pixel row per slot, because a
+      // scrolling picture is only stable when the draw is 1:1 — see `blit`. The history
+      // depth rides in `stack` instead: how many arriving rows share a pixel row.
+      //
+      // The measured rate drifts by a percent or two between frames, and re-grouping for
+      // that would repaint the whole picture every row for a change nobody can see. Only
+      // a real move is worth it: a tier change is a factor of ten.
+      const deep = stackFor(rate, Math.max(1, canvas.height));
+      const regroup = stack === 0 || Math.abs(deep - stack) > Math.max(1, stack / 4);
+      const nextStack = regroup ? deep : stack;
+      const keep = nextStack * Math.max(1, canvas.height);
       if (history.length > keep) history.length = keep;
       const said = rate === null ? null : Math.round(rate);
       if (said !== saidFps) {
@@ -221,7 +271,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       // bins to columns itself (max-hold), so nothing downstream has to guess which of
       // five bins a pixel means. A resize therefore reshapes and repaints, which is the
       // cost of that — paid on a resize rather than on every frame.
-      let full = reshape(Math.max(1, canvas.width), keep);
+      let full = reshape(Math.max(1, canvas.width), Math.max(1, canvas.height));
+      if (nextStack !== stack) {
+        stack = nextStack;
+        full = true;
+      }
       // A band's widest row is its extent: a frame that lost a block is short, and the
       // one after it usually is not. Taking the max means a dropped block leaves a gap
       // rather than resizing the whole picture around its absence.
@@ -249,7 +303,10 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
       if (frame) cancelAnimationFrame(frame);
       unsubscribe();
     };
-  }, []);
+    // `height` is read by `fit` before layout can answer, so the effect depends on it.
+    // It is a constant in practice — the prop has a default and no caller varies it —
+    // so this re-runs never rather than on every render.
+  }, [height]);
 
   const bins = band?.db.length ?? 0;
   return (

@@ -11,6 +11,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSdrSpectrum, startSdrSpectrum } from "../sdrSpectrum";
+import { HISTORY_SECONDS, stackFor } from "../sdrWaterfall";
 import { SdrWaterfall } from "./SdrWaterfall";
 
 /** The stream the store opens, held so a test can deliver a row through it — the same
@@ -163,11 +164,50 @@ describe("what a row costs", () => {
   it("drops the paint and never the row", () => {
     // Coalescing is only safe because the row is already in the ring by then. A dropped
     // ROW would be a hole in the time base that no later frame can fill in.
+    //
+    // One row a second, so `stackFor` groups one arriving row per pixel row and the
+    // count is direct. The grouped case is the test below.
     const stream = watching();
 
-    run(stream, 12, 0.1);
+    run(stream, 12, 1);
 
     expect(ring().writes).toHaveLength(12);
+  });
+
+  it("groups rows into pixel rows rather than letting the browser blend them", () => {
+    // MEASURED by the owner, twice, and the second time zoomed in: the picture "goes
+    // through cycles of pixels changing as scroll happens". `HISTORY_SECONDS` of a 10
+    // fps stream is 1800 rows and the box shows a few hundred pixel rows, so the
+    // picture is squeezed — and while that squeeze was `drawImage`'s to make, the blend
+    // membership rotated as the content scrolled and a row whose numbers had not moved
+    // was drawn differently every frame. Exactly what `reduce` already argues about
+    // bins, on the axis nobody had applied it to.
+    //
+    // So ten rows a second must write FEWER pixel rows than it receives, and each one
+    // must stand for a whole group.
+    const stream = watching();
+
+    run(stream, 24, 0.1);
+
+    const writes = ring().writes;
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.length).toBeLessThan(24);
+    // Every write is a single pixel row (or a whole-picture repaint), never a stretch.
+    expect(writes.every((w) => w.height === 1 || w.height === ring().canvas.height)).toBe(true);
+  });
+
+  it("draws the ring at one pixel row per slot, so a scroll cannot resample it", () => {
+    // The fix's load-bearing half. A constant scale factor is NOT enough: it fixes the
+    // mapping, but the data moves through it — every row shifts down one source row
+    // each frame, so a filter's blend membership rotates even when the factor does not.
+    // 1:1 with smoothing off is the only arrangement a scrolling picture is stable in.
+    const stream = watching();
+
+    run(stream, 4, 1);
+    flushFrame();
+
+    expect(ring().canvas.height).toBe(onscreen().canvas.height);
+    expect(onscreen().imageSmoothingEnabled).toBe(false);
   });
 
   it("writes one row into the ring once the window is held", () => {
@@ -196,22 +236,26 @@ describe("what a row costs", () => {
 });
 
 describe("sizing the picture in seconds", () => {
+  // The ring is the DISPLAY's height now — one pixel row per slot, because that is the
+  // only arrangement a scrolling picture is stable in. So the three minutes live in the
+  // GROUPING instead: how many arriving rows share a pixel row. These assert the seconds
+  // rather than the rows, which is what they were always about.
   it("keeps three minutes at one row a second", () => {
-    const stream = watching();
-
-    run(stream, 8, 1);
-
-    expect(ring().canvas.height).toBe(180);
+    expect(stackFor(1, 180)).toBe(1);
+    expect(stackFor(1, 180) * 180).toBe(HISTORY_SECONDS * 1);
   });
 
   it("keeps three minutes at ten rows a second too", () => {
     // The bug this replaces: a constant 180 rows, documented as three minutes, which at
     // 10 fps is eighteen seconds of history.
-    const stream = watching();
+    expect(stackFor(10, 180) * 180).toBe(HISTORY_SECONDS * 10);
+  });
 
-    run(stream, 8, 0.1);
-
-    expect(ring().canvas.height).toBe(1800);
+  it("never groups below one, however tall the display is", () => {
+    // A big display and a slow stream want fewer rows than there are pixel rows. That
+    // is not a reason to average nothing into nothing.
+    expect(stackFor(1, 4000)).toBe(1);
+    expect(stackFor(null, 4000)).toBe(1);
   });
 });
 

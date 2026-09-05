@@ -941,8 +941,35 @@ convention, and not a preference: a carrier occupying one bin of five is the thi
 looked for, and a mean buries it four fifths of the way into the noise. It gathers per
 column rather than scattering per bin, so a narrow band on a wide display cannot come out
 striped. The ring is unwrapped 1:1 into a scratch canvas and drawn **once**, at a scale
-that does not depend on the head. What is on screen can then only change when the
-measurements do, which is what the owner asked for.
+that does not depend on the head.
+
+#### That fixed half of it, and the claim that it fixed all of it was wrong
+
+The sentence this section used to end on — *"what is on screen can then only change when
+the measurements do"* — did not survive the owner looking again. Zoomed in, the picture
+still "goes through cycles of pixels changing as scroll happens".
+
+Because **a constant scale factor is not the same as a stable picture.** It fixes the
+mapping; the data moves through it. `HISTORY_SECONDS` of a 10 fps stream is 1800 rows and
+the box shows a few hundred device pixel rows, so the vertical draw was a ~4:1 downscale —
+and every frame each row shifts down one source row, so which four rows a display pixel
+blends **rotates**, and a row whose numbers never moved is drawn differently each time.
+The period of that rotation is the beat between the two heights, which is exactly the
+"cycles" reported.
+
+Which is `reduce`'s own argument, on the axis nobody had applied it to: *the pixel's value
+must depend on the measurement, not on a resampling decision.* So the vertical is now a
+reduction with a rule, like the horizontal. `stackFor` says how many arriving rows share a
+pixel row; they are **max-held** into one (a carrier present in one row of four is the
+thing being looked for, and a mean buries it); the ring is the display's height, one slot
+per pixel row; and the draw is **1:1 on both axes with smoothing off**. A scrolling
+picture is stable in that arrangement and in no other.
+
+No row is dropped to achieve it — a partial group waits in an accumulator and reaches the
+picture when it completes, so the three minutes of history survive a display that has no
+1800 pixel rows to put them in. It also fixed a pre-layout bug found on the way: the ring
+is sized from `clientHeight`, which is 0 until the box is laid out, so the picture was
+briefly built one pixel tall and regrouped when layout arrived.
 
 ### The settle is measured now, not assumed
 
@@ -1160,7 +1187,40 @@ So the discard is **fixed at 0.15 s**, covering the measured worst case with mar
 price belongs in the open: eleven hops pay it once each, so the FM dial redraws about
 **twice a second**, and making that faster means **fewer hops, not a shorter discard**.
 The measurement stayed — `settle_after_barrier` reports what is still disturbed after the
-real barrier has run, so this cannot regress quietly.
+real barrier has run, so this cannot regress quietly. **Verified on the box**: 0.0 ms
+median and 7.68 ms worst left behind, and the too-short finding is gone.
+
+#### But the price came in at 0.33 fps, and the arithmetic says why
+
+Correct, and **worse than the `rtl_power` this engine exists to replace**. `2m-all`
+(three hops) manages 1.97 fps on the same deploy, which is the same cost seen from the
+other end.
+
+Three numbers, all measured, and they fit together too well to ignore:
+
+| | |
+| --- | --- |
+| USB buffer period | 10.27 ms |
+| buffers the driver queues | 15 → **154 ms** |
+| retune settle | 61 ms median, **134 ms worst** |
+
+A settle distributed uniformly inside one queue depth is exactly what that describes —
+and 60 ms is not what an R820T2's PLL does, which is over in well under a millisecond.
+The same figures came back from **both dongles** (61.7 / 133.5 on the second), so it is
+systematic rather than one radio.
+
+So the suspect is now the thing this file's own comment already named: *"`buffers` is
+left at the driver's 15: the count is what bounds the backlog a retune has to flush."*
+If the transient is pre-retune data already handed to the kernel, then the 150 ms discard
+is paying for a queue depth nothing here needs, and shrinking the queue buys the frame
+rate back **without** giving up the correctness.
+
+`queue_ladder` measures it rather than assuming it: a settle per candidate depth, with
+each candidate arg tried **alone** so the answer names which knob moved it — SoapyRTLSDR
+spells "how many buffers" more than one way and only one reaches librtlsdr's
+`rtlsdr_read_async`. Each rung opens its own radio, because a stream argument can only be
+set at `setupStream`. If nothing moves, that is worth knowing too: it would mean a 20 MHz
+span really is slow on this hardware rather than slow because of a setting.
 
 ## 8. Deliberately not in this plan
 
