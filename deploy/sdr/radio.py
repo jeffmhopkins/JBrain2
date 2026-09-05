@@ -292,6 +292,7 @@ class _Soapy:
             ("root", sdr.getRootPath),
             ("modules", lambda: [str(m) for m in sdr.listModules()]),
             ("search_paths", lambda: [str(p) for p in sdr.listSearchPaths()]),
+            ("module_errors", self._module_errors),
         ]
         for key, call in readings:
             try:
@@ -299,6 +300,26 @@ class _Soapy:
             except Exception as failed:  # noqa: BLE001 - name it, do not raise it
                 env[key] = f"{type(failed).__name__}: {failed}"[:160]
         return env
+
+    def _module_errors(self) -> dict[str, str]:
+        """Modules that loaded but did NOT register, keyed by path.
+
+        `getLoaderResult` is empty for a clean load and carries the reason otherwise —
+        an ABI mismatch, a missing symbol, a driver name already taken. A module can be
+        on the search path, be listed, and still have registered nothing, which is the
+        one state where `enumerate` and `make` could honestly disagree."""
+        sdr = self._sdr
+        broken: dict[str, str] = {}
+        for module in sdr.listModules():
+            result = sdr.getLoaderResult(module)
+            # 0.8's binding hands this back as a Kwargs proxy in some builds and a
+            # plain string in others; empty means it loaded either way.
+            text = " ".join(f"{k}={v}" for k, v in dict(result).items()) if (
+                hasattr(result, "keys")
+            ) else str(result)
+            if text:
+                broken[str(module)] = text[:200]
+        return broken
 
     def _filter_result(self, filt: dict[str, str]) -> dict[str, str]:
         """`enumerate` and `make` on the SAME args, side by side.
@@ -1070,7 +1091,16 @@ def _diagnosis_finding(diag: dict[str, Any]) -> str:
     that opens is a code fault, and `enumerate` and `make` disagreeing over the same
     args is neither — it is SoapySDR contradicting itself, and the next place to look
     is inside `make` rather than at anything this file passes it."""
-    modules = diag.get("environment", {}).get("modules")
+    environment = diag.get("environment", {})
+    broken = environment.get("module_errors")
+    if isinstance(broken, dict):
+        refused = [f"{path}: {why}" for path, why in broken.items() if "rtl" in path.lower()]
+        if refused:
+            return (
+                f"The rtlsdr module loaded and registered NOTHING — {refused[0]}. That "
+                "is why the same args enumerate and will not open."
+            )
+    modules = environment.get("modules")
     if isinstance(modules, list) and not any("rtl" in m.lower() for m in modules):
         return (
             "No rtlsdr module is loaded in this process — enumeration is answering "

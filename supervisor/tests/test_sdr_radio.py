@@ -733,3 +733,43 @@ def test_an_unreadable_environment_is_not_a_packaging_verdict() -> None:
 
     assert "packaging" not in finding
     assert "inside make()" in finding
+
+
+def test_a_module_that_registered_nothing_is_the_answer_ahead_of_everything() -> None:
+    """A module can be on the search path, be listed, and have registered nothing. That
+    is the one state where `enumerate` and `make` can honestly disagree, so it is read
+    before the contradiction it would otherwise be described as."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["/usr/lib/SoapySDR/modules0.8/librtlsdrSupport.so"],
+                "module_errors": {
+                    "/usr/lib/SoapySDR/modules0.8/librtlsdrSupport.so": "ABI mismatch",
+                },
+            },
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "registered NOTHING" in finding and "ABI mismatch" in finding
+
+
+def test_another_modules_loader_error_is_not_mistaken_for_the_rtlsdr_one() -> None:
+    """The audio module fails to load on a box with no sound card and always will. It
+    has nothing to do with a radio that will not open."""
+    finding = radio._diagnosis_finding(
+        {
+            "environment": {
+                "modules": ["librtlsdrSupport.so", "libaudioSupport.so"],
+                "module_errors": {"libaudioSupport.so": "no such device"},
+            },
+            "filters": [
+                {"filter": "driver + serial", "enumerate": "1", "make": "no match"}
+            ],
+        }
+    )
+
+    assert "registered NOTHING" not in finding
+    assert "inside make()" in finding
