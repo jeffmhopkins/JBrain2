@@ -1040,10 +1040,48 @@ barriers timed at 0, 50 and 150 ms, with `setFrequency` and the read timed apart
 them, and a `bound` of `real-time` or `memcpy`. It is a reading, not a finding — both
 answers describe a healthy radio.
 
-What the stale data most plausibly is: `barrier()` flushes the FIFO and only then discards
-by time, so what survives the flush is USB transfers already in flight. At the measured
-10.27 ms per buffer, the 61 ms median is about six of them and the 132 ms worst about
-thirteen — a pipeline depth, not a PLL relock.
+#### Where a hop's 91 ms goes, and the question it raises
+
+`hop_cost`, measured on the box the same day:
+
+| phase | ms per hop |
+| --- | --- |
+| `setFrequency` | **32.0** |
+| the bare flush (`activateStream`) | 0.02 |
+| discard at 50 ms | **49.5** |
+| discard at 150 ms | 153.4 |
+| read 4096 samples | 0.21 |
+
+`bound: real-time`. Three things follow. The flush is free. The read is free — the samples
+are already captured, so a bigger capture costs nothing. And **the discard costs exactly
+what it asks for**, which kills the comfortable hypothesis: if the stale data were sitting
+in buffers, reading past it would be a memcpy. It is not, so the flush really does empty
+the pipeline and the samples arriving afterwards are live.
+
+32.0 + 49.5 + 0.2 ≈ 82 ms, times eleven hops ≈ the 1.0 fps observed. The frame rate is
+fully accounted for, and neither term is the signal.
+
+**Which leaves the real question: why is live data still WRONG for 61 ms?** An R820T2's
+PLL locks in well under a millisecond. What the stopwatch actually watches is a **level**
+— and there is a much better candidate for something that moves a level over tens of
+milliseconds after a retune.
+
+#### Nothing in this engine ever set the gain
+
+There is no `setGain` and no `setGainMode` anywhere in `radio.py`, so the tuner runs at
+librtlsdr's default, which is **automatic**. That is a defect on its own terms, quite
+apart from the settle: a waterfall whose gain moves has a dB scale that means nothing from
+row to row, and on a hopped band every seam becomes a gain step drawn as if the band had
+changed. `soapy-probe` now reports `gain` and raises a finding when it is automatic.
+
+It is also the obvious suspect for the 61 ms. So the probe asks the same question twice —
+`retune_settle` as configured, and `retune_settle_fixed_gain` with the gain nailed down
+and handed back afterwards, because a probe that leaves the radio configured differently
+from how it found it makes the next reading a lie. If the settle collapses with the gain
+fixed, it was never a relock, and the fix is the one a spectrum instrument wants anyway.
+
+That measurement is pending on the box. `SETTLE_S` stays 0.05 until it answers, because
+the two outcomes call for different constants.
 
 ## 8. Deliberately not in this plan
 
