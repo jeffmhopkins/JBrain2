@@ -54,8 +54,20 @@
 #      is SOAPY_SDR_OVERFLOW really reported under induced backpressure, does the achieved
 #      rate match the requested one, and — the one nothing else can answer — did `bufflen`
 #      actually take, measured as a callback period. Also captures one frame through the
-#      real FFT, so the 10 MHz default is a WWV check. TAKES THE RADIO for a few seconds
+#      real FFT — the strongest bin EXCLUDING the centre one, since a peak there is the
+#      receiver's own DC offset — so the 10 MHz default is a WWV check. MEASURED on this
+#      box: it comes back `dead` there, a DC spike with no noise floor at 5, 7.15 and 10
+#      MHz alike, so nothing reaches the ADC below 24 MHz. TAKES THE RADIO for a few seconds
 #      through the same lease as everything else; run it once per dongle with --serial.)
+#   scripts/debug-connect.sh spectrum-probe --section 2m-ssb [--seconds 3] [--serial S]
+#     (F6's twin of soapy-probe: starts a REAL live spectrum, watches it for a few
+#      seconds and gives the radio back. Answers the three things nothing else can —
+#      which engine actually ran (the sidecar falls back to rtl_power at runtime when a
+#      radio will not open, and a silent downgrade is a waterfall at a tenth of the rate
+#      it claims), whether `bin_hz` on the wire is exactly `rate / bins`, and what the
+#      frame rate really is. Above ~1.5 fps is the rtl_power ceiling being gone.
+#      `--from/--to` takes a hand-typed range instead of a curated section. TAKES A
+#      RADIO for those seconds.)
 #   scripts/debug-connect.sh sdr-reset <serial>       # re-enumerate one dongle
 #     (The software equivalent of unplugging it. An RTL-SDR left with transfers pending
 #      can stay on the bus and stop answering descriptor reads — every lookup by serial
@@ -548,6 +560,25 @@ PY
     q="frequency_mhz=$MHZ&rate_hz=$RATE&bins=$BINS"
     [ -n "$SER" ] && q="$q&serial=$SER"
     _call POST "/api/debug/sdr/soapy-probe?$q" | _pp ;;
+
+  spectrum-probe) # [--section ID | --from MHZ --to MHZ] [--seconds N] [--serial S]
+    SEC=; FROM=; TO=; SECS=3; SER=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --section) SEC="$2"; shift 2 ;;
+        --from) FROM="$2"; shift 2 ;;
+        --to) TO="$2"; shift 2 ;;
+        --seconds) SECS="$2"; shift 2 ;;
+        --serial) SER="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    q="seconds=$SECS"
+    [ -n "$SEC" ] && q="$q&section=$SEC"
+    [ -n "$FROM" ] && q="$q&start_mhz=$FROM"
+    [ -n "$TO" ] && q="$q&stop_mhz=$TO"
+    [ -n "$SER" ] && q="$q&serial=$SER"
+    _call POST "/api/debug/sdr/spectrum-probe?$q" | _pp ;;
 
   sdr-reset) # <serial> — re-enumerate one dongle, for one that has stopped answering
     ser="${1:?usage: debug-connect.sh sdr-reset <serial>}"
