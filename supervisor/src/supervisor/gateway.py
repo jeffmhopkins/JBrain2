@@ -55,6 +55,25 @@ def _rebuild_command(service: str) -> str:
     return f"exec sh src/deploy/rebuild-inner.sh {shlex.quote(service)}"
 
 
+# Pull main and rebuild ONE service: the fast path between `rebuild` (applies code
+# already on the box, never pulls) and `update` (pulls and rebuilds the world, unloading
+# every model on the way). It exists because the sdr sidecar is pure Python behind an
+# apt-only image, so a one-line change to a measurement otherwise costs a whole system
+# update to try — and the owner has no terminal to shortcut it with (CLAUDE.md #10).
+#
+# It takes NO REF, exactly as the update does not: the inner script resets to the
+# tracked upstream, so a token can ask for what a merged PR already put on `main` and
+# nothing else. Same shell-quoting and live-service validation at the HTTP layer.
+#
+# `apk add git` because this one PULLS — the docker:cli image has no git, which is why
+# UPDATE_COMMAND does the same and why `rebuild`, which never pulls, does not.
+def _refresh_command(service: str) -> str:
+    return (
+        "apk add --no-cache git >/dev/null 2>&1 && "
+        f"exec sh src/deploy/refresh-inner.sh {shlex.quote(service)}"
+    )
+
+
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
 
@@ -161,6 +180,8 @@ class DockerGateway(Protocol):
     def start_provision(self) -> str: ...
 
     def start_rebuild(self, service: str) -> str: ...
+
+    def start_refresh(self, service: str) -> str: ...
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
@@ -306,6 +327,11 @@ class ComposeDockerGateway:
     def start_rebuild(self, service: str) -> str:
         return self._run_oneshot(
             "jbrain-rebuild", {ONESHOT_LABEL: "rebuild"}, _rebuild_command(service)
+        )
+
+    def start_refresh(self, service: str) -> str:
+        return self._run_oneshot(
+            "jbrain-refresh", {ONESHOT_LABEL: "refresh"}, _refresh_command(service)
         )
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:

@@ -2291,6 +2291,71 @@ async def update_status(
     return cast(dict[str, object], resp.json())
 
 
+@router.post("/refresh", status_code=202)
+async def start_refresh_debug(
+    request: Request, settings: SettingsDep, _p: DebugDep, service: str
+) -> dict[str, object]:
+    """**Pull main and rebuild ONE service** — the fast path between nothing and
+    `/update`.
+
+    `/update` pulls and then rebuilds the world: it backs up, quiesces the stack,
+    rebuilds every image, unloads every model and takes about ten minutes. That is the
+    right price for shipping and the wrong one for asking the radio a question. The sdr
+    sidecar is pure Python behind an apt-only image, so a one-line change to a
+    measurement cost a full system update to try — and on a box whose owner has no
+    terminal (CLAUDE.md #10) there was no cheaper route, which made every hardware
+    question a ten-minute round trip.
+
+    **It takes no ref, and that is the same security property `/update` has.** The inner
+    script resets the source mirror to its tracked upstream, so a token can ask for what
+    a merged PR already put on `main` and nothing else. `service` is validated by the
+    supervisor against the live compose service set before it reaches a shell-quoted
+    command, so it is a known token rather than caller-controlled text.
+
+    **It is a PARTIAL deploy, deliberately.** The source mirror moves to `main` for every
+    service while only the named one is rebuilt, so the api can be running older code
+    than `src` describes until a full `/update` follows — and `/version` reports the
+    api's build, not the mirror's, so it will not show the change. It also does not
+    refresh the host helper files, so a `docker-compose.yml` or Dockerfile-path change
+    still needs the full update. Use it to iterate, `/update` to ship.
+
+    Rebuilding a service recreates its container, so anything the service was holding —
+    an sdr lease, a live spectrum — ends. 409 while another one-shot is running; poll
+    `/refresh/status` for the log tail."""
+    request.state.debug_detail = f"refresh {service} (pull main, rebuild one service)"
+    resp = await _supervisor(request).post(
+        "/refresh",
+        json={"service": service},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"no such service: {service}")
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another one-shot is running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/refresh/status")
+async def refresh_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The most recent refresh one-shot's state + log tail. Like `/update/status`, this
+    is the only window into it: the one-shot runs OUTSIDE the compose project, so
+    `/debug/logs/<service>` cannot reach it."""
+    request.state.debug_detail = f"refresh (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/refresh/status",
+        params={"tail": tail},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 @router.get("/provision/status")
 async def provision_status(
     request: Request,
