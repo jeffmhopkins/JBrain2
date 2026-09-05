@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SpectrumRow } from "./sdrSpectrum";
-import { CENTRED_BINS, offsetLabel, spillLabel, tuningOf } from "./sdrTuning";
+import { CENTRED_BINS, CENTRED_SHARE, offsetLabel, spillLabel, tuningOf } from "./sdrTuning";
 
 const TUNED_HZ = 146_940_000;
 const BIN_HZ = 93.75; // 512 bins over a 48 kHz IF, as the sidecar sends it
@@ -33,6 +33,30 @@ function row(
     peaks: [],
     passbandHz,
   };
+}
+
+/** A wide-FM row as the sidecar really sends one: 512 bins over 240 kHz, a 180 kHz
+ *  passband, and a station filling most of it. The narrowband `row` above cannot stand
+ *  in for this — the whole difficulty is that the signal is most of the picture. */
+function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = -70 } = {}) {
+  const bins = 512;
+  const binHz = 468.75;
+  const startHz = TUNED_HZ - (bins / 2) * binHz;
+  const db: number[] = [];
+  for (let i = 0; i < bins; i += 1) {
+    const hz = startHz + (i + 0.5) * binHz - TUNED_HZ;
+    const away = Math.abs(hz - offsetHz);
+    db.push((away <= widthHz / 2 ? peakDb : floorDb) + Math.sin(i * 1.7) * 0.8);
+  }
+  return {
+    at: 0,
+    startHz,
+    stopHz: startHz + bins * binHz,
+    binHz,
+    db,
+    peaks: [],
+    passbandHz: 180_000,
+  } satisfies SpectrumRow;
 }
 
 describe("tuningOf", () => {
@@ -97,6 +121,32 @@ describe("tuningOf", () => {
       if (Math.abs(hz - 13_000) <= 1_500) near.db[i] = -40;
     }
     expect(tuningOf(near, TUNED_HZ)?.offsetHz).toBeCloseTo(0, -2);
+  });
+
+  it("finds a broadcast station that fills two thirds of its row", () => {
+    // The floor cannot be the row's median here: a 180 kHz station in a 240 kHz view
+    // is two thirds of the bins, so the median lands INSIDE the signal and the reading
+    // came back null — "nothing in this channel" on a station 40 dB over the noise.
+    const found = tuningOf(wideRow(0), TUNED_HZ);
+    expect(found).not.toBeNull();
+    expect(found?.centred).toBe(true);
+  });
+
+  it("scales the centred tolerance to the passband", () => {
+    // MEASURED ON AIR: an FM signal's instantaneous spectrum is asymmetric because the
+    // carrier is swinging, so on a 180 kHz broadcast station the loudest part of one
+    // frame wanders tens of kHz. Tuned exactly, 104.1 read 39 kHz "high". One bin of
+    // tolerance would have put a "Centre it" prompt on a station that is exactly right.
+    expect(tuningOf(wideRow(6_000), TUNED_HZ)?.centred).toBe(true);
+    expect(CENTRED_SHARE * 180_000).toBeGreaterThan(CENTRED_BINS * BIN_HZ);
+  });
+
+  it("still calls a real narrowband error off centre", () => {
+    // The tolerance must not swallow what it exists to report: 5% of a 16 kHz
+    // passband is 800 Hz, and 6.2 kHz off a 25 kHz channel is the case the strip was
+    // built for.
+    expect(tuningOf(row(6_200), TUNED_HZ)?.centred).toBe(false);
+    expect(tuningOf(row(900), TUNED_HZ)?.centred).toBe(false);
   });
 
   it("calls anything inside one bin centred", () => {

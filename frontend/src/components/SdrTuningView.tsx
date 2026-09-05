@@ -34,6 +34,18 @@ const CHART_H = 78;
 const MIN_SPAN_DB = 24;
 const HEADROOM_DB = 4;
 
+/** How many rows the READING is averaged over before it is called an offset.
+ *
+ *  The picture is drawn from the newest row alone — that is what makes it live — but
+ *  the sentence under it is not, and this is why. An FM signal's instantaneous
+ *  spectrum is asymmetric because the carrier is swinging, so a single 100 ms frame
+ *  puts the signal's apparent centre somewhere it is not: measured on air, a
+ *  correctly-tuned 104.1 read 39 kHz off. Averaged over eight frames the swing cancels
+ *  and what is left is where the carrier actually sits.
+ *
+ *  Eight is 0.8 s, which is fast enough that turning the dial still feels immediate. */
+const READING_ROWS = 8;
+
 /** How fast the vertical scale follows the row. Per frame, at ~10 fps. A scale that
  *  snapped would make the trace jump every time a transmission started; one that
  *  never moved would push a strong signal off the top. */
@@ -154,6 +166,22 @@ function paint(
   }
 }
 
+/** Bin `i` averaged across the rows held for the reading. In the linear domain, not
+ *  in dB: averaging decibels is averaging logarithms, which under-weights exactly the
+ *  loud frames the signal is in and biases the answer toward the quiet ones. */
+function average(rows: readonly SpectrumRow[], bin: number): number {
+  let total = 0;
+  let seen = 0;
+  for (const row of rows) {
+    const value = row.db[bin];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      total += 10 ** (value / 10);
+      seen += 1;
+    }
+  }
+  return seen === 0 ? Number.NaN : 10 * Math.log10(total / seen);
+}
+
 function kHz(hz: number): string {
   const value = hz / 1000;
   return Number.isInteger(value) ? `${value}` : value.toFixed(1);
@@ -177,6 +205,7 @@ export function SdrTuningView({
   // changes when the reading does rather than when the row does.
   const [tuning, setTuning] = useState<Tuning | null>(null);
   const [row, setRow] = useState<SpectrumRow | null>(null);
+  const recentRef = useRef<SpectrumRow[]>([]);
 
   useEffect(() => {
     const draw = (next: SpectrumRow | null) => {
@@ -202,7 +231,20 @@ export function SdrTuningView({
       const wanted = Math.round(canvas.clientWidth * (window.devicePixelRatio || 1));
       if (wanted > 0 && canvas.width !== wanted) canvas.width = wanted;
       if (canvas.height !== CHART_H) canvas.height = CHART_H;
-      const read = tuningOf(next, frequencyHz);
+      // Averaged for the READING only — see READING_ROWS. Rows from a different band
+      // are dropped rather than averaged with these, so a retune re-reads from the new
+      // band's own frames instead of blending the two into a frequency neither is on.
+      const recent = recentRef.current;
+      if (recent.length > 0) {
+        const first = recent[0] as SpectrumRow;
+        if (first.startHz !== next.startHz || first.db.length !== next.db.length) {
+          recent.length = 0;
+        }
+      }
+      recent.push(next);
+      if (recent.length > READING_ROWS) recent.shift();
+      const mean = { ...next, db: next.db.map((_, i) => average(recent, i)) };
+      const read = tuningOf(mean, frequencyHz);
       paint(canvas, next, read, eased);
       setRow(next);
       setTuning(read);
