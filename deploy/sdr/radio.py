@@ -70,6 +70,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import numpy as np
@@ -165,6 +166,8 @@ class Device(Protocol):
     def getGain(self, direction: int, channel: int) -> float: ...
 
     def setGain(self, direction: int, channel: int, value: float) -> None: ...
+
+    def getGainRange(self, direction: int, channel: int) -> Any: ...
 
     def readSetting(self, key: str) -> str: ...
 
@@ -737,6 +740,10 @@ class Radio:
             out["automatic"] = bool(device.getGainMode(self._driver.RX, CHANNEL))
         with contextlib.suppress(Exception):
             out["gain_db"] = round(float(device.getGain(self._driver.RX, CHANNEL)), 2)
+        with contextlib.suppress(Exception):
+            span = device.getGainRange(self._driver.RX, CHANNEL)
+            out["gain_min_db"] = round(float(span.minimum()), 2)
+            out["gain_max_db"] = round(float(span.maximum()), 2)
         return out
 
     def set_gain(self, db: float | None) -> None:
@@ -1159,19 +1166,18 @@ def _settled_index(off: np.ndarray, hold: int) -> int | None:
     return int(starts[0]) if starts.size else None
 
 
-def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
-    """How long the radio really needs after a retune, against what we assume.
+def _settle_after(radio: Radio, disturb: "Callable[[], None]") -> dict[str, Any]:
+    """How long the radio's output stays disturbed after `disturb`, against what we
+    assume — a discard of zero and a stopwatch made of sample indices.
 
     `SETTLE_S` was chosen, never measured, and it is the whole cost of a hopping sweep:
     the samples in a hop are microseconds and the discard is milliseconds, so this one
-    number decides whether a wide band redraws twice a second or twenty times. Measuring
-    it is therefore worth more than any other tuning in this engine.
+    number decides whether a wide band redraws twice a second or twenty times.
 
-    The method is a discard of zero and a stopwatch made of sample indices. Tune away,
-    tune back with the timed discard switched OFF, read one continuous block, and find
-    where its slice-by-slice level stops differing from the settled level by more than
-    the settled level's own deviation. Everything before that point is the transient the
-    discard exists to hide."""
+    `disturb` is a parameter rather than a fixed retune because a hop does TWO things —
+    it retunes AND it flushes — and a measurement that always does both cannot say which
+    one owns the transient. It must leave the radio back at home with no timed discard,
+    so the block that follows starts at the instant the disturbance ends."""
     home = radio.center_hz
     radio.retune(center_hz=home, settle_s=SETTLE_S * 4)
     steady = _window_levels(radio.read(int(radio.rate_hz * SETTLE_SPAN_S)).samples,
@@ -1190,10 +1196,7 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
     span_ms = 0.0
     saturated = 0
     for _ in range(SETTLE_TRIALS):
-        radio.retune(center_hz=other_hz, settle_s=SETTLE_S * 4)
-        # The measurement itself: no timed discard, so the block starts at the instant
-        # the flush ends and carries the transient in its first samples.
-        radio.retune(center_hz=home, settle_s=0.0)
+        disturb()
         levels = _window_levels(
             radio.read(int(radio.rate_hz * SETTLE_SPAN_S)).samples, SETTLE_WINDOW
         )
@@ -1229,6 +1232,33 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
         "hold_ms": round(hold * slice_ms, 3),
         "saturated": saturated,
     }
+
+
+def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
+    """A whole hop: move away, come back, and flush — what the engine actually does."""
+    home = radio.center_hz
+
+    def disturb() -> None:
+        radio.retune(center_hz=other_hz, settle_s=SETTLE_S * 4)
+        radio.retune(center_hz=home, settle_s=0.0)
+
+    return _settle_after(radio, disturb)
+
+
+def _settle_after_flush(radio: Radio) -> dict[str, Any]:
+    """The control: a flush and NO frequency change at all.
+
+    A hop is a retune and a flush together, so every reading so far has been of both.
+    If the transient is still here with the radio sitting exactly where it was, then
+    `activateStream` is what costs the settle and the tuner is innocent — and the fix is
+    to stop flushing every hop rather than to discard for longer after each one.
+
+    Written because the previous suspect was falsified: the gain was already manual, and
+    fixing it moved the median from 60.8 ms to 51.4, which is not a collapse."""
+    def disturb() -> None:
+        radio.barrier(0.0)  # the flush alone; `barrier` returns what it dropped
+
+    return _settle_after(radio, disturb)
 
 
 def _elsewhere(center_hz: int, rate_hz: int, direct: bool) -> int:
@@ -1364,6 +1394,44 @@ def _settle_findings(settle: dict[str, Any]) -> list[str]:
             f"the retune settle is {configured} ms and the radio needed {measured} — "
             f"every hop pays the difference, so a wide band redraws several times "
             f"slower than this radio can manage"
+        ]
+    return []
+
+
+def _gain_findings(gain: dict[str, Any]) -> list[str]:
+    """Nothing in this engine ever sets the gain, so whatever it is, it is a default."""
+    if gain.get("automatic"):
+        return [
+            "the tuner's gain is AUTOMATIC — nothing in this engine ever sets it. A "
+            "waterfall's dB scale then means nothing from row to row, and every hop "
+            "seam is a gain step drawn as if the band had changed."
+        ]
+    at = gain.get("gain_db")
+    floor = gain.get("gain_min_db")
+    if at is None or floor is None:
+        return []
+    if float(at) <= float(floor):
+        return [
+            f"the tuner's gain is fixed at {at} dB, the BOTTOM of its "
+            f"{floor}-{gain.get('gain_max_db')} dB range — nothing here ever sets it, "
+            f"so that is a default rather than a choice, and it costs every weak "
+            f"signal on every band"
+        ]
+    return []
+
+
+def _flush_findings(hop: dict[str, Any], flush: dict[str, Any]) -> list[str]:
+    """Say it when the flush, not the tuner, is what a hop is waiting for."""
+    if not (hop.get("measured") and flush.get("measured")):
+        return []
+    moved = float(hop["settle_ms"])
+    still = float(flush["settle_ms"])
+    if still >= moved * 0.5:
+        return [
+            f"the transient is the FLUSH, not the retune: a flush with no frequency "
+            f"change still disturbs the output for {still} ms against {moved} ms for a "
+            f"whole hop, so `activateStream` is what every hop is waiting for and "
+            f"discarding longer after each one cannot be the fix"
         ]
     return []
 
@@ -1681,19 +1749,25 @@ def _probe_open(
             findings.extend(_settle_findings(settle))
 
         out["gain"] = _answered("gain", radio.gain_state)
-        if out["gain"].get("automatic"):
-            findings.append(
-                "the tuner's gain is AUTOMATIC — nothing in this engine ever sets it. "
-                "A waterfall's dB scale then means nothing from row to row, and every "
-                "hop seam is a gain step drawn as if the band had changed."
-            )
+        findings.extend(_gain_findings(out["gain"]))
 
         # Is the settle a PLL relock or a gain loop re-converging? An R820T2 locks in
         # well under a millisecond, and what the stopwatch watches is a LEVEL.
+        # FALSIFIED on the box, 2026-09-05: the gain was already manual, and fixing it
+        # moved the median from 60.8 ms to 51.4 — not a collapse. Kept because a
+        # falsified suspect that is not re-checked comes back.
         out["retune_settle_fixed_gain"] = _answered(
             "retune_settle_fixed_gain",
             lambda: _settle_fixed_gain(radio, _elsewhere(center_hz, rate_hz, direct)),
         )
+
+        # The control that separates the hop's two halves. If the transient survives a
+        # flush with NO frequency change, `activateStream` owns it and the tuner does
+        # not — and the fix is to stop flushing every hop, not to discard for longer.
+        out["settle_after_flush"] = _answered(
+            "settle_after_flush", lambda: _settle_after_flush(radio)
+        )
+        findings.extend(_flush_findings(out["retune_settle"], out["settle_after_flush"]))
 
         # And where the rest of a hop's time goes. The settle says how much stale data
         # there is; this says what removing it COSTS, and the two together are the only
