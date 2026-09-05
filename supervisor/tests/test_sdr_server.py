@@ -1718,3 +1718,28 @@ def test_a_frame_with_nothing_in_it_blames_the_antenna_not_the_engine() -> None:
 
     assert verdict["ok"] is False
     assert any("antenna or the input" in f for f in verdict["findings"])
+
+
+def test_the_spectrum_probe_says_what_the_rows_actually_found() -> None:
+    """Peaks ride on every frame to the picture and to the agent, and until this was
+    reported the only way to know whether a live band produced any was to open the PWA
+    and look — the exact bind this probe exists to undo (CLAUDE.md #10).
+
+    Counted over the whole watch as well as in the last frame, so a band whose traffic
+    is intermittent is not judged by whichever row the probe happened to stop on."""
+    sweep = listen.Sweep.of(
+        144_000_000, 148_000_000, 9375, 3.0, capture=(2_400_000, 256)
+    )
+    quiet = listen.Frame(at=1.0, start_hz=144_000_000, bin_hz=9375, db=[-70.0] * 8)
+    loud = listen.Frame(
+        at=2.0,
+        start_hz=144_000_000,
+        bin_hz=9375,
+        db=[-70.0] * 8,
+        peaks=[{"hz": 144_390_000, "db": -50.0, "over_db": 18.0}],
+    )
+
+    verdict = server._spectrum_verdict(sweep, [quiet, loud, quiet], 3.0, "iq")
+
+    assert verdict["signals"]["in_last_frame"] == 0
+    assert verdict["signals"]["rows_with_any"] == 1

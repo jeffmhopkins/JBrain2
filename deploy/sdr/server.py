@@ -158,6 +158,18 @@ def _spectrum_verdict(
         "bin_hz": last.bin_hz,
         "bins": len(last.db),
     }
+    # What the rows actually FOUND, which nothing else can answer: the peaks ride on
+    # every frame to the picture and to the agent, and until this was here the only way
+    # to know whether a live band was producing any was to open the PWA and look — the
+    # exact bind this probe exists to undo (CLAUDE.md #10). The strongest few rather
+    # than all of them: this is a check that the finding works, not a band survey.
+    out["signals"] = {
+        "in_last_frame": len(last.peaks),
+        "strongest": last.peaks[:5],
+        # Over the whole watch, so a band whose traffic is intermittent is not judged
+        # by whichever row the probe happened to stop on.
+        "rows_with_any": sum(1 for frame in frames if frame.peaks),
+    }
     if sweep.capture is not None:
         rate_hz, fft_bins = sweep.capture
         want = iq.bin_width_hz(rate_hz, fft_bins)
