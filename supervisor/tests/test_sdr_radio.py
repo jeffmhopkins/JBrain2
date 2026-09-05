@@ -180,7 +180,11 @@ class _FakeDevice:
         noise = self._noise.standard_normal(elems) + 1j * self._noise.standard_normal(
             elems
         )
-        view[:elems] = (tone + NOISE_AMPLITUDE * noise).astype(np.complex64)
+        if self.driver.silent_reads > 0:
+            self.driver.silent_reads -= 1
+            view[:elems] = 0.0
+        else:
+            view[:elems] = (tone + NOISE_AMPLITUDE * noise).astype(np.complex64)
         self._say("readStream", elems)
         return _Result(elems)
 
@@ -202,6 +206,7 @@ class _FakeDriver:
         paced: bool = False,
         overflow_after_s: float = 1e9,
         stale_center_hz: float = 1.0,
+        silent_reads: int = 0,
         make_raises: Exception | None = None,
         unmake_raises: Exception | None = None,
     ) -> None:
@@ -212,6 +217,10 @@ class _FakeDriver:
         self.paced = paced
         self.overflow_after_s = overflow_after_s
         self.stale_center_hz = stale_center_hz
+        # Reads that deliver ZEROS before the radio starts producing samples. The
+        # direct-sampling branch on real hardware does this, and a probe that judged
+        # one frame called a live radio deaf because of it.
+        self.silent_reads = silent_reads
         self.make_raises = make_raises
         self.unmake_raises = unmake_raises
         self.devices: list[_FakeDevice] = []
@@ -1030,3 +1039,36 @@ def test_a_peak_above_the_dc_bin_keeps_its_own_frequency() -> None:
 
     assert verdict["peak_db"] == -10.0
     assert verdict["peak_hz"] == 1_000_000 + 6 * 250
+
+
+def test_a_radio_that_needs_a_moment_is_not_reported_deaf() -> None:
+    """MEASURED on the box: a single frame taken shortly after the direct-sampling
+    branch was switched reported a dead radio that the STREAMING engine, on the same
+    dongle at the same frequency and rate, found perfectly alive — a -51.5 dBFS floor
+    with a peak over it. Both cannot be true of the radio, so one was true of the
+    reading, and the single frame is the weaker one.
+
+    The verdict now comes from the last of several frames, and `settled` records that
+    the first had nothing in it. Before this the probe called a live radio deaf and
+    said so about the owner's antenna."""
+    driver = _FakeDriver(silent_reads=2)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        verdict = radio._capture(rig, 64)
+
+    assert verdict["dead"] is False
+    assert verdict["settled"] is True
+    assert verdict["frames"] == radio.PROBE_CAPTURE_FRAMES
+
+
+def test_a_radio_that_is_silent_throughout_is_still_reported_dead() -> None:
+    """The flag must not become an excuse. A receiver with no noise floor after ten
+    frames is not settling, and saying otherwise would hide the very thing this check
+    exists to find."""
+    driver = _FakeDriver(silent_reads=10_000)
+
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        verdict = radio._capture(rig, 64)
+
+    assert verdict["dead"] is True
+    assert verdict["settled"] is False

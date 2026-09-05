@@ -599,6 +599,27 @@ and it is now the one F0 answer still outstanding. **F6 does not wait on it** �
 engine swap is proven for everything above 24 MHz, which is where the live waterfall
 lives; only the HF half of §4's promise is gated.
 
+⟲ **RETRACTED, and by the engine F6 shipped.** The `spectrum-probe` route added after
+F6 puts a real live session on the same dongle at the same frequency and rate, and 40 m
+comes back **alive**: `engine: iq`, 96 frames in 3.09 s (**31.07 fps**), 1024 bins of
+exactly 250 Hz, floor **-51.5 dBFS** with a peak 6.8 dB over it. Re-running the F0
+probe at that same 7.2125 MHz still answers `dead` — a DC spike at +3.0 dBFS with a
+median at `DB_FLOOR`.
+
+Both cannot be true of the radio, so one was true of the READING, and the single frame
+is the weaker measurement: the streaming engine is also what the owner actually sees.
+So the conclusion above — "nothing is reaching the ADC below 24 MHz", "the antenna or a
+board that does not wire the Q branch" — **was wrong**, and it was reported to the owner
+as a hardware fault before the engine existed to contradict it. `_capture` now reads
+ten frames the way the engine does, judges the last, and reports `settled` when the
+first was empty and a later one was not; the `dead` sentence no longer names a cause it
+cannot know. Whether the HF path needs a settle or something else differs between the
+two readings is what the next run measures rather than assumes.
+
+The lesson is the same one this plan has now learned three times: **a reading taken
+differently from how the system reads is not a measurement of the system.** The call
+shape, the sandbox with no hardware, and now a single frame against a stream.
+
 **F1 — the base rebase, and CI that actually builds it.** `debian:trixie-slim`; `python3
 python3-numpy python3-soapysdr soapysdr-module-rtlsdr` beside the existing `rtl-sdr ffmpeg
 direwolf`; `python` → `python3` in `CMD` and `HEALTHCHECK`; `python3 -c "import server,
@@ -673,6 +694,22 @@ so an I/Q session — which holds a radio and runs no process — would have bee
 closed by name, since a leaked handle is what `/reset` must not fire under (§6.18).
 The fallback is `RadioUnavailable`, a **subclass** of `SdrError` so that where it is
 not caught it refuses like anything else instead of becoming a 500.
+
+✅ **MEASURED on the box 2026-09-05**, through `spectrum-probe`, which runs the real
+route's own decision rather than a copy of it:
+
+| section | engine | frames | fps | bins × width |
+| --- | --- | --- | --- | --- |
+| `2m-ssb` (200 kHz, one hop) | **iq** | 96 in 3.01 s | **31.89** | 4096 × exactly 250 Hz |
+| `40m` (175 kHz, one hop, HF) | **iq** | 96 in 3.09 s | **31.07** | 1024 × exactly 250 Hz |
+| `fm-broadcast` (20 MHz, multi-hop) | `rtl_power` | 4 in 4.0 s | 1.00 | 1032 × 19531 Hz |
+
+Every claim the wave rests on, one reading each. The width is `rate / bins` **exactly**
+on both one-hop rows (1,024,000/4096 and 256,000/1024 are both 250). The multi-hop row
+is sent no capture and keeps rtl_power's own ladder width, which is the tier split
+working rather than a fallback firing. And **31.9 fps against a tool clamped to 1 fps
+in its own C** is the ceiling this plan was written to remove, measured gone — with a
+-60.1 dBFS floor under it, so those are real frames rather than empty ones.
 
  `Frame` unchanged. The wire budget is
 decided here against the **post-gzip** number (§5), not the raw one. Overflow and the
