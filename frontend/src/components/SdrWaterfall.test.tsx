@@ -417,3 +417,45 @@ describe("the signals under the picture", () => {
     expect(screen.queryAllByText("999.000")).toHaveLength(0);
   });
 });
+
+describe("tuning to a signal from the list", () => {
+  it("asks before it takes the radio off the waterfall", () => {
+    // Arm-then-confirm per DESIGN.md: tuning is destructive here — it stops the picture
+    // the owner is reading — and a dialog over that picture is the wrong shape.
+    const tuned: number[] = [];
+    render(<SdrWaterfall onTune={(hz) => tuned.push(hz)} />);
+    act(() => startSdrSpectrum());
+    const stream = FakeSource.last;
+    if (!stream) throw new Error("no stream opened");
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Listen on 144.075 megahertz" }));
+
+    expect(tuned).toEqual([]);
+    expect(screen.getByRole("alert").textContent).toContain("stops the waterfall");
+  });
+
+  it("tunes on the second tap", () => {
+    const tuned: number[] = [];
+    render(<SdrWaterfall onTune={(hz) => tuned.push(hz)} />);
+    act(() => startSdrSpectrum());
+    const stream = FakeSource.last;
+    if (!stream) throw new Error("no stream opened");
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+    const pill = screen.getByRole("button", { name: "Listen on 144.075 megahertz" });
+
+    fireEvent.click(pill);
+    fireEvent.click(screen.getByRole("button", { name: "Listen on 144.075 megahertz" }));
+
+    expect(tuned).toEqual([144_075_000]);
+  });
+
+  it("is not a button at all when there is nowhere to send it", () => {
+    // The picture is still a picture without a radio to retask.
+    const stream = watching();
+
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    expect(screen.queryByRole("button", { name: /Listen on/ })).toBeNull();
+  });
+});

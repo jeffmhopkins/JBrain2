@@ -36,10 +36,15 @@ export function SdrSpectrumJob({
   serial,
   /** The spectrum session on THIS radio, or null when it is not watching yet. */
   session,
+  onListen,
   onChanged,
 }: {
   serial: string;
   session: SdrListening | null;
+  /** Take the radio off the waterfall and listen on one frequency. Passed up rather
+   *  than done here: switching jobs belongs to the surface that owns the radio, which
+   *  is also where releasing it already lives. */
+  onListen?: (hz: number, mode: string) => void;
   onChanged: () => void;
 }) {
   const [sheet, setSheet] = useState(false);
@@ -119,7 +124,14 @@ export function SdrSpectrumJob({
 
       {session ? (
         <>
-          <SdrWaterfall />
+          {/* Spread rather than passed as `undefined`: `exactOptionalPropertyTypes` is
+              on, so "no handler" has to be an ABSENT prop and not a present one holding
+              undefined. The BAND's mode goes with it — wide FM on the dial, narrow FM
+              on 2 m — since a signal picked off the picture is on whatever band the
+              picture is, and `section` is already resolved above. */}
+          <SdrWaterfall
+            {...(onListen ? { onTune: (hz: number) => onListen(hz, section?.mode ?? "wbfm") } : {})}
+          />
           {section && dutyNote(section) && (
             // Said on the picture, not in a help page: a span wide enough to need
             // several retunes watches any one frequency for a fraction of each second,

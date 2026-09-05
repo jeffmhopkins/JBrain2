@@ -76,7 +76,16 @@ function rateNote(fps: number): string {
  *  changing is what moves a marker; this is only so a dB reading is not a minute old. */
 const PEAKS_HEARTBEAT_S = 1;
 
-export function SdrWaterfall({ height = 220 }: { height?: number }) {
+export function SdrWaterfall({
+  height = 220,
+  onTune,
+}: {
+  height?: number;
+  /** Tune the radio to a signal the owner picked out of the list. Optional, because a
+   *  waterfall with nowhere to send the request is still a waterfall — and because job
+   *  switching belongs to the surface that owns the radio, not to the picture. */
+  onTune?: (hz: number) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // What the axis under the picture reads. React state, because it changes on a retune
   // rather than on every row, and re-rendering two labels a minute costs nothing.
@@ -93,6 +102,10 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   // object the handler is accumulating into.
   const heldRef = useRef<HeldPeak[]>([]);
   const [marks, setMarks] = useState<"off" | "live" | "held">("held");
+  // Arm-then-confirm, per DESIGN.md, because tuning is destructive here: it takes the
+  // radio off the waterfall. The pill morphs rather than opening a dialog over the
+  // picture the owner is reading.
+  const [armed, setArmed] = useState<number | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -456,17 +469,48 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
               </button>
             ) : null}
           </div>
+          {armed !== null ? (
+            <p className="why" role="alert">
+              That stops the waterfall and listens on {mhz(armed)} MHz. Tap again to confirm.
+            </p>
+          ) : null}
           {marks === "off" ? null : placed.length ? (
             <ul className="wf-siglist">
-              {placed.map(({ peak }) => (
-                <li key={peak.hz} className={peak.live ? undefined : "held"}>
-                  <span className="wf-sighz">{mhz(peak.hz)}</span>
-                  {/* Over the noise AROUND it, which is what made it a signal — an
-                      absolute dBFS says nothing without the floor beside it. */}
-                  <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
-                  {peak.live ? null : <span className="wf-sigheld">gone</span>}
-                </li>
-              ))}
+              {placed.map(({ peak }) => {
+                const inside = (
+                  <>
+                    <span className="wf-sighz">{mhz(peak.hz)}</span>
+                    {/* Over the noise AROUND it, which is what made it a signal — an
+                        absolute dBFS says nothing without the floor beside it. */}
+                    <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
+                    {peak.live ? null : <span className="wf-sigheld">gone</span>}
+                  </>
+                );
+                const arm = armed === peak.hz;
+                return (
+                  <li key={peak.hz} className={peak.live ? undefined : "held"}>
+                    {onTune ? (
+                      <button
+                        type="button"
+                        className={arm ? "wf-sigpill armed" : "wf-sigpill"}
+                        aria-label={`Listen on ${mhz(peak.hz)} megahertz`}
+                        onClick={() => {
+                          if (!arm) {
+                            setArmed(peak.hz);
+                            return;
+                          }
+                          setArmed(null);
+                          onTune(peak.hz);
+                        }}
+                      >
+                        {arm ? <span className="wf-sighz">Listen here?</span> : inside}
+                      </button>
+                    ) : (
+                      <span className="wf-sigpill">{inside}</span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="wf-signone">

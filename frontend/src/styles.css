@@ -25925,17 +25925,33 @@ button.task-band:active {
 }
 .wf-siglist li {
   display: flex;
+}
+/* The pill itself, which is a button when there is a radio to send it to. Same shape
+   either way, so the list does not change size when tuning is unavailable. */
+.wf-sigpill {
+  display: flex;
   align-items: baseline;
   gap: 5px;
   padding: 2px 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
+  background: transparent;
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  color: inherit;
+}
+button.wf-sigpill {
+  cursor: pointer;
+}
+/* Armed, per DESIGN.md's arm-then-confirm: the pill says what the second tap does
+   rather than a dialog opening over the picture being read. */
+.wf-sigpill.armed {
+  border-color: var(--accent);
 }
 /* A signal that has stopped reads as remembered rather than as present: the list is
    most useful when "on the air now" and "was a moment ago" are told apart at a glance. */
-.wf-siglist li.held {
+.wf-siglist li.held .wf-sigpill {
   border-style: dashed;
   color: var(--text-3);
 }
