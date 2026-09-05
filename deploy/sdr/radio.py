@@ -500,7 +500,12 @@ class Radio:
         try:
             self._device = self._driver.make(args)
         except Exception as failed:
-            raise RadioError(f"could not open the radio ({failed})") from failed
+            # The ARGS go in the sentence. MEASURED 2026-09-05: the box answered
+            # `SoapySDR::Device::make() no match` for a filter as plain as
+            # `{"driver": "rtlsdr"}` while enumeration was finding devices, and without
+            # the args in the message there is no way to tell a wrong filter from a
+            # driver that is not loaded — which are opposite fixes.
+            raise RadioError(f"could not open the radio with {args} ({failed})") from failed
         device = self._device
         # Configured BEFORE `setupStream`, and not only by convention: `bufflen` is a
         # stream argument consumed once inside it, so the stream is built against a
@@ -888,7 +893,6 @@ def _probe(
 ) -> dict[str, Any]:
     started = time.monotonic()
     drv = driver if driver is not None else _Soapy()
-    findings: list[str] = []
     out: dict[str, Any] = {
         "serial": serial,
         "soapy": _version_or_error(drv),
@@ -916,6 +920,40 @@ def _probe(
         return out
 
     direct = center_hz < DIRECT_MAX_HZ
+    try:
+        return _probe_open(
+            out, drv, found, started, serial, center_hz, rate_hz, bins, direct
+        )
+    except RadioError as shut:
+        # Opening is the one step whose failure used to cost the enumeration too: the
+        # wrapper in `probe` catches, builds a fresh verdict, and the device list that
+        # would say WHY the open found no match goes with it. MEASURED 2026-09-05 —
+        # `make() no match` against a filter of `{"driver": "rtlsdr"}`, with the list of
+        # what enumeration had just found nowhere in the answer. Keep it.
+        out["ok"] = False
+        out["summary"] = f"Enumeration found {len(found)}, but the radio would not open: {shut}"
+        out["findings"] = [
+            str(shut),
+            "Enumeration and `make` disagree — compare `enumerate.devices` below "
+            "against the filter in the message: a wrong filter and an unloaded driver "
+            "look identical from the error alone and have opposite fixes.",
+        ]
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+
+def _probe_open(
+    out: dict[str, Any],
+    drv: Driver,
+    found: list[dict[str, str]],
+    started: float,
+    serial: str | None,
+    center_hz: int,
+    rate_hz: int,
+    bins: int,
+    direct: bool,
+) -> dict[str, Any]:
+    findings: list[str] = []
     with Radio.open(
         rate_hz=rate_hz,
         center_hz=center_hz,
