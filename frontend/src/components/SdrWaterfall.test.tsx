@@ -8,7 +8,7 @@
 // mistake a hertz of readback jitter for a retune. Every one of those is silent — the
 // picture still draws, it is just wrong or the phone is just hot.
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSdrSpectrum, startSdrSpectrum } from "../sdrSpectrum";
 import { HISTORY_SECONDS, stackFor } from "../sdrWaterfall";
@@ -332,5 +332,74 @@ describe("what the note claims", () => {
     run(stream, 8, 0.1);
 
     expect(note()).toContain("10 rows a second");
+  });
+});
+
+describe("the signals under the picture", () => {
+  it("marks what the box found, at the frequency the row puts it", () => {
+    // Found on the BOX (`peaks.py`), so the agent's tools and this picture cannot
+    // disagree about what was on the air. This view only places what it is handed.
+    const stream = watching();
+
+    send(stream, 1000, {
+      peaks: [{ hz: 144_075_000, db: -50, over_db: 18.4 }],
+    });
+
+    // Twice on purpose: the marker over the picture and the entry in the list beneath
+    // it are the same signal, and the list is what the marker's label is short for.
+    expect(screen.getAllByText("144.075")).toHaveLength(2);
+    expect(screen.getByText("+18.4 dB")).toBeTruthy();
+  });
+
+  it("holds a signal that stopped, and says it is gone", () => {
+    // A repeater keys up and drops. One marker that appears and goes, not one that
+    // vanishes between words — which is what makes a live list unreadable.
+    const stream = watching();
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    send(stream, 1002, { peaks: [] });
+
+    expect(screen.getAllByText("144.075")).toHaveLength(2);
+    expect(screen.getByText("gone")).toBeTruthy();
+  });
+
+  it("live shows only what is on the air now", () => {
+    const stream = watching();
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+    send(stream, 1002, { peaks: [] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Live" }));
+
+    expect(screen.queryAllByText("144.075")).toHaveLength(0);
+    expect(screen.getByText("Nothing above the noise right now.")).toBeTruthy();
+  });
+
+  it("off draws no markers at all", () => {
+    const stream = watching();
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Off" }));
+
+    expect(screen.queryAllByText("144.075")).toHaveLength(0);
+  });
+
+  it("forgets the old band's signals on a retune", () => {
+    // Markers drawn at frequencies this picture does not cover would be worse than
+    // none: the axis under them would be telling a different story.
+    const stream = watching();
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    send(stream, 1001, { start_hz: 430_000_000, peaks: [] });
+
+    expect(screen.queryAllByText("144.075")).toHaveLength(0);
+  });
+
+  it("places a signal the row does not cover nowhere at all", () => {
+    // A clamped marker claims a measurement at the band edge that was never taken.
+    const stream = watching();
+
+    send(stream, 1000, { peaks: [{ hz: 999_000_000, db: -50, over_db: 18 }] });
+
+    expect(screen.queryAllByText("999.000")).toHaveLength(0);
   });
 });

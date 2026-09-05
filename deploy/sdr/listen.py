@@ -53,10 +53,12 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+import peaks
 
 import iq
 import packets
@@ -549,6 +551,12 @@ class Sweep:
     #: engine retunes on the LIVE stream between them, which is what F0 measured and
     #: what makes this faster than the tool it replaces rather than merely different.
     hops: int = 1
+    #: One channel's width on THIS band — 200 kHz on the FM dial, 15 kHz on 2m. A band
+    #: plan fact, so it comes from the api (`bands.py`) rather than being guessed from
+    #: the capture: it decides which adjacent bins are one signal, and a rule that
+    #: guessed would report a 200 kHz transmission as twenty stations a few kHz apart.
+    #: Zero means the caller did not say, and only touching bins are then one signal.
+    channel_hz: int = 0
 
     @staticmethod
     def of(
@@ -560,6 +568,7 @@ class Sweep:
         direct_ok: bool = False,
         capture: tuple[int, int] | None = None,
         hops: int = 1,
+        channel_hz: int = 0,
     ) -> "Sweep":
         """`direct_ok` says WHICH ENGINE is asking, and it is the only thing that
         changes the floor.
@@ -616,6 +625,7 @@ class Sweep:
             seconds=max(1.0, min(float(seconds), MAX_SWEEP_SECONDS)),
             capture=capture,
             hops=max(1, int(hops)),
+            channel_hz=max(int(channel_hz), 0),
         )
 
     @property
@@ -702,6 +712,11 @@ class Frame:
     # compares this value exactly (§6.13).
     bin_hz: int | float
     db: list[float]
+    #: What stands above the noise in THIS row, strongest first (`peaks.find`). Carried
+    #: on the frame rather than computed by each viewer because it is a MEASUREMENT: the
+    #: agent's tools and the picture must not be able to disagree about what was on the
+    #: air, and only one of them is looking. Empty is a real answer — a quiet band.
+    peaks: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def stop_hz(self) -> int | float:
@@ -718,6 +733,7 @@ class Frame:
             # noise on any real reading — it is a tenth of a dB — while it costs a
             # character per bin on every frame of every viewer's stream.
             "db": [round(v, 1) for v in self.db],
+            "peaks": self.peaks,
         }
 
 
@@ -1290,6 +1306,19 @@ class Session:
                 self._end_frames()
 
     def _publish_frame(self, frame: Frame) -> None:
+        # Signals found HERE rather than at the three places a frame is built: both
+        # engines and the stitcher pass through this one seam, so no path can publish a
+        # row whose peaks nobody looked for — and a viewer cannot disagree with the
+        # agent about what was on the air, because neither of them decides.
+        frame = dataclasses.replace(
+            frame,
+            peaks=peaks.find(
+                frame.db,
+                frame.start_hz,
+                frame.bin_hz,
+                channel_hz=self.sweep.channel_hz if self.sweep else 0,
+            ),
+        )
         with self._lock:
             self._last = frame
             subs = list(self._frames)

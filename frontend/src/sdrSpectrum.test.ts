@@ -42,6 +42,9 @@ describe("reading a row", () => {
       stopHz: 144_050_000,
       binHz: 25_000,
       db: [-70, -60],
+      // Empty rather than absent: a quiet band and an older box look the same on the
+      // wire, and nothing downstream should have to tell them apart.
+      peaks: [],
     });
   });
 
@@ -225,5 +228,41 @@ describe("the stream", () => {
     startSdrSpectrum();
 
     expect(FakeSource.last).toBe(stream);
+  });
+});
+
+describe("the signals a row found", () => {
+  it("carries them in reading order, renamed for this side of the wire", () => {
+    // Found on the BOX, not here: the agent's tools read the same frames, so "what is
+    // on the air" cannot have two answers depending on who asked.
+    const row = parseRow(
+      frame({
+        peaks: [
+          { hz: 144_390_000, db: -50.2, over_db: 18.4 },
+          { hz: 145_000_000, db: -61, over_db: 9 },
+        ],
+      }),
+    );
+
+    expect(row).toMatchObject({
+      peaks: [
+        { hz: 144_390_000, db: -50.2, overDb: 18.4 },
+        { hz: 145_000_000, db: -61, overDb: 9 },
+      ],
+    });
+  });
+
+  it("drops an entry that is not a measurement rather than losing the row", () => {
+    // A marker drawn at a frequency nothing was measured at is worse than no marker,
+    // and one bad entry must not cost the picture the whole row.
+    const row = parseRow(
+      frame({ peaks: [{ hz: "loud", db: -50 }, null, { hz: 144_390_000, db: -50 }] }),
+    );
+
+    expect(row).toMatchObject({ peaks: [{ hz: 144_390_000, db: -50, overDb: 0 }] });
+  });
+
+  it("reads a row from a box that does not report them at all", () => {
+    expect(parseRow(frame())).toMatchObject({ peaks: [] });
   });
 });

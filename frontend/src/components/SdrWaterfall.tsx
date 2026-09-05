@@ -35,6 +35,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { khz, mhz } from "../mhz";
+import { type HeldPeak, mergePeaks, positionOf, visiblePeaks } from "../sdrPeaks";
 import {
   type SpectrumRow,
   type SpectrumState,
@@ -69,6 +70,10 @@ function rateNote(fps: number): string {
   return fps >= 1.5 ? `${Math.round(fps)} rows a second` : "one row a second";
 }
 
+/** How often the listed levels refresh when nothing has appeared or stopped. The set
+ *  changing is what moves a marker; this is only so a dB reading is not a minute old. */
+const PEAKS_HEARTBEAT_S = 1;
+
 export function SdrWaterfall({ height = 220 }: { height?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // What the axis under the picture reads. React state, because it changes on a retune
@@ -78,6 +83,10 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   // The measured rate, for the note only — and set only when the rounded figure moves,
   // so a stream ten rows a second does not re-render this tree ten times a second.
   const [fps, setFps] = useState<number | null>(null);
+  // What is on the air, and which reading of it is on screen. `held` is the whole set
+  // including what has stopped; the toggle chooses what is drawn from it.
+  const [signals, setSignals] = useState<HeldPeak[]>([]);
+  const [marks, setMarks] = useState<"off" | "live" | "held">("held");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -115,6 +124,13 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
     let head = 0;
     let frame = 0;
     let saidFps: number | null = null;
+    // The signals, held across rows here rather than in React: merging is per row and
+    // cheap, publishing is a re-render and is not. Kept in the effect for the same
+    // reason the ring is — the picture is on a canvas precisely so that ten rows a
+    // second cost ten paints and no reconciliation.
+    let held: HeldPeak[] = [];
+    let saidKey = "";
+    let saidAt = 0;
     // How many arriving rows share one row of pixels, and the max-hold they are
     // collected into. A row is never dropped: it lands in `pending` and reaches the
     // picture when its group completes, which is what keeps 180 s of history on a
@@ -242,6 +258,11 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
         extent = 0;
         scale = null;
         frozen = false;
+        // The signals were the OLD band's. Holding them across a retune would draw
+        // markers at frequencies this picture does not cover.
+        held = [];
+        saidKey = "";
+        setSignals([]);
         setBand(row);
       }
       history.unshift(row);
@@ -293,6 +314,17 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
           full = true;
         }
       }
+      held = mergePeaks(held, row);
+      // Published when the SET changes — a signal appearing or stopping is when a marker
+      // has to move — plus a slow heartbeat so the listed levels do not go stale. A row
+      // that only changed a decibel redraws nothing, which is the point.
+      const key = held.map((peak) => `${peak.hz}:${peak.live ? 1 : 0}`).join(",");
+      if (key !== saidKey || row.at - saidAt >= PEAKS_HEARTBEAT_S) {
+        saidKey = key;
+        saidAt = row.at;
+        setSignals(held);
+      }
+
       if (full) repaint();
       else append(row);
       show();
@@ -309,24 +341,92 @@ export function SdrWaterfall({ height = 220 }: { height?: number }) {
   }, [height]);
 
   const bins = band?.db.length ?? 0;
+  // Markers are DOM over the picture, not pixels in it. The ring is drawn 1:1 on both
+  // axes so that a scroll cannot resample it, and painting labels into that would put
+  // text through the same transform — while a positioned overlay gets real type, moves
+  // only when a signal does, and cannot disturb the picture it sits on.
+  const shown = band && marks !== "off" ? visiblePeaks(signals, marks) : [];
+  const placed = band
+    ? shown
+        .map((peak) => ({ peak, at: positionOf(peak.hz, band) }))
+        .filter((m): m is { peak: HeldPeak; at: number } => m.at !== null)
+    : [];
   return (
     <div className="wf">
-      <canvas
-        ref={canvasRef}
-        className="wf-canvas"
-        style={{ height }}
-        role="img"
-        aria-label={
-          band
-            ? `Live spectrum, ${mhz(band.startHz)} to ${mhz(band.stopHz)} megahertz`
-            : "Live spectrum, waiting for the first row"
-        }
-      />
+      <div className="wf-stack">
+        <canvas
+          ref={canvasRef}
+          className="wf-canvas"
+          style={{ height }}
+          role="img"
+          aria-label={
+            band
+              ? `Live spectrum, ${mhz(band.startHz)} to ${mhz(band.stopHz)} megahertz`
+              : "Live spectrum, waiting for the first row"
+          }
+        />
+        {placed.length ? (
+          <div className="wf-marks" aria-hidden="true">
+            {placed.map(({ peak, at }) => (
+              <span
+                key={peak.hz}
+                className={peak.live ? "wf-mark" : "wf-mark held"}
+                style={{ left: `${at * 100}%` }}
+              >
+                <b>{mhz(peak.hz)}</b>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
       {band ? (
         <div className="wf-axis">
           <span>{mhz(band.startHz)}</span>
           <span>{mhz((band.startHz + band.stopHz) / 2)}</span>
           <span>{mhz(band.stopHz)}</span>
+        </div>
+      ) : null}
+      {band ? (
+        <div className="wf-sig">
+          <div className="wf-sigbar">
+            <span className="wf-sightitle">
+              Signals
+              {marks === "off" ? null : <span className="wf-sigcount">{placed.length}</span>}
+            </span>
+            <fieldset className="wf-seg">
+              <legend>Which signals to mark</legend>
+              {(["off", "live", "held"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={marks === option ? "on" : undefined}
+                  aria-pressed={marks === option}
+                  onClick={() => setMarks(option)}
+                >
+                  {option === "off" ? "Off" : option === "live" ? "Live" : "Held"}
+                </button>
+              ))}
+            </fieldset>
+          </div>
+          {marks === "off" ? null : placed.length ? (
+            <ul className="wf-siglist">
+              {placed.map(({ peak }) => (
+                <li key={peak.hz} className={peak.live ? undefined : "held"}>
+                  <span className="wf-sighz">{mhz(peak.hz)}</span>
+                  {/* Over the noise AROUND it, which is what made it a signal — an
+                      absolute dBFS says nothing without the floor beside it. */}
+                  <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
+                  {peak.live ? null : <span className="wf-sigheld">gone</span>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="wf-signone">
+              {marks === "live"
+                ? "Nothing above the noise right now."
+                : "Nothing above the noise recently."}
+            </p>
+          )}
         </div>
       ) : null}
       <p className="wf-note">
