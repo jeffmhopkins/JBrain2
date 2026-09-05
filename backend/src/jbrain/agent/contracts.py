@@ -22,7 +22,17 @@ PermissionClass = Literal["read", "mutate", "external", "sensitive", "web"]
 off-box internet reads (`web_search`, `web_fetch`) — jerv holds no knowledge-base
 tools, so there is nothing personal in its context to exfiltrate into a query
 (docs/reference/ASSISTANT.md "Agent selection", the deliberate, owner-approved exception to
-invariant #9). The one non-internet member is `current_location`: it names the live
+invariant #9).
+
+⟲ **The class is the GATE, not the egress**, and the membership says so: the radio tools
+are all `web` and none of them reaches the internet. They are here because the gate is
+what they need — opt-in, jerv-only, direct-exec — and because the alternative is worse:
+`read` is admitted to every `allow=None` wildcard, so a `read` radio tool would be
+handed to the Full Brain curator, which has no radio to hold and no use for a band plan.
+An earlier version of this docstring said `current_location` was the one non-internet
+member; it has not been since the SDR tools landed.
+
+`current_location` is the subtlest of them: it names the live
 position the owner's app shared THIS turn — by default an OFFLINE nearest-city lookup
 (no egress, no read of the firewalled location domain: no saved places, no device
 stack), escalating to the owner-configured external reverse-geocoder ONLY for an

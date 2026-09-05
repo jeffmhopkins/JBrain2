@@ -992,6 +992,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             4,
             "f43452b5503101d5c0cb414bbc952db61b296ee09a93f2db1d445bfb0d551b8e",
         ),
+        "sdr_read.tool": (
+            "sdr_read",
+            1,
+            "4b8e602ddf01178e2a1671834dcbe219ee7a7aefc20bd4a23546118f8d88ada0",
+        ),
+        "sdr_signal.tool": (
+            "sdr_signal",
+            1,
+            "038b29fe8dfb98e5c329d8bde8709c377025530270d391104f4c0a380ea5723a",
+        ),
         "sdr_stop.tool": (
             "sdr_stop",
             3,

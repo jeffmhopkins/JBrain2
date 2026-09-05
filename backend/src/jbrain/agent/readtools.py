@@ -118,7 +118,19 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 # sdr_listen is load-bearing for the GUI as well as the chat: the composer's radio
 # icon exists only while a session holds the tuner, so dropping the tool on a
 # radio-less box also correctly means that surface can never appear.
-OPTIONAL_SDR_TOOLS = frozenset({"sdr_listen", "sdr_stop", "sdr_aprs_logging", "aprs_recent"})
+OPTIONAL_SDR_TOOLS = frozenset(
+    {
+        "sdr_listen",
+        "sdr_stop",
+        "sdr_aprs_logging",
+        "aprs_recent",
+        # The MEASUREMENT half (F10). Optional for the same reason the control half is:
+        # a box with no radio has no band to read and nothing to measure, and a tool
+        # offered there could only ever refuse.
+        "sdr_read",
+        "sdr_signal",
+    }
+)
 # jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})

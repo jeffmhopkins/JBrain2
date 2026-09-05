@@ -518,3 +518,112 @@ def test_sdr_stop_says_it_only_stops_listening() -> None:
 
     assert "listening only" in text
     assert "own switch" in text  # the answer the handler actually returns
+
+
+# --- F10: the MEASUREMENT half ------------------------------------------------------
+
+
+async def test_the_band_table_is_readable_without_taking_a_radio(tools) -> None:
+    """It answers "what can this radio hear" before anything is tuned, so it must never
+    reach the sidecar and never be refused for a busy radio."""
+    touched: list[str] = []
+
+    out = await tools(lambda p, _b: touched.append(p))["sdr_read"]({"what": "bands"}, None)
+
+    assert touched == []
+    assert "sections" in out
+    # The fields a band plan cannot give: what mode lives there, and how it can be
+    # watched. Guessing a frequency from memory gets the edges right and these wrong.
+    assert "live=" in out
+
+
+async def test_one_section_carries_its_named_channels(tools) -> None:
+    """The whole table would be unreadable with every channel in it, and a model asking
+    for a frequency needs exactly one section's worth."""
+    out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "2m-ssb"}, None)
+
+    assert "2m-ssb" in out
+    assert "144.1-144.3 MHz" in out
+
+
+async def test_an_unknown_section_says_how_to_find_a_real_one(tools) -> None:
+    out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "no-such-band"}, None)
+
+    assert "no-such-band" in out
+    assert "whole table" in out
+
+
+async def test_a_signal_reading_reports_the_MARGIN_not_the_raw_level(tools) -> None:
+    """An absolute dBFS figure means little on this receiver — no calibrated gain, about
+    seven effective bits — so what carries information is how far the peak stands over
+    the frame's own floor. That is the standard `sweep.steady` is calibrated on."""
+    body = {
+        "engine": "iq",
+        "frames": 96,
+        "frame": {"floor_db": -60.1, "peak_db": -48.2, "peak_hz": 144_200_000.0},
+    }
+
+    out = await tools(lambda _p, _b: _ok(body))["sdr_signal"]({"frequency_mhz": 144.2}, None)
+
+    assert "11.9 dB over" in out
+    assert "-60.1 dBFS" in out
+    assert "something is transmitting" in out
+
+
+async def test_a_quiet_band_is_said_to_be_quiet_rather_than_reported_as_a_level(
+    tools,
+) -> None:
+    """+6 dB is where the sweep detector found all 13 FM stations and nothing on a
+    silent band. Under it, "the strongest bin was -58 dBFS" reads as a signal."""
+    body = {
+        "engine": "iq",
+        "frames": 96,
+        "frame": {"floor_db": -60.0, "peak_db": -57.0, "peak_hz": 146_000_000.0},
+    }
+
+    out = await tools(lambda _p, _b: _ok(body))["sdr_signal"]({"frequency_mhz": 146.0}, None)
+
+    assert "nothing is standing out of the noise" in out
+
+
+async def test_a_measurement_sends_the_capture_so_the_IQ_engine_answers(tools) -> None:
+    """Without it the sidecar hops the span with `rtl_power`, which reports its OWN dB
+    scale rather than dBFS — the exact confusion F9 exists to stop, arriving through
+    the tool whose whole point is a real power figure."""
+    seen: dict[str, Any] = {}
+
+    def handler(path, body):
+        seen.update({"path": path, **(body or {})})
+        return _ok({"engine": "iq", "frames": 9, "frame": {"floor_db": -60.0, "peak_db": -50.0}})
+
+    await tools(handler)["sdr_signal"]({"section": "2m-ssb"}, None)
+
+    assert seen["path"] == "/spectrum/probe"
+    assert seen["rate_hz"] == 1_024_000
+    assert seen["bins"] == 4096
+    assert seen["bin_hz"] == 250
+
+
+async def test_a_measurement_cannot_hold_the_radio_for_minutes(tools) -> None:
+    """`listen.py` carries a comment written about exactly this surface: an agent will
+    ask for an hour, because nothing in its training says the radio is scarce. The
+    sidecar's own 900 s ceiling is far too generous to be the only guard."""
+    seen: dict[str, Any] = {}
+
+    def handler(path, body):
+        seen.update(body or {})
+        return _ok({"engine": "iq", "frames": 9, "frame": {"floor_db": -60.0, "peak_db": -50.0}})
+
+    await tools(handler)["sdr_signal"]({"frequency_mhz": 144.2, "seconds": 3600}, None)
+
+    assert seen["seconds"] == sdrtools.MAX_SIGNAL_SECONDS
+
+
+async def test_a_frame_with_no_floor_blames_the_antenna_not_the_band(tools) -> None:
+    """ "Nothing is transmitting" and "nothing is reaching the ADC" need opposite
+    actions, and only one of them is about the band."""
+    body = {"engine": "iq", "frames": 96, "frame": {"peak_hz": 7_200_000.0}}
+
+    out = await tools(lambda _p, _b: _ok(body))["sdr_signal"]({"frequency_mhz": 7.2}, None)
+
+    assert "antenna or the input" in out
