@@ -491,6 +491,31 @@ def create_app(
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )
 
+    @authed.post("/refresh", status_code=202)
+    def start_refresh(body: RebuildRequest) -> OneshotStartResponse:
+        # Pull main and rebuild ONE service — `rebuild` never pulls and `update`
+        # rebuilds the world, so iterating on one sidecar had no route between a stale
+        # box and ten minutes. Takes NO ref (it resets to the tracked upstream), so a
+        # token cannot choose the code it deploys, only ask for merged `main`. Same
+        # live-service validation and one-shot mutual exclusion as rebuild.
+        if body.service not in {c.service for c in gateway.list_containers()}:
+            raise UnknownServiceError(body.service)
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_refresh(body.service))
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/refresh/status")
+    def refresh_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("refresh", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
     @authed.get("/logs/{service}", response_class=PlainTextResponse)
     def logs(
         service: str,

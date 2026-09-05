@@ -74,6 +74,19 @@
 #      then fails while sysfs still lists it — and NOTHING else clears that: not a
 #      container restart, not a rebuild, not an update. Refused with a 409 while a
 #      session holds that radio; the other dongle is untouched.)
+#   scripts/debug-connect.sh refresh sdr               # pull main, rebuild ONE service
+#   scripts/debug-connect.sh refresh-status [tail]     # that refresh's state + log tail
+#     (The FAST path, and why it exists: `update` pulls and then rebuilds the world —
+#      backup, quiesce, every image, every model unloaded, about ten minutes — which is
+#      the right price for shipping and the wrong one for asking the radio a question.
+#      The sdr sidecar is pure Python behind an apt-only image, so a one-line change to
+#      a measurement cost a full update to try. Takes NO ref, exactly as `update` does
+#      not: it resets the source mirror to its tracked upstream, so this can still only
+#      deploy what a merged PR put on `main`. PARTIAL by design — the mirror moves for
+#      every service while only the named one is rebuilt, so `version` still reports the
+#      api's older build, and a compose or Dockerfile-path change still needs the full
+#      update. Recreating a container ends whatever it held, so `refresh sdr` drops any
+#      live lease.)
 #   scripts/debug-connect.sh update                    # pull main, rebuild, restart
 #   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
 #     (The Ops → Update button, reachable with a token. It takes NO ref: the supervisor
@@ -583,6 +596,12 @@ PY
   sdr-reset) # <serial> — re-enumerate one dongle, for one that has stopped answering
     ser="${1:?usage: debug-connect.sh sdr-reset <serial>}"
     _call POST "/api/debug/sdr/reset?serial=$ser" | _pp ;;
+
+  refresh) # <service> — pull main and rebuild ONE service: the fast path for the sidecar
+    svc="${1:?usage: debug-connect.sh refresh <service>}"
+    _call POST "/api/debug/refresh?service=$svc" | _pp ;;
+  refresh-status) # [tail] — that refresh's state + log tail
+    _call GET "/api/debug/refresh/status?tail=${1:-200}" | _pp ;;
 
   update) # pull main, rebuild, restart — the Ops → Update button, from here
     # No ref to pass, deliberately: the supervisor builds whatever `main` is, so this

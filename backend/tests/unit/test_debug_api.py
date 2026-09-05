@@ -87,6 +87,10 @@ class _FakeSupervisor:
         # True once an update one-shot is "running", so a second trigger 409s the way
         # the supervisor's own mutual exclusion over one-shots does.
         self.update_running = False
+        # Services the supervisor would accept for a targeted refresh; anything else is
+        # the 404 its live-service validation returns.
+        self.services = {"sdr", "api", "supervisor"}
+        self.oneshot_running = False
 
     async def post(
         self, url: str, json: dict | None = None, headers: dict | None = None
@@ -97,6 +101,14 @@ class _FakeSupervisor:
                 return _FakeResp(409, "")
             self.update_running = True
             return _FakeResp(202, "", json_body={"state": "running"})
+        if url == "/refresh":
+            service = (json or {}).get("service")
+            if service not in self.services:
+                return _FakeResp(404, "")
+            if self.oneshot_running:
+                return _FakeResp(409, "")
+            self.oneshot_running = True
+            return _FakeResp(202, "", json_body={"oneshot": "jbrain-refresh-1"})
         return _FakeResp(404, "")
 
     async def get(
@@ -113,6 +125,16 @@ class _FakeSupervisor:
                     "state": "running",
                     "exit_code": None,
                     "log_tail": "[update] syncing local models",
+                },
+            )
+        if url == "/refresh/status":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "state": "running",
+                    "exit_code": None,
+                    "log_tail": "[refresh] sdr: pulling latest main",
                 },
             )
         if url == "/provision/status":
@@ -1334,3 +1356,86 @@ def test_the_update_trigger_requires_the_debug_token(
     client, _ = debug_client
     assert client.post("/api/debug/update").status_code == 401
     assert _state(client).supervisor_client.posts == []
+
+
+def test_a_refresh_rebuilds_one_service_after_pulling_main(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The fast path. `/update` pulls and then rebuilds the world — backup, quiesce,
+    every image, every model unloaded, about ten minutes — which is the right price for
+    shipping and the wrong one for asking the radio a question. The sdr sidecar is pure
+    Python behind an apt-only image, so a one-line change to a measurement cost a full
+    system update to try, on a box whose owner has no terminal (CLAUDE.md #10)."""
+    client, key = debug_client
+
+    resp = client.post("/api/debug/refresh", headers=_auth(key), params={"service": "sdr"})
+
+    assert resp.status_code == 202
+    assert ("/refresh", {"service": "sdr"}) in _state(client).supervisor_client.posts
+
+
+def test_the_refresh_trigger_takes_no_ref_either(debug_client: tuple[TestClient, str]) -> None:
+    """The same security property `/update` has, and the one a fast path is most tempted
+    to trade away: the inner script resets to the tracked upstream, so a token can ask
+    for merged `main` and nothing else. A ref here would be remote code execution."""
+    client, key = debug_client
+
+    resp = client.post(
+        "/api/debug/refresh",
+        headers=_auth(key),
+        params={"service": "sdr"},
+        json={"ref": "attacker/branch", "sha": "deadbeef"},
+    )
+
+    assert resp.status_code == 202
+    url, body = _state(client).supervisor_client.posts[-1]
+    assert url == "/refresh"
+    assert body == {"service": "sdr"}, f"a ref reached the supervisor: {body}"
+
+
+def test_a_refresh_of_an_unknown_service_is_a_sentence_not_a_500(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+
+    resp = client.post("/api/debug/refresh", headers=_auth(key), params={"service": "nope"})
+
+    assert resp.status_code == 404
+    assert "nope" in resp.json()["detail"]
+
+
+def test_a_refresh_while_another_oneshot_runs_is_refused(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """It pulls the shared source mirror, so racing an update over it is how a box ends
+    up building from a tree that moved underneath it."""
+    client, key = debug_client
+    assert (
+        client.post("/api/debug/refresh", headers=_auth(key), params={"service": "sdr"}).status_code
+        == 202
+    )
+
+    resp = client.post("/api/debug/refresh", headers=_auth(key), params={"service": "api"})
+
+    assert resp.status_code == 409
+    assert "one-shot is running" in resp.json()["detail"]
+
+
+def test_refresh_status_proxies_to_the_supervisor(debug_client: tuple[TestClient, str]) -> None:
+    """The one-shot runs OUTSIDE the compose project, so /debug/logs cannot reach it."""
+    client, key = debug_client
+
+    resp = client.get("/api/debug/refresh/status", headers=_auth(key), params={"tail": 120})
+
+    assert resp.status_code == 200
+    assert resp.json()["log_tail"] == "[refresh] sdr: pulling latest main"
+    assert ("/refresh/status", {"tail": 120}) in _state(client).supervisor_client.calls
+
+
+def test_the_refresh_routes_require_the_debug_token(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, _ = debug_client
+
+    assert client.post("/api/debug/refresh", params={"service": "sdr"}).status_code == 401
+    assert client.get("/api/debug/refresh/status").status_code == 401

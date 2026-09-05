@@ -25,6 +25,10 @@ ONESHOT_SCRIPTS = [
     "import-inner.sh",
     "reset-inner.sh",
     "update-inner.sh",
+    # `rebuild` applies code already on the box and `refresh` pulls main first — both
+    # run in the same bash-less docker:cli one-shot as the update.
+    "rebuild-inner.sh",
+    "refresh-inner.sh",
     "backup.sh",
     # Reached from update-inner.sh: the local-model provisioning sync and the
     # weight downloader it calls both run in the bash-less updater, so both must
@@ -1372,3 +1376,43 @@ def test_the_sdr_url_default_is_empty_not_a_hostname() -> None:
     # failure on first capture. Empty keeps the clean 503 that names the real reason.
     compose = COMPOSE.read_text()
     assert "JBRAIN_SDR_URL: ${SDR_URL:-http" not in compose
+
+
+def _refresh_lines() -> list[str]:
+    return (DEPLOY / "refresh-inner.sh").read_text().splitlines()
+
+
+def test_the_refresh_pulls_before_it_builds() -> None:
+    """The whole point: `rebuild` applies code already on the box, so a fast path that
+    did not pull first would rebuild the same source and answer the same question."""
+    lines = _refresh_lines()
+    fetch = next(i for i, ln in enumerate(lines) if "git -C src fetch" in ln)
+    build = next(i for i, ln in enumerate(lines) if "docker compose build" in ln)
+    up = next(i for i, ln in enumerate(lines) if "docker compose up -d" in ln)
+
+    assert fetch < build < up
+
+
+def test_the_refresh_takes_no_ref_only_the_tracked_upstream() -> None:
+    """The security property `update` has and this must not lose: a token can ask for
+    what a merged PR already put on `main`, and for nothing else. A ref parameter here
+    would turn a capability token into remote code execution on the box."""
+    assert 'git -C src reset --hard "@{u}"' in (DEPLOY / "refresh-inner.sh").read_text()
+    # $1 is the SERVICE and nothing else — it must never reach a git command.
+    for line in _refresh_lines():
+        if line.strip().startswith("git "):
+            assert "$SERVICE" not in line and "$1" not in line
+
+
+def test_the_refresh_rebuilds_only_the_service_it_was_given() -> None:
+    """PARTIAL by design. Refreshing the host helper files or a second service would
+    make this a slow update wearing a fast update's name."""
+    # Code only: the header comment names what it deliberately does NOT do, and a
+    # substring search over prose would match the promise instead of the behaviour.
+    code = "\n".join(
+        line for line in _refresh_lines() if not line.lstrip().startswith("#")
+    )
+
+    assert code.count("docker compose build") == 1
+    assert code.count("docker compose up -d") == 1
+    assert "backup.sh" not in code
