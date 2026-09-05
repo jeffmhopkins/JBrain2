@@ -106,24 +106,22 @@ WIRE_BYTES_PER_SAMPLE = 2
 #: software backlog's quantum is a whole USB buffer, orders of magnitude bigger. It is
 #: the SECOND step, and it is small because the first one did the heavy lifting.
 #: MEASURED on the box, 2026-09-05, and no longer a guess: a retune disturbs the output
-#: for 59.7 ms typically and 131.2 ms at worst, while a flush with no frequency change
-#: disturbs it for 0.0. This is now the CAP on an adaptive discard rather than a fixed
-#: one — the worst case paid eleven times a row is what makes a wide band unwatchable,
-#: and the median is less than half of it.
+#: for 59.7 ms typically and 131.2 ms at WORST, while a flush with no frequency change
+#: disturbs it for 0.0. So this covers the worst case with margin, and it is fixed rather
+#: than adaptive on purpose.
+#:
+#: An adaptive discard was tried and REVERTED the same day. It stopped when the level
+#: stopped moving, because the new frequency's settled level is exactly what a discard
+#: cannot know — and that rule cannot tell "settled" from "steadily WRONG". A transient
+#: that steps to a wrong level and holds satisfies it immediately, which is not a tuning
+#: problem but the rule being unsound: without a reference there is nothing to have
+#: arrived AT. The fake's step-shaped transient says so, and it costs a hop's worth of
+#: correctness to find out on air.
+#:
+#: The price is real and belongs here rather than in a commit message: eleven hops on
+#: the FM dial pay this once each, so a 20 MHz span redraws about twice a second. Making
+#: that faster means FEWER HOPS, not a shorter discard.
 SETTLE_S = 0.15
-#: Samples per look while discarding. 4096 at 2.4 MS/s is 1.7 ms — fine enough to stop
-#: close to the real settle, coarse enough that its mean power is a number.
-SETTLE_SLICE = 4096
-#: How long the level must hold still before the discard stops.
-SETTLE_STABLE_S = 0.008
-#: How much the level may wander across that hold and still count as still, in dB.
-#: Wider than the steady deviation measured on the box (0.25 dB) so ordinary noise does
-#: not keep the discard running, tighter than any transient worth discarding.
-SETTLE_STABLE_DB = 0.8
-#: The level of a read with nothing in it. Silence is perfectly steady, so a discard
-#: that stops when the level stops moving has to know the difference between a settled
-#: band and a stream that has not started delivering yet.
-FLOOR_DB = 10.0 * np.log10(iq._POWER_FLOOR)
 
 #: `readStream`'s per-call timeout. Ten buffers at the slowest rate: long enough that an
 #: ordinary scheduling hiccup is not an event, short enough that a dead stream is.
@@ -826,9 +824,8 @@ class Radio:
         and the flush cannot reach samples that are still inside the RTL2832U."""
         device, stream = self._require()
         device.activateStream(stream)
-        if settle_s is None:
-            return self._discard_until_steady(SETTLE_S)
-        drop = int(self._rate_hz * float(settle_s))
+        settle = SETTLE_S if settle_s is None else float(settle_s)
+        drop = int(self._rate_hz * settle)
         if drop <= 0:
             return 0
         scratch = np.empty(min(drop, self.samples_per_buffer), dtype=np.complex64)
@@ -845,58 +842,6 @@ class Radio:
                 # worst a slightly stale first frame, while raising would turn a slow
                 # moment into a lost session.
                 _log(f"retune settle timed out with {dropped}/{drop} discarded")
-                break
-        return dropped
-
-    def _discard_until_steady(self, cap_s: float) -> int:
-        """Read past the retune transient, stopping when the level stops moving.
-
-        MEASURED on the box, 2026-09-05: a retune disturbs this radio's output for 59.7
-        ms typically and 131.2 ms at worst, while a FLUSH with no frequency change
-        disturbs it for 0.0 ms on every trial. So the transient is the TUNER's, it is
-        real, and 50 ms was never enough — a hop keeps 0.43 ms of signal, so a hop that
-        discarded 50 ms was reading the previous hop's frequency almost entirely.
-
-        Discarding the worst case instead would pay 131 ms eleven times on the FM dial.
-        This pays the actual settle, which is the median rather than the tail, and only
-        falls back to the cap when the level genuinely never steadies.
-
-        There is no reference level to compare against — the new frequency's level is
-        exactly what is not known yet — so the test is that the level has STOPPED
-        CHANGING, not that it matches anything."""
-        want = int(self._rate_hz * cap_s)
-        if want <= 0:
-            return 0
-        span = min(SETTLE_SLICE, want, self.samples_per_buffer)
-        if span <= 0:
-            return 0
-        hold = max(2, int(round(SETTLE_STABLE_S * self._rate_hz / span)))
-        scratch = np.empty(span, dtype=np.complex64)
-        levels: list[float] = []
-        dropped = 0
-        deadline = time.monotonic() + self._patience(want)
-        while dropped < want:
-            got = self.read_into(scratch[: min(span, want - dropped)])
-            if got > 0:
-                dropped += got
-                power = float(np.mean(np.abs(scratch[:got].astype(np.complex128)) ** 2))
-                level = 10.0 * np.log10(max(power, iq._POWER_FLOOR))
-                if level <= FLOOR_DB + SETTLE_STABLE_DB:
-                    # Silence is perfectly steady, which is exactly the trap: the
-                    # direct-sampling branch delivers empty reads before it starts, and
-                    # stopping there would hand back the silence as a settled band. A
-                    # receiver with no noise floor is not receiving, so the clock has
-                    # not started yet.
-                    levels.clear()
-                    continue
-                levels.append(level)
-                recent = levels[-hold:]
-                if len(recent) >= hold and max(recent) - min(recent) <= SETTLE_STABLE_DB:
-                    break
-            elif got not in (0, self._driver.OVERFLOW, self._driver.TIMEOUT):
-                raise RadioError(f"the stream failed during a retune (code {got})")
-            if time.monotonic() > deadline:
-                _log(f"retune settle timed out with {dropped}/{want} discarded")
                 break
         return dropped
 
@@ -1314,6 +1259,45 @@ def _settle_after_retune(radio: Radio, other_hz: int) -> dict[str, Any]:
         radio.retune(center_hz=home, settle_s=0.0)
 
     return _settle_after(radio, disturb)
+
+
+def _settle_after_barrier(radio: Radio, other_hz: int) -> dict[str, Any]:
+    """What is LEFT of the transient after the REAL barrier has run.
+
+    The check on the fix rather than on the radio, and the reason it exists is that the
+    fix is a constant: `SETTLE_S` covers the measured worst case, but "measured" was
+    seven trials on one radio on one band, and a constant that turns out to be short
+    again would put the stale samples back silently.
+
+    So: hop away, hop back through the barrier the engine actually uses, and time what is
+    still disturbed. Near zero is the barrier doing its job. Tens of milliseconds is the
+    constant being too small for this radio, whatever the frame rate says."""
+    home = radio.center_hz
+
+    def disturb() -> None:
+        radio.retune(center_hz=other_hz, settle_s=SETTLE_S * 4)
+        # No `settle_s`: the adaptive discard the engine actually uses.
+        radio.retune(center_hz=home)
+
+    return _settle_after(radio, disturb)
+
+
+def _barrier_findings(left: dict[str, Any]) -> list[str]:
+    """A barrier that stops early is a correctness fault wearing a frame rate's
+    clothes — the picture gets quicker by being wrong, which is how the adaptive
+    version passed for a whole 2.29 fps before its own fake convicted it."""
+    if not left.get("measured"):
+        return []
+    worst = float(left.get("worst_ms") or 0.0)
+    resolution = float(left.get("window_us") or 0.0) / 1000.0
+    if worst > max(resolution, float(left.get("hold_ms") or 0.0)):
+        return [
+            f"the barrier STOPS EARLY: {worst} ms of the transient is still there "
+            f"after it has run, so a hop still carries samples from the frequency it "
+            f"came from — `SETTLE_S` is too small for this radio, and it is a "
+            f"correctness fault rather than a slow one"
+        ]
+    return []
 
 
 def _settle_after_flush(radio: Radio) -> dict[str, Any]:
@@ -1839,6 +1823,16 @@ def _probe_open(
             "settle_after_flush", lambda: _settle_after_flush(radio)
         )
         findings.extend(_flush_findings(out["retune_settle"], out["settle_after_flush"]))
+
+        # And the check on the FIX: what is left of the transient once the adaptive
+        # discard the engine really uses has run. Near zero is the discard working.
+        out["settle_after_barrier"] = _answered(
+            "settle_after_barrier",
+            lambda: _settle_after_barrier(
+                radio, _elsewhere(center_hz, rate_hz, direct)
+            ),
+        )
+        findings.extend(_barrier_findings(out["settle_after_barrier"]))
 
         # And where the rest of a hop's time goes. The settle says how much stale data
         # there is; this says what removing it COSTS, and the two together are the only

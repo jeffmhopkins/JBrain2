@@ -1139,11 +1139,28 @@ steady` reads in 1.7 ms slices and stops when the level has held still for 8 ms,
 reference level, because the new frequency's level is exactly what is not known yet — the
 test is that the level has **stopped changing**, not that it matches anything.
 
-One trap, and an existing test caught it: **silence is perfectly steady.** The
-direct-sampling branch delivers empty reads before it starts, and a discard that stops
-when the level stops moving would have stopped there and handed back the silence as a
-settled band — the same failure that once had this probe calling a live radio deaf. A
-slice at the zero-magnitude floor now clears the run instead of extending it.
+#### The adaptive discard was written, shipped and reverted the same day
+
+It stopped when the level stopped moving, and on the box it took the FM dial from 1.0 to
+**2.29 fps** — which was the clue, not the result. That is faster than the arithmetic
+allows against a 60 ms settle, and "faster than it should be" is what a discard stopping
+early looks like.
+
+Two fakes then said why, and the second is the one that matters. **Silence is perfectly
+steady** — the direct-sampling branch delivers empty reads before it starts, and the rule
+would have stopped there and handed back the silence as a settled band, the same failure
+that once had this probe calling a live radio deaf. That one is patchable, and was
+patched. **A transient that steps to a WRONG level and holds is also perfectly steady**,
+and that one is not patchable, because it is the rule that is wrong rather than its
+constants: a discard cannot know the new frequency's settled level — that is precisely
+what it is waiting for — so "has the level stopped moving" is the only test available to
+it, and without a reference there is nothing to have *arrived at*.
+
+So the discard is **fixed at 0.15 s**, covering the measured worst case with margin. The
+price belongs in the open: eleven hops pay it once each, so the FM dial redraws about
+**twice a second**, and making that faster means **fewer hops, not a shorter discard**.
+The measurement stayed — `settle_after_barrier` reports what is still disturbed after the
+real barrier has run, so this cannot regress quietly.
 
 ## 8. Deliberately not in this plan
 
