@@ -25915,12 +25915,16 @@ button.task-band:active {
   color: var(--text-3);
   cursor: pointer;
 }
+/* A GRID, not a wrapped flex row. Wrapping sized every pill to its own text, so the
+   right edge was ragged and no two rows shared a column — twenty-odd frequencies that
+   have to be found by eye, laid out so that nothing lines up with anything. Even
+   columns make the list scannable down as well as across, which is how a dial is read. */
 .wf-siglist {
   margin: 5px 0 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 4px 6px;
 }
 .wf-siglist li {
@@ -25928,11 +25932,17 @@ button.task-band:active {
 }
 /* The pill itself, which is a button when there is a radio to send it to. Same shape
    either way, so the list does not change size when tuning is unavailable. */
+/* Three columns of its own, so the frequencies line up with each other and the levels
+   line up with each other DOWN the list, not just within one pill. The dot's column is
+   always there — an empty one on a held signal rather than no column at all, which
+   would shift that pill's numbers out of line with its neighbours. */
 .wf-sigpill {
-  display: flex;
-  align-items: baseline;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 7ch 1fr 5px;
+  align-items: center;
   gap: 5px;
-  padding: 2px 7px;
+  padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
@@ -25944,10 +25954,17 @@ button.task-band:active {
 button.wf-sigpill {
   cursor: pointer;
 }
-/* Armed, per DESIGN.md's arm-then-confirm: the pill says what the second tap does
-   rather than a dialog opening over the picture being read. */
+/* Armed, per DESIGN.md's arm-then-confirm. It CHANGES COLOUR AND NOT SIZE: the pill
+   used to swap its numbers for "Listen here?", which is a different width, so arming
+   one reflowed the row and moved the pill out from under the thumb about to confirm
+   it. What the second tap does is said once, above the list, where saying it costs no
+   layout. */
 .wf-sigpill.armed {
   border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.wf-sigpill.armed .wf-sighz {
+  color: var(--accent);
 }
 /* A signal that has stopped reads as remembered rather than as present: the list is
    most useful when "on the air now" and "was a moment ago" are told apart at a glance. */
@@ -25963,9 +25980,11 @@ button.wf-sigpill {
   font-weight: 500;
   color: var(--text-2);
 }
-.wf-sigover,
-.wf-sigheld {
+/* Right-aligned in its own column so the "dB" of every row sits on one line, whatever
+   the number in front of it. */
+.wf-sigover {
   color: var(--text-3);
+  text-align: right;
 }
 .wf-signone {
   margin: 5px 2px 0;
@@ -26278,6 +26297,10 @@ button.wf-sigpill {
   height: 5px;
   flex: none;
   border-radius: 50%;
+  /* Held: the column is kept and left empty, so the numbers beside it stay in line. */
+  background: transparent;
+}
+.wf-signow.on {
   background: var(--ok);
 }
 .wf-sighint {

@@ -498,7 +498,10 @@ export function SdrWaterfall({
                         transmitting continuously reads "gone" on twenty-one rows out of
                         twenty-two. REPORTED by the owner as "they seem to expire even
                         when held is on"; nothing was expiring, the label was wrong. */}
-                    {peak.live ? <span className="wf-signow" aria-label="on air now" /> : null}
+                    <span
+                      className={peak.live ? "wf-signow on" : "wf-signow"}
+                      {...(peak.live ? { "aria-label": "on air now" } : { "aria-hidden": true })}
+                    />
                   </>
                 );
                 const arm = armed === peak.hz;
@@ -518,7 +521,7 @@ export function SdrWaterfall({
                           onTune(peak.hz);
                         }}
                       >
-                        {arm ? <span className="wf-sighz">Listen here?</span> : inside}
+                        {inside}
                       </button>
                     ) : (
                       <span className="wf-sigpill">{inside}</span>
