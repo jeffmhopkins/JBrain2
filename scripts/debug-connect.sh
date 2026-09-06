@@ -79,6 +79,11 @@
 #      the audio is a signal rather than silence or a rail, and how many USB buffers
 #      the driver threw away — one row slightly wrong on a waterfall, an audible click
 #      on audio. TAKES A RADIO for those seconds and gives it back.)
+#   scripts/debug-connect.sh sdr-sessions              # every held radio + the one the icon shows
+#     (The owner's own `/api/sdr/status` is OwnerDep, so a token could start a session
+#      and never read back what their screen says about it. Same call the composer
+#      makes, so `listening` here IS the icon — on a two-radio box that is a choice
+#      the api makes out of `sessions`, not something the sidecar reports.)
 #   scripts/debug-connect.sh sdr-reset <serial>       # re-enumerate one dongle
 #     (The software equivalent of unplugging it. An RTL-SDR left with transfers pending
 #      can stay on the bus and stop answering descriptor reads — every lookup by serial
@@ -500,6 +505,7 @@ PY
     ;;
 
   sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?
+  sdr-sessions) _call GET /api/debug/sdr/sessions | _pp ;;  # which radios are held, and which the icon shows
 
   tune) # <MHz> [--seconds N] [--mode fm|nfm|wbfm|am|usb|lsb] [--gain G] [--no-transcribe]
     f="${1:?usage: debug-connect.sh tune <MHz> [--seconds N] [--mode M] [--gain G]}"; shift

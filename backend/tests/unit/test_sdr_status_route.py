@@ -125,3 +125,30 @@ async def test_a_box_with_no_radio_configured_never_asks(
     out = await sdr_api.status(SimpleNamespace(sdr_url=""), OWNER)  # type: ignore[arg-type]
 
     assert out.available is False
+
+
+async def test_the_debug_twin_shows_exactly_what_the_icon_shows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`GET /api/sdr/status` is `OwnerDep`, so a handed-over token could start a session
+    and never read back what the owner's screen says about it (CLAUDE.md #10).
+
+    The twin must not re-derive the answer: B7 exists to have ONE. Asserting they agree
+    on a body where the sidecar's own `listening` is a third answer is what makes that
+    load-bearing rather than incidental.
+    """
+    from jbrain.api import debug as debug_api
+
+    aprs = {"purpose": "aprs", "session_id": "s-aprs", "serial": WIRE}
+    sweep = {"purpose": "spectrum", "session_id": "s-sweep", "serial": WHIP}
+    _sidecar(monkeypatch, {"listening": sweep, "sessions": [sweep, aprs]})
+    settings = SimpleNamespace(sdr_url="http://sdr:8000")
+    request = SimpleNamespace(state=SimpleNamespace())
+
+    twin = await debug_api.sdr_sessions_debug(request, settings, None)  # type: ignore[arg-type]
+    owner = await sdr_api.status(settings, OWNER)  # type: ignore[arg-type]
+
+    assert twin.listening is not None and twin.listening["session_id"] == "s-aprs"
+    assert twin.model_dump() == owner.model_dump()
+    # ...and the console's audit line says which route ran, like every other one.
+    assert request.state.debug_detail == "sdr sessions"

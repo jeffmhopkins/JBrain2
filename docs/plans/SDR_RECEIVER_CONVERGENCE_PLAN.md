@@ -410,6 +410,17 @@ Tests: `TestWhichSessionAnOwnerSees` (6 cases) on `shown`, and a first test file
 the sidecar's `listening` DIFFER from the right answer, because one that lets the two
 agree proves nothing.
 
+**VERIFIED ON AIR 2026-09-06.** The probe bug is the half hardware can show: with a
+`wbfm` session holding 09022796, a spectrum probe on 77192819 came back `ok: true` — 51
+frames in 5.01 s (**10.18 fps**), 4096 bins of 250 Hz, floor −56.5 dBFS, two signals —
+where before it would have reported the session gone.
+
+The api's half was NOT observable from a token: `GET /api/sdr/status` is `OwnerDep`, so a
+handed-over token could start a session and never read back what the owner's own screen
+says about it. `GET /api/debug/sdr/sessions` (CLI `sdr-sessions`) closes that, and calls
+the same `status_of` the composer does — a twin that re-derived the choice would put back
+the second policy B7 deleted.
+
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
