@@ -111,9 +111,14 @@ class Capture:
         The next reading is DROPPED. `Radio.read` assembles a frame from several
         `readStream` calls and `_io_lock` only stops a retune landing inside one of
         them — so the buffer in flight when this returns straddles two frequencies, and
-        it is labelled with the one it started on. One dropped frame is 100 ms against
-        the ~600 ms a pipeline rebuild costs, and it is the difference between a click
-        and a gap."""
+        it is labelled with the one it started on.
+
+        MEASURED ON AIR 2026-09-06 (`listen-probe --retune-to`), two bands and both mode
+        families: **231-235 ms worst gap against a 103 ms median** — one dropped frame
+        plus the 30 ms settle — with `stream_rebuilt: false` every time. What it
+        replaces reopened the device, which `listen.Session.alive` measures at about
+        half a second on this box before ffmpeg is even relaunched: the difference
+        between a click and a gap."""
         with self._lock:
             if apply is not None:
                 apply()
