@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -751,6 +752,58 @@ def test_a_probe_that_breaks_returns_a_verdict_rather_than_an_exception() -> Non
     assert out["ok"] is False
     assert "SWIG says no" in out["summary"]
     assert any("SWIG says no" in f for f in out["findings"])
+
+
+def test_closing_waits_for_a_read_that_is_already_running() -> None:
+    """THE USE-AFTER-FREE. `close()` must not free what a reader is still inside.
+
+    `readStream` releases the GIL for up to a second and holds the device and stream in
+    LOCALS, so nulling the attributes under a lock protects nothing: the C++ side then
+    has `closeStream` clearing the buffer vector that `readStream` is copying out of,
+    and `unmake` ending in `delete device` while another thread executes a method on it.
+    A segfault of the sidecar, taking APRS on the other dongle with it.
+
+    It is reached on every stop and every retune, because `listen.Session._kill` closes
+    the radio WITHOUT joining its pump threads and `stop()` never joins at all. The
+    `alive` check a pump makes first cannot help — it is a check-then-act, and
+    `close()` fits between the two.
+
+    So: hold a read inside the driver, close from another thread, and assert the close
+    did not get to tear anything down until the read had left."""
+    driver = _FakeDriver()
+    rig = radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER)
+    device = rig._device
+    assert device is not None
+
+    inside = threading.Event()
+    release = threading.Event()
+    torn_down_during_read = []
+    real_read = device.readStream
+
+    def _slow_read(*args: Any, **kwargs: Any) -> Any:
+        inside.set()
+        release.wait(timeout=5.0)
+        # Whatever close() managed to do, it must not have been the teardown.
+        torn_down_during_read.append(
+            [k for k, *_ in driver.log if k in ("closeStream", "unmake")]
+        )
+        return real_read(*args, **kwargs)
+
+    device.readStream = _slow_read  # type: ignore[method-assign]
+    reader = threading.Thread(target=lambda: rig.read(1024), daemon=True)
+    reader.start()
+    assert inside.wait(timeout=5.0)
+
+    closer = threading.Thread(target=rig.close, daemon=True)
+    closer.start()
+    closer.join(timeout=0.3)
+    assert closer.is_alive(), "close() returned while a read was still in the driver"
+
+    release.set()
+    reader.join(timeout=5.0)
+    closer.join(timeout=5.0)
+    assert not closer.is_alive()
+    assert torn_down_during_read == [[]], "the stream was torn down under a live read"
 
 
 def test_a_driver_whose_version_call_fails_still_gets_probed() -> None:

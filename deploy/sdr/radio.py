@@ -586,6 +586,24 @@ class Radio:
         self._device: Device | None = None
         self._stream: Any = None
         self._lock = threading.Lock()
+        #: Held across a `readStream` AND across the whole of `close()`, so a teardown
+        #: cannot free the buffers a reader is still copying out of.
+        #:
+        #: `self._lock` above does not do this and cannot: it guards the handle
+        #: ATTRIBUTES for a moment, while `readStream` runs for up to `READ_TIMEOUT_US`
+        #: with the GIL released and the handles held in locals. Meanwhile
+        #: `SoapyRTLSDR::closeStream` clears the `_buffs` vector that `readStream` is
+        #: memcpy-ing from, and `Device::unmake` ends in `delete device` — with another
+        #: thread executing a method on it. `listen.Session._kill` closes the radio
+        #: WITHOUT joining its pump threads and `stop()` never joins at all, so the
+        #: window is reached on every stop and every retune: a use-after-free, and a
+        #: segfault takes the whole sidecar including APRS on the other dongle.
+        #:
+        #: The `alive` check a pump makes before reading cannot close it — that is a
+        #: check-then-act, and `close()` fits between the two. Only a lock spanning the
+        #: call does. The cost is that `close()` waits for at most one read timeout,
+        #: which is what `deactivateStream` does anyway when it joins the async thread.
+        self._io_lock = threading.Lock()
         self._rate_hz = 0
         self._achieved_rate_hz = 0.0
         self._center_hz = 0
@@ -877,11 +895,12 @@ class Radio:
         Public because a caller measuring the USB callback period needs exactly one
         call at a time, and because that measurement is the only honest check that
         `bufflen` took (`probe`)."""
-        device, stream = self._require()
-        result = device.readStream(
-            stream, [view], int(view.size), 0, READ_TIMEOUT_US
-        )
-        return int(result.ret)
+        with self._io_lock:
+            device, stream = self._require()
+            result = device.readStream(
+                stream, [view], int(view.size), 0, READ_TIMEOUT_US
+            )
+            return int(result.ret)
 
     def _patience(self, samples: int) -> float:
         """How long `samples` may take before the stream counts as dead."""
@@ -934,12 +953,19 @@ class Radio:
         firing a port reset from the process still holding the usbfs fd, and a handle we
         could not close is precisely the handle that is still held. The refusal then
         names the recovery that does work, which is restarting this service."""
-        with self._lock:
-            device, stream = self._device, self._stream
-            self._device, self._stream = None, None
-        if device is None:
-            _release(self.key, self)
-            return
+        # The io lock OUTSIDE the handle lock, and held for the whole teardown: a
+        # reader inside `readStream` finishes first, and the next one finds the handles
+        # already None and raises instead of touching freed memory.
+        with self._io_lock:
+            with self._lock:
+                device, stream = self._device, self._stream
+                self._device, self._stream = None, None
+            if device is None:
+                _release(self.key, self)
+                return
+            self._teardown(device, stream)
+
+    def _teardown(self, device: Device, stream: Any) -> None:
         try:
             if stream is not None:
                 device.deactivateStream(stream)

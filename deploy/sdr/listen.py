@@ -204,8 +204,29 @@ LISTEN_CAPTURE_HZ = 2_400_000
 #: middle of the thing you are listening to, and a spike in the middle of the tuning
 #: view drawn from the same samples. `_Mixer` snaps this to a whole division of the
 #: rate; 240 kHz already is one, and it is well inside the 5/6 of the capture the
-#: R820T2's IF filter passes flat.
-LISTEN_OFFSET_HZ = 240_000
+#: How far BELOW the station the radio is tuned, so the receiver's own DC spike is not
+#: sitting on top of what we are trying to hear. `_Mixer` snaps this to a whole division
+#: of the capture rate and reports what it used; 126 kHz snaps to 2 400 000 / 19.
+#:
+#: **The value is chosen so the spike lands outside EVERY mode's channel, and that is
+#: not automatic.** It was 240 000, which is exactly five times the 48 kHz narrowband IF
+#: and exactly one times the 240 kHz wide-FM one — so the decimation folded the spike to
+#: **0 Hz, the tuned frequency itself**, suppressed only by the window's stopband. An
+#: empty channel then carries a residual carrier dead centre, which is the same false
+#: positive the front-end sag produced and which the tuning strip cannot tell from a
+#: station.
+#:
+#: MEASURED 2026-09-06, pure DC in, read at the discriminator's input, every divisor of
+#: the capture rate from 5 to 25 tried:
+#:
+#:   240 kHz (was)   nfm  -64.8 dB at    0 Hz   wbfm -55.4 dB at    0 Hz   both IN channel
+#:   126 kHz (now)   nfm -157   dB at +17.7 kHz wbfm -67   dB at +113.7 kHz both outside
+#:
+#: 19 is the divisor whose worst case across nfm/wbfm/am is lowest. Divisors that put
+#: the spike back in a channel — 5, 10, 13, 16, 24, 25 — are exactly the ones where the
+#: offset is a near-multiple of an IF rate, which is why this is a measurement and not
+#: a round number.
+LISTEN_OFFSET_HZ = 126_000
 
 #: Bins in the tuning view's transform. 512 over a 48 kHz IF is 93.75 Hz — six times
 #: finer than the 600 Hz a 4000-bin transform of the whole 2.4 MHz capture gives, for
