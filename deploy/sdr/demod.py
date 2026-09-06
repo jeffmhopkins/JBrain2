@@ -483,8 +483,21 @@ class Demodulator:
 
         self._mixer = _Mixer(offset_hz, capture_rate_hz)
         #: The offset ACTUALLY used, after snapping to a whole division of the rate.
-        #: The radio is tuned `offset_hz` above the station, so this is what a caller
-        #: adds to the tuned frequency and subtracts from every spectrum centre.
+        #:
+        #: **The radio is tuned `offset_hz` BELOW the station**, so a caller SUBTRACTS
+        #: this from the frequency it wants to hear. The mixer shifts the spectrum DOWN
+        #: by `offset_hz` (`_Mixer` multiplies by `exp(-j...)`), so what lands at DC is
+        #: whatever sat `offset_hz` ABOVE the tuned centre.
+        #:
+        #: The sign is spelled out because getting it backwards is silent and total.
+        #: This said "above" and `listen.py` implemented it, which put the station at
+        #: -offset_hz where the mixer moved it to -2*offset_hz — 480 kHz from DC, past
+        #: every filter in the chain. MEASURED ON AIR 2026-09-06: a carrier at
+        #: +240 kHz reaches DC at +30.1 dB and one at -240 kHz reaches it at -35.1,
+        #: sixty-five decibels down, so the station was not attenuated but GONE, and
+        #: what the discriminator got was the empty spectrum 480 kHz above it. On the
+        #: box, asking to hear 99.3 read 3.7 dB over the noise; asking for 99.3 minus
+        #: 480 kHz read 21.8 dB with four times the audio.
         self.offset_hz = self._mixer.offset_hz
         # When the IF is wide enough to carry the picture — every mode but wide FM —
         # the front end serves both and its output IS the picture, for free. When it
