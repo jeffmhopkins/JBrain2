@@ -718,128 +718,6 @@ class TestAudioLevelPairing:
         assert "d" in flag
 
 
-class TestSurveySession:
-    """A band sweep, as a real lease.
-
-    The point of making this a `Session` at all is that the omnibox icon, the elapsed
-    clock, Release and the 409 semantics ALL read the session's existence. A sweep that
-    held the radio outside the lease would be a radio held by something invisible —
-    which is the failure `PURPOSE_APRS` was introduced to prevent, one purpose earlier.
-    """
-
-    @pytest.fixture
-    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
-        _instant(monkeypatch)
-        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
-        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-        tuner = listen.Tuner()
-        yield tuner
-        tuner.stop()
-
-    def _sweep(self) -> Any:
-        return listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300)
-
-    def test_a_sweep_holds_the_lease_like_any_other_session(self, tuner) -> None:
-        info = tuner.start(
-            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
-
-        assert info.as_dict()["purpose"] == listen.PURPOSE_SURVEY
-        # The thing the omnibox reads. Without it there is no icon, and
-        # nothing for Release to target.
-        assert tuner.current() is not None
-
-    def test_a_second_session_is_refused_while_a_sweep_runs(self, tuner) -> None:
-        tuner.start(
-            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
-
-        with pytest.raises(listen.SdrBusy) as refused:
-            tuner.start(99_300_000, "wbfm", None)
-
-        # And it says WHICH job has it, because the answer the owner needs differs.
-        assert "sweeping" in str(refused.value)
-
-    def test_a_sweep_cannot_STEAL_the_radio_from_APRS_logging(self, tuner) -> None:
-        """The direction that matters, and the one the first test missed.
-
-        A sweep is the newest purpose and the one an agent asks for on its own
-        initiative, so the dangerous case is not "a sweep is running, refuse a listen" —
-        it is "the box has been logging APRS for a week, and something quietly takes the
-        radio away to look at 70cm". The lease has to refuse a survey exactly as it
-        refuses everything else."""
-        tuner.start(144_390_000, "fm", None, purpose=listen.PURPOSE_APRS)
-
-        with pytest.raises(listen.SdrBusy) as refused:
-            tuner.start(
-                440_000_000,
-                "fm",
-                None,
-                purpose=listen.PURPOSE_SURVEY,
-                sweep=self._sweep(),
-            )
-
-        assert "logging APRS" in str(refused.value)
-        # And the APRS session is untouched: a refused sweep must not disturb it.
-        held = tuner.current()
-        assert held is not None and held.purpose == listen.PURPOSE_APRS
-
-    def test_the_owner_can_take_the_radio_back_mid_sweep(self, tuner) -> None:
-        tuner.start(
-            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
-
-        assert tuner.stop() is True
-        assert tuner.current() is None
-
-    def test_a_survey_without_a_range_is_refused(self, tuner) -> None:
-        # A survey session with no sweep would start rtl_power with no arguments and
-        # hold the radio doing nothing.
-        with pytest.raises(listen.SdrError):
-            tuner.start(144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY)
-
-    def test_the_command_is_rtl_power_over_the_range(self, monkeypatch) -> None:
-        _instant(monkeypatch)
-        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
-        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-        session = listen.Session(
-            144_000_000, "fm", "30", purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
-        try:
-            cmd = session._sweep_cmd()
-        finally:
-            session.stop()
-
-        assert cmd[0] == "rtl_power"
-        assert "144000000:148000000:5000" in cmd
-        assert cmd[cmd.index("-e") + 1] == "300"
-        # Fixed gain, never AGC: a floor that moves with the signal makes dB values
-        # incomparable across the sweep, and every threshold built on them drifts.
-        assert cmd[cmd.index("-g") + 1] == "30"
-
-    def test_a_survey_fixes_the_gain_even_when_nobody_asked(self, monkeypatch) -> None:
-        """AGC was the DEFAULT, which is the thing the comment above warns against.
-
-        `-g` was passed only when a caller named a gain, so every sweep run from the
-        Radio tab or the agent measured through a moving gain. MEASURED ON AIR
-        2026-09-06, three 162.3-162.7 sweeps each way: on AGC the floor wandered and the
-        reduction reported a station at 162.35 — not a NOAA channel, not anything, just
-        the gain breathing — while 162.550, which is real, appeared on some runs and not
-        others. At a fixed 30 dB the floor holds to 0.2 dB, 162.550 is found every time,
-        and 162.35 is gone."""
-        _instant(monkeypatch)
-        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
-        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-        session = listen.Session(
-            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
-        try:
-            cmd = session._sweep_cmd()
-        finally:
-            session.stop()
-        assert cmd[cmd.index("-g") + 1] == str(listen.MEASURING_GAIN_DB)
-
-
 class TestAddressingOneRadioOfSeveral:
     """Both pipelines must open the radio they were TOLD to, not the first one.
 
@@ -867,22 +745,6 @@ class TestAddressingOneRadioOfSeveral:
 
         assert cmd[cmd.index("-d") + 1] == "77192819"
 
-    def test_sweeping_opens_the_named_radio(self, monkeypatch) -> None:
-        session = self._session(
-            monkeypatch,
-            purpose=listen.PURPOSE_SURVEY,
-            sweep=self._sweep(),
-            serial="77192819",
-        )
-        try:
-            cmd = session._sweep_cmd()
-        finally:
-            session.stop()
-
-        assert cmd[cmd.index("-d") + 1] == "77192819"
-        # ...and the CSV path stays last, where rtl_power expects its positional.
-        assert cmd[-1].endswith(".csv")
-
     def test_the_argument_is_what_librtlsdr_can_actually_match(
         self, monkeypatch
     ) -> None:
@@ -907,15 +769,10 @@ class TestAddressingOneRadioOfSeveral:
         """A one-dongle box must not change behaviour. `-d` absent means librtlsdr's
         own choice, which is exactly right when there is only one thing to choose."""
         listening = self._session(monkeypatch)
-        sweeping = self._session(
-            monkeypatch, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
-        )
         try:
             assert "-d" not in listening._rtl_cmd()
-            assert "-d" not in sweeping._sweep_cmd()
         finally:
             listening.stop()
-            sweeping.stop()
 
     def test_a_serial_that_is_not_one_is_refused_rather_than_passed_along(self) -> None:
         """`serial` is the only field in a start body that becomes a subprocess argv
@@ -1074,7 +931,7 @@ class TestOneSessionPerRadio:
         tuner.start(146_520_000, "fm", None, serial="09022796")
 
         assert tuner.for_purpose(listen.PURPOSE_APRS).id == aprs.session_id
-        assert tuner.for_purpose(listen.PURPOSE_SURVEY) is None
+        assert tuner.for_purpose(listen.PURPOSE_SPECTRUM) is None
 
     def test_current_prefers_the_tuner_over_a_service(self, tuner) -> None:
         """The omnibox draws ONE icon, so `current` has to pick — and pick the same way
@@ -1442,30 +1299,21 @@ class TestShortwave:
         assert listen.validate(listen.NYQUIST_HZ, "usb") == "usb"
         assert listen.validate(listen.MIN_HZ, "fm") == "fm"
 
-    def test_a_sweep_refuses_to_go_there_and_says_why(self) -> None:
-        """Not a policy. `rtl_power -D` hardcodes direct sampling mode 1 — the I branch
-        — so on this board it would tune something and measure nothing. A flat,
-        plausible, meaningless waterfall is worse than a refusal."""
-        with pytest.raises(listen.SdrError) as refused:
-            listen.Sweep.of(7_000_000, 7_300_000, 1_000, 60)
-
-        assert "cannot go below" in str(refused.value)
-        assert "still listen" in str(refused.value)
-
-    def test_the_SAME_range_is_accepted_for_the_engine_that_can_see_it(self) -> None:
-        """The whole of F8, in one pair of calls. The refusal above is `rtl_power`'s and
-        was never the radio's: the live spectrum does its own FFT off raw I/Q and sets
-        direct sampling mode 2 — the ADC branch this board wires — so 40 m is a picture
-        for that engine and still not a survey for the tool."""
-        sweep = listen.Sweep.of(7_000_000, 7_300_000, 250, 60, direct_ok=True)
+    def test_shortwave_is_accepted_now_that_one_engine_serves_both(self) -> None:
+        """This pair of tests spent three waves asserting the opposite, and the reason
+        was never the radio's: `rtl_power -D` hardcodes direct sampling mode 1 — the
+        ADC's I branch — where this board wires Q, so a survey below 24 MHz tuned
+        something and measured nothing. B1 removed the tool from the picture and B2 from
+        the survey, and the floor went with it."""
+        sweep = listen.Sweep.of(7_000_000, 7_300_000, 250, 60)
 
         assert sweep.start_hz == 7_000_000
 
     def test_even_the_direct_path_stops_at_what_the_ADC_reaches(self) -> None:
-        """`direct_ok` moves the floor, it does not remove it. Below DIRECT_MIN_HZ the
+        """The floor that remains is the RADIO's, not a tool's: below DIRECT_MIN_HZ the
         board's diplexer feeds the ADC nothing at all."""
         with pytest.raises(listen.SdrError) as refused:
-            listen.Sweep.of(50_000, 200_000, 250, 60, direct_ok=True)
+            listen.Sweep.of(50_000, 200_000, 250, 60)
 
         assert "below what this radio reaches" in str(refused.value)
 
@@ -1719,9 +1567,7 @@ class TestTheLiveSpectrum:
         sub = session.subscribe_frames()
 
         with pytest.raises(listen.SdrError) as refused:
-            session.resweep(
-                listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True)
-            )
+            session.resweep(listen.Sweep.of(7_125_000, 7_300_000, 250, 0))
 
         assert "no capture plan" in str(refused.value)
         # Still running, still leased, and still the session the omnibox names —
@@ -1748,9 +1594,7 @@ class TestTheLiveSpectrum:
         session = self._start(tuner)
 
         session.resweep(
-            listen.Sweep.of(
-                7_125_000, 7_175_000, 250, 0, direct_ok=True, capture=(256_000, 1024)
-            )
+            listen.Sweep.of(7_125_000, 7_175_000, 250, 0, capture=(256_000, 1024))
         )
 
         assert session.sweep is not None and session.sweep.start_hz == 7_125_000
@@ -2120,7 +1964,7 @@ def test_a_spectrum_with_no_capture_plan_is_refused_wherever_it_is(tuner) -> Non
             "fm",
             None,
             purpose=listen.PURPOSE_SPECTRUM,
-            sweep=listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True),
+            sweep=listen.Sweep.of(7_125_000, 7_300_000, 250, 0),
         )
 
     assert "no capture plan" in str(refused.value)
@@ -2135,9 +1979,7 @@ def test_a_named_capture_keeps_its_exact_width_through_the_clamp() -> None:
     make the frame declare a width the transform never used — invisibly, because
     nothing downstream can tell (§6.14). 250 Hz is under that floor and is exactly what
     256 kS/s over 1024 bins produces."""
-    swept = listen.Sweep.of(
-        7_125_000, 7_300_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
-    )
+    swept = listen.Sweep.of(7_125_000, 7_300_000, 250, 60, capture=(256_000, 1_024))
 
     assert swept.bin_hz == 250
     assert swept.capture == (256_000, 1_024)
@@ -2159,9 +2001,7 @@ def test_shortwave_with_a_capture_is_no_longer_refused() -> None:
     """F6. The refusal belonged to the ENGINE: `rtl_power -D` hardcodes the I branch
     and this board wires Q. The I/Q engine sets mode 2 at runtime, so a range it can
     draw in one capture is its to draw."""
-    swept = listen.Sweep.of(
-        7_125_000, 7_300_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
-    )
+    swept = listen.Sweep.of(7_125_000, 7_300_000, 250, 60, capture=(256_000, 1_024))
 
     assert listen.spectrum_engine_refusal(swept) is None
 
@@ -2170,7 +2010,7 @@ def test_a_range_with_no_capture_plan_is_refused_and_says_what_to_ask_for() -> N
     """The sentence has to name what to do instead, because the owner has no terminal
     to look with (CLAUDE.md #10) — and since B1 there is no second engine to name, only
     a narrower request."""
-    swept = listen.Sweep.of(3_000_000, 8_000_000, 25_000, 60, direct_ok=True)
+    swept = listen.Sweep.of(3_000_000, 8_000_000, 25_000, 60)
 
     refusal = listen.spectrum_engine_refusal(swept)
 
@@ -2252,7 +2092,7 @@ class TestIQSpectrumEngine:
         range where refusing was right."""
         self._refuse_to_open(monkeypatch, listen.radio.RadioError("no such device"))
         swept = listen.Sweep.of(
-            7_125_000, 7_300_000, 250, 300, direct_ok=True, capture=(256_000, 1_024)
+            7_125_000, 7_300_000, 250, 300, capture=(256_000, 1_024)
         )
 
         with pytest.raises(listen.SdrError) as refused:

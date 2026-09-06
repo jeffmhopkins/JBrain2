@@ -77,7 +77,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
 from jbrain.sdr.roles import GENERAL
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
-from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range, sweepable
+from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -1730,10 +1730,9 @@ async def sdr_sweep(
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
-    # Bounded to what the RADIO reaches, not to what a sweep reaches — so a shortwave
-    # request arrives here and gets `sweepable`'s sentence rather than a 422 validation
-    # blob. The difference matters because shortwave is listenable and not sweepable,
-    # and that is precisely the thing a bare bound cannot say.
+    # Bounded to what the RADIO reaches, so a request outside the capture plan arrives
+    # here and gets a sentence rather than a 422 validation blob — which is the one
+    # surface an owner with no terminal has (CLAUDE.md #10).
     start_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     stop_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     bin_khz: Annotated[float, Query(ge=0.1, le=100.0)] = 5.0,
@@ -1767,24 +1766,33 @@ async def sdr_sweep(
     unsized, `steady` measures a wide carrier against a window sitting inside it and sees
     nothing. Zero leaves the bins alone and takes the narrowband default neighbourhood.
 
-    `include_csv` returns rtl_power's own numbers alongside the reduction. Off by
-    default because it is megabytes; worth having because calibrating a detector against
-    a summary the detector produced is circular, and the first round of this was done by
-    reading brightness off the PNG."""
+    `include_csv` returns the raw rows alongside the reduction. Off by default because it
+    is megabytes; worth having because calibrating a detector against a summary the
+    detector produced is circular, and the first round of this was done by reading
+    brightness off the PNG.
+
+    **Shortwave is surveyable now.** The floor that refused it was `rtl_power`'s, and B2
+    moved the survey onto the engine that sets the ADC branch at runtime
+    (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2)."""
     request.state.debug_detail = f"sdr sweep {start_mhz}-{stop_mhz} MHz for {seconds}s"
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
-    # Both EDGES, because the sidecar validates the sweep's centre: a 10-70 MHz request
-    # centres on 40 and passes every check while its bottom half cannot be measured at
-    # all, and comes back reported as quiet.
-    for edge in (start_mhz, stop_mhz):
-        refusal = sweepable(edge)
-        if refusal:
-            raise HTTPException(status_code=400, detail=refusal)
+    # THE SAME QUESTION THE PICTURE ASKS, since B2 put the survey on the picture's
+    # engine. `sweepable` was `rtl_power`'s question — it refused everything below
+    # 24 MHz because the tool hardcodes the ADC's I branch and this board wires Q — and
+    # the tool is gone, so what is left is whatever the capture plan covers.
+    #
+    # `_span` checks BOTH EDGES, which the sidecar cannot: it validates the sweep's
+    # centre, so a 10-70 MHz request centres on 40 and passes every check while its
+    # bottom half cannot be measured at all and comes back reported as quiet.
+    start_hz, stop_hz, _picture_bin, capture = sdr_api._span(None, start_mhz, stop_mhz)  # noqa: SLF001
 
-    body = {
-        "start_hz": int(round(start_mhz * 1_000_000)),
-        "stop_hz": int(round(stop_mhz * 1_000_000)),
+    body: dict[str, Any] = {
+        "start_hz": start_hz,
+        "stop_hz": stop_hz,
+        # The width the SURVEY is written at, which is the caller's to choose and is NOT
+        # the transform's. The sidecar folds one into the other and reports which it
+        # used; nothing here assumes they are equal.
         "bin_hz": int(round(bin_khz * 1_000)),
         "seconds": seconds,
         "gain": gain,
@@ -1793,6 +1801,10 @@ async def sdr_sweep(
         # rather than an error the caller has to poll for.
         "serial": await _radio(request, settings, GENERAL),
     }
+    if capture is not None:
+        # The capture the plan named, as the spectrum routes send it: the band table
+        # lives in ONE place and the sidecar executes what it was handed.
+        body["rate_hz"], body["bins"], body["hops"] = capture
     jobs = request.app.state.debug_jobs
     tasks = request.app.state.debug_job_tasks
     job_id = uuid.uuid4().hex

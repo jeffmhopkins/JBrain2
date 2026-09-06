@@ -115,9 +115,10 @@ export function sectionAt(
  *  error — and, on the spectrum, a tap that ends in an error is expensive: it costs the
  *  waterfall that was already running.
  *
- *  **It no longer asks `surveyable`.** That flag is `rtl_power`'s answer to a different
- *  question — whether the band can be SURVEYED — and asking it here kept ten shortwave
- *  rows greyed out with a reason that was about the wrong tool. */
+ *  **It does not ask `surveyable`.** That flag was `rtl_power`'s answer to a different
+ *  question — whether the band could be SURVEYED — and asking it here kept ten shortwave
+ *  rows greyed out for a reason about the wrong tool. The tool is gone from both the
+ *  picture and the survey now, and the flag is true everywhere. */
 export function whyNotLive(section: BandSection): string | null {
   // The transitional line that greyed out every HF row is GONE, with the guard it
   // mirrored: `listen.spectrum_engine_refusal` refused everything below 24 MHz while

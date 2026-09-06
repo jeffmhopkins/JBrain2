@@ -478,12 +478,19 @@ class Section:
 
     @property
     def surveyable(self) -> bool:
-        """Whether a sweep can reach it at all.
+        """Whether a survey can reach this band at all.
 
-        False for every HF section, and not by choice: `rtl_power -D` hardcodes direct
-        sampling mode 1 (the I branch) while this hardware wires the Q branch. Fixing it
-        means patching a C tool, so HF listening works and HF sweeping does not."""
-        return not self.direct_sampling
+        **True everywhere now, and the history is the point of keeping the field.** It
+        was False for every HF section, and not by choice: `rtl_power -D` hardcodes
+        direct sampling mode 1 (the I branch) while this hardware wires Q, so HF
+        listening worked and HF sweeping did not. B2 made a survey an accumulator over
+        the live spectrum — one engine, which sets the branch at runtime — so the
+        exception is gone (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2).
+
+        Kept as a field rather than deleted from the wire because the PWA reads it and
+        an older PWA against a newer box must not lose a row: `true` is the answer that
+        degrades safely in both directions."""
+        return True
 
 
 def _s(**kw: object) -> Section:
@@ -1274,11 +1281,12 @@ def validate(sections: tuple[Section, ...] = SECTIONS) -> list[str]:
                 f"over {LIVE_FAST_MAX_HZ / 1e6:.1f} MHz it needs a hop, so it is at best "
                 f"{LIVE_SLOW}"
             )
-        if s.live == LIVE_SLOW and not s.surveyable:
-            # LIVE_SLOW is rtl_power, and rtl_power cannot reach the Q branch at all.
+        if s.live == LIVE_SLOW and s.direct_sampling:
+            # Below the tuner every hop would have to satisfy the Nyquist window
+            # separately, so a wide shortwave span has no plan and cannot be `slow`.
             problems.append(
                 f"{where} is below {DIRECT_SAMPLING_MAX_HZ / 1e6:.0f} MHz, where a live "
-                f"view cannot come from rtl_power — it hardcodes the wrong ADC branch"
+                f"view is one capture or nothing — hops cannot be stitched down there"
             )
         problems.extend(_capture_problems(s))
         if s.hops > 1 and not s.continuous and s.sweep_seconds < 300:

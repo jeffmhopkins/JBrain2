@@ -107,12 +107,11 @@ MODES = {
 # `listen` produces audio; `aprs` decodes packets and produces none.
 PURPOSE_LISTEN = "listen"
 PURPOSE_APRS = "aprs"
-# A band sweep. Unlike the other two it ENDS ON ITS OWN when rtl_power's exit timer
-# fires, so the radio frees itself — but it is still a real Session while it runs, which
-# is the whole point: the omnibox icon, the elapsed clock, Release and the 409 all read
-# the session's existence, so a sweep that held the radio outside the lease would be a
-# radio held by something invisible.
-PURPOSE_SURVEY = "survey"
+# `PURPOSE_SURVEY` went with `rtl_power`. A survey was never a different way of
+# MEASURING — it is the same spectrum, integrated for longer and written down instead of
+# drawn — so it is an accumulator over a `spectrum` session (`SurveyRows`) rather than a
+# fourth kind of session with its own lifecycle, its own temp file and a handler that
+# pinned a thread for fifteen minutes (A5/B2).
 # A LIVE spectrum: our own capture, transformed here, with rows fanned out as they are
 # measured rather than read back once. The difference from `survey` is the whole point —
 # a survey is a measurement that ends and is then reduced, this is a picture that keeps
@@ -126,15 +125,15 @@ PURPOSE_SPECTRUM = "spectrum"
 PURPOSE_LABEL = {
     PURPOSE_LISTEN: "listening",
     PURPOSE_APRS: "logging APRS",
-    PURPOSE_SURVEY: "sweeping the band",
     PURPOSE_SPECTRUM: "watching the spectrum",
 }
 PURPOSES = tuple(PURPOSE_LABEL)
-#: The purposes tuned to a RANGE rather than a frequency. Every place that asks "does
-#: this session have a sweep" means this set — which is one line rather than two
-#: comparisons that can fall out of step. They no longer share an ENGINE: B1 left the
-#: live spectrum with only our own, and `survey` is the last caller of `rtl_power`.
-SWEEPING = (PURPOSE_SURVEY, PURPOSE_SPECTRUM)
+#: The purposes tuned to a RANGE rather than a frequency. One entry since `survey` became
+#: an accumulator over `spectrum` rather than a purpose of its own — kept as a set because
+#: every place that asks "does this session have a sweep" means THIS, and one line is
+#: cheaper than comparisons that can fall out of step when a second range-shaped purpose
+#: appears.
+SWEEPING = (PURPOSE_SPECTRUM,)
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
 # Sweep bounds, enforced HERE rather than at the caller. An agent will ask for an hour,
@@ -320,11 +319,6 @@ def hop_centres(start_hz: int, rate_hz: int, bins: int, hops: int) -> list[int]:
         int(round(start_hz + (index * usable + usable / 2) * width))
         for index in range(hops)
     ]
-
-#: Whether `stdbuf` is here to make rtl_power's stdout line-buffered. Resolved once, at
-#: import, rather than per launch: it is a property of the image, and a `which` on every
-#: retune is a syscall for an answer that cannot have changed.
-_LINE_BUFFERED = shutil.which("stdbuf") is not None
 
 #: How long a freshly launched pipeline is watched before it is believed. Paid on every
 #: start, which is the cost of a 200 meaning "the radio opened" instead of "a process
@@ -692,22 +686,18 @@ class Sweep:
         bin_hz: int | float,
         seconds: float,
         *,
-        direct_ok: bool = False,
         capture: tuple[int, int] | None = None,
         hops: int = 1,
         channel_hz: int = 0,
     ) -> "Sweep":
-        """`direct_ok` says WHICH ENGINE is asking, and it is the only thing that
-        changes the floor.
+        """ONE FLOOR, which is the radio's own.
 
-        `rtl_power` cannot go below `MIN_HZ` — it hardcodes direct sampling mode 1, the
-        ADC's I branch, where this board wires Q — so the survey path leaves this False
-        and keeps its refusal. The live spectrum reads raw I/Q and does its own FFT,
-        which puts the ADC in mode 2 at runtime, so shortwave really is reachable there
-        and the same floor would be a fiction copied from a tool it no longer uses
-        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md §6.2, F8). Two engines, two answers, one
-        constructor — rather than a second Sweep type that agrees about everything else.
-        """
+        There used to be two, selected by a `direct_ok` flag that said which ENGINE was
+        asking: `rtl_power` hardcodes direct sampling mode 1 — the ADC's I branch, where
+        this board wires Q — so a survey was refused below `MIN_HZ` while a picture of
+        the same range was drawn. B1 removed the tool from the picture and B2 from the
+        survey, so every caller passed the same value and the parameter was a fork with
+        one side (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B1/B2)."""
         start, stop = int(min(start_hz, stop_hz)), int(max(start_hz, stop_hz))
         if stop - start > MAX_SWEEP_SPAN_HZ:
             raise SdrError(
@@ -716,20 +706,9 @@ class Sweep:
             )
         if stop - start < 1:
             raise SdrError("a sweep needs a range, not a single frequency")
-        if direct_ok and start < DIRECT_MIN_HZ:
+        if start < DIRECT_MIN_HZ:
             raise SdrError(
                 f"{start} Hz is below what this radio reaches ({DIRECT_MIN_HZ} Hz)"
-            )
-        if not direct_ok and start < MIN_HZ:
-            # NOT a policy. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` —
-            # the ADC's I branch — and this board wires Q, so the tool would tune
-            # something and measure nothing. Listening below the tuner works
-            # (`-E direct2` on rtl_fm); sweeping there cannot, and saying so beats
-            # returning a flat, plausible, meaningless waterfall.
-            raise SdrError(
-                f"a sweep cannot go below {MIN_HZ / 1e6:.0f} MHz — the radio reaches "
-                f"shortwave by bypassing its tuner, and the sweep tool cannot use that "
-                f"path. You can still listen there."
             )
         return Sweep(
             start_hz=start,
@@ -745,7 +724,13 @@ class Sweep:
             # a width nothing computed (§6.14). The clamp is the SURVEY's, where the
             # width is a request made of rtl_power rather than a fact about a transform.
             bin_hz=(
-                bin_hz
+                # DERIVED from the capture, not trusted from the caller: `bin_hz` is
+                # documented as the width the transform actually uses, and the only way
+                # for it to be that is to compute it here. A caller that sent a width of
+                # its own — a SURVEY asking to be written down more coarsely than it was
+                # measured — would otherwise have the frame declare a width nothing
+                # computed, which is the one error nothing downstream can see (§6.14).
+                iq.bin_width_hz(capture[0], capture[1])
                 if capture is not None
                 else max(MIN_SWEEP_BIN_HZ, min(int(bin_hz), MAX_SWEEP_BIN_HZ))
             ),
@@ -776,6 +761,116 @@ class Sweep:
             out["rate_hz"], out["bins"] = self.capture
             out["hops"] = self.hops
         return out
+
+
+#: How long one survey row integrates. rtl_power's `-i`, kept as a number because the
+#: reduction downstream thinks in INTERVALS: `sweep.reduce_csv` estimates each bin's
+#: floor as a percentile over them and calls a bin occupied for a fraction of them, so
+#: an interval that changed length would change what "40% occupied" means. One second
+#: was that tool's floor (`if (interval < 1) interval = 1;`); it is this engine's
+#: CHOICE, and the only thing still tying the two together.
+SURVEY_INTERVAL_S = 1.0
+
+
+class SurveyRows:
+    """Waterfall rows in, the CSV a survey is reduced from out.
+
+    **The survey stops being a second engine and becomes an accumulator over the first**
+    (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). A survey was never a different
+    way of measuring — it is the same spectrum, integrated for longer and written down
+    instead of drawn. Making it a subprocess with its own lifecycle, its own temp file
+    and a synchronous handler pinning a thread for fifteen minutes was the invention.
+
+    Pure: frames in, text out, no radio and no clock of its own. Every awkward case the
+    old `Stitch` existed for is gone with the tool that produced them — a `Frame` is
+    already one whole row of the band.
+
+    **Averaged in POWER, not in decibels.** A mean of dB values is a geometric mean of
+    powers, which sits below the arithmetic one and drags a noise floor down with it;
+    downstream `reduce_csv` takes a percentile of these numbers and calls the result a
+    noise floor, so the error would land exactly where it is read as fact.
+
+    The emitted width is `bin_hz` when the capture is FINER than what was asked for —
+    adjacent bins folded together, which is a real average of real measurements — and
+    the capture's own width when it is coarser, because a row cannot be given resolution
+    it was not measured at. Each line states the width it used, and `reduce_csv` reads
+    it from the line rather than from the request."""
+
+    def __init__(self, bin_hz: int | float, interval_s: float = SURVEY_INTERVAL_S) -> None:
+        self.bin_hz = max(float(bin_hz), 0.0)
+        self.interval_s = max(float(interval_s), 0.0)
+        self.rows = 0
+        #: The width the rows are ACTUALLY written at, which is the requested one folded
+        #: to a whole number of capture bins — 25 kHz asked for off a 4687.5 Hz capture
+        #: is five bins, or 23437.5. Zero until the first row, and the number the route
+        #: reports: an envelope claiming the width that was ASKED for, over rows that
+        #: state a different one, is the frame-declares-a-width-nothing-computed error
+        #: moved up a layer.
+        self.step_hz: int | float = 0
+        self._start_hz: int | float = 0
+        self._step: int | float = 0
+        self._fold = 1
+        self._sum: np.ndarray | None = None
+        self._count = 0
+        self._opened = 0.0
+
+    def push(self, frame: Frame) -> list[str]:
+        """Fold one row in, and emit a line whenever an interval has closed."""
+        if not frame.db or frame.bin_hz <= 0:
+            return []
+        fold = max(1, int(round(self.bin_hz / frame.bin_hz))) if self.bin_hz else 1
+        kept = (len(frame.db) // fold) * fold
+        if kept <= 0:
+            return []
+        power = np.power(10.0, np.asarray(frame.db[:kept], dtype=np.float64) / 10.0)
+        folded = power.reshape(-1, fold).mean(axis=1) if fold > 1 else power
+        out: list[str] = []
+        # A row that describes a different band ENDS the interval it lands in rather than
+        # being averaged into it: a retune mid-survey is two measurements, and averaging
+        # across it would report a band that was never on the air.
+        moved = (
+            self._sum is None
+            or self._sum.size != folded.size
+            or self._start_hz != frame.start_hz
+            or self._step != frame.bin_hz * fold
+        )
+        if moved:
+            out.extend(self.flush())
+            self._start_hz = frame.start_hz
+            self._step = self.step_hz = frame.bin_hz * fold
+            self._fold = fold
+            self._sum, self._count, self._opened = np.zeros_like(folded), 0, frame.at
+        assert self._sum is not None  # noqa: S101 - set on the branch above
+        self._sum += folded
+        self._count += 1
+        if frame.at - self._opened >= self.interval_s:
+            out.extend(self.flush())
+        return out
+
+    def flush(self) -> list[str]:
+        """Close the open interval, if there is one. Called at the end of a survey too:
+        a truncated last row is a real measurement of a shorter interval, and dropping
+        it would silently shorten every survey by up to a second."""
+        if self._sum is None or self._count == 0:
+            return []
+        mean = self._sum / self._count
+        # `iq.DB_FLOOR`'s job, repeated here for the same reason: a bin with no power at
+        # all is `-inf` in dB, which `json`/`csv` cannot carry and a reader cannot read.
+        db = 10.0 * np.log10(np.maximum(mean, 10.0 ** (iq.DB_FLOOR / 10.0)))
+        stamp = time.strftime("%Y-%m-%d, %H:%M:%S", time.gmtime(self._opened))
+        line = ", ".join(
+            [
+                stamp,
+                str(int(self._start_hz)),
+                str(int(self._start_hz + db.size * self._step)),
+                f"{self._step:.2f}",
+                str(self._count),
+                *(f"{v:.2f}" for v in db),
+            ]
+        )
+        self._sum, self._count = None, 0
+        self.rows += 1
+        return [line]
 
 
 def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
@@ -969,9 +1064,6 @@ class Session:
         # in; with two it is how APRS silently ends up on the wrong antenna, so the api
         # resolves a serial from the owner's settings and names it here.
         self.serial = serial
-        # The CSV rtl_power writes, read back once the sweep ends. Per session, so a
-        # retune or a restart cannot serve a stale file.
-        self.sweep_csv = f"/tmp/sweep-{self.id}.csv" if sweep else ""  # noqa: S108
         self.started_at = time.time()
         self.gain = gain
         self.purpose = validate_purpose(purpose)
@@ -1103,9 +1195,6 @@ class Session:
         if self.purpose == PURPOSE_APRS:
             self._start_packet_pipeline()
             return
-        if self.purpose == PURPOSE_SURVEY:
-            self._start_sweep_pipeline()
-            return
         if self.purpose == PURPOSE_SPECTRUM:
             self._start_spectrum_pipeline()
             return
@@ -1151,84 +1240,24 @@ class Session:
         for thread in self._threads:
             thread.start()
 
-    def _sweep_cmd(self) -> list[str]:
-        """`rtl_power` over the range, one CSV row per bin-block per interval.
-
-        rtl_power ONLY, and still deliberately — but on narrower grounds than before.
-        `Dockerfile.sdr`'s rule is now APT ONLY, NO PIP rather than stdlib-only, so numpy
-        and SoapySDR are in the image and an FFT of our own has become affordable; this
-        stays rtl_power because nothing has replaced it yet, not because nothing could
-        (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6 is where the swap happens). The rewrites
-        are refused as they always were: `rtl_power_fftw` is a source build and
-        `soapy_power` a pip install, and neither is in Debian.
-
-        `-i 1` is one second per row, and MEASURED on this box that is also the real
-        revisit: 1.0 s between consecutive readings of the same block at 1, 2, 4, 8 and
-        22 hops alike, with every block carrying identical timestamps. rtl_power retunes
-        WITHIN the interval rather than multiplying it. (This docstring used to claim the
-        revisit was one second times the number of hops. It is not, anywhere in the range
-        `MAX_SWEEP_SPAN_HZ` allows — and that cap is what bounds it: 60 MHz is ~25 hops,
-        so 22 is close to the worst case a caller can ask for.)"""
-        assert self.sweep is not None
-        span = self.sweep
-        cmd = [
-            "rtl_power",
-            "-f", f"{span.start_hz}:{span.stop_hz}:{span.bin_hz}",
-            "-i", "1",
-            "-e", str(int(span.seconds)),
-        ]  # fmt: skip
-        # Fixed gain, never AGC — and NEVER means when the caller named none either,
-        # which is what this got wrong. A floor that moves with the signal makes dB
-        # values incomparable across the sweep, and every threshold built on them
-        # drifts; on air that hid a real station on half its runs and invented one that
-        # is not on the channel plan (`MEASURING_GAIN_DB`).
-        cmd += ["-g", str(self.gain or MEASURING_GAIN_DB)]
-        cmd += self._device_args()
-        return [*cmd, self.sweep_csv]
-
     def _device_args(self) -> list[str]:
         """`-d <serial>`, or nothing at all.
 
         Nothing is not a neutral default once a second dongle exists: librtlsdr then
         opens whichever it enumerated first, which is a property of USB bus order rather
-        than of anything the owner chose. Both tools take the same `-d` and both went
-        without it, so the fix belongs in one place rather than twice.
+        than of anything the owner chose.
 
-        THE BARE SERIAL, not `serial=...`. rtl_fm and rtl_power hand `-d` straight to
-        librtlsdr's `verbose_device_search`, which tries a raw index, then an exact
-        serial, then a serial prefix, then a serial suffix — and has no key=value form
-        at all. `serial=` is SoapySDR's syntax; passed here it matches nothing and the
-        tool exits(1) before opening the device, which is WORSE than the bug it was
-        meant to fix: the sidecar's `start` has already returned, so the lease looks
-        live and the omnibox lights while nothing is decoding.
+        THE BARE SERIAL, not `serial=...`. rtl_fm hands `-d` straight to librtlsdr's
+        `verbose_device_search`, which tries a raw index, then an exact serial, then a
+        serial prefix, then a serial suffix — and has no key=value form at all.
+        `serial=` is SoapySDR's syntax; passed here it matches nothing and the tool
+        exits(1) before opening the device, which is WORSE than the bug it was meant to
+        fix: the sidecar's `start` has already returned, so the lease looks live and the
+        omnibox lights while nothing is decoding.
 
         Empty when the caller named no radio, which keeps a one-dongle box byte
         identical to what it ran before."""
         return ["-d", str(self.serial)] if self.serial else []
-
-    def _start_sweep_pipeline(self) -> None:
-        """One process, no threads, and it ENDS ON ITS OWN.
-
-        rtl_power's `-e` is an exit timer, so the sweep terminates and `alive` goes
-        false, at which point the tuner reaps the session and the radio frees itself.
-        That is the difference from the other two purposes, and it is why a survey needs
-        no stop from the caller — though Release still works, because the session is
-        real and the Tuner owns it."""
-        if shutil.which("rtl_power") is None:
-            raise SdrError("rtl_power is not installed in this image")
-        self.engine = "rtl_power"
-        try:
-            self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
-                self._sweep_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-        except OSError as exc:
-            self._kill()
-            raise SdrError(f"could not start the sweep: {exc}") from exc
-        # Its stderr carries the retune plan and any device error, and an unread pipe
-        # blocks the writer at 64 KB — the same hazard `_drain_tuner_log` exists for.
-        self._threads = [threading.Thread(target=self._drain_tuner_log, daemon=True)]
-        for thread in self._threads:
-            thread.start()
 
     def _start_spectrum_pipeline(self) -> None:
         """ONE engine draws a live spectrum, and a range it cannot draw is refused.
@@ -2686,7 +2715,6 @@ class Tuner:
         PURPOSE_LISTEN: 0,
         PURPOSE_APRS: 1,
         PURPOSE_SPECTRUM: 2,
-        PURPOSE_SURVEY: 3,
     }
 
     @classmethod

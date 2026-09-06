@@ -989,8 +989,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "sdr_listen.tool": (
             "sdr_listen",
-            4,
-            "f43452b5503101d5c0cb414bbc952db61b296ee09a93f2db1d445bfb0d551b8e",
+            5,
+            "4c2ed92284771f34baaca365bc1769d7f4bb9a4c6c20772664c28ba7555ebbef",
         ),
         "sdr_read.tool": (
             "sdr_read",
@@ -1004,8 +1004,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "sdr_stop.tool": (
             "sdr_stop",
-            3,
-            "9d2e5de0bd61c13e41b8c160b3d226f1a20bfa6397389059c89bb611aa45d3d9",
+            4,
+            "a61c07ba16215aa535a23ee68d4c588970c83f139bfd1e8e28962c0d5b2aacfa",
         ),
         "search.tool": (
             "search",

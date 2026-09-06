@@ -84,25 +84,28 @@ class TestTheValidatorActuallyCatchesThings:
 
         assert any("outside it" in p for p in bands.validate((bad,)))
 
-    def test_an_HF_section_cannot_claim_the_rtl_power_live_tier(self) -> None:
-        """`rtl_power -D` hardcodes direct sampling mode 1 — the I branch — and this
-        hardware wires the Q branch. So the slow live tier, which IS rtl_power, cannot
-        reach HF at all, however wide the section is."""
+    def test_an_HF_section_cannot_claim_the_multi_hop_live_tier(self) -> None:
+        """Below the tuner every hop would have to satisfy the Nyquist window
+        separately, so a wide shortwave span cannot be stitched — it is one capture or
+        nothing. The reason used to be `rtl_power -D`'s hardcoded ADC branch; the tool
+        is gone (B1) and the geometry is not."""
         bad = self._row(start_hz=7_000_000, stop_hz=7_300_000, live=LIVE_SLOW, channel_hz=0)
 
-        assert any("wrong ADC branch" in p for p in bands.validate((bad,)))
+        assert any("hops cannot be stitched" in p for p in bands.validate((bad,)))
 
     def test_duplicate_ids_are_refused(self) -> None:
         assert any("duplicate id" in p for p in bands.validate((self._row(), self._row())))
 
 
 class TestWhatTheHardwareCanReach:
-    def test_every_HF_section_says_it_cannot_be_surveyed(self) -> None:
-        """Not a preference. rtl_power cannot be put into the mode this dongle needs, so
-        HF listening works and HF sweeping does not — and the table has to carry that or
-        the owner meets it as a failed job."""
+    def test_every_section_can_now_be_surveyed(self) -> None:
+        """This assertion was the exact inverse for three waves: `rtl_power` could not
+        be put into the mode this dongle needs, so HF listening worked and HF sweeping
+        did not, and the table carried that so the owner did not meet it as a failed
+        job. B2 made a survey an accumulator over the live spectrum, which sets the ADC
+        branch at runtime, and the exception went with the tool."""
         for s in bands.SECTIONS:
-            assert s.surveyable is (s.start_hz > bands.DIRECT_SAMPLING_MAX_HZ), s.id
+            assert s.surveyable is True, s.id
 
     def test_nothing_below_the_tuner_claims_to_use_it(self) -> None:
         hf = [s for s in bands.SECTIONS if s.direct_sampling]
@@ -408,15 +411,15 @@ class TestTheRouteThatServesTheTable:
         assert (aprs.span_hz, aprs.hops, aprs.centre_hz) == (800_000, 1, 144_700_000)
         assert whole.hops == 2  # 4 MHz needs a retune, and the client must not guess
 
-    async def test_HF_sections_arrive_marked_unsweepable_and_gainless(self) -> None:
-        """Both facts have to reach the screen or it will offer controls that cannot
-        work: a Survey button that always fails, and a gain slider wired to a tuner that
-        is powered down."""
+    async def test_HF_sections_arrive_marked_gainless_and_surveyable(self) -> None:
+        """The gain fact still has to reach the screen or it will offer a slider wired
+        to a tuner that is powered down. The SURVEY fact flipped: a Survey button on an
+        HF row used to always fail, and since B2 it works."""
         out = await self._out()
         wwv = next(s for s in out.sections if s.id == "wwv-10")
 
         assert wwv.direct_sampling is True
-        assert wwv.surveyable is False
+        assert wwv.surveyable is True
         # ...and the capture that WILL draw it, which is the other half of the same
         # honesty: 256 kS/s over 1024 bins is 250 Hz, exactly, and the image it carries
         # is named rather than flagged.
@@ -496,36 +499,35 @@ class TestTheExpertPathCoversTheWholeRadio:
         assert mode == "fm" and step == 12_500
 
 
-class TestRefusingASweepInWordsRatherThanASchema:
+class TestRefusingARequestInWordsRatherThanASchema:
     """Measured on the box: asking to sweep 9.9-10.1 MHz returned a bare 422 with a
     FastAPI validation blob, because the route's `Query` bound rejected before anything
     could explain itself. The sentence existed — in the sidecar — and was unreachable.
 
-    This is the one surface an owner with no terminal has (CLAUDE.md #10), and the
-    distinction it has to carry is the least obvious one on this hardware: shortwave is
-    perfectly listenable and cannot be swept.
+    This is the one surface an owner with no terminal has (CLAUDE.md #10). What it had
+    to carry was the least obvious distinction on this hardware — shortwave is
+    listenable and cannot be swept — and B2 removed that distinction by putting the
+    survey on the engine that reaches down there. The requirement that a refusal be a
+    SENTENCE outlived the refusal it was written for.
     """
 
-    def test_shortwave_is_refused_with_a_reason_and_a_way_forward(self) -> None:
-        from jbrain.sdr.tuner import sweepable
+    def test_shortwave_is_no_longer_refused_at_all(self) -> None:
+        from jbrain.sdr.tuner import viewable
 
-        refusal = sweepable(10.0)
-
-        assert refusal is not None
-        assert "cannot go below" in refusal
-        assert "still listen" in refusal  # ...says what DOES work down there
+        assert viewable(9.9, 10.1) is None
 
     def test_a_frequency_the_radio_cannot_reach_says_that_instead(self) -> None:
-        """A different failure needing different words: 2000 MHz is not 'listen instead',
-        it is 'this radio does not go there'."""
-        from jbrain.sdr.tuner import sweepable
+        """A different failure needing different words: 2000 MHz is not "listen
+        instead", it is "this radio does not go there"."""
+        from jbrain.sdr.tuner import viewable
 
-        refusal = sweepable(2000.0)
+        refusal = viewable(2000.0, 2000.2)
 
         assert refusal is not None and "above what this radio reaches" in refusal
 
-    def test_a_sweepable_frequency_is_waved_through(self) -> None:
-        from jbrain.sdr.tuner import sweepable
+    def test_an_ordinary_range_is_waved_through(self) -> None:
+        from jbrain.sdr.tuner import viewable
 
-        assert sweepable(144.0) is None
-        assert sweepable(24.0) is None  # exactly at the handover, where the tuner starts
+        assert viewable(144.0, 144.2) is None
+        # Exactly at the handover, where the tuner starts.
+        assert viewable(24.0, 24.2) is None

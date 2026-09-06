@@ -27,7 +27,6 @@ from jbrain.sdr.tuner import (
     MIN_MHZ,
     nodes_in,
     serials_in,
-    sweepable,
     viewable,
 )
 
@@ -143,12 +142,12 @@ class TestReadingTheUsbScan:
 
 
 class TestWhatALiveViewCanCover:
-    """A waterfall is no longer rtl_power on every tier, and this is where that shows.
+    """One engine draws and integrates, so `viewable` is the only question.
 
-    The one-hop picture reads raw I/Q and does its own FFT, which reaches shortwave
-    through direct sampling mode 2 — the ADC branch this board wires and the one
-    `rtl_power -D` cannot select. So `viewable` and `sweepable` stopped being the same
-    question, and the refusals below 24 MHz became narrower rather than absent.
+    It reads raw I/Q and does its own FFT, which reaches shortwave through direct
+    sampling mode 2 — the ADC branch this board wires and the one `rtl_power -D` cannot
+    select. `sweepable` was that tool's separate answer and went with it (B1/B2); what
+    is left below 24 MHz is a narrower rule about captures, not about tools.
     """
 
     def test_a_span_no_capture_plan_covers_is_refused_in_words(self) -> None:
@@ -169,19 +168,17 @@ class TestWhatALiveViewCanCover:
         for section in bands.SECTIONS:
             assert viewable(section.start_hz / 1e6, section.stop_hz / 1e6) is None, section.id
 
-    def test_shortwave_can_now_be_drawn_though_it_still_cannot_be_swept(self) -> None:
-        """The whole of F8 in two lines. The same 300 kHz of 40 m is a picture and not
-        a survey, because the two run different engines and only one of them can be put
-        into the ADC mode this board needs."""
+    def test_shortwave_is_both_drawable_and_surveyable_now(self) -> None:
+        """This assertion spent three waves being the OPPOSITE. The same 300 kHz of 40 m
+        was a picture and not a survey, because the two ran different engines and only
+        one could be put into the ADC mode this board wires. B2 put the survey on the
+        picture's engine, so there is one predicate and one answer."""
         assert viewable(7.0, 7.3) is None
 
-        refusal = sweepable(7.0)
-        assert refusal and "still listen" in refusal
-
     def test_shortwave_wider_than_one_capture_is_refused_in_those_words(self) -> None:
-        """Not "cannot be swept" — that is no longer why. Below 24 MHz the picture is
-        one capture or nothing, because the thing that stitches hops together is the
-        tool that cannot go down there."""
+        """Not "cannot be swept" — that is no longer why. Below 24 MHz a picture is one
+        capture or nothing, because every hop would have to satisfy the Nyquist window
+        separately down there (`bands.hop_plan`)."""
         refusal = viewable(3.0, 8.0)
 
         assert refusal and "more than one capture" in refusal

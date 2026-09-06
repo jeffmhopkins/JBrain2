@@ -59,12 +59,6 @@ from listen import SdrBusy as ListenBusy
 from listen import SdrError as ListenError
 from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
 
-# The R820T2 tuner's real range. Anything outside it cannot be tuned, so it is
-# rejected here rather than handed to rtl_fm to fail on. HF below 24 MHz needs
-# direct sampling and is deliberately out of scope for now (plan §9).
-# How long after rtl_power's own exit timer to keep waiting, for the retune settle it
-# does before the first row. Named so a test can shrink it.
-SWEEP_SETTLE_S = 30
 
 # The tuner's range and the mode allowlist come from `listen`, which is where the
 # radio lives — they were declared again here, and a second declaration of a fact is a
@@ -569,18 +563,17 @@ def _channel_hz_of(body: dict[str, Any]) -> int:
         return 0
 
 
-def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
+def _range_of(body: dict[str, Any]) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
     Shared by the one-shot `/sweep` and by starting or moving a live spectrum, so the
     three cannot drift apart on what a legal range is — the tuner's limits are a fact
     about the radio, not about which route asked.
 
-    `direct_ok` is the one thing that DOES depend on which route asked, because it is a
-    fact about the engine rather than about the radio: `rtl_power` hardcodes the wrong
-    ADC branch and can never see below `MIN_HZ`, while the live spectrum's own FFT sets
-    direct sampling mode 2 at runtime and can. Passed through rather than decided here,
-    so the floor and the reason for it stay in one place (`listen.Sweep.of`).
+    ONE FLOOR since B2, which is the radio's own. It used to depend on which route
+    asked — a fact about the ENGINE rather than about the radio, since `rtl_power`
+    hardcoded the wrong ADC branch — and with one engine there is nothing left to
+    select (`listen.Sweep.of`).
 
     `seconds` is how long a SURVEY runs and means nothing to a live spectrum, which
     runs until it is released. It is parsed either way rather than made conditional:
@@ -591,12 +584,11 @@ def _range_of(body: dict[str, Any], *, direct_ok: bool = False) -> listen.Sweep:
         stop_hz=int(body.get("stop_hz", 0)),
         bin_hz=_bin_hz_of(body),
         seconds=float(body.get("seconds", 60)),
-        direct_ok=direct_ok,
         capture=_capture_of(body),
         hops=_hops_of(body),
         channel_hz=_channel_hz_of(body),
     )
-    floor = listen.DIRECT_MIN_HZ if direct_ok else MIN_HZ
+    floor = listen.DIRECT_MIN_HZ
     if not (floor <= sweep.start_hz and sweep.stop_hz <= MAX_HZ):
         raise ListenError(
             f"{sweep.start_hz}-{sweep.stop_hz} Hz is outside the radio's range "
@@ -984,22 +976,32 @@ class Handler(BaseHTTPRequestHandler):
             session.unsubscribe_frames(sub)
 
     def _sweep(self) -> None:
-        """Run one band sweep and return the CSV rtl_power wrote.
+        """Run one band survey and return the CSV the api reduces.
 
-        The sidecar's whole job here is the RADIO: hold the lease, run the sweep, hand
-        back the numbers. It does not reduce them and it does not draw them: a plotting
-        stack is exactly what `Dockerfile.sdr`'s apt-only, no-pip rule still refuses —
-        and the api already carries Pillow for exactly this kind of work. Sending the raw CSV
-        also means a better reduction can be run over an old sweep later, the same
-        reasoning that keeps `raw` on every APRS row.
+        **The survey is an accumulator over a live spectrum now, not a second engine**
+        (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). It was a fourth session
+        kind with its own lifecycle, its own temp CSV and a handler that pinned a thread
+        for up to fifteen minutes — strictly LESS capable than the picture it duplicated,
+        because `rtl_power -D` hardcodes the ADC branch this board does not wire and so a
+        survey could never reach shortwave. It can now, on the same engine the waterfall
+        uses, and the CSV that comes out is the shape `sdr/sweep.py` already parses.
 
-        Synchronous: the request is held for the length of the sweep. That is the
+        The sidecar's job here is still the RADIO: hold the lease, integrate, hand back
+        the numbers. It does not reduce them and it does not draw them — a plotting stack
+        is what `Dockerfile.sdr`'s apt-only rule refuses, and the api already carries
+        Pillow. Sending the raw CSV also means a better reduction can be run over an old
+        survey later, the same reasoning that keeps `raw` on every APRS row.
+
+        Synchronous: the request is held for the length of the survey. That is the
         caller's problem to solve (the debug route runs it as a background job), not a
         reason for the sidecar to grow a job table of its own."""
         body = self._body()
         if body is None:
             return
         try:
+            # `direct_ok`: the floor that kept surveys above 24 MHz was rtl_power's, and
+            # rtl_power is gone. What replaces it is the same rule a picture gets — a
+            # range with no capture plan is refused in words.
             sweep = _range_of(body)
         except (TypeError, ValueError) as bad:
             self._json(400, {"detail": f"a sweep needs numbers: {bad}"})
@@ -1007,13 +1009,22 @@ class Handler(BaseHTTPRequestHandler):
         except ListenError as refused:
             self._json(400, {"detail": str(refused)})
             return
+        unservable = listen.spectrum_engine_refusal(sweep)
+        if unservable is not None:
+            self._json(400, {"detail": unservable})
+            return
+        # The width the survey is WRITTEN at, which is the caller's to choose and is not
+        # `sweep.bin_hz` — that is the width the transform runs at, and a survey asks to
+        # be integrated more coarsely than it is measured. `SurveyRows` folds one into
+        # the other and states on every line which it used.
+        want_bin_hz = _bin_hz_of(body)
 
         try:
             info = TUNER.start(
                 sweep.centre_hz,
                 "fm",
                 body.get("gain"),
-                purpose=listen.PURPOSE_SURVEY,
+                purpose=PURPOSE_SPECTRUM,
                 sweep=sweep,
                 serial=listen.validate_serial(body.get("serial")),
             )
@@ -1024,49 +1035,48 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"detail": str(bad)})
             return
 
-        # The path is derived from the session id rather than read off the Session,
-        # because a sweep can finish before this line runs — `Tuner.current()` reaps a
-        # dead session, so holding the object is a race the fast case loses.
-        csv_path = f"/tmp/sweep-{info.session_id}.csv"  # noqa: S108 - container-local
-        # ...and the Session itself is held anyway, for the OPPOSITE reason: once it is
-        # reaped its stderr is gone with it, and that is the only place a sweep that
-        # measured nothing says why. A reference kept here outlives the registry.
-        ran = TUNER.find(info.session_id)
-        # rtl_power's own exit timer ends it; the wait is bounded by that plus a margin
-        # for the retune settle it does before the first row. The tuner going idle IS
-        # the completion signal, since a survey frees the radio when it ends.
-        deadline = time.time() + sweep.seconds + SWEEP_SETTLE_S
-        stopped_early = True
-        while time.time() < deadline:
-            held = TUNER.find(info.session_id)
-            if held is None:
-                stopped_early = False
-                break
-            time.sleep(0.25)
-        TUNER.stop(info.session_id)
-
+        session = TUNER.find(info.session_id)
+        if session is None:
+            self._json(502, {"detail": "the survey session was gone before it started"})
+            return
+        rows = listen.SurveyRows(want_bin_hz)
+        lines: list[str] = []
+        sub = session.subscribe_frames(listen.VIEW_BAND)
+        started = time.monotonic()
+        deadline = started + sweep.seconds
+        stopped_early = False
         try:
-            with open(csv_path, encoding="utf-8", errors="replace") as handle:
-                csv_text = handle.read()
-        except OSError:
-            csv_text = ""
-        with contextlib.suppress(OSError):
-            os.unlink(csv_path)
+            while time.monotonic() < deadline:
+                try:
+                    frame = sub.get(timeout=max(0.1, deadline - time.monotonic()))
+                except queue.Empty:
+                    break
+                if frame is None:
+                    # The radio went away mid-survey. What has been measured so far is
+                    # still a real measurement of a shorter window.
+                    stopped_early = True
+                    break
+                lines.extend(rows.push(frame))
+        finally:
+            session.unsubscribe_frames(sub)
+            with contextlib.suppress(Exception):
+                # Released HERE rather than by the caller: a survey that walked away
+                # holding the radio is one the owner has no terminal to free.
+                TUNER.stop(info.session_id)
+        # The open interval, which is a real measurement of a shorter one. Dropping it
+        # would silently shorten every survey by up to `SURVEY_INTERVAL_S`.
+        lines.extend(rows.flush())
+        csv_text = "\n".join(lines)
 
         if not csv_text.strip():
-            # A sweep that measured NOTHING is a failure, not a quiet band, and it used
-            # to answer `complete: true` with an empty CSV — a success over a
-            # measurement that never happened. MEASURED on the box 2026-09-04: rtl_power
-            # exited on `No matching devices found` and the caller was told the sweep
-            # finished. The tool's own last words go back with the refusal, because they
-            # name WHICH radio it could not find and the owner cannot read the container
-            # log (CLAUDE.md #10).
-            # The refusal line first: the rest of the tail is hop plans and buffer
-            # sizes, and leading with those buries the sentence that names what to fix.
-            said = (ran.refusal or ran.tail) if ran else ""
+            # A survey that measured NOTHING is a failure, not a quiet band, and it used
+            # to answer `complete: true` with an empty CSV — a success over a measurement
+            # that never happened. The session's own last words go back with the refusal,
+            # because the owner cannot read the container log (CLAUDE.md #10).
+            said = (session.refusal or session.tail) if session else ""
             self._json(
                 502,
-                {"detail": f"the sweep measured nothing: {said or 'the tool wrote no rows'}"},
+                {"detail": f"the sweep measured nothing: {said or 'no rows were measured'}"},
             )
             return
 
@@ -1075,10 +1085,15 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "start_hz": sweep.start_hz,
                 "stop_hz": sweep.stop_hz,
-                "bin_hz": sweep.bin_hz,
-                "seconds": sweep.seconds,
+                # What the ROWS say, which is what the reducer reads. NOT the width
+                # that was asked for: folding is by whole capture bins, so 25 kHz off a
+                # 4687.5 Hz capture is five of them and the rows say 23437.5. An
+                # envelope claiming otherwise would be the same lie as a frame declaring
+                # a width nothing computed, one layer up.
+                "bin_hz": rows.step_hz or want_bin_hz,
+                "seconds": round(time.monotonic() - started, 2),
                 "gain": body.get("gain"),
-                # A sweep that hit the deadline still returns its rows. A partial sweep
+                # A survey that hit the deadline still returns its rows. A partial survey
                 # is a real measurement of a shorter window, and throwing it away would
                 # cost the caller the whole run.
                 "complete": not stopped_early,
@@ -1253,7 +1268,7 @@ class Handler(BaseHTTPRequestHandler):
         else — so it is refused with a 409 naming the holder, and it never leaves a
         session behind on a box whose owner cannot go and stop one."""
         try:
-            sweep = _range_of(body, direct_ok=True)
+            sweep = _range_of(body)
             seconds = float(body.get("seconds") or SPECTRUM_PROBE_S)
             named = listen.validate_serial(body.get("serial"))
         except (ListenError, TypeError, ValueError) as bad:
@@ -1527,7 +1542,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Per PURPOSE, because the two sweeping purposes run different engines:
                 # `survey` is rtl_power and cannot see shortwave at all, `spectrum` does
                 # its own FFT off raw I/Q and can.
-                sweep = _range_of(body, direct_ok=purpose == PURPOSE_SPECTRUM)
+                sweep = _range_of(body)
             except (TypeError, ValueError) as bad:
                 self._json(400, {"detail": f"a range needs numbers: {bad}"})
                 return
@@ -1619,7 +1634,7 @@ class Handler(BaseHTTPRequestHandler):
         would be a second place for the released-session race to be got wrong."""
         try:
             # Only a live spectrum is ever resweept, and that engine reaches shortwave.
-            sweep = _range_of(body, direct_ok=True)
+            sweep = _range_of(body)
         except (TypeError, ValueError) as bad:
             self._json(400, {"detail": f"a range needs numbers: {bad}"})
             return

@@ -14,19 +14,18 @@ which is the only part of this that cannot be solved by sharing a module.
 SMArt v5 is sold as 100 kHz-1.75 GHz because the RTL2832U's ADC can be fed directly,
 bypassing the tuner — how every RTL-SDR reaches HF. `deploy/sdr/listen.py` passes
 `-E direct2` below `MIN_MHZ`, and everything up to the ADC's Nyquist edge LISTENS.
-What does not follow down there is everything the tuner provides: no gain control, no
-`rtl_power`, and images above 14.4 MHz. Nor does the range meet in the middle —
-14.4-24 MHz is bypassed by the tuner and past the ADC's honest edge, so it is refused
-rather than tuned into the second Nyquist zone (`aliased`). `direct_sampling`,
-`sweepable` and `aliased` are how a caller asks which of those apply, rather than
-comparing against a floor and guessing.
+What does not follow down there is everything the tuner provides: no gain control and
+images above 14.4 MHz. Nor does the range meet in the middle — 14.4-24 MHz is bypassed
+by the tuner and past the ADC's honest edge, so it is refused rather than tuned into the
+second Nyquist zone (`aliased`). `direct_sampling` and `aliased` are how a caller asks
+which of those apply, rather than comparing against a floor and guessing.
 
-**`sweepable` and `viewable` are two questions now, not one shape of the same one.**
-They used to agree because a waterfall WAS `rtl_power`. It is not: the one-hop tier
-reads raw I/Q and does its own FFT, and that path can be put into direct sampling
-mode 2 — the ADC branch this board wires — where `rtl_power -D` hardcodes mode 1.
-So shortwave is drawable and still not surveyable, and the two predicates say so
-separately (SDR_IQ_SPECTRUM_PLAN §6.3, F8).
+**`sweepable` is gone, and that is the end of a three-wave story.** It was
+`rtl_power`'s question — the tool hardcodes direct sampling mode 1, the ADC's I branch,
+where this board wires Q — so a survey could never reach shortwave while a picture of
+the same range could. B1 removed the tool from the picture and B2 from the survey
+(`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md`), so both now ask `viewable`: one engine,
+one answer, and shortwave is surveyable.
 """
 
 from __future__ import annotations
@@ -72,43 +71,6 @@ def direct_sampling(mhz: float) -> bool:
     return mhz < MIN_MHZ
 
 
-def sweepable(mhz: float) -> str | None:
-    """Why a SWEEP cannot reach this frequency, or None.
-
-    **`rtl_power`'s question, and only its.** The survey route (`api/debug.py`) really
-    does drive that tool, and the tool really cannot go below `MIN_MHZ`. A live
-    spectrum asks `viewable` instead, which no longer routes through here.
-
-    Separate from `out_of_range` because the two answers differ, and the difference is
-    the one an owner most needs explained: shortwave is perfectly listenable and cannot
-    be swept. `rtl_power -D` hardcodes `verbose_direct_sampling(dev, 1)` — the ADC's I
-    branch — while this hardware wires Q, so the tool would tune something and measure
-    nothing, and a flat plausible waterfall is worse than a refusal.
-
-    Lives here rather than in the route's `Query` bounds because a bound produces a 422
-    with a validation blob, and this is the one surface an owner with no terminal has
-    (CLAUDE.md #10). They need the sentence, not the schema."""
-    refusal = out_of_range(mhz)
-    if refusal:
-        return refusal
-    if direct_sampling(mhz):
-        return (
-            f"a sweep cannot go below {MIN_MHZ:g} MHz — the radio reaches shortwave by "
-            f"bypassing its tuner, and the sweep tool cannot use that path. You can "
-            f"still listen there."
-        )
-    return None
-
-
-def tunable(mhz: float) -> bool:
-    """Whether the radio can reach this frequency at all, by either path.
-
-    `out_of_range`'s question as a boolean, and it must stay that — the hole at
-    14.4-24 MHz is a place the radio answers with a different frequency, so a check
-    that only compared the ends would call an alias tunable."""
-    return out_of_range(mhz) is None
-
-
 def aliased(mhz: float) -> str | None:
     """Why tuning here would hand back a DIFFERENT frequency, or None.
 
@@ -151,18 +113,17 @@ def out_of_range(mhz: float) -> str | None:
     return aliased(mhz)
 
 
-#: The widest span rtl_power is allowed, mirroring `MAX_SWEEP_SPAN_HZ` in the sidecar.
+#: The widest span the sidecar allows, mirroring `MAX_SWEEP_SPAN_HZ` there.
 MAX_SPAN_MHZ = 60.0
 
 
 def viewable(start_mhz: float, stop_mhz: float) -> str | None:
     """Why a live spectrum cannot cover this range, or None. One sentence, as ever.
 
-    **No longer a superset of `sweepable`, and that split is the point of F8.** The two
-    used to give the same answer because the picture WAS rtl_power. The fast tier is
-    now raw I/Q and our own FFT, which reaches shortwave through direct sampling mode 2
-    — so the flat refusal below `MIN_MHZ` goes, and `sweepable` keeps it for the survey
-    route that really does run the tool.
+    **The only question now, for the picture and for the survey alike.** These used to
+    be two predicates that disagreed, because the survey WAS `rtl_power` and the tool
+    cannot reach the ADC branch this board wires. One engine draws and integrates now,
+    so one answer serves both (B1/B2).
 
     What replaces it down there is a NARROWER rule, not none: below `MIN_MHZ` the
     picture is one capture or nothing, because the thing that stitches several hops

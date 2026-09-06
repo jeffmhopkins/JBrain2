@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b◻️ W5c◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -262,8 +262,8 @@ about half a second on this box, before ffmpeg is relaunched under whoever is li
 **W5 — The subprocess engines go.** Three PRs, because the deletions are independent
 and each is separately deployable and verifiable on air:
 **W5a ✅ shipped 2026-09-06** — B1, the `rtl_power` SPECTRUM;
-**W5b** — B2/A5, `/sweep` as a spectrum session with a `SurveySink` emitting the CSV
-shape the backend already parses, and `PURPOSE_SURVEY` deleted with it;
+**W5b ✅ shipped 2026-09-06** — B2/A5, `/sweep` as a spectrum session with `SurveyRows`
+emitting the CSV shape the backend already parses, and `PURPOSE_SURVEY` deleted with it;
 **W5c** — B7, `_worth_showing` moved to the backend.
 
 ## W5a — what shipped (2026-09-06)
@@ -336,6 +336,44 @@ transform) or lower `MAX_HOPS` to where the claim is true, and say the number ei
   tests changed premise rather than expectation and say so — the shortwave case that had
   been asserting "both are refused, and this becomes a 200 when the engine lands" is now
   that 200, and the fallback cases assert refusals.
+
+## W5b — what shipped (2026-09-06)
+
+**A survey was never a different way of MEASURING.** It is the same spectrum, integrated
+for longer and written down instead of drawn. Making it a fourth session kind — with its
+own lifecycle, its own temp CSV and a synchronous handler that pinned a thread for up to
+fifteen minutes — was the invention, and it was *strictly less capable* than the picture
+it duplicated: `rtl_power -D` hardcodes the ADC's I branch where this board wires Q, so a
+survey could never reach shortwave while a waterfall of the same range could.
+
+`SurveyRows` is the replacement: frames in, CSV out, no radio and no clock of its own.
+`/sweep` starts a `spectrum` session, subscribes to its band rows, and integrates.
+
+- **Gone:** `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `Session.sweep_csv`
+  and its `/tmp` file, `SWEEP_SETTLE_S`, `_LINE_BUFFERED`/`stdbuf`, `tuner.sweepable`,
+  and `Sweep.of`'s `direct_ok` — a fork whose two sides were "which engine is asking",
+  and every caller now passes the same value.
+- **Averaged in POWER, not decibels.** A mean of dB values is a geometric mean of
+  powers, which sits below the arithmetic one; `reduce_csv` takes a percentile of these
+  numbers and calls it a noise floor, so the error would land exactly where it is read
+  as fact. On -70 and -60 dB the two answers differ by 1.4 dB — most of the 6 dB
+  `STEADY_DB` margin the classifier works with.
+- **The row states the width it used**, and so does the envelope. A survey asks to be
+  written more coarsely than it is measured; folding is by whole capture bins, so 25 kHz
+  asked for off a 4687.5 Hz capture is five of them — 23437.5 — and claiming 25 kHz
+  anywhere would be the frame-declares-a-width-nothing-computed error moved up a layer.
+- **A retune ends the interval** rather than being averaged across: two bands is two
+  measurements, and averaging across one would report a band that was never on the air.
+- **Shortwave is surveyable.** `Section.surveyable` is now true for every row — kept on
+  the wire rather than deleted, because an older PWA against a newer box must not lose a
+  row, and `true` degrades safely in both directions.
+- **The producer is tested against its real reader.** `test_sdr_survey.py` loads
+  `backend/src/jbrain/sdr/sweep.py` **by path** and reduces rows `SurveyRows` produced:
+  a carrier on air for half the window comes back 50% busy at its own bin, and one that
+  never stops comes back in `steady` — which is the reduction's own documented trap (a
+  bin up the whole window becomes its own floor and reads as 0% occupied). The two live
+  in different packages and different containers, joined only by a line of text, so
+  asserting the shape from one side would only assert what that side believes.
 
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 
