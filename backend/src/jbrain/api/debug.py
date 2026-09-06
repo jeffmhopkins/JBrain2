@@ -2308,6 +2308,21 @@ async def sdr_stop_debug(request: Request, settings: SettingsDep, _p: DebugDep) 
     return await _sdr_post(settings, "/listen/stop", {"session_id": None})
 
 
+@router.get("/sdr/sessions")
+async def sdr_sessions_debug(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> sdr_api.SdrStatusOut:
+    """Which radios are held, and WHICH ONE the composer icon is showing.
+
+    The owner surface (`GET /api/sdr/status`) is `OwnerDep`, so a handed-over token
+    could see the USB bus and start a session but never read back what the owner's own
+    screen says about it — and after B7 that answer is a decision this api makes, not
+    something the sidecar reports. It calls the same `status_of`, so it cannot drift
+    from the icon: a second derivation would be the very thing B7 deleted."""
+    request.state.debug_detail = "sdr sessions"
+    return await sdr_api.status_of(settings)
+
+
 def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:
     """The sidecar's own refusal, or `fallback` if it did not send one.
 

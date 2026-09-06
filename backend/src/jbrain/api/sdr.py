@@ -221,10 +221,14 @@ def _detail(resp: httpx.Response, fallback: str) -> str:
         return fallback
 
 
-@router.get("/status")
-async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
-    """What the radio is doing. Answers `available: false` on a box with no radio
-    rather than erroring, so the composer can simply never show the icon."""
+async def status_of(settings: Any) -> SdrStatusOut:
+    """What the radio is doing, read from the sidecar's `/healthz`.
+
+    Split out of the route so the owner debug console can be shown EXACTLY what the
+    composer icon is showing, rather than a second answer to the same question. B7 moved
+    that decision here to have one of them; a debug twin that re-derived it would put
+    two back (CLAUDE.md #10 — the owner has no terminal, and a console that disagrees
+    with their screen is worse than no console)."""
     if not settings.sdr_url:
         return SdrStatusOut(available=False, listening=None)
     try:
@@ -254,6 +258,13 @@ async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
         listening=shown(sessions),
         sessions=sessions,
     )
+
+
+@router.get("/status")
+async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
+    """What the radio is doing. Answers `available: false` on a box with no radio
+    rather than erroring, so the composer can simply never show the icon."""
+    return await status_of(settings)
 
 
 def _tunable(frequency_mhz: float) -> None:
