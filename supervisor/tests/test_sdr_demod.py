@@ -416,6 +416,61 @@ def test_the_picture_is_flat_across_the_view():
     assert float(shown.max() - np.median(shown)) < 8.0
 
 
+def _row(built, offset_hz: float, bins: int = 512) -> tuple[np.ndarray, float]:
+    """The picture a plain carrier at `offset_hz` makes, in dB, and its bin spacing."""
+    out = None
+    for _ in range(5):  # let every tail fill
+        n = CAPTURE_HZ // 10
+        tone = np.exp(2j * np.pi * offset_hz * np.arange(n) / CAPTURE_HZ)
+        out = built.feed(tone.astype(np.complex64)).baseband
+    assert out is not None and out.size >= bins
+    spec = np.zeros(bins)
+    for start in range(0, out.size - bins + 1, bins):
+        window = out[start : start + bins] * np.hanning(bins)
+        spec += np.abs(np.fft.fftshift(np.fft.fft(window))) ** 2
+    return 10.0 * np.log10(np.maximum(spec, 1e-30)), built.view_rate_hz / bins
+
+
+def test_the_picture_is_wider_than_the_crop_in_every_mode():
+    """The strip crops to TWICE the passband, so a picture narrower than that is the
+    front end's own roll-off being drawn as if it were spectrum."""
+    for mode in demod.IF_RATE_HZ:
+        built = demod.Demodulator(mode, CAPTURE_HZ)
+        assert built.view_half_hz >= 2.0 * built.channel_half_hz, mode
+
+
+@pytest.mark.parametrize("mode", ["nfm", "wbfm"])
+def test_nothing_outside_the_picture_folds_into_it(mode):
+    """A signal the picture does not cover must not APPEAR in it somewhere else.
+
+    The regression test for breaking wide FM while fixing narrow FM. Flattening the
+    front end (`test_the_picture_is_flat_across_the_view`) also stopped it rejecting
+    what folds down: with the picture taken at the 240 kHz IF, the anti-alias filter
+    only had to reach its stopband by 144 kHz, so everything from 120 to 144 kHz
+    landed back inside the row — and a carrier 200 kHz out, which on the FM broadcast
+    raster is EXACTLY where the next station sits, arrived at -40 kHz at full
+    strength. Measured on air 2026-09-06: 104.1 reported its strongest bin 100 kHz off
+    centre, and 96.5 — a station `rtl_power` sees 13 dB up — read 2.8 dB over a floor
+    its own neighbours were holding up.
+
+    The fix is that the picture is taken at `view_rate_hz`, above the decimation that
+    was folding. What is asserted is the property, not the mechanism: nothing from
+    outside the view may put energy into the part of the row the strip draws."""
+    built = demod.Demodulator(mode, CAPTURE_HZ)
+    centred, bin_hz = _row(built, 0.0)
+    reference = float(centred.max())
+    bins = centred.size
+    away = np.abs((np.arange(bins) - bins / 2) * bin_hz)
+    shown = away <= 2.0 * built.channel_half_hz  # what `listen._tuning_frame` keeps
+    for step in (1.3, 1.6, 2.0, 2.5, 3.0):
+        offset = built.view_half_hz * step
+        db, _ = _row(built, offset)
+        worst = float(db[shown].max())
+        assert worst < reference - 40.0, (
+            f"{offset / 1000:.0f} kHz reached {worst - reference:.1f} dB"
+        )
+
+
 def test_the_channel_filter_keeps_the_channel_and_drops_the_rest():
     """The number the tuning view SHADES has to be the number the audio filter uses.
 
