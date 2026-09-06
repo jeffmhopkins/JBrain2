@@ -3248,3 +3248,39 @@ class TestTheWireFormIsBuiltOnce:
 
         assert after.as_dict()["peaks"] == [{"hz": 144_000_000, "db": -30.0}]
         assert before.as_dict()["peaks"] == []
+
+
+def test_every_row_says_what_GAIN_it_was_measured_at(iq_tuner) -> None:
+    """C22. `db` is dBFS, and dBFS is comparable only against the same gain and the same
+    `bin_hz`. `bin_hz` was always on the row; the gain was not, so a floor from an older
+    run was silently incomparable with this one — the same class as C18, one field up.
+
+    None is a real answer and not an absence: it means the radio's own loop was running,
+    where the absolute level means nothing between rows at all."""
+    info = iq_tuner.start(146_940_000, "fm", "24.0")
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        frame = session.subscribe_frames().get(timeout=5)
+        assert frame is not None
+
+        assert frame.gain_db == pytest.approx(24.0)
+        assert frame.as_dict()["gain_db"] == pytest.approx(24.0)
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_row_measured_under_the_radios_OWN_loop_says_so(iq_tuner) -> None:
+    """`None`, not a number: a listening session leaves the gain automatic, and
+    reporting whatever the driver last stored would be the C26 mistake one layer up."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        frame = session.subscribe_frames().get(timeout=5)
+        assert frame is not None
+
+        assert frame.gain_db is None
+        assert frame.as_dict()["gain_db"] is None
+    finally:
+        iq_tuner.stop()

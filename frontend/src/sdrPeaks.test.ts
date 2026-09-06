@@ -30,6 +30,7 @@ function row(
     db: [],
     passbandHz: 0,
     passbandCentreHz: 0,
+    gainDb: null,
     channelHz,
     view: "band" as const,
     peaks: peaks.map((p) => ({ ...p, overDb: 12 })),

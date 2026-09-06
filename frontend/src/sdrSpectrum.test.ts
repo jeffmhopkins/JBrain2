@@ -51,6 +51,7 @@ describe("reading a row", () => {
       passbandHz: 0,
       passbandCentreHz: 0,
       channelHz: 0,
+      gainDb: null,
       // Band unless the row says otherwise, which is what a row from a spectrum session
       // and a row from a box that predates views both are.
       view: "band",

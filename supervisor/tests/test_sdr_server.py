@@ -2045,7 +2045,11 @@ def test_the_probe_and_the_PEAK_FINDER_are_on_one_frequency_grid() -> None:
     db = [-78.0] * bins
     at = 200  # a signal centred on ONE bin, so "the centre" is unambiguous
     db[at] = -30.0
-    frame = listen.Frame(at=0.0, start_hz=start_hz, bin_hz=bin_hz, db=db)
+    # A real passband, because `_channel_centre` looks for the peak INSIDE it (C21) —
+    # bin 200 is 2.8 kHz off centre, well within a narrowband channel's ±8 kHz.
+    frame = listen.Frame(
+        at=0.0, start_hz=start_hz, bin_hz=bin_hz, db=db, passband_hz=16_000.0
+    )
     middle = start_hz + bins / 2 * bin_hz
 
     offset, peak_at = server._channel_centre(frame, middle)
@@ -2055,3 +2059,57 @@ def test_the_probe_and_the_PEAK_FINDER_are_on_one_frequency_grid() -> None:
     assert found[0]["hz"] == pytest.approx(middle + offset, abs=0.05)
     # ...and on the grid itself: bin `at` is exactly `at` bins above bin 0's centre.
     assert found[0]["hz"] == pytest.approx(start_hz + at * bin_hz, abs=0.05)
+
+
+def _fm_channel_row(*, neighbour_db: float = -30.0) -> Any:
+    """A wide-FM channel row: the tuned station, and one 200 kHz up whose skirt lands
+    in the outer third of the picture — which is where the row's outer third is."""
+    bin_hz, bins = 937.5, 768  # 720 kHz, four times a ±90 kHz passband
+    db: list[float] = []
+    for i in range(bins):
+        hz = (i + 0.5 - bins / 2) * bin_hz
+        if abs(hz) <= 60_000:
+            db.append(-60.0)
+        elif hz >= 110_000:
+            db.append(neighbour_db)
+        else:
+            db.append(-80.0 + (i % 7) * 0.2)
+    return listen.Frame(
+        at=0.0,
+        start_hz=96_300_000 - (bins / 2) * bin_hz,
+        bin_hz=bin_hz,
+        db=db,
+        passband_hz=180_000.0,
+        channel_hz=200_000,
+        view=listen.VIEW_CHANNEL,
+    )
+
+
+def test_the_probe_reads_the_station_it_is_DEMODULATING_not_the_one_next_door() -> None:
+    """C21. The channel row reaches four times the passband, so on the FM dial its outer
+    thirds are exactly where the 200 kHz raster puts the NEIGHBOUR — and a global argmax
+    there answers "where is the signal in this channel?" with a different station.
+
+    MEASURED ON AIR 2026-09-06, either side of a carrier at 96.494 MHz: tuning 96.3 put
+    the row's strongest bin at +157,969 Hz and 96.7 at -161,250 Hz. Same neighbour both
+    times, 158 kHz outside a 90 kHz passband. The readout would have called it 1.6 kHz
+    off and the "tune to it" button would have moved the dial onto it."""
+    frame = _fm_channel_row()
+    middle = frame.start_hz + len(frame.db) / 2 * frame.bin_hz
+
+    offset, _ = server._channel_centre(frame, middle)
+
+    assert abs(offset) < 5_000, f"{offset} Hz — that is the neighbour, not this station"
+
+
+def test_the_channel_floor_is_taken_from_NOISE_not_from_the_neighbour() -> None:
+    """The other half. The ring the floor is measured in is where the neighbour's skirt
+    lands, and a skirt filling a third of it drags a median onto the edge of another
+    station — two decibels taken off every SNR reported there.
+
+    MEASURED ON AIR: beside the same 96.494 carrier, 96.3 read a ring floor of -46.9 dB
+    where an empty channel at 107.9 read -49.1."""
+    crowded = server._channel_floor(_fm_channel_row())
+    empty = server._channel_floor(_fm_channel_row(neighbour_db=-80.0))
+
+    assert abs(crowded - empty) < 1.0, (crowded, empty)

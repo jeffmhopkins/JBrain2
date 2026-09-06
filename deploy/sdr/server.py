@@ -176,10 +176,38 @@ def _channel_floor(frame: "listen.Frame") -> float:
     reference taken from inside the thing being measured.
 
     The outer bins are the honest reference: they are past the demodulator's passband
-    by construction, so nothing the radio is listening to is in them."""
-    edge = (len(frame.db) - int(frame.passband_hz / frame.bin_hz)) // 2
-    outside = frame.db[:edge] + frame.db[-edge:] if edge > 0 else list(frame.db)
-    return sorted(outside)[len(outside) // 2] if outside else 0.0
+    by construction, so nothing the radio is listening to is in them.
+
+    **Which bins those are is not symmetric** (C14). The row straddles the dial and the
+    passband need not: `usb` hears +300..+3400 Hz of it. Slicing an equal strip off each
+    end — which this did — put the top of a `usb` passband in the "noise", lifting the
+    floor with the signal itself and hiding a weak station. `sdrTuning.ts` grew the same
+    fix in W6b and this twin was missed; they answer the same question for the same rows,
+    and a floor measured differently in the two places is a disagreement waiting for the
+    marginal case."""
+    half = frame.passband_hz / 2.0
+    low = frame.passband_centre_hz - half
+    high = frame.passband_centre_hz + half
+    outside = [
+        value
+        for index, value in enumerate(frame.db)
+        # The bin's own centre, as an offset from the row's middle — which is the dial.
+        if not (low <= (index + 0.5 - len(frame.db) / 2) * frame.bin_hz <= high)
+    ]
+    if not outside:
+        outside = list(frame.db)
+    outside.sort()
+    # A LOW PERCENTILE, not the median (C21). The row reaches four times the passband, so
+    # on the FM dial its outer thirds are where the 200 kHz raster puts the neighbour —
+    # and a neighbour's skirt can fill a third of this ring, which is enough to drag a
+    # median off the noise and onto the edge of another station.
+    #
+    # MEASURED ON AIR 2026-09-06: beside a carrier at 96.494 MHz, tuning 96.3 read a ring
+    # floor of -46.9 dB where an empty channel at 107.9 read -49.1 — two decibels of
+    # "noise" that was a station, taken off every SNR reported there. The quartile sits
+    # in clean noise whether or not a neighbour is present, and on an empty ring it is
+    # within a decibel of the median it replaces.
+    return outside[len(outside) // 4]
 
 
 def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
@@ -197,8 +225,27 @@ def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
     on a sick one.
 
     Walks OUT from the peak rather than scanning the row, so a second signal inside the
-    view is not swept into the first one's width."""
-    peak_at = max(range(len(frame.db)), key=lambda i: frame.db[i])
+    view is not swept into the first one's width.
+
+    **The peak is looked for INSIDE THE PASSBAND, not across the row** (C21). The row is
+    four times the passband's reach, so on the FM dial its outer thirds are exactly where
+    the 200 kHz raster puts the NEIGHBOUR — and a global argmax there answers "where is
+    the signal in this channel?" with a different station.
+
+    MEASURED ON AIR 2026-09-06, tuning either side of a carrier at 96.494 MHz: at 96.3
+    the strongest bin in the row sat at **+157,969 Hz** and at 96.7 at **-161,250 Hz** —
+    both of them the same neighbour, 158 kHz outside a passband 90 kHz wide. The tuning
+    readout would have said "1.6 kHz high" about a station it is not listening to, and
+    the "tune to it" button would have moved the dial onto it."""
+    half = frame.passband_hz / 2.0
+    lowest = frame.passband_centre_hz - half
+    highest = frame.passband_centre_hz + half
+    inside = [
+        index
+        for index in range(len(frame.db))
+        if lowest <= (index + 0.5 - len(frame.db) / 2) * frame.bin_hz <= highest
+    ]
+    peak_at = max(inside or range(len(frame.db)), key=lambda i: frame.db[i])
     edge = frame.db[peak_at] - 6.0
     low = peak_at
     while low > 0 and frame.db[low - 1] >= edge:
