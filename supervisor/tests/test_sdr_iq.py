@@ -260,6 +260,39 @@ def test_overlapping_segments_steady_the_floor() -> None:
     assert float(np.mean(spreads)) < 1.25
 
 
+def test_the_dc_bin_is_excised_only_when_asked() -> None:
+    """Every direct-conversion receiver puts a DC offset spike at the tuned frequency,
+    and `radio.probe` has always excised it — it measured +3.0 dBFS there with every
+    other bin at the floor. Nothing on the live path did, so a wideband stare drew one
+    phantom station per row and a stitched hop row drew a comb of them, one per hop,
+    against a cap of 24 peaks.
+
+    OPT-IN, because DC means two different things. On a wideband row it is the LO. On a
+    CHANNEL row the mixer put the station there on purpose, so excising would delete
+    the thing the strip exists to draw."""
+    rng = np.random.default_rng(3)
+    size = 512 * 8
+    noise = (rng.normal(size=size) + 1j * rng.normal(size=size)) / math.sqrt(2.0)
+    spike = (noise + 6.0).astype(np.complex64)  # a fat DC offset on a noise floor
+
+    plain = iq.Spectrometer(512, RATE).frame(spike, CENTER)
+    excised = iq.Spectrometer(512, RATE, excise_dc=True).frame(spike, CENTER)
+    middle = 512 // 2
+
+    assert plain.db[middle] > plain.db[middle + 8] + 20.0, "the fixture has no spike"
+    # THREE bins go, because a periodic Hann puts a bin-centred tone into its two
+    # neighbours at -6 dB as well — excising only the centre left them 35 dB over the
+    # floor, a narrower phantom rather than none.
+    for offset in (-1, 0, 1):
+        assert excised.db[middle + offset] < excised.db[middle + 8] + 3.0
+        assert excised.db[middle + offset] > excised.db[middle + 8] - 3.0
+    # ...and nothing outside those three moved.
+    keep = [i for i in range(plain.db.size) if abs(i - middle) > 1]
+    assert np.allclose(plain.db[keep], excised.db[keep])
+    # The channel view must NOT do this: there, DC is the station.
+    assert np.argmax(plain.db) == middle
+
+
 def test_a_frame_shorter_than_one_segment_is_refused() -> None:
     """There is no honest spectrum to return, and a padded one is the lie above."""
     spectro = iq.Spectrometer(N, RATE)

@@ -2715,6 +2715,39 @@ def test_audio_reaches_the_encoder(iq_tuner) -> None:
             iq_tuner.stop()
 
 
+def test_every_engine_says_which_one_it_is(tuner, monkeypatch) -> None:
+    """`SessionInfo.engine` is a documented part of the PWA contract and drives a
+    banner, and it was set on the two LISTENING paths only.
+
+    So a live spectrum running our own I/Q engine reported `rtl_fm`, one that had
+    fallen back to rtl_power reported `rtl_fm` too, and the string "rtl_power" was
+    never produced anywhere in the file. `server._watch_spectrum` worked around it by
+    reading `session._radio` through a `noqa` — the symptom of a field the session
+    could have filled in and did not."""
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+    swept = listen.Sweep.of(144_000_000, 144_400_000, 600, 300)
+
+    # No `capture`, so the I/Q engine is not selected and rtl_power runs.
+    session = listen.Session(
+        146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+    )
+    try:
+        assert session.engine == "rtl_power"
+        assert session.info().as_dict()["engine"] == "rtl_power"
+    finally:
+        session.stop()
+
+    survey = listen.Session(
+        146_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=swept
+    )
+    try:
+        assert survey.engine == "rtl_power"
+    finally:
+        survey.stop()
+
+
 def test_the_audio_carries_the_station_and_not_noise(iq_tuner) -> None:
     """The recovered audio must contain the tone the fake radio is transmitting.
 

@@ -254,9 +254,16 @@ class Spectrometer:
         # square root that the square would immediately undo.
         power = spec.real**2 + spec.imag**2
         mean = power.mean(axis=0)
-        if self.excise_dc and mean.size >= 3:
-            # Before `fftshift`, so DC is index 0 and its neighbours are 1 and -1.
-            mean[0] = 0.5 * (mean[1] + mean[-1])
+        if self.excise_dc and mean.size >= 5:
+            # THREE bins, not one, and that is this window's own arithmetic: a periodic
+            # Hann's transform is exactly `(-1/4, 1/2, -1/4)`, so anything bin-centred —
+            # and a DC offset is exactly bin-centred — lands in its two neighbours at
+            # -6.02 dB as well. Replacing only bin zero left them 9.6 dB over the floor,
+            # which is still a phantom carrier, just a narrower one.
+            #
+            # Before `fftshift`, so DC is index 0 and the three bins are -1, 0, +1.
+            edge = 0.5 * (mean[2] + mean[-2])
+            mean[0] = mean[1] = mean[-1] = edge
         mean *= self._power_scale
         np.maximum(mean, _POWER_FLOOR, out=mean)
         db = np.fft.fftshift(10.0 * np.log10(mean))

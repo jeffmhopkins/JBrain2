@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3◻️ W4◻️ W5◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -43,10 +43,10 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 |---|---|---|---|
 | **B1** | The `rtl_power` **spectrum** fallback (`_spectrum_cmd`, `_pump_spectrum`, `Stitch`, ~180 lines) | An honest refusal naming the driver | **[V]** Both engines land on the same `Frame.db`, the same colour map, and the same `peaks.find` — **whose output reaches the agent's tools as measurement**. `iq.py` emits true dBFS; `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes what a number *means*, feeding an LLM that reads it as fact, is a correctness bug wearing a robustness costume. |
 | **B2** | `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `sweep_csv`, its lifecycle rule | A `SurveySink` over a `spectrum` session, emitting the CSV shape `backend/src/jbrain/sdr/sweep.py` already parses | Removes a purpose, a lifecycle, a temp file, and gains shortwave surveys. Its only caller is one debug route. |
-| **B3** | `peaks._median` + `_local_floors` — a pure-Python `sorted()` per bin | `np.lib.stride_tricks.sliding_window_view` + `np.partition` on a stride, `np.interp` back | **[V]** 238–1910 ms against a 100 ms budget, on the capture thread. Vectorised: **0.88 ms**. |
+| **B3 ✅** | `peaks._median` + `_local_floors` — a pure-Python `sorted()` per bin | `np.lib.stride_tricks.sliding_window_view` + `np.partition` on a stride, `np.interp` back | **[V]** 238–1910 ms against a 100 ms budget, on the capture thread. Vectorised: **0.88 ms**. |
 | **B4** | The gap-based fold at `peaks.py:118` | A minimum peak-to-peak distance (`0.6 × channel_hz`, the number the client already uses) | **[R]** Two stations one raster apart always have a clear gap smaller than the raster, so they always merge. Measured: two FM stations 200 kHz apart → 1 signal. |
 | **B5** | `_Fir.delay` (`demod.py:297`) | — | No caller anywhere in `deploy/`. |
-| **B6** | `server.py`'s duplicate `MODES`, `MIN_HZ`, `MAX_HZ`, and `WBFM_SAMPLE_RATE = 171_000` | Import from `listen` | **[V]** The constant is dead *and* contradicts `listen.py:344`'s measured 192_000, which carries two paragraphs explaining why 171 kHz was wrong. |
+| **B6 ✅** | `server.py`'s duplicate `MODES`, `MIN_HZ`, `MAX_HZ`, and `WBFM_SAMPLE_RATE = 171_000` | Import from `listen` | **[V]** The constant is dead *and* contradicts `listen.py:344`'s measured 192_000, which carries two paragraphs explaining why 171 kHz was wrong. |
 | **B7** | `_SHOWN_FIRST` / `_worth_showing` (`listen.py:2509`) | The same policy in `backend/.../sdr.py`, which already reshapes `SessionInfo` | Presentation policy in the radio process. Mostly stops being a question after A1. |
 
 **Kept deliberately — do not delete:**
@@ -60,7 +60,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 |---|---|---|
 | **C1 ✅** | **Use-after-free.** `read_into` calls `readStream` outside `self._lock`; `close()` nulls the handles under it and frees them outside. `_kill` (`listen.py:2142`) closes the radio **without joining the pump threads**; `stop()` never joins. A pump inside `readStream` while `closeStream` frees the buffer vector and `unmake` deletes the device is a segfault of the container. `held.alive` is TOCTOU. | **[V]** by reading both call paths |
 | **C2 ✅** | **`_build_back` places its cutoff at the passband edge** — the identical bug fixed in `_build_front` on 2026-09-06, left in the sibling function. `stop` is computed for the tap count and discarded. | **[V]** measured through nfm: −3.1 dB @ 2 kHz, **−6.6 @ 3 kHz**, −12.5 @ 4 kHz. Muffled consonants on every NFM/AM voice signal. AM has no de-emphasis alibi. |
-| **C3** | **`peaks.find` blows the frame budget 2–19×** on the capture thread, so the wideband waterfall is throttled and USB buffers overflow — defeating the "the radio never looks away" property `iq.py` exists to guarantee. | **[V]** 238 / 321 / 1910 ms vs 100 ms. Retroactively explains the "0.33 fps on the FM dial" the runbook blamed on retune settle. |
+| **C3 ✅** | **`peaks.find` blows the frame budget 2–19×** on the capture thread, so the wideband waterfall is throttled and USB buffers overflow — defeating the "the radio never looks away" property `iq.py` exists to guarantee. | **[V]** 238 / 321 / 1910 ms vs 100 ms. Retroactively explains the "0.33 fps on the FM dial" the runbook blamed on retune settle. |
 
 ### C2 tier — measured, fix soon
 
@@ -68,12 +68,12 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 |---|---|---|
 | **C4 ✅** | **`LISTEN_OFFSET_HZ = 240_000` folds the LO/DC spike onto the tuned station.** 240 kHz is exactly 5 × the 48 kHz IF, so the receiver's own DC offset aliases to **0 Hz**, suppressed only by the window's stopband. Shipped as **126_000** (2.4 MS/s ÷ 19), not the 300 kHz first proposed: 300 kHz fixes the narrow modes but still lands the spike inside wide FM's channel, and every divisor from 5 to 25 was measured to find the one whose worst case across nfm/wbfm/am is lowest. | **[V]** residue at **+0 Hz, −65 dB** before; **−157 dB at +17.7 kHz** after. |
 | **C5 ✅** | **`_build_channel` builds a 53-tap wide-FM filter its own docstring says it returns `None` for.** Introduced 2026-09-06 when the guard moved from `view_half_hz` to `0.45 × if_rate`. Costs 18% of the wide-FM chain and narrows the signal. | **[V]** |
-| **C6** | **The detection baseline window can only grow and is never clamped to the row.** `max(400 kHz, 21 × channel_hz)` exceeds the whole row for any sweep < 400 kHz, every 256 kS/s capture, and any 200 kHz raster — silently degrading to a global median. This is the 162.55 blind spot generalised, and a test currently *pins* the behaviour. | **[V]** the constants, and the on-air miss |
-| **C7** | **`SessionInfo.engine` is never set to `"rtl_power"` and never set in `_start_iq_spectrum`.** A waterfall on our own engine reports `"rtl_fm"`. `server.py:1175` works around it by reading a private attribute with a `noqa`. | **[V]** |
+| **C6 ✅** | **The detection baseline window can only grow and is never clamped to the row.** `max(400 kHz, 21 × channel_hz)` exceeds the whole row for any sweep < 400 kHz, every 256 kS/s capture, and any 200 kHz raster — silently degrading to a global median. This is the 162.55 blind spot generalised, and a test currently *pins* the behaviour. | **[V]** the constants, and the on-air miss |
+| **C7 ✅** | **`SessionInfo.engine` is never set to `"rtl_power"` and never set in `_start_iq_spectrum`.** A waterfall on our own engine reports `"rtl_fm"`. `server.py:1175` works around it by reading a private attribute with a `noqa`. | **[V]** |
 | **C8** | `Device.unmake(device)` bypasses the SWIG binding's own deleter, so `__del__` unmakes a second time and throws inside the destructor on every teardown. | **[R]** binding source read |
 | **C9** | `QUEUE_BUFFERS = 4` is a spectrum-path tuning applied to the listening path: 41 ms of ring at 2.4 MS/s, and SoapyRTLSDR discards the **entire** fifo on one overflow event. Any ffmpeg stall over 41 ms tears audio. A listening session never retunes mid-session, so the shallow ring buys nothing there. | **[R]** |
-| **C10** | The DC/LO bin is excised in the *probe* (`radio.py:1000`) and nowhere in production. On a stitched hop row that is a comb of up to 11 phantom stations, and `steady` is precisely the classifier that cannot absorb it. | **[R]** |
-| **C11** | Welch segments do not overlap; the textbook and `scipy.signal.welch`'s default is 50%. On the tuning row: per-bin σ **1.49 → 1.09 dB**, and an empty channel's apparent SNR falls from a mean of 3.89 dB to 3.08 — against a 6 dB threshold with only ~0.7 dB of headroom today. | **[R]** |
+| **C10 ✅** | The DC/LO bin is excised in the *probe* (`radio.py:1000`) and nowhere in production. On a stitched hop row that is a comb of up to 11 phantom stations, and `steady` is precisely the classifier that cannot absorb it. | **[R]** |
+| **C11 ✅** | Welch segments do not overlap; the textbook and `scipy.signal.welch`'s default is 50%. On the tuning row: per-bin σ **1.49 → 1.09 dB**, and an empty channel's apparent SNR falls from a mean of 3.89 dB to 3.08 — against a 6 dB threshold with only ~0.7 dB of headroom today. | **[R]** |
 
 ### C3 tier — real, lower urgency
 
@@ -126,7 +126,7 @@ Each is one PR, per `PROCESS.md`. Verified from `supervisor/`.
 
 **W1 — Stop the bleeding. ✅ shipped 2026-09-06.** C1 (join pumps before close, or an `_io_lock` spanning `read_into` and `close`), C2, C5, C4. Regression tests: a close racing an in-flight read; audio flatness through the back end (there is no such test today, which is why C2 was invisible); DC-spike suppression (also absent).
 
-**W2 — The measuring path tells the truth.** B3 + C3 (vectorised baseline), C6 (clamp the window to the row; move the baseline statistic off the median so a window that is majority-signal still reads noise), C10, C11, C7, B6. Delete the test that pins C6.
+**W2 — The measuring path tells the truth. ✅ shipped 2026-09-06.** B3 + C3 (vectorised baseline), C6 (clamp the window to the row; move the baseline statistic off the median so a window that is majority-signal still reads noise), C10, C11, C7, B6. Delete the test that pins C6.
 
 **W3 — One capture, many sinks.** A1 as a pure refactor first: lift `_pump_iq_listen`'s body into `Capture` + `Sink.feed`, same two sinks, no behaviour change. Then A3: `Frame.view` ("band"|"channel"), `/listen/spectrum?view=`, and a band sink on the listening session. C9 rides along.
 
@@ -162,6 +162,40 @@ tone at 1 kHz, where C2 is 0.9 dB. `test_full_deviation_reaches_most_of_full_sca
 broke on the fix and had to move to the settled audio: it read `Audio.peak` over the
 whole buffer, which is the filter's own step response, and had been passing only because
 the sag held that transient under 1.0. Third time that trap has fired in this file.
+
+## W2 — what shipped (2026-09-06)
+
+- **B3/C3** `peaks.find` is vectorised: **1910 ms → 2.81 ms** on the FM dial, 238 → 2.73
+  on a wideband stare, 7.0 → 0.26 on a listen row. The baseline is a slowly varying
+  function of frequency, so it is evaluated every `width/32` bins and interpolated —
+  measured at **0.07–0.12 dB** against the exact rolling percentile, a hundredth of
+  `SNR_DB`.
+- **C6** the window is clamped to a third of the row and the statistic moved from the
+  median to the 35th percentile. Run against the REAL CSV that missed NOAA on air, it
+  now finds 162.550 at 9.7 dB. The test that pinned the old behaviour is replaced by its
+  opposite.
+- **C11** 50% Welch overlap. `segments` now counts overlapping windows, which is what
+  it is used for (averaging depth).
+- **C10** the DC bin is excised on wideband rows only — **three** bins, because a
+  periodic Hann puts a bin-centred tone into both neighbours at −6 dB and excising one
+  leaves a narrower phantom. Opt-in, because on a channel row DC is the station.
+- **C7** `engine` is set on every path and `server.py` stops reading a private attribute.
+- **B6** `server.py`'s duplicate `MODES`/`MIN_HZ`/`MAX_HZ` import from `listen`, and the
+  dead `WBFM_SAMPLE_RATE` that contradicted it is gone.
+
+### The W1 review, and what it cost
+
+An adversarial review caught that **C4 and C5 combined into a 52 dB regression on wide
+FM** — the exact quantity C4 exists to improve. C5 is **withdrawn**: it deleted wide FM's
+channel filter on the strength of a docstring sentence that is false (the front end's
+6 dB points are at 240 and 120 kHz, not 90, so it passes 113.7 kHz at about −5 dB).
+C4's constant was rescored on **suppression** rather than position — my reported −67 dB
+for 126 kHz was 56 dB out, because the metric was a per-bin FFT maximum with
+unnormalised segment accumulation rather than an RMS. **The fifth instance in this
+project of a metric that looked like the quantity and was not.** 300 kHz ships.
+
+C1 was also incomplete: `_io_lock` covered `readStream` only, leaving the same
+use-after-free reachable through `retune` on a live stream. It is the device lock now.
 
 ## Risks
 
