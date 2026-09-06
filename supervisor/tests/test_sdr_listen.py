@@ -10,7 +10,6 @@ from __future__ import annotations
 import importlib.util
 import queue
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Any, ClassVar
@@ -2591,6 +2590,7 @@ class _FakeRadio:
         self.reads = 0
         self.gain_db: float | None = "unset"  # type: ignore[assignment]
         self.gain_calls = 0
+        self.retunes = 0
         # The station sits `center - station` BELOW the radio's centre, which is what
         # the demodulator's mixer has to take back out.
         self._offset = station_hz - center_hz
@@ -2628,6 +2628,18 @@ class _FakeRadio:
     def set_gain(self, db: float | None) -> None:
         self.gain_db = db
         self.gain_calls += 1
+
+    def retune(self, *, center_hz: int | None = None, **kwargs: Any) -> int:
+        """Move in place, as `radio.Radio.retune` does — the whole of A2.
+
+        The fake follows the real one in the property that matters: the STREAM is not
+        rebuilt, so `closed` stays false and the carrier simply arrives at a new offset
+        from the centre."""
+        self.retunes += 1
+        if center_hz is not None:
+            self._offset += self.center_hz - center_hz
+            self.center_hz = center_hz
+        return 0
 
     def close(self) -> None:
         self.closed = True
@@ -2947,10 +2959,11 @@ def test_a_chosen_gain_wins_over_the_radios_own_loop(iq_tuner) -> None:
         iq_tuner.stop()
 
 
-def test_a_retune_does_not_let_the_session_be_reaped(iq_tuner) -> None:
-    """The regression the owner hit: retuning while listening kicked the radio to idle.
+def test_a_retune_never_reopens_the_radio(iq_tuner) -> None:
+    """A2, and the strongest form of the claim: the window is GONE, not narrowed.
 
-    `alive` reads the radio when there is one and otherwise falls through to
+    The regression the owner hit was a retune while listening kicking the radio to
+    idle. `alive` reads the radio when there is one and otherwise falls through to
     `self._rtl.poll()` — and on the I/Q path there is no rtl_fm process to fall through
     to, so between `_kill()` clearing `_radio` and `Radio.open` returning it answered
     False. `_reap` believes that answer, so the status poll the PWA runs every second
@@ -2958,38 +2971,124 @@ def test_a_retune_does_not_let_the_session_be_reaped(iq_tuner) -> None:
     device reopened cleanly and the next request came back "that session is no longer
     the live one", with the threads still running and the dongle still held.
 
-    Reproduced by holding the reopen and asking the reaper for the session while the
-    retune is in flight — which is exactly what the status poll does."""
+    Every guard written for that window is still in `_restart` and still needed on the
+    engine that still uses it. This path simply does not go there: the radio moves, the
+    stream stays, and there is no moment at which this session has no radio."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        held = iq_tuner.opened[0]
+        opens = len(iq_tuner.opened)
+
+        session.tune(146_950_000)
+
+        assert len(iq_tuner.opened) == opens, "the retune reopened the radio"
+        assert held.retunes == 1
+        assert held.closed is False
+        assert session.frequency_hz == 146_950_000
+        # ...and the session was never for one instant reapable.
+        assert iq_tuner.find(info.session_id) is session
+        assert session.alive
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_retune_moves_the_radio_by_the_offset_it_snapped_to(iq_tuner) -> None:
+    """The same subtraction `_start_iq_listen` makes, and it has to be the same one:
+    the mixer shifts the spectrum DOWN, so the station has to sit ABOVE the centre. Any
+    other sign here and a retune is silence from code that reads correctly."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        chain = listen.demod.Demodulator(
+            "fm", listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ)
+        )
+
+        session.tune(145_000_000)
+
+        assert iq_tuner.opened[0].center_hz == 145_000_000 - int(chain.offset_hz)
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_retune_into_shortwave_switches_the_branch_without_reopening(
+    iq_tuner,
+) -> None:
+    """Crossing `DIRECT_MAX_HZ` changes the ADC branch AND drops the offset to zero —
+    the tuner is powered down there, so there is no LO spike to dodge. Both are
+    `Radio.retune` arguments; neither needs a new stream."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        opens = len(iq_tuner.opened)
+
+        session.tune(7_200_000, "am")
+
+        assert len(iq_tuner.opened) == opens
+        assert iq_tuner.opened[0].center_hz == 7_200_000  # no offset on the direct path
+        assert session.mode == "am"
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_retune_that_cannot_be_demodulated_leaves_the_session_alone(
+    iq_tuner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The order is the reverse of `_restart`'s and that is the whole gain: everything
+    that can fail happens BEFORE the radio moves. `_restart` kills first and applies
+    second, so anything it raises kills a session that was working."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+
+        def _no(*_a: Any, **_k: Any):
+            raise listen.demod.DemodError("not in this build")
+
+        monkeypatch.setattr(listen.demod, "Demodulator", _no)
+        with pytest.raises(listen.RadioUnavailable):
+            session.tune(145_000_000)
+
+        assert session.frequency_hz == 146_940_000
+        assert iq_tuner.opened[0].retunes == 0
+        assert session.alive
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_released_session_still_refuses_to_retune(iq_tuner) -> None:
+    """`_restart`'s load-bearing guard, kept on the path that no longer goes through it:
+    the route resolves the Session outside the tuner's lock, so a `/listen/stop` landing
+    in between must not move a radio this session no longer owns."""
     info = iq_tuner.start(146_940_000, "fm", None)
     session = iq_tuner.find(info.session_id)
     assert session is not None
-
-    opening = threading.Event()
-    release = threading.Event()
-    original = listen.radio.Radio.open
-
-    def _slow(**kwargs: Any):
-        opening.set()
-        release.wait(timeout=5)
-        return original(**kwargs)
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(listen.radio.Radio, "open", staticmethod(_slow))
-        turning = threading.Thread(
-            target=lambda: session.tune(146_950_000), daemon=True
-        )
-        turning.start()
-        try:
-            assert opening.wait(timeout=5), "the retune never reached the reopen"
-            # THE ASSERTION. `sessions()` reaps, so this is the status poll's own path.
-            assert iq_tuner.find(info.session_id) is session
-            assert session.alive
-        finally:
-            release.set()
-            turning.join(timeout=5)
-
-    assert iq_tuner.find(info.session_id) is session
     iq_tuner.stop()
+
+    with pytest.raises(listen.SessionGone):
+        session.tune(145_000_000)
+
+
+def test_a_retune_drops_the_old_stations_rows(iq_tuner) -> None:
+    """A viewer attaching after a retune is seeded with "the most recent row" so its
+    picture does not open blank. One from before the retune is a picture of somewhere
+    else with a plausible axis on it."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        warm = session.subscribe_frames(listen.VIEW_CHANNEL)
+        assert warm.get(timeout=5) is not None
+        assert session._last
+
+        session.tune(145_000_000)
+
+        assert session._last == {}
+    finally:
+        iq_tuner.stop()
 
 
 def test_a_listening_session_draws_the_band_it_is_sitting_in(iq_tuner) -> None:
@@ -3177,15 +3276,16 @@ def test_the_band_is_transformed_only_while_someone_is_watching_it(iq_tuner) -> 
         iq_tuner.stop()
 
 
-def test_a_retune_does_not_let_the_old_capture_close_the_new_encoder(
+def test_a_retune_keeps_the_very_same_encoder(
     iq_tuner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`_restart` builds the next pipeline WITHOUT joining the old pump, so for as long
-    as that thread takes to notice its radio is closed, two captures are alive at once.
-    A sink that read `self._enc` at close time would close the NEW encoder's stdin on
-    its way out — killing the audio of the session that replaced it, seconds after the
-    retune that looked like it worked. The handle is bound into the sink for that
-    reason; this is the test that it stays bound."""
+    """A2's payoff, stated as the thing the owner actually experiences.
+
+    MP3 is a sequence of self-describing frames and every mode demodulates to the same
+    `AUDIO_RATE`, so the encoder does not care that the station changed — and a listener
+    already attached hears a click rather than the silence of a relaunch. Nothing about
+    the capture changes either: 2 400 000 samples a second for every mode is the
+    property `demod.IF_RATE_HZ` was chosen around."""
     made: list[Any] = []
     real = listen.subprocess.Popen
 
@@ -3200,15 +3300,56 @@ def test_a_retune_does_not_let_the_old_capture_close_the_new_encoder(
         session = iq_tuner.find(info.session_id)
         assert session is not None
         assert _wait_for(lambda: made and made[0].stdin.written > 0)
-        session.tune(146_520_000)
+        before = made[0].stdin.written
 
-        # The new encoder's stdin is open and taking audio; the old one's is closed.
-        assert len(made) == 2
-        assert _wait_for(lambda: made[1].stdin.written > 0)
-        assert _wait_for(lambda: made[0].stdin.closed)
-        assert made[1].stdin.closed is False
+        session.tune(146_520_000, "wbfm")
+
+        assert len(made) == 1, "the retune relaunched the encoder"
+        assert made[0].stdin.closed is False
+        # ...and it is still being fed, through a demodulator built for the new mode.
+        assert _wait_for(lambda: made[0].stdin.written > before)
+        assert session.mode == "wbfm"
     finally:
         iq_tuner.stop()
+
+
+def test_rtl_fm_still_rebuilds_because_it_really_cannot_be_retuned(
+    tuner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scope boundary of A2, asserted rather than assumed.
+
+    `rtl_fm` takes its frequency on the command line and has no control channel, so a
+    retune there is a new process — and `_restart`, with every guard its docstring
+    records, is what this engine still needs. Keeping the SESSION across it is the part
+    that has to hold either way: listeners stay attached, and the end-of-stream sentinel
+    means the session ended, never that its pipeline was replaced."""
+    made: list[Any] = []
+    real = listen.subprocess.Popen
+
+    def _watched(*a: Any, **k: Any) -> Any:
+        proc = real(*a, **k)
+        made.append(proc)
+        return proc
+
+    monkeypatch.setattr(listen.subprocess, "Popen", _watched)
+    info = tuner.start(146_940_000, "fm", None)
+    try:
+        session = tuner.find(info.session_id)
+        assert session is not None
+        assert session.engine == "rtl_fm"
+        assert session._capture is None  # nothing to move
+        listener = session.subscribe()
+        made.clear()
+
+        session.tune(146_520_000)
+
+        assert len(made) >= 2, "rtl_fm and its encoder are both replaced"
+        assert session.frequency_hz == 146_520_000
+        assert tuner.find(info.session_id) is session
+        # The listener was never told the stream ended.
+        assert None not in list(listener.queue)
+    finally:
+        tuner.stop()
 
 
 def test_a_listening_session_leaves_the_tuner_to_its_own_loop(iq_tuner) -> None:
@@ -3288,3 +3429,27 @@ def test_a_measuring_session_is_always_pinned_even_with_no_gain_asked_for(
     session.sweep = swept
 
     assert session.tuner_gain_db == listen.MEASURING_GAIN_DB
+
+
+def test_a_retune_the_radio_refuses_ends_the_session_rather_than_mistuning_it(
+    iq_tuner,
+) -> None:
+    """`Radio.retune` sets rate, branch and frequency IN ORDER, so a failure partway
+    leaves the radio somewhere nobody asked for. A receiver that keeps demodulating a
+    frequency it is not on is the silent failure this whole wave has been peeling —
+    `_restart` ends the session when its relaunch fails, and so does this."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    session = iq_tuner.find(info.session_id)
+    assert session is not None
+    held = iq_tuner.opened[0]
+
+    def _no(**_k: Any) -> int:
+        raise listen.radio.RadioError("the radio stopped answering")
+
+    held.retune = _no  # type: ignore[method-assign]
+
+    with pytest.raises(listen.RadioUnavailable, match="stopped answering"):
+        session.tune(145_000_000)
+
+    assert held.closed is True
+    assert iq_tuner.find(info.session_id) is None

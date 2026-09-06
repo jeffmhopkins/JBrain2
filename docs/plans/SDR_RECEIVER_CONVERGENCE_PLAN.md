@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -202,7 +202,43 @@ the band while it plays. The plumbing is done — one argument (`startSdrSpectru
 turns it on — but where that picture goes on the sheet is a DESIGN.md question that
 wants a mock, not a canvas dropped in by the wave that made it possible.
 
-**W4 — Retune in place.** A2. `_restart` survives for the `rtl_fm` fallback only.
+**W4 — Retune in place. ✅ shipped 2026-09-06.** A2. `_restart` survives for the
+`rtl_fm` fallback and for a `resweep`.
+
+## W4 — what shipped (2026-09-06)
+
+`Session.tune` on the I/Q engine now **moves the radio**: `Capture.swap` takes the
+capture's own lock, runs `Radio.retune` inside it, and replaces the sinks. The stream,
+the pump, ffmpeg and every listener behind it survive.
+
+**Why a listening retune can do this and a `resweep` cannot** is the line the wave is
+drawn on, and it is not "which engine": a listening capture never changes SHAPE. Every
+mode captures 2 400 000 samples a second — the property `demod.IF_RATE_HZ` was chosen
+around — so a retune changes the tuning and the demodulator and nothing else, even
+across a mode change or a crossing of `DIRECT_MAX_HZ` (the ADC branch and the offset
+are both `Radio.retune` arguments). A `resweep` changes the rate, the bin count and the
+hop plan, which is a different capture. `rtl_fm` takes its frequency on the command
+line and has no control channel at all. Both still go through `_restart`, and every
+guard in it is still needed — just no longer on the path the owner exercises most.
+
+- **The cost is one dropped frame, ~100 ms, against the ~600 ms of a rebuild.**
+  `Radio.read` assembles a frame from several `readStream` calls and `_io_lock` only
+  stops a retune landing *inside* one, so the buffer in flight straddles two
+  frequencies and is labelled with the one it started on. `Capture.swap` drops it.
+- **The order is the reverse of `_restart`'s, and that is the gain.** Everything that
+  can fail — validation, then building the new `Demodulator` — happens *before* the
+  radio moves, so a request that cannot be served leaves a working session exactly as
+  it was. `_restart` kills first and applies second, so anything it raises kills a
+  session that was working.
+- **A `Radio.retune` that fails ends the session.** It sets rate, branch and frequency
+  in order, so a failure partway leaves the radio somewhere nobody asked for — and a
+  receiver that keeps demodulating a frequency it is not on is the silent failure this
+  whole plan has been peeling.
+- **The reaping window is gone, not narrowed.** The incident `alive`'s `_restarting`
+  special case documents — a status poll deleting a session that was merely between
+  pipelines — cannot occur on a path where the session never has no radio.
+- The old station's rows are dropped from `_last`, so a viewer attaching after a retune
+  is not seeded with a picture of somewhere else.
 
 **W5 — The subprocess engines go.** B1, then B2/A5 (`SurveySink` emitting the CSV shape the backend already parses), then B7.
 
