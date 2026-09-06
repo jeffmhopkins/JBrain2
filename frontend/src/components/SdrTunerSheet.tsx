@@ -148,7 +148,9 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const drawing = listening.engine === "iq";
   useEffect(() => {
     if (!drawing) return;
-    startSdrSpectrum();
+    // The CHANNEL only: this sheet draws the tuning strip, and the band picture the
+    // same session can now produce would cost ~11% of a core with nothing rendering it.
+    startSdrSpectrum("channel");
     return () => stopSdrSpectrum();
   }, [drawing]);
 

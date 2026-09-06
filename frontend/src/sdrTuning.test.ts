@@ -33,6 +33,7 @@ function row(
     peaks: [],
     passbandHz,
     channelHz: 0,
+    view: "channel" as const,
   };
 }
 
@@ -58,6 +59,7 @@ function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = 
     peaks: [],
     passbandHz: 180_000,
     channelHz: 0,
+    view: "channel" as const,
   } satisfies SpectrumRow;
 }
 

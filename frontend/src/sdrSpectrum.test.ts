@@ -50,15 +50,39 @@ describe("reading a row", () => {
       // to draw it (sdrTuning.tuningOf).
       passbandHz: 0,
       channelHz: 0,
+      // Band unless the row says otherwise, which is what a row from a spectrum session
+      // and a row from a box that predates views both are.
+      view: "band",
     });
   });
 
   it("reads the passband that marks a row as a tuned channel", () => {
     // The same stream now carries two kinds of row: a BAND from a spectrum session and
-    // a CHANNEL from a listening one, which is the tuning view. `passband_hz` is the
-    // only thing that tells them apart, and a channel row drawn as a band — or the
-    // reverse — is a picture of somewhere else with a plausible axis on it.
+    // a CHANNEL from a listening one, which is the tuning view. A channel row drawn as
+    // a band — or the reverse — is a picture of somewhere else with a plausible axis
+    // on it.
     expect(parseRow(frame({ passband_hz: 16_000 }))).toMatchObject({ passbandHz: 16_000 });
+  });
+
+  it("takes the view from the row when the box says which", () => {
+    // One session now draws BOTH off one capture, so `passband_hz` has stopped being
+    // able to answer this on its own: the band row a listening session publishes is a
+    // band row from a session that also has a passband.
+    expect(parseRow(frame({ view: "band" }))?.view).toBe("band");
+    expect(parseRow(frame({ view: "channel" }))?.view).toBe("channel");
+  });
+
+  it("falls back to the passband when the box is older than the field", () => {
+    // Exactly the guess every reader used to make, kept for the one case it is still
+    // the only available answer.
+    expect(parseRow(frame({ passband_hz: 16_000 }))?.view).toBe("channel");
+    expect(parseRow(frame())?.view).toBe("band");
+    expect(parseRow(frame({ view: "sideways" }))?.view).toBe("band");
+  });
+
+  it("believes the row over the passband when the two disagree", () => {
+    // A LISTENING session's band row: it has a passband, and it is not a channel.
+    expect(parseRow(frame({ view: "band", passband_hz: 16_000 }))?.view).toBe("band");
   });
 
   it("treats a missing or nonsense passband as a band row", () => {

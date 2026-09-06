@@ -547,6 +547,13 @@ class Reading:
     reads: int
     overflows: int
     timeouts: int
+    #: Where the radio was tuned while these samples were collected. SELF-DESCRIBING for
+    #: `listen.Frame`'s reason: a sink that labels a row with the centre it reads back off
+    #: the radio labels it with wherever the radio is NOW, which on a hopping stream — or
+    #: across a retune-in-place — is not where these samples came from. Carried on the
+    #: buffer, it cannot drift from it. REQUIRED rather than defaulted, so no caller —
+    #: a test fake included — can hand a sink samples that claim to be at DC.
+    center_hz: int
 
     @property
     def torn(self) -> bool:
@@ -957,6 +964,11 @@ class Radio:
         buf = np.empty(int(samples), dtype=np.complex64)
         filled = reads = overflows = timeouts = 0
         at = time.time()
+        # Read with `at`, not at the end: `_apply_locked` takes `_io_lock`, so a retune
+        # can land BETWEEN this frame's `readStream` calls, and a centre sampled
+        # afterwards would label the whole buffer with where the radio went rather than
+        # where most of it came from.
+        center_hz = self._center_hz
         deadline = time.monotonic() + self._patience(samples)
         while filled < samples:
             got = self.read_into(buf[filled:])
@@ -975,7 +987,12 @@ class Radio:
                     f"stream stopped answering"
                 )
         return Reading(
-            samples=buf, at=at, reads=reads, overflows=overflows, timeouts=timeouts
+            samples=buf,
+            at=at,
+            reads=reads,
+            overflows=overflows,
+            timeouts=timeouts,
+            center_hz=center_hz,
         )
 
     def close(self) -> None:

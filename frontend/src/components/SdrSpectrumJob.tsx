@@ -54,8 +54,8 @@ export function SdrSpectrumJob({
   // The newest row, for the band button. React state and not a ref: it changes once a
   // second and re-renders two lines of text, which is nothing — the CANVAS is what
   // reads rows imperatively, and it subscribes on its own.
-  const [row, setRow] = useState<SpectrumRow | null>(() => sdrSpectrum().latest);
-  useEffect(() => subscribeSdrSpectrum((next) => setRow(next.latest)), []);
+  const [row, setRow] = useState<SpectrumRow | null>(() => sdrSpectrum().band);
+  useEffect(() => subscribeSdrSpectrum((next) => setRow(next.band)), []);
 
   useEffect(() => {
     let alive = true;
@@ -80,7 +80,7 @@ export function SdrSpectrumJob({
   const live = session !== null;
   useEffect(() => {
     if (!live) return;
-    startSdrSpectrum();
+    startSdrSpectrum("band");
     return () => stopSdrSpectrum();
   }, [live]);
 

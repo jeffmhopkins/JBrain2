@@ -80,12 +80,18 @@ class _Empty:
 
 
 class _Sink:
+    def __init__(self) -> None:
+        self.closed = False
+        self.written = 0
+
     def write(self, _b: bytes) -> int:
+        self.written += len(_b)
         return len(_b)
 
     def flush(self) -> None: ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        self.closed = True
 
 
 def _instant(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2433,6 +2439,7 @@ class TestIQSpectrumEngine:
                     reads=1,
                     overflows=0,
                     timeouts=0,
+                    center_hz=self.center_hz,
                 )
 
             def set_gain(self, db: float | None) -> None:
@@ -2615,6 +2622,7 @@ class _FakeRadio:
             reads=1,
             overflows=0,
             timeouts=0,
+            center_hz=self.center_hz,
         )
 
     def set_gain(self, db: float | None) -> None:
@@ -2982,3 +2990,219 @@ def test_a_retune_does_not_let_the_session_be_reaped(iq_tuner) -> None:
 
     assert iq_tuner.find(info.session_id) is session
     iq_tuner.stop()
+
+
+def test_a_listening_session_draws_the_band_it_is_sitting_in(iq_tuner) -> None:
+    """A1/A3: the whole point of the wave. The radio has always captured 2.4 MHz and
+    thrown all but 32 kHz of it away; "listen to a station OR look at the band, pick
+    one" was a property of the code, not of the hardware.
+
+    `view="all"` because the two pictures now share one stream, and a row says which
+    it is rather than a reader guessing from `passband_hz`."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        sub = session.subscribe_frames(listen.VIEW_ALL)
+        seen: dict[str, Any] = {}
+        end = time.monotonic() + 6.0
+        while time.monotonic() < end and len(seen) < 2:
+            frame = sub.get(timeout=5)
+            assert frame is not None
+            seen[frame.view] = frame
+
+        assert set(seen) == {listen.VIEW_BAND, listen.VIEW_CHANNEL}
+        band, channel = seen[listen.VIEW_BAND], seen[listen.VIEW_CHANNEL]
+        # The band row is the WHOLE capture, centred where the radio is pointed — which
+        # is `LISTEN_OFFSET_HZ` below the station, and the row says so rather than
+        # pretending to be symmetric about the tuning.
+        assert len(band.db) == listen.LISTEN_BAND_BINS
+        assert band.stop_hz - band.start_hz == pytest.approx(
+            listen.LISTEN_CAPTURE_HZ, rel=1e-6
+        )
+        middle = band.start_hz + (band.stop_hz - band.start_hz) / 2
+        assert middle == pytest.approx(
+            146_940_000 - listen.LISTEN_OFFSET_HZ, abs=2 * band.bin_hz
+        )
+        # ...and the channel row is still the narrow one, off the demodulator's own
+        # baseband: 93.75 Hz bins against the band's 586.
+        assert channel.bin_hz < band.bin_hz
+        assert channel.passband_hz > 0
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_band_row_carries_peaks_and_a_channel_row_does_not(iq_tuner) -> None:
+    """`peaks.find` answers "what stands above the noise across this BAND", and its
+    rolling baseline is meaningless on a 32 kHz row a station fills 40% of. Which row
+    gets measured is now decided by what the row IS rather than by whether anyone
+    happened to set `passband_hz`."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        sub = session.subscribe_frames(listen.VIEW_ALL)
+        seen: dict[str, Any] = {}
+        end = time.monotonic() + 6.0
+        while time.monotonic() < end and len(seen) < 2:
+            frame = sub.get(timeout=5)
+            assert frame is not None
+            seen[frame.view] = frame
+
+        assert seen[listen.VIEW_CHANNEL].peaks == []
+        # The fake radio puts one carrier on the air, and the band sink is the only
+        # thing on this session that can see it as a station among others.
+        assert seen[listen.VIEW_BAND].peaks
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_viewer_is_handed_only_the_picture_it_asked_for(iq_tuner) -> None:
+    """One capture publishing two pictures is only useful if a viewer can take one.
+    Anything else and the tuning strip draws band rows half the time."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        band = session.subscribe_frames(listen.VIEW_BAND)
+        channel = session.subscribe_frames(listen.VIEW_CHANNEL)
+        got_band = [band.get(timeout=5) for _ in range(3)]
+        got_channel = [channel.get(timeout=5) for _ in range(3)]
+
+        assert {f.view for f in got_band} == {listen.VIEW_BAND}
+        assert {f.view for f in got_channel} == {listen.VIEW_CHANNEL}
+    finally:
+        iq_tuner.stop()
+
+
+def test_the_default_view_is_the_one_the_session_always_published(iq_tuner) -> None:
+    """A client that never learns about views must see no change at all. That is the
+    whole reason `default_view` exists rather than a constant."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert session.default_view == listen.VIEW_CHANNEL
+        sub = session.subscribe_frames()
+        assert {sub.get(timeout=5).view for _ in range(3)} == {listen.VIEW_CHANNEL}
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_spectrum_session_still_defaults_to_the_band(tuner, monkeypatch) -> None:
+    swept = listen.Sweep.of(
+        144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
+    )
+    session = listen.Session.__new__(listen.Session)
+    session.purpose = listen.PURPOSE_SPECTRUM
+    session.sweep = swept
+    assert session.default_view == listen.VIEW_BAND
+
+
+def test_a_fresh_viewer_is_seeded_with_the_latest_row_of_its_own_view(
+    iq_tuner,
+) -> None:
+    """Attaching mid-stream used to hand over "the most recent row", which on a session
+    drawing two pictures is the wrong one half the time — and a tuning strip opening on
+    a 2.4 MHz band row is a blank canvas that looks like a radio that did not start."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        warm = session.subscribe_frames(listen.VIEW_ALL)
+        seen = set()
+        end = time.monotonic() + 6.0
+        while time.monotonic() < end and len(seen) < 2:
+            seen.add(warm.get(timeout=5).view)
+        assert len(seen) == 2
+
+        # Both pictures have been published, so a seed can now be wrong.
+        late = session.subscribe_frames(listen.VIEW_CHANNEL)
+        assert late.get_nowait().view == listen.VIEW_CHANNEL
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_listening_capture_asks_for_a_deeper_ring_than_a_hopping_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`radio.QUEUE_BUFFERS = 4` was measured for a HOPPING spectrum, where a shallow
+    ring is the whole point: whatever is left in it after a retune is pre-retune data.
+    A listening session never hops, so the shallow ring buys it nothing and costs it
+    41 ms of grace against an ffmpeg stall — and SoapyRTLSDR discards its ENTIRE fifo
+    on one overflow event (C9)."""
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+    seen: dict[str, Any] = {}
+
+    def _open(*, center_hz: int, **kwargs: Any) -> _FakeRadio:
+        seen.update(kwargs)
+        return _FakeRadio(center_hz, station_hz=146_940_000)
+
+    monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+    tuner = listen.Tuner()
+    try:
+        tuner.start(146_940_000, "fm", None)
+        assert seen["stream_args"] == {"buffers": str(listen.LISTEN_QUEUE_BUFFERS)}
+        assert listen.LISTEN_QUEUE_BUFFERS > listen.radio.QUEUE_BUFFERS
+    finally:
+        tuner.stop()
+
+
+def test_the_band_is_transformed_only_while_someone_is_watching_it(iq_tuner) -> None:
+    """A listening session holds the radio to make AUDIO. The band row is ~11% of one
+    core, which is worth paying for a picture the owner is looking at and is pure waste
+    for one nobody asked for — so the sink asks before it transforms."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        # A channel viewer is attached, and the band still costs nothing.
+        channel = session.subscribe_frames(listen.VIEW_CHANNEL)
+        for _ in range(3):
+            assert channel.get(timeout=5).view == listen.VIEW_CHANNEL
+        assert listen.VIEW_BAND not in session._last
+
+        band = session.subscribe_frames(listen.VIEW_BAND)
+        assert band.get(timeout=5).view == listen.VIEW_BAND
+
+        # ...and it stops again when the last band viewer goes.
+        session.unsubscribe_frames(band)
+        assert not session._wants_view(listen.VIEW_BAND)
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_retune_does_not_let_the_old_capture_close_the_new_encoder(
+    iq_tuner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_restart` builds the next pipeline WITHOUT joining the old pump, so for as long
+    as that thread takes to notice its radio is closed, two captures are alive at once.
+    A sink that read `self._enc` at close time would close the NEW encoder's stdin on
+    its way out — killing the audio of the session that replaced it, seconds after the
+    retune that looked like it worked. The handle is bound into the sink for that
+    reason; this is the test that it stays bound."""
+    made: list[Any] = []
+    real = listen.subprocess.Popen
+
+    def _watched(*a: Any, **k: Any) -> Any:
+        proc = real(*a, **k)
+        made.append(proc)
+        return proc
+
+    monkeypatch.setattr(listen.subprocess, "Popen", _watched)
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert _wait_for(lambda: made and made[0].stdin.written > 0)
+        session.tune(146_520_000)
+
+        # The new encoder's stdin is open and taking audio; the old one's is closed.
+        assert len(made) == 2
+        assert _wait_for(lambda: made[1].stdin.written > 0)
+        assert _wait_for(lambda: made[0].stdin.closed)
+        assert made[1].stdin.closed is False
+    finally:
+        iq_tuner.stop()

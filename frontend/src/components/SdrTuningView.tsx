@@ -397,8 +397,13 @@ export function SdrTuningView({
       setRow(next);
       setTuning(read);
     };
-    draw(sdrSpectrum().latest);
-    return subscribeSdrSpectrum((_state, next) => draw(next));
+    draw(sdrSpectrum().channel);
+    // CHANNEL rows only: the session this strip watches now also publishes the whole
+    // 2.4 MHz band it is sitting in, and this canvas is 32 kHz wide.
+    return subscribeSdrSpectrum((_state, next) => {
+      if (next && next.view !== "channel") return;
+      draw(next);
+    });
     // `mode` is read through `modeRef` rather than listed here: re-subscribing on a tap
     // would drop the stream and the history with it, and the whole point of keeping
     // the history in both modes is that the waterfall has something to show the moment

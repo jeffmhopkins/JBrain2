@@ -2194,6 +2194,7 @@ async def sdr_listen_probe(
     serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
     gain: Annotated[str | None, Query(max_length=8, pattern=r"^[0-9.]+$")] = None,
     transcribe: Annotated[bool, Query()] = False,
+    band: Annotated[bool, Query()] = False,
 ) -> dict[str, Any]:
     """**Does the numpy demodulator work on this radio?** The twin of `spectrum-probe`.
 
@@ -2222,6 +2223,13 @@ async def sdr_listen_probe(
     It is off by default because it costs the audio a trip through the gateway, and
     because the sidecar only taps the PCM when someone asks.
 
+    `band` adds what ELSE was on the air, measured from the very same capture: one
+    radio, one buffer, the channel demodulated and the whole 2.4 MHz around it
+    transformed. That reading used to be impossible without giving up the audio — a
+    spectrum session and a listening session are one dongle apiece. Off by default
+    because the wideband transform is real work (~11% of a core) that the sidecar
+    skips entirely while nobody has asked for it.
+
     **TAKES A RADIO** for those seconds and releases it even on failure."""
     request.state.debug_detail = f"sdr listen probe {mhz} {mode}"
     if serial is not None:
@@ -2242,6 +2250,7 @@ async def sdr_listen_probe(
         "serial": serial,
         "gain": gain,
         "audio": transcribe,
+        "band": band,
     }
     answer = await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
     # Stripped whatever happens next: a quarter of a megabyte of base64 in a console

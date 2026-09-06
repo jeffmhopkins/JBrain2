@@ -68,7 +68,7 @@
 #      frame rate really is. Above ~1.5 fps is the rtl_power ceiling being gone.
 #      `--from/--to` takes a hand-typed range instead of a curated section. TAKES A
 #      RADIO for those seconds.)
-#   scripts/debug-connect.sh listen-probe --mhz 146.94 [--mode fm] [--seconds 5] [--serial S]
+#   scripts/debug-connect.sh listen-probe --mhz 146.94 [--mode fm] [--seconds 5] [--serial S] [--band]
 #     (--transcribe hands the DEMODULATED audio to whisper, which is the only check here
 #      that is not a measure of level — an FM discriminator is blind to amplitude, so a
 #      chain demodulating the wrong spectrum reads healthy on every other number. Judge
@@ -625,7 +625,7 @@ PY
     _call GET "/api/debug/update/status?tail=${1:-200}" | _pp ;;
 
   listen-probe)
-    mhz=""; mode="fm"; secs="5"; serial=""; gain=""; tr=""
+    mhz=""; mode="fm"; secs="5"; serial=""; gain=""; tr=""; band=""
     # `$1` is already the first ARGUMENT here — the verb was shifted off above, which
     # is what every other option-taking command in this file assumes.
     while [ $# -gt 0 ]; do
@@ -636,14 +636,16 @@ PY
         --serial) serial="$2"; shift 2 ;;
         --gain) gain="$2"; shift 2 ;;
         --transcribe) tr="true"; shift ;;
+        --band) band="true"; shift ;;
         *) shift ;;
       esac
     done
-    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--gain dB] [--serial S] [--transcribe]" >&2; exit 2; }
+    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--gain dB] [--serial S] [--transcribe] [--band]" >&2; exit 2; }
     q="mhz=$mhz&mode=$mode&seconds=$secs"
     [ -n "$serial" ] && q="$q&serial=$serial"
     [ -n "$gain" ] && q="$q&gain=$gain"
     [ -n "$tr" ] && q="$q&transcribe=true"
+    [ -n "$band" ] && q="$q&band=true"
     _call POST "/api/debug/sdr/listen-probe?$q" | _pp
     ;;
 

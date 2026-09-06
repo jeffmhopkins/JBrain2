@@ -1192,6 +1192,51 @@ def test_a_row_reaches_a_viewer_carrying_its_own_range(
     assert row["db"] == [-70.0, -71.0]
 
 
+def test_a_row_says_which_picture_it_is(sidecar: str, monkeypatch) -> None:
+    """One session now draws two pictures off one capture, so every row on the wire has
+    to say which — the PWA reads it, and so does anything holding rows across time."""
+    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
+    assert _start_spectrum(sidecar)[0] == 200
+
+    with urllib.request.urlopen(sidecar + "/listen/spectrum", timeout=10) as resp:
+        row = next(
+            json.loads(raw) for raw in resp if not json.loads(raw).get("keepalive")
+        )
+
+    assert row["view"] == "band"
+
+
+def test_a_view_the_sidecar_does_not_serve_is_refused_not_substituted(
+    sidecar: str, monkeypatch
+) -> None:
+    """Named rather than coerced. Quietly handing a viewer the band when it asked for
+    the channel is the same class of substitution as swapping the spectrum engine
+    underneath a measurement: a picture that is not of what it says it is."""
+    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
+    assert _start_spectrum(sidecar)[0] == 200
+
+    status, body = _get(sidecar, "/listen/spectrum?view=sideways")
+
+    assert status == 400
+    assert "view must be one of" in body["detail"]
+
+
+def test_the_view_asked_for_is_the_view_served(sidecar: str, monkeypatch) -> None:
+    """`?view=` reaches `subscribe_frames`, which is the whole of the plumbing: the
+    filtering itself is the session's and is tested there."""
+    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
+    assert _start_spectrum(sidecar)[0] == 200
+
+    with urllib.request.urlopen(
+        sidecar + "/listen/spectrum?view=band", timeout=10
+    ) as resp:
+        row = next(
+            json.loads(raw) for raw in resp if not json.loads(raw).get("keepalive")
+        )
+
+    assert row["view"] == "band"
+
+
 def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> None:
     _, started = _start_spectrum(sidecar)
 
@@ -1855,3 +1900,42 @@ def test_a_full_scale_peak_is_not_clipping_on_its_own() -> None:
     assert verdict["ok"] is True
     assert verdict["audio_peak_max"] == 1.0
     assert verdict["clipped_fraction_max"] == 0.0006
+
+
+def test_the_band_report_says_what_else_was_on_the_air() -> None:
+    """The reading W3 exists to make possible: before it, "listen to 162.55" and "what
+    is on 2 m" were two sessions and one radio, so asking the second meant giving up
+    the first."""
+    row = listen.Frame(
+        at=1.0,
+        start_hz=144_000_000,
+        bin_hz=25_000,
+        db=[-90.0, -50.0],
+        peaks=[{"hz": 144_390_000, "db": -50.0, "over_db": 21.4}],
+        view=listen.VIEW_BAND,
+    )
+    report = server._band_report([row, row])
+
+    assert report["rows"] == 2
+    assert report["start_hz"] == 144_000_000
+    assert report["peaks"] == [{"mhz": 144.39, "db": -50.0, "over_db": 21.4}]
+
+
+def test_a_band_report_with_no_rows_says_so_rather_than_guessing() -> None:
+    """No row is not a quiet band: it is a probe that did not ask early enough, or an
+    engine that draws nothing. Reporting an empty peak list with a plausible range
+    would read as the first."""
+    assert server._band_report([]) == {"rows": 0, "peaks": []}
+
+
+def test_the_band_report_is_bounded() -> None:
+    """A noisy band must not fill the verdict; the point is what the dial looks like."""
+    many = [
+        {"hz": 144_000_000 + i * 25_000, "db": -50.0, "over_db": 20.0}
+        for i in range(40)
+    ]
+    row = listen.Frame(
+        at=1.0, start_hz=144_000_000, bin_hz=25_000, db=[-90.0], peaks=many
+    )
+
+    assert len(server._band_report([row])["peaks"]) == server.BAND_REPORT_PEAKS

@@ -60,6 +60,7 @@ import numpy as np
 
 import peaks
 
+import capture
 import demod
 import iq
 import packets
@@ -230,6 +231,45 @@ LISTEN_OFFSET_HZ = 300_000
 #: 0.15 ms of work. The narrow view is not a zoom into a wideband row; it is the row a
 #: wideband transform cannot produce.
 TUNING_BINS = 512
+
+#: Bins in the BAND view a listening session now also draws — the whole 2.4 MHz the
+#: radio is already capturing, at 586 Hz. Wide enough to place a station on the FM dial
+#: (200 kHz raster) and to see a 2 m repeater pair (25 kHz) as two things.
+#:
+#: **The cheapest useful width, and the review's `+2.8% of one core` was wrong.**
+#: MEASURED 2026-09-06 on the dev container, 2.4 MS/s at 10 fps, Welch with the 50%
+#: overlap W2 added — transform plus `peaks.find`, per 100 ms frame:
+#:
+#:   1024 bins  13.9% of one core
+#:   2048 bins  17.5%
+#:   4096 bins  11.4%   <- here
+#:   8192 bins  13.8%
+#:
+#: FEWER bins costs MORE, which is the opposite of the intuition the 2.8% came from:
+#: Welch averages every segment that fits, so halving N doubles the segment count.
+#: Eleven percent is real money on a box that also runs LLM inference, which is why
+#: `capture.BandSink` does the work only while someone is subscribed to the picture.
+LISTEN_BAND_BINS = 4096
+
+#: How deep the driver's ring is on a LISTENING capture, overriding `radio.QUEUE_BUFFERS`.
+#: That four was measured for a HOPPING spectrum, where a shallow ring is the whole point:
+#: the samples still in it after a retune are pre-retune data, so 41 ms of queue is 41 ms
+#: less to discard. A listening session never hops — and SoapyRTLSDR discards its ENTIRE
+#: fifo on one overflow event, so 41 ms of grace against an ffmpeg stall, on a box that
+#: also runs LLM inference, is the difference between a click and a tear (C9).
+LISTEN_QUEUE_BUFFERS = 16
+
+#: What a waterfall row is a picture OF. A listening session publishes both — the same
+#: samples looked at twice — so a row has to say which, and a viewer has to be able to
+#: ask for one. Before this the answer was implicit in the SESSION's purpose, which is
+#: exactly the coupling A1 removes: `passband_hz` was doing the job by accident, being
+#: nonzero only on a channel row.
+VIEW_BAND = "band"
+VIEW_CHANNEL = "channel"
+#: `?view=` on the frames route also takes this, meaning "every row, both kinds".
+VIEW_ALL = "all"
+VIEWS = (VIEW_BAND, VIEW_CHANNEL, VIEW_ALL)
+
 #: The most a single frame may average. Bounds the read buffer, and past this the row
 #: is a long enough exposure that a burst inside it is smeared rather than seen.
 MAX_IQ_SEGMENTS = 128
@@ -587,6 +627,17 @@ def validate_purpose(purpose: str) -> str:
     return purpose
 
 
+def _close_stdin(proc: "subprocess.Popen[bytes]") -> None:
+    """Close a pipe's stdin so the tool behind it flushes and exits.
+
+    A free function on purpose: it is what a sink's `close` does when the capture ends,
+    and it must act on the handle it was given rather than on whatever the session holds
+    by then — a retune has built the next pipeline before this runs."""
+    with contextlib.suppress(OSError, ValueError):
+        if proc.stdin is not None:
+            proc.stdin.close()
+
+
 def _peak(pcm: bytes) -> float:
     """Loudest sample in a chunk, as a 0..1 fraction of full scale."""
     count = len(pcm) // 2
@@ -796,6 +847,12 @@ class Frame:
     #: across rows cannot tell ONE station whose loudest bin wanders from TWO stations
     #: that are genuinely apart. Zero when the band has no raster.
     channel_hz: int = 0
+    #: Which picture this row belongs to: the whole capture (`VIEW_BAND`) or the tuned
+    #: channel (`VIEW_CHANNEL`). One session now publishes both off the same samples, so
+    #: a reader holding rows across time needs the row itself to say which — the
+    #: alternative, inferring it from `passband_hz`, worked only while exactly one kind
+    #: existed per session and is the coupling this replaces.
+    view: str = VIEW_BAND
 
     @property
     def stop_hz(self) -> int | float:
@@ -815,6 +872,7 @@ class Frame:
             "peaks": self.peaks,
             "passband_hz": self.passband_hz,
             "channel_hz": self.channel_hz,
+            "view": self.view,
         }
 
 
@@ -1012,18 +1070,27 @@ class Session:
         # Decoded APRS frames, for a purpose=aprs session. Empty on a listening one.
         self._packets: set[queue.Queue[packets.Packet | None]] = set()
         # Waterfall rows, for a purpose=spectrum session.
-        self._frames: set[queue.Queue[Frame | None]] = set()
+        # Waterfall viewers, each mapped to the VIEW it asked for. A dict rather than
+        # a set since a listening session publishes two pictures off one capture and a
+        # viewer that wanted the tuning strip must not be handed band rows.
+        self._frames: dict[queue.Queue[Frame | None], str] = {}
         # The most recent row, handed to a viewer the moment it attaches. Without it the
         # waterfall opens on a blank canvas for up to a whole interval, which reads as a
         # radio that did not start.
-        self._last: Frame | None = None
+        # PER VIEW, because seeding a fresh viewer with "the most recent row" from a
+        # session publishing two kinds would hand a tuning strip a band row half the time.
+        self._last: dict[str, Frame] = {}
         # The I/Q engine's open radio and its transform, or None on the rtl_power path.
         # `_kill` walks processes and this is not one, so teardown reaches it by name —
         # and a Radio left open is exactly the leak `/reset` must not fire under.
         self._radio: "radio.Radio | None" = None
         self._spectrometer: "iq.Spectrometer | None" = None
         self._demod: "demod.Demodulator | None" = None
-        self._tuning: "iq.Spectrometer | None" = None
+        # The sinks a listening capture fans out to: the tuned channel (audio + its own
+        # picture) and the whole band. Both are torn down by name in `_kill`, as `_radio`
+        # is and for the same reason — `_kill` walks PROCESSES and these are not.
+        self._channel: "capture.ChannelSink | None" = None
+        self._band: "capture.BandSink | None" = None
         #: Which engine the running pipeline actually is. Written by whichever start
         #: path wins, so a runtime fallback is visible rather than inferred.
         self.engine = "rtl_fm"
@@ -1353,6 +1420,10 @@ class Session:
                 serial=self.serial,
                 direct=direct,
                 doing=PURPOSE_LABEL[PURPOSE_LISTEN],
+                # A DEEPER RING than the spectrum path's, which is where the default was
+                # measured: see `LISTEN_QUEUE_BUFFERS`. Audio is the one output on this
+                # box that a 41 ms stall is audible in.
+                stream_args={"buffers": str(LISTEN_QUEUE_BUFFERS)},
             )
         except radio.RadioBusy as busy:
             raise RadioUnavailable(str(busy)) from busy
@@ -1375,10 +1446,6 @@ class Session:
             held.set_gain(float(self.gain) if self.gain else None)
         self._radio = held
         self._demod = chain
-        # `view_rate_hz`, not `if_rate_hz`: on wide FM the picture is drawn at twice
-        # the rate the audio is demodulated at, so that the row has spectrum either
-        # side of a 180 kHz station to measure it against (`demod.VIEW_MARGIN`).
-        self._tuning = iq.Spectrometer(TUNING_BINS, chain.view_rate_hz)
         try:
             self._enc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._enc_cmd(),
@@ -1389,6 +1456,38 @@ class Session:
         except OSError as exc:
             raise SdrError(f"could not start the encoder: {exc}") from exc
         self.engine = "iq"
+        # ONE capture, TWO sinks — the fanout `capture.py` exists to make ordinary. The
+        # demodulator hears the channel and draws it; the band sink transforms the same
+        # buffer, whole. The radio has been capturing 2.4 MHz and throwing all but
+        # 32 kHz of it away since this path was written, so the samples cost nothing
+        # more; the transform costs ~11% of a core and is done only while a viewer is
+        # attached to the band (A1/A3, `LISTEN_BAND_BINS`).
+        # THE ENCODER IS BOUND IN, not read back off the session. `_restart` kills this
+        # pipeline and builds the next one WITHOUT joining this pump, so a sink that
+        # looked up `self._enc` at write or close time would, in that window, write the
+        # old radio's audio into the new encoder — and close the new encoder's stdin on
+        # its way out, killing the audio of the session that replaced it. The pump this
+        # replaced captured the handle at thread start for exactly this reason.
+        enc = self._enc
+        self._channel = capture.ChannelSink(
+            chain,
+            audio=lambda out: self._to_encoder(enc, out),
+            view=self._publish_channel,
+            view_bins=TUNING_BINS,
+            want=max(TUNING_BINS, int(LISTEN_CAPTURE_HZ / TARGET_FPS)),
+            finish=lambda: _close_stdin(enc),
+        )
+        self._band = capture.BandSink(
+            # `excise_dc`: this row is centred on the LO, so bin zero is the receiver
+            # looking at itself. The channel view is centred on the STATION and must not.
+            iq.Spectrometer(LISTEN_BAND_BINS, LISTEN_CAPTURE_HZ, excise_dc=True),
+            row=self._publish_band,
+            # ONLY WHILE SOMEONE IS WATCHING. The band row is ~11% of one core
+            # (`capture.BandSink`), which is worth paying for a picture the owner is
+            # looking at and is pure waste for one nobody has asked for — and audio is
+            # what this session is holding the radio to produce.
+            active=lambda: self._wants_view(VIEW_BAND),
+        )
         self._threads = [
             threading.Thread(target=self._pump_iq_listen, daemon=True),
             threading.Thread(target=self._pump_audio, daemon=True),
@@ -1396,57 +1495,67 @@ class Session:
         for thread in self._threads:
             thread.start()
 
+    def _to_encoder(self, enc: "subprocess.Popen[bytes]", out: "demod.Audio") -> None:
+        """One buffer of demodulated audio: measured, taped, and written on to ffmpeg.
+
+        `enc` is passed in rather than read off the session — see `_start_iq_listen`."""
+        chunk = out.tobytes()
+        # Clamped because `Audio.peak` is measured BEFORE the clip, so an over-deviated
+        # signal reads above 1.0 — while `audio_peak` is documented as a fraction of full
+        # scale, and a meter that can read 1.4 is a meter with no top.
+        self.audio_peak = min(1.0, out.peak)
+        self.audio_clipped = out.clipped
+        self.audio_rms = out.rms
+        self._record(chunk)
+        self._accumulate(chunk, self.audio_peak)
+        if enc.stdin is not None:
+            enc.stdin.write(chunk)
+            enc.stdin.flush()
+
+    def _publish_channel(self, spectrum: "iq.Spectrum", passband_hz: float) -> None:
+        self._publish_frame(self._tuning_frame(spectrum, passband_hz))
+
+    def _publish_band(self, spectrum: "iq.Spectrum") -> None:
+        self._publish_frame(self._band_frame(spectrum))
+
+    def _count_overflows(self, overflows: int) -> None:
+        self.overflows += overflows
+
+    def _wants_view(self, view: str) -> bool:
+        """Whether any viewer is attached to this picture right now."""
+        with self._lock:
+            return any(
+                asked == VIEW_ALL or asked == view for asked in self._frames.values()
+            )
+
     def _pump_iq_listen(self) -> None:
-        """Raw I/Q -> audio into ffmpeg, and the same buffer -> the tuning view.
+        """Run the capture: one `read`, fanned out to the demodulator and the band.
 
-        One `read` feeds both, which is the difference this whole path exists to make:
-        the picture is not a second measurement that could disagree with the sound, it
-        is the same samples looked at twice.
-
-        A frame is 100 ms, matching `TARGET_FPS`. That is the audio's latency too, and
-        it is nothing against what the MP3 encoder and the browser already buffer.
+        One read feeds both, which is the difference this whole path exists to make: the
+        picture is not a second measurement that could disagree with the sound, it is the
+        same samples looked at twice. Everything about HOW is in `capture.py`; what is
+        left here is the session's part — end the frame streams when the loop stops, and
+        do not tell listeners the session is over when it is only being retuned.
 
         A read that fails ENDS the session rather than retrying forever, exactly as the
         spectrum pump does: the radio is gone, and audio that keeps flowing from a
         stopped stream would be silence presented as a working receiver."""
-        held, chain, tuning = self._radio, self._demod, self._tuning
-        enc = self._enc
-        if held is None or chain is None or tuning is None:
+        held, channel, band = self._radio, self._channel, self._band
+        if held is None or channel is None:
             return
-        if enc is None or enc.stdin is None:
-            return
-        want = max(TUNING_BINS, int(LISTEN_CAPTURE_HZ / TARGET_FPS))
+        sinks: list[capture.Sink] = [channel]
+        if band is not None:
+            sinks.append(band)
         try:
-            while not self._stopping and held.alive:
-                reading = held.read(want)
-                self.overflows += reading.overflows
-                audio = chain.feed(reading.samples)
-                if audio.pcm.size:
-                    chunk = audio.tobytes()
-                    # Clamped because `Audio.peak` is measured BEFORE the clip, so an
-                    # over-deviated signal reads above 1.0 — while `audio_peak` is
-                    # documented as a fraction of full scale, and a meter that can read
-                    # 1.4 is a meter with no top.
-                    self.audio_peak = min(1.0, audio.peak)
-                    self.audio_clipped = audio.clipped
-                    self.audio_rms = audio.rms
-                    self._record(chunk)
-                    self._accumulate(chunk, self.audio_peak)
-                    enc.stdin.write(chunk)
-                    enc.stdin.flush()
-                if audio.baseband.size >= tuning.n:
-                    self._publish_frame(
-                        self._tuning_frame(
-                            tuning.frame(audio.baseband, self.frequency_hz, at=reading.at),
-                            2.0 * chain.channel_half_hz,
-                        )
-                    )
+            capture.Capture(
+                held,
+                sinks,
+                running=lambda: not self._stopping,
+                overflowed=self._count_overflows,
+            ).run()
         except (radio.RadioError, ValueError, BrokenPipeError, OSError):
             pass  # a stop, or the radio went away; teardown is `_kill`'s job
         finally:
-            with contextlib.suppress(OSError, ValueError):
-                if enc.stdin is not None:
-                    enc.stdin.close()
             if not self._restarting:
                 self._end_frames()
 
@@ -1467,6 +1576,24 @@ class Session:
             bin_hz=spectrum.bin_hz,
             db=spectrum.db[first : first + keep].tolist(),
             passband_hz=passband_hz,
+            view=VIEW_CHANNEL,
+        )
+
+    def _band_frame(self, spectrum: "iq.Spectrum") -> Frame:
+        """One row of everything the radio is capturing, whatever it is capturing it for.
+
+        The one shape both a spectrum session's stare and a listening session's band sink
+        publish, so a viewer cannot tell which kind of session drew it — which is the
+        point: the row describes the band, not the reason someone tuned there."""
+        return Frame(
+            at=spectrum.at,
+            start_hz=int(spectrum.start_hz),
+            # Unrounded: `as_dict` is where the wire's one decimal is applied, and
+            # rounding twice just does the work twice while denying any other reader the
+            # precision it was handed.
+            bin_hz=spectrum.bin_hz,
+            db=spectrum.db_list(),
+            view=VIEW_BAND,
         )
 
     def _start_iq_spectrum(self) -> None:
@@ -1540,22 +1667,27 @@ class Session:
                 self._end_frames()
 
     def _stare(self, held: "radio.Radio", spectrometer: "iq.Spectrometer") -> None:
-        """One tuning, rows as fast as the frame budget allows."""
-        want = spectrometer.n * segments_for(spectrometer.n, held.rate_hz)
-        while not self._stopping and held.alive:
-            reading = held.read(want)
-            spectrum = spectrometer.frame(reading.samples, held.center_hz)
-            self._publish_frame(
-                Frame(
-                    at=reading.at,
-                    start_hz=int(spectrum.start_hz),
-                    bin_hz=spectrum.bin_hz,
-                    # Unrounded: `as_dict` is where the wire's one decimal is applied,
-                    # and rounding twice just does the work twice while denying any
-                    # other reader the precision it was handed.
-                    db=spectrum.db_list(),
+        """One tuning, rows as fast as the frame budget allows.
+
+        The same `Capture` and the same `BandSink` a LISTENING session runs — the only
+        difference between a waterfall and a receiver drawing its band is that this one
+        has no demodulator hanging off the read (A1)."""
+        capture.Capture(
+            held,
+            [
+                capture.BandSink(
+                    spectrometer,
+                    row=self._publish_band,
+                    want=spectrometer.n * segments_for(spectrometer.n, held.rate_hz),
                 )
-            )
+            ],
+            running=lambda: not self._stopping,
+            # Counted here too, which it was not before: `overflows` is documented as
+            # "USB buffers the driver threw away under this session", and a spectrum
+            # session that reported zero however torn its rows were is a counter that is
+            # not the quantity it names.
+            overflowed=self._count_overflows,
+        ).run()
 
     def _sweep_hops(
         self, held: "radio.Radio", spectrometer: "iq.Spectrometer", sweep: Sweep
@@ -1633,7 +1765,7 @@ class Session:
         # engines and the stitcher pass through this one seam, so no path can publish a
         # row whose peaks nobody looked for — and a viewer cannot disagree with the
         # agent about what was on the air, because neither of them decides.
-        if not frame.passband_hz:
+        if frame.view != VIEW_CHANNEL:
             frame = dataclasses.replace(
                 frame,
                 peaks=peaks.find(
@@ -1652,8 +1784,12 @@ class Session:
         # is for is answered by `frontend/src/sdrTuning.ts`, which asks the narrower
         # question the row can actually support.
         with self._lock:
-            self._last = frame
-            subs = list(self._frames)
+            self._last[frame.view] = frame
+            subs = [
+                sub
+                for sub, view in self._frames.items()
+                if view == VIEW_ALL or view == frame.view
+            ]
         for sub in subs:
             try:
                 sub.put_nowait(frame)
@@ -1670,20 +1806,29 @@ class Session:
             except queue.Full:
                 pass
 
-    def subscribe_frames(self) -> queue.Queue[Frame | None]:
-        """Attach one viewer, seeded with the most recent row if there is one."""
+    def subscribe_frames(self, view: str | None = None) -> queue.Queue[Frame | None]:
+        """Attach one viewer to one picture, seeded with the most recent row of it.
+
+        `view` defaults to `default_view` — what this session's rows meant before there
+        was more than one kind — so a caller that does not know about views keeps
+        getting exactly the stream it used to get."""
+        wanted = view or self.default_view
         sub: queue.Queue[Frame | None] = queue.Queue(maxsize=SPECTRUM_QUEUE)
         with self._lock:
-            self._frames.add(sub)
-            last = self._last
-        if last is not None:
+            self._frames[sub] = wanted
+            seed = [
+                frame
+                for kind, frame in self._last.items()
+                if wanted == VIEW_ALL or wanted == kind
+            ]
+        for frame in seed:
             with contextlib.suppress(queue.Full):
-                sub.put_nowait(last)
+                sub.put_nowait(frame)
         return sub
 
     def unsubscribe_frames(self, sub: queue.Queue[Frame | None]) -> None:
         with self._lock:
-            self._frames.discard(sub)
+            self._frames.pop(sub, None)
 
     @property
     def refusal(self) -> str:
@@ -2162,7 +2307,8 @@ KISSPORT {self.kiss_port}
                 _park(proc)
         self._rtl = self._enc = None
         held, self._radio, self._spectrometer = self._radio, None, None
-        self._demod = self._tuning = None
+        self._demod = None
+        self._channel = self._band = None
         if held is not None:
             # A close that FAILS keeps its registry entry inside `radio.py`, so the
             # handle stays discoverable and `/reset` still refuses rather than firing a
@@ -2176,6 +2322,16 @@ KISSPORT {self.kiss_port}
             os.unlink(f"/tmp/direwolf-{self.id}.conf")  # noqa: S108 - written by this session
 
     # ---- public surface -------------------------------------------------------
+
+    @property
+    def default_view(self) -> str:
+        """Which picture this session's rows mean when a viewer does not say.
+
+        The one it published back when it could only publish one: a listening session's
+        tuning strip, a spectrum session's band. Keeping that is what lets the frames
+        route grow a `?view=` without changing a single byte for a client that never
+        learns about it."""
+        return VIEW_CHANNEL if self.purpose == PURPOSE_LISTEN else VIEW_BAND
 
     @property
     def draws_frames(self) -> bool:
@@ -2229,7 +2385,7 @@ KISSPORT {self.kiss_port}
         def apply() -> None:
             self.sweep = sweep
             self.frequency_hz = sweep.centre_hz
-            self._last = None
+            self._last = {}
 
         self._restart(apply)
 

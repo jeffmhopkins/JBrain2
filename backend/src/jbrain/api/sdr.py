@@ -1058,7 +1058,12 @@ async def spectrum_tune(
 
 
 @router.get("/spectrum")
-async def spectrum(request: Request, settings: SettingsDep, _owner: OwnerDep) -> StreamingResponse:
+async def spectrum(
+    request: Request,
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    view: Annotated[str | None, Query(pattern="^(band|channel|all)$")] = None,
+) -> StreamingResponse:
     """The waterfall's rows, as server-sent events.
 
     SSE rather than a WebSocket, which is what an earlier sketch of this assumed. The
@@ -1070,13 +1075,19 @@ async def spectrum(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     Each row is relayed verbatim, because each row already says which band it covers
     (`listen.Frame`). This route understands nothing about the picture, which is what
-    lets a retune land without a message on this stream at all."""
+    lets a retune land without a message on this stream at all.
+
+    `view` picks WHICH picture, on a session that draws two off one capture: the band it
+    is sitting in, the channel it is demodulating, or `all` for both interleaved (every
+    row says which it is). Omitted keeps whatever that session's rows meant before there
+    was a choice, so a client that never sends it sees no change."""
     base = _base(settings)
+    query = f"?view={view}" if view else ""
 
     async def pump():
         client = httpx.AsyncClient(base_url=base, timeout=None)
         try:
-            async with client.stream("GET", "/listen/spectrum") as upstream:
+            async with client.stream("GET", f"/listen/spectrum{query}") as upstream:
                 if upstream.status_code != 200:
                     body = await upstream.aread()
                     yield _event({"error": _detail_of(body, "The radio is busy.")})

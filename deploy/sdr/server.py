@@ -38,6 +38,7 @@ import shutil
 import struct
 import subprocess
 import time
+import urllib.parse
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
@@ -213,6 +214,37 @@ def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
         high += 1
     centre_bin = (low + high) / 2.0
     return frame.start_hz + (centre_bin + 0.5) * frame.bin_hz - middle, peak_at
+
+
+#: How many of a band row's signals the probe reports. Enough to say what the dial
+#: looks like; not so many that a quiet band's noise fills the answer.
+BAND_REPORT_PEAKS = 8
+
+
+def _band_report(rows: list["listen.Frame"]) -> dict[str, Any]:
+    """What else was on the air, from the SAME capture that made the audio.
+
+    The reading W3 exists to make possible: before it, "listen to 162.55" and "what is
+    on 2 m" were two sessions and one radio, so the second question could only be
+    answered by giving up the first. Taken from the LAST row rather than pooled across
+    them, because pooling would report a band that never existed at any one moment."""
+    if not rows:
+        return {"rows": 0, "peaks": []}
+    last = rows[-1]
+    return {
+        "rows": len(rows),
+        "start_hz": last.start_hz,
+        "stop_hz": last.stop_hz,
+        "bin_hz": last.bin_hz,
+        "peaks": [
+            {
+                "mhz": round(peak["hz"] / 1_000_000, 4),
+                "db": round(float(peak["db"]), 1),
+                "over_db": round(float(peak.get("over_db", 0.0)), 1),
+            }
+            for peak in last.peaks[:BAND_REPORT_PEAKS]
+        ],
+    }
 
 
 def _listen_verdict(
@@ -804,6 +836,18 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             session.unsubscribe_packets(sub)
 
+    def _view_wanted(self) -> str | None:
+        """The `?view=` asked for: a name, "" for "the session decides", None for junk.
+
+        Validated rather than coerced, because silently serving the band to a viewer that
+        asked for the channel is exactly the class of quiet substitution B1 exists to
+        stop — a picture that is not of what it says it is."""
+        query = urllib.parse.urlsplit(self.path).query
+        asked = urllib.parse.parse_qs(query).get("view", [""])[0].strip().lower()
+        if not asked:
+            return ""
+        return asked if asked in listen.VIEWS else None
+
     def _stream_spectrum(self) -> None:
         """Hand one viewer a stream of waterfall rows, newline-framed JSON.
 
@@ -818,6 +862,16 @@ class Handler(BaseHTTPRequestHandler):
         # through this same seam, because it is the same `Frame` measured off the same
         # samples. Each row says which band it covers, so a reader needs no warning
         # that it is now looking at 32 kHz of one channel rather than 20 MHz of a dial.
+        # WHICH picture, on a session that now draws two off one capture. Absent means
+        # the session's own default — what its rows meant before there was more than one
+        # kind — so a client that never learns about views sees no change at all.
+        wanted = self._view_wanted()
+        if wanted is None:
+            self._json(
+                400,
+                {"detail": f"view must be one of {', '.join(listen.VIEWS)}"},
+            )
+            return
         session = TUNER.drawing()
         if session is None:
             held = TUNER.sessions()
@@ -830,7 +884,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(409, {"detail": "nothing is watching the spectrum"})
             return
-        sub = session.subscribe_frames()
+        sub = session.subscribe_frames(wanted or None)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
@@ -1169,7 +1223,10 @@ class Handler(BaseHTTPRequestHandler):
         # `session.engine`, not a guess from a private attribute: the session knows
         # which engine it started and now says so on every path.
         engine = session.engine
-        sub = session.subscribe_frames()
+        # THE BAND, named rather than defaulted: this probe's verdict is about a wideband
+        # picture, and a session that also drew a channel would otherwise get to answer
+        # with rows measured over 32 kHz of one station.
+        sub = session.subscribe_frames(listen.VIEW_BAND)
         frames: list[listen.Frame] = []
         started = time.monotonic()
         deadline = started + seconds
@@ -1229,6 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
             seconds = float(body.get("seconds") or LISTEN_PROBE_S)
             named = listen.validate_serial(body.get("serial"))
             want_audio = bool(body.get("audio"))
+            want_band = bool(body.get("band"))
         except (ListenError, TypeError, ValueError) as bad:
             self._json(400, {"detail": str(bad)})
             return
@@ -1248,14 +1306,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"detail": str(bad)})
             return
         try:
-            answer = self._watch_listen(seconds, info.session_id, want_audio=want_audio)
+            answer = self._watch_listen(
+                seconds, info.session_id, want_audio=want_audio, want_band=want_band
+            )
         finally:
             with contextlib.suppress(Exception):
                 TUNER.stop(info.session_id)
         self._json(200, answer)
 
     def _watch_listen(
-        self, seconds: float, session_id: str, *, want_audio: bool = False
+        self,
+        seconds: float,
+        session_id: str,
+        *,
+        want_audio: bool = False,
+        want_band: bool = False,
     ) -> dict[str, Any]:
         """Hold a listening session for `seconds` and reduce it to a verdict."""
         session = TUNER.find(session_id)
@@ -1268,8 +1333,26 @@ class Handler(BaseHTTPRequestHandler):
             }
         if want_audio:
             session.tap_audio(seconds)
-        sub = session.subscribe_frames() if session.draws_frames else None
+        # THE CHANNEL, named rather than defaulted: the same session now also publishes
+        # the band it is sitting in, and `_listen_verdict` reads every row it is handed as
+        # a picture of the tuned channel. A band row reaching that arithmetic would report
+        # a station's own neighbours as its SNR.
+        sub = (
+            session.subscribe_frames(listen.VIEW_CHANNEL) if session.draws_frames else None
+        )
+        # ...and the BAND, when asked, off the very same capture. This is what W3 buys
+        # and the only way to see it without a browser: what else was on the air while
+        # this radio was listening to one channel of it, measured from the same samples
+        # the audio came from rather than from a second session that cannot exist.
+        # Subscribing is also what turns the band transform ON (`capture.BandSink`), so
+        # a probe that does not ask costs nothing.
+        band_sub = (
+            session.subscribe_frames(listen.VIEW_BAND)
+            if want_band and session.draws_frames
+            else None
+        )
         frames: list[listen.Frame] = []
+        band_rows: list[listen.Frame] = []
         peaks_seen: list[float] = []
         clip_seen: list[float] = []
         rms_seen: list[float] = []
@@ -1295,9 +1378,20 @@ class Handler(BaseHTTPRequestHandler):
                 peaks_seen.append(session.audio_peak)
                 clip_seen.append(session.audio_clipped)
                 rms_seen.append(session.audio_rms)
+                if band_sub is not None:
+                    # Drained rather than waited on: the band row is a bonus reading and
+                    # must never be what decides how long the probe takes.
+                    with contextlib.suppress(queue.Empty):
+                        while True:
+                            row = band_sub.get_nowait()
+                            if row is None:
+                                break
+                            band_rows.append(row)
         finally:
             if sub is not None:
                 session.unsubscribe_frames(sub)
+            if band_sub is not None:
+                session.unsubscribe_frames(band_sub)
         pcm = session.taken_audio() if want_audio else b""
         verdict = _listen_verdict(
             session,
@@ -1307,6 +1401,8 @@ class Handler(BaseHTTPRequestHandler):
             rms_seen,
             round(time.monotonic() - started, 2),
         )
+        if want_band:
+            verdict["band"] = _band_report(band_rows)
         if pcm:
             # Base64 in the verdict rather than a second route: the audio is only ever
             # wanted ALONGSIDE the numbers it explains, and the caller that asked for it
