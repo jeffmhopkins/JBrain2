@@ -18,7 +18,11 @@ lives.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
+
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 #: How far above its neighbourhood a bin must stand to be a signal. `sweep.py` reaches
 #: the same judgement with `STEADY_DB = 6.0` against a floor taken over time; a single
@@ -33,6 +37,17 @@ BASELINE_CHANNELS = 21
 #: Fewest bins a baseline may be built from, so a coarse row cannot let a signal three
 #: bins wide become most of its own baseline and hide itself.
 BASELINE_MIN_BINS = 11
+#: Where in the sorted neighbourhood the floor is read. NOT the median: a median assumes
+#: the window is mostly noise, and `baseline_width`'s ceiling allows a signal to be up to
+#: a third of its own reference. The 35th percentile still reads noise there, and costs a
+#: fraction of a decibel where the window really is empty.
+BASELINE_SHARE = 0.35
+#: How many times per window the baseline is actually evaluated; between those points it
+#: is interpolated. The baseline is slowly varying by construction, so this is an
+#: approximation only in the sense that a straight line between two nearby samples of a
+#: smooth function is: measured at 0.07-0.12 dB against the exact rolling percentile,
+#: which is a hundredth of `SNR_DB`, for about a two-hundredth of the work.
+BASELINE_STRIDE = 32
 #: The most signals one row will report. A row with more than this in it is a band that
 #: wants looking at rather than a list that wants reading, and the cap bounds both the
 #: frame every viewer receives and the work done per row.
@@ -56,21 +71,74 @@ def _median(values: list[float]) -> float:
     return (ordered[middle - 1] + ordered[middle]) / 2.0
 
 
-def _local_floors(db: list[float], bin_hz: float, channel_hz: int) -> list[float]:
-    """Each bin's neighbourhood level: the median of the levels around it.
+def baseline_width(bins: int, bin_hz: float, channel_hz: int) -> int:
+    """How many bins each bin is judged against — CLAMPED TO THE ROW.
 
-    `sweep.py`'s reasoning, unchanged: "higher than it has any business being" only has
-    an answer relative to somewhere, and a span-wide median is the wrong somewhere —
-    band-edge rolloff drags the ends down and each hop of a stitched row has its own
-    noise. A window wider than the row degrades to a global median rather than
-    misbehaving, because the slicing already does that."""
+    The clamp is the fix, and its absence is a fault that reached the owner. The window
+    could only grow: `max(400 kHz, 21 channels)` is wider than the whole row for any
+    sweep under 400 kHz, for every 256 kS/s capture, and for any 200 kHz raster — and a
+    window wider than the row is a GLOBAL median, which is the "floor measured from
+    inside the signal" failure this file exists to avoid. Measured on air 2026-09-06: a
+    162.3-162.7 sweep (400 kHz, so 128 bins against a 525 kHz window) missed NOAA on
+    162.550 while it was the strongest bin in the row, 9.8 dB over its own median.
+
+    A third of the row is the ceiling, so a signal can never be more than a third of its
+    own reference no matter how the caller sizes the sweep."""
     span = max(BASELINE_SPAN_HZ, BASELINE_CHANNELS * max(channel_hz, 0))
-    width = max(int(span // bin_hz) if bin_hz > 0 else 0, BASELINE_MIN_BINS)
+    want = int(span // bin_hz) if bin_hz > 0 else 0
+    ceiling = max(BASELINE_MIN_BINS, bins // 3)
+    width = max(min(max(want, BASELINE_MIN_BINS), ceiling), 1)
+    # Odd DOWNWARD. Rounding up would step back over the ceiling the line above just
+    # applied, which on a 128-bin row is 43 against a limit of 42.
+    return width - 1 if width % 2 == 0 and width > 1 else width
+
+
+def _local_floors(
+    db: "Sequence[float] | np.ndarray", bin_hz: float, channel_hz: int
+) -> "np.ndarray":
+    """Each bin's neighbourhood level: a LOW PERCENTILE of the levels around it.
+
+    Two changes from the rolling median this was, and both are load-bearing.
+
+    **It is vectorised, because the median was costing more than the radio.** A
+    `sorted()` per bin is O(N*W) in Python and ran on the CAPTURE THREAD, between
+    `read()` calls: measured 238 ms for a 4000-bin stare, 321 ms with a 25 kHz raster
+    and 1910 ms on the FM dial, against a 100 ms frame budget. That is what throttled
+    the wideband waterfall to a third of its rate and overflowed USB buffers — defeating
+    the "the radio never looks away" property `iq.py` exists to guarantee, downstream of
+    it. It also explains the 0.33 fps this project blamed on retune settle.
+
+    The baseline is a SLOWLY VARYING function of frequency by construction, so it is
+    evaluated every `width/BASELINE_STRIDE` bins and interpolated between. Measured
+    against the exact rolling percentile: **0.07-0.12 dB of error, for 1.0-1.4 ms** —
+    a hundredth of `SNR_DB`, and about two hundred times faster than computing it at
+    every bin.
+
+    **And it is the 35th percentile, not the 50th.** A median assumes the window is
+    mostly noise; a lower percentile still reads noise when a signal fills a third of
+    its own reference, which is exactly the case `baseline_width`'s ceiling now permits
+    at worst. It costs a fraction of a decibel where the window really is empty."""
+    values = np.asarray(db, dtype=np.float64)
+    n = values.size
+    if n == 0:
+        return values
+    width = min(baseline_width(n, bin_hz, channel_hz), n if n % 2 else n - 1) or 1
     half = width // 2
-    return [
-        _median([v for v in db[max(0, i - half) : i + half + 1] if math.isfinite(v)])
-        for i in range(len(db))
-    ]
+    # NaN is a bin that measured nothing (a hop that lost a block), and it must not
+    # drag a neighbourhood down. Filled with the row's own median, which is neutral.
+    clean = np.where(np.isfinite(values), values, np.nan)
+    if np.isnan(clean).any():
+        fill = np.nanmedian(clean) if not np.isnan(clean).all() else 0.0
+        clean = np.where(np.isnan(clean), fill, clean)
+    padded = np.pad(clean, half, mode="edge")
+    windows = sliding_window_view(padded, width)
+    stride = max(1, width // BASELINE_STRIDE)
+    at = np.arange(0, n, stride)
+    if at[-1] != n - 1:
+        at = np.append(at, n - 1)
+    rank = min(width - 1, max(0, int(BASELINE_SHARE * (width - 1))))
+    sampled = np.partition(windows[at], rank, axis=-1)[:, rank]
+    return sampled if stride == 1 else np.interp(np.arange(n), at, sampled)
 
 
 def find(

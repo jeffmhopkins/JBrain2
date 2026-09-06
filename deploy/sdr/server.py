@@ -65,25 +65,19 @@ from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
 # does before the first row. Named so a test can shrink it.
 SWEEP_SETTLE_S = 30
 
-MIN_HZ = 24_000_000
-MAX_HZ = 1_766_000_000
-
-# rtl_fm's demodulators. Narrow FM for voice comms, wide FM for broadcast, AM for
-# air band. The values are passed to `-M`, so this doubles as the allowlist.
-MODES = {
-    "fm": "fm",
-    "nfm": "fm",
-    "wbfm": "wbfm",
-    "am": "am",
-    "usb": "usb",
-    "lsb": "lsb",
-}
+# The tuner's range and the mode allowlist come from `listen`, which is where the
+# radio lives — they were declared again here, and a second declaration of a fact is a
+# place for the two to disagree. One of them already had: this file also carried
+# `WBFM_SAMPLE_RATE = 171_000`, unused, against the 192_000 `listen` measured and
+# documented at length, so the dead copy contradicted the live one in the same repo.
+MIN_HZ = listen.MIN_HZ
+MAX_HZ = listen.MAX_HZ
+MODES = listen.MODES
 
 # 16 kHz mono is whisper's native input AND rtl_fm's, for narrowband. Wide FM needs a
 # higher demodulation rate to sound right, so it is captured at 32 kHz and told to
 # resample down — rtl_fm does that itself with `-r`.
 NARROW_RATE = 16_000
-WBFM_SAMPLE_RATE = 171_000  # rtl_fm's documented wbfm capture rate
 
 MAX_SECONDS = 120
 #: How long rtl_fm gets to run its SIGTERM handler — cancel the USB transfer, close the
@@ -1172,7 +1166,9 @@ class Handler(BaseHTTPRequestHandler):
                 "summary": "the spectrum session was gone before a frame arrived",
                 "findings": ["nothing held the radio by the time the probe looked"],
             }
-        engine = "iq" if session._radio is not None else "rtl_power"  # noqa: SLF001
+        # `session.engine`, not a guess from a private attribute: the session knows
+        # which engine it started and now says so on every path.
+        engine = session.engine
         sub = session.subscribe_frames()
         frames: list[listen.Frame] = []
         started = time.monotonic()

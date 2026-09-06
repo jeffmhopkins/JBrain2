@@ -125,7 +125,9 @@ def test_the_noise_floor_sits_where_theory_says() -> None:
     the processing gain the plan counts on in §4 (~36 dB at N=4096, less ~1.8 for the
     window), so getting it wrong would mislabel every HF reading. Welch over 64
     segments leaves a per-bin spread of ~0.54 dB, which the median across 4000 bins
-    flattens to well inside the tolerance."""
+    flattens to well inside the tolerance.
+
+    The floor itself is unchanged by 50% overlap — overlap buys VARIANCE, not level."""
     spectro = iq.Spectrometer(N, RATE)
     rng = np.random.default_rng(20260904)
     size = N * 64
@@ -133,7 +135,9 @@ def test_the_noise_floor_sits_where_theory_says() -> None:
 
     frame = spectro.frame(noise.astype(np.complex64), CENTER)
 
-    assert frame.segments == 64
+    # 127, not 64: at 50% overlap a buffer of 64 whole segments yields 2n-1 windows.
+    # `segments` is the averaging depth, so overlapping windows count.
+    assert frame.segments == 127
     expected = 10.0 * math.log10(1.5 / N)
     assert float(np.median(frame.db)) == pytest.approx(expected, abs=0.2)
 
@@ -217,12 +221,43 @@ def test_a_partial_trailing_segment_is_dropped_not_padded() -> None:
     samples = _tone(N * 3 + N // 2, 60_000)
 
     partial = spectro.frame(samples, CENTER)
-    whole = spectro.frame(samples[: N * 3], CENTER)
 
-    assert partial.segments == 3
-    assert np.array_equal(partial.db, whole.db)
-    # The level is the tell: a padded frame could not still read full scale.
+    # Six windows at 50% overlap, the last one starting at 2.5N and ENDING exactly at
+    # 3.5N — so the trailing half-segment is used by a whole window rather than padded.
+    # (This asserted equality with a 3N frame before overlap existed, which is no longer
+    # the right claim: the extra half is now real data, not a dropped remainder.)
+    assert partial.segments == 6
+    # The level is the tell, and it is the claim that matters: a padded frame could not
+    # still read full scale, because the zeros would pull every bin down.
     assert partial.db.max() == pytest.approx(0.0, abs=0.01)
+    # And a buffer half a segment SHORT of the next window still drops it rather than
+    # padding: 3.25N gives the same five windows as 3N.
+    assert spectro.frame(_tone(N * 3 + N // 4, 60_000), CENTER).segments == 5
+    assert spectro.frame(samples[: N * 3], CENTER).segments == 5
+
+
+def test_overlapping_segments_steady_the_floor() -> None:
+    """WHY the overlap is here: it buys variance, which is what a threshold is spent on.
+
+    A Hann window at 0% overlap multiplies the samples near each segment boundary by
+    nearly zero and no other segment covers them, so about half the buffer is discarded
+    by weight — which is what this module's docstring claimed it did not do. The cost of
+    that showed up where it matters least visibly: an EMPTY channel's peak-over-floor,
+    which `sdrTuning.SIGNAL_OVER_DB` tests against 6.0, sat at a mean of 3.9 dB with
+    excursions past 5. Under a decibel of headroom on the check that decides whether the
+    strip draws a station on nothing.
+
+    Asserted as a spread rather than a level: overlap does not move the floor."""
+    spectro = iq.Spectrometer(512, RATE)
+    rng = np.random.default_rng(5)
+    spreads = []
+    for _ in range(12):
+        size = 512 * 8
+        noise = (rng.normal(size=size) + 1j * rng.normal(size=size)) / math.sqrt(2.0)
+        row = spectro.frame(noise.astype(np.complex64), CENTER)
+        spreads.append(float(np.std(row.db)))
+    # Non-overlapping 8 segments measured ~1.49 dB; 50% overlap ~1.09.
+    assert float(np.mean(spreads)) < 1.25
 
 
 def test_a_frame_shorter_than_one_segment_is_refused() -> None:

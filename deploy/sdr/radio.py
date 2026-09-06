@@ -586,8 +586,9 @@ class Radio:
         self._device: Device | None = None
         self._stream: Any = None
         self._lock = threading.Lock()
-        #: Held across a `readStream` AND across the whole of `close()`, so a teardown
-        #: cannot free the buffers a reader is still copying out of.
+        #: Held across EVERY call that touches the device or the stream, and across the
+        #: whole of `close()`, so a teardown cannot land between a caller taking the
+        #: handle out of `_require` and handing it to the driver.
         #:
         #: `self._lock` above does not do this and cannot: it guards the handle
         #: ATTRIBUTES for a moment, while `readStream` runs for up to `READ_TIMEOUT_US`
@@ -601,7 +602,16 @@ class Radio:
         #:
         #: The `alive` check a pump makes before reading cannot close it — that is a
         #: check-then-act, and `close()` fits between the two. Only a lock spanning the
-        #: call does. The cost is that `close()` waits for at most one read timeout,
+        #: call does.
+        #:
+        #: **Every call, not just `readStream`** — a first version covered the read
+        #: alone, which left the same use-after-free reachable through `retune`:
+        #: `_sweep_hops` retunes a LIVE stream from the pump thread eleven times a
+        #: second while `_kill` closes from the request thread, so a `setFrequency` on
+        #: a deleted device is one interleaving away. Reviewed and widened before it
+        #: shipped.
+        #:
+        #: `close()` therefore waits for whatever call is in flight — one read at worst,
         #: which is what `deactivateStream` does anyway when it joins the async thread.
         self._io_lock = threading.Lock()
         self._rate_hz = 0
@@ -693,12 +703,14 @@ class Radio:
 
     def hardware_info(self) -> dict[str, str]:
         """What the driver says about the device it opened."""
-        return dict(self._require_device().getHardwareInfo())
+        with self._io_lock:
+            return dict(self._require_device().getHardwareInfo())
 
     def read_setting(self, key: str) -> str:
         """What a setting reads back as NOW. `writeSetting` returns nothing, so a value
         the driver declined is indistinguishable from one it took until this is asked."""
-        return str(self._require_device().readSetting(key))
+        with self._io_lock:
+            return str(self._require_device().readSetting(key))
 
     def __enter__(self) -> "Radio":
         return self
@@ -707,10 +719,16 @@ class Radio:
         self.close()
 
     def _require_device(self) -> Device:
-        """The device alone — everything up to `setupStream` has no stream yet."""
-        if self._device is None:
-            raise RadioError("this radio has been closed")
-        return self._device
+        """The device alone — everything up to `setupStream` has no stream yet.
+
+        Under `_lock`, which until now guarded a write no reader ever took: `close()`
+        nulled the handles under it and every reader read them bare. Callers hold
+        `_io_lock` across the driver call that follows, so this only has to order the
+        read of the attribute against the write."""
+        with self._lock:
+            if self._device is None:
+                raise RadioError("this radio has been closed")
+            return self._device
 
     def _require(self) -> tuple[Device, Any]:
         device, stream = self._device, self._stream
@@ -794,6 +812,10 @@ class Radio:
 
         Suppressed rather than required, because a driver that cannot answer is a
         reading this probe does without, not a reason to fail the whole run."""
+        with self._io_lock:
+            return self._gain_state_locked()
+
+    def _gain_state_locked(self) -> dict[str, Any]:
         device = self._require_device()
         out: dict[str, Any] = {}
         with contextlib.suppress(Exception):
@@ -812,12 +834,13 @@ class Radio:
         A spectrum instrument wants the first: a waterfall whose gain moves has a dB
         scale that means nothing from row to row, and every hop seam becomes a gain
         step drawn as if the band had changed."""
-        device = self._require_device()
-        if db is None:
-            device.setGainMode(self._driver.RX, CHANNEL, True)
-            return
-        device.setGainMode(self._driver.RX, CHANNEL, False)
-        device.setGain(self._driver.RX, CHANNEL, float(db))
+        with self._io_lock:
+            device = self._require_device()
+            if db is None:
+                device.setGainMode(self._driver.RX, CHANNEL, True)
+                return
+            device.setGainMode(self._driver.RX, CHANNEL, False)
+            device.setGain(self._driver.RX, CHANNEL, float(db))
 
     def _apply(
         self,
@@ -828,6 +851,17 @@ class Radio:
     ) -> None:
         """Steps 1-3 of `retune`, without the barrier — the only caller that wants them
         apart is `_start`, where there is no stream to flush yet."""
+        with self._io_lock:
+            self._apply_locked(center_hz=center_hz, rate_hz=rate_hz, direct=direct)
+
+    def _apply_locked(
+        self,
+        *,
+        center_hz: int | None = None,
+        rate_hz: int | None = None,
+        direct: bool | None = None,
+    ) -> None:
+        """`_apply`'s body, with `_io_lock` already held by the caller."""
         device = self._require_device()
         if rate_hz is not None and int(rate_hz) != self._rate_hz:
             if rate_hz <= 0:
@@ -866,8 +900,12 @@ class Radio:
         `resetBuffer` does not reach. Neither step alone is the barrier: the ring holds
         up to `numBuffers * bufflen` samples, which is far more than any settle window,
         and the flush cannot reach samples that are still inside the RTL2832U."""
-        device, stream = self._require()
-        device.activateStream(stream)
+        # Only the driver call is under the lock: `read_into` below takes it per call,
+        # and holding it across the whole settle would block `close()` for the settle's
+        # length rather than for one read.
+        with self._io_lock:
+            device, stream = self._require()
+            device.activateStream(stream)
         settle = SETTLE_S if settle_s is None else float(settle_s)
         drop = int(self._rate_hz * settle)
         if drop <= 0:

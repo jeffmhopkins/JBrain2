@@ -590,20 +590,18 @@ class Demodulator:
         but the channel, because every hertz of noise it passes reaches a discriminator
         that is blind to amplitude and turns it into full-scale hiss.
 
-        None for wide FM, which has no room for one: 90 kHz of channel in a 240 kHz IF
-        is already most of Nyquist, so the front end is its own channel filter there and
-        a second pass would buy a fraction of a decibel for a hundred and sixty taps."""
+        **Wide FM needs one, and a draft of this said it did not.** The claim was that
+        90 kHz of channel in a 240 kHz IF is already most of Nyquist so the front end is
+        its own channel filter — but the front end's stages are placed by the MIDPOINT
+        rule, which puts their 6 dB points at 240 and 120 kHz, and 120 kHz is not 90.
+        They pass 113.7 kHz at about -5 dB. Deleting this filter on that reasoning cost
+        52 dB of LO-leakage suppression on wide FM (-63 dB to -11) and was caught by an
+        adversarial review before it shipped."""
         kept = self.channel_half_hz
         # Against the IF's own usable half-band, since this runs at the IF rate — the
         # view can be wider and for wide FM is.
         room = 0.45 * self.if_rate_hz
-        # 0.75, not 0.9, and the difference is wide FM. At 0.9 the guard was False for a
-        # 90 kHz channel in a 240 kHz IF, so a 53-tap filter was built for the one mode
-        # this function's own docstring says returns None — 18% of the wide-FM chain,
-        # unclaimed, narrowing the signal by a few kHz for a fraction of a decibel. The
-        # front end already band-limits to the channel when the picture is taken above
-        # it (`wide`), so there is nothing left for this to do there.
-        if kept >= 0.75 * room:
+        if kept >= 0.9 * room:
             return None
         # Wide enough to be affordable, narrow enough that the stopband is inside the
         # band this filter runs in — a transition that ran past it would be shaped by
@@ -640,10 +638,12 @@ class Demodulator:
         # until 2026-09-06, which is the same defect fixed in the front end that day and
         # left here in the sibling function. `stop` was computed on the line above for
         # the tap count and then thrown away, so the 6 dB point sat on the PASSBAND EDGE
-        # and the response had been sagging since DC. Measured through the narrowband
-        # chain: -3.1 dB at 2 kHz, -6.6 at 3, -12.5 at 4, of which less than half is the
-        # de-emphasis that is supposed to be there. AM has no de-emphasis at all and was
-        # simply dark. That is the consonant band, so it is heard as muffled speech.
+        # and the response had been sagging since DC. The honest way to state the cost is
+        # as DEVIATION FROM THE INTENDED SHAPE: FM is meant to slope (de-emphasis), so
+        # of the -6.6 dB measured at 3 kHz, 4.8 belonged there and 1.86 was this. AM is
+        # meant to be FLAT and was 1.93 dB down at 3 kHz with nothing to blame. Either
+        # way it is the consonant band, heard as muffled speech. (A draft of this said
+        # "less than half is de-emphasis", which is backwards: it is 72-89% of them.)
         h = lowpass((cutoff + stop) / 2.0, self.if_rate_hz, taps)
         if self.mode in ("fm", "nfm", "wbfm"):
             h = np.convolve(h, deemphasis(self.if_rate_hz))

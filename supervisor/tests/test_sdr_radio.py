@@ -806,6 +806,53 @@ def test_closing_waits_for_a_read_that_is_already_running() -> None:
     assert torn_down_during_read == [[]], "the stream was torn down under a live read"
 
 
+def test_closing_waits_for_a_retune_that_is_already_running() -> None:
+    """The same use-after-free, reached through `retune` rather than `read`.
+
+    A first version of the fix locked `readStream` only, which left this open: the
+    hopping spectrum retunes a LIVE stream from the pump thread eleven times a second
+    while `_kill` closes from the request thread. Thread A takes the device out of
+    `_require_device`, thread B completes the teardown — nothing blocks it, A is not
+    inside a read — and A then calls `setFrequency` on a deleted `SoapyRTLSDR`.
+
+    So `_io_lock` is the DEVICE lock, not the read lock, and this is the test that says
+    so."""
+    driver = _FakeDriver()
+    rig = radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER)
+    device = rig._device
+    assert device is not None
+
+    inside = threading.Event()
+    release = threading.Event()
+    seen: list[list[str]] = []
+    real = device.setFrequency
+
+    def _slow_tune(*args: Any, **kwargs: Any) -> Any:
+        inside.set()
+        release.wait(timeout=5.0)
+        seen.append([k for k, *_ in driver.log if k in ("closeStream", "unmake")])
+        return real(*args, **kwargs)
+
+    device.setFrequency = _slow_tune  # type: ignore[method-assign]
+
+    def _tune() -> None:
+        rig.retune(center_hz=CENTER + 1_000_000, settle_s=0.0)
+
+    tuner = threading.Thread(target=_tune, daemon=True)
+    tuner.start()
+    assert inside.wait(timeout=5.0)
+
+    closer = threading.Thread(target=rig.close, daemon=True)
+    closer.start()
+    closer.join(timeout=0.3)
+    assert closer.is_alive(), "close() returned while a retune was still in the driver"
+
+    release.set()
+    tuner.join(timeout=5.0)
+    closer.join(timeout=5.0)
+    assert seen == [[]], "the device was unmade under a live retune"
+
+
 def test_a_driver_whose_version_call_fails_still_gets_probed() -> None:
     """`version()` is the FIRST call the probe makes, so an exception there used to take
     the whole verdict down before a single claim was tested."""

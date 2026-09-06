@@ -246,7 +246,10 @@ def test_the_audio_passband_is_flat_where_it_claims_to_be():
     hzs = (300.0, 1_000.0, 2_000.0, 3_000.0)
     levels = _sweep_audio("am", lambda hz: am_signal(0.5, tone_hz=hz), hzs)
     for hz, level in zip(hzs[1:], levels[1:], strict=True):
-        assert level - levels[0] > -1.5, (
+        # 0.5 dB, not the 1.5 this first used: the fixed chain measures 0.08 dB of
+        # droop and the broken one 1.93, so 1.5 left only 0.43 dB of margin — and the
+        # test would have passed the OLD code had the sweep stopped at 2 kHz.
+        assert level - levels[0] > -0.5, (
             f"AM is {levels[0] - level:.1f} dB down at {hz} Hz"
         )
 
@@ -272,48 +275,104 @@ def test_fm_audio_is_shaped_by_de_emphasis_AND_NOTHING_ELSE():
         )
 
 
-def test_the_receivers_own_dc_spike_lands_outside_every_channel():
-    """`LISTEN_OFFSET_HZ` exists to move the station off the receiver's DC spike, and
-    it only does that if the DECIMATION does not fold the spike back on top of it.
+def _dc_leak_db(mode: str, capture_hz: int, offset_hz: float) -> tuple[float, float]:
+    """How much of a unit DC input survives to the discriminator, and to the picture.
+
+    RMS, in dB, for a DC bias of amplitude 1 — which is what the receiver's own LO
+    leakage looks like before the mixer moves it. Two numbers because there are two
+    places it can hurt: the audio, and the row the tuning strip draws."""
+    built = demod.Demodulator(mode, capture_hz, offset_hz=offset_hz)
+    return _dc_leak_db_of(built, capture_hz)
+
+
+def _dc_leak_db_of(built, capture_hz: int) -> tuple[float, float]:
+    """The same measurement on a chain already built, so a test can strip a stage."""
+    bias = np.ones(capture_hz // 10, dtype=np.complex64)
+    channel = view = None
+    for _ in range(6):  # let every filter tail fill with the spike
+        stream = built._mixer.feed(bias)
+        wide = built._view_row(stream) if built._view is not None else None
+        for stage in built._front:
+            stream = stage.feed(stream)
+        view = wide if wide is not None else stream
+        channel = built._channel.feed(stream) if built._channel else stream
+
+    def rms(x: np.ndarray) -> float:
+        return 20.0 * np.log10(max(float(np.sqrt(np.mean(np.abs(x) ** 2))), 1e-30))
+
+    assert channel is not None and view is not None
+    return rms(channel), rms(view)
+
+
+def test_the_receivers_own_dc_spike_is_suppressed_in_every_mode():
+    """`LISTEN_OFFSET_HZ` exists to keep the receiver's DC spike off the station, and it
+    only does that if the DECIMATION does not fold it back.
 
     240 kHz — the value shipped until 2026-09-06 — is exactly 5x the 48 kHz IF and 1x
-    the 240 kHz one, so the spike aliased to 0 Hz: the tuned frequency, dead centre of
-    the channel, at -65 dB. An empty channel then carries a residual carrier the tuning
-    strip cannot tell from a station, which is the same false positive the front-end sag
-    produced. The offset is a MEASUREMENT, not a round number."""
-    # By path, like `demod` itself: `deploy/sdr/` is not on the type-checker's
-    # path, and a bare import resolves only because `_load` put it on sys.path.
+    the 240 kHz one, so the spike aliased to 0 Hz: the tuned frequency, dead centre.
+
+    **Asserted as a LEVEL, and that is the whole point of this test's second draft.**
+    The first asserted POSITION — that the fold lands outside `channel_half_hz` — and
+    that is not the same question: it passed wide FM at -11 dBFS, certifying as fixed a
+    52 dB regression, and it had to exclude usb/lsb from its mode list because a
+    residue of -158 dB puts the argmax on an arbitrary bin. A test that must drop modes
+    to pass is measuring the wrong thing.
+
+    The view is asserted too: it is what the strip draws, and for a wide-FM picture
+    taken at `view_rate_hz` the spike can sit in the row unattenuated while the audio is
+    perfectly clean."""
     listen = importlib.import_module("listen")
-    for mode in ("nfm", "fm", "wbfm", "am"):
-        built = demod.Demodulator(
-            mode, listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ)
+    for mode in demod.IF_RATE_HZ:
+        audio, view = _dc_leak_db(
+            mode, listen.LISTEN_CAPTURE_HZ, float(listen.LISTEN_OFFSET_HZ)
         )
-        bias = np.ones(listen.LISTEN_CAPTURE_HZ // 10, dtype=np.complex64)
-        channel = None
-        for _ in range(5):  # let every tail fill with the spike
-            stream = built._mixer.feed(bias)
-            for stage in built._front:
-                stream = stage.feed(stream)
-            channel = built._channel.feed(stream) if built._channel else stream
-        assert channel is not None
-        bins = 1024
-        spec = np.zeros(bins)
-        for start in range(0, channel.size - bins + 1, bins):
-            window = channel[start : start + bins] * np.hanning(bins)
-            spec += np.abs(np.fft.fftshift(np.fft.fft(window))) ** 2
-        where = (float(np.argmax(spec)) - bins / 2) * (built.if_rate_hz / bins)
-        assert abs(where) > built.channel_half_hz, (
-            f"{mode}: the DC spike folds to {where:.0f} Hz, inside a "
-            f"+/-{built.channel_half_hz:.0f} Hz channel"
-        )
+        assert audio < -60.0, f"{mode}: DC leaks into the audio at {audio:.1f} dBFS"
+        assert view < -40.0, f"{mode}: DC sits in the picture at {view:.1f} dBFS"
 
 
-def test_wide_fm_builds_no_channel_filter():
-    """Its own docstring says so, and for a while it did not: the guard let a 90 kHz
-    channel in a 240 kHz IF through, building 53 taps for 18% of the chain's cost and
-    narrowing the signal. The front end already band-limits wide FM to its channel."""
-    assert demod.Demodulator("wbfm", CAPTURE_HZ)._channel is None
+def test_the_shipped_offset_beats_the_one_it_replaced():
+    """The claim the constant is chosen on, kept honest.
+
+    Every divisor of the capture rate is a candidate and most are worse; this pins that
+    the shipped value really is better than its predecessor on BOTH quantities, so a
+    future change to `IF_RATE_HZ` that quietly breaks the relationship fails here."""
+    listen = importlib.import_module("listen")
+    capture = listen.LISTEN_CAPTURE_HZ
+    for mode in demod.IF_RATE_HZ:
+        now = _dc_leak_db(mode, capture, float(listen.LISTEN_OFFSET_HZ))
+        was = _dc_leak_db(mode, capture, 240_000.0)
+        assert now[0] <= was[0] + 1.0, f"{mode}: audio {was[0]:.1f} -> {now[0]:.1f}"
+        assert now[1] <= was[1] + 1.0, f"{mode}: view {was[1]:.1f} -> {now[1]:.1f}"
+
+
+def test_wide_fm_has_a_channel_filter_and_needs_it():
+    """C5 proposed deleting this filter and was WITHDRAWN after an adversarial review.
+
+    `_build_channel`'s docstring said wide FM gets none because 90 kHz of channel in a
+    240 kHz IF "is already most of Nyquist, so the front end is its own channel filter".
+    The front end's stages are placed by the MIDPOINT rule, which puts their 6 dB points
+    at 240 and 120 kHz — and 120 kHz is not 90. Without this filter the demodulator
+    hears 30 kHz beyond its channel on each side, which is the guard band where the
+    neighbouring station's skirts live.
+
+    Asserted as SELECTIVITY, measured on the filter, because that is the filter's job.
+    (A first draft of this test tried to prove it through the LO spike and found the
+    filter buying 0 dB — true, and the wrong instrument: at the shipped offset the
+    front end suppresses the spike before the fold, so it never reaches this stage.)"""
+    built = demod.Demodulator("wbfm", CAPTURE_HZ)
+    channel = built._channel
+    assert channel is not None, "wide FM must have a channel filter"
     assert demod.Demodulator("nfm", CAPTURE_HZ)._channel is not None
+
+    taps = channel._taps[::-1]
+
+    def at(hz: float) -> float:
+        turns = np.arange(taps.size) * hz / built.if_rate_hz
+        gain = abs((taps * np.exp(-2j * np.pi * turns)).sum())
+        return 20.0 * np.log10(max(gain, 1e-12))
+
+    assert at(built.channel_half_hz) > -1.0, "it must pass its own channel"
+    assert at(115_000.0) < -30.0, "it must reject what the front end still passes"
 
 
 def test_am_recovers_the_modulating_tone():
