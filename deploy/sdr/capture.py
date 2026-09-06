@@ -22,6 +22,7 @@ rather than a new pipeline.
 from __future__ import annotations
 
 import contextlib
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -76,21 +77,67 @@ class Capture:
         self.sinks = list(sinks)
         self._running = running
         self._overflowed = overflowed
+        # Held across the fanout, and taken by `swap`. The fanout is the only place the
+        # sink list is read, and it is short — a few milliseconds against the ~100 ms
+        # the loop spends inside `read` — so a caller moving the radio waits for at most
+        # one frame's worth of transform.
+        self._lock = threading.Lock()
+        self._settling = False
 
     @property
     def want(self) -> int:
         """Samples per read: the largest any sink asked for, and never zero."""
         return max([sink.want for sink in self.sinks] + [1])
 
+    def swap(self, sinks: list[Sink], apply: Callable[[], None] | None = None) -> None:
+        """Move the radio and replace the sinks, without stopping the capture.
+
+        `apply` runs before any NEW sink has seen a reading, which is the property that
+        matters: no chain is ever handed samples from a frequency it was not built for.
+        An OLD sink may still be finishing the buffer it was given, and that is correct —
+        those samples really are from where it thinks they are.
+
+        The old sinks are NOT closed: on a retune the encoder they write to is the same
+        encoder, and closing its stdin is what ends the audio.
+
+        **The two locks never invert.** `apply` runs under this one and takes the
+        radio's `_io_lock` inside `retune`; the loop takes the radio's lock inside
+        `read` and this one only AFTER that read has fully returned. So no thread ever
+        holds one while waiting for the other. What the two do contend for is the
+        driver: the retune's settle discards through `read_into` while the pump may be
+        mid-frame, so some of the stale samples end up in the pump's buffer instead of
+        the barrier's — which is precisely the buffer `_settling` throws away.
+
+        The next reading is DROPPED. `Radio.read` assembles a frame from several
+        `readStream` calls and `_io_lock` only stops a retune landing inside one of
+        them — so the buffer in flight when this returns straddles two frequencies, and
+        it is labelled with the one it started on. One dropped frame is 100 ms against
+        the ~600 ms a pipeline rebuild costs, and it is the difference between a click
+        and a gap."""
+        with self._lock:
+            if apply is not None:
+                apply()
+            self.sinks = list(sinks)
+            self._settling = True
+
     def run(self) -> None:
         """Read until the caller says stop or the radio goes away."""
-        want = self.want
         try:
             while self._running() and self.held.alive:
-                reading = self.held.read(want)
+                # Re-read every turn rather than once: `swap` can change what the sinks
+                # want, and a `want` captured before it would size every later read for
+                # a chain that is gone.
+                reading = self.held.read(self.want)
                 if reading.overflows and self._overflowed is not None:
                     self._overflowed(reading.overflows)
-                for sink in self.sinks:
+                with self._lock:
+                    if self._settling:
+                        # The buffer that straddled the retune. Dropped rather than fed
+                        # to sinks that would draw it at the frequency it started on.
+                        self._settling = False
+                        continue
+                    sinks = self.sinks
+                for sink in sinks:
                     sink.feed(reading)
         finally:
             # Every sink, even after one of them raised: the encoder's stdin has to be

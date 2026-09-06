@@ -283,3 +283,92 @@ def test_a_band_sink_nobody_is_watching_does_no_work() -> None:
     watching[0] = True
     _run(_Radio(frames=3), [sink], frames=3)
     assert len(rows) == 3
+
+
+class _SwapsOnce(_Recorder):
+    """A sink that asks its capture to move, from inside the fanout.
+
+    Deterministic where a thread would be a race, and it is also the real shape: a
+    request thread calls `swap` while the pump is somewhere in its cycle."""
+
+    def __init__(self, cap_box: list[Any], sinks: list[Any], apply=None, want: int = 0):
+        super().__init__(want)
+        self._box = cap_box
+        self._sinks = sinks
+        self._apply = apply
+
+    def feed(self, reading: Any) -> None:
+        super().feed(reading)
+        if len(self.seen) == 1:
+            self._box[0].swap(self._sinks, self._apply)
+
+
+def test_a_swap_moves_the_radio_before_any_new_sink_sees_a_reading() -> None:
+    """The ordering the whole of A2 rests on: no chain is ever handed samples from a
+    frequency it was not built for. `apply` runs first, the buffer that straddled the
+    move is dropped, and only then does the new sink start reading."""
+    held = _Radio(frames=6)
+    moved: list[int] = []
+    new = _Recorder()
+
+    def move() -> None:
+        held.center_hz = CENTER + 1_000_000
+        moved.append(held.center_hz)
+
+    box: list[Any] = [None]
+    old = _SwapsOnce(box, [new], move)
+    box[0] = capture.Capture(held, [old], running=lambda: True)
+    box[0].run()
+
+    assert moved == [CENTER + 1_000_000]
+    assert len(old.seen) == 1
+    assert new.seen, "the new sink never ran"
+    assert all(r.center_hz == CENTER + 1_000_000 for r in new.seen)
+    assert all(r.center_hz == CENTER for r in old.seen)
+
+
+def test_a_swap_drops_the_buffer_that_straddled_it() -> None:
+    """`Radio.read` assembles a frame from several `readStream` calls, so the buffer in
+    flight when the radio moves is half one frequency and half the other — and it is
+    labelled with the one it started on. One dropped frame is 100 ms against the ~600 ms
+    a pipeline rebuild costs."""
+    held = _Radio(frames=9)
+    sink = _Recorder()
+    cap = capture.Capture(held, [sink], running=lambda: True)
+    cap.swap([sink])  # armed before the loop starts, so the very first read is dropped
+
+    cap.run()
+
+    assert len(sink.seen) == 9  # ten readings taken, the first thrown away
+
+
+def test_a_swap_does_not_close_the_sinks_it_replaces() -> None:
+    """On a retune the encoder the old sink writes to is the SAME encoder, and closing
+    its stdin is what ends the audio. Only the capture ending closes anything."""
+    old, new = _Recorder(), _Recorder()
+    held = _Radio(frames=3)
+    cap = capture.Capture(held, [old], running=lambda: True)
+    cap.swap([new])
+    assert old.closed == 0
+
+    cap.run()
+
+    assert new.closed == 1
+    assert old.closed == 0  # it is not in the list any more; nothing to close
+
+
+def test_a_swap_resizes_the_read() -> None:
+    """A `want` captured once would size every later read for a chain that is gone —
+    on a mode change that is a different demodulator with a different appetite."""
+    held = _Radio(frames=4)
+    box: list[Any] = [None]
+    box[0] = capture.Capture(
+        held,
+        [_SwapsOnce(box, [_Recorder(want=240_000)], want=4096)],
+        running=lambda: True,
+    )
+
+    box[0].run()
+
+    assert held.wanted[0] == 4096
+    assert held.wanted[-1] == 240_000

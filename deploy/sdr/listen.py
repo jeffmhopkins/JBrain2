@@ -26,9 +26,19 @@ sequence of self-describing frames, so a listener can begin at any byte and a
 relaunched encoder simply continues the stream. That is the property this shape needs,
 and it is why internet radio has been served this way for thirty years.
 
-**Retuning restarts the pipeline, and must not hang up on anyone.** `rtl_fm` cannot be
-retuned in place, so a tune tears down and relaunches at the new frequency while
-keeping the SESSION id — the UI sees a continuous session with a brief audio gap
+**Retuning MOVES THE RADIO; it does not rebuild the pipeline.** That sentence used to
+read the other way round, because `rtl_fm` takes its frequency on the command line and
+has no control channel — but `rtl_fm` is the fallback now. On our own engine a retune
+is what it is in every other SDR application: a source parameter. `Radio.retune`
+changes the tuning on a LIVE stream, which `_sweep_hops` already does eleven times a
+second, and a listening capture never changes shape while it does — 2 400 000 samples
+a second for every mode, the property `demod.IF_RATE_HZ` was chosen around. So the
+stream, the pump, the encoder and every listener behind it all survive, and the owner
+hears a click of one dropped frame rather than the gap of a relaunch
+(`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A2).
+
+**Under `rtl_fm` it still tears down and relaunches, and must not hang up on anyone.**
+The SESSION id survives — the UI sees a continuous session with a brief audio gap
 rather than one that vanished and came back, which would flicker the icon and read as
 the lease having been dropped. Subscribers stay attached across that restart: the
 end-of-stream sentinel means the SESSION is over, never that its pipeline is being
@@ -1091,6 +1101,9 @@ class Session:
         # is and for the same reason — `_kill` walks PROCESSES and these are not.
         self._channel: "capture.ChannelSink | None" = None
         self._band: "capture.BandSink | None" = None
+        # The running fanout, so a retune can move the radio under it instead of tearing
+        # it down. None on `rtl_fm`, which has no radio of ours to move (A2).
+        self._capture: "capture.Capture | None" = None
         #: Which engine the running pipeline actually is. Written by whichever start
         #: path wins, so a runtime fallback is visible rather than inferred.
         self.engine = "rtl_fm"
@@ -1462,19 +1475,46 @@ class Session:
         # 32 kHz of it away since this path was written, so the samples cost nothing
         # more; the transform costs ~11% of a core and is done only while a viewer is
         # attached to the band (A1/A3, `LISTEN_BAND_BINS`).
-        # THE ENCODER IS BOUND IN, not read back off the session. `_restart` kills this
-        # pipeline and builds the next one WITHOUT joining this pump, so a sink that
-        # looked up `self._enc` at write or close time would, in that window, write the
-        # old radio's audio into the new encoder — and close the new encoder's stdin on
-        # its way out, killing the audio of the session that replaced it. The pump this
-        # replaced captured the handle at thread start for exactly this reason.
         enc = self._enc
+        assert enc is not None  # noqa: S101 - `Popen` above either bound it or raised
+        # Built HERE, before the pump thread exists, so a retune arriving in the first
+        # milliseconds of a session finds a capture to move rather than falling back to
+        # a rebuild on a timing accident.
+        self._capture = capture.Capture(
+            held,
+            self._listen_sinks(chain, enc),
+            running=lambda: not self._stopping,
+            overflowed=self._count_overflows,
+        )
+        self._threads = [
+            threading.Thread(target=self._pump_iq_listen, daemon=True),
+            threading.Thread(target=self._pump_audio, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _listen_sinks(
+        self, chain: "demod.Demodulator", enc: "subprocess.Popen[bytes]"
+    ) -> list["capture.Sink"]:
+        """The two sinks a listening capture fans out to, built around one demodulator.
+
+        A function rather than inline setup because a RETUNE rebuilds them: the mode may
+        have changed, and with it the IF, the filters and the rate the channel picture is
+        drawn at. The capture and the encoder both survive that (A2).
+
+        THE ENCODER IS BOUND IN, not read back off the session. `_restart` kills this
+        pipeline and builds the next one WITHOUT joining this pump, so a sink that looked
+        up `self._enc` at write or close time would, in that window, write the old
+        radio's audio into the new encoder — and close the new encoder's stdin on its way
+        out, killing the audio of the session that replaced it."""
         self._channel = capture.ChannelSink(
             chain,
             audio=lambda out: self._to_encoder(enc, out),
             view=self._publish_channel,
             view_bins=TUNING_BINS,
             want=max(TUNING_BINS, int(LISTEN_CAPTURE_HZ / TARGET_FPS)),
+            # Closed only when the CAPTURE ends, never on a retune — `Capture.swap`
+            # leaves the old sinks unclosed for exactly this reason.
             finish=lambda: _close_stdin(enc),
         )
         self._band = capture.BandSink(
@@ -1488,12 +1528,7 @@ class Session:
             # what this session is holding the radio to produce.
             active=lambda: self._wants_view(VIEW_BAND),
         )
-        self._threads = [
-            threading.Thread(target=self._pump_iq_listen, daemon=True),
-            threading.Thread(target=self._pump_audio, daemon=True),
-        ]
-        for thread in self._threads:
-            thread.start()
+        return [self._channel, self._band]
 
     def _to_encoder(self, enc: "subprocess.Popen[bytes]", out: "demod.Audio") -> None:
         """One buffer of demodulated audio: measured, taped, and written on to ffmpeg.
@@ -1540,19 +1575,11 @@ class Session:
         A read that fails ENDS the session rather than retrying forever, exactly as the
         spectrum pump does: the radio is gone, and audio that keeps flowing from a
         stopped stream would be silence presented as a working receiver."""
-        held, channel, band = self._radio, self._channel, self._band
-        if held is None or channel is None:
+        running = self._capture
+        if running is None:
             return
-        sinks: list[capture.Sink] = [channel]
-        if band is not None:
-            sinks.append(band)
         try:
-            capture.Capture(
-                held,
-                sinks,
-                running=lambda: not self._stopping,
-                overflowed=self._count_overflows,
-            ).run()
+            running.run()
         except (radio.RadioError, ValueError, BrokenPipeError, OSError):
             pass  # a stop, or the radio went away; teardown is `_kill`'s job
         finally:
@@ -2320,6 +2347,7 @@ KISSPORT {self.kiss_port}
         held, self._radio, self._spectrometer = self._radio, None, None
         self._demod = None
         self._channel = self._band = None
+        self._capture = None
         if held is not None:
             # A close that FAILS keeps its registry entry inside `radio.py`, so the
             # handle stays discoverable and `/reset` still refuses rather than firing a
@@ -2378,16 +2406,75 @@ KISSPORT {self.kiss_port}
         return self.purpose == PURPOSE_LISTEN and self.engine == "iq"
 
     def tune(self, frequency_hz: int, mode: str | None = None) -> None:
-        """Retune in place. Restarts the pipeline but keeps the session id, its
-        listeners, and — through `_restart` — its refusal to relaunch once released."""
-        wanted = validate(frequency_hz, mode or self.mode)
+        """Move this session to another station, keeping its id and its listeners.
 
-        def apply() -> None:
+        **IN PLACE on our own engine, which is the point (A2).** "`rtl_fm` cannot be
+        retuned in place" was true and is no longer the only engine: `Radio.retune` is a
+        source parameter change, and `_sweep_hops` already does it on a LIVE stream
+        eleven times a second. What a listening retune changes is the tuning and the
+        demodulator; what it does NOT change is the capture — 2 400 000 samples a second
+        for every mode, which is the property `demod.IF_RATE_HZ` was chosen around — so
+        the stream, the pump, the encoder and every listener behind it all survive.
+
+        The owner hears a click of one dropped frame instead of the gap of a whole
+        pipeline rebuild, and none of `_restart`'s guards are in play, because there is
+        no window in which this session is between pipelines at all.
+
+        Order matters and is the reverse of `_restart`'s: everything that can FAIL —
+        validation, then building the new demodulator — happens before the radio moves,
+        so a request that cannot be served leaves a working session exactly as it was."""
+        wanted = validate(frequency_hz, mode or self.mode)
+        running, held, enc = self._capture, self._radio, self._enc
+        if running is None or held is None or enc is None:
+            # `rtl_fm`, which really cannot be retuned: tear it down and build it again.
+            def apply() -> None:
+                self.frequency_hz = frequency_hz
+                self.mode = wanted
+                self.audio_peak = 0.0
+
+            self._restart(apply)
+            return
+        with self._lock:
+            if self._released:
+                raise SessionGone("that session has been released")
+        direct = frequency_hz < radio.DIRECT_MAX_HZ
+        try:
+            # No offset on the direct path: the tuner is powered down, so there is no LO
+            # and no leakage spike to dodge (`_start_iq_listen`).
+            chain = demod.Demodulator(
+                wanted,
+                LISTEN_CAPTURE_HZ,
+                offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+            )
+        except demod.DemodError as bad:
+            raise RadioUnavailable(f"this build cannot demodulate {wanted}: {bad}") from bad
+        sinks = self._listen_sinks(chain, enc)
+
+        def move() -> None:
+            held.retune(
+                center_hz=frequency_hz - int(chain.offset_hz),
+                direct=direct,
+            )
             self.frequency_hz = frequency_hz
             self.mode = wanted
             self.audio_peak = 0.0
+            self._demod = chain
 
-        self._restart(apply)
+        try:
+            running.swap(sinks, move)
+        except radio.RadioError as failed:
+            # `Radio.retune` sets rate, branch and frequency IN ORDER, so a failure
+            # partway leaves the radio somewhere nobody asked for — and a receiver that
+            # keeps demodulating a frequency it is not on is the silent failure this
+            # whole wave has been peeling. `_restart` ends the session when its relaunch
+            # fails; so does this, for the same reason.
+            self.stop()
+            raise RadioUnavailable(str(failed)) from failed
+        # The old station's rows, dropped rather than handed to the next viewer that
+        # attaches. A seeded row is there so a picture does not open blank; one from
+        # before the retune is a picture of somewhere else.
+        with self._lock:
+            self._last = {}
 
     def resweep(self, sweep: Sweep) -> None:
         """Point a live spectrum at a different range, in place.
@@ -2423,6 +2510,13 @@ KISSPORT {self.kiss_port}
 
     def _restart(self, apply: Callable[[], None]) -> None:
         """Tear the pipeline down, apply the new tuning, bring it back up.
+
+        **The path for a capture whose SHAPE changes, and for the engine that has no
+        other option.** `rtl_fm` takes its frequency on the command line, so a retune
+        there is a new process; a `resweep` changes the rate, the bin count and the hop
+        plan, which is a different capture rather than a different tuning. A listening
+        retune on our own engine goes through `tune` and never comes here (A2), which
+        is what took every guard below off the path the owner exercises most.
 
         Refuses once the session has been released, and this is the load-bearing half.
         The route resolves the Session under the tuner's lock and calls this OUTSIDE it,
