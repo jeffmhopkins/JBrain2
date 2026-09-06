@@ -1315,7 +1315,10 @@ class Session:
             held.set_gain(float(self.gain) if self.gain else None)
         self._radio = held
         self._demod = chain
-        self._tuning = iq.Spectrometer(TUNING_BINS, chain.if_rate_hz)
+        # `view_rate_hz`, not `if_rate_hz`: on wide FM the picture is drawn at twice
+        # the rate the audio is demodulated at, so that the row has spectrum either
+        # side of a 180 kHz station to measure it against (`demod.VIEW_MARGIN`).
+        self._tuning = iq.Spectrometer(TUNING_BINS, chain.view_rate_hz)
         try:
             self._enc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._enc_cmd(),

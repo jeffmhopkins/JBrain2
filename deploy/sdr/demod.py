@@ -125,6 +125,43 @@ CHANNEL_HALF_HZ: dict[str, float] = {
 #: filter if the picture is wider than the filter.
 VIEW_SHARE = 0.4
 
+#: How much wider than the channel the picture has to be before it can carry a NOISE
+#: FLOOR — a piece of the row that the demodulator is not listening to, which is what
+#: `_channel_floor` in the sidecar and `floorOf` in the PWA both measure "over the
+#: noise" against.
+#:
+#: This exists because widening the picture was not enough on its own. Wide FM's
+#: channel is 180 kHz inside a 240 kHz IF, so even a perfectly flat front end leaves
+#: 6 kHz a side outside the passband — and those bins are the station's own skirts.
+#: The old sagging filter had been SUPPRESSING them, which by accident made them look
+#: like a floor; flattening it handed the floor estimator the signal instead, and
+#: 96.5 — a station `rtl_power` sees 13 dB up — came back "nothing is transmitting
+#: here". A false negative on a strong station, from the fix for a false positive on
+#: an empty one.
+#:
+#: So when the IF is too narrow to hold both the channel and a margin, the PICTURE is
+#: taken further up the chain, at `view_rate_hz`, while the audio carries on down to
+#: `if_rate_hz` as before. The alternative — demodulating wide FM at 480 kHz — was
+#: measured at 21.7% of a core against 6.1%, because the audio filter's length goes
+#: with the rate it runs at. There is no reason the two should share a rate.
+VIEW_MARGIN = 1.5
+
+#: How many samples of the wide picture one frame produces — eight 512-bin segments
+#: for `iq.Spectrometer` to average over, which is close to what a narrow mode's whole
+#: buffer already gives it.
+#:
+#: The picture is a SLICE of the buffer rather than all of it, and only on the wide
+#: path. Filtering all 240 000 samples of a 100 ms capture down to 480 kHz costs a
+#: hundred taps at every one of the 48 000 outputs — measured at 20.3% of a core
+#: against 6.1% — and 47 900 of those outputs are then dropped, because a 512-bin
+#: transform consumes 4 096 samples and no more. Slicing first makes the same picture
+#: for a twelfth of the arithmetic. What it costs is honest and worth naming: a wide
+#: row integrates over 8.5 ms of the frame rather than all 100, so a burst inside the
+#: other 91.5 ms is not in it. For a station one is TUNED TO that is a trade worth
+#: making; the wideband waterfall, which exists to catch bursts, still sees every
+#: sample.
+VIEW_SAMPLES = 4096
+
 #: How long a window the AM carrier is averaged over, in AUDIO samples. The corner
 #: is roughly `audio_rate / length` — 31 Hz at 512 and 16 kHz — which is well below
 #: anything a voice channel carries and well above the drift it exists to remove.
@@ -429,7 +466,18 @@ class Demodulator:
         #: narrower than the channel: wide FM's 90 kHz is most of its 240 kHz IF
         #: already, so there is nothing to widen to and the front end is its own
         #: channel filter (`_build_channel` returns None for it).
-        self.view_half_hz = max(self.channel_half_hz, VIEW_SHARE * if_rate)
+        #: The rate the PICTURE is sampled at — the IF rate whenever that is wide
+        #: enough to hold the channel and a margin around it, and a whole multiple of
+        #: it when it is not (see `VIEW_MARGIN`).
+        self.view_rate_hz = if_rate
+        while (
+            VIEW_SHARE * self.view_rate_hz < VIEW_MARGIN * self.channel_half_hz
+            and self.view_rate_hz * 2 <= capture_rate_hz
+            and capture_rate_hz % (self.view_rate_hz * 2) == 0
+        ):
+            self.view_rate_hz *= 2
+        #: ...and how much of it the front end keeps flat.
+        self.view_half_hz = max(self.channel_half_hz, VIEW_SHARE * self.view_rate_hz)
         deviation = FM_DEVIATION_HZ.get(key)
         self._gain = FM_HEADROOM * if_rate / (2.0 * deviation) if deviation else 1.0
 
@@ -438,7 +486,18 @@ class Demodulator:
         #: The radio is tuned `offset_hz` above the station, so this is what a caller
         #: adds to the tuned frequency and subtracts from every spectrum centre.
         self.offset_hz = self._mixer.offset_hz
-        self._front = self._build_front(capture_rate_hz // if_rate)
+        # When the IF is wide enough to carry the picture — every mode but wide FM —
+        # the front end serves both and its output IS the picture, for free. When it
+        # is not, the front end serves the AUDIO only (so it need be flat across the
+        # channel and no wider, which is what keeps it cheap) and `_view` makes the
+        # wide picture separately out of the same buffer.
+        wide = self.view_rate_hz != if_rate
+        self._view_m = self.capture_rate_hz // self.view_rate_hz
+        self._front = self._build_front(
+            capture_rate_hz // if_rate,
+            kept=self.channel_half_hz if wide else self.view_half_hz,
+        )
+        self._view = self._build_view() if wide else None
         self._channel = self._build_channel()
         self._back = self._build_back()
         # The discriminator differentiates phase, so it needs the sample BEFORE the
@@ -451,7 +510,7 @@ class Demodulator:
 
     # -- construction ---------------------------------------------------------------
 
-    def _build_front(self, total: int) -> list[_Fir]:
+    def _build_front(self, total: int, *, kept: float) -> list[_Fir]:
         """The decimation from the capture rate down to the IF. ANTI-ALIAS ONLY.
 
         Split into at most two stages, coarse first. The first stage only has to
@@ -473,7 +532,6 @@ class Demodulator:
         edge is what buys a passband that is actually flat — the same taps, a response
         within a tenth of a decibel across the band instead of five decibels down at the
         edge of it (see `VIEW_SHARE` for what that cost on air)."""
-        kept = self.view_half_hz
         stages: list[_Fir] = []
         rate = float(self.capture_rate_hz)
         for m in _split(total):
@@ -485,6 +543,31 @@ class Demodulator:
             stages.append(_Fir(lowpass((kept + stop) / 2.0, rate, taps), m, complex_in=True))
             rate = out_rate
         return stages
+
+    def _build_view(self) -> np.ndarray:
+        """The taps that make the wide picture, reversed for a dot product.
+
+        Not an `_Fir`: this one keeps no state and is not fed everything. It runs over
+        the tail of each buffer only (`VIEW_SAMPLES`), so there is no continuity across
+        frames to preserve — an FFT window is its own beginning and end."""
+        m = self.capture_rate_hz // self.view_rate_hz
+        stop = self.view_rate_hz - self.view_half_hz
+        taps = _taps_for(max(stop - self.view_half_hz, 1.0), float(self.capture_rate_hz))
+        h = lowpass((self.view_half_hz + stop) / 2.0, float(self.capture_rate_hz), taps)
+        self._view_m = m
+        return np.ascontiguousarray(h[::-1])
+
+    def _view_row(self, stream: np.ndarray) -> np.ndarray:
+        """`VIEW_SAMPLES` of the wide picture, from the end of this buffer."""
+        taps = self._view
+        if taps is None:
+            return stream
+        need = VIEW_SAMPLES * self._view_m + taps.size
+        chunk = stream[-need:] if stream.size > need else stream
+        if chunk.size < taps.size + self._view_m:
+            return np.zeros(0, dtype=np.complex64)
+        window = sliding_window_view(chunk, taps.size)[:: self._view_m]
+        return (window @ taps).astype(np.complex64)
 
     def _build_channel(self) -> _Fir | None:
         """The selectivity, at the IF rate: what the demodulator actually hears.
@@ -498,12 +581,15 @@ class Demodulator:
         is already most of Nyquist, so the front end is its own channel filter there and
         a second pass would buy a fraction of a decibel for a hundred and sixty taps."""
         kept = self.channel_half_hz
-        if kept >= 0.9 * self.view_half_hz:
+        # Against the IF's own usable half-band, since this runs at the IF rate — the
+        # view can be wider and for wide FM is.
+        room = 0.45 * self.if_rate_hz
+        if kept >= 0.9 * room:
             return None
         # Wide enough to be affordable, narrow enough that the stopband is inside the
-        # picture — a transition that ran past `view_half_hz` would be shaped by the
-        # front end instead, which is the confusion this split exists to end.
-        stop = min(self.view_half_hz, kept + max(0.5 * kept, 2_000.0))
+        # band this filter runs in — a transition that ran past it would be shaped by
+        # the stage above instead, which is the confusion this split exists to end.
+        stop = min(room, kept + max(0.5 * kept, 2_000.0))
         taps = _taps_for(stop - kept, float(self.if_rate_hz))
         return _Fir(lowpass((kept + stop) / 2.0, float(self.if_rate_hz), taps), 1, complex_in=True)
 
@@ -550,13 +636,17 @@ class Demodulator:
         if iq.dtype != np.complex64:
             iq = iq.astype(np.complex64)
         stream = self._mixer.feed(iq)
+        # The wide picture, when there is one, comes off the MIXER output — before the
+        # front end has narrowed the band to what the audio needs.
+        wide = self._view_row(stream) if self._view is not None else None
         for stage in self._front:
             stream = stage.feed(stream)
-        # The picture is taken HERE, between the anti-alias filter and the channel one,
-        # and the audio goes on through the channel filter. One buffer, two widths.
+        # ...and when there is not, the front end's own output is the picture, which is
+        # the whole economy of this path: one filter, two readings.
+        view = stream if wide is None else wide
         channel = self._channel.feed(stream) if self._channel is not None else stream
         pcm, peak, clipped, rms = self._to_pcm(channel)
-        return Audio(pcm=pcm, baseband=stream, peak=peak, clipped=clipped, rms=rms)
+        return Audio(pcm=pcm, baseband=view, peak=peak, clipped=clipped, rms=rms)
 
     def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float, float, float]:
         if baseband.size == 0:
