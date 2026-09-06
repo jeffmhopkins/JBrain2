@@ -421,6 +421,16 @@ says about it. `GET /api/debug/sdr/sessions` (CLI `sdr-sessions`) closes that, a
 the same `status_of` the composer does — a twin that re-derived the choice would put back
 the second policy B7 deleted.
 
+Through it, on a **real two-session box** (162.55 nfm on 09022796, a 2 m spectrum on
+77192819): `sessions` carried both and `listening` named the LISTEN session — the choice
+made in the api, out of what the sidecar sent. A second probe over 12 s under the same
+contention held **10.15 fps**, 122 frames, `ok: true`.
+
+The one case hardware could not stage is the listener on the HIGHER serial, because
+`POST /api/debug/sdr/listen` picks the radio itself. That is what
+`test_current_means_the_LISTENING_session` and `test_serial_only_breaks_a_tie` are for,
+and both fail if the ranking degrades to serial order.
+
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
