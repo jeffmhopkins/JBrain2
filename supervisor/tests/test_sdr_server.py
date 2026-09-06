@@ -1700,8 +1700,8 @@ def test_a_width_the_transform_never_used_is_a_finding() -> None:
 
 
 def test_a_frame_rate_that_cannot_tell_the_ENGINES_APART_is_a_finding() -> None:
-    """`rtl_power` clamps its interval to `>= 1s` in its own C, and removing that ceiling
-    is what this whole plan is for.
+    """`rtl_power` clamps its interval to `>= 1s` in its own C, and removing that
+    ceiling is what this whole plan is for.
 
     The finding used to say "no better than rtl_power's own one-second clamp", which was
     false at the threshold: `RTL_POWER_CEILING_FPS` is 1.5, a MARGIN over the clamp, and
