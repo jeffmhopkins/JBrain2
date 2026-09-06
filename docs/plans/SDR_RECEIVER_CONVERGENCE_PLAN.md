@@ -525,6 +525,12 @@ is not a trade worth making.
 **C16 is closed as measured-and-declined.** Revisit if `AUDIO_RATE` ever rises to 48 kHz,
 where the shaped design wins outright.
 
+**VERIFIED ON AIR 2026-09-06.** NOAA 162.55 nfm: 33.1 dB SNR, 0 overflows, 10.09 fps, no
+clipping, no findings. 96.5 wbfm with `--transcribe`: **coherent words came back** —
+"alone now / there doesn't seem to be / anyone around" — which is the sharpest test
+available, because an FM discriminator is amplitude-blind and a chain demodulating the
+wrong spectrum reads healthy on every other number while producing noise.
+
 ## W6b — what shipped (2026-09-06)
 
 ### C13 — AM and SSB stop being as loud as the propagation happens to make them
@@ -598,6 +604,15 @@ the real passband in the "noise". Fixed with the same `passbandEdges` helper the
 and the spill now share. **No test claims it**: on a 341-bin row the passband is 23% of
 the bins, so a median cannot be moved by the mistake, and a fixture that appeared to prove
 it would be measuring something else.
+
+**VERIFIED ON AIR 2026-09-06**, three readings, each answering a different half:
+
+| probe | agc | what it shows |
+|---|---|---|
+| 162.55 nfm | **0.0 dB** | FM is untouched. rms 0.274, peak 0.715, 38.6 dB SNR, no clipping — the same numbers as before W6b. |
+| 143.9985 usb (a real carrier 1.5 kHz inside the passband) | **+5.3 dB** | `passband_hz` on the wire is **3100**, not 6800: C14 is live. |
+| 144.0 usb (the same carrier moved to the passband edge) | **+13.1 dB** | The AGC follows the signal down — the same carrier, eight decibels weaker through the filter, eight decibels more gain. |
+| 128.5 am (a dead air-band channel) | **+20.4 dB** | And the probe still says *"nothing is transmitting here: the strongest bin is 2.9 dB over the channel's own noise floor"*. **This is the C13 design property on air**: the AGC made the hiss audible without making the level meter lie about it, because `audio_rms` is measured before the gain. |
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
 C27 need hardware: add probe rungs rather than guessing. **Plus C29, found by W5a's own
