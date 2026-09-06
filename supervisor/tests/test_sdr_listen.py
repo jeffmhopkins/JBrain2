@@ -813,6 +813,28 @@ class TestSurveySession:
         # incomparable across the sweep, and every threshold built on them drifts.
         assert cmd[cmd.index("-g") + 1] == "30"
 
+    def test_a_survey_fixes_the_gain_even_when_nobody_asked(self, monkeypatch) -> None:
+        """AGC was the DEFAULT, which is the thing the comment above warns against.
+
+        `-g` was passed only when a caller named a gain, so every sweep run from the
+        Radio tab or the agent measured through a moving gain. MEASURED ON AIR
+        2026-09-06, three 162.3-162.7 sweeps each way: on AGC the floor wandered and the
+        reduction reported a station at 162.35 — not a NOAA channel, not anything, just
+        the gain breathing — while 162.550, which is real, appeared on some runs and not
+        others. At a fixed 30 dB the floor holds to 0.2 dB, 162.550 is found every time,
+        and 162.35 is gone."""
+        _instant(monkeypatch)
+        monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        session = listen.Session(
+            144_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=self._sweep()
+        )
+        try:
+            cmd = session._sweep_cmd()
+        finally:
+            session.stop()
+        assert cmd[cmd.index("-g") + 1] == str(listen.MEASURING_GAIN_DB)
+
 
 class TestAddressingOneRadioOfSeveral:
     """Both pipelines must open the radio they were TOLD to, not the first one.
@@ -1738,6 +1760,15 @@ class TestTheLiveSpectrum:
         assert cmd[cmd.index("-i") + 1] == "1"
         assert cmd[cmd.index("-g") + 1] == "30"
 
+    def test_a_live_spectrum_fixes_the_gain_even_when_nobody_asked(self, tuner) -> None:
+        """Same fault as the survey's, and worse on a picture: a waterfall whose dB
+        scale is a property of whatever the tuner's AGC was doing has no two rows that
+        mean the same thing, and no two runs either."""
+        session = self._start(tuner)
+        assert session._spectrum_cmd()[session._spectrum_cmd().index("-g") + 1] == str(
+            listen.MEASURING_GAIN_DB
+        )
+
     def test_the_rows_are_line_buffered_when_stdbuf_is_here(self, tuner) -> None:
         session = self._start(tuner)
         assert session._spectrum_cmd()[:3] == ["stdbuf", "-oL", "rtl_power"]
@@ -2404,6 +2435,9 @@ class TestIQSpectrumEngine:
                     timeouts=0,
                 )
 
+            def set_gain(self, db: float | None) -> None:
+                opened["gain_db"] = db
+
             def close(self) -> None:
                 opened["closed"] = True
 
@@ -2434,6 +2468,13 @@ class TestIQSpectrumEngine:
         # And it opened the radio the capture named, not a rate of its own choosing.
         assert opened["rate_hz"] == rate_hz
         assert opened["direct"] is False
+        # AND IT SET THE GAIN. `Radio.open` does not touch it, so without this the
+        # picture ran at whatever librtlsdr was left at by the previous session — a dB
+        # scale that is a property of history rather than of the band. The fake had no
+        # `set_gain` at all when this was written, which is why the omission survived:
+        # the call is suppressed broadly, so a radio that cannot take a gain still
+        # draws, and a test whose fake cannot take one asserts nothing.
+        assert opened["gain_db"] == listen.MEASURING_GAIN_DB
 
 
 def test_the_audio_level_is_named_for_what_it_measures() -> None:
