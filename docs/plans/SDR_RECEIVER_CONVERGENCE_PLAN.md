@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** Proposed · **Last verified:** 2026-09-06 · **Waves:** W1 W2 W3 W4 W5 W6 W7
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -58,16 +58,16 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 
 | # | Finding | Evidence |
 |---|---|---|
-| **C1** | **Use-after-free.** `read_into` calls `readStream` outside `self._lock`; `close()` nulls the handles under it and frees them outside. `_kill` (`listen.py:2142`) closes the radio **without joining the pump threads**; `stop()` never joins. A pump inside `readStream` while `closeStream` frees the buffer vector and `unmake` deletes the device is a segfault of the container. `held.alive` is TOCTOU. | **[V]** by reading both call paths |
-| **C2** | **`_build_back` places its cutoff at the passband edge** — the identical bug fixed in `_build_front` on 2026-09-06, left in the sibling function. `stop` is computed for the tap count and discarded. | **[V]** measured through nfm: −3.1 dB @ 2 kHz, **−6.6 @ 3 kHz**, −12.5 @ 4 kHz. Muffled consonants on every NFM/AM voice signal. AM has no de-emphasis alibi. |
+| **C1 ✅** | **Use-after-free.** `read_into` calls `readStream` outside `self._lock`; `close()` nulls the handles under it and frees them outside. `_kill` (`listen.py:2142`) closes the radio **without joining the pump threads**; `stop()` never joins. A pump inside `readStream` while `closeStream` frees the buffer vector and `unmake` deletes the device is a segfault of the container. `held.alive` is TOCTOU. | **[V]** by reading both call paths |
+| **C2 ✅** | **`_build_back` places its cutoff at the passband edge** — the identical bug fixed in `_build_front` on 2026-09-06, left in the sibling function. `stop` is computed for the tap count and discarded. | **[V]** measured through nfm: −3.1 dB @ 2 kHz, **−6.6 @ 3 kHz**, −12.5 @ 4 kHz. Muffled consonants on every NFM/AM voice signal. AM has no de-emphasis alibi. |
 | **C3** | **`peaks.find` blows the frame budget 2–19×** on the capture thread, so the wideband waterfall is throttled and USB buffers overflow — defeating the "the radio never looks away" property `iq.py` exists to guarantee. | **[V]** 238 / 321 / 1910 ms vs 100 ms. Retroactively explains the "0.33 fps on the FM dial" the runbook blamed on retune settle. |
 
 ### C2 tier — measured, fix soon
 
 | # | Finding | Evidence |
 |---|---|---|
-| **C4** | **`LISTEN_OFFSET_HZ = 240_000` folds the LO/DC spike onto the tuned station.** 240 kHz is exactly 5 × the 48 kHz IF, so the receiver's own DC offset aliases to **0 Hz**, suppressed only by the window's stopband. `300_000` is still a whole division of 2.4 MHz so the mixer snaps to it exactly. | **[V]** residue at **+0 Hz, −61 dB** today; at 300 kHz, **−137 dB at −12 kHz**. 76 dB for one constant. |
-| **C5** | **`_build_channel` builds a 53-tap wide-FM filter its own docstring says it returns `None` for.** Introduced 2026-09-06 when the guard moved from `view_half_hz` to `0.45 × if_rate`. Costs 18% of the wide-FM chain and narrows the signal. | **[V]** |
+| **C4 ✅** | **`LISTEN_OFFSET_HZ = 240_000` folds the LO/DC spike onto the tuned station.** 240 kHz is exactly 5 × the 48 kHz IF, so the receiver's own DC offset aliases to **0 Hz**, suppressed only by the window's stopband. Shipped as **126_000** (2.4 MS/s ÷ 19), not the 300 kHz first proposed: 300 kHz fixes the narrow modes but still lands the spike inside wide FM's channel, and every divisor from 5 to 25 was measured to find the one whose worst case across nfm/wbfm/am is lowest. | **[V]** residue at **+0 Hz, −65 dB** before; **−157 dB at +17.7 kHz** after. |
+| **C5 ✅** | **`_build_channel` builds a 53-tap wide-FM filter its own docstring says it returns `None` for.** Introduced 2026-09-06 when the guard moved from `view_half_hz` to `0.45 × if_rate`. Costs 18% of the wide-FM chain and narrows the signal. | **[V]** |
 | **C6** | **The detection baseline window can only grow and is never clamped to the row.** `max(400 kHz, 21 × channel_hz)` exceeds the whole row for any sweep < 400 kHz, every 256 kS/s capture, and any 200 kHz raster — silently degrading to a global median. This is the 162.55 blind spot generalised, and a test currently *pins* the behaviour. | **[V]** the constants, and the on-air miss |
 | **C7** | **`SessionInfo.engine` is never set to `"rtl_power"` and never set in `_start_iq_spectrum`.** A waterfall on our own engine reports `"rtl_fm"`. `server.py:1175` works around it by reading a private attribute with a `noqa`. | **[V]** |
 | **C8** | `Device.unmake(device)` bypasses the SWIG binding's own deleter, so `__del__` unmakes a second time and throws inside the destructor on every teardown. | **[R]** binding source read |
@@ -124,7 +124,7 @@ Recorded so no future wave "improves" a thing that was measured right.
 
 Each is one PR, per `PROCESS.md`. Verified from `supervisor/`.
 
-**W1 — Stop the bleeding.** C1 (join pumps before close, or an `_io_lock` spanning `read_into` and `close`), C2, C5, C4. Regression tests: a close racing an in-flight read; audio flatness through the back end (there is no such test today, which is why C2 was invisible); DC-spike suppression (also absent).
+**W1 — Stop the bleeding. ✅ shipped 2026-09-06.** C1 (join pumps before close, or an `_io_lock` spanning `read_into` and `close`), C2, C5, C4. Regression tests: a close racing an in-flight read; audio flatness through the back end (there is no such test today, which is why C2 was invisible); DC-spike suppression (also absent).
 
 **W2 — The measuring path tells the truth.** B3 + C3 (vectorised baseline), C6 (clamp the window to the row; move the baseline statistic off the median so a window that is majority-signal still reads noise), C10, C11, C7, B6. Delete the test that pins C6.
 
@@ -137,6 +137,31 @@ Each is one PR, per `PROCESS.md`. Verified from `supervisor/`.
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and C27 need hardware: add probe rungs rather than guessing.
+
+
+## W1 — what shipped, and what it measured (2026-09-06)
+
+All four landed with five regression tests, each verified to fail on the code before it.
+
+- **C1** `Radio._io_lock` spans `read_into` and the whole of `close()`; `close()` now
+  waits for an in-flight read rather than freeing under it.
+- **C2** `_build_back` cuts at the midpoint. The chain now tracks the ideal de-emphasis
+  curve to **0.1 dB** where it was **1.8 dB** below it at 3 kHz.
+- **C5** wide FM builds no channel filter, as its docstring always claimed.
+- **C4** `LISTEN_OFFSET_HZ = 126_000` (2.4 MS/s ÷ 19). Narrowband residue **-65 dB at
+  0 Hz → -157 dB at +17.7 kHz**.
+
+**C4 is margin, not a visible fix, and the box said so before the change.** An empty
+channel's strongest bin already wandered (-9.3, -9.8, +7.6 kHz across three runs), so
+the spike sits ~25 dB under the noise floor. Removed while it is cheap; not a fault the
+owner was seeing.
+
+**The two test CATEGORIES that were missing** — response against frequency, and where
+the DC spike lands — are why C2 and C4 survived. Every previous audio test used one
+tone at 1 kHz, where C2 is 0.9 dB. `test_full_deviation_reaches_most_of_full_scale` then
+broke on the fix and had to move to the settled audio: it read `Audio.peak` over the
+whole buffer, which is the filter's own step response, and had been passing only because
+the sag held that transient under 1.0. Third time that trap has fired in this file.
 
 ## Risks
 
