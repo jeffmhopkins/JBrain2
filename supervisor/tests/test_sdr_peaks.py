@@ -186,19 +186,43 @@ def test_the_band_plan_widens_the_fold_and_cannot_narrow_it() -> None:
     assert len(peaks.find(row, 88_000_000, 9375, channel_hz=0)) == 1
 
 
-def test_a_carrier_wider_than_its_own_baseline_window_hides_itself() -> None:
-    """Why `channel_hz` reaching the sidecar is a CORRECTNESS matter and not a
-    refinement. The baseline window is 400 kHz when nobody says otherwise, and a 200 kHz
-    FM carrier is half of that — so the median it is judged against is the carrier, and
-    it stands 0 dB above itself. The band plan makes the window 21 channels wide, where
-    one signal is under 5% of it.
+def test_a_carrier_is_found_even_when_it_fills_much_of_its_own_baseline() -> None:
+    """This test used to assert the OPPOSITE, and pinning it kept a real fault alive.
 
-    Pinned as a test because it is the failure `bands.py` already reasoned about and the
-    one a retune reintroduced by dropping the raster."""
+    It said a 200 kHz carrier in a 400 kHz baseline window "hides itself", stands 0 dB
+    above itself, and that naming `channel_hz` is what rescues it. The first half was
+    true; the second was a workaround. `channel_hz` only ever made the window WIDER, so
+    on any row narrower than the window — a sweep under 400 kHz, a 256 kS/s capture, a
+    200 kHz raster — the baseline silently became a global median and the signal was
+    still measured against itself. Measured on air 2026-09-06: a 162.3-162.7 sweep
+    missed NOAA on 162.550 while it was the strongest bin in the row, 9.8 dB over its
+    own median.
+
+    Two changes make the failure unreachable rather than avoidable: the window is capped
+    at a third of the row, and the statistic is the 35th percentile rather than the
+    median, so a signal filling a third of its own reference still has noise under it.
+    Naming the raster now places the window better; it is no longer a rescue."""
     row = _flat(400)
-    # 24 bins is ~225 kHz, wider than half of a 400 kHz baseline window.
+    # 24 bins is ~225 kHz — more than half a 400 kHz baseline window, and the exact
+    # case that used to read as nothing at all.
     for index in range(100, 124):
         row[index] = -50.0
 
-    assert peaks.find(row, 88_000_000, 9375, channel_hz=0) == []
+    assert len(peaks.find(row, 88_000_000, 9375, channel_hz=0)) == 1
     assert len(peaks.find(row, 88_000_000, 9375, channel_hz=200_000)) == 1
+
+
+def test_the_baseline_window_never_exceeds_a_third_of_the_row() -> None:
+    """The clamp, as the invariant rather than one of its consequences.
+
+    Without it the window grows on demand and the row does not: 21 channels of a 200 kHz
+    raster is 4.2 MHz, which is wider than any row this radio can produce."""
+    for bins, bin_hz, channel_hz in (
+        (128, 3125.0, 25_000),  # the 162.3-162.7 sweep that missed NOAA
+        (256, 1000.0, 0),  # a 256 kS/s capture
+        (4000, 600.0, 200_000),  # the FM dial
+        (4000, 600.0, 0),
+    ):
+        assert peaks.baseline_width(bins, bin_hz, channel_hz) <= max(
+            peaks.BASELINE_MIN_BINS, bins // 3
+        )

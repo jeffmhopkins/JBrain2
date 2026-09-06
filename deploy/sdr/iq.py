@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 # The floor a silent bin lands on. log10(0) is -inf, `json.dumps` writes that as
 # `-Infinity`, and that is not JSON — `JSON.parse` in the PWA refuses the frame. An
@@ -172,11 +173,26 @@ class Spectrometer:
     numpy caches its pocketfft plan per transform size, so a long-lived instance is
     also what keeps that cache warm."""
 
-    def __init__(self, n: int, rate_hz: int) -> None:
+    def __init__(self, n: int, rate_hz: int, *, excise_dc: bool = False) -> None:
         if n < 2:
             raise ValueError("n must be at least 2")
         self.n = n
         self.rate_hz = rate_hz
+        #: Replace the centre bin with the mean of its neighbours.
+        #:
+        #: **Opt-in, because DC means two different things here.** On a WIDEBAND row the
+        #: radio is tuned to the middle of the picture, so bin zero is the LO — and every
+        #: direct-conversion receiver puts a DC offset spike exactly there. `radio.probe`
+        #: has always excised it (it measured +3.0 dBFS with every other bin at the
+        #: floor) and nothing on the live path did, so a stare drew one phantom station
+        #: per row at the tuned frequency and a stitched hop row drew a comb of them, one
+        #: per hop, against a cap of 24 peaks.
+        #:
+        #: On a CHANNEL row it is the opposite: the mixer put the station at DC on
+        #: purpose, so excising would delete the very thing the strip is drawing. Hence a
+        #: flag rather than a rule, set by the caller that knows which kind of row it is
+        #: making.
+        self.excise_dc = bool(excise_dc)
         self.bin_hz = bin_width_hz(rate_hz, n)
         # PERIODIC Hann (denominator n), not numpy's symmetric `np.hanning`
         # (denominator n-1). The DFT treats the segment as one period of an infinite
@@ -213,17 +229,41 @@ class Spectrometer:
         power down by the padded fraction — an invented reading is worse than a
         marginally shorter average."""
         iq = as_complex64(samples)
-        segments = int(iq.size) // self.n
+        # Counted the way `segments` is USED — as the averaging depth that sets a bin's
+        # variance — so overlapping segments count, but the whole-segment guard below
+        # still asks whether one fits at all.
+        segments = max(0, (int(iq.size) - self.n) // (self.n // 2) + 1) if iq.size >= self.n else 0
         if segments == 0:
             raise ValueError(
                 f"need at least one whole segment of {self.n} samples, got {iq.size}"
             )
-        seg2d = iq[: segments * self.n].reshape(segments, self.n) * self.window
+        # FIFTY PERCENT OVERLAP, which is what Welch means and what this did not do.
+        # A Hann window at 0% overlap throws away about half the buffer by weight — the
+        # samples near each segment boundary are multiplied by nearly zero and no other
+        # segment covers them — so the module docstring's boast about "not ignoring
+        # samples the radio did hand us" was exactly what it was doing. Measured on the
+        # tuning row: per-bin sigma 1.49 -> 1.09 dB, and an EMPTY channel's apparent
+        # peak-over-floor falls from a mean of 3.89 dB to 3.08, against a threshold of
+        # 6.0 that had only ~0.7 dB of headroom. It costs one extra transform per
+        # segment, which is nothing beside the peak-finding next door.
+        step = self.n // 2
+        starts = np.arange(0, iq.size - self.n + 1, step)
+        seg2d = sliding_window_view(iq, self.n)[starts] * self.window
         spec = np.fft.fft(seg2d, axis=1)
         # `real**2 + imag**2` rather than `abs(spec)**2`: the same number without the
         # square root that the square would immediately undo.
         power = spec.real**2 + spec.imag**2
         mean = power.mean(axis=0)
+        if self.excise_dc and mean.size >= 5:
+            # THREE bins, not one, and that is this window's own arithmetic: a periodic
+            # Hann's transform is exactly `(-1/4, 1/2, -1/4)`, so anything bin-centred —
+            # and a DC offset is exactly bin-centred — lands in its two neighbours at
+            # -6.02 dB as well. Replacing only bin zero left them 9.6 dB over the floor,
+            # which is still a phantom carrier, just a narrower one.
+            #
+            # Before `fftshift`, so DC is index 0 and the three bins are -1, 0, +1.
+            edge = 0.5 * (mean[2] + mean[-2])
+            mean[0] = mean[1] = mean[-1] = edge
         mean *= self._power_scale
         np.maximum(mean, _POWER_FLOOR, out=mean)
         db = np.fft.fftshift(10.0 * np.log10(mean))

@@ -198,14 +198,32 @@ TARGET_FPS = 10.0
 #: changes the capture and a retune never has to re-open the stream at a new rate.
 LISTEN_CAPTURE_HZ = 2_400_000
 
-#: How far ABOVE the station the radio is tuned, with the offset taken back out in
+#: How far BELOW the station the radio is tuned, with the offset taken back out in
 #: software (`demod.Demodulator(offset_hz=...)`). Tuning the LO onto the station would
 #: sit the RTL2832U's own DC/LO-leakage spike exactly on the carrier — a birdie in the
 #: middle of the thing you are listening to, and a spike in the middle of the tuning
-#: view drawn from the same samples. `_Mixer` snaps this to a whole division of the
-#: rate; 240 kHz already is one, and it is well inside the 5/6 of the capture the
-#: R820T2's IF filter passes flat.
-LISTEN_OFFSET_HZ = 240_000
+#: view drawn from the same samples. BELOW, because `_Mixer` shifts the spectrum DOWN,
+#: so what reaches DC is what sat above the centre (`demod.Demodulator.offset_hz`).
+#:
+#: **Moving the spike off the carrier is not enough; the decimation has to not fold it
+#: back.** 240 000 is exactly five times the 48 kHz narrowband IF and one times the
+#: 240 kHz wide-FM one, so it folded to 0 Hz — the tuned frequency itself.
+#:
+#: MEASURED 2026-09-06, unit DC in, RMS at the discriminator's input AND in the picture
+#: the strip draws, every divisor of the capture rate from 5 to 25, worst case across
+#: all six modes:
+#:
+#:   240 kHz (was)     audio -63.0 dB     view  -6.0 dB
+#:   300 kHz (now)     audio -74.1 dB     view -62.3 dB
+#:
+#: **Scored on SUPPRESSION, not position, and that correction matters.** A first pass
+#: chose 126 kHz because it put the spike outside every mode's channel by FREQUENCY —
+#: which for wide FM is meaningless, since the filter that would act on it is a few
+#: kilohertz further out. That reading was 52 dB wrong: 126 kHz measures -11.0 dB on
+#: wide FM, worse than the value it replaced. The picture is scored too, because for
+#: any offset below ~250 kHz the spike lands inside the wide-FM view UNATTENUATED and
+#: the tuning strip would draw the receiver looking at itself as a station.
+LISTEN_OFFSET_HZ = 300_000
 
 #: Bins in the tuning view's transform. 512 over a 48 kHz IF is 93.75 Hz — six times
 #: finer than the 600 Hz a 4000-bin transform of the whole 2.4 MHz capture gives, for
@@ -1192,6 +1210,7 @@ class Session:
         real and the Tuner owns it."""
         if shutil.which("rtl_power") is None:
             raise SdrError("rtl_power is not installed in this image")
+        self.engine = "rtl_power"
         try:
             self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._sweep_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1270,6 +1289,7 @@ class Session:
                 return
         if shutil.which("rtl_power") is None:
             raise SdrError("rtl_power is not installed in this image")
+        self.engine = "rtl_power"
         try:
             self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -1479,7 +1499,17 @@ class Session:
         # session does without, not a reason to refuse to draw.
         with contextlib.suppress(Exception):
             self._radio.set_gain(float(self.gain) if self.gain else MEASURING_GAIN_DB)
-        self._spectrometer = iq.Spectrometer(bins, rate_hz)
+        # WHICH ENGINE RAN, said by the engine that ran. This was set only on the two
+        # listening paths, so a live spectrum on our own I/Q engine reported `rtl_fm`
+        # and one that had fallen back reported `rtl_fm` too — the string "rtl_power"
+        # was never produced anywhere. `server._watch_spectrum` worked around it by
+        # reaching into `session._radio` with a `noqa`, which is the symptom; this is
+        # the cause. The field is a documented part of the PWA contract and drives a
+        # banner, so an unset one is a lie the owner reads.
+        self.engine = "iq"
+        # `excise_dc`: a wideband row is centred on the LO, so bin zero is the
+        # receiver looking at itself. The tuning view does the opposite and must not.
+        self._spectrometer = iq.Spectrometer(bins, rate_hz, excise_dc=True)
         self._threads = [threading.Thread(target=self._pump_iq_spectrum, daemon=True)]
         for thread in self._threads:
             thread.start()

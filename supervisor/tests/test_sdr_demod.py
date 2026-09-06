@@ -200,10 +200,179 @@ def test_fm_level_follows_deviation():
 
 def test_full_deviation_reaches_most_of_full_scale():
     """The reason `FM_DEVIATION_HZ` exists: the discriminator's natural output for a
-    narrowband signal is a fifth of full scale, which is correct and sounds broken."""
+    narrowband signal is a fifth of full scale, which is correct and sounds broken.
+
+    Measured on the SETTLED audio, for the reason `test_fm_level_follows_deviation`
+    gives: `Audio.peak` spans the whole buffer and the filters start from zeroed tails,
+    so the loudest sample in a fresh chain is the step response, not the signal. This
+    read `out.peak` and passed only because the audio low-pass was sagging enough to
+    hold the transient under 1.0 — fixing that sag (the cutoff was on the passband
+    edge) took it to 1.13 and failed the assertion, which is the test noticing a
+    quantity it was never measuring."""
     built = demod.Demodulator("fm", CAPTURE_HZ)
-    out = built.feed(fm_signal(0.4, tone_hz=1_000.0, deviation_hz=5_000.0))
-    assert 0.6 < out.peak <= 1.0
+    pcm = built.feed(fm_signal(0.4, tone_hz=1_000.0, deviation_hz=5_000.0)).pcm
+    audio = settled(pcm, built.audio_rate_hz).astype(np.float64)
+    assert 0.6 < float(np.max(np.abs(audio))) / 32768.0 <= 1.0
+
+
+def _tone_level(built, pcm: np.ndarray, hz: float) -> float:
+    """The recovered tone's level in dB, past the chain's start-up transient."""
+    audio = settled(pcm, built.audio_rate_hz).astype(np.float64)
+    mag = np.abs(np.fft.rfft(audio * np.hanning(audio.size)))
+    freqs = np.fft.rfftfreq(audio.size, 1.0 / built.audio_rate_hz)
+    at = np.abs(freqs - hz) < 60.0
+    return 20.0 * np.log10(max(float(np.sqrt((mag[at] ** 2).sum())), 1e-12))
+
+
+def _sweep_audio(mode: str, make, hzs: tuple[float, ...]) -> list[float]:
+    """The chain's response across FREQUENCY, each point on a fresh chain."""
+    out = []
+    for hz in hzs:
+        built = demod.Demodulator(mode, CAPTURE_HZ)
+        out.append(_tone_level(built, built.feed(make(hz)).pcm, hz))
+    return out
+
+
+def test_the_audio_passband_is_flat_where_it_claims_to_be():
+    """THE TEST THAT WAS MISSING, and the reason `_build_back` shipped sagging.
+
+    Nothing here measured the chain against FREQUENCY. Every audio test used a single
+    tone at 1 kHz, where the defect is 0.9 dB and invisible; tone recovery, level
+    linearity and chunk invariance all pass on a filter whose passband is a slope.
+
+    AM is asserted on because it has no de-emphasis: its passband should simply be
+    flat. Measured with the cutoff on the passband edge it was ~2 dB down at 3 kHz with
+    nothing to blame it on."""
+    hzs = (300.0, 1_000.0, 2_000.0, 3_000.0)
+    levels = _sweep_audio("am", lambda hz: am_signal(0.5, tone_hz=hz), hzs)
+    for hz, level in zip(hzs[1:], levels[1:], strict=True):
+        # 0.5 dB, not the 1.5 this first used: the fixed chain measures 0.08 dB of
+        # droop and the broken one 1.93, so 1.5 left only 0.43 dB of margin — and the
+        # test would have passed the OLD code had the sweep stopped at 2 kHz.
+        assert level - levels[0] > -0.5, (
+            f"AM is {levels[0] - level:.1f} dB down at {hz} Hz"
+        )
+
+
+def test_fm_audio_is_shaped_by_de_emphasis_AND_NOTHING_ELSE():
+    """The FM half of the same question, and the sharper form of it.
+
+    FM's passband is deliberately tilted, so "flat" is the wrong assertion — but the
+    tilt has an exact shape, `1/sqrt(1 + (2*pi*f*tau)^2)`, and anything the anti-alias
+    filter adds on top of it is a defect. With the cutoff on the passband edge the
+    chain was 1.8 dB below the ideal curve at 3 kHz; it now tracks it to a tenth."""
+    tau = demod.DEEMPHASIS_S
+    hzs = (300.0, 1_000.0, 2_000.0, 3_000.0)
+    levels = _sweep_audio(
+        "fm", lambda hz: fm_signal(0.5, tone_hz=hz, deviation_hz=2_000.0), hzs
+    )
+    for hz, level in zip(hzs, levels, strict=True):
+        ideal = -10.0 * np.log10(1.0 + (2.0 * np.pi * hz * tau) ** 2)
+        got = level - levels[0]
+        want = ideal - (-10.0 * np.log10(1.0 + (2.0 * np.pi * hzs[0] * tau) ** 2))
+        assert abs(got - want) < 0.5, (
+            f"{hz} Hz is {got:.2f} dB, de-emphasis wants {want:.2f}"
+        )
+
+
+def _dc_leak_db(mode: str, capture_hz: int, offset_hz: float) -> tuple[float, float]:
+    """How much of a unit DC input survives to the discriminator, and to the picture.
+
+    RMS, in dB, for a DC bias of amplitude 1 — which is what the receiver's own LO
+    leakage looks like before the mixer moves it. Two numbers because there are two
+    places it can hurt: the audio, and the row the tuning strip draws."""
+    built = demod.Demodulator(mode, capture_hz, offset_hz=offset_hz)
+    return _dc_leak_db_of(built, capture_hz)
+
+
+def _dc_leak_db_of(built, capture_hz: int) -> tuple[float, float]:
+    """The same measurement on a chain already built, so a test can strip a stage."""
+    bias = np.ones(capture_hz // 10, dtype=np.complex64)
+    channel = view = None
+    for _ in range(6):  # let every filter tail fill with the spike
+        stream = built._mixer.feed(bias)
+        wide = built._view_row(stream) if built._view is not None else None
+        for stage in built._front:
+            stream = stage.feed(stream)
+        view = wide if wide is not None else stream
+        channel = built._channel.feed(stream) if built._channel else stream
+
+    def rms(x: np.ndarray) -> float:
+        return 20.0 * np.log10(max(float(np.sqrt(np.mean(np.abs(x) ** 2))), 1e-30))
+
+    assert channel is not None and view is not None
+    return rms(channel), rms(view)
+
+
+def test_the_receivers_own_dc_spike_is_suppressed_in_every_mode():
+    """`LISTEN_OFFSET_HZ` exists to keep the receiver's DC spike off the station, and it
+    only does that if the DECIMATION does not fold it back.
+
+    240 kHz — the value shipped until 2026-09-06 — is exactly 5x the 48 kHz IF and 1x
+    the 240 kHz one, so the spike aliased to 0 Hz: the tuned frequency, dead centre.
+
+    **Asserted as a LEVEL, and that is the whole point of this test's second draft.**
+    The first asserted POSITION — that the fold lands outside `channel_half_hz` — and
+    that is not the same question: it passed wide FM at -11 dBFS, certifying as fixed a
+    52 dB regression, and it had to exclude usb/lsb from its mode list because a
+    residue of -158 dB puts the argmax on an arbitrary bin. A test that must drop modes
+    to pass is measuring the wrong thing.
+
+    The view is asserted too: it is what the strip draws, and for a wide-FM picture
+    taken at `view_rate_hz` the spike can sit in the row unattenuated while the audio is
+    perfectly clean."""
+    listen = importlib.import_module("listen")
+    for mode in demod.IF_RATE_HZ:
+        audio, view = _dc_leak_db(
+            mode, listen.LISTEN_CAPTURE_HZ, float(listen.LISTEN_OFFSET_HZ)
+        )
+        assert audio < -60.0, f"{mode}: DC leaks into the audio at {audio:.1f} dBFS"
+        assert view < -40.0, f"{mode}: DC sits in the picture at {view:.1f} dBFS"
+
+
+def test_the_shipped_offset_beats_the_one_it_replaced():
+    """The claim the constant is chosen on, kept honest.
+
+    Every divisor of the capture rate is a candidate and most are worse; this pins that
+    the shipped value really is better than its predecessor on BOTH quantities, so a
+    future change to `IF_RATE_HZ` that quietly breaks the relationship fails here."""
+    listen = importlib.import_module("listen")
+    capture = listen.LISTEN_CAPTURE_HZ
+    for mode in demod.IF_RATE_HZ:
+        now = _dc_leak_db(mode, capture, float(listen.LISTEN_OFFSET_HZ))
+        was = _dc_leak_db(mode, capture, 240_000.0)
+        assert now[0] <= was[0] + 1.0, f"{mode}: audio {was[0]:.1f} -> {now[0]:.1f}"
+        assert now[1] <= was[1] + 1.0, f"{mode}: view {was[1]:.1f} -> {now[1]:.1f}"
+
+
+def test_wide_fm_has_a_channel_filter_and_needs_it():
+    """C5 proposed deleting this filter and was WITHDRAWN after an adversarial review.
+
+    `_build_channel`'s docstring said wide FM gets none because 90 kHz of channel in a
+    240 kHz IF "is already most of Nyquist, so the front end is its own channel filter".
+    The front end's stages are placed by the MIDPOINT rule, which puts their 6 dB points
+    at 240 and 120 kHz — and 120 kHz is not 90. Without this filter the demodulator
+    hears 30 kHz beyond its channel on each side, which is the guard band where the
+    neighbouring station's skirts live.
+
+    Asserted as SELECTIVITY, measured on the filter, because that is the filter's job.
+    (A first draft of this test tried to prove it through the LO spike and found the
+    filter buying 0 dB — true, and the wrong instrument: at the shipped offset the
+    front end suppresses the spike before the fold, so it never reaches this stage.)"""
+    built = demod.Demodulator("wbfm", CAPTURE_HZ)
+    channel = built._channel
+    assert channel is not None, "wide FM must have a channel filter"
+    assert demod.Demodulator("nfm", CAPTURE_HZ)._channel is not None
+
+    taps = channel._taps[::-1]
+
+    def at(hz: float) -> float:
+        turns = np.arange(taps.size) * hz / built.if_rate_hz
+        gain = abs((taps * np.exp(-2j * np.pi * turns)).sum())
+        return 20.0 * np.log10(max(gain, 1e-12))
+
+    assert at(built.channel_half_hz) > -1.0, "it must pass its own channel"
+    assert at(115_000.0) < -30.0, "it must reject what the front end still passes"
 
 
 def test_am_recovers_the_modulating_tone():
