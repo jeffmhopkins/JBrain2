@@ -2363,6 +2363,16 @@ KISSPORT {self.kiss_port}
     # ---- public surface -------------------------------------------------------
 
     @property
+    def stream_token(self) -> int:
+        """Identity of the open stream, or 0 when this engine holds none.
+
+        `setupStream` is called exactly once per `Radio`, so comparing this across a
+        retune is what PROVES the stream was not rebuilt — the claim A2 rests on and the
+        one thing no amount of "the session id is the same" can establish."""
+        held = self._radio
+        return held.stream_token if held is not None else 0
+
+    @property
     def tuner_gain_db(self) -> float | None:
         """What this session pins the tuner at, or None for the radio's own loop.
 

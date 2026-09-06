@@ -273,6 +273,57 @@ def _band_report(
     }
 
 
+def _retune_report(
+    turned: dict[str, Any],
+    frames: list["listen.Frame"],
+    before_token: int,
+    after_token: int,
+    retune_hz: int,
+) -> dict[str, Any]:
+    """Did the radio MOVE, or was the pipeline rebuilt under the session? (A2)
+
+    "The session id survived" cannot tell those apart — it survived a rebuild too, by
+    design. Two things can:
+
+    **`stream_rebuilt`** compares `setupStream`'s handle either side. `setupStream` is
+    called exactly once per `Radio`, so a token that did not change is proof the stream
+    was never torn down, which is a claim no timing measurement can make.
+
+    **`worst_gap_ms`** is the longest silence between two consecutive channel rows, and
+    it is the number the OWNER experiences: the rows come off the same buffer as the
+    audio, at `TARGET_FPS`, so the gap between them is the gap in the sound. Reported
+    beside `median_gap_ms` because a probe that only gave the worst has no scale to read
+    it against — a rebuild is several times the frame period and a moved radio is about
+    one."""
+    at = turned.get("at") or 0.0
+    stamps = sorted(f.at for f in frames)
+    gaps = [
+        (later - earlier, earlier)
+        for earlier, later in zip(stamps, stamps[1:], strict=False)
+    ]
+    out: dict[str, Any] = {
+        "to_hz": retune_hz,
+        "accepted": bool(turned.get("ok")),
+        # THE claim. A stream that was rebuilt is a pipeline that went down and came
+        # back, whatever the session id says.
+        "stream_rebuilt": before_token != after_token or after_token == 0,
+        "frames_before": sum(1 for f in frames if at and f.at < at),
+        "frames_after": sum(1 for f in frames if at and f.at >= at),
+    }
+    if "refused" in turned:
+        out["refused"] = turned["refused"][:200]
+    if gaps:
+        widest, when = max(gaps)
+        ordered = sorted(g for g, _ in gaps)
+        out["worst_gap_ms"] = round(widest * 1000.0, 1)
+        out["median_gap_ms"] = round(ordered[len(ordered) // 2] * 1000.0, 1)
+        # Where the worst gap fell relative to the retune. A worst gap that is NOT at
+        # the retune is a probe reporting an unrelated hiccup, and reading it as the
+        # cost of the retune is exactly the kind of mistake this file keeps making.
+        out["worst_gap_at_retune"] = bool(at) and abs(when - at) < 1.0
+    return out
+
+
 def _listen_verdict(
     session: "listen.Session",
     frames: list["listen.Frame"],
@@ -1313,6 +1364,7 @@ class Handler(BaseHTTPRequestHandler):
             named = listen.validate_serial(body.get("serial"))
             want_audio = bool(body.get("audio"))
             want_band = bool(body.get("band"))
+            retune_mhz = float(body.get("retune_mhz") or 0.0)
         except (ListenError, TypeError, ValueError) as bad:
             self._json(400, {"detail": str(bad)})
             return
@@ -1333,7 +1385,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             answer = self._watch_listen(
-                seconds, info.session_id, want_audio=want_audio, want_band=want_band
+                seconds,
+                info.session_id,
+                want_audio=want_audio,
+                want_band=want_band,
+                retune_hz=int(round(retune_mhz * 1_000_000)) if retune_mhz else 0,
             )
         finally:
             with contextlib.suppress(Exception):
@@ -1347,6 +1403,7 @@ class Handler(BaseHTTPRequestHandler):
         *,
         want_audio: bool = False,
         want_band: bool = False,
+        retune_hz: int = 0,
     ) -> dict[str, Any]:
         """Hold a listening session for `seconds` and reduce it to a verdict."""
         session = TUNER.find(session_id)
@@ -1382,10 +1439,29 @@ class Handler(BaseHTTPRequestHandler):
         peaks_seen: list[float] = []
         clip_seen: list[float] = []
         rms_seen: list[float] = []
+        # HALFWAY, so there is a comparable stretch of frames either side of it. The
+        # retune is what A2 claims costs one dropped frame instead of a pipeline
+        # rebuild, and "the session id survived" cannot tell those apart — only the gap
+        # between two consecutive rows can, and only the stream token can say the stream
+        # was never rebuilt at all.
+        turn_at = started_wall = 0.0
+        turned: dict[str, Any] = {}
+        before_token = session.stream_token
         started = time.monotonic()
         deadline = started + seconds
+        turn_at = started + seconds / 2.0 if retune_hz else 0.0
         try:
             while time.monotonic() < deadline:
+                if turn_at and time.monotonic() >= turn_at:
+                    turn_at = 0.0
+                    started_wall = time.time()
+                    try:
+                        session.tune(retune_hz)
+                        turned["ok"] = True
+                    except Exception as bad:  # noqa: BLE001 - a refusal is the finding
+                        turned["ok"] = False
+                        turned["refused"] = str(bad)
+                    turned["at"] = started_wall
                 left = max(0.05, deadline - time.monotonic())
                 if sub is None:
                     time.sleep(min(0.1, left))
@@ -1427,6 +1503,10 @@ class Handler(BaseHTTPRequestHandler):
             rms_seen,
             round(time.monotonic() - started, 2),
         )
+        if retune_hz:
+            verdict["retune"] = _retune_report(
+                turned, frames, before_token, session.stream_token, retune_hz
+            )
         if want_band:
             verdict["band"] = _band_report(band_rows, session.tuner_gain_db)
         if pcm:
