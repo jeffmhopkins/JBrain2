@@ -2314,6 +2314,9 @@ class _FakeRadio:
         self.gain_db: float | None = "unset"  # type: ignore[assignment]
         self.gain_calls = 0
         self.retunes = 0
+        #: The `settle_s` each retune was asked for, so a caller paying a settle this
+        #: radio does not need is visible rather than merely slow (C29).
+        self.settles: list[float | None] = []
         # The station sits `center - station` BELOW the radio's centre, which is what
         # the demodulator's mixer has to take back out.
         self._offset = station_hz - center_hz
@@ -2359,6 +2362,7 @@ class _FakeRadio:
         rebuilt, so `closed` stays false and the carrier simply arrives at a new offset
         from the centre."""
         self.retunes += 1
+        self.settles.append(kwargs.get("settle_s"))
         if center_hz is not None:
             self._offset += self.center_hz - center_hz
             self.center_hz = center_hz
@@ -3284,3 +3288,36 @@ def test_a_row_measured_under_the_radios_OWN_loop_says_so(iq_tuner) -> None:
         assert frame.as_dict()["gain_db"] is None
     finally:
         iq_tuner.stop()
+
+
+def test_a_hop_does_not_pay_a_settle_this_radio_does_not_need(iq_tuner) -> None:
+    """C29. At the top of the hop ladder a 30 MHz row took ~1 s — 1.0 fps, which is
+    exactly `rtl_power`'s own clamp, the ceiling this engine exists to remove. The
+    cost is per-RETUNE: sixteen `setFrequency` + settle pairs, the settle 30 ms each.
+
+    MEASURED ON THE BOX at a FIXED gain, seven trials: settle 0.0 ms, worst 0.0 ms,
+    steady level holding to 0.091 dB. A spectrum session runs at a fixed gain BY
+    CONSTRUCTION, so that is the reading that applies — and 16 x 30 ms of the second was
+    being discarded for a transient this radio does not have."""
+    info = iq_tuner.start(
+        144_000_000,
+        "fm",
+        None,
+        purpose=listen.PURPOSE_SPECTRUM,
+        sweep=listen.Sweep.of(
+            144_000_000, 148_000_000, 9_375, 60, capture=(2_400_000, 256), hops=2
+        ),
+    )
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        session.subscribe_frames().get(timeout=5)
+    finally:
+        iq_tuner.stop()
+
+    asked = [s for made in iq_tuner.opened for s in made.settles]
+    assert asked, "the hop never retuned"
+    assert all(s == listen.radio.HOP_SETTLE_S for s in asked), asked
+    # ...and the LISTENING path keeps the number that was measured under its own AGC,
+    # which is what moves the level there (1.47 dB sigma against 0.09 fixed).
+    assert listen.radio.SETTLE_S > listen.radio.HOP_SETTLE_S

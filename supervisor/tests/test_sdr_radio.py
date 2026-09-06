@@ -2034,3 +2034,57 @@ def test_a_driver_with_NO_stream_clock_is_reported_as_such() -> None:
     assert clock["time_ns_filled"] is False
     assert clock["time_ns_advances"] is False
     assert clock["median_step_ns"] is None
+
+
+def test_the_probe_asks_what_an_EXPLICIT_if_bandwidth_would_buy() -> None:
+    """C27. `hop_usable_bins` throws away a sixth of every capture because the R820T2's
+    IF filter rolls off across it, and `setBandwidth` is called NOWHERE in this engine —
+    librtlsdr picks the bandwidth from the sample rate on its own.
+
+    If asking for the full rate flattens those edges, `TRUSTED_FILL` is leaving picture
+    on the table. If it changes nothing, the sixth is the honest price and the
+    constant stays. Either way it is a property of this tuner, so it is a rung rather
+    than a change."""
+    out = radio.probe(driver=_FakeDriver())
+
+    rung = out["if_bandwidth"]
+    assert rung["supported"] in (True, False)
+    # The shape is reported both ways, so the verdict can be checked rather than taken.
+    assert set(rung["automatic"]) == {"middle_db", "edge_db", "rolloff_db"}
+    if rung["supported"]:
+        assert set(rung["explicit"]) == {"middle_db", "edge_db", "rolloff_db"}
+        assert "recovered_db" in rung
+
+
+def test_the_bandwidth_rung_hands_the_radio_BACK_as_it_found_it() -> None:
+    """A probe that leaves the radio configured differently makes the NEXT reading a
+    lie — the same rule `_settle_fixed_gain` follows for the gain."""
+    driver = _FakeDriver()
+    held = radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER)
+    try:
+        before = held.bandwidth_hz()
+        radio._if_bandwidth(held, 256)
+
+        assert held.bandwidth_hz() == before
+    finally:
+        held.close()
+
+
+def test_a_driver_that_will_not_take_a_bandwidth_is_a_finding_free_answer() -> None:
+    """ "This tuner has no adjustable IF" is a fact about the hardware, not a fault —
+    and saying so is what closes C27 rather than leaving the question open."""
+
+    class _Fixed(_FakeDriver):
+        def make(self, args: dict[str, str]) -> Any:
+            device = super().make(args)
+
+            def refuse(*_a: Any, **_k: Any) -> None:
+                raise RuntimeError("setBandwidth is not supported")
+
+            device.setBandwidth = refuse  # type: ignore[method-assign]
+            return device
+
+    rung = radio.probe(driver=_Fixed())["if_bandwidth"]
+
+    assert rung["supported"] is False
+    assert "automatic" in rung
