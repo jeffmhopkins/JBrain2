@@ -10,7 +10,7 @@ the same capture.
 `listen.py` had this fanout already — one `read` feeding a demodulator and a
 spectrometer — but hardcoded inside one method for exactly one pair, which is why
 "listen to a station OR look at the band, pick one" was a property of this code
-rather than of the hardware (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A1/A3).
+rather than of the hardware (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A1/A3).
 The radio was capturing 2.4 MHz either way and throwing all but 32 kHz of it away.
 
 **Nothing in this file knows what a session is.** Sinks take callbacks and emit

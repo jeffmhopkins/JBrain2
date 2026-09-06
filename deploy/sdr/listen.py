@@ -35,7 +35,7 @@ second, and a listening capture never changes shape while it does — 2 400 000 
 a second for every mode, the property `demod.IF_RATE_HZ` was chosen around. So the
 stream, the pump, the encoder and every listener behind it all survive, and the owner
 hears a click of one dropped frame rather than the gap of a relaunch
-(`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A2).
+(`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A2).
 
 **Under `rtl_fm` it still tears down and relaunches, and must not hang up on anyone.**
 The SESSION id survives — the UI sees a continuous session with a brief audio gap
@@ -693,7 +693,7 @@ class Sweep:
         this board wires Q — so a survey was refused below `MIN_HZ` while a picture of
         the same range was drawn. B1 removed the tool from the picture and B2 from the
         survey, so every caller passed the same value and the parameter was a fork with
-        one side (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B1/B2)."""
+        one side (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B1/B2)."""
         start, stop = int(min(start_hz, stop_hz)), int(max(start_hz, stop_hz))
         if stop - start > MAX_SWEEP_SPAN_HZ:
             raise SdrError(
@@ -772,7 +772,7 @@ class SurveyRows:
     """Waterfall rows in, the CSV a survey is reduced from out.
 
     **The survey stops being a second engine and becomes an accumulator over the first**
-    (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). A survey was never a different
+    (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). A survey was never a different
     way of measuring — it is the same spectrum, integrated for longer and written down
     instead of drawn. Making it a subprocess with its own lifecycle, its own temp file
     and a synchronous handler pinning a thread for fifteen minutes was the invention.
@@ -1311,7 +1311,7 @@ class Session:
         There used to be two, with `rtl_power` behind the I/Q engine as a runtime
         fallback justified by CLAUDE.md #10 — an owner with no terminal must not need a
         revert and a rebuild to get a picture back. **That trade was the wrong way
-        round** (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1): both engines land on
+        round** (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1): both engines land on
         the same `Frame.db`, the same colour map and the same `peaks.find`, whose output
         reaches the agent's tools as a MEASUREMENT — and `iq.py` emits true dBFS while
         `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes

@@ -595,6 +595,28 @@ DVB blacklist and module eviction, both through the PWA update path so no termin
 S0b-ii ◻️ is the blocking on-box gate (sidecar, device permissions, and whether whisper on
 narrowband voice is worth a library).
 
+**Shipped 2026-09-06:** SDR receiver convergence (archived plan:
+`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md`) — the receiver stopped being four
+mutually-exclusive session kinds and became one capture fanned out to many sinks, both
+`rtl_power` subprocesses deleted, retune in place on a live stream, and filter design
+turned into a specification. Every wave verified on air. **Three things it leaves
+behind**, carried here so they are not lost with the plan:
+
+- **`test_a_reset_that_the_kernel_refuses_says_so` is intermittently flaky.** Failed twice
+  in FULL-SUITE runs and passed on its own, on re-run, and in three repetitions of
+  `test_sdr_radio.py + test_sdr_server.py` together. Not reproducible short of the whole
+  suite; the likeliest shape is cross-file state in `radio._open` or teardown timing under
+  load. Its subject — a USB port reset the kernel refuses — is untouched by that work.
+- **The stream clock advances by exactly twice what it should** (C17). SoapyRTLSDR fills
+  `timeNs`, advances it, and sets `SOAPY_SDR_HAS_TIME`; `probe`'s `stream_clock` rung
+  measures the step at 194 ms against the 97 ms one delivered buffer comes to. Until that
+  factor of two is explained the clock cannot say how much an overflow threw away — which
+  is the one number a waterfall needs to place a row honestly after a drop.
+- **The frequency error is bounded, not measured** (C25). Under ~2.3 ppm between the two
+  dongles, which is below the scatter of the only estimator available; measuring it
+  properly needs an unmodulated carrier of known frequency, and WWV is below this tuner's
+  floor. A second, better-behaved reference (or a GPSDO) is what would close it.
+
 **Parked:** jcode session isolation (build plan: `docs/plans/JCODE_SESSION_ISOLATION_PLAN.md`) —
 per-session network namespace; parked after the P1 spike (the P0 substrate reverted), kept for a
 future revisit.

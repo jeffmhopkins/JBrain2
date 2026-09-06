@@ -2,7 +2,7 @@
 
 `SurveyRows` is what replaced `rtl_power -e`: a survey was never a different way of
 MEASURING, it is the same spectrum integrated for longer and written down instead of
-drawn (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). What can go wrong here is
+drawn (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). What can go wrong here is
 arithmetic and text, both of which a synthetic frame can provoke exactly — and the text
 has a reader with its own opinions (`backend/src/jbrain/sdr/sweep.py`), so the shape is
 asserted against what that reader parses rather than against what looks right.
