@@ -1954,3 +1954,61 @@ def test_the_band_report_is_bounded() -> None:
     )
 
     assert len(server._band_report([row], 30.0)["peaks"]) == server.BAND_REPORT_PEAKS
+
+
+def test_the_retune_report_proves_the_stream_was_not_rebuilt() -> None:
+    """ "The session id survived" was true of a full pipeline rebuild too, by design, so
+    it cannot be the evidence for A2. `setupStream` is called exactly once per `Radio`,
+    so a stream token that did not change is proof the stream was never torn down —
+    which is a claim no timing measurement can make."""
+    rows = [
+        listen.Frame(at=100.0, start_hz=1, bin_hz=1, db=[-1.0]),
+        listen.Frame(at=100.1, start_hz=1, bin_hz=1, db=[-1.0]),
+        listen.Frame(at=100.3, start_hz=1, bin_hz=1, db=[-1.0]),
+        listen.Frame(at=100.4, start_hz=1, bin_hz=1, db=[-1.0]),
+    ]
+    report = server._retune_report(
+        {"ok": True, "at": 100.15}, rows, 4242, 4242, 146_940_000
+    )
+
+    assert report["accepted"] is True
+    assert report["stream_rebuilt"] is False
+    assert report["frames_before"] == 2
+    assert report["frames_after"] == 2
+    assert report["worst_gap_ms"] == 200.0
+    assert report["median_gap_ms"] == 100.0
+    assert report["worst_gap_at_retune"] is True
+
+
+def test_a_rebuilt_stream_is_reported_as_one() -> None:
+    """A token that moved, and a session that has no radio at all, are the same answer:
+    whatever is running now is not what was running before."""
+    assert server._retune_report({}, [], 1, 2, 1)["stream_rebuilt"] is True
+    assert server._retune_report({}, [], 1, 0, 1)["stream_rebuilt"] is True
+
+
+def test_a_worst_gap_away_from_the_retune_says_so() -> None:
+    """A gap that did not fall at the retune is an unrelated hiccup, and reading it as
+    the cost of the retune is exactly the kind of mistake this file keeps making."""
+    rows = [
+        listen.Frame(at=100.0, start_hz=1, bin_hz=1, db=[-1.0]),
+        listen.Frame(at=101.0, start_hz=1, bin_hz=1, db=[-1.0]),
+        listen.Frame(at=101.1, start_hz=1, bin_hz=1, db=[-1.0]),
+    ]
+    report = server._retune_report({"ok": True, "at": 101.05}, rows, 7, 7, 1)
+
+    assert report["worst_gap_ms"] == 1000.0
+    assert report["worst_gap_at_retune"] is False
+
+
+def test_a_retune_the_session_refused_is_reported_rather_than_swallowed() -> None:
+    report = server._retune_report(
+        {"ok": False, "refused": "that session has been released", "at": 1.0},
+        [],
+        7,
+        7,
+        1,
+    )
+
+    assert report["accepted"] is False
+    assert "released" in report["refused"]

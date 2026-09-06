@@ -2195,6 +2195,7 @@ async def sdr_listen_probe(
     gain: Annotated[str | None, Query(max_length=8, pattern=r"^[0-9.]+$")] = None,
     transcribe: Annotated[bool, Query()] = False,
     band: Annotated[bool, Query()] = False,
+    retune_to: Annotated[float | None, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)] = None,
 ) -> dict[str, Any]:
     """**Does the numpy demodulator work on this radio?** The twin of `spectrum-probe`.
 
@@ -2230,6 +2231,13 @@ async def sdr_listen_probe(
     because the wideband transform is real work (~11% of a core) that the sidecar
     skips entirely while nobody has asked for it.
 
+    `retune_to` moves the session to another frequency HALFWAY through and reports what
+    that cost. It is the only way to see A2's claim from outside: "the session id
+    survived" was true of a full pipeline rebuild too, by design, so the evidence is
+    `retune.stream_rebuilt` (`setupStream`'s handle either side — false means the stream
+    was never torn down) and `retune.worst_gap_ms` against `median_gap_ms`, which is the
+    gap in the SOUND, since the rows come off the same buffer as the audio.
+
     **TAKES A RADIO** for those seconds and releases it even on failure."""
     request.state.debug_detail = f"sdr listen probe {mhz} {mode}"
     if serial is not None:
@@ -2251,6 +2259,7 @@ async def sdr_listen_probe(
         "gain": gain,
         "audio": transcribe,
         "band": band,
+        "retune_mhz": retune_to,
     }
     answer = await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
     # Stripped whatever happens next: a quarter of a megabyte of base64 in a console

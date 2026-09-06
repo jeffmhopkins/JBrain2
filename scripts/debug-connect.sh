@@ -625,7 +625,7 @@ PY
     _call GET "/api/debug/update/status?tail=${1:-200}" | _pp ;;
 
   listen-probe)
-    mhz=""; mode="fm"; secs="5"; serial=""; gain=""; tr=""; band=""
+    mhz=""; mode="fm"; secs="5"; serial=""; gain=""; tr=""; band=""; ret=""
     # `$1` is already the first ARGUMENT here — the verb was shifted off above, which
     # is what every other option-taking command in this file assumes.
     while [ $# -gt 0 ]; do
@@ -637,15 +637,17 @@ PY
         --gain) gain="$2"; shift 2 ;;
         --transcribe) tr="true"; shift ;;
         --band) band="true"; shift ;;
+        --retune-to) ret="$2"; shift 2 ;;
         *) shift ;;
       esac
     done
-    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--gain dB] [--serial S] [--transcribe] [--band]" >&2; exit 2; }
+    [ -n "$mhz" ] || { echo "usage: debug-connect.sh listen-probe --mhz <MHz> [--mode fm] [--seconds 5] [--gain dB] [--serial S] [--transcribe] [--band] [--retune-to MHz]" >&2; exit 2; }
     q="mhz=$mhz&mode=$mode&seconds=$secs"
     [ -n "$serial" ] && q="$q&serial=$serial"
     [ -n "$gain" ] && q="$q&gain=$gain"
     [ -n "$tr" ] && q="$q&transcribe=true"
     [ -n "$band" ] && q="$q&band=true"
+    [ -n "$ret" ] && q="$q&retune_to=$ret"
     _call POST "/api/debug/sdr/listen-probe?$q" | _pp
     ;;
 
