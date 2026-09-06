@@ -501,7 +501,9 @@ export function SdrTuningView({
         ) : (
           <>
             <span className="dot" />
-            {span > 0 ? "Nothing in this channel." : "The picture starts with the audio."}
+            {span > 0
+              ? "Nothing in this channel — what you can hear is noise."
+              : "The picture starts with the audio."}
           </>
         )}
       </p>

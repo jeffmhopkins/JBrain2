@@ -180,15 +180,22 @@ def test_fm_recovers_the_modulating_tone(mode, deviation_hz, tone_hz):
 
 def test_fm_level_follows_deviation():
     """Twice the deviation is twice the audio: the discriminator is linear, and an
-    AGC anywhere in this chain would destroy the property the level meter reports."""
-    quiet = demod.Demodulator("fm", CAPTURE_HZ).feed(
-        fm_signal(0.4, tone_hz=1_000.0, deviation_hz=1_500.0)
-    )
-    loud = demod.Demodulator("fm", CAPTURE_HZ).feed(
-        fm_signal(0.4, tone_hz=1_000.0, deviation_hz=3_000.0)
-    )
-    ratio = loud.peak / quiet.peak
-    assert ratio == pytest.approx(2.0, rel=0.12)
+    AGC anywhere in this chain would destroy the property the level meter reports.
+
+    Measured AFTER the chain has settled, and that is not a detail. This read
+    `Audio.peak` over the whole buffer, which on a filter chain starting from zeroed
+    tails is the start-up transient and nothing else — the first hundred samples were
+    the loudest in both buffers, so the test was comparing two step responses and
+    calling it linearity. It passed anyway until the channel filter made the step a
+    little sharper, at which point the ratio it reported was 1.29."""
+
+    def settled_peak(deviation_hz: float) -> float:
+        built = demod.Demodulator("fm", CAPTURE_HZ)
+        pcm = built.feed(fm_signal(0.4, tone_hz=1_000.0, deviation_hz=deviation_hz)).pcm
+        audio = settled(pcm, built.audio_rate_hz).astype(np.float64)
+        return float(np.max(np.abs(audio))) / 32768.0
+
+    assert settled_peak(3_000.0) / settled_peak(1_500.0) == pytest.approx(2.0, rel=0.12)
 
 
 def test_full_deviation_reaches_most_of_full_scale():
@@ -344,9 +351,9 @@ def test_the_mixer_phase_survives_a_long_run():
 # -- the baseband, which is what the tuning view draws --------------------------------
 
 
-def test_the_baseband_is_the_channel_at_the_if_rate():
+def test_the_baseband_is_the_if_the_picture_is_drawn_from():
     """`Audio.baseband` is what makes the narrow tuning view free: it is the decimated
-    complex stream, so an FFT of it is the channel's own spectrum. 512 bins over
+    complex stream, so an FFT of it is the tuned neighbourhood's spectrum. 512 bins over
     48 kHz is 94 Hz — six times finer than a 4000-bin transform of the whole 2.4 MHz
     capture, and it costs a 512-point FFT instead of a 4000-point one."""
     built = demod.Demodulator("fm", CAPTURE_HZ)
@@ -362,13 +369,79 @@ def test_the_baseband_is_the_channel_at_the_if_rate():
     assert found == pytest.approx(6_000.0, abs=1.5 * bin_hz)
 
 
-def test_the_channel_half_width_is_what_the_filter_actually_keeps():
-    """The number the tuning view shades has to be the number the filter uses, or the
-    picture says one thing and the radio does another."""
+def test_the_picture_is_flat_across_the_view():
+    """PURE NOISE MUST LOOK LIKE PURE NOISE, and this is the regression test for the
+    evening it did not.
+
+    The front end used to be the channel filter as well as the anti-alias one, with
+    its cutoff asked for at the passband edge — and a windowed sinc's cutoff is where
+    it is SIX DECIBELS DOWN, so the response sagged from 0 dB at DC to -4.7 dB at the
+    edge of the channel and -21 dB just outside it. `Audio.baseband` is what the tuning
+    strip draws, so every listening session drew that sag.
+
+    On air (2026-09-06) that meant an EMPTY channel — no station, receiver noise only —
+    arrived as a smooth hump centred exactly on the tuned frequency, reading 13.7 dB
+    over its own outer bins. The strip drew a strong station, the readout said "On
+    centre", `listen-probe` returned `ok: True`, and the owner heard the static that
+    noise through a discriminator actually is. Every instrument agreed, and all of them
+    were reporting the shape of our own filter.
+
+    So: flat, to a decibel, across the whole width the picture claims to show."""
+    built = demod.Demodulator("nfm", CAPTURE_HZ)
+    rng = np.random.default_rng(11)
+    bins = 512
+    spec = np.zeros(bins)
+    for _ in range(8):
+        n = CAPTURE_HZ // 10
+        noise = ((rng.standard_normal(n) + 1j * rng.standard_normal(n)) * 0.02).astype(
+            np.complex64
+        )
+        row = built.feed(noise).baseband
+        # Averaged over many windows: one periodogram of noise IS noise, and a
+        # flatness test run on one would be measuring its own estimator.
+        for start in range(0, row.size - bins, bins):
+            window = row[start : start + bins] * np.hanning(bins)
+            spec += np.abs(np.fft.fftshift(np.fft.fft(window))) ** 2
+    db = 10.0 * np.log10(spec / spec.max())
+    away = np.abs((np.arange(bins) - bins / 2) * (built.if_rate_hz / bins))
+    centre = db[away <= 2_000.0].mean()
+    # The ring the probe and the strip both take their noise floor from: outside the
+    # passband, inside the crop. On the old chain this sat 11 dB below the centre and
+    # every reading of "signal over floor" was really a reading of that.
+    half = built.channel_half_hz
+    ring = db[(away > half) & (away <= 2.0 * half)].mean()
+    assert abs(centre - ring) < 1.5
+    # ...and the same numbers the probe prints: max over median, across the crop.
+    shown = db[away <= 2.0 * built.channel_half_hz]
+    assert float(shown.max() - np.median(shown)) < 8.0
+
+
+def test_the_channel_filter_keeps_the_channel_and_drops_the_rest():
+    """The number the tuning view SHADES has to be the number the audio filter uses.
+
+    Measured on the audio now rather than on `baseband`, because those are deliberately
+    two different widths since the split: `baseband` is the picture, `view_half_hz`
+    wide, and the channel filter runs after it. A test on `baseband` would now be
+    testing the anti-alias filter and would pass whatever the channel filter did."""
     built = demod.Demodulator("fm", CAPTURE_HZ)
-    inside = built.feed(tone(0.3, hz=built.channel_half_hz * 0.6))
-    outside = demod.Demodulator("fm", CAPTURE_HZ).feed(
-        tone(0.3, hz=built.channel_half_hz * 3.0)
+    half = built.channel_half_hz
+    inside = built.feed(
+        fm_signal(0.4, tone_hz=1_000.0, deviation_hz=2_000.0, offset_hz=0.0)
     )
-    power = lambda a: float(np.mean(np.abs(a.baseband[-4096:]) ** 2))  # noqa: E731
-    assert power(inside) > power(outside) * 100
+    aside = demod.Demodulator("fm", CAPTURE_HZ).feed(
+        fm_signal(0.4, tone_hz=1_000.0, deviation_hz=2_000.0, offset_hz=half * 2.5)
+    )
+    rate = built.audio_rate_hz
+
+    # The TONE, not the level: an FM discriminator fed almost nothing still emits
+    # full-scale noise (see `test_a_signal_outside_the_channel_is_rejected`), so the
+    # question a rejected station can answer is whether its modulation survives.
+    def tone_share(pcm: np.ndarray) -> float:
+        audio = settled(pcm, rate).astype(np.float64)
+        mag = np.abs(np.fft.rfft(audio * np.hanning(audio.size)))
+        freqs = np.fft.rfftfreq(audio.size, 1.0 / rate)
+        at = np.abs(freqs - 1_000.0) < 60.0
+        return float((mag[at] ** 2).sum() / max((mag**2).sum(), 1e-30))
+
+    assert tone_share(inside.pcm) > 0.5
+    assert tone_share(aside.pcm) < 0.01

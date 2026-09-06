@@ -102,6 +102,29 @@ CHANNEL_HALF_HZ: dict[str, float] = {
     "wbfm": 90_000.0,
 }
 
+#: How much of the IF the FRONT END keeps flat, as a share of the IF rate — 80% of
+#: Nyquist, so the picture has honest spectrum either side of the channel.
+#:
+#: This is the constant that separates the two jobs the front end used to do badly at
+#: once. It decimated to the IF with its cutoff set at `CHANNEL_HALF_HZ`, which made it
+#: the channel filter as well as the anti-alias one — and a windowed sinc's cutoff is
+#: its SIX DECIBEL point, not its passband edge, so "keep 8 kHz" really meant a
+#: response sloping from 0 dB at DC to -4.7 dB at 8 kHz, -11 dB at 12 and -21 dB at 16.
+#:
+#: MEASURED ON AIR 2026-09-06, and it cost the owner an evening. An EMPTY channel of
+#: pure receiver noise, shaped by that slope, arrives at the tuning view as a smooth
+#: hump centred on the tuned frequency reading 13.7 dB over its own outer bins — which
+#: the strip draws as a strong, perfectly centred station and the probe passes as
+#: `ok: True`. 162.550 read "on centre, -47.4 dBFS" with nothing on the air at all,
+#: while the audio was the static that noise through a discriminator actually is.
+#:
+#: So the front end is now anti-alias ONLY, flat across this width, and a separate
+#: `_build_channel` filter does the selectivity at the IF rate. The picture is taken
+#: BETWEEN them, which is what every SDR display does and what makes the shaded
+#: passband mean something: you can only see how much of a signal falls outside the
+#: filter if the picture is wider than the filter.
+VIEW_SHARE = 0.4
+
 #: How long a window the AM carrier is averaged over, in AUDIO samples. The corner
 #: is roughly `audio_rate / length` — 31 Hz at 512 and 16 kHz — which is well below
 #: anything a voice channel carries and well above the drift it exists to remove.
@@ -335,8 +358,15 @@ class Audio:
     #: Mono int16 at `audio_rate_hz`. `.tobytes()` is what ffmpeg and direwolf read,
     #: and is byte-identical in format to what `rtl_fm` wrote on its stdout.
     pcm: np.ndarray
-    #: The decimated complex stream, centred on the tuned frequency, at `if_rate_hz`.
-    #: An FFT of this is the channel's own spectrum — see the module docstring.
+    #: The decimated complex IF, centred on the tuned frequency, at `if_rate_hz`, as
+    #: it is BEFORE the channel filter — `view_half_hz` wide, not `channel_half_hz`.
+    #:
+    #: The width is the point. An FFT of this is what the tuning strip draws, and a
+    #: picture no wider than the filter cannot show a noise floor to judge a signal
+    #: against, an adjacent station to be confused by, or the part of a signal that
+    #: falls outside the passband it shades. Worse, it makes the FILTER'S OWN SHAPE
+    #: the picture: an empty channel came out as a centred hump 13.7 dB over its own
+    #: edges, which is a station drawn out of nothing (see `VIEW_SHARE`).
     baseband: np.ndarray
     #: Loudest sample as a 0..1 fraction of full scale, the same quantity
     #: `listen._peak` measures — computed here because the samples are already in a
@@ -395,6 +425,11 @@ class Demodulator:
         self.if_rate_hz = if_rate
         self.audio_rate_hz = int(audio_rate_hz)
         self.channel_half_hz = CHANNEL_HALF_HZ[key]
+        #: What the FRONT END keeps flat, and therefore how wide the picture is. Never
+        #: narrower than the channel: wide FM's 90 kHz is most of its 240 kHz IF
+        #: already, so there is nothing to widen to and the front end is its own
+        #: channel filter (`_build_channel` returns None for it).
+        self.view_half_hz = max(self.channel_half_hz, VIEW_SHARE * if_rate)
         deviation = FM_DEVIATION_HZ.get(key)
         self._gain = FM_HEADROOM * if_rate / (2.0 * deviation) if deviation else 1.0
 
@@ -404,6 +439,7 @@ class Demodulator:
         #: adds to the tuned frequency and subtracts from every spectrum centre.
         self.offset_hz = self._mixer.offset_hz
         self._front = self._build_front(capture_rate_hz // if_rate)
+        self._channel = self._build_channel()
         self._back = self._build_back()
         # The discriminator differentiates phase, so it needs the sample BEFORE the
         # buffer it is given. One complex number, and without it there is a click per
@@ -416,13 +452,28 @@ class Demodulator:
     # -- construction ---------------------------------------------------------------
 
     def _build_front(self, total: int) -> list[_Fir]:
-        """The decimation from the capture rate down to the IF.
+        """The decimation from the capture rate down to the IF. ANTI-ALIAS ONLY.
 
         Split into at most two stages, coarse first. The first stage only has to
         reject what would fold into the band the second one keeps, so its transition
         band is enormous and its taps few; the second does the sharp work at a tenth
-        of the rate."""
-        kept = self.channel_half_hz
+        of the rate.
+
+        Two things here are load-bearing and only one of them used to be right.
+
+        **What is kept is `view_half_hz`, not the channel.** Filtering to the channel
+        here left nothing outside it to look at, so the tuning view could not show a
+        noise floor, an adjacent station, or how much of a signal falls outside the
+        passband it shades — the three things it exists to show.
+
+        **The cutoff is the MIDDLE of the transition band, not its start.** A
+        windowed sinc's `cutoff_hz` is where it is 6 dB down, so asking for a cutoff at
+        the passband edge asks for a filter that is already half gone there and has been
+        sagging since DC. Placing it halfway between the passband edge and the stopband
+        edge is what buys a passband that is actually flat — the same taps, a response
+        within a tenth of a decibel across the band instead of five decibels down at the
+        edge of it (see `VIEW_SHARE` for what that cost on air)."""
+        kept = self.view_half_hz
         stages: list[_Fir] = []
         rate = float(self.capture_rate_hz)
         for m in _split(total):
@@ -431,9 +482,30 @@ class Demodulator:
             # down. That, not the cutoff, is what sets the filter's length.
             stop = out_rate - kept
             taps = _taps_for(max(stop - kept, 1.0), rate)
-            stages.append(_Fir(lowpass(kept, rate, taps), m, complex_in=True))
+            stages.append(_Fir(lowpass((kept + stop) / 2.0, rate, taps), m, complex_in=True))
             rate = out_rate
         return stages
+
+    def _build_channel(self) -> _Fir | None:
+        """The selectivity, at the IF rate: what the demodulator actually hears.
+
+        Separate from the front end because the two want opposite things. The front
+        end must leave the picture something to show; this must throw all of it away
+        but the channel, because every hertz of noise it passes reaches a discriminator
+        that is blind to amplitude and turns it into full-scale hiss.
+
+        None for wide FM, which has no room for one: 90 kHz of channel in a 240 kHz IF
+        is already most of Nyquist, so the front end is its own channel filter there and
+        a second pass would buy a fraction of a decibel for a hundred and sixty taps."""
+        kept = self.channel_half_hz
+        if kept >= 0.9 * self.view_half_hz:
+            return None
+        # Wide enough to be affordable, narrow enough that the stopband is inside the
+        # picture — a transition that ran past `view_half_hz` would be shaped by the
+        # front end instead, which is the confusion this split exists to end.
+        stop = min(self.view_half_hz, kept + max(0.5 * kept, 2_000.0))
+        taps = _taps_for(stop - kept, float(self.if_rate_hz))
+        return _Fir(lowpass((kept + stop) / 2.0, float(self.if_rate_hz), taps), 1, complex_in=True)
 
     def _build_back(self) -> _Fir:
         """Demodulated audio to the output rate, with de-emphasis folded in.
@@ -480,7 +552,10 @@ class Demodulator:
         stream = self._mixer.feed(iq)
         for stage in self._front:
             stream = stage.feed(stream)
-        pcm, peak, clipped, rms = self._to_pcm(stream)
+        # The picture is taken HERE, between the anti-alias filter and the channel one,
+        # and the audio goes on through the channel filter. One buffer, two widths.
+        channel = self._channel.feed(stream) if self._channel is not None else stream
+        pcm, peak, clipped, rms = self._to_pcm(channel)
         return Audio(pcm=pcm, baseband=stream, peak=peak, clipped=clipped, rms=rms)
 
     def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float, float, float]:

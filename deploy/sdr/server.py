@@ -145,7 +145,27 @@ SPECTRUM_PROBE_MAX_S = 15.0
 #: tuner gain either (1.00% on AGC, 1.19% at 40 dB), because a discriminator is blind
 #: to amplitude. A gain that really was too high is an order of magnitude worse than
 #: this: 1.5x deviation clips nearly half a sine.
+#:
+#: **The 162.550 row was not a weak signal. It was NO signal**, and the "14 dB SNR"
+#: was the front end's own roll-off measured against itself (`demod.VIEW_SHARE`). The
+#: threshold it justifies is still right — 5% separates a chain clipping from one
+#: making clicks — but the row is here as the reading it turned out to be: an empty
+#: channel, whose 1% of samples at the rail is what pure noise through a discriminator
+#: does. `CHANNEL_SIGNAL_DB` below is the check that now says so.
 CLIPPING_FRACTION = 0.05
+
+#: How far the strongest bin must stand over the channel's own floor before the probe
+#: agrees there is a station there. Mirrored from `SIGNAL_OVER_DB` in
+#: `frontend/src/sdrTuning.ts` on purpose: the strip stops drawing a signal at the same
+#: place the probe stops claiming one, so the picture and the verdict cannot disagree.
+CHANNEL_SIGNAL_DB = 6.0
+
+#: ...and where narrowband FM stops being listenable. Below roughly this, the noise
+#: wins the discriminator often enough that the audio is more click than voice — the
+#: FM threshold effect, and the reason a receiver can go from clear to unusable over
+#: about three decibels. Reported rather than enforced: a marginal signal is still one
+#: the owner may want to strain to hear.
+FM_THRESHOLD_DB = 12.0
 
 LISTEN_PROBE_S = 5.0
 LISTEN_PROBE_MAX_S = 20.0
@@ -271,6 +291,24 @@ def _listen_verdict(
             "floor_db": round(_channel_floor(latest), 1),
             "snr_db": round(latest.db[loudest] - _channel_floor(latest), 1),
         }
+        snr = out["view"]["snr_db"]
+        # THE FINDING THIS PROBE DID NOT HAVE, and the reason it passed a dead channel.
+        # Every other check here is satisfied by pure noise: the chain runs, audio comes
+        # out, the discriminator does not clip much, rows flow at 10 fps and the loudest
+        # bin sits near the centre — because on FM, noise IS a full-scale signal. On air
+        # 2026-09-06 that returned `ok: True` on 162.550 with nothing transmitting, and
+        # the owner spent an evening looking for a demodulator fault. Signal strength is
+        # the ONE question audio level cannot answer and the spectrum can.
+        if snr < CHANNEL_SIGNAL_DB:
+            findings.append(
+                f"nothing is transmitting here: the strongest bin is {snr:.1f} dB over "
+                f"the channel's own noise floor, so what the audio carries is hiss"
+            )
+        elif session.mode in ("fm", "nfm", "wbfm") and snr < FM_THRESHOLD_DB:
+            findings.append(
+                f"{snr:.1f} dB over the noise is below the FM threshold: there is a "
+                f"signal here but it will be more click than voice"
+            )
         if abs(middle - session.frequency_hz) > latest.bin_hz:
             # The offset-tuning failure, and the reason this number is reported rather
             # than assumed: the radio sits above the station and the mixer takes that
