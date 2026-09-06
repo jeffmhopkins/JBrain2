@@ -66,6 +66,15 @@ export interface SpectrumRow {
    *  peaks across rows cannot tell ONE station whose loudest bin wanders from TWO that
    *  are genuinely apart. Zero when the band has no raster. */
   channelHz: number;
+  /** The tuner gain this row was measured at, in dB, or null when the radio's own loop
+   *  was running — and null too on a row from a box that predates the field (C22).
+   *
+   *  `db` is dBFS, and dBFS is only comparable against the SAME gain and the SAME
+   *  `binHz`. A noise floor is power per bin, so a band at 250 Hz bins reads ~6 dB below
+   *  the same band at 1 kHz; and under an automatic gain the absolute level means
+   *  nothing between rows at all. A reader holding rows across time needs both to tell a
+   *  floor that MOVED from a floor measured differently. */
+  gainDb: number | null;
   /** Band or channel. Said by the box; inferred from `passbandHz` only for a row from
    *  an older sidecar, which is exactly how every reader used to guess. */
   view: SpectrumView;
@@ -144,6 +153,13 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
       typeof payload.channel_hz === "number" && Number.isFinite(payload.channel_hz)
         ? Math.max(0, payload.channel_hz)
         : 0,
+    // NULL, not zero: 0 dB is a real gain this box has actually run at, so a falsy
+    // default would be a reading rather than an absence — the C18 mistake in a
+    // different file.
+    gainDb:
+      typeof payload.gain_db === "number" && Number.isFinite(payload.gain_db)
+        ? payload.gain_db
+        : null,
     view: parseView(payload.view, passband),
   };
 }

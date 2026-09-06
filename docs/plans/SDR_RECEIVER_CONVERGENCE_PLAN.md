@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b✅ W7c◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b✅ W7c✅ W7d◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -71,7 +71,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C6 ✅** | **The detection baseline window can only grow and is never clamped to the row.** `max(400 kHz, 21 × channel_hz)` exceeds the whole row for any sweep < 400 kHz, every 256 kS/s capture, and any 200 kHz raster — silently degrading to a global median. This is the 162.55 blind spot generalised, and a test currently *pins* the behaviour. | **[V]** the constants, and the on-air miss |
 | **C7 ✅** | **`SessionInfo.engine` is never set to `"rtl_power"` and never set in `_start_iq_spectrum`.** A waterfall on our own engine reports `"rtl_fm"`. `server.py:1175` works around it by reading a private attribute with a `noqa`. | **[V]** |
 | **C8 ✅** | `Device.unmake(device)` bypasses the SWIG binding's own deleter, so `__del__` unmakes a second time and throws inside the destructor on every teardown. | **[R]** binding source read |
-| **C9** | `QUEUE_BUFFERS = 4` is a spectrum-path tuning applied to the listening path: 41 ms of ring at 2.4 MS/s, and SoapyRTLSDR discards the **entire** fifo on one overflow event. Any ffmpeg stall over 41 ms tears audio. A listening session never retunes mid-session, so the shallow ring buys nothing there. | **[R]** |
+| **C9 ✅** | `QUEUE_BUFFERS = 4` is a spectrum-path tuning applied to the listening path: 41 ms of ring at 2.4 MS/s, and SoapyRTLSDR discards the **entire** fifo on one overflow event. Any ffmpeg stall over 41 ms tears audio. A listening session never retunes mid-session, so the shallow ring buys nothing there. | **[R]** |
 | **C10 ✅** | The DC/LO bin is excised in the *probe* (`radio.py:1000`) and nowhere in production. On a stitched hop row that is a comb of up to 11 phantom stations, and `steady` is precisely the classifier that cannot absorb it. | **[R]** |
 | **C11 ✅** | Welch segments do not overlap; the textbook and `scipy.signal.welch`'s default is 50%. On the tuning row: per-bin σ **1.49 → 1.09 dB**, and an empty channel's apparent SNR falls from a mean of 3.89 dB to 3.08 — against a 6 dB threshold with only ~0.7 dB of headroom today. | **[R]** |
 
@@ -88,8 +88,8 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C18 ✅** | `_settle_fixed_gain` uses `or`, so a measured gain of exactly **0.0 dB** — the value this box actually had — is treated as absent and replaced by 30. The "fixed gain" comparison was against a different gain. | **[R]** |
 | **C19 ✅** | `radio._claim` uses exact-match keying where `listen.blocking_key` has the correct rule (an unnamed holder blocks everything). Guarded one layer up today, so latent. | **[R]** |
 | **C20 ✅** | Half-bin convention conflict: `peaks.py` treats `start_hz + i·bin_hz` as the bin **centre** (correct, verified); `sdrTuning.ts` and `server.py:222` add a further half bin. The box's peak frequencies and the tuning readout are on two different grids. | **[R]** |
-| **C21** | `_channel_floor`'s outer ring for wide FM is 90–180 kHz off centre — where the 200 kHz raster puts the neighbour's sideband. On a crowded dial the "noise floor" is a neighbouring station. | **[S]** |
-| **C22** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
+| **C21 ✅** | `_channel_floor`'s outer ring for wide FM is 90–180 kHz off centre — where the 200 kHz raster puts the neighbour's sideband. On a crowded dial the "noise floor" is a neighbouring station. | **[S]** |
+| **C22 ✅** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
 | **C23 ✅** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
 | **C24 ✅** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
 | **C25** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
@@ -617,7 +617,9 @@ it would be measuring something else.
 **W7 — Loose ends.**
 **W7a ✅ shipped 2026-09-06** — C8, C18, C19, C26, B5: the latent correctness bugs.
 **W7b ✅ shipped 2026-09-06** — C20, C23, C28, B4, and C17 as a probe rung.
-**W7c** — C22, and rungs for C21/C25/C27/C29. **Plus C29, found by W5a's own
+**W7c ✅ shipped 2026-09-06** — C21 (measured on air and worse than filed) and C22.
+**W7d** — the last three, all of which are questions for the box rather than changes:
+C25 (ppm), C27 (`setBandwidth`), C29 (the 16-hop second). **Plus C29, found by W5a's own
 on-air verification:** a 16-hop row takes ~1 s, all of it in sixteen `setFrequency` +
 settle pairs, so at the top of the hop ladder the engine hits the exact clamp it exists
 to remove (measured table above). Either cut the per-hop cost or lower `MAX_HOPS` to
@@ -779,6 +781,66 @@ DELIVERED, not what was asked for — `readStream` returns at most what is left 
 buffer it is draining). The alternative on offer — overflows times `bufflen` — is an
 estimate that would be read as a measurement, which is the failure this plan has named
 six times.
+
+
+## W7c — what shipped (2026-09-06)
+
+### C21 — the "noise floor" was a neighbouring station, and so was the SIGNAL
+
+C21 was filed **[S]** — speculative — about the floor. Probing the FM dial answered it,
+and turned up a second consequence nobody had written down.
+
+A channel row reaches **four times the passband's furthest edge**, so on the FM dial its
+outer thirds are exactly where the 200 kHz raster puts the neighbour. Two things read
+those bins: `_channel_floor` takes its noise from them, and `_channel_centre` took its
+PEAK from the whole row.
+
+**MEASURED ON AIR**, with a carrier at 96.494 MHz (−4.3 dBFS, the strongest on this dial)
+and the channel probe tuned either side of it:
+
+| tuned to | ring floor | strongest bin in the row |
+|---|---|---|
+| 96.3 MHz | **−46.9 dB** | **+157,969 Hz** |
+| 96.7 MHz | −46.4 dB | **−161,250 Hz** |
+| 107.9 MHz (empty, no neighbour) | **−49.1 dB** | −152,813 Hz at only 8.7 dB over |
+
+Both crowded readings point at the SAME station — 96.494 — 158 kHz outside a passband
+90 kHz wide. The tuning readout would have called it "1.6 kHz high" about a station the
+radio is not listening to, and the **"tune to it" button would have moved the dial onto
+it**. That is the half C21 did not mention and the more serious one.
+
+The floor half is the 2.2 dB between −46.9 and −49.1: noise that was a station, taken off
+every SNR reported beside a strong carrier.
+
+Two fixes, each in both implementations, because the probe and the picture answer the same
+question about the same rows:
+
+- **The peak is looked for INSIDE the passband.** "Where is the signal in this channel?"
+  is a question about the channel.
+- **The floor is a low quartile of the outer bins, not their median.** A neighbour's skirt
+  can fill a third of the ring, which is enough to drag a median onto it; a quartile stays
+  in the noise below, and on an empty ring it is within a decibel of the median it
+  replaces.
+
+### C22 — a row now says what gain it was measured at
+
+`db` is dBFS, and dBFS is comparable only against the SAME gain and the SAME `bin_hz`. A
+noise floor is power per BIN, so a band at 250 Hz bins reads about 6 dB below the same
+band at 1 kHz — a threshold calibrated at one resolution does not transfer. And under an
+automatic gain the absolute level means nothing between rows at all, which `_band_report`
+already said at REPORT level while the rows outlived the report.
+
+`bin_hz` was always on the row. `gain_db` is the other half, stamped at the same seam the
+peaks and the raster are, so a reader holding rows across time can tell a floor that MOVED
+from a floor measured differently. **None, not zero** — 0 dB is a real gain this box has
+run at, and a falsy default would be C18 in a different file.
+
+### ...and a W6b twin that was missed
+
+`server._channel_floor` sliced a symmetric strip off each end of the row, which on `usb`
+put the top of the real passband in the "noise". `sdrTuning.ts`'s `floorOf` got the C14
+fix in W6b and this one did not — the exact "two implementations of one rule" pattern the
+plan keeps finding. Both now derive the ring from `(passband_hz, passband_centre_hz)`.
 
 
 ## W1 — what shipped, and what it measured (2026-09-06)

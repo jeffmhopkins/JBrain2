@@ -963,6 +963,20 @@ class Frame:
     #: across rows cannot tell ONE station whose loudest bin wanders from TWO stations
     #: that are genuinely apart. Zero when the band has no raster.
     channel_hz: int = 0
+    #: The TUNER GAIN this row was measured at, in dB, or None when the radio's own loop
+    #: was running (C22).
+    #:
+    #: **`db` is dBFS, and dBFS is only comparable against the same gain and the same
+    #: `bin_hz`.** Both halves matter and neither was on the row. A noise floor is power
+    #: per BIN, so the same band measured at 250 Hz bins reads about 6 dB below the same
+    #: band at 1 kHz — a threshold calibrated at one resolution does not transfer to the
+    #: other. And under an automatic gain the absolute level means nothing at all
+    #: between rows, which is what `_band_report`'s AGC note already says at report level
+    #: while the rows outlived the report.
+    #:
+    #: `bin_hz` was always here; this is the other half, so a reader holding rows across
+    #: time can tell a floor that MOVED from a floor measured differently.
+    gain_db: float | None = None
     #: Which picture this row belongs to: the whole capture (`VIEW_BAND`) or the tuned
     #: channel (`VIEW_CHANNEL`). One session now publishes both off the same samples, so
     #: a reader holding rows across time needs the row itself to say which — the
@@ -1005,6 +1019,7 @@ class Frame:
                 "passband_hz": self.passband_hz,
                 "passband_centre_hz": self.passband_centre_hz,
                 "channel_hz": self.channel_hz,
+                "gain_db": self.gain_db,
                 "view": self.view,
             }
             # `object.__setattr__` because the dataclass is frozen — which is also what
@@ -1714,6 +1729,11 @@ class Session:
         # has to guess the band for.
         if self.sweep is not None and self.sweep.channel_hz and not frame.channel_hz:
             frame = dataclasses.replace(frame, channel_hz=self.sweep.channel_hz)
+        # The gain the row was measured at, stamped at the same seam and for the same
+        # reason (C22): dBFS is comparable only against the same gain, and a row that did
+        # not carry it is a row a reader has to guess the reference for.
+        if frame.gain_db is None:
+            frame = dataclasses.replace(frame, gain_db=self.tuner_gain_db)
         # Signals found HERE rather than at the three places a frame is built: both
         # engines and the stitcher pass through this one seam, so no path can publish a
         # row whose peaks nobody looked for — and a viewer cannot disagree with the

@@ -41,6 +41,7 @@ function row(
     passbandHz,
     passbandCentreHz,
     channelHz: 0,
+    gainDb: null,
     view: "channel" as const,
   };
 }
@@ -68,6 +69,7 @@ function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = 
     passbandHz: 180_000,
     passbandCentreHz: 0,
     channelHz: 0,
+    gainDb: null,
     view: "channel" as const,
   } satisfies SpectrumRow;
 }
@@ -254,5 +256,62 @@ describe("the bin-to-hertz convention (C20)", () => {
     const off = tuningOf(row(4 * BIN_HZ), TUNED_HZ);
 
     expect(off?.offsetHz).toBeCloseTo(4 * BIN_HZ, 6);
+  });
+});
+
+describe("a neighbour on the raster (C21)", () => {
+  /** An FM channel row: the tuned station, plus one 200 kHz away whose skirt reaches
+   *  into the outer third of the picture. `row()` above is narrowband, so this builds a
+   *  broadcast-shaped one directly. */
+  function dial({ tuned = -60, neighbour = -30 } = {}): SpectrumRow {
+    const binHz = 937.5;
+    const bins = 768; // 720 kHz — four times a ±90 kHz passband
+    const startHz = TUNED_HZ - (bins / 2) * binHz;
+    const db: number[] = [];
+    for (let i = 0; i < bins; i += 1) {
+      const hz = (i + 0.5 - bins / 2) * binHz;
+      const inTuned = Math.abs(hz) <= 60_000;
+      // The neighbour is centred 200 kHz up — outside the row — but 180 kHz wide, so
+      // its lower skirt lands from +110 kHz to the row's edge.
+      const inNeighbour = hz >= 110_000;
+      db.push(inTuned ? tuned : inNeighbour ? neighbour : -80 + Math.sin(i) * 0.5);
+    }
+    return {
+      at: 0,
+      startHz,
+      stopHz: startHz + bins * binHz,
+      binHz,
+      db,
+      peaks: [],
+      passbandHz: 180_000,
+      passbandCentreHz: 0,
+      channelHz: 200_000,
+      gainDb: null,
+      view: "channel" as const,
+    };
+  }
+
+  it("reads the station being demodulated, not the louder one next door", () => {
+    // MEASURED ON AIR beside a carrier at 96.494 MHz: tuning 96.3 put the row's
+    // strongest bin at +157,969 Hz and 96.7 at -161,250 Hz — the same neighbour both
+    // times, 158 kHz outside a 90 kHz passband.
+    const tuning = tuningOf(dial(), TUNED_HZ);
+
+    expect(tuning).not.toBeNull();
+    // Centred on the dial, not 130 kHz up where the neighbour is.
+    expect(Math.abs(tuning?.offsetHz ?? 1e9)).toBeLessThan(5_000);
+    expect(tuning?.centred).toBe(true);
+  });
+
+  it("takes the noise floor from noise, not from the neighbour's skirt", () => {
+    // The neighbour fills part of the ring the floor is measured in. A median can be
+    // dragged onto it; a low quartile stays in the noise below.
+    const crowded = tuningOf(dial(), TUNED_HZ);
+    const empty = tuningOf(dial({ neighbour: -80 }), TUNED_HZ);
+
+    expect(crowded).not.toBeNull();
+    expect(empty).not.toBeNull();
+    // Within a decibel of each other: the neighbour must not move the reading.
+    expect(Math.abs((crowded?.overDb ?? 0) - (empty?.overDb ?? 0))).toBeLessThan(1);
   });
 });

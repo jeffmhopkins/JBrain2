@@ -112,7 +112,15 @@ function floorOf(row: SpectrumRow): number {
     if (hz < lowHz || hz > highHz) outside.push(row.db[i] as number);
   }
   if (outside.length === 0) return median(row.db);
-  return median(outside);
+  // A LOW QUARTILE, not the median (C21). The row reaches four times the passband, so on
+  // the FM dial its outer thirds are where the raster puts the neighbour, and a
+  // neighbour's skirt can fill a third of this ring — enough to drag a median off the
+  // noise and onto the edge of another station. MEASURED ON AIR: beside a carrier at
+  // 96.494 MHz, 96.3 read a ring floor of -46.9 dB where an empty 107.9 read -49.1.
+  // The quartile sits in clean noise either way, and on an empty ring it is within a
+  // decibel of the median it replaces.
+  const sorted = [...outside].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 4)] as number;
 }
 
 /** Where the demodulator's passband sits, as offsets from the tuned frequency.
@@ -132,9 +140,21 @@ export function passbandEdges(row: SpectrumRow): { lowHz: number; highHz: number
  *  centre can sit half a bin off the frequency it was measured around. */
 export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
   if (row.passbandHz <= 0 || row.db.length === 0 || row.binHz <= 0) return null;
+  // The peak is looked for INSIDE THE PASSBAND, not across the row (C21). The row
+  // reaches four times the passband, so on the FM dial its outer thirds are exactly
+  // where the 200 kHz raster puts the NEIGHBOUR — and a global argmax there answers
+  // "where is the signal in this channel?" with a different station.
+  //
+  // MEASURED ON AIR beside a carrier at 96.494 MHz: at 96.3 the strongest bin in the row
+  // sat at +157,969 Hz and at 96.7 at -161,250 Hz — both the same neighbour, 158 kHz
+  // outside a 90 kHz passband. The readout would have called it 1.6 kHz off and the
+  // "tune to it" button would have moved the dial onto it.
+  const band = passbandEdges(row);
   let peak = Number.NEGATIVE_INFINITY;
   let peakAt = -1;
   for (let i = 0; i < row.db.length; i += 1) {
+    const hz = (i + 0.5 - row.db.length / 2) * row.binHz;
+    if (hz < band.lowHz || hz > band.highHz) continue;
     const value = row.db[i] as number;
     if (Number.isFinite(value) && value > peak) {
       peak = value;
