@@ -463,6 +463,14 @@ export function SdrWaterfall({
             {/* Held keeps what it has seen until this is pressed: a band watched for an
                 hour should still be able to say what went through it, and an expiry
                 would make the answer depend on when you happened to look. */}
+            {/* Said once, above the list, instead of on seventy pills: on a hopped band
+                "not in the newest row" is where the radio is pointing, not whether the
+                signal is there. */}
+            {marks === "held" && placed.length ? (
+              <span className="wf-sighint">
+                {placed.filter((p) => p.peak.live).length} on air now
+              </span>
+            ) : null}
             {marks === "held" && signals.length ? (
               <button type="button" className="wf-clear" onClick={clear}>
                 Clear
@@ -483,7 +491,14 @@ export function SdrWaterfall({
                     {/* Over the noise AROUND it, which is what made it a signal — an
                         absolute dBFS says nothing without the floor beside it. */}
                     <span className="wf-sigover">+{peak.overDb.toFixed(1)} dB</span>
-                    {peak.live ? null : <span className="wf-sigheld">gone</span>}
+                    {/* The LIVE ones are marked, not the held ones. It tagged every
+                        signal absent from the newest row "gone", which on a band wide
+                        enough to hop is almost all of them almost all the time — the
+                        radio visits each hop for a fraction of a second, so a station
+                        transmitting continuously reads "gone" on twenty-one rows out of
+                        twenty-two. REPORTED by the owner as "they seem to expire even
+                        when held is on"; nothing was expiring, the label was wrong. */}
+                    {peak.live ? <span className="wf-signow" aria-label="on air now" /> : null}
                   </>
                 );
                 const arm = armed === peak.hz;

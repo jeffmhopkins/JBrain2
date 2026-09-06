@@ -365,16 +365,24 @@ describe("the signals under the picture", () => {
     expect(screen.queryAllByText("144.075")).toHaveLength(0);
   });
 
-  it("holds a signal that stopped, and says it is gone", () => {
+  it("holds a signal that stopped, and marks the ones on air instead", () => {
     // A repeater keys up and drops. One marker that appears and goes, not one that
     // vanishes between words — which is what makes a live list unreadable.
+    //
+    // It used to tag the ABSENT ones "gone", which on a band wide enough to hop is
+    // almost all of them almost all the time: the radio visits each hop for a fraction
+    // of a second, so a station transmitting continuously reads "gone" on twenty-one
+    // rows out of twenty-two. The owner read that as signals expiring while held was
+    // on. Nothing was expiring; the label was answering a different question.
     const stream = watching();
     send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+    expect(screen.getAllByLabelText("on air now")).toHaveLength(1);
 
     send(stream, 1002, { peaks: [] });
 
     expect(screen.getAllByText("144.075")).toHaveLength(2);
-    expect(screen.getByText("gone")).toBeTruthy();
+    expect(screen.queryAllByLabelText("on air now")).toHaveLength(0);
+    expect(screen.queryByText("gone")).toBeNull();
   });
 
   it("live shows only what is on the air now", () => {

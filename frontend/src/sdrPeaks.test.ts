@@ -16,7 +16,12 @@ import {
 } from "./sdrPeaks";
 import type { SpectrumRow } from "./sdrSpectrum";
 
-function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): SpectrumRow {
+function row(
+  peaks: { hz: number; db: number }[],
+  at = 100,
+  binHz = 9375,
+  channelHz = 0,
+): SpectrumRow {
   return {
     at,
     startHz: 88_000_000,
@@ -24,6 +29,7 @@ function row(peaks: { hz: number; db: number }[], at = 100, binHz = 9375): Spect
     binHz,
     db: [],
     passbandHz: 0,
+    channelHz,
     peaks: peaks.map((p) => ({ ...p, overDb: 12 })),
   };
 }
@@ -38,7 +44,44 @@ describe("holding a signal across rows", () => {
     const second = mergePeaks(first, row([{ hz: 100_009_375, db: -51 }], 101));
 
     expect(second).toHaveLength(1);
-    expect(second[0]).toMatchObject({ hz: 100_009_375, db: -51, live: true });
+    // The STRONGEST sighting's frequency, not the newest. REPORTED by the owner:
+    // "frequencies jump around too much I can't click them twice" — taking the newest
+    // meant the number under their thumb changed ten times a second, so a
+    // tap-then-confirm could never land twice on the same pill.
+    expect(second[0]).toMatchObject({ hz: 100_000_000, db: -50, live: true });
+  });
+
+  it("takes the new frequency when the new sighting is stronger", () => {
+    // Stability must not become stickiness: the strongest sighting is also the best
+    // estimate of where the station is, so a louder one is a better answer and wins.
+    const first = mergePeaks([], row([{ hz: 100_000_000, db: -60 }], 100));
+
+    const second = mergePeaks(first, row([{ hz: 100_009_375, db: -40 }], 101));
+
+    expect(second[0]).toMatchObject({ hz: 100_009_375, db: -40 });
+  });
+
+  it("folds a broadcast station's wander into one signal", () => {
+    // REPORTED by the owner on the FM dial: 84 "signals" for a band with about twenty
+    // stations, four pills for 96.5 alone. A broadcast carrier is 180 kHz wide and its
+    // loudest bin wanders across that width, so three bins of 9.4 kHz matched almost
+    // nothing and every row added a station that was already there.
+    let out = mergePeaks([], row([{ hz: 96_475_000, db: -40 }], 100, 9375, 200_000));
+    for (const [i, hz] of [96_438_000, 96_503_000, 96_541_000].entries()) {
+      out = mergePeaks(out, row([{ hz, db: -42 }], 101 + i, 9375, 200_000));
+    }
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ hz: 96_475_000 });
+  });
+
+  it("keeps two real neighbours on the raster apart", () => {
+    // The tolerance must not swallow what the raster is FOR: 96.5 and 96.7 are two
+    // stations, and a rule wide enough to merge them would hide half the dial.
+    let out = mergePeaks([], row([{ hz: 96_500_000, db: -40 }], 100, 9375, 200_000));
+    out = mergePeaks(out, row([{ hz: 96_700_000, db: -41 }], 101, 9375, 200_000));
+
+    expect(out).toHaveLength(2);
   });
 
   it("keeps a signal that stopped, and marks it as remembered", () => {
@@ -102,19 +145,23 @@ describe("holding a signal across rows", () => {
     expect(both.every((p) => p.live)).toBe(true);
   });
 
-  it("lists the strongest first, because that is what a glance wants", () => {
+  it("lists in FREQUENCY order, because that is how a dial is read", () => {
+    // It listed strongest-first, which re-ordered the whole list whenever a level
+    // wobbled — the other half of "I can't click them twice". Which to FORGET when the
+    // list is full is still decided by strength; that is a different question from
+    // what order to read them in.
     const merged = mergePeaks(
       [],
       row(
         [
-          { hz: 100_000_000, db: -70 },
           { hz: 102_000_000, db: -40 },
+          { hz: 100_000_000, db: -70 },
         ],
         100,
       ),
     );
 
-    expect(merged.map((p) => p.db)).toEqual([-40, -70]);
+    expect(merged.map((p) => p.hz)).toEqual([100_000_000, 102_000_000]);
   });
 });
 
