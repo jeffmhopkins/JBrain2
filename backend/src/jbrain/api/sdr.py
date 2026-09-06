@@ -51,7 +51,6 @@ from jbrain.sdr.tuner import (
     MAX_MHZ,
     MIN_MHZ,
     TUNABLE_MIN_MHZ,
-    live_bin_hz,
     nodes_in,
     out_of_range,
     viewable,
@@ -863,29 +862,6 @@ async def stop(
 
 
 SPECTRUM_PURPOSE = "spectrum"
-#: The bin width a live view falls back to when neither the caller nor a band section
-#: names one. 25 kHz is a channel on most of the narrowband VHF/UHF plan, so a row at
-#: this width puts roughly one bin per channel — coarse enough to be cheap, fine enough
-#: that a signal lands in a bin of its own rather than smeared across a neighbour's.
-DEFAULT_SPECTRUM_BIN_HZ = 25_000
-
-#: **TRANSITIONAL — F6 deletes this and everything it guards.** Which engine the
-#: sidecar really runs for `purpose=spectrum`. It is still `rtl_power` (F6, the I/Q
-#: swap, is not built), and the two engines do not take the same bin width: the table's
-#: `rate / N` is a number OUR FFT produces, while rtl_power is handed
-#: `-f start:stop:bin` and answers with the finest power-of-two division of its per-hop
-#: bandwidth that is no coarser than what it was asked for. Ask it for `air-tower`'s
-#: 600 Hz and it returns 4097 columns instead of 513 — ~29 kB per frame instead of
-#: ~3.6 kB, relayed on the api's own event loop and rounded bin by bin in pure Python,
-#: for a picture no finer than the tool's own `%.2f` bin width can honestly label.
-#: So the table's exact width is held back until the engine that produces it exists.
-#: Flipped by F6, which is what makes the exact width safe: `_span` now names the
-#: capture that produces it, `spectrum_start` and `spectrum_tune` send that capture to
-#: the sidecar, and the sidecar's I/Q engine is what transforms it. Set this back to
-#: False and every session returns to rtl_power's ladder in one line — the sidecar falls
-#: back on its own when a radio will not open (CLAUDE.md #10), so this is the deliberate
-#: switch rather than the safety net.
-SPECTRUM_ENGINE_IS_IQ = True
 
 
 def _capture_body(capture: tuple[int, int, int] | None) -> dict[str, int]:
@@ -950,36 +926,31 @@ def _span(
         # terminal has (CLAUDE.md #10), and "this is more than one capture down there"
         # is the fact they most need said in words.
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
-    if SPECTRUM_ENGINE_IS_IQ:
-        # F6 onwards the width is ours, and the frame is exactly `rate / N` wide. The
-        # CAPTURE comes back with it rather than being re-derived by the caller, because
-        # the width and the engine that produces it have to be ONE decision: a width of
-        # `rate / N` handed to rtl_power is the 4097-column frame §6.4 describes.
-        capture = bands.capture_for(start_hz, stop_hz)
-        if capture is not None:
-            rate_hz, fft_bins = capture
-            return (
-                start_hz,
-                stop_hz,
-                bands.bin_width_hz(rate_hz, fft_bins),
-                (
-                    rate_hz,
-                    fft_bins,
-                    1,
-                ),
-            )
-        # F11: too wide for one capture is not the same as too wide for this engine.
-        # The retune works on a live stream (F0), so a wide span is several captures
-        # stitched — finer bins than rtl_power gives AND without its one-second clamp.
-        hopped = bands.hop_plan(start_hz, stop_hz)
-        if hopped is not None:
-            rate_hz, fft_bins, _hops = hopped
-            return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), hopped
-    # rtl_power's tier — after F11 only the spans no I/Q capture plan covers at all:
-    # a wide SHORTWAVE range, where every hop would have to satisfy the Nyquist window
-    # separately, and a hand-typed span wider than the hop budget.
-    want = found.sweep_bin_hz if found is not None else DEFAULT_SPECTRUM_BIN_HZ
-    return start_hz, stop_hz, live_bin_hz(stop_hz - start_hz, want), None
+    # The width is OURS, and the frame is exactly `rate / N` wide. The CAPTURE comes
+    # back with it rather than being re-derived by the caller, because the width and the
+    # engine that produces it have to be ONE decision.
+    capture = bands.capture_for(start_hz, stop_hz)
+    if capture is not None:
+        rate_hz, fft_bins = capture
+        return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), (rate_hz, fft_bins, 1)
+    # F11: too wide for one capture is not the same as too wide for this engine.
+    # The retune works on a live stream (F0), so a wide span is several captures
+    # stitched — finer bins than rtl_power gave AND without its one-second clamp.
+    hopped = bands.hop_plan(start_hz, stop_hz)
+    if hopped is not None:
+        rate_hz, fft_bins, _hops = hopped
+        return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), hopped
+    # THERE IS NO SECOND ENGINE ANY MORE (B1). `viewable` above already refused every
+    # range with no plan, in a sentence naming the widest the waterfall stitches, so
+    # reaching here is a disagreement between that refusal and this chooser rather than
+    # a range to serve some other way — and serving it some other way is exactly what
+    # made a `Frame.db` mean two different things depending on which engine drew it.
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"No capture plan covers {start_hz / 1e6:g}-{stop_hz / 1e6:g} MHz. Pick a band section."
+        ),
+    )
 
 
 @router.post("/spectrum")

@@ -113,12 +113,12 @@ PURPOSE_APRS = "aprs"
 # the session's existence, so a sweep that held the radio outside the lease would be a
 # radio held by something invisible.
 PURPOSE_SURVEY = "survey"
-# A LIVE spectrum: the same rtl_power, with no exit timer and its CSV on stdout instead
-# of a file, so rows can be fanned out as they are measured rather than read back once.
-# The difference from `survey` is the whole point — a survey is a measurement that ends
-# and is then reduced, this is a picture that keeps being drawn — so it is a purpose of
-# its own rather than a flag on that one: they end differently, they are released
-# differently, and the omnibox has to name them differently.
+# A LIVE spectrum: our own capture, transformed here, with rows fanned out as they are
+# measured rather than read back once. The difference from `survey` is the whole point —
+# a survey is a measurement that ends and is then reduced, this is a picture that keeps
+# being drawn — so it is a purpose of its own rather than a flag on that one: they end
+# differently, they are released differently, and the omnibox has to name them
+# differently.
 PURPOSE_SPECTRUM = "spectrum"
 # Every purpose maps to the phrase a refusal uses. `.get` rather than `[]` because this
 # is read while holding the tuner lock on the contention path: a purpose added without a
@@ -130,9 +130,10 @@ PURPOSE_LABEL = {
     PURPOSE_SPECTRUM: "watching the spectrum",
 }
 PURPOSES = tuple(PURPOSE_LABEL)
-#: The purposes tuned to a RANGE rather than a frequency. Both drive rtl_power, and
-#: every place that asks "does this session have a sweep" means this set — which is one
-#: line rather than two comparisons that can fall out of step.
+#: The purposes tuned to a RANGE rather than a frequency. Every place that asks "does
+#: this session have a sweep" means this set — which is one line rather than two
+#: comparisons that can fall out of step. They no longer share an ENGINE: B1 left the
+#: live spectrum with only our own, and `survey` is the last caller of `rtl_power`.
 SWEEPING = (PURPOSE_SURVEY, PURPOSE_SPECTRUM)
 
 AUDIO_RATE = 16_000  # whisper's native rate, and rtl_fm's for narrowband
@@ -176,10 +177,9 @@ MEASURING_GAIN_DB = 30.0
 RESERVATION_TTL_S = 300.0
 
 # --- live spectrum --------------------------------------------------------------
-# One waterfall row per second. rtl_power retunes WITHIN the interval rather than
-# stretching it (measured — `_sweep_cmd` says so at length), so this is the real frame
-# rate at every span the sweep bounds allow, not one divided by the hop count.
-SPECTRUM_INTERVAL_S = 1
+# `SPECTRUM_INTERVAL_S` went with B1. It was rtl_power's `-i`, and its one-row-a-second
+# floor was `if (interval < 1) interval = 1;` in the tool's own C; this engine has no
+# such clamp and the rate is the capture's own (`segments_for`).
 # Frames held for one viewer. Two seconds' worth: a waterfall row that arrives late is
 # drawn in the wrong place, so a viewer that has stopped reading is dropped rather than
 # queued — the same backpressure, and for the same reason, as live audio.
@@ -667,11 +667,11 @@ class Sweep:
     stop_hz: int
     bin_hz: int | float
     seconds: float
-    #: The ONE-HOP capture the api chose for this range — `(rate_hz, bins)` — or None
-    #: when no single capture covers it and `rtl_power` must hop instead. Decided there
-    #: rather than here because `bands.LIVE_CAPTURES` is the band table, and a second
-    #: copy of it in the sidecar is two tables that will disagree. When it is present,
-    #: `bin_hz` is exactly `rate / bins` and the I/Q engine is what draws the picture.
+    #: The capture the api chose for this range — `(rate_hz, bins)` — or None when no
+    #: plan covers it, which since B1 is a REFUSAL rather than a second engine's cue
+    #: (`spectrum_engine_refusal`). Decided there rather than here because
+    #: `bands.LIVE_CAPTURES` is the band table, and a second copy of it in the sidecar is
+    #: two tables that will disagree. `bin_hz` is then exactly `rate / bins`.
     capture: tuple[int, int] | None = None
     #: How many captures the span takes. 1 is one tuning; more is a stitched sweep
     #: (F11), where each hop contributes the trusted middle of its own capture. The
@@ -742,8 +742,8 @@ class Sweep:
             # can tell (§6.14).
             # NOT clamped when the api named a capture: `rate / bins` is then the width
             # the transform actually uses, and clamping it would make the frame declare
-            # a width nothing computed (§6.14). The clamp exists for rtl_power's tier,
-            # where the width is a request rather than a fact.
+            # a width nothing computed (§6.14). The clamp is the SURVEY's, where the
+            # width is a request made of rtl_power rather than a fact about a transform.
             bin_hz=(
                 bin_hz
                 if capture is not None
@@ -784,10 +784,16 @@ def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
     The refusal belongs to the ENGINE rather than to the route, and F6 is why that
     distinction earned its keep: the same shortwave range that had to be refused while
     `rtl_power` was the only engine is drawn by the I/Q one, and a route-level floor
-    would have had to be found and removed again. What is left is narrower and still
-    real — `rtl_power -D` hardcodes direct sampling mode 1, the ADC's I branch, and this
-    board wires Q, so a shortwave range too WIDE for one I/Q capture still has no engine
-    that can honestly draw it (docs/plans/SDR_IQ_SPECTRUM_PLAN.md F6, F8).
+    would have had to be found and removed again.
+
+    **Since B1 there is no second engine at all, so a range with no capture named is
+    refused rather than served differently.** Both engines landed on the same
+    `Frame.db`, the same colour map and the same `peaks.find`, whose output reaches the
+    agent's tools as a MEASUREMENT — and `iq.py` emits true dBFS where `rtl_power`
+    emitted its own uncalibrated scale. The api chooses the capture (`bands.hop_plan`)
+    and refuses in words what no plan covers; this is the same rule stated where the
+    engine is, so a sidecar handed a captureless sweep by anything says so instead of
+    drawing something.
 
     Whether anything is actually ARRIVING on shortwave is a separate question and
     deliberately not asked here: F0 measured a dead HF input on this box, and that shows
@@ -799,21 +805,21 @@ def spectrum_engine_refusal(sweep: "Sweep | None") -> str | None:
     `resweep` has to ask before `_restart` tears either of them down. One reading, two
     call sites — the alternative is the guard drifting into two floors that disagree.
     """
-    if sweep is None or sweep.start_hz >= MIN_HZ:
+    if sweep is None:
         return None
-    if sweep.capture is not None:
-        # F6: the I/Q engine sets `direct_samp` at runtime and reaches the branch this
-        # board wires, so shortwave is the engine's to draw. Whether anything ARRIVES
-        # there is the antenna's business and shows up as an empty picture rather than
-        # as a refusal — F0 measured a dead HF input on this box, and a refusal would
-        # hide that behind a sentence about software instead of showing it.
-        return None
-    return (
-        f"a live spectrum below {MIN_HZ // 1_000_000} MHz needs one capture the I/Q "
-        f"engine can draw, and this range needs several hops — which only the sweep "
-        f"tool does, and it cannot reach the ADC branch this radio wires. Listening "
-        f"there works."
-    )
+    if sweep.capture is None:
+        return (
+            "this range has no capture plan, and there is no second engine to draw it "
+            "with — the sweep tool measured on a scale of its own, which is worse than "
+            "no picture when the numbers reach a model as fact. Ask for a band section, "
+            "or a narrower piece."
+        )
+    # F6: the I/Q engine sets `direct_samp` at runtime and reaches the branch this board
+    # wires, so shortwave is the engine's to draw. Whether anything ARRIVES there is the
+    # antenna's business and shows up as an empty picture rather than as a refusal — F0
+    # measured a dead HF input on this box, and a refusal would hide that behind a
+    # sentence about software instead of showing it.
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -886,91 +892,6 @@ class Frame:
         }
 
 
-def _spectrum_row(line: str) -> tuple[str, int, int, list[float]] | None:
-    """One rtl_power CSV line as (timestamp, low Hz, bin Hz, dB per bin).
-
-    Tolerant, for the reason `sweep.reduce_csv` is: this parses text a radio wrote
-    while it is still writing, so a torn or short line is a lost row rather than an
-    error that ends a live picture."""
-    parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 7:
-        return None
-    try:
-        low, step = int(float(parts[2])), int(float(parts[4]))
-        values = [float(p) for p in parts[6:] if p]
-    except ValueError:
-        return None
-    if not values or step <= 0:
-        return None
-    return f"{parts[0]} {parts[1]}", low, step, values
-
-
-class Stitch:
-    """rtl_power's rows back into whole waterfall frames.
-
-    rtl_power emits one row per retune BLOCK, and a sweep wider than the radio's ~2.8
-    MHz window is several blocks — all carrying the SAME timestamp, because the retunes
-    happen inside the interval rather than extending it. So a frame is the run of rows
-    sharing a timestamp.
-
-    Waiting for the NEXT timestamp to prove a frame complete would cost every frame a
-    whole interval of latency, including the single-block case that is most of what the
-    PWA asks for. So the width is LEARNED — the first complete frame says how many
-    blocks a frame has — and after that a frame is emitted the moment its last block
-    arrives. The timestamp change is still there as the fallback, which is what makes a
-    dropped row cost one short frame rather than a stalled picture.
-
-    Blocks are keyed by their low edge rather than assumed to arrive in band order,
-    because they do not: `sweep.reduce_csv` learned the same thing off the same tool.
-
-    Pure: text in, frames out, no clock and no radio, which is what lets the awkward
-    cases be tested without one."""
-
-    def __init__(self) -> None:
-        self._stamp = ""
-        self._blocks: dict[int, tuple[int, list[float]]] = {}
-        self._expect = 0
-
-    def push(self, line: str) -> list[Frame]:
-        """Feed one CSV line; get back whatever frames it completed (usually none)."""
-        row = _spectrum_row(line)
-        if row is None:
-            return []
-        stamp, low, step, values = row
-        out: list[Frame] = []
-        # A repeated block is a wrap that the timestamp did not show — belt and braces
-        # against a tool that stamps two intervals alike on a slow box.
-        if stamp != self._stamp or low in self._blocks:
-            frame = self._flush()
-            if frame is not None:
-                out.append(frame)
-            self._stamp = stamp
-        self._blocks[low] = (step, values)
-        if self._expect and len(self._blocks) >= self._expect:
-            frame = self._flush()
-            if frame is not None:
-                out.append(frame)
-        return out
-
-    def _flush(self) -> Frame | None:
-        blocks, self._blocks = self._blocks, {}
-        if not blocks:
-            return None
-        # `max`, never plain assignment: a frame short a dropped row must not teach the
-        # eager path a narrower width, or every frame after it would be cut to match.
-        self._expect = max(self._expect, len(blocks))
-        ordered = sorted(blocks.items())
-        db: list[float] = []
-        for _low, (_step, values) in ordered:
-            db.extend(values)
-        return Frame(
-            at=time.time(),
-            start_hz=ordered[0][0],
-            bin_hz=ordered[0][1][0],
-            db=db,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class SessionInfo:
     """What a session looks like from outside — the shape the omnibox tuner reads."""
@@ -997,11 +918,16 @@ class SessionInfo:
     #: a tuner parked somewhere it is not, and gives a waterfall no way to label its own
     #: axis. None for the purposes that really are one frequency.
     sweep: dict[str, Any] | None = None
-    #: Which engine is actually running — `iq` for our own samples, `rtl_fm`/`rtl_power`
-    #: for a subprocess. Reported because both paths can serve the same request and the
-    #: choice is made at RUNTIME: a box where SoapySDR will not open the dongle falls
-    #: back silently and keeps working, which is right, but an owner with no terminal
-    #: then has no way to tell a fallback from a preference (CLAUDE.md #10).
+    #: Which engine is actually running — `iq` for our own samples, `rtl_fm` for the
+    #: LISTENING fallback. Reported because that fallback is chosen at RUNTIME: a box
+    #: where SoapySDR will not open the dongle keeps playing audio, which is right, but
+    #: an owner with no terminal then has no way to tell a fallback from a preference
+    #: (CLAUDE.md #10) — and on `rtl_fm` there is no tuning view at all.
+    #:
+    #: There is no `rtl_power` value any more. A PICTURE has one engine since B1, because
+    #: a fallback there degraded the MEANING of a number rather than a feature: both
+    #: engines landed on the same `Frame.db` and the same `peaks.find`, on two different
+    #: scales, feeding a model that reads the result as fact.
     engine: str = "rtl_fm"
     #: USB buffers dropped under this session. See `Session.overflows`.
     overflows: int = 0
@@ -1304,48 +1230,24 @@ class Session:
         for thread in self._threads:
             thread.start()
 
-    def _spectrum_cmd(self) -> list[str]:
-        """The same rtl_power, with no exit timer and its CSV on stdout.
-
-        `stdbuf -oL` because the whole feature turns on rtl_power flushing each row as
-        it writes it. It does — `csv_dbm` ends in an `fflush` — but that is a property
-        of a binary the image installs from apt rather than one this repo builds, and
-        the failure mode if a future build ever changes it is a waterfall that paints
-        nothing while every test still passes. Line buffering makes the guarantee ours.
-        `stdbuf` execs its argument, so `self._rtl` is still rtl_power's own pid and
-        `_kill` still reaches it.
-
-        No `-e`: a live spectrum runs until the session is released, which is what makes
-        it different from a survey (see PURPOSE_SPECTRUM)."""
-        assert self.sweep is not None
-        span = self.sweep
-        cmd = ["stdbuf", "-oL", "rtl_power"] if _LINE_BUFFERED else ["rtl_power"]
-        cmd += [
-            "-f", f"{span.start_hz}:{span.stop_hz}:{span.bin_hz}",
-            "-i", str(SPECTRUM_INTERVAL_S),
-        ]  # fmt: skip
-        # Fixed gain for the same reason the survey fixes it, and defaulted for the
-        # same reason: a floor that moves with the signal makes the colours mean nothing
-        # across the picture, and a waterfall whose scale drifts is one nobody can read
-        # a weak signal off.
-        cmd += ["-g", str(self.gain or MEASURING_GAIN_DB)]
-        cmd += self._device_args()
-        return [*cmd, "-"]
-
     def _start_spectrum_pipeline(self) -> None:
-        """Whichever engine can draw this range: the I/Q one first, rtl_power behind it.
+        """ONE engine draws a live spectrum, and a range it cannot draw is refused.
 
-        The api names a one-hop capture when the band table has one, and that IS the
-        engine choice — the band table lives in one place and the sidecar executes what
-        it was handed (F6). A range too wide for one capture has no capture named, and
-        rtl_power hops it exactly as before.
+        There used to be two, with `rtl_power` behind the I/Q engine as a runtime
+        fallback justified by CLAUDE.md #10 — an owner with no terminal must not need a
+        revert and a rebuild to get a picture back. **That trade was the wrong way
+        round** (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1): both engines land on
+        the same `Frame.db`, the same colour map and the same `peaks.find`, whose output
+        reaches the agent's tools as a MEASUREMENT — and `iq.py` emits true dBFS while
+        `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes
+        what a number MEANS, feeding a model that reads it as fact, is a correctness bug
+        wearing a robustness costume.
 
-        **The fallback is a runtime one, and that is CLAUDE.md #10.** If the I/Q engine
-        cannot open the radio on this box, an owner with no terminal must not need a
-        revert and a rebuild to get a picture back — so a failure here drops to
-        rtl_power for any range rtl_power can serve, and says so in the log. Only a
-        range rtl_power cannot serve at all keeps the I/Q failure, because there the
-        alternative is not a worse picture but a false one."""
+        What #10 actually requires is that the owner is never left guessing, and a
+        refusal naming the driver does that better than a picture whose dB are a
+        different quantity. LISTENING keeps its `rtl_fm` fallback, deliberately: audio
+        is what an owner must not lose to a driver regression, and there the fallback
+        degrades the FEATURE rather than the MEANING of a number."""
         # Asked here as well as in `resweep` because this is the START path — reached
         # from `__init__`, where there is no session yet and nothing to lose by finding
         # out late. A retune cannot afford that, which is why the reading lives in one
@@ -1353,36 +1255,7 @@ class Session:
         unservable = spectrum_engine_refusal(self.sweep)
         if unservable is not None:
             raise SdrError(unservable)
-        assert self.sweep is not None
-        if self.sweep.capture is not None:
-            try:
-                self._start_iq_spectrum()
-            except RadioUnavailable as failed:
-                if self.sweep.start_hz < MIN_HZ:
-                    raise
-                print(  # noqa: T201
-                    f"[spectrum] the I/Q engine would not start ({failed}); "
-                    f"falling back to rtl_power for this session",
-                    flush=True,
-                )
-            else:
-                return
-        if shutil.which("rtl_power") is None:
-            raise SdrError("rtl_power is not installed in this image")
-        self.engine = "rtl_power"
-        try:
-            self._rtl = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
-                self._spectrum_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-        except OSError as exc:
-            self._kill()
-            raise SdrError(f"could not start the spectrum: {exc}") from exc
-        self._threads = [
-            threading.Thread(target=self._pump_spectrum, daemon=True),
-            threading.Thread(target=self._drain_tuner_log, daemon=True),
-        ]
-        for thread in self._threads:
-            thread.start()
+        self._start_iq_spectrum()
 
     def _start_iq_listen(self) -> None:
         """Open the radio ourselves, demodulate its samples, and draw the channel.
@@ -1760,27 +1633,6 @@ class Session:
                     db=row.tolist(),
                 )
             )
-
-    def _pump_spectrum(self) -> None:
-        """rtl_power's CSV -> whole frames -> every viewer."""
-        rtl = self._rtl
-        if rtl is None or rtl.stdout is None:
-            return
-        stitch = Stitch()
-        try:
-            for raw in rtl.stdout:
-                if self._stopping:
-                    break
-                for frame in stitch.push(raw.decode("utf-8", "replace")):
-                    self._publish_frame(frame)
-        except (ValueError, OSError):
-            pass  # a stop, or the process went away; _kill handles teardown
-        finally:
-            # A retune replaces the process under viewers who stay attached, and each
-            # frame says which band it covers — so they need no sentinel and no reconnect
-            # to follow the move. Only a real end closes their streams.
-            if not self._restarting:
-                self._end_frames()
 
     def _publish_frame(self, frame: Frame) -> None:
         # Stamped at the one seam every engine passes through, exactly as the peaks are

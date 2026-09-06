@@ -18,13 +18,13 @@ import re
 
 import pytest
 
+from jbrain.sdr import bands
 from jbrain.sdr.bands import LIVE_MAX_BINS, MIN_LIVE_BIN_HZ
 from jbrain.sdr.tuner import (
     DIRECT_MIN_MHZ,
     MAX_MHZ,
     MAX_SPAN_MHZ,
     MIN_MHZ,
-    live_bin_hz,
     nodes_in,
     serials_in,
     sweepable,
@@ -151,21 +151,23 @@ class TestWhatALiveViewCanCover:
     question, and the refusals below 24 MHz became narrower rather than absent.
     """
 
-    def test_a_row_too_fine_to_send_is_coarsened_by_doubling(self) -> None:
-        # rtl_power's ladder, and only its: the multi-hop tier is still swept by the
-        # tool, which grants the largest power-of-two division of its per-hop bandwidth
-        # no coarser than what it was asked for. An exact quotient is a number it will
-        # not honour — which is exactly why the one-hop tier no longer comes here.
-        assert live_bin_hz(4_000_000, 100) == 1_600
-        assert LIVE_MAX_BINS >= 4_000_000 // 1_600
-        # ...and 800 really was too fine.
-        assert LIVE_MAX_BINS < 4_000_000 // 800
+    def test_a_span_no_capture_plan_covers_is_refused_in_words(self) -> None:
+        """B1: the tier that used to catch this was `rtl_power`, which drew the range
+        on its own uncalibrated scale. There is no second engine now, so the limit is
+        the hop plan's and it is said rather than worked around — and the number comes
+        off the same ladder `hop_plan` walks, so the two cannot drift."""
+        widest = bands.widest_stitchable_hz() / 1_000_000
 
-    def test_a_bin_that_already_fits_is_left_alone(self) -> None:
-        assert live_bin_hz(4_000_000, 25_000) == 25_000
+        assert viewable(144.0, 144.0 + widest - 1) is None
+        refusal = viewable(144.0, 144.0 + widest + 1)
+        assert refusal is not None
+        assert "stitch in one row" in refusal
+        assert f"{widest:g}" in refusal
 
-    def test_a_nonsense_bin_does_not_divide_by_zero(self) -> None:
-        assert live_bin_hz(4_000_000, 0) > 0
+    def test_every_curated_section_is_inside_that_limit(self) -> None:
+        """What the refusal above must never catch: a band button in the sheet."""
+        for section in bands.SECTIONS:
+            assert viewable(section.start_hz / 1e6, section.stop_hz / 1e6) is None, section.id
 
     def test_shortwave_can_now_be_drawn_though_it_still_cannot_be_swept(self) -> None:
         """The whole of F8 in two lines. The same 300 kHz of 40 m is a picture and not

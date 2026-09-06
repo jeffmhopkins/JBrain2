@@ -67,38 +67,24 @@ function shortwave(over: Partial<BandSection> = {}): BandSection {
 }
 
 describe("which rows the picker offers", () => {
-  it("greys out shortwave while the engine behind it is still rtl_power", () => {
-    // ⏳ TRANSITIONAL, and this test is the record of WHY it is not null. The refusal
-    // stopped being `surveyable` — that is rtl_power's answer to whether a band can be
-    // surveyed, and it kept these rows dark for a reason about the wrong tool. What is
-    // in the way now is narrower and temporary: F8 opened the HF rows one wave before
-    // F6 swaps the engine, so the sidecar is still rtl_power and answers a shortwave
-    // spectrum with a 400. A picker that offered the row anyway would be promising
-    // something the box refuses — and on the spectrum that tap costs the waterfall
-    // already running, because it is a RETUNE of a live session.
-    //
-    // **THIS FLIPS AT F6.** When `listen.spectrum_engine_refusal` goes, so does the
-    // mirror in `whyNotLive`, and this expectation becomes `toBeNull()`.
+  it("offers shortwave now that one engine draws every band", () => {
+    // This test was the record of a TRANSITIONAL refusal: F8 opened the HF rows one
+    // wave before the engine behind them changed, so the picker greyed them out rather
+    // than promising a tap the box answered with a 400. B1 deleted `rtl_power`, and the
+    // I/Q engine sets the ADC branch at runtime — so the row is offered, which is what
+    // the marker in `whyNotLive` said should happen "in the same wave".
     const forty = shortwave();
 
+    // ...and it is still not SURVEYABLE, which is a different question about a
+    // different tool. Asking it here is what kept these rows dark for the wrong reason.
     expect(forty.surveyable).toBe(false);
-    expect(whyNotLive(forty)).toContain("I/Q engine");
+    expect(whyNotLive(forty)).toBeNull();
   });
 
-  it("says nothing about surveying, because that is not what the row is refused for", () => {
-    // The wording matters as much as the boolean: "this band cannot be swept" was the
-    // old reason and it is about a tool the waterfall will not be using. The owner is
-    // being told the box has not been updated yet, not that the radio cannot do it.
-    const refusal = whyNotLive(shortwave()) ?? "";
-
-    expect(refusal).not.toContain("survey");
-    expect(refusal).toContain("yet");
-  });
-
-  it("keeps the capture rule that outlives the transition", () => {
-    // Below 24 MHz a picture is one capture or nothing: the thing that stitches several
-    // hops together is the tool that cannot go there at all. This is what `whyNotLive`
-    // still refuses on once the engine lands and the mirror above is deleted.
+  it("keeps the capture rule that outlived the transition", () => {
+    // Below 24 MHz a picture is one capture or nothing: every hop would have to satisfy
+    // the Nyquist window separately down there, so a wide shortwave span has no plan.
+    // This is the rule that was hiding behind the transitional mirror.
     const refusal = whyNotLive(shortwave({ sample_rate_hz: 0, fft_bins: 0, bin_hz: 0 }));
 
     expect(refusal).not.toBeNull();
@@ -106,7 +92,7 @@ describe("which rows the picker offers", () => {
 
   it("leaves an ordinary VHF row alone", () => {
     expect(whyNotLive(section())).toBeNull();
-    // ...including the multi-hop tier, which rtl_power still serves perfectly well.
+    // ...including the multi-hop tier, which is several captures stitched (F11).
     expect(whyNotLive(section({ live: "slow", sample_rate_hz: 0, hops: 8 }))).toBeNull();
   });
 });

@@ -119,17 +119,11 @@ export function sectionAt(
  *  question — whether the band can be SURVEYED — and asking it here kept ten shortwave
  *  rows greyed out with a reason that was about the wrong tool. */
 export function whyNotLive(section: BandSection): string | null {
-  // ⏳ TRANSITIONAL — the one line in this file that mirrors a rule instead of reading
-  // a field, and it is here because the waves landed out of order. F8 opened the HF
-  // rows before F6 swapped the engine behind them, so the sidecar is still `rtl_power`
-  // and `listen.spectrum_engine_refusal` still refuses everything below 24 MHz — the
-  // tool hardcodes the ADC branch this board does not wire. Returning null here would
-  // make this file's own promise false: the picker would offer ten rows the box answers
-  // with a 400. DELETE THIS WITH THAT GUARD, in the same wave, and the check below —
-  // which is the real F6-era rule — is what remains.
-  if (section.direct_sampling) {
-    return "shortwave needs the I/Q engine, which this build doesn't have yet";
-  }
+  // The transitional line that greyed out every HF row is GONE, with the guard it
+  // mirrored: `listen.spectrum_engine_refusal` refused everything below 24 MHz while
+  // `rtl_power` was the engine down there, because the tool hardcodes the ADC branch
+  // this board does not wire. B1 deleted the tool, and the I/Q engine sets the branch
+  // at runtime — so shortwave is offered, and what remains below is the real rule.
   if (section.direct_sampling && !section.sample_rate_hz) {
     return "below 24 MHz a waterfall is one capture, and this range is wider than one";
   }

@@ -22,7 +22,6 @@ from fastapi import HTTPException
 from jbrain.api import sdr as sdr_api
 from jbrain.sdr import bands
 from jbrain.sdr.roles import Radio
-from jbrain.sdr.tuner import live_bin_hz
 
 # Typed `Any` so the fakes can stand in for `SettingsDep`/`OwnerDep` without a
 # `type: ignore` on every call — the routes read two attributes off each.
@@ -73,38 +72,26 @@ def test_a_one_hop_section_carries_the_bin_width_ITS_capture_will_produce() -> N
     assert isinstance(section.live_bin_hz, int)  # exact, so `sameBand` can compare it
 
 
-def test_the_fast_tier_never_asks_rtl_power_for_sub_kilohertz_bins() -> None:
-    """**Transitional, and F6 deletes it with `SPECTRUM_ENGINE_IS_IQ`.**
+def test_every_curated_section_has_a_capture_plan() -> None:
+    """B1 removed the second engine, so this is now a completeness requirement rather
+    than a comparison between two ladders: a section with no plan would be a button in
+    the band sheet that answers 400.
 
-    The table's `rate / N` is 250-600 Hz, and until the I/Q engine exists that number
-    is handed to `rtl_power -f start:stop:bin`, which honours it: `air-tower` goes from
-    512 bins a frame to 4096, and `csv_dbm` prints `i1..i2` INCLUSIVE and then repeats
-    `avg[i2]`, so the block is 4097 columns. That is ~29 kB per frame instead of ~3.6,
-    relayed on the api's own event loop and rounded value by value in pure Python, for
-    a picture no finer than the `%.2f` bin width the tool prints — 488.28 read back as
-    488, putting a 4096-bin frame ~1150 Hz out at the top. All cost, no benefit, on the
-    engine the width was not computed for.
+    Checked over the whole table rather than a sample, because the table is the thing
+    that can grow a row nobody plans for."""
+    for section in bands.SECTIONS:
+        _start, _stop, bin_hz, capture = sdr_api._span(section.id, None, None)
 
-    Asserted as a floor rather than as an exact number so it survives a re-tabling: no
-    fast section may ask the running engine for a bin finer than a kilohertz."""
-    if sdr_api.SPECTRUM_ENGINE_IS_IQ:  # pragma: no cover - F6 deletes this whole test
-        pytest.skip("the I/Q engine computes the width itself; the ladder is gone")
-
-    fast = [s for s in bands.SECTIONS if s.live == bands.LIVE_FAST]
-    assert fast, "the table lost its one-hop sections"
-    for section in fast:
-        _start, _stop, bin_hz, _capture = sdr_api._span(section.id, None, None)
-
-        assert bin_hz == live_bin_hz(section.span_hz, section.sweep_bin_hz), section.id
-        assert bin_hz >= 1_000, section.id
-        # And the width the tool would really emit, which is what crosses the wire.
-        assert (section.span_hz // bin_hz) + 1 <= bands.LIVE_MAX_BINS, section.id
+        assert capture is not None, section.id
+        rate_hz, fft_bins, hops = capture
+        assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id
+        assert hops >= 1, section.id
 
 
-def test_a_multi_hop_section_still_gets_rtl_powers_own_ladder() -> None:
-    """20 MHz of FM broadcast is more than one capture, so it is still swept — hops, one
-    row a second, and a bin width the tool picks. Keeping that here is the point of
-    splitting the two tiers rather than pretending one engine serves both."""
+def test_a_multi_hop_section_is_stitched_rather_than_swept() -> None:
+    """20 MHz of FM broadcast is more than one capture — and since F11 that is several
+    captures stitched on OUR engine rather than a job for a tool with a one-row-a-second
+    clamp and a coarser bin."""
     section = bands.by_id("fm-broadcast")
     assert section is not None
     assert section.sample_rate_hz == 0

@@ -22,9 +22,10 @@ import urllib.request
 from collections.abc import Iterator
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from unittest import mock
 
+import numpy as np
 import pytest
 
 _SDR = Path(__file__).resolve().parents[2] / "deploy/sdr"
@@ -103,6 +104,13 @@ def sidecar(monkeypatch) -> Iterator[str]:
     # that vanishes a second later. A fake process is alive the instant it exists, so
     # that wait buys nothing here and costs every case four tenths of a second.
     monkeypatch.setattr(listen, "STARTUP_GRACE_S", 0)
+    monkeypatch.setattr(
+        listen.radio.Radio,
+        "open",
+        staticmethod(
+            lambda *, center_hz, rate_hz, **kw: _SpectrumRadio(center_hz, rate_hz, **kw)
+        ),
+    )
     monkeypatch.setattr(server, "TUNER", listen.Tuner())
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -1039,56 +1047,66 @@ def test_a_capture_runs_on_a_free_radio_while_another_is_held(
 # --- the live spectrum ----------------------------------------------------------
 
 
-def _spectrum_row(stamp: str, low: int, step: int, *db: float) -> bytes:
-    high = low + len(db) * step
-    values = ", ".join(f"{v:.2f}" for v in db)
-    return f"{stamp}, {low}, {high}, {step:.2f}, 12, {values}\n".encode()
+class _SpectrumRadio:
+    """A radio delivering noise with one carrier in it, for the I/Q spectrum path.
 
+    There is no second engine to stand in for since B1, so the spectrum tests drive the
+    real transform against a fake DEVICE rather than a fake process writing CSV. Free
+    running: it hands back whatever is asked for, so rows arrive as fast as the pump
+    reads and a viewer never has to be fed by hand."""
 
-class _Rows(_FakeProc):
-    """rtl_power streaming two intervals of one block, then holding the pipe open.
+    def __init__(self, center_hz: int, rate_hz: int, **kwargs: Any) -> None:
+        self.center_hz = center_hz
+        self.rate_hz = rate_hz
+        self.opened_with = kwargs
+        self.alive = True
+        self.gain_db: float | None = None
+        self.closed = False
+        self._phase = 0.0
+        self._rng = np.random.default_rng(20260906)
 
-    Two, because a frame is only known to be complete when the next interval starts or
-    the learned width is reached — so one row proves nothing about what a viewer sees.
-    """
+    def read(self, samples: int) -> Any:
+        n = int(samples)
+        k = np.arange(n, dtype=np.float64) + self._phase
+        self._phase += n
+        wave = np.exp(2.0j * np.pi * (self.rate_hz / 8.0) * k / self.rate_hz)
+        noise = self._rng.standard_normal(n) + 1j * self._rng.standard_normal(n)
+        return listen.radio.Reading(
+            samples=(wave + 0.03 * noise).astype(np.complex64),
+            at=time.time(),
+            reads=1,
+            overflows=0,
+            timeouts=0,
+            center_hz=self.center_hz,
+        )
 
-    # The same readings twice, so the assertion does not depend on WHICH frame the
-    # viewer catches: a viewer attaching after both were published is seeded with the
-    # newer one, which is right, and is a race a fixed expectation would lose at random.
-    LINES: ClassVar[list[bytes]] = [
-        _spectrum_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0),
-        _spectrum_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0, -71.0),
-    ]
+    def set_gain(self, db: float | None) -> None:
+        self.gain_db = db
 
-    def __init__(self, *a: Any, **k: Any) -> None:
-        super().__init__(*a, **k)
-        self.stdout = _Lines(self.LINES)
-
-
-class _Lines:
-    def __init__(self, lines: list[bytes]) -> None:
-        self._lines = list(lines)
-        self._done = threading.Event()
-
-    def read(self, _n: int = -1) -> bytes:
-        return b""
-
-    def __iter__(self) -> Iterator[bytes]:
-        yield from self._lines
-        # Held open, as a live rtl_power's pipe is: a stream that ended would send the
-        # viewer an end-of-stream sentinel and hide whether the rows arrived at all.
-        self._done.wait(timeout=5)
+    def retune(self, *, center_hz: int | None = None, **_k: Any) -> int:
+        if center_hz is not None:
+            self.center_hz = center_hz
+        return 0
 
     def close(self) -> None:
-        self._done.set()
+        self.closed = True
+        self.alive = False
+
+
+#: The capture the api would name for the 2 m test range. Sent by `_start_spectrum` for
+#: the reason the api sends it: the band table lives in ONE place and the sidecar
+#: executes the plan it was handed, so a sweep with no capture is refused rather than
+#: drawn another way (B1).
+TEST_CAPTURE = {"rate_hz": 2_400_000, "bins": 512, "hops": 1}
 
 
 def _start_spectrum(base: str, **extra: Any) -> tuple[int, dict[str, Any]]:
-    body = {
+    body: dict[str, Any] = {
         "purpose": "spectrum",
         "start_hz": 144_000_000,
         "stop_hz": 144_200_000,
-        "bin_hz": 25_000,
+        "bin_hz": 2_400_000 / 512,
+        **TEST_CAPTURE,
     }
     body.update(extra)
     return _post(base, "/listen/start", body)
@@ -1109,22 +1127,25 @@ def test_a_spectrum_session_is_started_by_its_range_not_a_frequency(
 def test_a_spectrum_reaches_shortwave_where_a_SURVEY_of_it_does_not(
     sidecar: str, monkeypatch
 ) -> None:
-    """One range, two engines, two answers — which is the point of splitting the guard
-    per purpose rather than per frequency. `rtl_power` hardcodes the ADC branch this
-    board does not wire and can never see 40 m; the live spectrum does its own FFT and
-    sets direct sampling mode 2, so the same numbers are a picture there.
+    """One range, two purposes, two answers — which is the point of splitting the guard
+    per purpose rather than per frequency.
 
-    **Both are refused today, and the two refusals are the assertion.** F8 opened the
-    band before F6 replaced the spectrum engine, so what a shortwave spectrum meets is
-    no longer the tuner floor — it is the engine saying it is still rtl_power. That
-    distinction is the whole wave: the guards now answer per PURPOSE, and the last
-    thing in the way is a fact about the tool rather than about the radio. When F6
-    lands this becomes a 200 and the second half of the test stands unchanged."""
-    status, spectrum = _start_spectrum(sidecar, start_hz=7_000_000, stop_hz=7_300_000)
+    `rtl_power` hardcodes the ADC branch this board does not wire and can never see
+    40 m; the live spectrum does its own FFT and sets direct sampling mode 2, so the
+    same numbers are a picture there. This test spent two waves asserting that BOTH
+    were refused, with a note saying it would become a 200 when the I/Q engine landed.
+    It has."""
+    status, body = _start_spectrum(
+        sidecar,
+        start_hz=7_000_000,
+        stop_hz=7_256_000,
+        bin_hz=250,
+        rate_hz=256_000,
+        bins=1024,
+    )
 
-    assert status == 400
-    assert "I/Q engine" in spectrum["detail"], "the band guard, not the engine, refused"
-    assert "cannot go below" not in spectrum["detail"]
+    assert status == 200
+    assert body["purpose"] == "spectrum"
 
     _sweeping(monkeypatch)
     status, refused = _post(
@@ -1178,7 +1199,6 @@ def test_a_row_reaches_a_viewer_carrying_its_own_range(
 ) -> None:
     """The shape the renderer depends on: a frame says where it is, so a retune needs
     no protocol event and a client that draws what each row says is already right."""
-    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
     assert _start_spectrum(sidecar)[0] == 200
 
     with urllib.request.urlopen(sidecar + "/listen/spectrum", timeout=10) as resp:
@@ -1186,16 +1206,18 @@ def test_a_row_reaches_a_viewer_carrying_its_own_range(
             json.loads(raw) for raw in resp if not json.loads(raw).get("keepalive")
         )
 
-    assert row["start_hz"] == 144_000_000
-    assert row["bin_hz"] == 25_000
+    # Centred where the range is, at the width the capture makes — `rate / bins`, not a
+    # width anyone asked for.
+    assert row["bin_hz"] == 2_400_000 / 512
+    assert row["bins"] == 512
+    assert row["start_hz"] == 144_100_000 - 256 * row["bin_hz"]
     assert row["stop_hz"] == row["start_hz"] + row["bins"] * row["bin_hz"]
-    assert row["db"] == [-70.0, -71.0]
+    assert len(row["db"]) == 512
 
 
 def test_a_row_says_which_picture_it_is(sidecar: str, monkeypatch) -> None:
     """One session now draws two pictures off one capture, so every row on the wire has
     to say which — the PWA reads it, and so does anything holding rows across time."""
-    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
     assert _start_spectrum(sidecar)[0] == 200
 
     with urllib.request.urlopen(sidecar + "/listen/spectrum", timeout=10) as resp:
@@ -1212,7 +1234,6 @@ def test_a_view_the_sidecar_does_not_serve_is_refused_not_substituted(
     """Named rather than coerced. Quietly handing a viewer the band when it asked for
     the channel is the same class of substitution as swapping the spectrum engine
     underneath a measurement: a picture that is not of what it says it is."""
-    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
     assert _start_spectrum(sidecar)[0] == 200
 
     status, body = _get(sidecar, "/listen/spectrum?view=sideways")
@@ -1224,7 +1245,6 @@ def test_a_view_the_sidecar_does_not_serve_is_refused_not_substituted(
 def test_the_view_asked_for_is_the_view_served(sidecar: str, monkeypatch) -> None:
     """`?view=` reaches `subscribe_frames`, which is the whole of the plumbing: the
     filtering itself is the session's and is tested there."""
-    monkeypatch.setattr(listen.subprocess, "Popen", _Rows)
     assert _start_spectrum(sidecar)[0] == 200
 
     with urllib.request.urlopen(
@@ -1247,7 +1267,8 @@ def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> N
             "session_id": started["session_id"],
             "start_hz": 440_000_000,
             "stop_hz": 440_200_000,
-            "bin_hz": 25_000,
+            "bin_hz": 2_400_000 / 512,
+            **TEST_CAPTURE,
         },
     )
 
@@ -1259,16 +1280,15 @@ def test_a_waterfall_is_moved_on_the_session_it_already_holds(sidecar: str) -> N
     assert body["frequency_hz"] == 440_100_000
 
 
-def test_a_refused_shortwave_move_costs_a_sentence_and_not_the_radio(
-    sidecar: str,
-) -> None:
-    """The whole tap, end to end: watching 2 m, ask for 40 m, get a 400.
+def test_a_refused_move_costs_a_sentence_and_not_the_radio(sidecar: str) -> None:
+    """The whole tap, end to end: watching 2 m, ask for a range with no capture plan,
+    get a 400.
 
     `_resweep` passes `direct_ok=True` unconditionally, so the range is legal all the
-    way down to the engine — which is still `rtl_power` until F6, and cannot serve it.
-    What the owner must be left with is the picture they already had: the 400 is the
-    cheap half, and the expensive half is that the session, the lease and the old range
-    are all exactly where they were. When F6 lands this becomes a 200."""
+    way down to the engine — which since B1 refuses what it has no plan for rather than
+    reaching for a tool that measures on another scale. What the owner must be left with
+    is the picture they already had: the 400 is the cheap half, and the expensive half
+    is that the session, the lease and the old range are all exactly where they were."""
     _, started = _start_spectrum(sidecar)
 
     status, refused = _post(
@@ -1283,7 +1303,7 @@ def test_a_refused_shortwave_move_costs_a_sentence_and_not_the_radio(
     )
 
     assert status == 400
-    assert "I/Q engine" in refused["detail"]
+    assert "no capture plan" in refused["detail"]
     # Not a 409, which is what a session reaped out from under the sheet would look
     # like — and the sheet would then have to start a new one to get a picture back.
     status, health = _get(sidecar, "/healthz")
@@ -1309,7 +1329,12 @@ def test_an_unnamed_move_with_a_range_finds_the_waterfall_not_the_tuner(
     status, body = _post(
         sidecar,
         "/listen/tune",
-        {"start_hz": 440_000_000, "stop_hz": 440_200_000, "bin_hz": 25_000},
+        {
+            "start_hz": 440_000_000,
+            "stop_hz": 440_200_000,
+            "bin_hz": 2_400_000 / 512,
+            **TEST_CAPTURE,
+        },
     )
 
     assert status == 200
@@ -1343,7 +1368,8 @@ def test_a_survey_is_never_moved_mid_measurement(sidecar: str, monkeypatch) -> N
             "session_id": started["session_id"],
             "start_hz": 440_000_000,
             "stop_hz": 440_200_000,
-            "bin_hz": 25_000,
+            "bin_hz": 2_400_000 / 512,
+            **TEST_CAPTURE,
         },
     )
 

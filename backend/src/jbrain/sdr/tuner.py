@@ -155,38 +155,6 @@ def out_of_range(mhz: float) -> str | None:
 MAX_SPAN_MHZ = 60.0
 
 
-def live_bin_hz(span_hz: int, want_hz: int) -> int:
-    """The bin width a MULTI-HOP live view of `span_hz` can actually be drawn at.
-
-    **`rtl_power`'s ladder, and now only its.** A one-hop picture does not come through
-    here at all: `bands.LIVE_CAPTURES` pairs every capture rate with an N that divides
-    it exactly, so its bin width is `rate / N` — ours, chosen, and not negotiated with
-    a tool (SDR_IQ_SPECTRUM_PLAN §2.3, F7). What is left for this function is the spans
-    too wide for one capture — the `slow` sections and the hand-entered ranges — which
-    are still swept by rtl_power, hops and all, and still get whatever division of its
-    per-hop bandwidth it feels like granting.
-
-    COARSENED, not refused. A live spectrum is the one place the owner asks for a whole
-    band at once, and "that is too wide" is a worse answer than a coarser picture they
-    can then zoom into — the frame carries its own bin width, so a coarse row draws
-    correctly without anything downstream being told.
-
-    Coarsened by DOUBLING rather than by dividing the span, because rtl_power grants the
-    largest power-of-two division of its per-hop bandwidth that is no coarser than what
-    it was asked for (`bands.sweep_bin_hz` says the same). Walking the sequence the tool
-    will itself land on beats computing an exact number it will not honour.
-
-    The `+ 1` is the column rtl_power really prints: `csv_dbm` writes `i1..i2`
-    INCLUSIVE and then repeats `avg[i2]`, so a block is one wider than the division
-    suggests. Counting the division alone is how a ceiling of 4096 lets 4097 values onto
-    the wire — a budget that does not bind is worse than none, because it reads as one
-    that does."""
-    bin_hz = max(1, want_hz)
-    while (span_hz // bin_hz) + 1 > bands.LIVE_MAX_BINS:
-        bin_hz *= 2
-    return bin_hz
-
-
 def viewable(start_mhz: float, stop_mhz: float) -> str | None:
     """Why a live spectrum cannot cover this range, or None. One sentence, as ever.
 
@@ -229,6 +197,25 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
         return (
             f"{stop_mhz - start_mhz:g} MHz at once is wider than the radio can sweep "
             f"({MAX_SPAN_MHZ:g} MHz). Pick a section of it."
+        )
+    start_hz = int(round(start_mhz * 1_000_000))
+    stop_hz = int(round(stop_mhz * 1_000_000))
+    if bands.capture_for(start_hz, stop_hz) is None and bands.hop_plan(start_hz, stop_hz) is None:
+        # THE ENGINE'S OWN LIMIT, said rather than served by a different engine. Until
+        # B1 this fell through to `rtl_power`, which draws the range on its own
+        # uncalibrated scale — and both engines land on the same `Frame.db`, the same
+        # colour map and the same `peaks.find`, whose output reaches the agent's tools
+        # as a MEASUREMENT. A silent engine swap that changes what a number means is a
+        # correctness bug wearing a robustness costume
+        # (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1).
+        #
+        # Every one of the 32 curated sections is inside this, so what it refuses is a
+        # hand-typed span, and the number comes off the same ladder `hop_plan` walks.
+        widest = bands.widest_stitchable_hz() / 1_000_000
+        return (
+            f"{stop_mhz - start_mhz:g} MHz at once is more than the waterfall can "
+            f"stitch in one row ({widest:g} MHz). Pick a narrower piece of it, or a "
+            f"band section."
         )
     return None
 
