@@ -92,9 +92,9 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C22 ✅** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
 | **C23 ✅** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
 | **C24 ✅** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
-| **C25** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
+| **C25 ✅ bounded** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
 | **C26 ✅** | Gain is written on the direct-sampling path, where the tuner is bypassed and the number is fiction. | **[R]** |
-| **C27** | `setBandwidth` is never called; librtlsdr's automatic IF bandwidth is exactly the rolloff `hop_usable_bins` throws away a sixth of every capture to avoid. Setting it explicitly might buy much of that back. | **[S]** probe rung, not a blind change |
+| **C27 ✅ rung** | `setBandwidth` is never called; librtlsdr's automatic IF bandwidth is exactly the rolloff `hop_usable_bins` throws away a sixth of every capture to avoid. Setting it explicitly might buy much of that back. | **[S]** probe rung, not a blind change |
 | **C28 ✅** | `hop_usable_bins` is `bins * 5 // 6` in `listen.py` and `TRUSTED_FILL` in `bands.py`. They agree today; changing the constant desynchronises the planner from the stitcher silently, and the stitched row's bin→Hz mapping is then wrong with nothing to detect it. | **[R]** |
 
 ## D — Verified correct: do not churn
@@ -618,12 +618,8 @@ it would be measuring something else.
 **W7a ✅ shipped 2026-09-06** — C8, C18, C19, C26, B5: the latent correctness bugs.
 **W7b ✅ shipped 2026-09-06** — C20, C23, C28, B4, and C17 as a probe rung.
 **W7c ✅ shipped 2026-09-06** — C21 (measured on air and worse than filed) and C22.
-**W7d** — the last three, all of which are questions for the box rather than changes:
-C25 (ppm), C27 (`setBandwidth`), C29 (the 16-hop second). **Plus C29, found by W5a's own
-on-air verification:** a 16-hop row takes ~1 s, all of it in sixteen `setFrequency` +
-settle pairs, so at the top of the hop ladder the engine hits the exact clamp it exists
-to remove (measured table above). Either cut the per-hop cost or lower `MAX_HOPS` to
-where the claim holds — and say which.
+**W7d** — C29 answered and cut, C27 asked, C25 bounded and closed. Merged; the
+on-air reading of both is what closes it, as it has been for every wave here.
 
 
 ## W7a — what shipped (2026-09-06)
@@ -841,6 +837,90 @@ run at, and a falsy default would be C18 in a different file.
 put the top of the real passband in the "noise". `sdrTuning.ts`'s `floorOf` got the C14
 fix in W6b and this one did not — the exact "two implementations of one rule" pattern the
 plan keeps finding. Both now derive the ring from `(passband_hz, passband_centre_hz)`.
+
+
+## W7d — the last three, all of them questions for the box (2026-09-06)
+
+### C29 — the settle a hop was paying is zero, and C18 is what let us see that
+
+At the top of the hop ladder a 30 MHz row took ~1 s — **1.0 fps, exactly `rtl_power`'s
+own clamp**, the ceiling this engine exists to remove. The cost is per-RETUNE: sixteen
+`setFrequency` + settle pairs, of which the settle is 30 ms each, while the samples
+themselves are 0.43 ms a hop.
+
+**MEASURED ON THE BOX**, `soapy-probe` at a FIXED gain, seven trials:
+
+```
+retune_settle_fixed_gain: settle_ms 0.0, worst_ms 0.0,
+                          steady_sigma_db 0.091, gain_db 0.0, was_automatic false
+retune_settle (automatic): settle_ms 0.0, worst_ms 0.0, steady_sigma_db 1.466
+```
+
+...and the probe's own finding, which it already had: *"the retune settle is 30.0 ms and
+the radio needed 0.0 at its worst — every hop pays the difference, so a wide band redraws
+several times slower than this radio can manage."*
+
+A spectrum session runs at a **fixed gain by construction** (a waterfall whose gain moves
+has a dB scale that means nothing from row to row), so the fixed-gain reading is the one
+that applies to a hop — and it is zero. `HOP_SETTLE_S = 0.0`; `SETTLE_S` stays 30 ms on
+the LISTENING path, where the gain is automatic and the AGC is what moves the level
+(σ 1.47 dB against 0.09). **Sixteen hops were discarding 480 ms of a ~1 s row for a
+transient this radio does not have.**
+
+**C18 is what made this measurable.** `_settle_fixed_gain` picked its gain with `or`, so
+this box's real 0.0 dB was falsy and silently replaced by 30 — the "fixed gain" reading
+was taken at a different gain from the automatic one it was being compared against. The
+run above reports `gain_db: 0.0, was_automatic: false`, which is W7a showing its work.
+
+The choice C29 posed was "cut the per-hop cost or lower `MAX_HOPS`". The measurement
+chose: cut the cost. Nothing about the ladder's reach changes.
+
+### C27 — asked, as a rung
+
+`setBandwidth` is called nowhere in this engine, so librtlsdr picks the IF bandwidth from
+the sample rate on its own — and that automatic choice is exactly the rolloff
+`hop_usable_bins` throws a sixth of every capture away to avoid. `probe`'s `if_bandwidth`
+rung measures the capture's own shape (median of the middle third against the outer
+sixth, averaged in POWER over six frames, against the receiver's noise floor so the shape
+is the filter's) with the automatic bandwidth and again with an explicit one, and reports
+the decibels of edge rolloff recovered. It hands the radio back as it found it.
+
+If the explicit bandwidth flattens those edges, `TRUSTED_FILL` is leaving picture on the
+table. If it changes nothing, the sixth is the honest price and the constant stays. Which
+it is, is a property of this tuner.
+
+### C25 — bounded, and the instrument that cannot measure it
+
+A ppm figure needs an UNMODULATED carrier of known frequency. WWV on 10 MHz is
+unreachable here (F0: nothing below 24 MHz reaches this ADC), and NOAA on 162.550 —
+the one crystal-locked transmitter above the tuner's floor — is continuously modulated
+±5 kHz.
+
+**MEASURED, and the reading is the finding.** `strongest_offset_hz` on 162.550, gain
+fixed at 24 dB, four runs across the two dongles: **−375.0, −328.1, 0.0, 0.0 Hz**, and on
+a later pair **0.0 and 0.0**. The estimator is the midpoint of the 6 dB shoulders, and on
+a frequency-modulated carrier those shoulders are set by the audio — so it wanders by a
+few hundred hertz between five-second windows and is not a frequency-error measurement at
+all. **The seventh instance in this project of a number that looks like the quantity and
+is not.**
+
+What can honestly be said: across those readings the two radios never differed by more
+than 375 Hz at 162.55 MHz, so any real crystal error is **under about 2.3 ppm** and is
+below the scatter of the only instrument available. At that bound the worst case is ~4
+bins on the tuning strip and invisible on any waterfall this box draws.
+
+**C25 closes as bounded rather than measured**, with the reason named: correcting it
+would need a reference this receiver cannot hear.
+
+### One thing this wave leaves behind
+
+`supervisor/tests/test_sdr_server.py::test_a_reset_that_the_kernel_refuses_says_so`
+failed twice during this work in FULL-SUITE runs and passed every time on its own, on
+re-run, and in three repetitions of `test_sdr_radio.py + test_sdr_server.py` together. It
+could not be reproduced short of the whole suite, so it is recorded rather than fixed or
+shrugged off. Its subject — a USB port reset the kernel refuses — is untouched by any
+wave here; the likeliest shape is cross-file state in `radio._open` or teardown timing
+under load, and finding it needs its own sitting.
 
 
 ## W1 — what shipped, and what it measured (2026-09-06)

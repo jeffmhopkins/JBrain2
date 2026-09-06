@@ -132,7 +132,31 @@ QUEUE_WORTH_MS = 5.0
 #: What is left to discard after a retune once the queue is shallow. MEASURED: 20.5 ms
 #: worst at `QUEUE_BUFFERS`, so this covers it with margin — and it is a fifth of the
 #: 0.15 s it replaced, which is the FM dial's frame rate handed back.
+#:
+#: That measurement was taken with the gain AUTOMATIC, and this is the number a LISTENING
+#: retune keeps for that reason: the loop is what moves the level (`steady_sigma_db`
+#: 1.47 under AGC against 0.09 fixed), and it moves it for about the duration measured.
 SETTLE_S = 0.03
+
+#: ...and what a HOP discards, which is nothing (C29).
+#:
+#: MEASURED ON THE BOX 2026-09-06, `soapy-probe` at a FIXED gain, seven trials:
+#: **`settle_ms` 0.0, `worst_ms` 0.0**, with the steady level holding to
+#: `steady_sigma_db` **0.091**. The probe's own finding says what that costs: *"the
+#: retune settle is 30.0 ms and the radio needed 0.0 at its worst — every hop pays the
+#: difference, so a wide band redraws several times slower than this radio can manage."*
+#:
+#: A spectrum session runs at a fixed gain BY CONSTRUCTION (`listen.MEASURING_GAIN_DB` —
+#: a waterfall whose gain moves has a dB scale that means nothing from row to row), so it
+#: is the fixed-gain reading that applies to it, and that reading is zero. Sixteen hops
+#: were paying 480 ms of a ~1 s row for a transient this radio does not have.
+#:
+#: **C18 is what made this measurable.** `_settle_fixed_gain` picked its gain with `or`,
+#: so the box's real 0.0 dB was falsy and silently replaced by 30 — the "fixed gain"
+#: reading was taken at a different gain from the automatic one it was being compared
+#: against, and the A/B answered a different question. The run above reports
+#: `gain_db: 0.0, was_automatic: false`, which is the fix showing its work.
+HOP_SETTLE_S = 0.0
 
 #: `readStream`'s per-call timeout. Ten buffers at the slowest rate: long enough that an
 #: ordinary scheduling hiccup is not an event, short enough that a dead stream is.
@@ -238,6 +262,10 @@ class Device(Protocol):
     ) -> None: ...
 
     def writeSetting(self, key: str, value: str) -> None: ...
+
+    def setBandwidth(self, direction: int, channel: int, hz: float) -> None: ...
+
+    def getBandwidth(self, direction: int, channel: int) -> float: ...
 
     def getGainMode(self, direction: int, channel: int) -> bool: ...
 
@@ -918,6 +946,29 @@ class Radio:
             out["gain_max_db"] = round(float(span.maximum()), 2)
         return out
 
+    def set_bandwidth(self, hz: float) -> bool:
+        """Ask for an explicit IF bandwidth. False when the driver will not take one.
+
+        Never called by the engine (C27) — this exists so `probe` can ASK what it buys.
+        librtlsdr picks a bandwidth automatically from the sample rate, and its automatic
+        choice is exactly the rolloff `hop_usable_bins` throws away a sixth of every
+        capture to avoid."""
+        with self._io_lock:
+            device = self._require_device()
+            try:
+                device.setBandwidth(self._driver.RX, CHANNEL, float(hz))
+            except Exception:  # noqa: BLE001 - "this driver will not" is the answer
+                return False
+            return True
+
+    def bandwidth_hz(self) -> float | None:
+        """What the driver says the IF bandwidth is, or None if it will not say."""
+        with self._io_lock:
+            device = self._require_device()
+            with contextlib.suppress(Exception):
+                return float(device.getBandwidth(self._driver.RX, CHANNEL))
+            return None
+
     def set_gain(self, db: float | None) -> None:
         """Nail the gain down, or hand it back to the radio's own loop with None.
 
@@ -1216,6 +1267,69 @@ def _reading_verdict(spectrum: iq.Spectrum) -> dict[str, Any]:
         "floor_db": round(floor, 1),
         "above_floor_db": round(float(db[top_bin]) - floor, 1),
         "dead": floor <= iq.DB_FLOOR,
+    }
+
+
+#: How many frames each half of the bandwidth rung averages. Enough that the shape is
+#: the filter's and not one frame's noise.
+PROBE_SHAPE_FRAMES = 6
+
+
+def _band_shape(radio: Radio, bins: int) -> dict[str, float]:
+    """The capture's own shape: how far the outer sixth sits below the middle third.
+
+    Measured against the receiver's NOISE FLOOR, which fills the band uniformly — so
+    whatever shape comes back is the filter's, not the signal's."""
+    spectrometer = iq.Spectrometer(bins, radio.rate_hz)
+    stack = np.zeros(bins, dtype=np.float64)
+    for _ in range(PROBE_SHAPE_FRAMES):
+        reading = radio.read(bins * PROBE_SEGMENTS)
+        # Averaged in POWER, not in dB: a mean of decibels is a geometric mean of
+        # powers, which reads low on anything that is not flat — and shape is the whole
+        # measurement here.
+        stack += np.power(10.0, spectrometer.frame(reading.samples, radio.center_hz).db / 10.0)
+    db = 10.0 * np.log10(stack / PROBE_SHAPE_FRAMES)
+    third = bins // 3
+    sixth = bins // 12
+    middle = float(np.median(db[third : bins - third]))
+    edges = float(np.median(np.concatenate([db[:sixth], db[-sixth:]])))
+    return {"middle_db": round(middle, 2), "edge_db": round(edges, 2),
+            "rolloff_db": round(middle - edges, 2)}
+
+
+def _if_bandwidth(radio: Radio, bins: int) -> dict[str, Any]:
+    """C27: does asking for an explicit IF bandwidth buy back the outer sixth?
+
+    `hop_usable_bins` throws away a sixth of every capture because the R820T2's IF
+    filter rolls off across it, and `setBandwidth` is never called anywhere in this
+    engine — so librtlsdr picks the bandwidth from the sample rate on its own. If asking
+    for the FULL rate flattens those edges, `TRUSTED_FILL` is leaving picture on the
+    table; if it changes nothing, the sixth is the honest price and the constant stays.
+
+    A rung and not a change, because the answer is a property of this tuner."""
+    radio.barrier(0.0)
+    before = _band_shape(radio, bins)
+    was = radio.bandwidth_hz()
+    took = radio.set_bandwidth(float(radio.rate_hz))
+    if not took:
+        return {"supported": False, "automatic": before, "was_hz": was}
+    radio.barrier(SETTLE_S)
+    after = _band_shape(radio, bins)
+    asked = radio.bandwidth_hz()
+    # Handed back, because a probe that leaves the radio configured differently from how
+    # it found it makes the NEXT reading a lie.
+    if was is not None:
+        radio.set_bandwidth(was)
+    return {
+        "supported": True,
+        "was_hz": was,
+        "asked_hz": float(radio.rate_hz),
+        "took_hz": asked,
+        "automatic": before,
+        "explicit": after,
+        # The number C27 is about: decibels of edge rolloff recovered. Positive means
+        # the explicit bandwidth is flatter across the sixth `TRUSTED_FILL` discards.
+        "recovered_db": round(before["rolloff_db"] - after["rolloff_db"], 2),
     }
 
 
@@ -2179,6 +2293,8 @@ def _probe_open(
         # C17: can this driver say how much an overflow threw away? Only a stream clock
         # could, so ask whether there is one before designing against it.
         out["stream_clock"] = _answered("stream_clock", lambda: _stream_clock(radio))
+        # C27: is the sixth of every capture `TRUSTED_FILL` discards recoverable?
+        out["if_bandwidth"] = _answered("if_bandwidth", lambda: _if_bandwidth(radio, bins))
         if not out["bufflen"].get("took"):
             findings.append(
                 f"`bufflen` did NOT take: buffers measured "

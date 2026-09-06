@@ -1707,7 +1707,11 @@ class Session:
                 if self._stopping or not held.alive:
                     return
                 if held.center_hz != centre:
-                    held.retune(center_hz=centre)
+                    # `HOP_SETTLE_S`, not the listening one: a spectrum session runs at a
+                    # FIXED gain by construction, and at fixed gain this radio's settle
+                    # measured 0.0 ms worst over seven trials (C29). Sixteen hops were
+                    # paying 480 ms of a ~1 s row for a transient that is not there.
+                    held.retune(center_hz=centre, settle_s=radio.HOP_SETTLE_S)
                 reading = held.read(want)
                 at = at or reading.at
                 spectrum = spectrometer.frame(reading.samples, centre)
