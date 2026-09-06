@@ -2721,6 +2721,50 @@ def test_the_audio_carries_the_station_and_not_noise(iq_tuner) -> None:
     assert float((tone**2).sum() / (magnitude**2).sum()) > 0.5
 
 
+def test_the_audio_tap_collects_what_the_demodulator_produced(iq_tuner) -> None:
+    """`listen-probe --transcribe` is only worth anything if the tap holds real audio.
+
+    Same assertion as `test_the_audio_carries_the_station_and_not_noise`, through the
+    path the probe actually uses: the tap must carry the station, not a plausible
+    quantity of bytes."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert session.taken_audio() == b""  # nothing is kept until a probe asks
+        session.tap_audio(2.0)
+        rate = demod.AUDIO_RATE
+        assert _wait_for(lambda: len(session._tap or ()) * listen._CHUNK >= rate)
+        pcm = session.taken_audio()
+    finally:
+        iq_tuner.stop()
+    assert len(pcm) % 2 == 0
+    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float64)
+    audio = audio[len(audio) // 4 :]
+    magnitude = np.abs(np.fft.rfft(audio * np.hanning(audio.size)))
+    freqs = np.fft.rfftfreq(audio.size, 1.0 / rate)
+    assert freqs[int(np.argmax(magnitude))] == pytest.approx(1_000.0, abs=40.0)
+
+
+def test_the_tap_is_bounded_and_off_by_default(iq_tuner) -> None:
+    """A tap a failed probe left on must not grow for the life of the session."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert session._tap is None
+        session.tap_audio(1.0)
+        held = session._tap
+        assert held is not None and held.maxlen is not None
+        # ~1 s of audio, not unbounded.
+        assert held.maxlen * listen._CHUNK <= 4 * demod.AUDIO_RATE * 2
+        assert _wait_for(lambda: len(held) == held.maxlen, timeout=6.0)
+        # It stops growing rather than eating the session.
+        assert len(held) == held.maxlen
+    finally:
+        iq_tuner.stop()
+
+
 def test_the_level_meter_hears_the_carrier(iq_tuner) -> None:
     """A silent meter on a fully-modulated carrier is the symptom of every wiring
     mistake in this path at once — wrong offset, dead mixer, filters not connected."""

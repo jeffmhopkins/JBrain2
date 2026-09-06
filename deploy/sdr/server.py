@@ -28,6 +28,7 @@ its native output rather than a coincidence.
 
 from __future__ import annotations
 
+import base64
 import io
 import contextlib
 import json
@@ -1231,6 +1232,7 @@ class Handler(BaseHTTPRequestHandler):
             mode = str(body.get("mode") or "fm")
             seconds = float(body.get("seconds") or LISTEN_PROBE_S)
             named = listen.validate_serial(body.get("serial"))
+            want_audio = bool(body.get("audio"))
         except (ListenError, TypeError, ValueError) as bad:
             self._json(400, {"detail": str(bad)})
             return
@@ -1250,13 +1252,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"detail": str(bad)})
             return
         try:
-            answer = self._watch_listen(seconds, info.session_id)
+            answer = self._watch_listen(seconds, info.session_id, want_audio=want_audio)
         finally:
             with contextlib.suppress(Exception):
                 TUNER.stop(info.session_id)
         self._json(200, answer)
 
-    def _watch_listen(self, seconds: float, session_id: str) -> dict[str, Any]:
+    def _watch_listen(
+        self, seconds: float, session_id: str, *, want_audio: bool = False
+    ) -> dict[str, Any]:
         """Hold a listening session for `seconds` and reduce it to a verdict."""
         session = TUNER.find(session_id)
         if session is None:
@@ -1266,6 +1270,8 @@ class Handler(BaseHTTPRequestHandler):
                 "summary": "the session was gone before the probe looked",
                 "findings": ["nothing held the radio by the time the probe looked"],
             }
+        if want_audio:
+            session.tap_audio(seconds)
         sub = session.subscribe_frames() if session.draws_frames else None
         frames: list[listen.Frame] = []
         peaks_seen: list[float] = []
@@ -1296,7 +1302,8 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if sub is not None:
                 session.unsubscribe_frames(sub)
-        return _listen_verdict(
+        pcm = session.taken_audio() if want_audio else b""
+        verdict = _listen_verdict(
             session,
             frames,
             peaks_seen,
@@ -1304,6 +1311,13 @@ class Handler(BaseHTTPRequestHandler):
             rms_seen,
             round(time.monotonic() - started, 2),
         )
+        if pcm:
+            # Base64 in the verdict rather than a second route: the audio is only ever
+            # wanted ALONGSIDE the numbers it explains, and the caller that asked for it
+            # (`api/debug.py`) strips it once whisper has read it.
+            verdict["audio_wav_b64"] = base64.b64encode(_wav(pcm, listen.AUDIO_RATE)).decode()
+            verdict["audio_seconds"] = round(len(pcm) / 2 / listen.AUDIO_RATE, 2)
+        return verdict
 
     def _listen(self, body: dict[str, Any]) -> None:
         # Absent means listening: every existing caller predates purposes and means
