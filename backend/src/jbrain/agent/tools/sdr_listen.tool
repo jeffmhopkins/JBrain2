@@ -18,8 +18,8 @@ station, a frequency, or a band — "put on 99.3", "listen to the weather radio"
 "what's on the air band".
 
 This takes a radio — the box can have more than one, and the lease is per radio. A
-refusal names the radio and the job holding it: listening, logging APRS, sweeping the
-band, or watching the spectrum. Say which radio and which job, because each has its own
+refusal names the radio and the job holding it: listening, logging APRS, or watching
+the spectrum — which is also what a band survey holds a radio for now. Say which radio and which job, because each has its own
 switch and another radio may still be free. Not an error to retry — let them decide.
 
 Starting a session puts a RADIO ICON in the owner's composer. That icon is the whole

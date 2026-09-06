@@ -490,12 +490,14 @@ def test_the_radio_module_docstring_says_it_too() -> None:
 
 def test_sdr_listen_names_every_job_a_refusal_can_name() -> None:
     """A refusal quotes the sidecar's own label, so a job the description has never
-    heard of arrives as an unexplained sentence. `sdr_listen` is where the four are
-    enumerated; when a fifth purpose lands in `listen.py`, this is what says so."""
+    heard of arrives as an unexplained sentence. `sdr_listen` is where they are
+    enumerated; when a purpose lands in or leaves `listen.py`, this is what says so —
+    and B2 removed one, `sweeping the band`, by making a survey an accumulator over the
+    spectrum rather than a session of its own."""
     labels = _purpose_labels()
     described = _flow(_TOOLS / "sdr_listen.tool")
 
-    assert len(labels) == len(set(labels)) >= 4
+    assert len(labels) == len(set(labels)) >= 3
     missing = [label for label in labels if label not in described]
     assert missing == [], f"sdr_listen.tool never mentions: {missing}"
 

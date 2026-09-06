@@ -345,62 +345,46 @@ class _DeadProc(_FakeProc):
         return 0 if self._polls > 2 else None
 
 
-def _csv_on_disk(monkeypatch, csv: str) -> None:
-    """What rtl_power wrote, without a radio. Separate from `_sweeping` because the
-    overrun case needs a CSV AND a process that is still running — a sweep that
-    measured nothing is now a refusal, so "partial" has to be modelled as partial."""
-    real_open = open
-
-    def fake_open(path, *a, **k):
-        if str(path).startswith("/tmp/sweep-"):
-            import io as _io
-
-            return _io.StringIO(csv)
-        return real_open(path, *a, **k)
-
-    monkeypatch.setattr("builtins.open", fake_open)
-
-
-def _sweeping(monkeypatch, csv: str = "") -> None:
-    monkeypatch.setattr(listen.subprocess, "Popen", _DeadProc)
-    if csv:
-        _csv_on_disk(monkeypatch, csv)
+def _sweep_body(**extra: Any) -> dict[str, Any]:
+    """A survey request as the api sends it: a range, a WIDTH to be written at, and the
+    capture that measures it. The width and the capture are different numbers on
+    purpose — a survey asks to be integrated more coarsely than it is measured."""
+    body: dict[str, Any] = {
+        "start_hz": 144_000_000,
+        "stop_hz": 144_200_000,
+        "bin_hz": 25_000,
+        "seconds": 2,
+        **TEST_CAPTURE,
+    }
+    body.update(extra)
+    return body
 
 
-def test_a_sweep_holds_the_radio_and_returns_its_rows(
-    sidecar: str, monkeypatch
-) -> None:
+def test_a_sweep_holds_the_radio_and_returns_its_rows(sidecar: str) -> None:
     """The happy path, and the shape the api reduces.
 
-    The sidecar hands back the CSV rtl_power wrote and does NOT draw it: the image work
-    needs a plotting stack, which `Dockerfile.sdr`'s apt-only, no-pip rule refuses, and
-    the api already carries Pillow."""
-    _sweeping(
-        monkeypatch, csv="2026-09-03, 15:00:00, 144000000, 144005000, 5000, 12, -71.2\n"
-    )
-
-    status, body = _post(
-        sidecar,
-        "/sweep",
-        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 2},
-    )
+    **The rows come from the same engine the waterfall uses now** (B2): a survey was
+    never a different way of measuring, it is the same spectrum integrated for longer.
+    The sidecar still does NOT draw it — the image work needs a plotting stack, which
+    `Dockerfile.sdr`'s apt-only rule refuses, and the api already carries Pillow."""
+    status, body = _post(sidecar, "/sweep", _sweep_body())
 
     assert status == 200
-    assert "-71.2" in body["csv"]
-    assert (body["start_hz"], body["stop_hz"]) == (144_000_000, 148_000_000)
     assert body["complete"] is True
+    assert (body["start_hz"], body["stop_hz"]) == (144_000_000, 144_200_000)
+    # The width the ROWS are written at — 25 kHz asked for off a 4687.5 Hz capture is
+    # five whole bins, so 23437.5, and the envelope says the same thing the rows do.
+    first = [p.strip() for p in body["csv"].splitlines()[0].split(",")]
+    assert len(first) > 6
+    assert float(first[4]) == body["bin_hz"] == 5 * 2_400_000 / 512
+    assert min(float(v) for v in first[6:]) < -20  # a real floor, in dBFS
 
 
-def test_a_sweep_frees_the_radio_when_it_ends(sidecar: str, monkeypatch) -> None:
-    # A survey ends on its own, so nothing should be holding the tuner afterwards — the
-    # next listener must not find the radio busy with a sweep that already finished.
-    _sweeping(monkeypatch)
-
-    _post(
-        sidecar,
-        "/sweep",
-        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 2},
-    )
+def test_a_sweep_frees_the_radio_when_it_ends(sidecar: str) -> None:
+    # The next listener must not find the radio busy with a survey that already
+    # finished — and the survey is a spectrum session now, which is released rather
+    # than self-terminating, so this is the assertion that the route releases it.
+    _post(sidecar, "/sweep", _sweep_body())
 
     status, _ = _post(
         sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
@@ -418,43 +402,47 @@ def test_a_sweep_is_refused_while_APRS_is_logging(sidecar: str, monkeypatch) -> 
         "/listen/start",
         {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs"},
     )
-    _sweeping(monkeypatch)
-
     status, body = _post(
-        sidecar,
-        "/sweep",
-        {"start_hz": 440_000_000, "stop_hz": 450_000_000, "seconds": 2},
+        sidecar, "/sweep", _sweep_body(start_hz=440_000_000, stop_hz=440_200_000)
     )
 
     assert status == 409
     assert "logging APRS" in body["detail"]
 
 
-def test_a_sweep_outside_the_tuner_s_range_is_refused(
-    sidecar: str, monkeypatch
-) -> None:
-    # A sweep reaches 24 MHz-1.766 GHz. Below that the radio still LISTENS — it bypasses
-    # the tuner — but rtl_power hardcodes the other ADC branch, so a sweep there would
-    # tune something and measure nothing, and report the band as quiet.
-    _sweeping(monkeypatch)
-
+def test_a_survey_reaches_shortwave_now_that_it_is_not_rtl_power(sidecar: str) -> None:
+    """The floor that kept surveys above 24 MHz was the TOOL's, not the radio's:
+    `rtl_power -D` hardcodes the ADC's I branch and this board wires Q, so a survey down
+    there tuned something and measured nothing. B2 put the survey on the engine that
+    sets the branch at runtime, and the floor went with the tool (A5)."""
     status, body = _post(
-        sidecar, "/sweep", {"start_hz": 1_000_000, "stop_hz": 2_000_000}
+        sidecar,
+        "/sweep",
+        _sweep_body(
+            start_hz=7_000_000,
+            stop_hz=7_256_000,
+            bin_hz=1_000,
+            rate_hz=256_000,
+            bins=1024,
+        ),
+    )
+
+    assert status == 200
+    assert body["csv"].strip()
+
+
+def test_a_survey_below_what_the_ADC_reaches_is_still_refused(sidecar: str) -> None:
+    """The radio's own floor, which is a fact about the hardware rather than a tool."""
+    status, body = _post(
+        sidecar, "/sweep", _sweep_body(start_hz=20_000, stop_hz=90_000)
     )
 
     assert status == 400
-    assert "cannot go below" in body["detail"]
-    assert "still listen" in body["detail"]  # ...and say what DOES work down there
+    assert "below what this radio reaches" in body["detail"]
 
 
-def test_a_sweep_with_no_range_is_refused_rather_than_run(
-    sidecar: str, monkeypatch
-) -> None:
-    _sweeping(monkeypatch)
-
-    status, _ = _post(
-        sidecar, "/sweep", {"start_hz": 144_000_000, "stop_hz": 144_000_000}
-    )
+def test_a_sweep_with_no_range_is_refused_rather_than_run(sidecar: str) -> None:
+    status, _ = _post(sidecar, "/sweep", _sweep_body(stop_hz=144_000_000))
 
     assert status == 400
 
@@ -464,77 +452,83 @@ def test_a_range_whose_EDGE_is_out_of_band_is_refused(
 ) -> None:
     """The check `listen.py` cannot make for us.
 
-    It validates the CENTRE frequency, which for 20-70 MHz is 45 MHz — comfortably in
-    band, while the sweep's low edge is below anything the sweep tool can reach. A sweep
-    that silently started 4 MHz above where it was asked to would report the bottom of
-    the range as quiet."""
-    _sweeping(monkeypatch)
-
+    It validates the CENTRE frequency, which for 0.02-70 MHz is 35 MHz — comfortably in
+    band, while the low edge is below anything the ADC reaches. A survey that quietly
+    started above where it was asked to would report the bottom of the range as
+    quiet."""
     status, body = _post(
-        sidecar, "/sweep", {"start_hz": 20_000_000, "stop_hz": 70_000_000}
+        sidecar, "/sweep", _sweep_body(start_hz=20_000, stop_hz=200_000)
     )
 
     assert status == 400
-    assert "cannot go below" in body["detail"]
+    assert "below what this radio reaches" in body["detail"]
 
 
-def test_a_sweep_that_overruns_is_stopped_and_says_so(
-    sidecar: str, monkeypatch
-) -> None:
-    """rtl_power's exit timer is what normally ends a sweep, so this is the case where
-    it did NOT: the process is still running when the deadline passes.
+def test_a_sweep_whose_radio_goes_away_keeps_what_it_measured(sidecar: str) -> None:
+    """The stream ending mid-survey is not the same as a survey that finished.
 
-    Two things have to happen. The radio is released — otherwise a wedged rtl_power
-    holds the tuner until somebody notices — and the result says it is partial, because
-    a short window reported as a full one reads as a quiet band."""
-    monkeypatch.setattr(server, "SWEEP_SETTLE_S", 0)
-    # The default fake stays alive until killed, which IS the overrun case. It still has
-    # to have MEASURED something: a sweep with no rows at all is a different answer now
-    # (see the test below), and conflating the two is what let an unopenable radio
-    # report `complete: true`.
-    _csv_on_disk(
-        monkeypatch, "2026-09-04, 13:00:00, 144000000, 144100000, 25000.00, 12, -70.0\n"
+    A short window reported as a full one reads as a quiet band, so the result says it
+    is partial — and what was measured before the radio went is still a real measurement
+    of a shorter window, which is why it is returned rather than thrown away."""
+    started = _post(
+        sidecar, "/listen/start", {**_sweep_body(seconds=30), "purpose": "spectrum"}
     )
+    assert started[0] == 200
 
-    status, body = _post(
-        sidecar,
-        "/sweep",
-        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 1},
-    )
+    # The rows a viewer would have seen, then the radio going away underneath it.
+    session = server.TUNER.find(started[1]["session_id"])
+    assert session is not None
+    sub = session.subscribe_frames(listen.VIEW_BAND)
+    rows = listen.SurveyRows(25_000)
+    lines = []
+    for _ in range(8):
+        frame = sub.get(timeout=5)
+        assert frame is not None
+        lines.extend(rows.push(frame))
+    lines.extend(rows.flush())
+    server.TUNER.stop(started[1]["session_id"])
 
-    assert status == 200
-    assert body["complete"] is False
-    # And the next caller finds the radio free.
-    free, _ = _post(
-        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
-    )
-    assert free == 200
+    assert lines, "nothing was measured before the radio went"
+    assert sub.get(timeout=5) is None  # the sentinel a survey reads as "stopped early"
 
 
 def test_a_sweep_that_measured_nothing_is_not_reported_as_finished(
     sidecar: str, monkeypatch
 ) -> None:
     """MEASURED on the box 2026-09-04, and the reason this test exists: a dongle whose
-    USB descriptors had stopped answering made rtl_power exit on `No matching devices
+    USB descriptors had stopped answering made the sweep exit on `No matching devices
     found`, and the route answered `complete: true` with an empty CSV. A success over a
     measurement that never happened is the worst answer available — it cost a container
     log read to notice, which is exactly what the owner cannot do."""
-    monkeypatch.setattr(server, "SWEEP_SETTLE_S", 0)
-    _sweeping(monkeypatch)  # a process that ends at once and writes nothing
 
-    status, body = _post(
-        sidecar,
-        "/sweep",
-        {"start_hz": 144_000_000, "stop_hz": 148_000_000, "seconds": 1},
+    class _Silent(_SpectrumRadio):
+        """A radio that opens and then delivers nothing, which is what a dongle in
+        trouble looks like from here."""
+
+        def read(self, samples: int) -> Any:
+            self.alive = False
+            raise listen.radio.RadioError("the stream stopped answering")
+
+    monkeypatch.setattr(
+        listen.radio.Radio,
+        "open",
+        staticmethod(
+            lambda *, center_hz, rate_hz, **kw: _Silent(center_hz, rate_hz, **kw)
+        ),
     )
 
-    assert status == 502
-    assert "measured nothing" in body["detail"]
+    status, body = _post(sidecar, "/sweep", _sweep_body(seconds=1))
+
+    # A REFUSAL, and an earlier one than before: `_confirm_started` watches a fresh
+    # pipeline and a session whose radio died on the first read never becomes a lease at
+    # all. Better than the 502 it used to reach — the answer names the driver's own
+    # words instead of "the sweep measured nothing" after the fact.
+    assert status == 400
+    assert "did not start" in body["detail"]
     # ...and the radio is free regardless, because a failed sweep must not hold it.
-    free, _ = _post(
-        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm"}
-    )
-    assert free == 200
+    # Asserted on the registry rather than by starting something, since the radio this
+    # fixture hands out is still the broken one.
+    assert server.TUNER.sessions() == []
 
 
 # --- two radios, over the wire ------------------------------------------------------
@@ -738,14 +732,16 @@ def test_an_unnamed_stop_never_picks_between_two_services(sidecar: str) -> None:
         "/listen/start",
         {"frequency_hz": 144_390_000, "mode": "fm", "purpose": "aprs", "serial": WIRE},
     )
-    # Started directly: `/sweep` blocks until rtl_power exits, and what matters here is
-    # a second session existing, not how it got there.
+    # Started directly: `/sweep` blocks for the length of the survey, and what matters
+    # here is a second session existing, not how it got there.
     server.TUNER.start(
         146_000_000,
         "fm",
         None,
-        purpose=listen.PURPOSE_SURVEY,
-        sweep=listen.Sweep.of(144_000_000, 148_000_000, 5_000, 300),
+        purpose=listen.PURPOSE_SPECTRUM,
+        sweep=listen.Sweep.of(
+            144_000_000, 144_200_000, 4_687.5, 300, capture=(2_400_000, 512)
+        ),
         serial=WHIP,
     )
 
@@ -753,7 +749,7 @@ def test_an_unnamed_stop_never_picks_between_two_services(sidecar: str) -> None:
 
     assert body["stopped"] is False
     # In serial order, like every other list the sidecar reports.
-    assert [h["purpose"] for h in body["holding"]] == ["survey", "aprs"]
+    assert [h["purpose"] for h in body["holding"]] == ["spectrum", "aprs"]
 
 
 def test_an_unnamed_stop_with_nothing_running_is_not_an_error(sidecar: str) -> None:
@@ -1124,36 +1120,29 @@ def test_a_spectrum_session_is_started_by_its_range_not_a_frequency(
     assert body["frequency_hz"] == 144_100_000
 
 
-def test_a_spectrum_reaches_shortwave_where_a_SURVEY_of_it_does_not(
-    sidecar: str, monkeypatch
-) -> None:
-    """One range, two purposes, two answers — which is the point of splitting the guard
-    per purpose rather than per frequency.
+def test_a_spectrum_AND_a_survey_both_reach_shortwave_now(sidecar: str) -> None:
+    """One range, two purposes, ONE answer — which is what A5 was about.
 
-    `rtl_power` hardcodes the ADC branch this board does not wire and can never see
-    40 m; the live spectrum does its own FFT and sets direct sampling mode 2, so the
-    same numbers are a picture there. This test spent two waves asserting that BOTH
-    were refused, with a note saying it would become a 200 when the I/Q engine landed.
-    It has."""
-    status, body = _start_spectrum(
-        sidecar,
-        start_hz=7_000_000,
-        stop_hz=7_256_000,
-        bin_hz=250,
-        rate_hz=256_000,
-        bins=1024,
-    )
+    These two spent three waves giving different answers to the same question, because
+    the survey ran `rtl_power`, which hardcodes the ADC's I branch where this board
+    wires Q. The picture stopped needing that tool at B1 and the survey at B2, so the
+    split they were split over is gone: a survey is an accumulator over the picture."""
+    shortwave = {
+        "start_hz": 7_000_000,
+        "stop_hz": 7_256_000,
+        "bin_hz": 250,
+        "rate_hz": 256_000,
+        "bins": 1024,
+        "hops": 1,
+    }
 
+    status, body = _start_spectrum(sidecar, **shortwave)
     assert status == 200
-    assert body["purpose"] == "spectrum"
+    _post(sidecar, "/listen/stop", {"session_id": body["session_id"]})
 
-    _sweeping(monkeypatch)
-    status, refused = _post(
-        sidecar, "/sweep", {"start_hz": 7_000_000, "stop_hz": 7_300_000}
-    )
-
-    assert status == 400
-    assert "cannot go below" in refused["detail"]
+    status, body = _post(sidecar, "/sweep", {**shortwave, "seconds": 2})
+    assert status == 200
+    assert body["csv"].strip()
 
 
 def test_a_spectrum_below_what_the_ADC_reaches_is_still_refused(sidecar: str) -> None:
@@ -1284,7 +1273,7 @@ def test_a_refused_move_costs_a_sentence_and_not_the_radio(sidecar: str) -> None
     """The whole tap, end to end: watching 2 m, ask for a range with no capture plan,
     get a 400.
 
-    `_resweep` passes `direct_ok=True` unconditionally, so the range is legal all the
+    There is one floor now — the radio's own — so the range is legal all the
     way down to the engine — which since B1 refuses what it has no plan for rather than
     reaching for a tool that measures on another scale. What the owner must be left with
     is the picture they already had: the 400 is the cheap half, and the expensive half
@@ -1343,41 +1332,6 @@ def test_an_unnamed_move_with_a_range_finds_the_waterfall_not_the_tuner(
     _, health = _get(sidecar, "/healthz")
     listening = next(s for s in health["sessions"] if s["purpose"] == "listen")
     assert listening["frequency_hz"] == 99_300_000
-
-
-def test_a_survey_is_never_moved_mid_measurement(sidecar: str, monkeypatch) -> None:
-    """A survey's rows are a measurement someone is waiting on, and moving it halfway
-    through would hand them a CSV of two different bands with nothing to say so."""
-    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-    _, started = _post(
-        sidecar,
-        "/listen/start",
-        {
-            "purpose": "survey",
-            "start_hz": 144_000_000,
-            "stop_hz": 144_200_000,
-            "bin_hz": 25_000,
-            "seconds": 60,
-        },
-    )
-
-    status, body = _post(
-        sidecar,
-        "/listen/tune",
-        {
-            "session_id": started["session_id"],
-            "start_hz": 440_000_000,
-            "stop_hz": 440_200_000,
-            "bin_hz": 2_400_000 / 512,
-            **TEST_CAPTURE,
-        },
-    )
-
-    assert status == 409
-    assert "sweeping the band" in body["detail"]
-
-
-# --- resetting a radio that has stopped answering -----------------------------------
 
 
 def test_a_reset_re_enumerates_the_named_device(sidecar: str, monkeypatch) -> None:
@@ -1781,9 +1735,7 @@ def test_a_frame_with_nothing_in_it_blames_the_antenna_not_the_engine() -> None:
     dead = listen.Frame(
         at=0.0, start_hz=7_125_000, bin_hz=250, db=[iq.DB_FLOOR] * 1_024
     )
-    swept = listen.Sweep.of(
-        7_125_000, 7_381_000, 250, 60, direct_ok=True, capture=(256_000, 1_024)
-    )
+    swept = listen.Sweep.of(7_125_000, 7_381_000, 250, 60, capture=(256_000, 1_024))
 
     verdict = server._spectrum_verdict(swept, [dead] * 60, 3.0, "iq")
 

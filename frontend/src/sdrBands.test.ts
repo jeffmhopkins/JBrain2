@@ -44,7 +44,7 @@ function section(over: Partial<BandSection> = {}): BandSection {
   };
 }
 
-/** A shortwave row as the server now sends it: unsurveyable, and drawable as soon as
+/** A shortwave row as the server now sends it: drawable and surveyable as soon as
  *  the engine behind the picture stops being `rtl_power`. */
 function shortwave(over: Partial<BandSection> = {}): BandSection {
   return section({
@@ -55,7 +55,7 @@ function shortwave(over: Partial<BandSection> = {}): BandSection {
     stop_hz: 7_300_000,
     span_hz: 175_000,
     centre_hz: 7_212_500,
-    surveyable: false,
+    surveyable: true,
     direct_sampling: true,
     sample_rate_hz: 256_000,
     fft_bins: 1_024,
@@ -75,9 +75,9 @@ describe("which rows the picker offers", () => {
     // the marker in `whyNotLive` said should happen "in the same wave".
     const forty = shortwave();
 
-    // ...and it is still not SURVEYABLE, which is a different question about a
-    // different tool. Asking it here is what kept these rows dark for the wrong reason.
-    expect(forty.surveyable).toBe(false);
+    // ...and it is SURVEYABLE too since B2, which is what finally makes the two
+    // questions one. Asking the survey's flag here is what kept these rows dark.
+    expect(forty.surveyable).toBe(true);
     expect(whyNotLive(forty)).toBeNull();
   });
 

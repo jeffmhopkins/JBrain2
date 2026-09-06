@@ -37,7 +37,8 @@
 # because they must run as a non-root user for other reasons; this one need not.
 FROM debian:trixie-slim
 
-# rtl-sdr brings librtlsdr plus rtl_fm / rtl_sdr / rtl_power / rtl_test. usbutils is
+# rtl-sdr brings librtlsdr plus rtl_fm / rtl_sdr / rtl_test — rtl_power is in the
+# package and is no longer invoked by anything (B1/B2). usbutils is
 # not needed — enumeration happens through sysfs in the supervisor, not here.
 #
 # python3 + python3-numpy come from apt for the ABI reason above: Debian builds its
