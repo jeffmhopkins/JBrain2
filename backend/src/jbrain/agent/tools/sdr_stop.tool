@@ -1,6 +1,6 @@
 ---
 name: sdr_stop
-version: 3
+version: 4
 permission: web
 params:
   type: object
