@@ -167,6 +167,36 @@ dispatched to.
   never hops, so the shallow ring buys it nothing and costs it 41 ms of grace against an
   ffmpeg stall, on a box that also runs LLM inference.
 
+**VERIFIED ON AIR 2026-09-06, and the verification found a defect W3 had just
+shipped.** One listening session on 162.550: `engine: iq`, 10.12 fps, zero overflows,
+the channel at **34.9 dB SNR** 234 Hz off centre — and *at the same time*, off the same
+buffer, a 2.4 MHz band row at 586 Hz bins. The band row reported **eight** signals. Only
+one of them was real.
+
+| | carrier | signals reported |
+|---|---|---|
+| listening, AGC | −7.0 dBFS | 162.550 **+ 7 phantoms** at exactly ±55.5, ±111, ±166, ±222 kHz |
+| listening, `--gain 30` | −33.5 dBFS | 162.550 alone, 27.1 dB over, +0.6 kHz |
+| `spectrum-probe`, same span, fixed 30 dB | −28.8 dBFS | 162.550 at 28.6 dB over |
+
+A *symmetric comb* around one strong carrier is front-end overload, not a channel plan —
+none of those frequencies are on NOAA's 25 kHz raster, and the independent path at a
+fixed gain sees none of them. **Listening keeps AGC deliberately** (loudness is the point
+there), so a band row off a listening session is measured under a moving gain, and
+`peaks.find` did its job perfectly on a reading of the receiver rather than of the air.
+
+Fixed the way `_publish_frame` already handles a channel row: **a row measured under AGC
+carries no peaks at all.** The picture is still published — its levels are relative and
+`band.gain_db: null` says so — but the *measurement* is withheld rather than invented,
+because it is what reaches the agent's tools as fact. `Session.tuner_gain_db` is now the
+one place the gain rule lives, which is also where two call sites had been computing it
+separately.
+
+This is the fifth instance of one pattern in this file's history: **a number that looks
+like the quantity and is not.** Median-as-floor (twice), max-as-clipping,
+level-as-signal-presence, per-bin-FFT-max-as-suppression, and now
+peaks-under-AGC-as-stations.
+
 **Still open, and deliberately not invented here:** the Listen screen does not yet SHOW
 the band while it plays. The plumbing is done — one argument (`startSdrSpectrum("all")`)
 turns it on — but where that picture goes on the sheet is a DESIGN.md question that

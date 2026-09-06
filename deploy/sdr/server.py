@@ -221,21 +221,47 @@ def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
 BAND_REPORT_PEAKS = 8
 
 
-def _band_report(rows: list["listen.Frame"]) -> dict[str, Any]:
+def _band_report(
+    rows: list["listen.Frame"], gain_db: float | None = None
+) -> dict[str, Any]:
     """What else was on the air, from the SAME capture that made the audio.
 
     The reading W3 exists to make possible: before it, "listen to 162.55" and "what is
     on 2 m" were two sessions and one radio, so the second question could only be
     answered by giving up the first. Taken from the LAST row rather than pooled across
-    them, because pooling would report a band that never existed at any one moment."""
+    them, because pooling would report a band that never existed at any one moment.
+
+    `gain_db` is None when the tuner is on its own loop, and then there are NO peaks —
+    not because the picture is worthless but because its peaks would be. MEASURED ON
+    AIR 2026-09-06: 162.550 under AGC ran to -7.0 dBFS and the R820T2 answered with a
+    symmetric spur comb reported as seven stations. `--gain 30` is how to ask this
+    question and get an answer about the air."""
     if not rows:
-        return {"rows": 0, "peaks": []}
+        return {"rows": 0, "gain_db": gain_db, "peaks": []}
     last = rows[-1]
     return {
         "rows": len(rows),
         "start_hz": last.start_hz,
         "stop_hz": last.stop_hz,
         "bin_hz": last.bin_hz,
+        # The tuner's own loop, said plainly, with the sentence that reads the empty
+        # peak list. A reader who does not know the gain cannot tell "no stations" from
+        # "no measurement", and those are opposite answers. Not a FINDING — nothing
+        # failed, and `ok` means the demodulator works — but not a silence either.
+        "gain_db": gain_db,
+        **(
+            {}
+            if gain_db is not None
+            else {
+                "note": (
+                    "no peaks: this session's tuner is on its own AGC loop, where a "
+                    "strong carrier drives the front end into inventing symmetric "
+                    "neighbours (MEASURED: 162.550 at -7.0 dBFS produced seven). The "
+                    "picture is real and its levels are relative; ask again with a "
+                    "gain to measure what is on the band."
+                )
+            }
+        ),
         "peaks": [
             {
                 "mhz": round(peak["hz"] / 1_000_000, 4),
@@ -1402,7 +1428,7 @@ class Handler(BaseHTTPRequestHandler):
             round(time.monotonic() - started, 2),
         )
         if want_band:
-            verdict["band"] = _band_report(band_rows)
+            verdict["band"] = _band_report(band_rows, session.tuner_gain_db)
         if pcm:
             # Base64 in the verdict rather than a second route: the audio is only ever
             # wanted ALONGSIDE the numbers it explains, and the caller that asked for it

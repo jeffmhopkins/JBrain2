@@ -1443,7 +1443,7 @@ class Session:
         # that will not take a gain is a setting this session does without, not a
         # reason to refuse to play.
         with contextlib.suppress(Exception):
-            held.set_gain(float(self.gain) if self.gain else None)
+            held.set_gain(self.tuner_gain_db)
         self._radio = held
         self._demod = chain
         try:
@@ -1625,7 +1625,7 @@ class Session:
         # `radio.gain_state` is: a driver that will not take a gain is a setting this
         # session does without, not a reason to refuse to draw.
         with contextlib.suppress(Exception):
-            self._radio.set_gain(float(self.gain) if self.gain else MEASURING_GAIN_DB)
+            self._radio.set_gain(self.tuner_gain_db)
         # WHICH ENGINE RAN, said by the engine that ran. This was set only on the two
         # listening paths, so a live spectrum on our own I/Q engine reported `rtl_fm`
         # and one that had fallen back reported `rtl_fm` too — the string "rtl_power"
@@ -1765,7 +1765,7 @@ class Session:
         # engines and the stitcher pass through this one seam, so no path can publish a
         # row whose peaks nobody looked for — and a viewer cannot disagree with the
         # agent about what was on the air, because neither of them decides.
-        if frame.view != VIEW_CHANNEL:
+        if frame.view != VIEW_CHANNEL and self.tuner_gain_db is not None:
             frame = dataclasses.replace(
                 frame,
                 peaks=peaks.find(
@@ -1783,6 +1783,17 @@ class Session:
         # worse than none: it would reach the agent's tools as fact. What a channel row
         # is for is answered by `frontend/src/sdrTuning.ts`, which asks the narrower
         # question the row can actually support.
+        #
+        # A row measured under AGC is left without peaks for the SAME reason, and it is
+        # not a theoretical one. MEASURED ON AIR 2026-09-06, the first hour this file
+        # could draw a band while listening: 162.550 with the tuner on its own loop ran
+        # to -7.0 dBFS and the front end answered with a symmetric spur comb at +-55.5,
+        # 111, 166 and 222 kHz. `peaks.find` did its job perfectly and reported seven
+        # stations, none on NOAA's 25 kHz raster. The same radio pinned at 30 dB found
+        # ONE. A picture drawn under AGC is still worth looking at — the levels are
+        # relative and it says so — but its peaks are a MEASUREMENT, they reach the
+        # agent's tools as fact, and under a moving gain they are a reading of the
+        # receiver rather than of the air (`tuner_gain_db`).
         with self._lock:
             self._last[frame.view] = frame
             subs = [
@@ -2322,6 +2333,27 @@ KISSPORT {self.kiss_port}
             os.unlink(f"/tmp/direwolf-{self.id}.conf")  # noqa: S108 - written by this session
 
     # ---- public surface -------------------------------------------------------
+
+    @property
+    def tuner_gain_db(self) -> float | None:
+        """What this session pins the tuner at, or None for the radio's own loop.
+
+        The ONE place the rule lives, because two different answers were being computed
+        at two call sites and a THIRD reader — the band row's peak finder — needs the
+        same one. A measuring session is always fixed: a picture whose dB scale is a
+        property of whatever the last session left behind is one where no two rows mean
+        the same thing. Listening keeps AGC unless the owner names a gain, because there
+        loudness is the point.
+
+        `peaks` on a band row hangs off this, and MEASURED ON AIR is why. 162.550 under
+        AGC drove the tuner to -7.0 dBFS and the R820T2's front end answered with a
+        symmetric spur comb at +-55.5, 111, 166 and 222 kHz — seven phantom stations,
+        none of them on NOAA's 25 kHz raster, all of them reported as signals. The same
+        radio at a fixed 30 dB found ONE, 27.1 dB over the floor, agreeing with a
+        spectrum session over the same span to within 1.5 dB."""
+        if self.gain:
+            return float(self.gain)
+        return None if self.purpose in (PURPOSE_LISTEN, PURPOSE_APRS) else MEASURING_GAIN_DB
 
     @property
     def default_view(self) -> str:

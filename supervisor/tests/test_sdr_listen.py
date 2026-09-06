@@ -3036,8 +3036,11 @@ def test_a_band_row_carries_peaks_and_a_channel_row_does_not(iq_tuner) -> None:
     """`peaks.find` answers "what stands above the noise across this BAND", and its
     rolling baseline is meaningless on a 32 kHz row a station fills 40% of. Which row
     gets measured is now decided by what the row IS rather than by whether anyone
-    happened to set `passband_hz`."""
-    info = iq_tuner.start(146_940_000, "fm", None)
+    happened to set `passband_hz`.
+
+    At a FIXED gain, which is the other half of the rule — see
+    `test_a_band_row_measured_under_agc_carries_no_peaks`."""
+    info = iq_tuner.start(146_940_000, "fm", "30")
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
@@ -3206,3 +3209,82 @@ def test_a_retune_does_not_let_the_old_capture_close_the_new_encoder(
         assert made[1].stdin.closed is False
     finally:
         iq_tuner.stop()
+
+
+def test_a_listening_session_leaves_the_tuner_to_its_own_loop(iq_tuner) -> None:
+    """Loudness is the point when someone is listening, and a gain that moves costs
+    nothing there — which is exactly why it is not the same answer a measuring session
+    needs."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert session.tuner_gain_db is None
+        assert iq_tuner.opened[0].gain_db is None
+    finally:
+        iq_tuner.stop()
+
+
+def test_the_owners_gain_wins_on_every_purpose(iq_tuner) -> None:
+    info = iq_tuner.start(146_940_000, "fm", "40")
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        assert session.tuner_gain_db == 40.0
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_band_row_measured_under_agc_carries_no_peaks(iq_tuner) -> None:
+    """MEASURED ON AIR 2026-09-06, the first hour this file could draw a band while
+    listening: 162.550 with the tuner on its own loop ran to -7.0 dBFS, and the R820T2's
+    front end answered with a symmetric spur comb at ±55.5, 111, 166 and 222 kHz.
+    `peaks.find` did its job perfectly and reported SEVEN stations, none of them on
+    NOAA's 25 kHz raster. The same radio pinned at 30 dB found one, agreeing with a
+    spectrum session over the same span to within 1.5 dB.
+
+    The picture is still worth drawing — its levels are relative and it says so. Its
+    PEAKS are a measurement that reaches the agent's tools as fact, and under a moving
+    gain they are a reading of the receiver rather than of the air."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        sub = session.subscribe_frames(listen.VIEW_BAND)
+        row = sub.get(timeout=5)
+        assert row is not None
+        assert row.view == listen.VIEW_BAND
+        assert row.db  # the picture is there...
+        assert row.peaks == []  # ...and the measurement is not
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_band_row_at_a_fixed_gain_is_measured(iq_tuner) -> None:
+    """The other half: pinning the tuner is what turns the same row into a reading."""
+    info = iq_tuner.start(146_940_000, "fm", "30")
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        sub = session.subscribe_frames(listen.VIEW_BAND)
+        row = sub.get(timeout=5)
+        assert row is not None
+        assert row.peaks
+    finally:
+        iq_tuner.stop()
+
+
+def test_a_measuring_session_is_always_pinned_even_with_no_gain_asked_for(
+    tuner, monkeypatch
+) -> None:
+    """A picture whose dB scale is a property of whatever the last session left behind
+    is one where no two rows, and no two runs, mean the same thing."""
+    swept = listen.Sweep.of(
+        144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
+    )
+    session = listen.Session.__new__(listen.Session)
+    session.purpose = listen.PURPOSE_SPECTRUM
+    session.gain = None
+    session.sweep = swept
+
+    assert session.tuner_gain_db == listen.MEASURING_GAIN_DB

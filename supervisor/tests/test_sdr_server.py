@@ -1914,18 +1914,33 @@ def test_the_band_report_says_what_else_was_on_the_air() -> None:
         peaks=[{"hz": 144_390_000, "db": -50.0, "over_db": 21.4}],
         view=listen.VIEW_BAND,
     )
-    report = server._band_report([row, row])
+    report = server._band_report([row, row], 30.0)
 
     assert report["rows"] == 2
     assert report["start_hz"] == 144_000_000
+    assert report["gain_db"] == 30.0
     assert report["peaks"] == [{"mhz": 144.39, "db": -50.0, "over_db": 21.4}]
+    assert "note" not in report
+
+
+def test_a_band_report_under_agc_says_why_it_has_no_peaks() -> None:
+    """ "No stations" and "no measurement" are opposite answers, and an empty list looks
+    like the first. MEASURED ON AIR: 162.550 under AGC drove the front end to invent a
+    symmetric comb of seven, so the session stops publishing peaks at all — and the
+    report has to say that is what happened."""
+    row = listen.Frame(at=1.0, start_hz=144_000_000, bin_hz=25_000, db=[-90.0, -50.0])
+    report = server._band_report([row], None)
+
+    assert report["gain_db"] is None
+    assert report["peaks"] == []
+    assert "AGC" in report["note"]
 
 
 def test_a_band_report_with_no_rows_says_so_rather_than_guessing() -> None:
     """No row is not a quiet band: it is a probe that did not ask early enough, or an
     engine that draws nothing. Reporting an empty peak list with a plausible range
     would read as the first."""
-    assert server._band_report([]) == {"rows": 0, "peaks": []}
+    assert server._band_report([]) == {"rows": 0, "gain_db": None, "peaks": []}
 
 
 def test_the_band_report_is_bounded() -> None:
@@ -1938,4 +1953,4 @@ def test_the_band_report_is_bounded() -> None:
         at=1.0, start_hz=144_000_000, bin_hz=25_000, db=[-90.0], peaks=many
     )
 
-    assert len(server._band_report([row])["peaks"]) == server.BAND_REPORT_PEAKS
+    assert len(server._band_report([row], 30.0)["peaks"]) == server.BAND_REPORT_PEAKS
