@@ -21,7 +21,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { type SpectrumRow, sdrSpectrum, subscribeSdrSpectrum } from "../sdrSpectrum";
-import { type Tuning, offsetLabel, spillLabel, tuningOf } from "../sdrTuning";
+import { type Tuning, offsetLabel, passbandEdges, spillLabel, tuningOf } from "../sdrTuning";
 import { type Scale as FallScale, paint as fallPaint, reduce, shadeRow } from "../sdrWaterfall";
 
 /** CSS pixels of chart height, in BOTH modes. The owner's ask for the waterfall was
@@ -96,10 +96,14 @@ function paint(
     return h - Math.min(1, Math.max(0, t)) * h;
   };
 
-  // The passband, centred on the tuned frequency — which is the row's own middle.
+  // The passband. The ROW is centred on the tuned frequency — which is the row's own
+  // middle — but the passband need not be: SSB is one-sided, so `passbandCentreHz`
+  // offsets the shading to where the demodulator actually listens (C14). Zero on every
+  // symmetric mode, so this is the old arithmetic everywhere else.
   const centre = row.startHz + span / 2;
-  const left = xOf(centre - row.passbandHz / 2);
-  const right = xOf(centre + row.passbandHz / 2);
+  const band = passbandEdges(row);
+  const left = xOf(centre + band.lowHz);
+  const right = xOf(centre + band.highHz);
   ctx.fillStyle = tint;
   ctx.fillRect(left, 0, right - left, h);
   ctx.strokeStyle = steel;
@@ -248,7 +252,8 @@ function guides(canvas: HTMLCanvasElement, row: SpectrumRow, ratio: number): voi
   ctx.lineWidth = ratio;
   ctx.strokeStyle = token(canvas, "--steel", "#7fa7c9");
   ctx.globalAlpha = 0.55;
-  for (const hz of [centre - row.passbandHz / 2, centre + row.passbandHz / 2]) {
+  const band = passbandEdges(row);
+  for (const hz of [centre + band.lowHz, centre + band.highHz]) {
     ctx.beginPath();
     ctx.moveTo(Math.round(xOf(hz)) + 0.5, 0);
     ctx.lineTo(Math.round(xOf(hz)) + 0.5, h);
@@ -497,7 +502,7 @@ export function SdrTuningView({
               <button
                 type="button"
                 className="tv-nudge"
-                onClick={() => onTune(Math.round(frequencyHz + tuning.offsetHz))}
+                onClick={() => onTune(Math.round(frequencyHz + tuning.errorHz))}
               >
                 Centre it
               </button>

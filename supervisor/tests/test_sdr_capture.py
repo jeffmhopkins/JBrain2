@@ -241,7 +241,9 @@ def test_a_channel_view_is_centred_on_the_station_not_on_the_radio() -> None:
     spectrum, passband = seen[0]
     middle = spectrum.start_hz + spectrum.bins / 2 * spectrum.bin_hz
     assert middle == pytest.approx(station, abs=spectrum.bin_hz)
-    assert passband == pytest.approx(2.0 * chain.channel_half_hz)
+    # The PASSBAND as two edges, not a half-width doubled: on SSB those are not the same
+    # thing, and this sink used to hand over the symmetric one (C14).
+    assert passband == chain.passband_hz == (-8_000.0, 8_000.0)
 
 
 def test_a_channel_sink_that_draws_nothing_still_makes_audio() -> None:

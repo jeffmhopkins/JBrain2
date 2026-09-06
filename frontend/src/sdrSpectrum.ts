@@ -51,6 +51,16 @@ export interface SpectrumRow {
    *  now carries both kinds, and each row says which it is rather than the reader
    *  having to know what the radio was asked for. */
   passbandHz: number;
+  /** How far the passband's MIDDLE sits from the tuned frequency, in Hz. Zero on every
+   *  symmetric mode — which is every mode but SSB, and on a row from a box that predates
+   *  the field, so a strip that adds it draws exactly what it drew before everywhere
+   *  else.
+   *
+   *  SSB is one-sided: `usb` hears +300..+3400 Hz and `lsb` hears -3400..-300, so
+   *  shading `passbandHz` centred on the dial covered half the REJECTED sideband and
+   *  left the top of the real one outside the box. Someone centring a signal in it put
+   *  half the signal where nothing can hear it. */
+  passbandCentreHz: number;
   /** How far apart the stations on this band are — 200 kHz on the FM dial, 25 kHz on
    *  the 2 m plan. Only the box knows the raster, and without it a viewer holding
    *  peaks across rows cannot tell ONE station whose loudest bin wanders from TWO that
@@ -129,12 +139,22 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
     db: values,
     peaks: parsePeaks(payload.peaks),
     passbandHz: passband,
+    passbandCentreHz: centreOf(payload.passband_centre_hz),
     channelHz:
       typeof payload.channel_hz === "number" && Number.isFinite(payload.channel_hz)
         ? Math.max(0, payload.channel_hz)
         : 0,
     view: parseView(payload.view, passband),
   };
+}
+
+/** How far the passband's middle sits off the dial, in Hz.
+ *
+ *  SIGNED, unlike every other number this file parses: which SIDE the passband sits on
+ *  is the whole content of it, so the `Math.max(0, ...)` the neighbours use would erase
+ *  `lsb`. Zero for anything unreadable, which is what a symmetric mode sends anyway. */
+function centreOf(raw: unknown): number {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
 }
 
 /** The row's own view, or the guess every reader used to make.

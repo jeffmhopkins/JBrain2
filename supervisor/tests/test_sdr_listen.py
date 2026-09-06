@@ -3165,3 +3165,47 @@ def test_a_retune_the_radio_refuses_ends_the_session_rather_than_mistuning_it(
 
     assert held.closed is True
     assert iq_tuner.find(info.session_id) is None
+
+
+def test_an_SSB_row_shades_the_sideband_it_can_actually_HEAR(iq_tuner) -> None:
+    """C14. `usb` hears +300..+3400 Hz and `lsb` hears -3400..-300, but the strip drew
+    `2 * channel_half_hz` — symmetric ±3400 — so half the shaded box was the sideband
+    the back end rejects and the top 300 Hz of the real one fell outside it. Someone
+    centring a signal in that box put half of it where nothing can hear it.
+
+    The CROP stays centred on the dial, because "am I centred?" is a question about the
+    dial. Only the shading moves."""
+    for mode, want_centre in (("usb", 1_850.0), ("lsb", -1_850.0)):
+        info = iq_tuner.start(14_250_000, mode, None)
+        try:
+            session = iq_tuner.find(info.session_id)
+            assert session is not None
+            frame = session.subscribe_frames(listen.VIEW_CHANNEL).get(timeout=5)
+            assert frame is not None
+            # 3100 Hz wide, not 6800: the two edges, not a half-width doubled.
+            assert frame.passband_hz == pytest.approx(3_100.0)
+            assert frame.passband_centre_hz == pytest.approx(want_centre)
+            wire = frame.as_dict()
+            assert wire["passband_centre_hz"] == pytest.approx(want_centre)
+            # ...and the row itself still straddles the tuned frequency.
+            middle = frame.start_hz + (frame.stop_hz - frame.start_hz) / 2
+            assert middle == pytest.approx(14_250_000, abs=frame.bin_hz)
+        finally:
+            iq_tuner.stop()
+
+
+def test_a_symmetric_mode_shades_exactly_where_it_always_did(iq_tuner) -> None:
+    """The other half of C14, and what makes it safe: every mode but SSB reports a zero
+    centre, so a strip that adds the field draws the same picture it drew before — and a
+    PWA that has not been updated yet reads no field and does the same."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    try:
+        session = iq_tuner.find(info.session_id)
+        assert session is not None
+        frame = session.subscribe_frames(listen.VIEW_CHANNEL).get(timeout=5)
+        assert frame is not None
+        assert frame.passband_hz == pytest.approx(16_000.0)
+        assert frame.passband_centre_hz == 0.0
+        assert (frame.stop_hz - frame.start_hz) == pytest.approx(32_000.0, rel=0.05)
+    finally:
+        iq_tuner.stop()

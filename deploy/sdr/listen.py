@@ -952,6 +952,15 @@ class Frame:
     #: quarters of its 240 kHz one — so a client that derived it would have to know the
     #: mode, the IF and the crop. Zero on a band row, which has no passband.
     passband_hz: float = 0.0
+    #: How far the passband's MIDDLE sits from the tuned frequency, in Hz. Zero on every
+    #: symmetric mode — which is every mode but SSB, and why a viewer that ignores this
+    #: draws exactly what it drew before (C14).
+    #:
+    #: SSB is one-sided: `usb` hears +300..+3400 and `lsb` hears -3400..-300, so a strip
+    #: shading `passband_hz` centred on the dial covers half the rejected sideband and
+    #: leaves out the top of the real one. Someone centring a signal in that box put half
+    #: of it where nothing can hear it.
+    passband_centre_hz: float = 0.0
     #: How far apart the stations on this band are — the raster from `bands.py`, 200 kHz
     #: on the FM dial and 25 kHz on the 2 m plan. Carried for the same reason
     #: `passband_hz` is: only the box knows it, and without it a viewer holding peaks
@@ -982,6 +991,7 @@ class Frame:
             "db": [round(v, 1) for v in self.db],
             "peaks": self.peaks,
             "passband_hz": self.passband_hz,
+            "passband_centre_hz": self.passband_centre_hz,
             "channel_hz": self.channel_hz,
             "view": self.view,
         }
@@ -1140,6 +1150,11 @@ class Session:
         #: statistics.
         self.audio_clipped = 0.0
         self.audio_rms = 0.0
+        #: What the AGC is doing, in dB. Zero on FM, which has none, and on `rtl_fm`.
+        #: Reported because `audio_peak`/`audio_rms` are measured BEFORE it: a probe or
+        #: a meter reading a quiet number next to +34 dB of gain is being told the
+        #: station is weak AND that the owner can hear it, which are two facts.
+        self.audio_gain_db = 0.0
         # The most recent audio level direwolf announced, and when. One slot
         # rather than a queue — see `_take_audio_level`.
         self._level: tuple[float, int] | None = None
@@ -1443,14 +1458,17 @@ class Session:
         self.audio_peak = min(1.0, out.peak)
         self.audio_clipped = out.clipped
         self.audio_rms = out.rms
+        self.audio_gain_db = out.gain_db
         self._record(chunk)
         self._accumulate(chunk, self.audio_peak)
         if enc.stdin is not None:
             enc.stdin.write(chunk)
             enc.stdin.flush()
 
-    def _publish_channel(self, spectrum: "iq.Spectrum", passband_hz: float) -> None:
-        self._publish_frame(self._tuning_frame(spectrum, passband_hz))
+    def _publish_channel(
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float]
+    ) -> None:
+        self._publish_frame(self._tuning_frame(spectrum, passband))
 
     def _publish_band(self, spectrum: "iq.Spectrum") -> None:
         self._publish_frame(self._band_frame(spectrum))
@@ -1488,7 +1506,7 @@ class Session:
             if not self._restarting:
                 self._end_frames()
 
-    def _tuning_frame(self, spectrum: "iq.Spectrum", passband_hz: float) -> Frame:
+    def _tuning_frame(self, spectrum: "iq.Spectrum", passband: tuple[float, float]) -> Frame:
         """The channel's own spectrum, cropped to twice what the demodulator hears.
 
         Twice the passband is the span the mock settled on
@@ -1496,15 +1514,26 @@ class Session:
         a fixed fraction of the picture — the property that turns "am I centred?" into
         a shape rather than a number. It is not always achievable: wide FM's 180 kHz
         passband is three quarters of its 240 kHz IF, so the crop is a no-op there and
-        the frame carries `passband_hz` rather than a promise about the fraction."""
-        keep = min(spectrum.bins, max(TUNING_BINS // 8, int(round(2.0 * passband_hz / spectrum.bin_hz))))
+        the frame carries the passband rather than a promise about the fraction.
+
+        The crop stays CENTRED on the tuned frequency even where the passband is not
+        (SSB), because "am I centred?" is a question about the dial: it reaches four
+        times the passband's furthest edge, which is the same span every symmetric mode
+        had before C14 and now also holds all of SSB's."""
+        low, high = passband
+        reach = max(abs(low), abs(high))
+        keep = min(
+            spectrum.bins,
+            max(TUNING_BINS // 8, int(round(4.0 * reach / spectrum.bin_hz))),
+        )
         first = (spectrum.bins - keep) // 2
         return Frame(
             at=spectrum.at,
             start_hz=int(spectrum.start_hz + first * spectrum.bin_hz),
             bin_hz=spectrum.bin_hz,
             db=spectrum.db[first : first + keep].tolist(),
-            passband_hz=passband_hz,
+            passband_hz=high - low,
+            passband_centre_hz=(low + high) / 2.0,
             view=VIEW_CHANNEL,
         )
 

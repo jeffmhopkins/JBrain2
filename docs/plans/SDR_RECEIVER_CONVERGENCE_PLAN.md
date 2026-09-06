@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -80,8 +80,8 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | # | Finding | Evidence |
 |---|---|---|
 | **C12 ✅** | Every filter is Hamming, so alias rejection is a property of the window (~−53 dB) rather than a specification. Worst measured leakage into the demodulated channel: **−56 dB**. A local blowtorch 60–70 dB over a weak station is audible in it. Fix: `np.kaiser` with taps and β from a target attenuation, and change `lowpass`'s signature to `(pass_hz, stop_hz, atten_db, rate)` so the "is cutoff the edge or the 6 dB point?" question — which has now produced **two** separate bugs — becomes unaskable. | **[R]** |
-| **C13** | No AGC on AM/SSB. Same RF level: nfm −11.4 dBFS, usb −23.0, am −31.0 — a 20 dB swing on mode change, and a weak AM/SSB station is simply inaudible. `rtl_fm` behaves the same, so it is parity; every listening application runs AGC here. | **[R]** |
-| **C14** | SSB is modelled with a symmetric `channel_half_hz`, but SSB is one-sided: the strip shades ±3.4 kHz while the demodulator hears +300…+3400 only. A user centring a signal in the shaded box puts half of it in the rejected sideband. | **[R]** |
+| **C13 ✅** | No AGC on AM/SSB. Same RF level: nfm −11.4 dBFS, usb −23.0, am −31.0 — a 20 dB swing on mode change, and a weak AM/SSB station is simply inaudible. `rtl_fm` behaves the same, so it is parity; every listening application runs AGC here. | **[R]** |
+| **C14 ✅** | SSB is modelled with a symmetric `channel_half_hz`, but SSB is one-sided: the strip shades ±3.4 kHz while the demodulator hears +300…+3400 only. A user centring a signal in the shaded box puts half of it in the rejected sideband. | **[R]** |
 | **C15 ✅** | `_DcBlock`'s real −3 dB corner is ~7 Hz, not the 31 Hz documented (31.25 is the boxcar's first *null*, where the response is 0 dB), and it overshoots +2 dB at 20 Hz. | **[R]** |
 | **C16 ✅ declined** | De-emphasis is convolved in at the **IF** rate, making wide FM's back end 771 taps where the anti-alias filter alone is 481. `gr-analog` runs it at the audio rate. 12.3 → 8.0 Mmac/s. | **[R]** |
 | **C17** | `readStream`'s `flags` and `timeNs` are discarded, so `Reading.torn` can say *something* was lost but never *how much* — the one number a waterfall needs to place a row honestly. Frame time is wall-clock captured before the read. | **[R]** |
@@ -434,7 +434,8 @@ and both fail if the ranking degrades to serial order.
 **W6 — Filter design becomes a specification.**
 **W6a ✅ shipped 2026-09-06** — C12 (Kaiser + a `(pass, stop, atten, rate)` signature),
 C24, C15, and C16 **answered with measurement and NOT implemented** (below);
-**W6b** — C13 (AGC for AM/SSB) and C14 (SSB's one-sided passband).
+**W6b ✅ shipped 2026-09-06** — C13 (AGC for AM/SSB) and C14 (SSB's one-sided
+passband).
 
 ## W6a — what shipped (2026-09-06)
 
@@ -523,6 +524,80 @@ is not a trade worth making.
 
 **C16 is closed as measured-and-declined.** Revisit if `AUDIO_RATE` ever rises to 48 kHz,
 where the shaped design wins outright.
+
+## W6b — what shipped (2026-09-06)
+
+### C13 — AM and SSB stop being as loud as the propagation happens to make them
+
+An FM discriminator's output is the DEVIATION, which the transmitter sets and
+`FM_DEVIATION_HZ` scales to full scale — so FM already arrives at a level that means
+something. AM and SSB carry the RF level straight through to the audio, so they did not.
+
+**MEASURED, feeding the same modulation at three RF amplitudes** (audio RMS, dBFS):
+
+| RF amplitude | nfm | am before | am after | usb before | usb after |
+|---|---|---|---|---|---|
+| 0.5 | -11.4 | -16.9 | **-14.0** (agc +3.0) | -3.0 | **-14.0** (agc -11.0) |
+| 0.05 | -11.4 | -36.9 | **-14.0** (agc +23.0) | -23.0 | **-14.0** (agc +9.0) |
+| 0.005 | -11.4 | -56.9 | -17.0 (agc +40.0, at the ceiling) | -43.0 | **-14.0** (agc +29.0) |
+
+A **forty-decibel** span of RF now lands within three decibels in the speaker, and the
+20 dB mode-change swing C13 reported is 2.6 dB. `usb -23.0` at RF 0.05 reproduces C13's
+own reported figure exactly, which is what says the two measured the same thing.
+
+**Built as a boxcar over a carried tail, like `_DcBlock` and for the same reason.** The
+obvious AGC keeps a smoothed level and updates it once per BUFFER, which makes the gain a
+function of how the samples were delivered — the identical defect that stood in the DC
+blocker until `test_chunking_changes_nothing` caught it. One cumulative sum gives a gain
+for EVERY sample instead, which is exactly chunk-invariant (the test holds it to two int16
+counts) and removes the step a per-buffer gain puts at each boundary.
+
+**`peak` and `rms` are measured BEFORE the gain**, and `clipped` after. That split is the
+answer to `_to_pcm`'s own old objection — "an automatic gain destroys the only honest
+thing the level meter reports". They are what `listen-probe` reads to decide whether
+anything is on the air, and an AGC that moved them would make a dead channel and a loud
+one report the same number. What the AGC changes is what the owner HEARS; `Audio.gain_db`,
+`Session.audio_gain_db` and the probe's new `agc_gain_db` say by how much.
+
+### C14 — SSB's passband is one-sided, and the strip drew it symmetric
+
+`CHANNEL_HALF_HZ` is a half-width, so `usb` and `lsb` both shaded ±3400 Hz while the
+demodulator heard +300..+3400 (usb) or -3400..-300 (lsb). **Half the shaded box was the
+sideband the back end rejects**, and the top 300 Hz of the real one fell outside it —
+so someone centring a signal in the box put half of it where nothing can hear it, which
+is the one mistake SSB tuning most invites.
+
+`demod.PASSBAND_HZ` is its own table of (low, high) offsets, because a filter half-width
+cannot say this. `ChannelSink` hands the pair over, `Frame` carries `passband_hz` (the
+WIDTH, 3100 not 6800) beside a new `passband_centre_hz` (+1850 usb, -1850 lsb, **0 on
+every symmetric mode**), and the PWA offsets its shading by it.
+
+Two properties make it safe to ship across a rolling update: a symmetric mode sends zero,
+and a PWA that has not been updated reads no field — so everything but SSB draws exactly
+what it drew before. The CROP does not move either: it stays centred on the dial, because
+"am I centred?" is a question about the dial, and four times the passband's furthest edge
+is the same span every mode already had.
+
+**Three client-side defects fell out of it**, all in `sdrTuning.ts` and all invisible until
+the passband stopped being symmetric:
+
+- **"On centre" was measured against the dial.** A correctly tuned USB signal sits at
+  +1850 Hz from it, so the strip told the owner to move a radio that was already right.
+  `Tuning` now carries `errorHz` (distance from where the signal SHOULD be) beside
+  `offsetHz` (where it IS, which is what the marker points at); they are identical on
+  every symmetric mode.
+- **The "tune to it" button applied `offsetHz`**, which on USB would have moved the
+  signal ONTO the dial — out of the +300..+3400 the demodulator hears. It applies
+  `errorHz`.
+- **`spilled` — the whole point of the strip — counted spill out of a symmetric box.**
+  A USB signal sitting on the dial, which is nearly all in the rejected sideband, scored
+  as perfectly placed; it now scores above 0.4.
+
+`floorOf` took its noise from a symmetric slice off each end, which on USB put the top of
+the real passband in the "noise". Fixed with the same `passbandEdges` helper the shading
+and the spill now share. **No test claims it**: on a 341-bin row the passband is 23% of
+the bins, so a median cannot be moved by the mistake, and a fixture that appeared to prove
+it would be measuring something else.
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
 C27 need hardware: add probe rungs rather than guessing. **Plus C29, found by W5a's own

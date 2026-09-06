@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { SpectrumRow } from "./sdrSpectrum";
-import { CENTRED_BINS, CENTRED_SHARE, offsetLabel, spillLabel, tuningOf } from "./sdrTuning";
+import {
+  CENTRED_BINS,
+  CENTRED_SHARE,
+  offsetLabel,
+  passbandEdges,
+  spillLabel,
+  tuningOf,
+} from "./sdrTuning";
 
 const TUNED_HZ = 146_940_000;
 const BIN_HZ = 93.75; // 512 bins over a 48 kHz IF, as the sidecar sends it
@@ -12,7 +19,7 @@ const BINS = Math.round(SPAN_HZ / BIN_HZ);
  *  the flat top is exactly what makes the argmax a bad centre estimate. */
 function row(
   offsetHz: number,
-  { widthHz = 14_000, peakDb = -34, floorDb = -78, passbandHz = 16_000 } = {},
+  { widthHz = 14_000, peakDb = -34, floorDb = -78, passbandHz = 16_000, passbandCentreHz = 0 } = {},
 ): SpectrumRow {
   const startHz = TUNED_HZ - (BINS / 2) * BIN_HZ;
   const db: number[] = [];
@@ -32,6 +39,7 @@ function row(
     db,
     peaks: [],
     passbandHz,
+    passbandCentreHz,
     channelHz: 0,
     view: "channel" as const,
   };
@@ -58,6 +66,7 @@ function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = 
     db,
     peaks: [],
     passbandHz: 180_000,
+    passbandCentreHz: 0,
     channelHz: 0,
     view: "channel" as const,
   } satisfies SpectrumRow;
@@ -165,13 +174,64 @@ describe("labels", () => {
   });
 
   it("gives a tenth of a kHz up close and none far out", () => {
-    expect(offsetLabel({ centred: false, offsetHz: 6_200 } as never)).toBe("6.2 kHz high");
-    expect(offsetLabel({ centred: false, offsetHz: -12_000 } as never)).toBe("12 kHz low");
+    expect(offsetLabel({ centred: false, errorHz: 6_200 } as never)).toBe("6.2 kHz high");
+    expect(offsetLabel({ centred: false, errorHz: -12_000 } as never)).toBe("12 kHz low");
   });
 
   it("only mentions the passband when a real part of the signal is outside it", () => {
     expect(spillLabel({ spilled: 0.02 } as never)).toBe("");
     expect(spillLabel({ spilled: 0.33 } as never)).toContain("a third");
     expect(spillLabel({ spilled: 0.5 } as never)).toContain("half");
+  });
+});
+
+describe("a one-sided passband (C14)", () => {
+  // `usb` hears +300..+3400 Hz of the dial and `lsb` hears -3400..-300, so the passband
+  // is 3100 Hz wide with its middle 1850 Hz off the dial. Everything here reads the same
+  // for a symmetric mode, where the centre is zero.
+  const USB = { passbandHz: 3_100, passbandCentreHz: 1_850, widthHz: 2_600 };
+  const LSB = { passbandHz: 3_100, passbandCentreHz: -1_850, widthHz: 2_600 };
+
+  it("puts the edges where the demodulator listens, not around the dial", () => {
+    expect(passbandEdges(row(0, USB))).toEqual({ lowHz: 300, highHz: 3_400 });
+    expect(passbandEdges(row(0, LSB))).toEqual({ lowHz: -3_400, highHz: -300 });
+    // The symmetric case is untouched, which is what makes this safe everywhere else.
+    expect(passbandEdges(row(0))).toEqual({ lowHz: -8_000, highHz: 8_000 });
+  });
+
+  it("calls a signal sitting in the passband CENTRED, though it is off the dial", () => {
+    // The bug in one line. A correctly tuned USB signal sits at +1850 Hz from the dial,
+    // and the strip told the owner to move a radio that was already right.
+    const tuning = tuningOf(row(1_850, USB), TUNED_HZ);
+
+    expect(tuning).not.toBeNull();
+    expect(tuning?.centred).toBe(true);
+    expect(tuning?.errorHz).toBeCloseTo(0, -2);
+    // ...while `offsetHz` still says where it IS, which is what the marker points at.
+    expect(tuning?.offsetHz).toBeCloseTo(1_850, -2);
+    expect(offsetLabel(tuning as never)).toBe("On centre");
+  });
+
+  it("measures the error toward the passband, so the tune button lands the signal", () => {
+    // A kilohertz low of where USB wants it. The correction is -1000, NOT the -2850 the
+    // dial-relative offset would have asked for — which would have moved the signal to
+    // the dial, outside the +300..+3400 the demodulator hears.
+    const tuning = tuningOf(row(850, USB), TUNED_HZ);
+
+    expect(tuning?.centred).toBe(false);
+    expect(tuning?.errorHz).toBeCloseTo(-1_000, -2);
+    expect(offsetLabel(tuning as never)).toBe("1.0 kHz low");
+  });
+
+  it("counts what spills out of the SIDEBAND, not out of a symmetric box", () => {
+    // Sitting on the dial is the worst place for a USB signal: almost all of it is in
+    // the sideband the back end rejects. Against the old symmetric ±1550 box it looked
+    // perfectly placed.
+    const wrong = tuningOf(row(0, USB), TUNED_HZ);
+    const right = tuningOf(row(1_850, USB), TUNED_HZ);
+
+    expect(wrong?.spilled).toBeGreaterThan(0.4);
+    expect(right?.spilled).toBeLessThan(0.05);
+    expect(spillLabel(wrong as never)).not.toBe("");
   });
 });

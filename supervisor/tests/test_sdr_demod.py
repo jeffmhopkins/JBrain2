@@ -808,3 +808,100 @@ def test_the_dc_block_has_the_response_its_docstring_CLAIMS():
     block = demod._DcBlock(n)
     out = block.feed(np.ones(4 * n, dtype=np.float32))
     assert abs(float(out[-1])) < 1e-3
+
+
+# -- W6b: the AGC (C13) --------------------------------------------------------------
+
+
+def _steady_rms_dbfs(pcm: np.ndarray) -> float:
+    """Audio level once the AGC's own quarter-second window has filled."""
+    x = pcm.astype(np.float64)[pcm.size // 3 :] / 32768.0
+    return 20.0 * np.log10(max(float(np.sqrt(np.mean(x**2))), 1e-9))
+
+
+def _at_rf(mode: str, amplitude: float, seconds: float = 1.5):
+    if mode in ("fm", "nfm", "wbfm"):
+        signal = fm_signal(seconds, tone_hz=1_000.0, deviation_hz=3_000.0) * amplitude
+    elif mode == "am":
+        signal = am_signal(seconds, tone_hz=1_000.0) * amplitude
+    else:
+        # The sign is the sideband. A +1500 Hz tone is an UPPER sideband one and `lsb`
+        # is right to reject it — which an earlier cut of this test read as "the AGC
+        # failed" rather than as the sideband filter working.
+        signal = tone(
+            seconds, hz=1_500.0 if mode == "usb" else -1_500.0, amplitude=amplitude
+        )
+    return demod.Demodulator(mode, CAPTURE_HZ).feed(signal.astype(np.complex64))
+
+
+@pytest.mark.parametrize("mode", ["am", "usb", "lsb"])
+def test_the_same_station_arrives_at_the_same_LOUDNESS_however_strong_it_is(mode):
+    """C13. AM and SSB carry the RF level straight through to the audio, so without an
+    AGC the same station is as loud as the propagation happens to make it.
+
+    MEASURED before this, at one RF level: nfm -11.4 dBFS, usb -23.0, am -31.0 — a 20 dB
+    swing on a MODE CHANGE, and a weak AM or SSB station simply inaudible."""
+    levels = [_steady_rms_dbfs(_at_rf(mode, amp).pcm) for amp in (0.5, 0.05)]
+
+    # A hundredfold in RF, within a decibel in what comes out of the speaker.
+    assert abs(levels[0] - levels[1]) < 1.0, levels
+    assert all(abs(db - 20 * np.log10(demod.AGC_TARGET_RMS)) < 1.0 for db in levels), (
+        levels
+    )
+
+
+def test_fm_keeps_its_level_because_its_level_MEANS_something():
+    """The other half of C13, and the reason this is not applied everywhere. An FM
+    discriminator's output is the DEVIATION, which `FM_DEVIATION_HZ` scales to full
+    scale — so FM already arrives at a level that says something about the transmitter,
+    and an AGC would replace it with a level that says nothing."""
+    strong = _at_rf("nfm", 0.5)
+    weak = _at_rf("nfm", 0.05)
+
+    assert strong.gain_db == 0.0 and weak.gain_db == 0.0
+    # ...and FM's level does not follow the RF level either, which is the property that
+    # makes an AGC pointless here rather than merely unnecessary.
+    assert abs(_steady_rms_dbfs(strong.pcm) - _steady_rms_dbfs(weak.pcm)) < 0.5
+
+
+def test_the_level_METER_is_measured_before_the_gain():
+    """`peak` and `rms` are the only honest answer this chain gives to "how strong is
+    the signal", and `listen-probe` reads them to decide whether anything is on the air.
+    An AGC that moved them would make a dead channel and a loud one report the same
+    number — which is precisely what `_to_pcm`'s old comment said it refused to do."""
+    strong = _at_rf("usb", 0.5)
+    weak = _at_rf("usb", 0.005)
+
+    assert strong.rms > 10.0 * weak.rms, (strong.rms, weak.rms)
+    # ...while what the owner HEARS is within a decibel, and the field says by how much.
+    assert abs(_steady_rms_dbfs(strong.pcm) - _steady_rms_dbfs(weak.pcm)) < 1.0
+    assert weak.gain_db - strong.gain_db > 30.0
+
+
+def test_the_gain_is_bounded_so_an_empty_channel_stays_quiet():
+    """Unbounded, this would amplify a dead channel's noise to full scale — which sounds
+    like a fault and hides the fact that nothing is there."""
+    silence = demod.Demodulator("am", CAPTURE_HZ).feed(
+        np.zeros(CAPTURE_HZ, dtype=np.complex64)
+    )
+
+    assert silence.gain_db <= demod.AGC_MAX_GAIN_DB + 1e-6
+    assert _steady_rms_dbfs(silence.pcm) < -60.0
+
+
+def test_the_agc_gain_is_per_SAMPLE_not_per_buffer():
+    """A gain that steps once per buffer is a click at every boundary whenever the level
+    is moving, and makes the audio a function of how the samples were delivered. This is
+    the same defect `_DcBlock`'s docstring records, one stage further down —
+    `test_chunking_changes_nothing` covers am and usb and would catch it, and this says
+    out loud which property makes that pass."""
+    agc = demod._Agc(demod.AUDIO_RATE)
+    quiet = np.full(demod.AUDIO_RATE // 4, 0.01, dtype=np.float32)
+    loud = np.full(demod.AUDIO_RATE // 4, 0.5, dtype=np.float32)
+
+    agc.feed(quiet)
+    out, _ = agc.feed(loud)
+
+    # The gain rides down ACROSS the buffer rather than stepping at its head.
+    assert out[0] > 3.0 * out[-1]
+    assert np.all(np.diff(out) <= 1e-6), "monotonic, not a step"
