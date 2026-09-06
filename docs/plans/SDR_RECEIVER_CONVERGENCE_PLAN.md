@@ -221,10 +221,10 @@ hop plan, which is a different capture. `rtl_fm` takes its frequency on the comm
 line and has no control channel at all. Both still go through `_restart`, and every
 guard in it is still needed — just no longer on the path the owner exercises most.
 
-- **The cost is one dropped frame, ~100 ms, against the ~600 ms of a rebuild.**
-  `Radio.read` assembles a frame from several `readStream` calls and `_io_lock` only
-  stops a retune landing *inside* one, so the buffer in flight straddles two
-  frequencies and is labelled with the one it started on. `Capture.swap` drops it.
+- **The cost is one dropped frame.** `Radio.read` assembles a frame from several
+  `readStream` calls and `_io_lock` only stops a retune landing *inside* one, so the
+  buffer in flight straddles two frequencies and is labelled with the one it started
+  on. `Capture.swap` drops it.
 - **The order is the reverse of `_restart`'s, and that is the gain.** Everything that
   can fail — validation, then building the new `Demodulator` — happens *before* the
   radio moves, so a request that cannot be served leaves a working session exactly as
@@ -239,6 +239,25 @@ guard in it is still needed — just no longer on the path the owner exercises m
   pipelines — cannot occur on a path where the session never has no radio.
 - The old station's rows are dropped from `_last`, so a viewer attaching after a retune
   is not seeded with a picture of somewhere else.
+
+**VERIFIED ON AIR 2026-09-06** with `listen-probe --retune-to`, the rung built for this
+claim because nothing already on the box could see it — "the session id survived" was
+true of a rebuild too, by design.
+
+| | stream rebuilt | worst gap | median gap | at the retune | overflows |
+|---|---|---|---|---|---|
+| 162.55 → 146.94, nfm | **no** | 234.7 ms | 102.7 ms | yes | 0 |
+| 96.5 → 104.1, wbfm | **no** | 230.9 ms | 102.8 ms | yes | 0 |
+
+One dropped frame plus the 30 ms settle, on both bands and both mode families, with the
+frame rate unbroken at 9.9 fps and 52 frames before / 47 after each move. `stream_rebuilt`
+compares `setupStream`'s handle either side, which is the only evidence that can
+distinguish a moved radio from a rebuilt one. 104.1 came up at 15.9 dB SNR and `ok: true`
+immediately after the move; 146.94 came up "nothing is transmitting here", which is what
+an idle repeater is.
+
+The rebuild it replaces reopened the device, which `alive`'s own docstring measures at
+about half a second on this box, before ffmpeg is relaunched under whoever is listening.
 
 **W5 — The subprocess engines go.** B1, then B2/A5 (`SurveySink` emitting the CSV shape the backend already parses), then B7.
 
