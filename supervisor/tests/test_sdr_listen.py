@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import queue
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, ClassVar
@@ -2752,3 +2753,48 @@ def test_a_chosen_gain_wins_over_the_radios_own_loop(iq_tuner) -> None:
         assert iq_tuner.opened[0].gain_db == 30.0
     finally:
         iq_tuner.stop()
+
+
+def test_a_retune_does_not_let_the_session_be_reaped(iq_tuner) -> None:
+    """The regression the owner hit: retuning while listening kicked the radio to idle.
+
+    `alive` reads the radio when there is one and otherwise falls through to
+    `self._rtl.poll()` — and on the I/Q path there is no rtl_fm process to fall through
+    to, so between `_kill()` clearing `_radio` and `Radio.open` returning it answered
+    False. `_reap` believes that answer, so the status poll the PWA runs every second
+    deleted a session that was merely between pipelines. From the box's own log: the
+    device reopened cleanly and the next request came back "that session is no longer
+    the live one", with the threads still running and the dongle still held.
+
+    Reproduced by holding the reopen and asking the reaper for the session while the
+    retune is in flight — which is exactly what the status poll does."""
+    info = iq_tuner.start(146_940_000, "fm", None)
+    session = iq_tuner.find(info.session_id)
+    assert session is not None
+
+    opening = threading.Event()
+    release = threading.Event()
+    original = listen.radio.Radio.open
+
+    def _slow(**kwargs: Any):
+        opening.set()
+        release.wait(timeout=5)
+        return original(**kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(listen.radio.Radio, "open", staticmethod(_slow))
+        turning = threading.Thread(
+            target=lambda: session.tune(146_950_000), daemon=True
+        )
+        turning.start()
+        try:
+            assert opening.wait(timeout=5), "the retune never reached the reopen"
+            # THE ASSERTION. `sessions()` reaps, so this is the status poll's own path.
+            assert iq_tuner.find(info.session_id) is session
+            assert session.alive
+        finally:
+            release.set()
+            turning.join(timeout=5)
+
+    assert iq_tuner.find(info.session_id) is session
+    iq_tuner.stop()

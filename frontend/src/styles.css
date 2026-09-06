@@ -26286,3 +26286,25 @@ button.wf-sigpill {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
+
+/* The trace/waterfall switch. It sits ON the picture rather than beside it because the
+   picture is what it changes, and because the strip's whole budget is 78 px of height
+   that the transport below it needs back. Bottom-right: the trace's own line reaches
+   the top of the frame far more often than the bottom corner. */
+.tv-swap {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 1;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+.tv-swap[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
