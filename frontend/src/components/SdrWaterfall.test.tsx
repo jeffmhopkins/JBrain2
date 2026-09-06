@@ -458,6 +458,27 @@ describe("tuning to a signal from the list", () => {
     expect(tuned).toEqual([144_075_000]);
   });
 
+  it("keeps the pill's numbers when it is armed, so it cannot move", () => {
+    // REPORTED by the owner: "not change width when active". The pill used to swap its
+    // numbers for "Listen here?", which is a different width, so arming one reflowed
+    // the row and moved the pill out from under the thumb about to confirm it. What
+    // the second tap does is said once above the list, where saying it costs no layout.
+    render(<SdrWaterfall onTune={() => undefined} />);
+    act(() => startSdrSpectrum());
+    const stream = FakeSource.last;
+    if (!stream) throw new Error("no stream opened");
+    send(stream, 1000, { peaks: [{ hz: 144_075_000, db: -50, over_db: 18 }] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Listen on 144.075 megahertz" }));
+
+    // Still its own frequency and level, and the prompt is elsewhere.
+    expect(screen.getAllByText("144.075").length).toBeGreaterThan(0);
+    expect(screen.getByText("+18.0 dB")).toBeTruthy();
+    expect(screen.queryByText("Listen here?")).toBeNull();
+    expect(document.querySelector(".wf-sigpill.armed")).toBeTruthy();
+    expect(document.querySelector(".why")?.textContent).toContain("Tap again to confirm");
+  });
+
   it("is not a button at all when there is nowhere to send it", () => {
     // The picture is still a picture without a radio to retask.
     const stream = watching();

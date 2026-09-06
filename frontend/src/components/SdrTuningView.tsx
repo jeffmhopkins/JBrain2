@@ -22,10 +22,20 @@
 import { useEffect, useRef, useState } from "react";
 import { type SpectrumRow, sdrSpectrum, subscribeSdrSpectrum } from "../sdrSpectrum";
 import { type Tuning, offsetLabel, spillLabel, tuningOf } from "../sdrTuning";
+import { type Scale as FallScale, paint as fallPaint, reduce, shadeRow } from "../sdrWaterfall";
 
-/** Device pixels of chart height. Tall enough to read a shoulder, short enough to
- *  leave the transport on screen without scrolling. */
+/** CSS pixels of chart height, in BOTH modes. The owner's ask for the waterfall was
+ *  "same footprint, same bandwidth", so the two are the same picture of the same
+ *  channel drawn two ways and nothing below either of them moves when you switch. */
 const CHART_H = 78;
+
+/** How far the colour window may drift before the waterfall is repainted from its
+ *  numbers rather than scrolled. Scrolling is what makes it cheap — one row of colour
+ *  a frame instead of the whole picture — but the pixels already on the canvas were
+ *  coloured against the OLD window, so a window that has really moved leaves the
+ *  history saying something it did not measure. A decibel is under what the eye can
+ *  see in this palette and rare enough that the repaint costs nothing in practice. */
+const REPAINT_DB = 1;
 
 /** How much of the row's own dynamic range the picture spans, and the floor it never
  *  collapses below. A channel with nothing in it has almost no spread, and a scale
@@ -166,6 +176,93 @@ function paint(
   }
 }
 
+/** The channel over time, in the same frame the trace uses.
+ *
+ *  One row of history per DEVICE pixel row and one column per BIN: the vertical axis
+ *  is never resampled, which is the twinkle fix the wideband waterfall needed, applied
+ *  here before it can happen. The horizontal axis is UPSAMPLED — a few hundred bins
+ *  across a thousand device columns — and that is safe where the vertical was not,
+ *  because the factor is fixed and the data does not move through it.
+ *
+ *  Scrolled rather than repainted: only the newest row is coloured each frame. The
+ *  history is kept as NUMBERS as well, because a scrolled canvas cannot be recoloured
+ *  when the window moves, and `REPAINT_DB` is when that is cashed in. */
+function fall(
+  canvas: HTMLCanvasElement,
+  off: HTMLCanvasElement,
+  history: readonly SpectrumRow[],
+  scale: FallScale,
+  painted: { scale: FallScale; bins: number; rows: number } | null,
+): { scale: FallScale; bins: number; rows: number } {
+  const newest = history[0];
+  if (!newest) return painted ?? { scale, bins: 0, rows: 0 };
+  const bins = newest.db.length;
+  const rows = canvas.height;
+  const octx = off.getContext("2d");
+  const ctx = canvas.getContext("2d");
+  if (!octx || !ctx) return painted ?? { scale, bins, rows };
+  if (off.width !== bins) off.width = bins;
+  if (off.height !== rows) off.height = rows;
+
+  const stale =
+    painted === null ||
+    painted.bins !== bins ||
+    painted.rows !== rows ||
+    Math.abs(painted.scale.lowDb - scale.lowDb) > REPAINT_DB ||
+    Math.abs(painted.scale.highDb - scale.highDb) > REPAINT_DB;
+  if (stale) {
+    // Everything the strip remembers, recoloured against the window it is drawn with
+    // now. `paint` fills from the BOTTOM, so the newest row sits against the frequency
+    // axis it is measured on — the same convention the wideband waterfall settled on.
+    const buffer = fallPaint(history, bins, rows, scale);
+    octx.putImageData(new ImageData(buffer, bins, rows), 0, 0);
+  } else {
+    // Up by one, newest at the bottom. Drawing a canvas onto itself is defined to
+    // snapshot the source first, so this is a scroll and not a smear.
+    octx.drawImage(off, 0, -1);
+    octx.putImageData(
+      new ImageData(shadeRow(reduce(newest.db, bins), bins, scale), bins, 1),
+      0,
+      rows - 1,
+    );
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Nearest-neighbour on the way up: a bin becomes a block of identical columns rather
+  // than a gradient between two measurements that were never taken.
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+  return { scale, bins, rows };
+}
+
+/** The tuning references, drawn over whichever picture is underneath. Both modes need
+ *  them and neither owns them: the passband is what the demodulator hears and the
+ *  centre is where the radio is pointed, and those are true of a waterfall too. */
+function guides(canvas: HTMLCanvasElement, row: SpectrumRow, ratio: number): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  const span = Math.max(row.stopHz - row.startHz, 1);
+  const centre = row.startHz + span / 2;
+  const xOf = (hz: number) => ((hz - row.startHz) / span) * w;
+  ctx.lineWidth = ratio;
+  ctx.strokeStyle = token(canvas, "--steel", "#7fa7c9");
+  ctx.globalAlpha = 0.55;
+  for (const hz of [centre - row.passbandHz / 2, centre + row.passbandHz / 2]) {
+    ctx.beginPath();
+    ctx.moveTo(Math.round(xOf(hz)) + 0.5, 0);
+    ctx.lineTo(Math.round(xOf(hz)) + 0.5, h);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = token(canvas, "--text", "#e6e7e9");
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(w / 2) + 0.5, 0);
+  ctx.lineTo(Math.round(w / 2) + 0.5, h);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 /** Bin `i` averaged across the rows held for the reading. In the linear domain, not
  *  in dB: averaging decibels is averaging logarithms, which under-weights exactly the
  *  loud frames the signal is in and biases the answer toward the quiet ones. */
@@ -206,6 +303,24 @@ export function SdrTuningView({
   const [tuning, setTuning] = useState<Tuning | null>(null);
   const [row, setRow] = useState<SpectrumRow | null>(null);
   const recentRef = useRef<SpectrumRow[]>([]);
+  // TRACE is what the strip was built as — where the signal is right now. FALL is the
+  // same channel over TIME, which is the question a trace cannot answer: a repeater
+  // that keyed up four seconds ago left nothing on an instantaneous picture.
+  const [mode, setMode] = useState<"trace" | "fall">("trace");
+  // The waterfall's own pixels, kept off-screen at one column per BIN and one row per
+  // DEVICE pixel. Off-screen because the visible canvas is scrolled every frame and a
+  // scrolled canvas no longer holds the numbers a resize or a colour-window change has
+  // to redraw from — `historyRef` does, which is why both exist.
+  const fallRef = useRef<HTMLCanvasElement | null>(null);
+  const historyRef = useRef<SpectrumRow[]>([]);
+  const paintedRef = useRef<{ scale: FallScale; bins: number; rows: number } | null>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // The newest reading, for the repaint a MODE change triggers. A ref rather than the
+  // state it mirrors: the trace wants the caret drawn on it, but listing `tuning` as a
+  // dependency of that effect would re-run it ten times a second and fight the
+  // row-driven repaint that already owns every other frame.
+  const tuningRef = useRef<Tuning | null>(null);
 
   useEffect(() => {
     const draw = (next: SpectrumRow | null) => {
@@ -228,9 +343,15 @@ export function SdrTuningView({
       scaleRef.current = eased;
       // Device pixels 1:1 with the box, so a row is never resampled across the
       // picture — the twinkle fix the waterfall needed, applied before it can happen.
-      const wanted = Math.round(canvas.clientWidth * (window.devicePixelRatio || 1));
+      // The HEIGHT is device pixels too, which it was not: the backing store was 78
+      // against a CSS box three times that on a phone, so the trace was stretched and a
+      // waterfall row would have been smeared over three pixel rows with the smear
+      // rotating as it scrolled — precisely the twinkle.
+      const ratio = window.devicePixelRatio || 1;
+      const wanted = Math.round(canvas.clientWidth * ratio);
+      const tall = Math.round(CHART_H * ratio);
       if (wanted > 0 && canvas.width !== wanted) canvas.width = wanted;
-      if (canvas.height !== CHART_H) canvas.height = CHART_H;
+      if (canvas.height !== tall) canvas.height = tall;
       // Averaged for the READING only — see READING_ROWS. Rows from a different band
       // are dropped rather than averaged with these, so a retune re-reads from the new
       // band's own frames instead of blending the two into a frequency neither is on.
@@ -245,13 +366,66 @@ export function SdrTuningView({
       if (recent.length > READING_ROWS) recent.shift();
       const mean = { ...next, db: next.db.map((_, i) => average(recent, i)) };
       const read = tuningOf(mean, frequencyHz);
-      paint(canvas, next, read, eased);
+
+      // The history is kept in BOTH modes so switching to the waterfall shows what the
+      // channel has been doing, rather than starting a fresh picture from the moment
+      // the owner happened to tap. One row per device pixel row is exactly what the
+      // waterfall can show and no more; a retune drops it, since those rows belong to a
+      // channel this strip no longer covers.
+      const history = historyRef.current;
+      const oldest = history[0];
+      if (oldest && (oldest.startHz !== next.startHz || oldest.db.length !== next.db.length)) {
+        history.length = 0;
+        paintedRef.current = null;
+      }
+      history.unshift(next);
+      if (history.length > canvas.height) history.length = canvas.height;
+
+      if (modeRef.current === "fall") {
+        let off = fallRef.current;
+        if (!off) {
+          off = document.createElement("canvas");
+          fallRef.current = off;
+        }
+        paintedRef.current = fall(canvas, off, history, eased, paintedRef.current);
+      } else {
+        paintedRef.current = null;
+        paint(canvas, next, read, eased);
+      }
+      guides(canvas, next, ratio);
+      tuningRef.current = read;
       setRow(next);
       setTuning(read);
     };
     draw(sdrSpectrum().latest);
     return subscribeSdrSpectrum((_state, next) => draw(next));
+    // `mode` is read through `modeRef` rather than listed here: re-subscribing on a tap
+    // would drop the stream and the history with it, and the whole point of keeping
+    // the history in both modes is that the waterfall has something to show the moment
+    // it is switched to.
   }, [frequencyHz]);
+
+  // Repaint immediately on a tap rather than waiting for the next row: at 10 fps that
+  // is a tenth of a second of the old picture, which reads as the tap not working.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const history = historyRef.current;
+    const newest = history[0];
+    if (!canvas || !newest) return;
+    const ratio = window.devicePixelRatio || 1;
+    if (mode === "fall") {
+      let off = fallRef.current;
+      if (!off) {
+        off = document.createElement("canvas");
+        fallRef.current = off;
+      }
+      paintedRef.current = fall(canvas, off, history, scaleRef.current, null);
+    } else {
+      paintedRef.current = null;
+      paint(canvas, newest, tuningRef.current, scaleRef.current);
+    }
+    guides(canvas, newest, ratio);
+  }, [mode]);
 
   const span = row && row.passbandHz > 0 ? row.stopHz - row.startHz : 0;
   const edge = span / 2;
@@ -267,6 +441,19 @@ export function SdrTuningView({
       </p>
       <div className="tv-chart">
         {tuning && <span className="tv-lvl">{tuning.peakDb.toFixed(1)} dBFS</span>}
+        {/* The picture IS the control, which is what the owner asked for — "a waterfall
+            version if I click it". Two readings of one channel: where the signal is
+            now, and what it has been doing. Same footprint and same span either way, so
+            nothing below moves when it changes. */}
+        <button
+          type="button"
+          className="tv-swap"
+          aria-pressed={mode === "fall"}
+          aria-label={mode === "fall" ? "Show the live trace" : "Show the waterfall"}
+          onClick={() => setMode((now) => (now === "fall" ? "trace" : "fall"))}
+        >
+          <span aria-hidden="true">{mode === "fall" ? "Trace" : "Waterfall"}</span>
+        </button>
         {/* Named rather than hidden, the way the waterfall's is: the picture carries a
             reading, so a screen reader that skipped it would skip the answer. The
             sentence below is the same fact in words, which is what makes the label a
@@ -314,7 +501,9 @@ export function SdrTuningView({
         ) : (
           <>
             <span className="dot" />
-            {span > 0 ? "Nothing in this channel." : "The picture starts with the audio."}
+            {span > 0
+              ? "Nothing in this channel — what you can hear is noise."
+              : "The picture starts with the audio."}
           </>
         )}
       </p>
