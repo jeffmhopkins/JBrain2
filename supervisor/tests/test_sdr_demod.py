@@ -669,3 +669,142 @@ def test_the_channel_filter_keeps_the_channel_and_drops_the_rest():
 
     assert tone_share(inside.pcm) > 0.5
     assert tone_share(aside.pcm) < 0.01
+
+
+# -- W6a: the filter design is a specification ---------------------------------------
+
+
+def _response(taps: np.ndarray, hz: np.ndarray, rate_hz: float) -> np.ndarray:
+    """|H(f)| of a linear-phase FIR at these frequencies."""
+    k = np.arange(taps.size) - (taps.size - 1) / 2.0
+    return np.abs(np.exp(-2j * np.pi * np.outer(hz, k) / rate_hz) @ taps)
+
+
+def test_lowpass_delivers_the_stopband_it_was_ASKED_for():
+    """C12's whole point. Under Hamming the stopband was a property of the WINDOW —
+    ~-53 dB whatever anyone wanted — so a chain could not promise a number. Kaiser takes
+    it as an input, and these three prove it is honoured rather than approached."""
+    rate = 48_000.0
+    for atten_db in (40.0, 60.0, 90.0):
+        h = demod.lowpass(4_000.0, 6_000.0, atten_db, rate)
+        hz = np.arange(6_000.0, rate / 2, 25.0)
+        worst = 20 * np.log10(_response(h, hz, rate).max())
+
+        assert worst <= -atten_db + 1.0, (
+            f"{atten_db} dB asked, {worst:.1f} dB delivered"
+        )
+        # ...and not wildly OVER-delivered either: paying for 90 dB and getting 130
+        # means the taps were bought for nothing.
+        assert worst >= -atten_db - 12.0
+
+
+def test_a_stronger_stopband_costs_taps_and_a_wider_transition_saves_them():
+    """The two knobs, each moving the length the direction the design formula says.
+    A test that only checked the stopband would pass on a filter of 4000 taps."""
+    narrow = demod.lowpass(4_000.0, 5_000.0, 80.0, 48_000.0)
+    wide = demod.lowpass(4_000.0, 8_000.0, 80.0, 48_000.0)
+    weak = demod.lowpass(4_000.0, 5_000.0, 40.0, 48_000.0)
+
+    assert wide.size < narrow.size
+    assert weak.size < narrow.size
+    # Odd, always: an even-length linear-phase filter delays by half a sample.
+    assert all(h.size % 2 == 1 for h in (narrow, wide, weak))
+
+
+def test_a_low_pass_is_stated_as_two_EDGES_so_the_6_dB_question_cannot_be_asked():
+    """The signature is the fix, not the window. `cutoff_hz` was the 6 dB point and read
+    as the passband edge TWICE in this file — `_build_front` and then `_build_back`,
+    months apart. Passing both edges leaves nothing to misread: the passband is flat
+    where it says it is, and the 6 dB point lands in the middle by construction."""
+    h = demod.lowpass(4_000.0, 6_000.0, 80.0, 48_000.0)
+
+    flat = _response(h, np.arange(0.0, 4_000.0, 50.0), 48_000.0)
+    assert 20 * np.log10(flat.min()) > -0.2, "the passband must be flat where it claims"
+    six = _response(h, np.array([5_000.0]), 48_000.0)[0]
+    assert -6.5 < 20 * np.log10(six) < -5.5, "the 6 dB point belongs at the midpoint"
+
+
+def test_a_stopband_above_nyquist_is_refused_rather_than_clamped():
+    """A request the sample rate cannot carry. Moving it quietly would hand back a
+    filter that does not do what was asked while looking like one that does."""
+    with pytest.raises(demod.DemodError, match="Nyquist"):
+        demod.lowpass(4_000.0, 30_000.0, 80.0, 48_000.0)
+    with pytest.raises(demod.DemodError, match="above passband"):
+        demod.lowpass(6_000.0, 4_000.0, 80.0, 48_000.0)
+
+
+def _folds_into_the_channel(mode: str) -> float:
+    """The worst thing anywhere in the capture band that reaches the CHANNEL, in dB
+    relative to a signal dead centre. This is the number C12 is about: everything above
+    the anti-alias stopband lands inside the channel on the way down, and a
+    discriminator is blind to amplitude, so it becomes full-scale hiss."""
+    built = demod.Demodulator(mode, CAPTURE_HZ)
+    hz = np.arange(-CAPTURE_HZ / 2, CAPTURE_HZ / 2, 25.0)
+    gain = np.ones(hz.size)
+    landed = hz.copy()
+    rate = float(CAPTURE_HZ)
+    for stage in built._front:
+        gain = gain * _response(stage._taps[::-1], landed, rate)
+        rate = rate / stage._m
+        landed = (landed + rate / 2) % rate - rate / 2  # where sampling puts it
+    if built._channel is not None:
+        gain = gain * _response(built._channel._taps[::-1], landed, rate)
+    half = built.channel_half_hz
+    inside = np.abs(hz) <= half
+    folded = ~inside & (np.abs(landed) <= half)
+    return float(20 * np.log10(gain[folded].max() / gain[inside].max()))
+
+
+@pytest.mark.parametrize("mode", ["wbfm", "nfm", "am", "usb"])
+def test_nothing_from_outside_the_channel_arrives_louder_than_the_spec(mode):
+    """MEASURED. Hamming gave -55.0 dB (wbfm) to -55.9 (the narrow modes), which is
+    C12's reported -56 dB reproduced from the taps alone. At `STOPBAND_DB = 80` the same
+    sweep gives -79.1 to -81.3: a local blowtorch 60-70 dB over a weak station stops
+    being audible in it.
+
+    The margin is 3 dB rather than 0 because the cascade's own passband ripple and the
+    formula's fit both move the last decibel."""
+    assert _folds_into_the_channel(mode) <= -demod.STOPBAND_DB + 3.0
+
+
+@pytest.mark.parametrize(
+    "mode,rate", [("wbfm", 240_000), ("nfm", 48_000), ("am", 48_000), ("usb", 48_000)]
+)
+def test_a_capture_rate_that_needs_no_decimation_builds_and_runs(mode, rate):
+    """C24. `_build_front` asked for a filter even when nothing folds, whose stopband
+    landed exactly on Nyquist — so every one of these raised `DemodError` from the
+    CONSTRUCTOR. Unreachable from `listen.py` at today's rates and a trap for the next
+    one added, which is the kind of thing that gets found at 2 a.m. on hardware."""
+    built = demod.Demodulator(mode, rate)
+    assert built._front == []
+
+    audio = built.feed(tone(0.2, hz=1_000.0, rate_hz=rate))
+
+    assert audio.pcm.size > 0
+
+
+def test_the_dc_block_has_the_response_its_docstring_CLAIMS():
+    """C15. It claimed a corner at `rate / n` — 31 Hz — and 31 Hz is the boxcar's first
+    NULL, where a subtracted average leaves the signal alone. The real corner is a
+    quarter of that, and there is a +2 dB bump the claim did not mention at all.
+
+    Pinned rather than fixed: the bump is inherent to `x - boxcar(x)` and sits at 20 Hz,
+    below anything an AM voice channel carries. What a test can stop is the number
+    drifting back to the one that reads plausible."""
+    n, rate = demod.DC_BLOCK_TAPS, float(demod.AUDIO_RATE)
+    hz = np.arange(0.1, 500.0, 0.1)
+    box = (np.exp(-2j * np.pi * np.outer(hz, np.arange(n)) / rate) @ np.ones(n)) / n
+    db = 20 * np.log10(np.abs(1.0 - box))
+
+    corner = hz[np.argmin(np.abs(db + 3.0))]
+    assert 7.0 < corner < 8.0, f"-3 dB at {corner:.2f} Hz"
+    assert abs(corner - 0.24 * rate / n) < 0.5, "≈ 0.24 * rate/n, not rate/n"
+    # The first null, where the claim used to point: essentially untouched.
+    assert abs(db[np.argmin(np.abs(hz - rate / n))]) < 0.3
+    # ...and the overshoot the docstring now names.
+    assert 1.8 < db.max() < 2.2 and 18.0 < hz[np.argmax(db)] < 23.0
+
+    # It still does the job it exists for: a DC bias comes out as nothing.
+    block = demod._DcBlock(n)
+    out = block.feed(np.ones(4 * n, dtype=np.float32))
+    assert abs(float(out[-1])) < 1e-3

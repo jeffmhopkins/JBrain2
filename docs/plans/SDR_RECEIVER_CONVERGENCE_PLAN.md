@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -79,11 +79,11 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 
 | # | Finding | Evidence |
 |---|---|---|
-| **C12** | Every filter is Hamming, so alias rejection is a property of the window (~−53 dB) rather than a specification. Worst measured leakage into the demodulated channel: **−56 dB**. A local blowtorch 60–70 dB over a weak station is audible in it. Fix: `np.kaiser` with taps and β from a target attenuation, and change `lowpass`'s signature to `(pass_hz, stop_hz, atten_db, rate)` so the "is cutoff the edge or the 6 dB point?" question — which has now produced **two** separate bugs — becomes unaskable. | **[R]** |
+| **C12 ✅** | Every filter is Hamming, so alias rejection is a property of the window (~−53 dB) rather than a specification. Worst measured leakage into the demodulated channel: **−56 dB**. A local blowtorch 60–70 dB over a weak station is audible in it. Fix: `np.kaiser` with taps and β from a target attenuation, and change `lowpass`'s signature to `(pass_hz, stop_hz, atten_db, rate)` so the "is cutoff the edge or the 6 dB point?" question — which has now produced **two** separate bugs — becomes unaskable. | **[R]** |
 | **C13** | No AGC on AM/SSB. Same RF level: nfm −11.4 dBFS, usb −23.0, am −31.0 — a 20 dB swing on mode change, and a weak AM/SSB station is simply inaudible. `rtl_fm` behaves the same, so it is parity; every listening application runs AGC here. | **[R]** |
 | **C14** | SSB is modelled with a symmetric `channel_half_hz`, but SSB is one-sided: the strip shades ±3.4 kHz while the demodulator hears +300…+3400 only. A user centring a signal in the shaded box puts half of it in the rejected sideband. | **[R]** |
-| **C15** | `_DcBlock`'s real −3 dB corner is ~7 Hz, not the 31 Hz documented (31.25 is the boxcar's first *null*, where the response is 0 dB), and it overshoots +2 dB at 20 Hz. | **[R]** |
-| **C16** | De-emphasis is convolved in at the **IF** rate, making wide FM's back end 771 taps where the anti-alias filter alone is 481. `gr-analog` runs it at the audio rate. 12.3 → 8.0 Mmac/s. | **[R]** |
+| **C15 ✅** | `_DcBlock`'s real −3 dB corner is ~7 Hz, not the 31 Hz documented (31.25 is the boxcar's first *null*, where the response is 0 dB), and it overshoots +2 dB at 20 Hz. | **[R]** |
+| **C16 ✅ declined** | De-emphasis is convolved in at the **IF** rate, making wide FM's back end 771 taps where the anti-alias filter alone is 481. `gr-analog` runs it at the audio rate. 12.3 → 8.0 Mmac/s. | **[R]** |
 | **C17** | `readStream`'s `flags` and `timeNs` are discarded, so `Reading.torn` can say *something* was lost but never *how much* — the one number a waterfall needs to place a row honestly. Frame time is wall-clock captured before the read. | **[R]** |
 | **C18** | `_settle_fixed_gain` uses `or`, so a measured gain of exactly **0.0 dB** — the value this box actually had — is treated as absent and replaced by 30. The "fixed gain" comparison was against a different gain. | **[R]** |
 | **C19** | `radio._claim` uses exact-match keying where `listen.blocking_key` has the correct rule (an unnamed holder blocks everything). Guarded one layer up today, so latent. | **[R]** |
@@ -91,7 +91,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C21** | `_channel_floor`'s outer ring for wide FM is 90–180 kHz off centre — where the 200 kHz raster puts the neighbour's sideband. On a crowded dial the "noise floor" is a neighbouring station. | **[S]** |
 | **C22** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
 | **C23** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
-| **C24** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
+| **C24 ✅** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
 | **C25** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
 | **C26** | Gain is written on the direct-sampling path, where the tuner is bypassed and the number is fiction. | **[R]** |
 | **C27** | `setBandwidth` is never called; librtlsdr's automatic IF bandwidth is exactly the rolloff `hop_usable_bins` throws away a sixth of every capture to avoid. Setting it explicitly might buy much of that back. | **[S]** probe rung, not a blind change |
@@ -431,7 +431,98 @@ The one case hardware could not stage is the listener on the HIGHER serial, beca
 `test_current_means_the_LISTENING_session` and `test_serial_only_breaks_a_tie` are for,
 and both fail if the ranking degrades to serial order.
 
-**W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
+**W6 — Filter design becomes a specification.**
+**W6a ✅ shipped 2026-09-06** — C12 (Kaiser + a `(pass, stop, atten, rate)` signature),
+C24, C15, and C16 **answered with measurement and NOT implemented** (below);
+**W6b** — C13 (AGC for AM/SSB) and C14 (SSB's one-sided passband).
+
+## W6a — what shipped (2026-09-06)
+
+**A stopband is now something this chain PROMISES, not something a window happened to
+give.**
+
+Every filter was Hamming-windowed, whose stopband is a property of the window — about
+-53 dB, whatever anyone wanted. `lowpass` takes `atten_db` now and Kaiser's own formulas
+turn it into taps and β, so 80 dB is a specification with a test against it.
+
+**MEASURED, from the taps alone, over the whole 2.4 MHz capture band** — the worst signal
+anywhere outside the channel that reaches the channel after the decimation folds it in:
+
+| mode | Hamming (before) | Kaiser @ 80 dB (after) |
+|---|---|---|
+| wbfm | **-55.0 dB** | **-79.1 dB** |
+| nfm | -55.9 dB | -79.2 dB |
+| am | -55.9 dB | -79.2 dB |
+| usb | -55.9 dB | -81.3 dB |
+
+The "before" column reproduces C12's independently reported -56 dB, which is the check
+that the method measures what C12 measured. A local blowtorch 60-70 dB over a weak
+station stops being audible in it.
+
+**The signature is the fix, not the window.** `lowpass(cutoff_hz, rate_hz, taps)` asked
+for the 6 dB point and got handed the passband edge TWICE in this file — `_build_front`,
+and then `_build_back` months later, after the first was fixed. It is
+`lowpass(pass_hz, stop_hz, atten_db, rate_hz)` now: two edges, the midpoint derived
+inside, the length derived inside. There is no parameter left to misread, and
+`_taps_for` and `_TAP_RULE` are gone with the arithmetic that used them.
+
+**Cost, measured as multiply-accumulates per second of capture** (the structure is
+unchanged; only lengths move):
+
+| mode | before | after | |
+|---|---|---|---|
+| wbfm | 174.8 Mmac/s | 225.2 | +29% (front 33,33→43,43 · chan 53→69 · back 771→893) |
+| nfm | 75.3 | 96.5 | +28% |
+| am | 74.4 | 95.6 | +28% |
+| usb | 124.2 | 158.1 | +27% |
+
+Paid deliberately, and it is the ratio the design formula predicts:
+(80-8)/14.36 = 5.02 taps per unit transition against the old rule's 4.0. Twenty-four
+decibels for twenty-eight percent, on a chain the capture thread already carries at
+11.4% of one core.
+
+**C24** — `_build_front` built an anti-alias stage even when `m == 1`, whose stopband
+landed exactly on Nyquist, so `Demodulator("wbfm", 240_000)` and every other
+no-decimation rate raised `DemodError` from the CONSTRUCTOR. Nothing folds at `m == 1`;
+it builds no stage now, and four rates that used to raise now run.
+
+**C15** — `DC_BLOCK_TAPS` claimed a corner at `rate / n` = 31 Hz. That is the boxcar's
+first NULL, where a subtracted average leaves the signal alone (+0.07 dB). Measured, at
+512 taps and 16 kHz: **-3 dB at 7.5 Hz**, -0.96 dB at 10 Hz, **+2.00 dB at 20.5 Hz**, back
+to 0 dB by 31 Hz. The corner is `0.24 * rate / n` and holds across n and rate. The shape
+is kept — the bump is inherent to `x - boxcar(x)`, sits below anything an AM voice channel
+carries, and the one-pole alternative cannot be vectorised. The wrong number is not.
+
+### C16 — the observation is right and every remedy costs more than it saves
+
+C16 asks to run de-emphasis at the AUDIO rate, as `gr-analog` does, instead of convolving
+it into the anti-alias filter at the IF rate. **Measured, three ways, and none of them is
+worth it at a 16 kHz audio rate.** The quantity that matters is deviation from the ideal
+analog curve `1/sqrt(1 + (2*pi*f*tau)^2)` — the thing W1's C2 fixed from 1.8 dB, and the
+thing the back end exists to get right.
+
+| where de-emphasis runs | worst error to 3 kHz | worst error to 7 kHz | wbfm back end |
+|---|---|---|---|
+| **IF rate, convolved in (today)** | **0.002 dB** | **0.012 dB** | 893 taps · 14.3 Mmac/s |
+| audio rate, impulse-invariant (C16 as written) | 0.485 dB | **2.798 dB** | 603 + 20 taps · 9.9 |
+| audio rate, bilinear (`gr-analog`'s own design) | 0.398 dB | **10.401 dB** | 603 + 17 taps · 9.9 |
+| IF rate, folded into the FILTER DESIGN (shaped Kaiser) | — | 0.146 dB | 603 taps · 9.65 |
+
+`gr-analog` gets away with it because broadcast FM there is decimated to a 48 kHz audio
+rate, where the same design tracks to 0.055/0.304 dB. **At 16 kHz the bilinear transform's
+frequency warping is severe by 7 kHz** — which is exactly `AUDIO_CUTOFF_HZ["wbfm"]`, the
+top of the band wide FM carries.
+
+The fourth row is the interesting one and was built and measured rather than reasoned
+about: design ONE filter whose target magnitude is the brick-wall times the de-emphasis
+curve, so the two jobs cost one filter of the anti-alias length. It saves **4.6 Mmac/s
+(2% of the 225 Mmac/s chain)** and costs **0.13 dB** of tracking on wide FM. On narrow FM
+it LOSES: the convolution's 91 taps give 0.055 dB, and the shaped design needs 209 taps to
+match. Two methods chosen per mode, for 2%, against a curve W1 spent a wave getting right,
+is not a trade worth making.
+
+**C16 is closed as measured-and-declined.** Revisit if `AUDIO_RATE` ever rises to 48 kHz,
+where the shaped design wins outright.
 
 **W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
 C27 need hardware: add probe rungs rather than guessing. **Plus C29, found by W5a's own

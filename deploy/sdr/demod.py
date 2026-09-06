@@ -162,9 +162,19 @@ VIEW_MARGIN = 1.5
 #: sample.
 VIEW_SAMPLES = 4096
 
-#: How long a window the AM carrier is averaged over, in AUDIO samples. The corner
-#: is roughly `audio_rate / length` — 31 Hz at 512 and 16 kHz — which is well below
-#: anything a voice channel carries and well above the drift it exists to remove.
+#: How long a window the AM carrier is averaged over, in AUDIO samples.
+#:
+#: MEASURED, because this said 31 Hz and 31 Hz is the wrong quantity (C15).
+#: `audio_rate / length` — 31.25 Hz here — is the boxcar's first NULL, where a
+#: subtracted average leaves the signal UNTOUCHED (+0.07 dB), not where it is half
+#: gone. The real response of `x - boxcar(x)` at 512 taps and 16 kHz:
+#:
+#:     -3 dB at 7.5 Hz · -0.96 dB at 10 Hz · **+2.00 dB at 20.5 Hz** · 0 dB by 31 Hz
+#:
+#: The overshoot is the boxcar's own sidelobe showing through the subtraction, and it
+#: is inherent to this shape rather than a tuning mistake. Kept anyway: it is 2 dB at
+#: 20 Hz, below anything an AM voice channel carries, and the alternative — a one-pole
+#: — cannot be vectorised (see `_DcBlock`). What is not kept is the wrong number.
 DC_BLOCK_TAPS = 512
 
 #: Peak deviation each FM mode is scaled against, so a fully-deviated signal arrives
@@ -188,13 +198,24 @@ FM_HEADROOM = 0.7
 SSB_LOW_HZ = 300.0
 SSB_HIGH_HZ = 3_400.0
 
-#: Roughly how many taps a windowed-sinc needs for a given transition width, as a
-#: fraction of the sample rate. Hamming's rule of thumb is 3.3/Δf for ~53 dB of
-#: stopband; 4.0 buys margin, and taps are cheap at these decimation factors.
-_TAP_RULE = 4.0
+#: How far down the stopband has to be, for every filter in this chain.
+#:
+#: **This is a specification, and it used to be a side effect.** Every filter was
+#: Hamming-windowed, whose stopband is a property of the WINDOW (~-53 dB) and not of
+#: anything anyone asked for: worst measured leakage into the demodulated channel was
+#: **-56 dB**, which a local blowtorch 60-70 dB over a weak station is audible in.
+#: Kaiser takes the number as an input, so 80 dB is a thing this chain now promises and
+#: `test_lowpass_delivers_the_stopband_it_was_ASKED_for` checks. **After: -79.1 dB on
+#: wide FM, -81.3 on SSB**, measured over the whole capture band.
+#:
+#: It costs +27-29% of the chain's multiply-accumulates, which is exactly what the design
+#: formula predicts — (80-8)/14.36 = 5.02 taps per unit transition against the old rule
+#: of thumb's 4.0. Twenty-four decibels for twenty-eight percent, on a chain the capture
+#: thread already carries at 11.4% of one core.
+STOPBAND_DB = 80.0
 
-#: Never fewer than this, whatever the rule says. A very wide transition can ask for
-#: nine taps, and a nine-tap low-pass has a passband that is not flat.
+#: Never fewer than this, whatever the design formula says. A very wide transition can
+#: ask for nine taps, and a nine-tap low-pass has a passband that is not flat.
 _MIN_TAPS = 31
 
 
@@ -221,8 +242,40 @@ class DemodError(ValueError):
     """A mode or a rate this module cannot honestly serve."""
 
 
-def lowpass(cutoff_hz: float, rate_hz: float, taps: int) -> np.ndarray:
-    """A windowed-sinc low-pass: odd length, linear phase, unity gain at DC.
+def _kaiser(atten_db: float, transition_hz: float, rate_hz: float) -> tuple[int, float]:
+    """Kaiser's own formulas: how many taps and what β buy `atten_db` of stopband.
+
+    Both are empirical fits Kaiser published, and they are why this window is the one
+    worth having — the shape is a parameter rather than a constant, so a stopband is
+    something a caller ASKS for instead of something a window happens to give."""
+    a = float(atten_db)
+    if a > 50.0:
+        beta = 0.1102 * (a - 8.7)
+    elif a >= 21.0:
+        beta = 0.5842 * (a - 21.0) ** 0.4 + 0.07886 * (a - 21.0)
+    else:
+        # Below 21 dB the window is a rectangle and β is meaningless; the formula above
+        # would go complex on the fractional power.
+        beta = 0.0
+    n = int(np.ceil((a - 8.0) * rate_hz / (2.285 * 2.0 * np.pi * transition_hz))) + 1
+    return max(_MIN_TAPS, n | 1), beta
+
+
+def lowpass(pass_hz: float, stop_hz: float, atten_db: float, rate_hz: float) -> np.ndarray:
+    """A low-pass stated as a SPECIFICATION: flat to `pass_hz`, `atten_db` down by
+    `stop_hz`. Odd length, linear phase, unity gain at DC.
+
+    **The signature is the point** (C12). It used to be `(cutoff_hz, rate_hz, taps)`,
+    and a windowed sinc's `cutoff_hz` is its 6 dB point — the MIDDLE of the transition,
+    not the edge of the passband. "Is cutoff the edge or the 6 dB point?" produced two
+    separate bugs in this file: `_build_front` passed the passband edge (a response
+    5 dB down at the edge of the band it claimed to keep) and `_build_back` was still
+    doing it after the front end was fixed, costing 1.9 dB at 3 kHz on AM. Taking the
+    two edges and deriving the midpoint HERE makes the question unaskable — there is no
+    longer a parameter anyone can misread.
+
+    The tap count comes with it, from `atten_db` and the transition width, because a
+    caller computing taps separately is the same mistake wearing a different hat.
 
     Odd length so the filter is symmetric about a whole sample and its delay is an
     integer — an even-length linear-phase filter delays by half a sample, which is
@@ -232,23 +285,25 @@ def lowpass(cutoff_hz: float, rate_hz: float, taps: int) -> np.ndarray:
     both cost a little DC gain, and a filter that quietly attenuates by 0.4 dB per
     stage is a level error that compounds across the chain and shows up as a level
     meter that disagrees with the spectrum."""
-    if cutoff_hz <= 0 or cutoff_hz >= rate_hz / 2:
-        raise DemodError(f"cutoff {cutoff_hz} Hz is not inside 0..{rate_hz / 2} Hz")
-    n = int(taps) | 1
+    if pass_hz <= 0:
+        raise DemodError(f"a passband edge must be above 0 Hz, not {pass_hz}")
+    if stop_hz <= pass_hz:
+        raise DemodError(f"stopband {stop_hz} Hz must be above passband {pass_hz} Hz")
+    if stop_hz > rate_hz / 2:
+        # Not a clamp. A stopband above Nyquist is a request the sample rate cannot
+        # carry, and silently moving it would hand back a filter that does not do what
+        # the caller asked while looking like one that does.
+        raise DemodError(f"stopband {stop_hz} Hz is above Nyquist ({rate_hz / 2} Hz)")
+    n, beta = _kaiser(atten_db, stop_hz - pass_hz, rate_hz)
+    cutoff_hz = (pass_hz + stop_hz) / 2.0
     k = np.arange(n, dtype=np.float64) - (n - 1) / 2.0
     # np.sinc is the NORMALISED sinc — sin(pi x)/(pi x) — so the argument is in
     # cycles, not radians. Passing 2*pi*fc/fs here is a classic and silent error: the
     # filter comes out with a cutoff 2*pi times too high, which at these ratios is
     # simply no filter at all.
     h = 2.0 * (cutoff_hz / rate_hz) * np.sinc(2.0 * (cutoff_hz / rate_hz) * k)
-    h *= np.hamming(n)
+    h *= np.kaiser(n, beta)
     return h / h.sum()
-
-
-def _taps_for(transition_hz: float, rate_hz: float) -> int:
-    if transition_hz <= 0:
-        raise DemodError("a filter needs a transition band wider than zero")
-    return max(_MIN_TAPS, int(_TAP_RULE * rate_hz / transition_hz) | 1)
 
 
 def deemphasis(rate_hz: float, tau_s: float = DEEMPHASIS_S) -> np.ndarray:
@@ -259,7 +314,14 @@ def deemphasis(rate_hz: float, tau_s: float = DEEMPHASIS_S) -> np.ndarray:
     impulse response is `(1-a) * a**n`, which at 48 kHz and 75 µs decays below
     float32's resolution inside fifty taps, so the FIR is not an approximation in any
     sense the arithmetic can tell. It also CONVOLVES with the anti-alias filter it
-    sits next to, which is how both end up costing one pass instead of two."""
+    sits next to, which is how both end up costing one pass instead of two.
+
+    **It stays at the IF rate, and that was measured rather than assumed** (C16). Run at
+    the 16 kHz AUDIO rate as `gr-analog` does, this curve is 2.8 dB off the ideal analog
+    shape by 7 kHz (10.4 dB for gr-analog's own bilinear design, whose frequency warping
+    is severe that close to Nyquist) — where here it is 0.012 dB. gr-analog gets away
+    with it because broadcast FM there lands at a 48 kHz audio rate. The saving was
+    4.6 Mmac/s out of 225, against a curve W1 spent a wave getting right."""
     a = float(np.exp(-1.0 / (tau_s * rate_hz)))
     # Long enough that the tail is below the quantisation of the int16 it becomes.
     length = max(8, int(np.ceil(np.log(1e-7) / np.log(a))))
@@ -315,7 +377,9 @@ class _Fir:
 
 
 class _DcBlock:
-    """A trailing moving average, subtracted: a high-pass with a corner at `rate / n`.
+    """A trailing moving average, subtracted: a high-pass whose -3 dB corner is about
+    `0.24 * rate / n` — see `DC_BLOCK_TAPS` for the measured response and for the
+    number this used to claim.
 
     This is the AM carrier remover, and it is a boxcar rather than the obvious one-pole
     for two reasons. A one-pole cannot be vectorised — every output needs the one
@@ -538,22 +602,26 @@ class Demodulator:
         noise floor, an adjacent station, or how much of a signal falls outside the
         passband it shades — the three things it exists to show.
 
-        **The cutoff is the MIDDLE of the transition band, not its start.** A
-        windowed sinc's `cutoff_hz` is where it is 6 dB down, so asking for a cutoff at
-        the passband edge asks for a filter that is already half gone there and has been
-        sagging since DC. Placing it halfway between the passband edge and the stopband
-        edge is what buys a passband that is actually flat — the same taps, a response
-        within a tenth of a decibel across the band instead of five decibels down at the
-        edge of it (see `VIEW_SHARE` for what that cost on air)."""
+        **The stopband is where the fold starts, and that is all this has to say.**
+        Everything above `out_rate - kept` lands inside the kept band on the way down,
+        so those two edges ARE the specification; `lowpass` derives its own 6 dB point
+        and its own length from them (C12). The midpoint arithmetic that used to live on
+        this line is gone, along with the chance of writing the passband edge there —
+        which is exactly what it said until 2026-09-06, for a response five decibels
+        down at the edge of the band it claimed to keep (see `VIEW_SHARE`)."""
         stages: list[_Fir] = []
         rate = float(self.capture_rate_hz)
         for m in _split(total):
             out_rate = rate / m
-            # Everything above `out_rate - kept` folds into the kept band on the way
-            # down. That, not the cutoff, is what sets the filter's length.
-            stop = out_rate - kept
-            taps = _taps_for(max(stop - kept, 1.0), rate)
-            stages.append(_Fir(lowpass((kept + stop) / 2.0, rate, taps), m, complex_in=True))
+            if m == 1:
+                # Nothing folds, so there is nothing to reject (C24). The old code built
+                # a filter anyway, whose stopband landed exactly on Nyquist and raised
+                # from the constructor — unreachable from `listen.py` at today's rates
+                # and a trap for the next one added.
+                continue
+            stages.append(
+                _Fir(lowpass(kept, out_rate - kept, STOPBAND_DB, rate), m, complex_in=True)
+            )
             rate = out_rate
         return stages
 
@@ -564,9 +632,12 @@ class Demodulator:
         the tail of each buffer only (`VIEW_SAMPLES`), so there is no continuity across
         frames to preserve — an FFT window is its own beginning and end."""
         m = self.capture_rate_hz // self.view_rate_hz
-        stop = self.view_rate_hz - self.view_half_hz
-        taps = _taps_for(max(stop - self.view_half_hz, 1.0), float(self.capture_rate_hz))
-        h = lowpass((self.view_half_hz + stop) / 2.0, float(self.capture_rate_hz), taps)
+        h = lowpass(
+            self.view_half_hz,
+            self.view_rate_hz - self.view_half_hz,
+            STOPBAND_DB,
+            float(self.capture_rate_hz),
+        )
         self._view_m = m
         return np.ascontiguousarray(h[::-1])
 
@@ -592,11 +663,11 @@ class Demodulator:
 
         **Wide FM needs one, and a draft of this said it did not.** The claim was that
         90 kHz of channel in a 240 kHz IF is already most of Nyquist so the front end is
-        its own channel filter — but the front end's stages are placed by the MIDPOINT
-        rule, which puts their 6 dB points at 240 and 120 kHz, and 120 kHz is not 90.
-        They pass 113.7 kHz at about -5 dB. Deleting this filter on that reasoning cost
-        52 dB of LO-leakage suppression on wide FM (-63 dB to -11) and was caught by an
-        adversarial review before it shipped."""
+        its own channel filter — but the front end is specified by the FOLD, so its
+        6 dB points sit at 240 and 120 kHz, and 120 kHz is not 90. It passes 113.7 kHz
+        at about -5 dB. Deleting this filter on that reasoning cost 52 dB of LO-leakage
+        suppression on wide FM (-63 dB to -11) and was caught by an adversarial review
+        before it shipped."""
         kept = self.channel_half_hz
         # Against the IF's own usable half-band, since this runs at the IF rate — the
         # view can be wider and for wide FM is.
@@ -607,8 +678,9 @@ class Demodulator:
         # band this filter runs in — a transition that ran past it would be shaped by
         # the stage above instead, which is the confusion this split exists to end.
         stop = min(room, kept + max(0.5 * kept, 2_000.0))
-        taps = _taps_for(stop - kept, float(self.if_rate_hz))
-        return _Fir(lowpass((kept + stop) / 2.0, float(self.if_rate_hz), taps), 1, complex_in=True)
+        return _Fir(
+            lowpass(kept, stop, STOPBAND_DB, float(self.if_rate_hz)), 1, complex_in=True
+        )
 
     def _build_back(self) -> _Fir:
         """Demodulated audio to the output rate, with de-emphasis folded in.
@@ -620,7 +692,6 @@ class Demodulator:
         cutoff = AUDIO_CUTOFF_HZ[self.mode]
         # Same fold rule as the front end, at the output rate this time.
         stop = self.audio_rate_hz - cutoff
-        taps = _taps_for(max(stop - cutoff, 1.0), self.if_rate_hz)
         if self.mode in ("usb", "lsb"):
             # SSB does its filtering on the COMPLEX baseband, before the sideband is
             # folded down: a real filter after the fold cannot tell the two sidebands
@@ -629,22 +700,23 @@ class Demodulator:
             # keeps one side and rejects the other.
             centre = (SSB_LOW_HZ + SSB_HIGH_HZ) / 2.0
             half = (SSB_HIGH_HZ - SSB_LOW_HZ) / 2.0
-            base = lowpass(half, self.if_rate_hz, _taps_for(SSB_LOW_HZ, self.if_rate_hz))
+            # The transition is `SSB_LOW_HZ` wide, which is what puts the lower skirt on
+            # the carrier rather than through it.
+            base = lowpass(half, half + SSB_LOW_HZ, STOPBAND_DB, float(self.if_rate_hz))
             k = np.arange(base.size, dtype=np.float64) - (base.size - 1) / 2.0
             sign = 1.0 if self.mode == "usb" else -1.0
             shift = np.exp(1j * sign * 2.0 * np.pi * centre * k / self.if_rate_hz)
             return _Fir((base * shift).astype(np.complex128), m, complex_in=True)
-        # THE MIDPOINT, exactly as `_build_front` does it — and this line said `cutoff`
-        # until 2026-09-06, which is the same defect fixed in the front end that day and
-        # left here in the sibling function. `stop` was computed on the line above for
-        # the tap count and then thrown away, so the 6 dB point sat on the PASSBAND EDGE
-        # and the response had been sagging since DC. The honest way to state the cost is
-        # as DEVIATION FROM THE INTENDED SHAPE: FM is meant to slope (de-emphasis), so
-        # of the -6.6 dB measured at 3 kHz, 4.8 belonged there and 1.86 was this. AM is
-        # meant to be FLAT and was 1.93 dB down at 3 kHz with nothing to blame. Either
-        # way it is the consonant band, heard as muffled speech. (A draft of this said
-        # "less than half is de-emphasis", which is backwards: it is 72-89% of them.)
-        h = lowpass((cutoff + stop) / 2.0, self.if_rate_hz, taps)
+        # Two edges, and `lowpass` places its own 6 dB point between them. This line
+        # passed `cutoff` alone until 2026-09-06 — the same defect fixed in the front end
+        # that day and left in the sibling function — so the 6 dB point sat on the
+        # PASSBAND EDGE and the response had been sagging since DC. The honest way to
+        # state the cost is as DEVIATION FROM THE INTENDED SHAPE: FM is meant to slope
+        # (de-emphasis), so of the -6.6 dB measured at 3 kHz, 4.8 belonged there and 1.86
+        # was this. AM is meant to be FLAT and was 1.93 dB down at 3 kHz with nothing to
+        # blame. Either way it is the consonant band, heard as muffled speech. C12's
+        # signature is what makes writing it that way impossible now.
+        h = lowpass(cutoff, stop, STOPBAND_DB, float(self.if_rate_hz))
         if self.mode in ("fm", "nfm", "wbfm"):
             h = np.convolve(h, deemphasis(self.if_rate_hz))
             h = h / h.sum()
