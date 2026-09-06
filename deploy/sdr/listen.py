@@ -1285,11 +1285,20 @@ class Session:
         try:
             held = radio.Radio.open(
                 rate_hz=LISTEN_CAPTURE_HZ,
-                # The radio sits `offset_hz` ABOVE the station and the mixer takes it
-                # back out. `chain.offset_hz` is what was SNAPPED to, not what was
-                # asked for — using the request here would leave the station a few kHz
-                # off centre, which on a narrowband channel is silence.
-                center_hz=self.frequency_hz + int(chain.offset_hz),
+                # The radio sits `offset_hz` BELOW the station and the mixer takes it
+                # back out by shifting the spectrum DOWN — so what lands at DC is what
+                # was above the centre. This read `+` for as long as the I/Q listen
+                # path existed, which put the station at -offset and the mixer then
+                # moved it to -2*offset: 480 kHz out, past every filter, and the
+                # demodulator spent its life on the empty spectrum 480 kHz above the
+                # station. It is silent because an FM discriminator fed nothing emits
+                # full-scale noise, so the level meter, the tape and the captions all
+                # reported a working radio (`demod.Demodulator.offset_hz`).
+                #
+                # `chain.offset_hz` is what was SNAPPED to, not what was asked for —
+                # using the request here would leave the station a few kHz off centre,
+                # which on a narrowband channel is silence.
+                center_hz=self.frequency_hz - int(chain.offset_hz),
                 serial=self.serial,
                 direct=direct,
                 doing=PURPOSE_LABEL[PURPOSE_LISTEN],

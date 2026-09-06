@@ -2547,6 +2547,15 @@ class _FakeRadio:
         # the demodulator's mixer has to take back out.
         self._offset = station_hz - center_hz
         self._phase = 0.0
+        # A NOISE FLOOR, 30 dB down, and it is load-bearing rather than realism.
+        # Without it this radio hands over a bare carrier, and a bare carrier makes
+        # every content test in this file unfalsifiable: an FM discriminator is blind
+        # to amplitude, so a station the chain has attenuated by FIFTY-FIVE decibels —
+        # tuned to the wrong side of the offset, say, and surviving only as filter
+        # leakage — still demodulates to a perfect, full-scale 1 kHz tone. Noise is
+        # what makes a signal that has been thrown away sound like a signal that has
+        # been thrown away.
+        self._rng = np.random.default_rng(20260906)
 
     def read(self, samples: int):
         self.reads += 1
@@ -2557,8 +2566,10 @@ class _FakeRadio:
         # discriminator can actually recover, so silent audio means a broken chain.
         freq = self._offset + 3_000.0 * np.sin(2.0 * np.pi * 1_000.0 * t)
         phase = 2.0 * np.pi * np.cumsum(freq) / listen.LISTEN_CAPTURE_HZ
+        noise = self._rng.standard_normal(n) + 1j * self._rng.standard_normal(n)
+        wave = np.exp(1j * phase) + 0.0316 * noise  # -30 dB
         return listen.radio.Reading(
-            samples=np.exp(1j * phase).astype(np.complex64),
+            samples=wave.astype(np.complex64),
             at=time.time(),
             reads=1,
             overflows=0,
@@ -2613,11 +2624,19 @@ def test_the_iq_engine_takes_the_listen_session(iq_tuner) -> None:
         iq_tuner.stop()
 
 
-def test_the_radio_is_tuned_above_the_station_by_the_snapped_offset(iq_tuner) -> None:
-    """The offset the MIXER settled on, not the one that was requested.
+def test_the_radio_is_tuned_below_the_station_by_the_snapped_offset(iq_tuner) -> None:
+    """BELOW, and this test asserted "above" while the code did the same — so both
+    were wrong together and the pair looked like a check.
 
+    The mixer shifts the spectrum DOWN by `offset_hz`, so what reaches DC is what sat
+    ABOVE the tuned centre. Tuning above the station instead put it at `-offset`, which
+    the mixer moved to `-2 * offset`: 480 kHz from DC, past every filter in the chain.
+    MEASURED ON AIR 2026-09-06 — asking to hear 99.3 read 3.7 dB over the noise, and
+    asking for 99.3 minus 480 kHz read 21.8 dB with four times the audio.
+
+    The offset asserted is the one the MIXER settled on, not the one requested:
     `_Mixer` rounds to a whole division of the sample rate so its tone is a short
-    repeating table. Opening the radio at the requested offset while mixing by the
+    repeating table, and opening the radio at the requested offset while mixing by the
     snapped one leaves the station a few kHz off centre — which on a narrowband channel
     is silence, from code that looks right in both places."""
     iq_tuner.start(146_940_000, "fm", None)
@@ -2625,7 +2644,7 @@ def test_the_radio_is_tuned_above_the_station_by_the_snapped_offset(iq_tuner) ->
         chain = demod.Demodulator(
             "fm", listen.LISTEN_CAPTURE_HZ, offset_hz=float(listen.LISTEN_OFFSET_HZ)
         )
-        assert iq_tuner.opened[0].center_hz == 146_940_000 + int(chain.offset_hz)
+        assert iq_tuner.opened[0].center_hz == 146_940_000 - int(chain.offset_hz)
     finally:
         iq_tuner.stop()
 
@@ -2653,6 +2672,53 @@ def test_audio_reaches_the_encoder(iq_tuner) -> None:
             assert sum(len(c) for c in written) % 2 == 0
         finally:
             iq_tuner.stop()
+
+
+def test_the_audio_carries_the_station_and_not_noise(iq_tuner) -> None:
+    """The recovered audio must contain the tone the fake radio is transmitting.
+
+    THIS IS THE TEST THE I/Q LISTEN PATH SHIPPED WITHOUT, and its absence is what let
+    a sign error in the offset tuning live in the owner's radio: the station sat
+    480 kHz from DC, the demodulator spent its life on empty spectrum, and every other
+    check in this file still passed.
+
+    They passed because they measure LEVEL, and level is the one thing an FM
+    discriminator cannot report honestly. It differentiates phase and is completely
+    blind to amplitude, so fed nothing at all it emits noise AT FULL SCALE — a peak of
+    1.0, an RMS of 0.4, a busy level meter, a moving tape and a plausible waterfall.
+    `test_the_level_meter_hears_the_carrier` asserts `audio_peak > 0.1`, which pure
+    noise satisfies with room to spare.
+
+    The only question that separates a working chain from a dead one is WHAT the audio
+    contains. So: a 1 kHz tone, where the fake radio put it."""
+    written: list[bytes] = []
+
+    class _Recorder(_Sink):
+        def write(self, b: bytes) -> int:
+            written.append(bytes(b))
+            return len(b)
+
+    class _RecordingProc(_FakeProc):
+        def __init__(self, *a: Any, **k: Any) -> None:
+            super().__init__(*a, **k)
+            self.stdin = _Recorder()
+
+    rate = demod.AUDIO_RATE
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(listen.subprocess, "Popen", _RecordingProc)
+        iq_tuner.start(146_940_000, "fm", None)
+        try:
+            assert _wait_for(lambda: sum(len(c) for c in written) >= rate * 2)
+        finally:
+            iq_tuner.stop()
+    audio = np.frombuffer(b"".join(written), dtype=np.int16).astype(np.float64)
+    audio = audio[len(audio) // 4 :]  # past the filters' start-up transient
+    magnitude = np.abs(np.fft.rfft(audio * np.hanning(audio.size)))
+    freqs = np.fft.rfftfreq(audio.size, 1.0 / rate)
+    assert freqs[int(np.argmax(magnitude))] == pytest.approx(1_000.0, abs=40.0)
+    # ...and it must DOMINATE. An argmax alone can land on the loudest bin of noise.
+    tone = magnitude[np.abs(freqs - 1_000.0) < 60.0]
+    assert float((tone**2).sum() / (magnitude**2).sum()) > 0.5
 
 
 def test_the_level_meter_hears_the_carrier(iq_tuner) -> None:
