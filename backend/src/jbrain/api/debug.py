@@ -2193,6 +2193,7 @@ async def sdr_listen_probe(
     seconds: Annotated[float, Query(ge=1.0, le=20.0)] = 5.0,
     serial: Annotated[str | None, Query(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] = None,
     gain: Annotated[str | None, Query(max_length=8, pattern=r"^[0-9.]+$")] = None,
+    transcribe: Annotated[bool, Query()] = False,
 ) -> dict[str, Any]:
     """**Does the numpy demodulator work on this radio?** The twin of `spectrum-probe`.
 
@@ -2207,6 +2208,20 @@ async def sdr_listen_probe(
     signal rather than silence or a rail, and how many USB buffers the driver threw
     away — which on a waterfall is one row slightly wrong and on audio is a click.
 
+    `transcribe` is the one that catches what the others cannot, and it exists because
+    everything above measures LEVEL. An FM discriminator differentiates phase and is
+    blind to amplitude, so a chain demodulating the wrong piece of spectrum emits noise
+    at FULL SCALE — a healthy peak, a healthy RMS, a moving tape, a plausible row. The
+    offset tuning was inverted for the life of this path and every one of those readings
+    stayed green (2026-09-06). Words are the only evidence that separates a receiver
+    tuned to a station from one tuned to nothing, so this hands the demodulated audio to
+    whisper. Judge `ok` and `view.snr_db` first and the transcript second: whisper
+    hallucinates fluently on noise, and a transcript that does not match what the
+    station is known to be transmitting is not evidence of anything.
+
+    It is off by default because it costs the audio a trip through the gateway, and
+    because the sidecar only taps the PCM when someone asks.
+
     **TAKES A RADIO** for those seconds and releases it even on failure."""
     request.state.debug_detail = f"sdr listen probe {mhz} {mode}"
     if serial is not None:
@@ -2220,8 +2235,40 @@ async def sdr_listen_probe(
     # `gain` travels because it is the thing most likely to be WRONG on a quiet band,
     # and comparing two runs is the only way to tell a deaf receiver from a dead one.
     # Absent hands the tuner to its own AGC, which is what `rtl_fm` does by default.
-    body = {"mhz": mhz, "mode": mode, "seconds": seconds, "serial": serial, "gain": gain}
-    return await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
+    body = {
+        "mhz": mhz,
+        "mode": mode,
+        "seconds": seconds,
+        "serial": serial,
+        "gain": gain,
+        "audio": transcribe,
+    }
+    answer = await _sdr_post(settings, "/listen/probe", body, wait_s=seconds + 25.0)
+    # Stripped whatever happens next: a quarter of a megabyte of base64 in a console
+    # response buries the eight lines that are the verdict.
+    wav_b64 = answer.pop("audio_wav_b64", None)
+    if not transcribe:
+        return answer
+    if not wav_b64:
+        answer["transcript_error"] = "the sidecar returned no audio to transcribe"
+        return answer
+    if not settings.whisper_url:
+        answer["transcript_error"] = "no whisper gateway on this box (whisper_url unset)"
+        return answer
+    try:
+        result = await transcribe_audio_chunked(
+            WhisperCppClient(
+                settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+            ),
+            LocalGatewayClient(settings.whisper_url),
+            settings.whisper_model,
+            base64.b64decode(wav_b64),
+            filename=f"sdr-probe-{int(mhz * 1_000_000)}.wav",
+        )
+        answer["transcript"] = (result or {}).get("text") or ""
+    except Exception as exc:  # noqa: BLE001 - report, never sink the verdict
+        answer["transcript_error"] = repr(exc)
+    return answer
 
 
 @router.post("/sdr/stop")

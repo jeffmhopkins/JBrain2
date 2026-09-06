@@ -1003,6 +1003,9 @@ class Session:
         self._level: tuple[float, int] | None = None
         # Per session so two sidecars, or a relaunch, cannot collide on one port.
         self.kiss_port = KISS_PORT_BASE + (int(self.id[:4], 16) % KISS_PORT_SPAN)
+        # A raw-PCM tap for `listen-probe`, off unless a probe asks. Bounded, because
+        # a tap left on by a failed probe must not grow for the life of the session.
+        self._tap: collections.deque[bytes] | None = None
         self._seg: list[bytes] = []
         self._seg_started = time.time()
         self._seg_peak = 0.0
@@ -1379,6 +1382,7 @@ class Session:
                     self.audio_peak = min(1.0, audio.peak)
                     self.audio_clipped = audio.clipped
                     self.audio_rms = audio.rms
+                    self._record(chunk)
                     self._accumulate(chunk, self.audio_peak)
                     enc.stdin.write(chunk)
                     enc.stdin.flush()
@@ -1941,6 +1945,29 @@ KISSPORT {self.kiss_port}
                     except queue.Empty:
                         break
 
+    def tap_audio(self, seconds: float) -> None:
+        """Start keeping the demodulated PCM, for `listen-probe` to look INSIDE.
+
+        The measurement the probe never had. Everything else it reads — peak, RMS,
+        clipping, frame rate, the row's own SNR — describes the audio's LEVEL, and on
+        FM level cannot answer whether the chain is working: a discriminator is blind
+        to amplitude, so fed nothing at all it emits noise at full scale. Only the
+        CONTENT separates a tuned receiver from a dead one, and the content has to
+        leave the box to be judged (`server._listen_probe` hands this to whisper)."""
+        with self._lock:
+            self._tap = collections.deque(maxlen=max(1, int(seconds * AUDIO_RATE * 2 / _CHUNK) + 4))
+
+    def taken_audio(self) -> bytes:
+        """Whatever the tap holds, and stop tapping."""
+        with self._lock:
+            tap, self._tap = self._tap, None
+        return b"".join(tap) if tap is not None else b""
+
+    def _record(self, chunk: bytes) -> None:
+        tap = self._tap  # read once; `taken_audio` may clear it under us
+        if tap is not None:
+            tap.append(chunk)
+
     def _accumulate(self, chunk: bytes, level: float) -> None:
         """Grow the open segment, and close it on a gap or at the ceiling.
 
@@ -1993,6 +2020,7 @@ KISSPORT {self.kiss_port}
                     break
                 level = _peak(chunk)
                 self.audio_peak = level
+                self._record(chunk)
                 self._accumulate(chunk, level)
                 enc.stdin.write(chunk)
                 enc.stdin.flush()
