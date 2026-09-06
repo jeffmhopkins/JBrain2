@@ -2003,7 +2003,9 @@ def test_a_spectrum_probe_finds_ITS_session_while_another_radio_listens(
     the listening one and the mismatch read as correct code. It asks by id now.
     """
     status, _ = _post(
-        sidecar, "/listen/start", {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP}
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
     )
     assert status == 200
 
