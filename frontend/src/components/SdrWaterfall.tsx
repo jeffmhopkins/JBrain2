@@ -89,7 +89,7 @@ export function SdrWaterfall({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // What the axis under the picture reads. React state, because it changes on a retune
   // rather than on every row, and re-rendering two labels a minute costs nothing.
-  const [band, setBand] = useState<SpectrumRow | null>(() => sdrSpectrum().latest);
+  const [band, setBand] = useState<SpectrumRow | null>(() => sdrSpectrum().band);
   const [status, setStatus] = useState<SpectrumState>(() => sdrSpectrum());
   // The measured rate, for the note only — and set only when the rounded figure moves,
   // so a stream ten rows a second does not re-render this tree ten times a second.
@@ -278,7 +278,10 @@ export function SdrWaterfall({
 
     const unsubscribe = subscribeSdrSpectrum((next, row) => {
       setStatus(next);
-      if (!row) return;
+      // BAND rows only. One stream now carries the tuning strip's channel rows too, and
+      // a 32 kHz row folded into this history is a picture of one station stretched
+      // across a whole dial.
+      if (!row || row.view !== "band") return;
       // A retune arrives with no message of its own — the row simply describes another
       // band. Everything about the old picture is then wrong: its history is a
       // different frequency and its colour window is a different noise floor.

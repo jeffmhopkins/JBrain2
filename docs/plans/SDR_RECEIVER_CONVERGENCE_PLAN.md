@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3◻️ W4◻️ W5◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -31,7 +31,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 |---|---|---|---|
 | **A1** | Four mutually-exclusive session `purpose`s per radio (`listen`/`spectrum`/`survey`/`aprs`), each dispatching to one terminal pipeline (`listen.py:1078`). Consumers then guess which lease serves them — `for_purpose`, `drawing`, `_worth_showing`. | One device reader, fanned out to many sinks: waterfall FFT, one or more channel demodulators, decoders, recorders. SDR++ VFOs, gqrx's receiver chain + FFT tap, OpenWebRX's per-client chains, GNU Radio's explicit fanout. | Audio and a picture of the band are mutually exclusive *by construction*, on a radio that is already capturing both. The fanout **already exists, proven**, in `_pump_iq_listen` — one `read`, two sinks — hardcoded for exactly one pair. |
 | **A2** | `tune()` tears the pipeline down and rebuilds it (`_restart`, `listen.py:2206`), justified by "`rtl_fm` cannot be retuned in place" (`listen.py:31`). | Retune is a source parameter. Nobody destroys a stream to change frequency. | The justification is obsolete on the primary engine: `Radio.retune` exists and `_sweep_hops` retunes a **live** stream eleven times a second. Every subtle guard in the file — `_restarting`, the `alive` special case, the second `_released` re-check — is a consequence of a choice that no longer applies, and each documents a real measured incident. The user hears a gap on every retune. |
-| **A3** | A listening session captures 2.4 MHz and transforms only the ±16 kHz channel (`listen.py:1361`). | The default screen: full-span waterfall **and** demodulated audio from one stream. | "Listen or look at the band, pick one" is invented, not physical, for any span ≤ 2.4 MHz. Measured cost of adding the band row to a session already running: **+2.8% of one core** (7.3% for audio + band + channel together). |
+| **A3** | A listening session captures 2.4 MHz and transforms only the ±16 kHz channel (`listen.py:1361`). | The default screen: full-span waterfall **and** demodulated audio from one stream. | "Listen or look at the band, pick one" is invented, not physical, for any span ≤ 2.4 MHz. ~~+2.8% of one core~~ — **that figure was wrong and W3 re-measured it: 11.4%** (9.3 ms of transform + 2.1 ms of `peaks.find` per 100 ms frame, 4096 bins, Welch at the 50% overlap W2 added). Fewer bins costs MORE, not less — 1024 bins is 13.9% — because Welch averages every segment that fits. Affordable because the sink transforms nothing while nobody is subscribed to the band. |
 | **A4** | One demodulator per session. | Multiple VFOs off one capture. | Not proposed now. Falls out of A1 for free — a second `Demodulator` at a different `offset_hz` off the same `Reading` costs no extra USB bandwidth. Listed so A1 is designed to allow it. |
 | **A5** | `survey` is a fourth session kind with its own lifecycle, its own temp CSV, and a synchronous handler that pins a thread for up to 900 s. | A survey is an accumulator over spectrum rows. | Strictly *less* capable than `spectrum`: it refuses shortwave, because `rtl_power` hardcodes direct-sampling mode 1 and this board wires the other branch. |
 
@@ -128,7 +128,49 @@ Each is one PR, per `PROCESS.md`. Verified from `supervisor/`.
 
 **W2 — The measuring path tells the truth. ✅ shipped 2026-09-06.** B3 + C3 (vectorised baseline), C6 (clamp the window to the row; move the baseline statistic off the median so a window that is majority-signal still reads noise), C10, C11, C7, B6. Delete the test that pins C6.
 
-**W3 — One capture, many sinks.** A1 as a pure refactor first: lift `_pump_iq_listen`'s body into `Capture` + `Sink.feed`, same two sinks, no behaviour change. Then A3: `Frame.view` ("band"|"channel"), `/listen/spectrum?view=`, and a band sink on the listening session. C9 rides along.
+**W3 — One capture, many sinks. ✅ shipped 2026-09-06.** A1 as a pure refactor first: lift `_pump_iq_listen`'s body into `Capture` + `Sink.feed`, same two sinks, no behaviour change. Then A3: `Frame.view` ("band"|"channel"), `/listen/spectrum?view=`, and a band sink on the listening session. C9 rides along.
+
+## W3 — what shipped, and what it measured (2026-09-06)
+
+**`deploy/sdr/capture.py` is the new seam**, and nothing in it knows what a session is:
+`Sink` (a `want` and a `feed`), `Capture` (one `read`, offered to every sink in turn),
+`ChannelSink` (a VFO: demodulator, its audio, and the picture of the channel it hears)
+and `BandSink` (the whole capture, transformed). `_pump_iq_listen` and `_stare` are now
+the SAME loop with different sinks — which is the finding A1 named: the only difference
+between a waterfall and a receiver drawing its band was which pipeline the `purpose`
+dispatched to.
+
+- **`Reading` carries its own `center_hz`, and it is required.** A sink that asked the
+  RADIO where it is labels a row with wherever the radio went next, which on a hopping
+  stream is eleven wrong answers a second. Required rather than defaulted because the
+  two test fakes that constructed a `Reading` without one immediately proved the trap:
+  both drew rows centred on DC and both had a `center_hz` attribute sitting unused.
+- **A listening session draws the band it is sitting in**, off the same buffer as the
+  audio, and `Frame.view` (`"band"` | `"channel"`) says which picture a row is. Before
+  this, readers inferred it from `passband_hz` being nonzero — which worked only while
+  one session could publish one kind, and is exactly the coupling A1 removes.
+- **The cost, re-measured, is 11.4% of one core, not 2.8%** (see A3). So `BandSink`
+  takes an `active` predicate and transforms nothing while nobody is subscribed to the
+  band: a listening session pays for the second picture only while someone is looking
+  at it. A spectrum session passes no predicate — drawing is why it holds the radio.
+- **`/listen/spectrum?view=band|channel|all`**, refused with a 400 rather than
+  substituted; absent means the session's own `default_view`, so a client that never
+  learns about views sees no change. `?view=` rides through `GET /api/sdr/spectrum` to
+  the PWA, whose store now holds the two pictures apart (`sdrSpectrum.band` /
+  `.channel`) and whose two canvases each take only their own rows.
+- **`listen-probe --band`** reports what ELSE was on the air, from the same capture that
+  made the audio. That reading was impossible before: a spectrum session and a listening
+  session are one dongle apiece.
+- **C9 rode along.** `LISTEN_QUEUE_BUFFERS = 16` on the listening path only.
+  `radio.QUEUE_BUFFERS = 4` was measured for a HOPPING capture, where a shallow ring is
+  the point — what is left in it after a retune is pre-retune data. A listening session
+  never hops, so the shallow ring buys it nothing and costs it 41 ms of grace against an
+  ffmpeg stall, on a box that also runs LLM inference.
+
+**Still open, and deliberately not invented here:** the Listen screen does not yet SHOW
+the band while it plays. The plumbing is done — one argument (`startSdrSpectrum("all")`)
+turns it on — but where that picture goes on the sheet is a DESIGN.md question that
+wants a mock, not a canvas dropped in by the wave that made it possible.
 
 **W4 — Retune in place.** A2. `_restart` survives for the `rtl_fm` fallback only.
 

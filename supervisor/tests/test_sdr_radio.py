@@ -392,8 +392,23 @@ def test_the_bufflen_reaches_the_stream_as_a_setup_argument() -> None:
             "bufflen": str(radio.BUFFLEN_BYTES),
             "buffers": str(radio.QUEUE_BUFFERS),
         }
+        assert rig.stream_args == {}
         assert ("writeSetting", "bufflen", str(radio.BUFFLEN_BYTES)) not in driver.log
         assert rig.samples_per_buffer == radio.BUFFLEN_BYTES // 2
+
+
+def test_a_caller_that_names_a_ring_depth_gets_it() -> None:
+    """`buffers` is measured for a HOPPING capture, where a shallow ring is the point:
+    what is left in it after a retune is pre-retune data. A listening capture never
+    hops and wants the grace instead, so the depth is a per-open argument rather than
+    one number for every job (C9)."""
+    driver = _FakeDriver()
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=CENTER, stream_args={"buffers": "16"}
+    ):
+        setup = next(c for c in driver.log if c[0] == "setupStream")
+
+    assert setup[4]["buffers"] == "16"
 
 
 # --- the ordering rules --------------------------------------------------------------
@@ -502,6 +517,20 @@ def test_an_overflow_is_a_count_on_the_frame_not_an_exception() -> None:
     assert reading.samples.size == 4_096
     assert reading.overflows == 2
     assert reading.torn is True
+
+
+def test_a_reading_says_where_it_was_taken(monkeypatch) -> None:
+    """The samples carry their own centre, so a sink labels a row with where the buffer
+    came from rather than with wherever the radio has since been sent. On a hopping
+    stream — eleven retunes a second — those are different answers."""
+    driver = _FakeDriver()
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=CENTER) as rig:
+        first = rig.read(1_024)
+        rig.retune(center_hz=CENTER + 2_000_000)
+        second = rig.read(1_024)
+
+    assert first.center_hz == CENTER
+    assert second.center_hz == CENTER + 2_000_000
 
 
 def test_a_stream_error_that_is_not_an_overflow_is_raised() -> None:

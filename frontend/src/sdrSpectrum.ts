@@ -30,6 +30,11 @@ export interface SpectrumPeak {
   overDb: number;
 }
 
+/** Which picture a row belongs to. One session now draws both off one capture — the
+ *  band it is sitting in and the channel it is demodulating — so a reader has to be
+ *  told rather than infer it. */
+export type SpectrumView = "band" | "channel";
+
 export interface SpectrumRow {
   /** Box clock when the row was measured. */
   at: number;
@@ -51,13 +56,21 @@ export interface SpectrumRow {
    *  peaks across rows cannot tell ONE station whose loudest bin wanders from TWO that
    *  are genuinely apart. Zero when the band has no raster. */
   channelHz: number;
+  /** Band or channel. Said by the box; inferred from `passbandHz` only for a row from
+   *  an older sidecar, which is exactly how every reader used to guess. */
+  view: SpectrumView;
 }
 
 export interface SpectrumState {
   /** True from the moment the owner opens the picture until it is closed. */
   on: boolean;
-  /** The newest row, or null while waiting for the first. */
+  /** The newest row of ANY view, or null while waiting for the first. */
   latest: SpectrumRow | null;
+  /** The newest row of each picture, held apart. One stream carries both, so a viewer
+   *  that took "the newest row" would draw a 2.4 MHz band into a 32 kHz tuning strip
+   *  half the time — and the two are drawn side by side now, not in turn. */
+  band: SpectrumRow | null;
+  channel: SpectrumRow | null;
   /** How many rows have arrived on this stream. Lets a view say "warming up" without
    *  keeping a count of its own. */
   rows: number;
@@ -68,7 +81,14 @@ export interface SpectrumState {
 
 type Listener = (state: SpectrumState, row: SpectrumRow | null) => void;
 
-const IDLE: SpectrumState = { on: false, latest: null, rows: 0, error: null };
+const IDLE: SpectrumState = {
+  on: false,
+  latest: null,
+  band: null,
+  channel: null,
+  rows: 0,
+  error: null,
+};
 
 let state: SpectrumState = IDLE;
 let source: EventSource | null = null;
@@ -95,6 +115,10 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
   if (typeof start !== "number" || typeof bin !== "number" || bin <= 0) return null;
   if (!Array.isArray(db) || db.length === 0) return null;
   const values = db.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : Number.NaN));
+  const passband =
+    typeof payload.passband_hz === "number" && Number.isFinite(payload.passband_hz)
+      ? Math.max(0, payload.passband_hz)
+      : 0;
   return {
     at: typeof payload.at === "number" ? payload.at : 0,
     startHz: start,
@@ -104,15 +128,23 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
     binHz: bin,
     db: values,
     peaks: parsePeaks(payload.peaks),
-    passbandHz:
-      typeof payload.passband_hz === "number" && Number.isFinite(payload.passband_hz)
-        ? Math.max(0, payload.passband_hz)
-        : 0,
+    passbandHz: passband,
     channelHz:
       typeof payload.channel_hz === "number" && Number.isFinite(payload.channel_hz)
         ? Math.max(0, payload.channel_hz)
         : 0,
+    view: parseView(payload.view, passband),
   };
+}
+
+/** The row's own view, or the guess every reader used to make.
+ *
+ *  `passbandHz > 0` was the test for "is this a tuning view?" while exactly one kind of
+ *  row could come from one session. It still answers correctly for a box that predates
+ *  the field, which is the only case it is left for. */
+function parseView(raw: unknown, passbandHz: number): SpectrumView {
+  if (raw === "band" || raw === "channel") return raw;
+  return passbandHz > 0 ? "channel" : "band";
 }
 
 /** The peaks off the wire, defensively: a row from an older box has none, and one bad
@@ -168,14 +200,24 @@ export function sameBand(a: SpectrumRow | null, b: SpectrumRow | null): boolean 
   return Math.abs(a.binHz - b.binHz) * Math.min(a.db.length, b.db.length) <= tolerance;
 }
 
-/** Open the stream. Safe to call when already open. */
-export function startSdrSpectrum(): void {
+/** Open the stream. Safe to call when already open.
+ *
+ *  `view` says WHICH picture to ask the box for, and it is not only a filter: a
+ *  listening session transforms the whole 2.4 MHz band only while someone is
+ *  subscribed to it (~11% of one core), so asking for a picture nothing draws is work
+ *  the radio does for nobody. `all` is for a surface showing both at once. */
+export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
   if (source || typeof EventSource === "undefined") {
+    // Already open: the FIRST caller's view stands. There is one stream because there is
+    // one radio drawing, and two surfaces wanting different pictures of it at once does
+    // not happen — the tuner sheet and the Radio tab are different jobs on one dongle.
     publish({ ...state, on: true }, null);
     return;
   }
-  publish({ on: true, latest: null, rows: 0, error: null }, null);
-  const stream = new EventSource("/api/sdr/spectrum");
+  publish({ ...IDLE, on: true }, null);
+  // One socket whichever it is: each row says which picture it belongs to, so a
+  // surface that wants both needs no second stream.
+  const stream = new EventSource(`/api/sdr/spectrum?view=${view}`);
   source = stream;
   stream.onmessage = (event: MessageEvent<string>) => {
     const parsed = parseRow(event.data);
@@ -185,7 +227,14 @@ export function startSdrSpectrum(): void {
       return;
     }
     publish(
-      { on: true, latest: parsed, rows: state.rows + 1, error: null },
+      {
+        on: true,
+        latest: parsed,
+        band: parsed.view === "band" ? parsed : state.band,
+        channel: parsed.view === "channel" ? parsed : state.channel,
+        rows: state.rows + 1,
+        error: null,
+      },
       // The row is handed to subscribers directly rather than read back off the state,
       // so a canvas draws exactly the rows that arrived — never one twice, never a
       // skipped one, whatever else re-publishes in between.
