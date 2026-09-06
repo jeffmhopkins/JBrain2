@@ -49,9 +49,20 @@ export const CENTRED_BINS = 1;
 export const CENTRED_SHARE = 0.05;
 
 export interface Tuning {
-  /** How far the signal sits from the tuned frequency. Positive is high. */
+  /** How far the signal sits from the tuned frequency. Positive is high. This is where
+   *  it IS — what the marker on the picture points at. */
   offsetHz: number;
-  /** True when the offset is inside what the row can actually resolve. */
+  /** How far it sits from where it SHOULD be — the middle of the demodulator's
+   *  passband, which is not the dial on SSB (C14). This is the correction: what the
+   *  readout says and what the "tune to it" button applies.
+   *
+   *  Identical to `offsetHz` on every symmetric mode, which is every mode but SSB. On
+   *  `usb` a correctly tuned signal sits at +1850 Hz from the dial, and reporting THAT
+   *  as the error told the owner to move a radio that was already right — and moving it
+   *  would have put the signal at the dial, outside the +300..+3400 the demodulator
+   *  hears. */
+  errorHz: number;
+  /** True when the ERROR is inside what the row can actually resolve. */
   centred: boolean;
   /** The signal's 6 dB edges, as offsets from the tuned frequency. */
   fromHz: number;
@@ -91,9 +102,27 @@ function median(values: number[]): number {
  *  and the picture answer "is it centred?" for the same rows, and a floor measured
  *  differently in the two places is a disagreement waiting for the marginal case. */
 function floorOf(row: SpectrumRow): number {
-  const edge = Math.floor((row.db.length - row.passbandHz / row.binHz) / 2);
-  if (edge <= 0) return median(row.db);
-  return median([...row.db.slice(0, edge), ...row.db.slice(row.db.length - edge)]);
+  const { lowHz, highHz } = passbandEdges(row);
+  const outside: number[] = [];
+  for (let i = 0; i < row.db.length; i += 1) {
+    // The bin's own centre frequency, as an offset from the row's middle — which is the
+    // dial, and which the passband is NOT centred on for SSB. Taking a symmetric slice
+    // off each end, as this did, put the top of a `usb` passband in the "noise".
+    const hz = (i + 0.5 - row.db.length / 2) * row.binHz;
+    if (hz < lowHz || hz > highHz) outside.push(row.db[i] as number);
+  }
+  if (outside.length === 0) return median(row.db);
+  return median(outside);
+}
+
+/** Where the demodulator's passband sits, as offsets from the tuned frequency.
+ *
+ *  `passbandHz` is a WIDTH and `passbandCentreHz` says where its middle is — zero on
+ *  every symmetric mode, +1850 on `usb`, -1850 on `lsb` (C14). Everything that asks
+ *  "is this inside what we can hear?" goes through here so the two cannot drift. */
+export function passbandEdges(row: SpectrumRow): { lowHz: number; highHz: number } {
+  const half = row.passbandHz / 2;
+  return { lowHz: row.passbandCentreHz - half, highHz: row.passbandCentreHz + half };
 }
 
 /** What is in this channel, or null when nothing is.
@@ -130,13 +159,15 @@ export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
   const fromHz = hzOf(low);
   const toHz = hzOf(high);
   const offsetHz = (fromHz + toHz) / 2;
-  const half = row.passbandHz / 2;
+  const { lowHz, highHz } = passbandEdges(row);
+  const errorHz = offsetHz - row.passbandCentreHz;
   const width = toHz - fromHz + row.binHz;
-  const inside = Math.max(0, Math.min(toHz, half) - Math.max(fromHz, -half) + row.binHz);
+  const inside = Math.max(0, Math.min(toHz, highHz) - Math.max(fromHz, lowHz) + row.binHz);
   return {
     offsetHz,
+    errorHz,
     centred:
-      Math.abs(offsetHz) <= Math.max(CENTRED_BINS * row.binHz, CENTRED_SHARE * row.passbandHz),
+      Math.abs(errorHz) <= Math.max(CENTRED_BINS * row.binHz, CENTRED_SHARE * row.passbandHz),
     fromHz,
     toHz,
     peakDb: peak,
@@ -148,9 +179,9 @@ export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
 /** The offset as the readout says it. Never more precision than a row can carry. */
 export function offsetLabel(tuning: Tuning): string {
   if (tuning.centred) return "On centre";
-  const khz = Math.abs(tuning.offsetHz) / 1000;
+  const khz = Math.abs(tuning.errorHz) / 1000;
   const shown = khz >= 10 ? khz.toFixed(0) : khz.toFixed(1);
-  return `${shown} kHz ${tuning.offsetHz > 0 ? "high" : "low"}`;
+  return `${shown} kHz ${tuning.errorHz > 0 ? "high" : "low"}`;
 }
 
 /** The half of the sentence that says why it matters, or "" when it does not.

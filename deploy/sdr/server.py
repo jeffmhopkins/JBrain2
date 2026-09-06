@@ -343,6 +343,11 @@ def _listen_verdict(
         "audio_peak_max": round(loud, 4),
         "audio_peak_mean": round(sum(peaks_seen) / len(peaks_seen), 4) if peaks_seen else 0.0,
         "audio_rms_max": round(level, 4),
+        # What the AGC is doing, beside the level it is NOT allowed to move. AM and SSB
+        # only; zero on FM (see `demod.AGC_WINDOW_S`). A quiet `audio_rms_max` next to
+        # +34 dB here says "the station is weak and the owner can still hear it", which
+        # neither number says alone.
+        "agc_gain_db": round(session.audio_gain_db, 1),
         "clipped_fraction_max": round(clipped, 5),
         "overflows": session.overflows,
         "frames": len(frames),

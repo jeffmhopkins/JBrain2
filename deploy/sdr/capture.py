@@ -171,7 +171,7 @@ class ChannelSink(Sink):
         chain: demod.Demodulator,
         *,
         audio: Callable[[demod.Audio], None],
-        view: Callable[[iq.Spectrum, float], None] | None = None,
+        view: Callable[[iq.Spectrum, tuple[float, float]], None] | None = None,
         view_bins: int = 0,
         want: int = 0,
         finish: Callable[[], None] | None = None,
@@ -208,13 +208,18 @@ class ChannelSink(Sink):
         # radio sits `offset_hz` below the station and the mixer takes that back out, so
         # what the demodulator hands over is centred on the station — wherever the radio
         # actually was when these samples were collected.
+        # The PASSBAND, as (low, high) offsets, not a half-width doubled. This passed
+        # `2 * channel_half_hz` and `channel_half_hz` is symmetric, so SSB's shading
+        # covered ±3400 while the demodulator heard +300..+3400 — half the shaded box
+        # was the sideband the back end rejects, and someone centring a signal in it put
+        # half the signal where nothing can hear it (C14).
         self._view(
             spectrometer.frame(
                 out.baseband,
                 reading.center_hz + int(round(self.chain.offset_hz)),
                 at=reading.at,
             ),
-            2.0 * self.chain.channel_half_hz,
+            self.chain.passband_hz,
         )
 
     def close(self) -> None:

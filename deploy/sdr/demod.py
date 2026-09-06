@@ -91,8 +91,35 @@ AUDIO_CUTOFF_HZ: dict[str, float] = {
     "wbfm": 7_000.0,
 }
 
-#: The channel a narrow mode keeps out of the IF, as a half-width. This is the
-#: passband the tuning view shades: what the demodulator actually hears.
+#: Where an SSB passband sits relative to the suppressed carrier. 300–3400 Hz is the
+#: telephony band every SSB radio is built around; the filter is designed as a
+#: low-pass of half that width and shifted to the middle of it.
+SSB_LOW_HZ = 300.0
+SSB_HIGH_HZ = 3_400.0
+
+#: WHERE each mode's passband sits, as (low, high) offsets from the tuned frequency —
+#: what the demodulator actually hears, and therefore what the tuning view shades.
+#:
+#: **SSB is one-sided, and the strip drew it symmetric** (C14). `CHANNEL_HALF_HZ` is a
+#: HALF-WIDTH, so usb and lsb both shaded ±3400 Hz while the demodulator heard
+#: +300..+3400 (usb) or -3400..-300 (lsb) — half the shaded box was the sideband the
+#: back end rejects. Someone centring a signal in that box put half of it where nothing
+#: can hear it, which is the one mistake SSB tuning most invites.
+#:
+#: A filter half-width cannot say this, which is why it is its own table rather than a
+#: sign on the old one.
+PASSBAND_HZ: dict[str, tuple[float, float]] = {
+    "fm": (-8_000.0, 8_000.0),
+    "nfm": (-8_000.0, 8_000.0),
+    "am": (-8_000.0, 8_000.0),
+    "usb": (SSB_LOW_HZ, SSB_HIGH_HZ),
+    "lsb": (-SSB_HIGH_HZ, -SSB_LOW_HZ),
+    "wbfm": (-90_000.0, 90_000.0),
+}
+
+#: The channel a narrow mode keeps out of the IF, as a half-width — the FILTER, not the
+#: passband. Symmetric for every mode including SSB, where the IF-rate channel filter
+#: runs before the back end picks a sideband; `PASSBAND_HZ` is what the owner is shown.
 CHANNEL_HALF_HZ: dict[str, float] = {
     "fm": 8_000.0,
     "nfm": 8_000.0,
@@ -177,6 +204,39 @@ VIEW_SAMPLES = 4096
 #: — cannot be vectorised (see `_DcBlock`). What is not kept is the wrong number.
 DC_BLOCK_TAPS = 512
 
+#: The AGC, for the modes whose audio level is the SIGNAL's rather than the
+#: modulation's (C13).
+#:
+#: **Why only AM and SSB.** An FM discriminator's output is the DEVIATION, which the
+#: transmitter sets and `FM_DEVIATION_HZ` scales to full scale — so FM already arrives
+#: at a level that means something, and an AGC on top of it would destroy the one honest
+#: thing about it. AM and SSB carry the RF level straight through to the audio, so the
+#: same station is as loud as the propagation happens to make it.
+#:
+#: MEASURED at one RF level: nfm -11.4 dBFS, usb -23.0, am -31.0 — a **20 dB swing on a
+#: mode change**, and a weak AM or SSB station simply inaudible. `rtl_fm` behaves the
+#: same way, so this was parity rather than a regression; every listening application
+#: runs an AGC here.
+#:
+#: The window is a trailing mean square over a quarter of a second, which is long enough
+#: to ride over the syllables of speech and short enough to follow a fade. A boxcar over
+#: a carried tail, for the reason `_DcBlock` gives at length: it is O(n) through one
+#: cumulative sum and EXACTLY the same whether the samples arrive in one buffer or in
+#: forty, which `test_chunking_changes_nothing` holds to two int16 counts.
+AGC_WINDOW_S = 0.25
+
+#: What the AGC aims the RMS at. 0.2 is -14 dBFS, which lands speech peaks around 0.6-0.8
+#: at a voice's crest factor — measured on air, wide FM through this chain reads 0.24 RMS,
+#: so AM and SSB now arrive within a few decibels of it instead of 20 down.
+AGC_TARGET_RMS = 0.2
+
+#: How far the AGC may go, in each direction. Up is what makes a weak station audible;
+#: down is what a real receiver does with a strong one instead of clipping it. Bounded
+#: because an unbounded gain amplifies an empty channel's noise to full scale, which
+#: sounds like a fault and hides the fact that nothing is there.
+AGC_MAX_GAIN_DB = 40.0
+AGC_MIN_GAIN_DB = -20.0
+
 #: Peak deviation each FM mode is scaled against, so a fully-deviated signal arrives
 #: at full scale instead of at whatever fraction the IF rate happens to make it. The
 #: discriminator's natural output is `2 * f / if_rate`, which for a 5 kHz-deviated
@@ -191,12 +251,6 @@ FM_DEVIATION_HZ: dict[str, float] = {"fm": 5_000.0, "nfm": 5_000.0, "wbfm": 75_0
 #: consonants. -3 dB is what a receiver leaves; the cost is audio a third quieter,
 #: which the player's own volume answers and clipping does not.
 FM_HEADROOM = 0.7
-
-#: Where an SSB passband sits relative to the suppressed carrier. 300–3400 Hz is the
-#: telephony band every SSB radio is built around; the filter is designed as a
-#: low-pass of half that width and shifted to the middle of it.
-SSB_LOW_HZ = 300.0
-SSB_HIGH_HZ = 3_400.0
 
 #: How far down the stopband has to be, for every filter in this chain.
 #:
@@ -406,6 +460,59 @@ class _DcBlock:
         return (x - (window / self._n).astype(np.float32)).astype(np.float32)
 
 
+class _Agc:
+    """A trailing automatic gain, per sample, exactly the same in any chunking.
+
+    Built the way `_DcBlock` is and for the same reason. The obvious AGC keeps a
+    smoothed level and updates it once per BUFFER, which makes the gain a function of
+    how the samples happened to be delivered — the identical defect that stood in the DC
+    blocker until `test_chunking_changes_nothing` caught it, and one that is inaudible
+    on a single buffer. A boxcar mean-square over a carried tail costs one cumulative
+    sum, gives a gain for EVERY sample rather than one per buffer, and depends on
+    nothing but the samples.
+
+    A per-sample gain also removes the step a per-buffer gain puts at each boundary,
+    which is a click ten times a second whenever the level is moving.
+
+    **The attack is the window.** A signal that arrives suddenly is amplified by the old,
+    higher gain until the average catches up — a quarter of a second, bounded by the clip
+    in `_to_pcm`, which is what an overdriven receiver does anyway. A fast-attack /
+    slow-release pair would fix that and cannot be written with one boxcar; it is not
+    worth two, and a symmetric window is what an SSB operator would call a slow AGC."""
+
+    def __init__(
+        self,
+        rate_hz: int,
+        *,
+        window_s: float = AGC_WINDOW_S,
+        target_rms: float = AGC_TARGET_RMS,
+    ) -> None:
+        self._n = max(2, int(window_s * rate_hz))
+        self._tail = np.zeros(self._n - 1, dtype=np.float32)
+        self._target = float(target_rms)
+        self._lo = float(10.0 ** (AGC_MIN_GAIN_DB / 20.0))
+        self._hi = float(10.0 ** (AGC_MAX_GAIN_DB / 20.0))
+        #: The RMS below which the input is treated as silence rather than as something
+        #: to amplify. Without it an empty channel divides by nearly zero and the gain
+        #: pins at its ceiling — which is where the ceiling would be doing the work
+        #: instead of this.
+        self._floor = self._target / self._hi
+
+    def feed(self, x: np.ndarray) -> tuple[np.ndarray, float]:
+        """The gained audio, and where the gain ended up, in dB."""
+        if x.size == 0:
+            return x, 0.0
+        buf = np.concatenate([self._tail, x.astype(np.float32, copy=False)])
+        # float64 for the running total, as in `_DcBlock`: a float32 cumsum of squares
+        # over minutes of audio loses the low bits of every later term.
+        total = np.cumsum(np.square(buf, dtype=np.float64))
+        window = total[self._n - 1 :] - np.concatenate(([0.0], total[: -self._n]))
+        self._tail = buf[-(self._n - 1) :]
+        rms = np.sqrt(window / self._n)
+        gain = np.clip(self._target / np.maximum(rms, self._floor), self._lo, self._hi)
+        return (x * gain.astype(np.float32)), float(20.0 * np.log10(gain[-1]))
+
+
 class _Mixer:
     """A complex exponential that keeps its phase across buffers, from a table.
 
@@ -484,10 +591,22 @@ class Audio:
     #: What fraction of the buffer actually hit the rail, 0..1. THIS is the clipping
     #: measure: a tenth of a percent is the impulse noise above, half is a chain whose
     #: gain is wrong.
+    #:
+    #: Measured AFTER the AGC, unlike `peak` and `rms`: the rail is where the audio
+    #: ends up, not where the detector left it.
     clipped: float
     #: Root mean square of the buffer, 0..1 — how loud it really is, as against how
     #: loud its single worst sample was.
     rms: float
+    #: What the AGC is doing, in dB, at the end of this buffer. Zero on FM, which has
+    #: none.
+    #:
+    #: **`peak` and `rms` above are measured BEFORE it**, deliberately. They are the only
+    #: honest answer this chain gives to "how strong is the signal", `listen-probe` reads
+    #: them to decide whether anything is on the air at all, and an AGC that moved them
+    #: would make a dead channel and a loud one report the same number. What the AGC
+    #: changes is what the owner HEARS; this field is how much.
+    gain_db: float = 0.0
 
     def tobytes(self) -> bytes:
         return self.pcm.tobytes()
@@ -526,6 +645,16 @@ class Demodulator:
         self.if_rate_hz = if_rate
         self.audio_rate_hz = int(audio_rate_hz)
         self.channel_half_hz = CHANNEL_HALF_HZ[key]
+        #: (low, high) offsets from the tuned frequency of what this mode actually
+        #: hears — one-sided on SSB (C14). `channel_half_hz` above is the FILTER's
+        #: half-width and cannot say it.
+        self.passband_hz: tuple[float, float] = PASSBAND_HZ[key]
+        #: The same thing as the two numbers a viewer needs: how wide to shade, and how
+        #: far off the tuned frequency to centre the shading. Zero centre on every
+        #: symmetric mode, which is why a client that ignores it draws what it always
+        #: drew.
+        self.passband_width_hz = self.passband_hz[1] - self.passband_hz[0]
+        self.passband_centre_hz = (self.passband_hz[0] + self.passband_hz[1]) / 2.0
         #: What the FRONT END keeps flat, and therefore how wide the picture is. Never
         #: narrower than the channel: wide FM's 90 kHz is most of its 240 kHz IF
         #: already, so there is nothing to widen to and the front end is its own
@@ -584,6 +713,9 @@ class Demodulator:
         # AM only: an FM discriminator's output is already centred, so there is no
         # pedestal to remove and a high-pass would only cost a filter.
         self._dc = _DcBlock(DC_BLOCK_TAPS) if key == "am" else None
+        # AM and SSB only, and see `AGC_WINDOW_S` for why not FM: their audio level IS
+        # the RF level, so the same station is as loud as the propagation makes it.
+        self._agc = _Agc(self.audio_rate_hz) if key in ("am", "usb", "lsb") else None
 
     # -- construction ---------------------------------------------------------------
 
@@ -744,12 +876,14 @@ class Demodulator:
         # the whole economy of this path: one filter, two readings.
         view = stream if wide is None else wide
         channel = self._channel.feed(stream) if self._channel is not None else stream
-        pcm, peak, clipped, rms = self._to_pcm(channel)
-        return Audio(pcm=pcm, baseband=view, peak=peak, clipped=clipped, rms=rms)
+        pcm, peak, clipped, rms, gain_db = self._to_pcm(channel)
+        return Audio(
+            pcm=pcm, baseband=view, peak=peak, clipped=clipped, rms=rms, gain_db=gain_db
+        )
 
-    def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float, float, float]:
+    def _to_pcm(self, baseband: np.ndarray) -> tuple[np.ndarray, float, float, float, float]:
         if baseband.size == 0:
-            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0
+            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0, 0.0
         audio = self._detect(baseband)
         audio = self._back.feed(audio)
         if np.iscomplexobj(audio):
@@ -760,20 +894,27 @@ class Demodulator:
         if self._dc is not None:
             audio = self._dc.feed(audio)
         if audio.size == 0:
-            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0
-        magnitude = np.abs(audio)
-        peak = float(np.max(magnitude))
-        clipped = float(np.count_nonzero(magnitude >= 1.0)) / float(audio.size)
+            return np.zeros(0, dtype=np.int16), 0.0, 0.0, 0.0, 0.0
+        # MEASURED HERE, before the AGC. `peak` and `rms` are the only honest answer this
+        # chain gives to "how strong is the signal", and `listen-probe` reads them to
+        # decide whether anything is on the air; taking them after a gain that aims at a
+        # fixed level would make a dead channel and a loud one report the same number.
+        peak = float(np.max(np.abs(audio)))
         rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
-        # Clipped, not scaled to fit. An automatic gain that rescales per buffer makes
-        # a quiet channel as loud as a strong one and destroys the only honest thing
-        # the level meter reports; clipping is what a real receiver does when it is
-        # overdriven, and it is audible as overdrive rather than invisible.
+        gain_db = 0.0
+        if self._agc is not None:
+            audio, gain_db = self._agc.feed(audio)
+        # Clipped AFTER the gain, and it is the CLIP that stays: an AGC bounded at
+        # `AGC_MAX_GAIN_DB` still meets signals it cannot fit, and clipping is what a
+        # real receiver does then — audible as overdrive rather than invisible. FM has no
+        # AGC at all (`AGC_WINDOW_S`), so for it this is exactly what it always was.
+        clipped = float(np.count_nonzero(np.abs(audio) >= 1.0)) / float(audio.size)
         return (
             np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16),
             peak,
             clipped,
             rms,
+            gain_db,
         )
 
     def _detect(self, baseband: np.ndarray) -> np.ndarray:

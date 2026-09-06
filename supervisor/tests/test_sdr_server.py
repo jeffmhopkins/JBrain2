@@ -1785,6 +1785,7 @@ class _ProbeSession:
         self.mode = "fm"
         self.overflows = 0
         self.audio_peak = 0.4
+        self.audio_gain_db = 0.0
         for key, value in over.items():
             setattr(self, key, value)
 

@@ -49,6 +49,7 @@ describe("reading a row", () => {
       // says this row is a BAND and not a tuned channel, so the tuning view knows not
       // to draw it (sdrTuning.tuningOf).
       passbandHz: 0,
+      passbandCentreHz: 0,
       channelHz: 0,
       // Band unless the row says otherwise, which is what a row from a spectrum session
       // and a row from a box that predates views both are.
@@ -91,6 +92,31 @@ describe("reading a row", () => {
   it("believes the row over the passband when the two disagree", () => {
     // A LISTENING session's band row: it has a passband, and it is not a channel.
     expect(viewOf(frame({ view: "band", passband_hz: 16_000 }))).toBe("band");
+  });
+
+  it("keeps the SIGN of the passband centre, because the sign is the sideband", () => {
+    // C14. SSB is one-sided — `usb` hears +300..+3400 Hz, `lsb` hears -3400..-300 — so
+    // a strip shading `passbandHz` centred on the dial covers half the sideband the
+    // demodulator REJECTS. Every other number here is clamped at zero; clamping this one
+    // would erase `lsb` entirely.
+    expect(parseRow(frame({ passband_centre_hz: 1_850 }))).toMatchObject({
+      passbandCentreHz: 1_850,
+    });
+    expect(parseRow(frame({ passband_centre_hz: -1_850 }))).toMatchObject({
+      passbandCentreHz: -1_850,
+    });
+  });
+
+  it("centres the passband on the dial when the box does not say otherwise", () => {
+    // Zero is what every symmetric mode sends and what a box older than the field sends,
+    // so a strip that reads it draws exactly what it drew before C14.
+    expect(parseRow(frame())).toMatchObject({ passbandCentreHz: 0 });
+    expect(parseRow(frame({ passband_centre_hz: "left" }))).toMatchObject({
+      passbandCentreHz: 0,
+    });
+    expect(parseRow(frame({ passband_centre_hz: Number.NaN }))).toMatchObject({
+      passbandCentreHz: 0,
+    });
   });
 
   it("treats a missing or nonsense passband as a band row", () => {
