@@ -155,7 +155,12 @@ export function tuningOf(row: SpectrumRow, tunedHz: number): Tuning | null {
   let high = peakAt;
   while (high < row.db.length - 1 && (row.db[high + 1] as number) >= edge) high += 1;
 
-  const hzOf = (bin: number) => row.startHz + (bin + 0.5) * row.binHz - tunedHz;
+  // NO half bin (C20). `startHz` is bin 0's CENTRE — the sidecar's `iq.Spectrometer`
+  // puts DC in bin `n / 2`, so `startHz + i * binHz` addresses bin `i` exactly. Adding
+  // half a bin put this readout half a bin off the box's own peak frequencies: 46.9 Hz
+  // on a 93.75 Hz channel row. Small, and exactly the kind of thing that is never
+  // traced, because both numbers look right on their own.
+  const hzOf = (bin: number) => row.startHz + bin * row.binHz - tunedHz;
   const fromHz = hzOf(low);
   const toHz = hzOf(high);
   const offsetHz = (fromHz + toHz) / 2;

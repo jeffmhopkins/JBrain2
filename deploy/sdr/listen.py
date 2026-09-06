@@ -301,14 +301,26 @@ def segments_for(bins: int, rate_hz: int) -> int:
     return max(IQ_SEGMENTS, min(int(want), MAX_IQ_SEGMENTS))
 
 
+#: How much of a capture is worth drawing, as (numerator, denominator) of its bins. The
+#: R820T2's IF filter rolls off across the outer ~15%, which reads on a waterfall as
+#: "that side of the band is dead".
+#:
+#: **The same pair as `bands.TRUSTED_FILL`, and named rather than inlined** (C28). It has
+#: to be a copy — `deploy/sdr/` ships in its own container and imports nothing from the
+#: backend — but a copy spelled `5 // 6` inside an expression is one a reader cannot see
+#: is a copy, and the planner and the stitcher disagreeing about it is a stitched row
+#: whose bin-to-hertz mapping is wrong with nothing to say so.
+#: `test_sdr_hops.py` loads both modules and holds them equal across the whole ladder.
+TRUSTED_FILL = (5, 6)
+
+
 def hop_usable_bins(bins: int) -> int:
     """The trusted middle of one hop, in bins, and always EVEN.
 
-    The same 5/6 the api plans against (`bands.TRUSTED_FILL`), duplicated for the reason
-    every other constant here is: `deploy/sdr/` ships in its own container and imports
-    nothing from the backend. Even, because the hop's centre sits on the boundary
-    between its two middle bins and a half-bin error accumulates across a dozen hops."""
-    return (bins * 5 // 6) // 2 * 2
+    Even, because the hop's centre sits on the boundary between its two middle bins and
+    a half-bin error accumulates across a dozen hops."""
+    numerator, denominator = TRUSTED_FILL
+    return (bins * numerator // denominator) // 2 * 2
 
 
 def hop_centres(start_hz: int, rate_hz: int, bins: int, hops: int) -> list[int]:
@@ -962,23 +974,43 @@ class Frame:
     def stop_hz(self) -> int | float:
         return self.start_hz + len(self.db) * self.bin_hz
 
+    #: The wire form, built once and handed to every subscriber (C23).
+    #:
+    #: `as_dict` rounds 4096 bins in a Python comprehension, and `/listen/spectrum`
+    #: called it PER SUBSCRIBER PER FRAME — the exact per-row cost `iq.py` says it
+    #: eliminated with `np.round`, still paid on this path, and multiplied by however
+    #: many people are watching. A frame is immutable and every subscriber gets the same
+    #: bytes, so the second reader was recomputing a value that cannot differ.
+    #:
+    #: `init=False` and `compare=False` so it stays out of the constructor, out of
+    #: equality, and out of `dataclasses.replace` — which is used to add peaks to a
+    #: frame, and must hand back a frame whose cache is empty rather than one carrying
+    #: the pre-peaks answer.
+    _wire: dict[str, Any] | None = field(default=None, init=False, compare=False, repr=False)
+
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "at": round(self.at, 3),
-            "start_hz": self.start_hz,
-            "stop_hz": self.stop_hz,
-            "bin_hz": self.bin_hz,
-            "bins": len(self.db),
-            # One decimal. rtl_power prints two, and the second is well under the
-            # noise on any real reading — it is a tenth of a dB — while it costs a
-            # character per bin on every frame of every viewer's stream.
-            "db": [round(v, 1) for v in self.db],
-            "peaks": self.peaks,
-            "passband_hz": self.passband_hz,
-            "passband_centre_hz": self.passband_centre_hz,
-            "channel_hz": self.channel_hz,
-            "view": self.view,
-        }
+        wire = self._wire
+        if wire is None:
+            wire = {
+                "at": round(self.at, 3),
+                "start_hz": self.start_hz,
+                "stop_hz": self.stop_hz,
+                "bin_hz": self.bin_hz,
+                "bins": len(self.db),
+                # One decimal. rtl_power prints two, and the second is well under the
+                # noise on any real reading — it is a tenth of a dB — while it costs a
+                # character per bin on every frame of every viewer's stream.
+                "db": [round(v, 1) for v in self.db],
+                "peaks": self.peaks,
+                "passband_hz": self.passband_hz,
+                "passband_centre_hz": self.passband_centre_hz,
+                "channel_hz": self.channel_hz,
+                "view": self.view,
+            }
+            # `object.__setattr__` because the dataclass is frozen — which is also what
+            # makes the cache safe to share: nothing it is derived from can change.
+            object.__setattr__(self, "_wire", wire)
+        return wire
 
 
 @dataclass(frozen=True, slots=True)

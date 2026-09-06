@@ -11,6 +11,8 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
+
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
 
@@ -226,3 +228,71 @@ def test_the_baseline_window_never_exceeds_a_third_of_the_row() -> None:
         assert peaks.baseline_width(bins, bin_hz, channel_hz) <= max(
             peaks.BASELINE_MIN_BINS, bins // 3
         )
+
+
+def _dial(bin_hz: float, bins: int, stations: list[tuple[float, float]]) -> list[float]:
+    """A noise floor with broadcast-shaped humps on it. Each station is (offset_hz,
+    width_hz) from bin 0 and stands 40 dB over the floor with a ragged top, because a
+    flat one would let a rule pass by finding a plateau's single argmax."""
+    db = [-90.0 + (i % 5) * 0.4 for i in range(bins)]
+    for offset_hz, width_hz in stations:
+        centre = int(offset_hz / bin_hz)
+        half = int(width_hz / bin_hz / 2)
+        for i in range(max(0, centre - half), min(bins, centre + half + 1)):
+            db[i] = -50.0 + ((i * 7) % 11) * 0.5
+    return db
+
+
+def test_two_stations_one_RASTER_apart_are_two_signals() -> None:
+    """B4. The fold rule was a GAP — "a gap up to a whole channel wide is still one
+    signal" — and two stations exactly one raster apart always have a clear gap narrower
+    than the raster between their skirts. MEASURED: two FM stations 200 kHz apart came
+    back as ONE signal, which is the failure mode where a band looks emptier than it is.
+
+    A minimum peak-to-peak DISTANCE is the right shape, and 0.6 of the raster is the
+    number `sdrPeaks.ts` already holds signals together with."""
+    bin_hz = 9_375.0
+    db = _dial(bin_hz, 512, [(1_200_000.0, 180_000.0), (1_400_000.0, 180_000.0)])
+
+    found = peaks.find(db, 95_000_000, bin_hz, channel_hz=200_000)
+
+    assert len(found) == 2, found
+    apart = abs(found[0]["hz"] - found[1]["hz"])
+    assert apart == pytest.approx(200_000, abs=2 * bin_hz)
+
+
+def test_one_broadcast_carrier_is_still_ONE_signal() -> None:
+    """The other half, and the reason the gap rule existed: a 180 kHz carrier is twenty
+    bins wide with a ragged top, and a rule that reported each local maximum would put
+    four pills on one station — which the owner saw and reported."""
+    bin_hz = 9_375.0
+    db = _dial(bin_hz, 512, [(1_200_000.0, 180_000.0)])
+
+    found = peaks.find(db, 95_000_000, bin_hz, channel_hz=200_000)
+
+    assert len(found) == 1, found
+
+
+def test_a_carrier_split_by_a_NOTCH_is_not_two_stations() -> None:
+    """Adjacency alone would split here, and the distance rule is what puts it back: two
+    fragments 20 kHz apart are far inside one 200 kHz channel."""
+    bin_hz = 9_375.0
+    db = _dial(bin_hz, 512, [(1_200_000.0, 180_000.0)])
+    notch = int(1_200_000.0 / bin_hz)
+    for i in (notch - 1, notch, notch + 1):
+        db[i] = -90.0
+
+    found = peaks.find(db, 95_000_000, bin_hz, channel_hz=200_000)
+
+    assert len(found) == 1, found
+
+
+def test_with_no_band_plan_only_adjacency_decides() -> None:
+    """`channel_hz` zero means the caller did not say — a hand-typed range, a survey of
+    an unplanned band — and inventing a spacing there would be a measurement made up."""
+    bin_hz = 9_375.0
+    db = _dial(bin_hz, 512, [(1_200_000.0, 180_000.0), (1_400_000.0, 180_000.0)])
+
+    found = peaks.find(db, 95_000_000, bin_hz)
+
+    assert len(found) == 2, found

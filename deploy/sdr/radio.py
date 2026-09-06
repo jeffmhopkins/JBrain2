@@ -196,10 +196,14 @@ class RadioBusy(RuntimeError):
 
 
 class StreamResult(Protocol):
-    """What `readStream` returns: a count, or a negative SoapySDR error code."""
+    """What `readStream` returns: a count, or a negative SoapySDR error code.
+
+    `timeNs` is a STREAM CLOCK, in nanoseconds, and whether this driver fills it at all
+    is a hardware question — `stream_clock` in `probe` is the rung that asks (C17)."""
 
     ret: int
     flags: int
+    timeNs: int
 
 
 class Device(Protocol):
@@ -691,6 +695,10 @@ class Radio:
         self._io_lock = threading.Lock()
         self._rate_hz = 0
         self._achieved_rate_hz = 0.0
+        #: The last `readStream`'s `flags` and `timeNs` (C17). Zero until something
+        #: fills them, which on this driver may be never — see `probe`'s `stream_clock`.
+        self._last_flags = 0
+        self._last_time_ns = 0
         self._center_hz = 0
         # None rather than False, so the FIRST configure always writes the branch
         # explicitly instead of inheriting whatever the last holder left it in.
@@ -1030,7 +1038,25 @@ class Radio:
             result = device.readStream(
                 stream, [view], int(view.size), 0, READ_TIMEOUT_US
             )
+            # KEPT, not discarded (C17). `ret` is a COUNT and says nothing about how much
+            # a `SOAPY_SDR_OVERFLOW` threw away — only a stream clock could, and whether
+            # this driver even fills one is a hardware question rather than a design
+            # choice. Recorded here so `probe`'s `stream_clock` rung can ask it; nothing
+            # is inferred from these until it has answered.
+            with contextlib.suppress(AttributeError, TypeError, ValueError):
+                self._last_flags = int(result.flags)
+                self._last_time_ns = int(result.timeNs)
             return int(result.ret)
+
+    @property
+    def last_stream_flags(self) -> int:
+        """`flags` from the most recent `readStream`, or 0 if it reported none."""
+        return self._last_flags
+
+    @property
+    def last_stream_time_ns(self) -> int:
+        """`timeNs` from the most recent `readStream`, or 0 if it reported none."""
+        return self._last_time_ns
 
     def _patience(self, samples: int) -> float:
         """How long `samples` may take before the stream counts as dead."""
@@ -1231,6 +1257,54 @@ def _capture(radio: Radio, bins: int) -> dict[str, Any]:
         settled=bool(first_dead) and not verdict["dead"],
     )
     return verdict
+
+
+#: How many reads the stream-clock rung takes. Enough for a `timeNs` to advance several
+#: times if it advances at all, and short enough to cost a fraction of a second.
+PROBE_CLOCK_READS = 12
+
+
+def _stream_clock(radio: Radio) -> dict[str, Any]:
+    """Does this driver fill `readStream`'s `timeNs`, and does it ADVANCE? (C17)
+
+    The question behind it: `SOAPY_SDR_OVERFLOW` says the FIFO filled and a buffer was
+    thrown away, and nothing in the API says HOW MUCH. A waterfall placing a row after a
+    drop is placing it at a time it has to guess. A stream clock would answer exactly —
+    the jump between two `timeNs` values IS the loss — so the first thing to establish is
+    whether there is one.
+
+    A rung rather than a change, because it is a fact about SoapyRTLSDR and this board,
+    and the alternative on offer — multiply the overflow count by `bufflen` — is an
+    ESTIMATE that would be read as a measurement, which is the failure this plan has
+    named six times."""
+    radio.barrier(0.0)
+    scratch = np.empty(samples_per_buffer(DEFAULT_BUFFLEN_BYTES), dtype=np.complex64)
+    stamps: list[int] = []
+    flags: list[int] = []
+    elems: list[int] = []
+    for _ in range(PROBE_CLOCK_READS):
+        got = radio.read_into(scratch)
+        if got > 0:
+            stamps.append(radio.last_stream_time_ns)
+            flags.append(radio.last_stream_flags)
+            elems.append(got)
+    moved = [b - a for a, b in zip(stamps, stamps[1:], strict=False) if b > a]
+    # From what a read actually DELIVERED, not from what was asked for: `readStream`
+    # returns at most what is left of the buffer it is draining, so the two differ by
+    # whatever `bufflen` really is — and comparing a clock's step against the wrong
+    # number would answer "this clock is a counter" about a perfectly good one.
+    delivered = sorted(elems)[len(elems) // 2] if elems else 0
+    wanted_ns = int(delivered / max(radio.rate_hz, 1) * 1e9)
+    return {
+        "reads": len(stamps),
+        "time_ns_filled": bool([s for s in stamps if s]),
+        "time_ns_advances": bool(moved),
+        # What one buffer OUGHT to be worth, so a clock that moves can be checked
+        # against the rate rather than merely observed to change.
+        "expected_step_ns": wanted_ns,
+        "median_step_ns": int(sorted(moved)[len(moved) // 2]) if moved else None,
+        "flags_seen": sorted({f for f in flags}),
+    }
 
 
 def _callback_period(radio: Radio) -> dict[str, Any]:
@@ -2102,6 +2176,9 @@ def _probe_open(
             )
 
         out["bufflen"] = _answered("bufflen", lambda: _callback_period(radio))
+        # C17: can this driver say how much an overflow threw away? Only a stream clock
+        # could, so ask whether there is one before designing against it.
+        out["stream_clock"] = _answered("stream_clock", lambda: _stream_clock(radio))
         if not out["bufflen"].get("took"):
             findings.append(
                 f"`bufflen` did NOT take: buffers measured "

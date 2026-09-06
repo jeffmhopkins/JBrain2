@@ -37,6 +37,7 @@ sys.modules["sdr_server"] = server
 _spec.loader.exec_module(server)
 listen = sys.modules["listen"]
 iq = sys.modules["iq"]
+peaks = sys.modules["peaks"]
 
 
 class _FakeProc:
@@ -2029,3 +2030,28 @@ def test_a_spectrum_probe_finds_ITS_session_while_another_radio_listens(
     # ...and the probe released only its own radio: the listener is still up.
     _, health = _get(sidecar, "/healthz")
     assert [s["serial"] for s in health["sessions"]] == [WHIP]
+
+
+def test_the_probe_and_the_PEAK_FINDER_are_on_one_frequency_grid() -> None:
+    """C20. `iq.Spectrometer.start_hz` is bin 0's CENTRE — `fftshift` puts DC in bin
+    `n // 2`, so `start_hz + i * bin_hz` addresses bin `i` exactly, which is what
+    `Spectrum.stop_hz`'s own comment says and what `peaks.find` does.
+
+    `_channel_centre` added half a bin, so the probe's tuning readout and the box's own
+    peak frequencies sat on grids half a bin apart — 46.9 Hz on a 93.75 Hz channel row.
+    Two numbers, both plausible, never traced. The check is that the two agree, not that
+    either matches an arithmetic this test does over again."""
+    bins, bin_hz, start_hz = 341, 93.75, 146_924_015.0
+    db = [-78.0] * bins
+    at = 200  # a signal centred on ONE bin, so "the centre" is unambiguous
+    db[at] = -30.0
+    frame = listen.Frame(at=0.0, start_hz=start_hz, bin_hz=bin_hz, db=db)
+    middle = start_hz + bins / 2 * bin_hz
+
+    offset, peak_at = server._channel_centre(frame, middle)
+    found = peaks.find(db, start_hz, bin_hz, limit=1)
+
+    assert peak_at == at
+    assert found[0]["hz"] == pytest.approx(middle + offset, abs=0.05)
+    # ...and on the grid itself: bin `at` is exactly `at` bins above bin 0's centre.
+    assert found[0]["hz"] == pytest.approx(start_hz + at * bin_hz, abs=0.05)

@@ -7,6 +7,7 @@ pipeline itself needs hardware, so it is faked at the subprocess seam.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import sys
 import time
@@ -3209,3 +3210,41 @@ def test_a_symmetric_mode_shades_exactly_where_it_always_did(iq_tuner) -> None:
         assert (frame.stop_hz - frame.start_hz) == pytest.approx(32_000.0, rel=0.05)
     finally:
         iq_tuner.stop()
+
+
+class TestTheWireFormIsBuiltOnce:
+    """C23. `as_dict` rounds every bin in a Python comprehension, and the frames route
+    called it PER SUBSCRIBER PER FRAME — the exact per-row cost `iq.py` says it removed
+    with `np.round`, still paid here and multiplied by however many people are watching.
+    A frame is frozen and every subscriber gets the same bytes."""
+
+    def _frame(self) -> Any:
+        return listen.Frame(
+            at=1.0, start_hz=144_000_000, bin_hz=93.75, db=[-70.04] * 512
+        )
+
+    def test_two_readers_get_the_same_object_rather_than_two_equal_ones(self) -> None:
+        frame = self._frame()
+
+        assert frame.as_dict() is frame.as_dict()
+
+    def test_the_answer_is_the_same_one_it_always_was(self) -> None:
+        """A cache that changed the answer would be a worse defect than the cost."""
+        wire = self._frame().as_dict()
+
+        assert wire["db"][0] == -70.0
+        assert wire["bins"] == 512
+        assert wire["start_hz"] == 144_000_000
+
+    def test_a_frame_derived_from_another_does_not_inherit_its_cache(self) -> None:
+        """`_publish_frame` uses `dataclasses.replace` to add peaks to a frame that has
+        often already been serialised. Carrying the cache across would publish the
+        PRE-PEAKS answer with the peaks silently missing — a row that says a quiet band,
+        which is a real answer and so unfalsifiable from outside."""
+        before = self._frame()
+        before.as_dict()
+
+        after = dataclasses.replace(before, peaks=[{"hz": 144_000_000, "db": -30.0}])
+
+        assert after.as_dict()["peaks"] == [{"hz": 144_000_000, "db": -30.0}]
+        assert before.as_dict()["peaks"] == []

@@ -70,11 +70,15 @@ SETTLING_GAIN = 0.25
 
 
 class _Result:
-    """`readStream`'s return: a count, or a negative SoapySDR error code."""
+    """`readStream`'s return: a count, or a negative SoapySDR error code.
 
-    def __init__(self, ret: int, flags: int = 0) -> None:
+    `timeNs` defaults to 0, which is what a driver that fills no stream clock leaves it
+    at — the case C17's rung exists to detect on the real board."""
+
+    def __init__(self, ret: int, flags: int = 0, time_ns: int = 0) -> None:
         self.ret = ret
         self.flags = flags
+        self.timeNs = time_ns
 
 
 class _FakeRange:
@@ -109,6 +113,10 @@ class _FakeDevice:
         self.unmade = False
         self.bufflen = radio.DEFAULT_BUFFLEN_BYTES
         self._k = 0  # sample counter, so the tone's phase survives across reads
+        # A stream clock that FILLS AND ADVANCES, so C17's rung has both answers to
+        # choose between here — the real board may fill neither, which is the finding.
+        self.stream_time_ns = 0
+        self.stream_flags = 0
         self._noise = np.random.default_rng(20260905)
         # Samples of disturbed output still owed after the last retune, and how many
         # there were, so the decay can be indexed by how far through it is.
@@ -265,7 +273,10 @@ class _FakeDevice:
                 self._settling -= spoilt
             view[:elems] = block.astype(np.complex64)
         self._say("readStream", elems)
-        return _Result(elems)
+        # A stream clock that ADVANCES by one buffer's worth of time, so C17's rung has
+        # something to measure. The real driver may fill neither — which is the finding.
+        self.stream_time_ns += int(elems / max(self.rate or 1.0, 1.0) * 1e9)
+        return _Result(elems, flags=self.stream_flags, time_ns=self.stream_time_ns)
 
 
 class _FakeDriver:
@@ -1955,3 +1966,71 @@ def test_the_gain_is_not_written_where_there_is_no_tuner() -> None:
         assert held.gain_state() == {"tuner_bypassed": True}
     finally:
         held.close()
+
+
+def test_the_probe_asks_whether_there_is_a_STREAM_CLOCK_at_all() -> None:
+    """C17. `SOAPY_SDR_OVERFLOW` says the FIFO filled and a buffer was thrown away, and
+    nothing in the API says HOW MUCH — a waterfall placing a row after a drop is placing
+    it at a time it has to guess. A stream clock would answer exactly, because the jump
+    between two `timeNs` values IS the loss.
+
+    A rung rather than a change, because whether SoapyRTLSDR fills `timeNs` on this
+    board is a fact to find out. The alternative on offer — overflows times `bufflen`
+    — is an estimate that would be read as a measurement, which is the failure this
+    plan has named six times."""
+    out = radio.probe(driver=_FakeDriver())
+
+    clock = out["stream_clock"]
+    assert clock["reads"] > 0
+    # The rung REPORTS; it does not decide. Both answers are findings-free, because
+    # "this driver has no stream clock" is a fact about the hardware and not a fault.
+    assert set(clock) >= {
+        "time_ns_filled",
+        "time_ns_advances",
+        "expected_step_ns",
+        "median_step_ns",
+        "flags_seen",
+    }
+    assert clock["expected_step_ns"] > 0
+
+
+def test_a_stream_clock_that_advances_is_reported_with_its_STEP() -> None:
+    """A clock that moves is only useful if its step can be checked against the rate —
+    "it changed" and "it advanced by one buffer's worth of time" are different claims,
+    and only the second could ever say how much an overflow threw away."""
+    out = radio.probe(driver=_FakeDriver())
+    clock = out["stream_clock"]
+
+    assert clock["time_ns_filled"] is True
+    assert clock["time_ns_advances"] is True
+    step, wanted = clock["median_step_ns"], clock["expected_step_ns"]
+    assert step is not None and wanted > 0
+    # Within a factor of two of one buffer's worth of time, which is the check that
+    # distinguishes a real clock from a counter that merely increments.
+    assert 0.5 <= step / wanted <= 2.0, (step, wanted)
+
+
+def test_a_driver_with_NO_stream_clock_is_reported_as_such() -> None:
+    """And the other answer, which is the one the real board may give: `timeNs` left at
+    zero. Not a finding — a driver without a stream clock is a fact about the hardware,
+    not a fault — but it IS what closes C17 with "the driver cannot say" rather than
+    leaving the question open."""
+
+    class _Mute(_FakeDriver):
+        def make(self, args: dict[str, str]) -> Any:
+            device = super().make(args)
+            real = device.readStream
+
+            def hushed(*a: Any, **k: Any) -> Any:
+                result = real(*a, **k)
+                result.timeNs = 0
+                return result
+
+            device.readStream = hushed  # type: ignore[method-assign]
+            return device
+
+    clock = radio.probe(driver=_Mute())["stream_clock"]
+
+    assert clock["time_ns_filled"] is False
+    assert clock["time_ns_advances"] is False
+    assert clock["median_step_ns"] is None

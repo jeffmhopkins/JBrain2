@@ -58,6 +58,14 @@ MAX_PEAKS = 24
 #: three times — seen by the owner on the FM dial. Three bins is far narrower than any
 #: channel and far wider than a bin of noise.
 MIN_FOLD_BINS = 3
+#: How close two SEPARATE signals may be, as a share of the channel raster. The same 0.6
+#: `frontend/src/sdrPeaks.ts` holds signals together with, and deliberately the same: the
+#: browser folds this list across rows using that number, so a box that split more finely
+#: than the client merges would send pills the client then has to un-split.
+#:
+#: 120 kHz on the FM dial covers a broadcast carrier's loudest bin wandering across its
+#: own 180 kHz width; 15 kHz on the 2 m plan's 25 kHz channels.
+SAME_SIGNAL_SHARE = 0.6
 
 
 def _median(values: list[float]) -> float:
@@ -174,27 +182,62 @@ def find(
     if not over:
         return []
 
-    # Grouped by ADJACENCY and not snapped to a grid, for `sweep.py`'s reason: real band
-    # plans are not anchored at 0 Hz, so two bins either side of a boundary would be
-    # reported as two signals by a rule that rounds. `channel_hz` zero means the caller
-    # did not say, and then only touching bins are the same signal — a 16 kHz
-    # transmission in a 9 kHz row would otherwise read as several stations a few kHz
-    # apart, which is not a thing that happens.
-    # Never below `MIN_FOLD_BINS`: `channel_hz` zero means the caller did not say, and
-    # "only touching bins" is a rule that splits a carrier the moment noise dips one bin
-    # inside it. The band plan widens this; it can no longer narrow it to nothing.
-    apart = max(MIN_FOLD_BINS, int(max(channel_hz, 0) // bin_hz))
-    signals: list[tuple[int, float, float]] = []
+    # TWO rules, because they answer two different questions (B4).
+    #
+    # **Adjacency**, first, and not snapped to a grid — for `sweep.py`'s reason: real
+    # band plans are not anchored at 0 Hz, so two bins either side of a boundary would be
+    # reported as two signals by a rule that rounds. A run is broken only by a gap wider
+    # than `MIN_FOLD_BINS`, which is what stops noise dipping one bin inside a carrier
+    # from splitting it in two.
+    runs: list[list[tuple[int, float, float]]] = []
     cluster: list[tuple[int, float, float]] = []
     for entry in over:
-        if cluster and entry[0] - cluster[-1][0] > apart:
-            signals.append(max(cluster, key=lambda e: e[1]))
+        if cluster and entry[0] - cluster[-1][0] > MIN_FOLD_BINS:
+            runs.append(cluster)
             cluster = []
         cluster.append(entry)
     if cluster:
-        signals.append(max(cluster, key=lambda e: e[1]))
+        runs.append(cluster)
+
+    # **Then the raster, applied to a run's WIDTH** — which is where the old rule was
+    # wrong (B4). It asked whether the GAP between two above-threshold stretches was
+    # wider than a whole channel, and two stations one raster apart never have such a
+    # gap: each is most of a channel wide, and what separates their skirts is the
+    # remainder. MEASURED: two FM stations 200 kHz apart came back as ONE signal, which
+    # is the failure where a band reads emptier than it is.
+    #
+    # A run 380 kHz wide on a 200 kHz raster is not one station with a carrier twice the
+    # legal width; it is two. So a run holds `round(width / channel)` of them, and each
+    # equal share's strongest bin is where one is — the division puts its boundaries at
+    # the midpoints between stations, which is exactly where the skirts meet.
+    signals: list[tuple[int, float, float]] = []
+    for run in runs:
+        width_hz = (run[-1][0] - run[0][0] + 1) * bin_hz
+        parts = max(1, round(width_hz / channel_hz)) if channel_hz > 0 else 1
+        if parts == 1:
+            signals.append(max(run, key=lambda e: e[1]))
+            continue
+        span = len(run) / parts
+        for part in range(parts):
+            piece = run[int(part * span) : int((part + 1) * span)]
+            if piece:
+                signals.append(max(piece, key=lambda e: e[1]))
 
     signals.sort(key=lambda e: -e[1])
+    # ...and the same raster the other way, to put back what ADJACENCY oversplits. A
+    # carrier with a deep notch in it arrives as two runs, each well under a channel
+    # wide, and two fragments 90 kHz apart on a 200 kHz raster are one station. 0.6 is
+    # the share `frontend/src/sdrPeaks.ts` already holds signals together with, and it is
+    # the same quantity — a box that split more finely than the client merges would send
+    # pills the client then has to un-split. Strongest first, so the survivor is the one
+    # that was actually louder.
+    apart_bins = SAME_SIGNAL_SHARE * channel_hz / bin_hz if channel_hz > 0 else 0.0
+    if apart_bins > 0:
+        kept: list[tuple[int, float, float]] = []
+        for entry in signals:
+            if all(abs(entry[0] - other[0]) >= apart_bins for other in kept):
+                kept.append(entry)
+        signals = kept
     return [
         {
             "hz": round(start_hz + index * bin_hz, 1),
