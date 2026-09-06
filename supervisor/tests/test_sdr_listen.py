@@ -8,7 +8,6 @@ pipeline itself needs hardware, so it is faked at the subprocess seam.
 from __future__ import annotations
 
 import importlib.util
-import queue
 import sys
 import time
 from pathlib import Path
@@ -1478,210 +1477,44 @@ class TestShortwave:
 # --- the live spectrum ----------------------------------------------------------
 
 
-def _row(stamp: str, low: int, step: int, *db: float) -> str:
-    """One rtl_power CSV line, in the shape the tool actually writes."""
-    high = low + len(db) * step
-    values = ", ".join(f"{v:.2f}" for v in db)
-    return f"{stamp}, {low}, {high}, {step:.2f}, 12, {values}"
-
-
-class TestStitchingRowsIntoFrames:
-    """rtl_power's rows back into whole waterfall rows, with no radio in sight.
-
-    This is where the awkward cases live, and all of them are text: a sweep wider than
-    the radio's window arrives as several rows per interval, they do not arrive in band
-    order, and a row can be torn or lost while the tool is still writing. `Stitch` is
-    pure so every one of those can be provoked exactly rather than waited for.
-    """
-
-    def test_one_block_per_interval_is_one_frame(self) -> None:
-        """The common case — a span inside the radio's own window — and the one the
-        learned width pays off hardest on: once the first interval has shown that a
-        frame is one row, every row after it is a finished frame the moment it lands."""
-        stitch = listen.Stitch()
-
-        first = stitch.push(
-            _row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0)
-        )
-        second = stitch.push(
-            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0, -61.0)
-        )
-
-        assert first == []  # nothing yet knows how wide a frame is
-        assert [f.db for f in second] == [[-70.0, -71.0], [-60.0, -61.0]]
-
-    def test_a_wide_sweep_is_stitched_into_one_frame_in_band_order(self) -> None:
-        """The blocks do NOT arrive low-to-high, and a waterfall drawn in arrival order
-        is a picture with its halves swapped."""
-        stitch = listen.Stitch()
-
-        stitch.push(_row("2026-09-04, 13:00:00", 144_100_000, 25_000, -60.0, -61.0))
-        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0))
-        frames = stitch.push(
-            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0, -71.0)
-        )
-
-        assert len(frames) == 1
-        assert frames[0].start_hz == 144_000_000
-        assert frames[0].db == [-70.0, -71.0, -60.0, -61.0]
-
-    def test_once_the_width_is_known_a_frame_lands_without_waiting_a_second(
-        self,
-    ) -> None:
-        """The whole reason the width is learned: waiting for the NEXT interval to prove
-        a frame complete costs every frame a second of latency."""
-        stitch = listen.Stitch()
-        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
-        stitch.push(_row("2026-09-04, 13:00:00", 144_025_000, 25_000, -60.0))
-        stitch.push(
-            _row("2026-09-04, 13:00:01", 144_000_000, 25_000, -71.0)
-        )  # learns 2
-
-        # The second block of the SECOND interval completes it on arrival.
-        frames = stitch.push(_row("2026-09-04, 13:00:01", 144_025_000, 25_000, -61.0))
-
-        assert len(frames) == 1
-        assert frames[0].db == [-71.0, -61.0]
-
-    def test_a_dropped_block_costs_one_short_frame_not_every_frame_after_it(
-        self,
-    ) -> None:
-        """`max` in `_flush`, and it is load-bearing: a plain assignment would teach the
-        eager path the SHORT width, and every frame after a single lost row would be cut
-        to match — a waterfall that silently loses half its band and never recovers."""
-        stitch = listen.Stitch()
-        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
-        stitch.push(_row("2026-09-04, 13:00:00", 144_025_000, 25_000, -60.0))
-        stitch.push(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -71.0))
-
-        # Interval :01 loses its second block entirely; :02 arrives whole.
-        short = stitch.push(_row("2026-09-04, 13:00:02", 144_000_000, 25_000, -72.0))
-        whole = stitch.push(_row("2026-09-04, 13:00:02", 144_025_000, 25_000, -62.0))
-
-        assert len(short) == 1 and short[0].db == [-71.0]
-        assert len(whole) == 1 and whole[0].db == [-72.0, -62.0]
-
-    def test_a_repeated_block_ends_the_frame_even_if_the_clock_did_not(self) -> None:
-        """Belt and braces for a loaded box stamping two intervals alike. Without it the
-        second reading would overwrite the first and the frame would never complete."""
-        stitch = listen.Stitch()
-        stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
-        frames = stitch.push(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -80.0))
-
-        # Two readings of one block are two intervals, whatever the clock said.
-        assert [f.db for f in frames] == [[-70.0], [-80.0]]
-
-    def test_a_torn_line_is_skipped_not_raised(self) -> None:
-        # This parses text a radio is still writing. One lost row must not end the
-        # picture.
-        stitch = listen.Stitch()
-        assert stitch.push("2026-09-04, 13:00:00, 1440000") == []
-        assert stitch.push("") == []
-        assert stitch.push("2026-09-04, 13:00:00, x, y, z, 12, -70.0") == []
-
-    def test_a_frame_addresses_its_own_bins(self) -> None:
-        """`start_hz + i * bin_hz` has to land on bin i, whatever rtl_power reported
-        about the block edges — the renderer has no other way to place a column."""
-        stitch = listen.Stitch()
-        stitch.push(
-            _row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0, -72.0)
-        )
-        frames = stitch.push(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -70.0))
-
-        frame = frames[0]
-        assert frame.stop_hz == frame.start_hz + len(frame.db) * frame.bin_hz
-        assert frame.as_dict()["bins"] == 3
-
-
-class _Pipe:
-    """One process's stdout. Ends when the process is killed, as a real pipe does."""
-
-    def __init__(self) -> None:
-        self._q: queue.Queue[bytes | None] = queue.Queue()
-
-    def put(self, line: str) -> None:
-        self._q.put(line.encode() + b"\n")
-
-    def close(self) -> None:
-        self._q.put(None)
-
-    def read(self, _n: int = 0) -> bytes:
-        return b""
-
-    def __iter__(self):
-        while True:
-            item = self._q.get()
-            if item is None:
-                return
-            yield item
-
-
-class _Feed:
-    """rtl_power's stdout, driven by the test: `emit()` a line, the pump reads it.
-
-    A queue rather than a fixed list of rows, so a test can attach a viewer BEFORE any
-    row exists and then provoke exactly the one it wants — no sleeps anywhere.
-
-    A FRESH pipe per launch, and `emit` always writes to the newest. A retune relaunches
-    the process, and a single shared queue would leave the old pump thread sitting on it
-    beside the new one, splitting the rows between them at random."""
-
-    def __init__(self) -> None:
-        self.pipes: list[_Pipe] = []
-
-    def open(self) -> _Pipe:
-        pipe = _Pipe()
-        self.pipes.append(pipe)
-        return pipe
-
-    def emit(self, line: str) -> None:
-        self.pipes[-1].put(line)
-
-    def close(self) -> None:
-        for pipe in self.pipes:
-            pipe.close()
-
-
 class TestTheLiveSpectrum:
     """A waterfall is a radio held open, not a measurement that ends.
 
     That is the whole difference from `survey`, and every test here is about a
-    consequence of it: no exit timer, rows on stdout instead of a file read back, and a
+    consequence of it: no exit timer, rows fanned out as they are transformed, and a
     session that has to be released like a listening one rather than freeing itself.
+
+    **There is one engine now (B1).** The tests that asserted `rtl_power`'s argv are
+    gone with the tool; what is left is what a picture has to do whoever draws it, and
+    it is checked against a fake RADIO rather than a fake process.
     """
 
-    @pytest.fixture
-    def feed(self) -> Any:
-        return _Feed()
+    CAPTURE = (2_400_000, 512)
 
     @pytest.fixture
-    def tuner(self, monkeypatch: pytest.MonkeyPatch, feed) -> Any:
-        launched: list[list[str]] = []
+    def tuner(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        opened: list[Any] = []
 
-        class _Fed(_FakeProc):
-            def __init__(self, argv, *a: Any, **k: Any) -> None:
-                launched.append(list(argv))
-                super().__init__(argv, *a, **k)
-                self.stdout = feed.open()
-
-            def kill(self) -> None:
-                # A killed process closes its pipe, and the reader ends. Without this
-                # the pump thread would block on the queue for ever and a retune would
-                # sit out `_restart`'s join timeout on every test that provokes one.
-                super().kill()
-                self.stdout.close()
+        def _open(*, center_hz: int, rate_hz: int, **kwargs: Any) -> Any:
+            made = _FakeRadio(center_hz, station_hz=center_hz, rate_hz=rate_hz)
+            made.opened_with = kwargs  # type: ignore[attr-defined]
+            opened.append(made)
+            return made
 
         _instant(monkeypatch)
         monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
-        monkeypatch.setattr(listen.subprocess, "Popen", _Fed)
+        monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
         tuner = listen.Tuner()
-        tuner._launched_argv = launched  # type: ignore[attr-defined]
+        tuner.opened = opened  # type: ignore[attr-defined]
         yield tuner
-        feed.close()
         tuner.stop()
 
-    def _sweep(self, start: int = 144_000_000, stop: int = 144_200_000) -> Any:
-        return listen.Sweep.of(start, stop, 25_000, 60)
+    def _sweep(
+        self, start: int = 144_000_000, stop: int = 144_200_000, **kw: Any
+    ) -> Any:
+        kw.setdefault("capture", self.CAPTURE)
+        return listen.Sweep.of(start, stop, 25_000, 60, **kw)
 
     def _start(self, tuner, **kw: Any) -> Any:
         tuner.start(
@@ -1709,12 +1542,11 @@ class TestTheLiveSpectrum:
         assert body["purpose"] == listen.PURPOSE_SPECTRUM
         # The range, so the waterfall can label its own axis. `frequency_hz` can only
         # carry the midpoint, which reads as a tuner parked somewhere it is not.
-        assert body["sweep"] == {
-            "start_hz": 144_000_000,
-            "stop_hz": 144_200_000,
-            "bin_hz": 25_000,
-            "seconds": 60.0,
-        }
+        assert body["sweep"]["start_hz"] == 144_000_000
+        assert body["sweep"]["stop_hz"] == 144_200_000
+        assert body["sweep"]["seconds"] == 60.0
+        # ...and the capture that draws it, which IS the engine choice.
+        assert (body["sweep"]["rate_hz"], body["sweep"]["bins"]) == self.CAPTURE
         assert body["frequency_hz"] == 144_100_000
 
     def test_a_spectrum_cannot_steal_the_radio_from_APRS(self, tuner) -> None:
@@ -1750,68 +1582,71 @@ class TestTheLiveSpectrum:
 
         assert "coarser bins" in str(refused.value)
 
-    # ---- the command ----------------------------------------------------------
+    def test_a_range_with_no_capture_plan_is_refused_not_drawn_another_way(
+        self, tuner
+    ) -> None:
+        """B1. There is no second engine, and that is the point rather than a gap:
+        `rtl_power` measured on a scale of its own, both engines landed on the same
+        `Frame.db`, and `peaks.find` over it reaches the agent's tools as fact. A
+        picture that is a different QUANTITY depending on who drew it is worse than no
+        picture, so a range with no plan is a sentence."""
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                144_000_000,
+                "fm",
+                None,
+                purpose=listen.PURPOSE_SPECTRUM,
+                sweep=listen.Sweep.of(144_000_000, 144_200_000, 25_000, 60),
+            )
 
-    def test_the_command_never_carries_an_exit_timer(self, tuner) -> None:
-        """THE defining difference from a survey. `-e` would make the picture stop on
-        its own after a minute, and the radio free itself under a viewer still watching
-        — with nothing but a frozen waterfall to say so."""
-        session = self._start(tuner, gain="30")
-        cmd = session._spectrum_cmd()
+        assert "no capture plan" in str(refused.value)
+        assert tuner.sessions() == []  # and no radio was taken for it
 
-        assert "-e" not in cmd
-        assert cmd[-1] == "-"  # stdout, so rows can be fanned out as they are measured
-        assert "144000000:144200000:25000" in cmd
-        assert cmd[cmd.index("-i") + 1] == "1"
-        assert cmd[cmd.index("-g") + 1] == "30"
+    # ---- the radio ------------------------------------------------------------
 
     def test_a_live_spectrum_fixes_the_gain_even_when_nobody_asked(self, tuner) -> None:
-        """Same fault as the survey's, and worse on a picture: a waterfall whose dB
-        scale is a property of whatever the tuner's AGC was doing has no two rows that
-        mean the same thing, and no two runs either."""
-        session = self._start(tuner)
-        assert session._spectrum_cmd()[session._spectrum_cmd().index("-g") + 1] == str(
-            listen.MEASURING_GAIN_DB
-        )
+        """A waterfall whose dB scale is a property of whatever the tuner's AGC was
+        doing has no two rows that mean the same thing, and no two runs either."""
+        self._start(tuner)
 
-    def test_the_rows_are_line_buffered_when_stdbuf_is_here(self, tuner) -> None:
-        session = self._start(tuner)
-        assert session._spectrum_cmd()[:3] == ["stdbuf", "-oL", "rtl_power"]
+        assert tuner.opened[0].gain_db == listen.MEASURING_GAIN_DB
 
-    def test_and_the_tool_still_runs_when_it_is_not(self, tuner, monkeypatch) -> None:
-        # `stdbuf` is insurance, not a dependency: an image without it must still sweep.
-        monkeypatch.setattr(listen, "_LINE_BUFFERED", False)
-        session = self._start(tuner)
-        assert session._spectrum_cmd()[0] == "rtl_power"
+    def test_the_owners_gain_wins_when_they_name_one(self, tuner) -> None:
+        self._start(tuner, gain="30")
+
+        assert tuner.opened[0].gain_db == 30.0
 
     def test_it_opens_the_radio_it_was_told_to(self, tuner) -> None:
-        session = self._start(tuner, serial="77192819")
-        cmd = session._spectrum_cmd()
-        assert cmd[cmd.index("-d") + 1] == "77192819"
+        self._start(tuner, serial="77192819")
+
+        assert tuner.opened[0].opened_with["serial"] == "77192819"
+
+    def test_it_captures_at_the_rate_the_plan_named(self, tuner) -> None:
+        """The band table lives in ONE place and the sidecar executes what it was
+        handed: a rate chosen here would be a second table that disagrees."""
+        self._start(tuner)
+
+        assert tuner.opened[0].rate_hz == self.CAPTURE[0]
+        assert tuner.opened[0].center_hz == 144_100_000
 
     # ---- frames reaching viewers ----------------------------------------------
 
-    def test_a_viewer_is_handed_the_rows_as_they_are_measured(
-        self, tuner, feed
-    ) -> None:
+    def test_a_viewer_is_handed_the_rows_as_they_are_measured(self, tuner) -> None:
         session = self._start(tuner)
         sub = session.subscribe_frames()
 
-        feed.emit(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0, -71.0))
-        feed.emit(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0, -61.0))
-
         frame = sub.get(timeout=5)
-        assert frame is not None and frame.db == [-70.0, -71.0]
 
-    def test_a_viewer_arriving_late_is_not_shown_a_blank_canvas(
-        self, tuner, feed
-    ) -> None:
+        assert frame is not None
+        assert frame.view == listen.VIEW_BAND
+        assert len(frame.db) == self.CAPTURE[1]
+        assert frame.bin_hz == self.CAPTURE[0] / self.CAPTURE[1]
+
+    def test_a_viewer_arriving_late_is_not_shown_a_blank_canvas(self, tuner) -> None:
         """The seeded row. Without it a waterfall opens on nothing for up to a whole
         interval, which reads as a radio that did not start."""
         session = self._start(tuner)
         early = session.subscribe_frames()
-        feed.emit(_row("2026-09-04, 13:00:00", 144_000_000, 25_000, -70.0))
-        feed.emit(_row("2026-09-04, 13:00:01", 144_000_000, 25_000, -60.0))
         early.get(timeout=5)  # the pump has certainly published by now
 
         late = session.subscribe_frames()
@@ -1819,7 +1654,7 @@ class TestTheLiveSpectrum:
         assert late.get_nowait() is not None
 
     def test_a_backed_up_viewer_loses_rows_and_never_wedges_the_pump(
-        self, tuner, feed
+        self, tuner
     ) -> None:
         """A phone that stopped reading must cost that phone its picture, not everyone
         else's — the same backpressure live audio takes, and for the same reason: a
@@ -1828,16 +1663,12 @@ class TestTheLiveSpectrum:
         stalled = session.subscribe_frames()
         reading = session.subscribe_frames()
 
-        for interval in range(listen.SPECTRUM_QUEUE + 6):
-            feed.emit(
-                _row(f"2026-09-04, 13:00:{interval:02d}", 144_000_000, 25_000, -70.0)
-            )
-            if interval:
-                assert reading.get(timeout=5) is not None
+        for _ in range(listen.SPECTRUM_QUEUE + 6):
+            assert reading.get(timeout=5) is not None
 
         assert stalled.qsize() == listen.SPECTRUM_QUEUE
 
-    def test_releasing_the_radio_closes_every_viewers_stream(self, tuner, feed) -> None:
+    def test_releasing_the_radio_closes_every_viewers_stream(self, tuner) -> None:
         """Without the sentinel a released session leaves a server thread per viewer
         blocked for ever, each still reporting a healthy picture of a radio nothing is
         watching — the same leak the packet readers had."""
@@ -1846,13 +1677,12 @@ class TestTheLiveSpectrum:
 
         tuner.stop(session.id)
 
-        assert sub.get(timeout=5) is None
+        while sub.get(timeout=5) is not None:
+            pass  # the rows already queued, then the sentinel behind them
 
     # ---- moving it ------------------------------------------------------------
 
-    def test_moving_the_range_keeps_the_session_and_its_viewers(
-        self, tuner, feed
-    ) -> None:
+    def test_moving_the_range_keeps_the_session_and_its_viewers(self, tuner) -> None:
         session = self._start(tuner)
         sub = session.subscribe_frames()
         was = session.id
@@ -1866,24 +1696,25 @@ class TestTheLiveSpectrum:
         # And the viewer was never told anything — no sentinel, no reconnect. The next
         # row simply describes the new band, which is what every frame carrying its own
         # range buys.
-        feed.emit(_row("2026-09-04, 13:01:00", 440_000_000, 25_000, -70.0))
-        feed.emit(_row("2026-09-04, 13:01:01", 440_000_000, 25_000, -71.0))
-        frame = sub.get(timeout=5)
-        assert frame is not None and frame.start_hz == 440_000_000
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            frame = sub.get(timeout=5)
+            assert frame is not None
+            if frame.start_hz > 400_000_000:
+                break
+        else:  # pragma: no cover - the loop above returns on the first new-band row
+            raise AssertionError("no row described the new band")
 
-    def test_a_refused_shortwave_retune_leaves_the_picture_running(
-        self, tuner, feed
+    def test_a_retune_with_no_capture_plan_leaves_the_picture_running(
+        self, tuner
     ) -> None:
         """The tap that must not cost the owner their radio.
 
-        F8 opened the ten HF rows one wave before F6 replaces the engine, so "watching
-        2 m, tap 40 m" is now one tap: the band sheet offers it, the route passes it
-        through, and the sidecar refuses it. Refusing from inside the relaunch would
-        refuse AFTER `_restart` had killed the pipeline and written the new range —
-        `alive` false, the next `Tuner._reap` stopping the session and dropping the
-        lease, and the error toast landing on a screen that had just lost the waterfall
-        AND the radio. Validated before anything is destroyed, the tap costs a sentence.
-        """
+        Refusing from inside the relaunch would refuse AFTER `_restart` had killed the
+        pipeline and written the new range — `alive` false, the next `Tuner._reap`
+        stopping the session and dropping the lease, and the error toast landing on a
+        screen that had just lost the waterfall AND the radio. Validated before anything
+        is destroyed, the tap costs a sentence."""
         session = self._start(tuner)
         sub = session.subscribe_frames()
 
@@ -1892,7 +1723,7 @@ class TestTheLiveSpectrum:
                 listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True)
             )
 
-        assert "I/Q engine" in str(refused.value)
+        assert "no capture plan" in str(refused.value)
         # Still running, still leased, and still the session the omnibox names —
         # `current()` takes the lock and reaps, so this is the reaper's own verdict.
         assert session.alive
@@ -1904,15 +1735,31 @@ class TestTheLiveSpectrum:
         assert session.frequency_hz == 144_100_000
         # The viewer was never disconnected either — no sentinel, and the picture it is
         # already watching keeps arriving.
-        feed.emit(_row("2026-09-04, 13:01:00", 144_000_000, 25_000, -70.0))
-        feed.emit(_row("2026-09-04, 13:01:01", 144_000_000, 25_000, -71.0))
         frame = sub.get(timeout=5)
-        assert frame is not None and frame.start_hz == 144_000_000
+        assert frame is not None and frame.start_hz < 200_000_000
+
+    def test_shortwave_with_a_capture_plan_is_drawn_rather_than_refused(
+        self, tuner
+    ) -> None:
+        """F6's gain, kept: the I/Q engine sets `direct_samp` at runtime and reaches the
+        branch this board wires, so a shortwave range ONE capture covers is the engine's
+        to draw. Whether anything arrives there is the antenna's business and shows up
+        as an empty picture rather than a sentence about software."""
+        session = self._start(tuner)
+
+        session.resweep(
+            listen.Sweep.of(
+                7_125_000, 7_175_000, 250, 0, direct_ok=True, capture=(256_000, 1024)
+            )
+        )
+
+        assert session.sweep is not None and session.sweep.start_hz == 7_125_000
+        assert tuner.opened[-1].opened_with["direct"] is True
 
     def test_moving_a_released_spectrum_is_refused_not_relaunched(self, tuner) -> None:
-        """The race `Session._restart` exists for: a relaunch here spawns an rtl_power
-        for a session no longer in the registry — unreapable, and holding the dongle
-        until the container restarts."""
+        """The race `Session._restart` exists for: a relaunch here builds a pipeline for
+        a session no longer in the registry — unreapable, and holding the dongle until
+        the container restarts."""
         session = self._start(tuner)
         tuner.stop(session.id)
 
@@ -2026,14 +1873,24 @@ class TestARadioThatWillNotOpen:
         assert "Dongle bandwidth" not in str(refused.value)
         assert tuner.sessions() == []
 
-    def test_a_spectrum_is_refused_the_same_way(self, tuner) -> None:
+    def test_a_spectrum_is_refused_the_same_way(self, tuner, monkeypatch) -> None:
+        """A radio that will not open is a refusal naming the driver's own words, on
+        the picture path as on the audio one — and since B1 there is no second engine
+        to quietly draw it on a different scale instead."""
+
+        def _no(**_k: Any):
+            raise listen.radio.RadioError("No matching devices found")
+
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_no))
         with pytest.raises(listen.SdrError) as refused:
             tuner.start(
                 144_000_000,
                 "fm",
                 None,
                 purpose=listen.PURPOSE_SPECTRUM,
-                sweep=listen.Sweep.of(144_000_000, 144_200_000, 25_000, 60),
+                sweep=listen.Sweep.of(
+                    144_000_000, 144_200_000, 25_000, 60, capture=(2_400_000, 512)
+                ),
             )
 
         assert "No matching devices found" in str(refused.value)
@@ -2248,14 +2105,15 @@ def test_reaping_sessions_also_retries_stranded_processes(tracking) -> None:
     assert not stranded.running and listen._survivors == []
 
 
-def test_an_hf_spectrum_is_refused_while_rtl_power_is_still_the_engine(tuner) -> None:
-    """F8 opened the HF band rows one wave before F6 replaces this engine.
+def test_a_spectrum_with_no_capture_plan_is_refused_wherever_it_is(tuner) -> None:
+    """This test used to be about SHORTWAVE, and about `rtl_power -D` hardcoding the
+    ADC's I branch where this board wires Q. Both halves of that are gone: the I/Q
+    engine sets the branch at runtime, and B1 deleted the tool.
 
-    `rtl_power -D` hardcodes direct sampling mode 1 — the I branch — and this hardware
-    wires Q, so the tool would tune something and measure nothing. The refusal has to
-    live on the ENGINE rather than in the route: the same range becomes viewable the
-    moment the I/Q engine lands, and a floor in the route would have to be hunted down
-    and removed again. This test is the reminder to delete both together."""
+    What survives is the shape of the rule, which is why the refusal was put on the
+    ENGINE rather than in the route in the first place — a range with no capture plan
+    has nothing that can honestly draw it, at any frequency, and the sidecar says so
+    rather than reaching for something that measures on another scale."""
     with pytest.raises(listen.SdrError) as refused:
         tuner.start(
             7_200_000,
@@ -2265,8 +2123,7 @@ def test_an_hf_spectrum_is_refused_while_rtl_power_is_still_the_engine(tuner) ->
             sweep=listen.Sweep.of(7_125_000, 7_300_000, 250, 0, direct_ok=True),
         )
 
-    assert "I/Q engine" in str(refused.value)
-    # Above the tuner floor is untouched: this guard is about the ENGINE, not the band.
+    assert "no capture plan" in str(refused.value)
     assert tuner.current() is None
 
 
@@ -2309,17 +2166,17 @@ def test_shortwave_with_a_capture_is_no_longer_refused() -> None:
     assert listen.spectrum_engine_refusal(swept) is None
 
 
-def test_shortwave_too_wide_for_one_capture_is_still_refused_and_says_why() -> None:
-    """Several hops is rtl_power's job, and rtl_power cannot see down there at all. The
-    sentence has to name WHICH limit it hit, because the owner has no terminal to look
-    with (CLAUDE.md #10)."""
+def test_a_range_with_no_capture_plan_is_refused_and_says_what_to_ask_for() -> None:
+    """The sentence has to name what to do instead, because the owner has no terminal
+    to look with (CLAUDE.md #10) — and since B1 there is no second engine to name, only
+    a narrower request."""
     swept = listen.Sweep.of(3_000_000, 8_000_000, 25_000, 60, direct_ok=True)
 
     refusal = listen.spectrum_engine_refusal(swept)
 
     assert refusal is not None
-    assert "several hops" in refusal
-    assert "Listening there works" in refusal
+    assert "no capture plan" in refusal
+    assert "band section" in refusal
 
 
 def test_a_frame_carries_a_fractional_width_without_rounding_it() -> None:
@@ -2358,30 +2215,41 @@ class TestIQSpectrumEngine:
 
         monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
 
-    def test_a_radio_that_will_not_open_falls_back_to_rtl_power(
-        self, tuner, monkeypatch: pytest.MonkeyPatch, capsys
+    def test_a_radio_that_will_not_open_is_a_refusal_not_a_second_engine(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VHF: rtl_power can serve it, so the picture comes back rather than the
-        session failing. And it SAYS so, because a silent downgrade is a waterfall
-        that is quietly a tenth of the frame rate it claims."""
+        """B1 reversed this test, and the reasoning is worth keeping in one place.
+
+        It used to assert that VHF fell back to `rtl_power` when the radio would not
+        open, on CLAUDE.md #10's grounds: an owner with no terminal must not need a
+        revert and a rebuild to get a picture back. **The trade was the wrong way
+        round.** Both engines landed on the same `Frame.db`, the same colour map and the
+        same `peaks.find`, whose output reaches the agent's tools as a MEASUREMENT — and
+        `iq.py` emits true dBFS where `rtl_power` emitted its own uncalibrated scale.
+        What #10 requires is that the owner is never left guessing, and a refusal naming
+        the driver does that better than a picture whose decibels are a different
+        quantity.
+
+        LISTENING keeps its `rtl_fm` fallback, deliberately: there the fallback degrades
+        the FEATURE, not the meaning of a number."""
         self._refuse_to_open(monkeypatch, listen.radio.RadioError("no such device"))
         swept = listen.Sweep.of(
             144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
         )
 
-        info = tuner.start(
-            146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
-        )
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+            )
 
-        assert info.as_dict()["purpose"] == listen.PURPOSE_SPECTRUM
-        assert "falling back to rtl_power" in capsys.readouterr().out
+        assert "no such device" in str(refused.value)
+        assert tuner.sessions() == []
 
-    def test_shortwave_keeps_the_failure_instead_of_drawing_a_lie(
+    def test_shortwave_is_refused_the_same_way_as_everything_else(
         self, tuner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The one range where falling back is worse than failing: `rtl_power -D`
-        hardcodes the ADC's I branch and this board wires Q, so it would tune something
-        and measure nothing — a flat, plausible, meaningless waterfall."""
+        """It always was refused here; what changed is that it is no longer the ONE
+        range where refusing was right."""
         self._refuse_to_open(monkeypatch, listen.radio.RadioError("no such device"))
         swept = listen.Sweep.of(
             7_125_000, 7_300_000, 250, 300, direct_ok=True, capture=(256_000, 1_024)
@@ -2394,8 +2262,8 @@ class TestIQSpectrumEngine:
 
         assert "no such device" in str(refused.value)
 
-    def test_a_busy_radio_is_a_fallback_too_not_a_crash(
-        self, tuner, monkeypatch: pytest.MonkeyPatch, capsys
+    def test_a_busy_radio_is_a_refusal_too_and_not_a_crash(
+        self, tuner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """`RadioBusy` is a different exception from `RadioError` and would have escaped
         an `except RadioError` written from the happy path."""
@@ -2404,11 +2272,12 @@ class TestIQSpectrumEngine:
             144_000_000, 144_400_000, 600, 300, capture=(2_400_000, 4_000)
         )
 
-        tuner.start(
-            146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
-        )
+        with pytest.raises(listen.SdrError) as refused:
+            tuner.start(
+                146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
+            )
 
-        assert "falling back to rtl_power" in capsys.readouterr().out
+        assert "held by aprs" in str(refused.value)
 
     def test_the_engine_publishes_frames_it_transformed_itself(
         self, tuner, monkeypatch: pytest.MonkeyPatch
@@ -2581,9 +2450,20 @@ def test_a_sweep_carries_its_hop_count_on_the_wire() -> None:
 
 
 class _FakeRadio:
-    """A radio that hands back an FM carrier, and remembers how it was tuned."""
+    """A radio that hands back an FM carrier, and remembers how it was tuned.
 
-    def __init__(self, center_hz: int, *, station_hz: int) -> None:
+    `rate_hz` because ONE fake serves both engines now that the spectrum path has no
+    subprocess to stand in for: a listening capture is always `LISTEN_CAPTURE_HZ` and a
+    spectrum session captures at whatever rate the api's plan named."""
+
+    def __init__(
+        self,
+        center_hz: int,
+        *,
+        station_hz: int,
+        rate_hz: int = listen.LISTEN_CAPTURE_HZ,
+    ) -> None:
+        self.rate_hz = rate_hz
         self.center_hz = center_hz
         self.alive = True
         self.closed = False
@@ -2608,12 +2488,12 @@ class _FakeRadio:
     def read(self, samples: int):
         self.reads += 1
         n = int(samples)
-        t = (np.arange(n, dtype=np.float64) + self._phase) / listen.LISTEN_CAPTURE_HZ
+        t = (np.arange(n, dtype=np.float64) + self._phase) / self.rate_hz
         self._phase += n
         # A carrier at the station, deviated by a 1 kHz tone: something the
         # discriminator can actually recover, so silent audio means a broken chain.
         freq = self._offset + 3_000.0 * np.sin(2.0 * np.pi * 1_000.0 * t)
-        phase = 2.0 * np.pi * np.cumsum(freq) / listen.LISTEN_CAPTURE_HZ
+        phase = 2.0 * np.pi * np.cumsum(freq) / self.rate_hz
         noise = self._rng.standard_normal(n) + 1j * self._rng.standard_normal(n)
         wave = np.exp(1j * phase) + 0.0316 * noise  # -30 dB
         return listen.radio.Reading(
@@ -2737,35 +2617,25 @@ def test_audio_reaches_the_encoder(iq_tuner) -> None:
 
 def test_every_engine_says_which_one_it_is(tuner, monkeypatch) -> None:
     """`SessionInfo.engine` is a documented part of the PWA contract and drives a
-    banner, and it was set on the two LISTENING paths only.
+    banner, and it was set on the two LISTENING paths only — so a live spectrum running
+    our own I/Q engine reported `rtl_fm`, and `server._watch_spectrum` worked around it
+    by reading `session._radio` through a `noqa`.
 
-    So a live spectrum running our own I/Q engine reported `rtl_fm`, one that had
-    fallen back to rtl_power reported `rtl_fm` too, and the string "rtl_power" was
-    never produced anywhere in the file. `server._watch_spectrum` worked around it by
-    reading `session._radio` through a `noqa` — the symptom of a field the session
-    could have filled in and did not."""
+    Two of the three engines it could name are gone now: B1 deleted the `rtl_power`
+    spectrum and W5 the survey. `rtl_fm` remains, deliberately, as the LISTENING
+    fallback — and it is the one case where the field still has work to do, because on
+    that engine there is no tuning view and nothing else says why."""
     _instant(monkeypatch)
     monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
     monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
-    swept = listen.Sweep.of(144_000_000, 144_400_000, 600, 300)
 
-    # No `capture`, so the I/Q engine is not selected and rtl_power runs.
-    session = listen.Session(
-        146_000_000, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=swept
-    )
+    # No SoapySDR in the test image, so the listening path falls back and says so.
+    info = tuner.start(146_940_000, "fm", None)
     try:
-        assert session.engine == "rtl_power"
-        assert session.info().as_dict()["engine"] == "rtl_power"
+        assert info.engine == "rtl_fm"
+        assert info.as_dict()["engine"] == "rtl_fm"
     finally:
-        session.stop()
-
-    survey = listen.Session(
-        146_000_000, "fm", None, purpose=listen.PURPOSE_SURVEY, sweep=swept
-    )
-    try:
-        assert survey.engine == "rtl_power"
-    finally:
-        survey.stop()
+        tuner.stop()
 
 
 def test_the_audio_carries_the_station_and_not_noise(iq_tuner) -> None:

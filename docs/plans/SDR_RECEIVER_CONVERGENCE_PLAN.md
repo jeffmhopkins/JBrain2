@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b◻️ W5c◻️ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -259,7 +259,50 @@ an idle repeater is.
 The rebuild it replaces reopened the device, which `alive`'s own docstring measures at
 about half a second on this box, before ffmpeg is relaunched under whoever is listening.
 
-**W5 — The subprocess engines go.** B1, then B2/A5 (`SurveySink` emitting the CSV shape the backend already parses), then B7.
+**W5 — The subprocess engines go.** Three PRs, because the deletions are independent
+and each is separately deployable and verifiable on air:
+**W5a ✅ shipped 2026-09-06** — B1, the `rtl_power` SPECTRUM;
+**W5b** — B2/A5, `/sweep` as a spectrum session with a `SurveySink` emitting the CSV
+shape the backend already parses, and `PURPOSE_SURVEY` deleted with it;
+**W5c** — B7, `_worth_showing` moved to the backend.
+
+## W5a — what shipped (2026-09-06)
+
+**A live spectrum has ONE engine, and a range it cannot draw is refused in words.**
+
+The fallback's justification was CLAUDE.md #10: an owner with no terminal must not need
+a revert and a rebuild to get a picture back. **The trade was the wrong way round.** Both
+engines landed on the same `Frame.db`, the same colour map and the same `peaks.find`,
+whose output reaches the agent's tools as a MEASUREMENT — and `iq.py` emits true dBFS
+where `rtl_power` emitted its own uncalibrated scale. What #10 requires is that the owner
+is never left guessing, and a refusal naming the limit does that better than a picture
+whose decibels are a different quantity.
+
+**LISTENING keeps its `rtl_fm` fallback, deliberately.** There the fallback degrades the
+FEATURE — no tuning view, `SessionInfo.engine` says so — not the meaning of a number, and
+audio is what an owner must not lose to a driver regression.
+
+Deleted: `_spectrum_cmd`, `_start_spectrum_pipeline`'s fallback branch, `_pump_spectrum`,
+`Stitch`, `_spectrum_row`, `SPECTRUM_INTERVAL_S`, the api's `SPECTRUM_ENGINE_IS_IQ` flag
+and its rtl_power tier in `_span`, and `tuner.live_bin_hz` — rtl_power's bin ladder, whose
+last caller went with the tier.
+
+- **What is actually refused is narrow.** Every one of the **32 curated band sections**
+  has a capture plan; what has none is a hand-typed span wider than the hop plan stitches.
+  `bands.widest_stitchable_hz()` derives that limit from the same ladder `hop_plan` walks
+  — **31.8 MHz today** — so the sentence the owner reads and the plan that would have
+  served them cannot drift apart.
+- **A transitional line in the PWA went with it.** `sdrBands.whyNotLive` carried a
+  `⏳ TRANSITIONAL` marker greying out every HF row, mirroring the guard that refused
+  everything below 24 MHz while `rtl_power` was the engine down there. Its own comment
+  said "DELETE THIS WITH THAT GUARD, in the same wave" — this is that wave, and the real
+  rule it was hiding (below 24 MHz a picture is one capture or nothing) is now reachable.
+- **The test surgery is the honest cost of the deletion**, and it is most of the diff:
+  `TestTheLiveSpectrum` and the server's spectrum cases were written against a fake
+  `rtl_power` writing CSV, and now drive the real transform against a fake DEVICE. Two
+  tests changed premise rather than expectation and say so — the shortwave case that had
+  been asserting "both are refused, and this becomes a 200 when the engine lands" is now
+  that 200, and the fallback cases assert refusals.
 
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 

@@ -241,6 +241,25 @@ HOP_BINS_LADDER = (4096, 2048, 1024, 512, 256, 128, 64)
 MAX_HOPS = 16
 
 
+def widest_stitchable_hz(max_bins: int = LIVE_MAX_BINS) -> int:
+    """The widest tuner-side span the live spectrum can stitch into one row.
+
+    DERIVED from the same ladder `hop_plan` walks, so the refusal a caller reads and
+    the plan that would have served them cannot disagree — a hardcoded figure here is
+    a second copy of the ladder that drifts the first time a rung changes.
+
+    It is `MAX_HOPS` that binds, not the bin budget: sixteen retunes is already a
+    second of picture, and past that a row is an average over so long that a
+    transmission inside it is smeared rather than seen."""
+    widest = 0
+    for bins in HOP_BINS_LADDER:
+        usable = hop_usable_bins(bins)
+        if usable <= 0 or usable * MAX_HOPS > max_bins:
+            continue
+        widest = max(widest, int(usable * MAX_HOPS * bin_width_hz(HOP_RATE_HZ, bins)))
+    return widest
+
+
 def hop_plan(
     start_hz: int, stop_hz: int, max_bins: int = LIVE_MAX_BINS
 ) -> tuple[int, int, int] | None:
