@@ -551,9 +551,18 @@ def _spectrum_verdict(
                 f"radio would not open, so this is the runtime fallback, not the engine"
             )
         elif out["fps"] <= RTL_POWER_CEILING_FPS:
+            # WHAT THE DISCRIMINATOR MEANS, not "this equals the clamp". `rtl_power`'s
+            # interval is clamped to >= 1 s in its own C, and `RTL_POWER_CEILING_FPS` is
+            # 1.5 — a MARGIN over that, so a rate at or under it cannot tell the two
+            # engines apart. This said "no better than rtl_power's own one-second clamp",
+            # which at 1.5 fps is simply false: 1.5 is half again quicker than 1.0.
+            # MEASURED after C29 the 30 MHz row runs at exactly 1.50, which is where a
+            # sentence claiming equality with the clamp stopped being true.
             findings.append(
-                f"{out['fps']} fps is no better than rtl_power's own one-second clamp, "
-                f"which is the ceiling this engine exists to remove"
+                f"{out['fps']} fps is inside the band where a frame rate cannot tell "
+                f"this engine from rtl_power, whose interval is clamped to one second — "
+                f"the picture is real, but its rate is no longer evidence of which "
+                f"engine drew it"
             )
     finite = [v for v in last.db if v > iq.DB_FLOOR]
     if not finite:
@@ -1037,7 +1046,7 @@ class Handler(BaseHTTPRequestHandler):
         """Run one band survey and return the CSV the api reduces.
 
         **The survey is an accumulator over a live spectrum now, not a second engine**
-        (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). It was a fourth session
+        (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2). It was a fourth session
         kind with its own lifecycle, its own temp CSV and a handler that pinned a thread
         for up to fifteen minutes — strictly LESS capable than the picture it duplicated,
         because `rtl_power -D` hardcodes the ADC branch this board does not wire and so a

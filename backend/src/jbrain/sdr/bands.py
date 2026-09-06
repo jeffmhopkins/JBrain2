@@ -485,7 +485,7 @@ class Section:
         direct sampling mode 1 (the I branch) while this hardware wires Q, so HF
         listening worked and HF sweeping did not. B2 made a survey an accumulator over
         the live spectrum — one engine, which sets the branch at runtime — so the
-        exception is gone (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2).
+        exception is gone (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2).
 
         Kept as a field rather than deleted from the wire because the PWA reads it and
         an older PWA against a newer box must not lose a row: `true` is the answer that

@@ -24,7 +24,7 @@ which of those apply, rather than comparing against a floor and guessing.
 `rtl_power`'s question — the tool hardcodes direct sampling mode 1, the ADC's I branch,
 where this board wires Q — so a survey could never reach shortwave while a picture of
 the same range could. B1 removed the tool from the picture and B2 from the survey
-(`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md`), so both now ask `viewable`: one engine,
+(`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md`), so both now ask `viewable`: one engine,
 one answer, and shortwave is surveyable.
 """
 
@@ -168,7 +168,7 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
         # colour map and the same `peaks.find`, whose output reaches the agent's tools
         # as a MEASUREMENT. A silent engine swap that changes what a number means is a
         # correctness bug wearing a robustness costume
-        # (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1).
+        # (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` B1).
         #
         # Every one of the 32 curated sections is inside this, so what it refuses is a
         # hand-typed span, and the number comes off the same ladder `hop_plan` walks.

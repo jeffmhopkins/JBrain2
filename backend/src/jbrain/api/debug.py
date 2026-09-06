@@ -1773,7 +1773,7 @@ async def sdr_sweep(
 
     **Shortwave is surveyable now.** The floor that refused it was `rtl_power`'s, and B2
     moved the survey onto the engine that sets the ADC branch at runtime
-    (`docs/plans/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2)."""
+    (`docs/archive/SDR_RECEIVER_CONVERGENCE_PLAN.md` A5/B2)."""
     request.state.debug_detail = f"sdr sweep {start_mhz}-{stop_mhz} MHz for {seconds}s"
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")

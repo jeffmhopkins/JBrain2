@@ -1699,16 +1699,25 @@ def test_a_width_the_transform_never_used_is_a_finding() -> None:
     assert any("nothing computed" in f for f in verdict["findings"])
 
 
-def test_a_frame_rate_no_better_than_rtl_power_is_a_finding() -> None:
+def test_a_frame_rate_that_cannot_tell_the_ENGINES_APART_is_a_finding() -> None:
     """`rtl_power` clamps its interval to `>= 1s` in its own C, and removing that
-    ceiling is what this whole plan is for. One frame a second from the I/Q engine
-    means the ceiling is still there, wearing the new engine's name."""
+    ceiling is what this whole plan is for.
+
+    The finding used to say "no better than rtl_power's own one-second clamp", which was
+    false at the threshold: `RTL_POWER_CEILING_FPS` is 1.5, a MARGIN over the clamp, and
+    1.5 fps is half again quicker than 1.0. C29 is what made that matter — cutting the
+    hop settle moved the 30 MHz row from 1.00 fps to exactly 1.50, where the sentence
+    claiming equality with the clamp stopped being true. What the number means is that a
+    frame rate at or under it cannot tell the two engines apart."""
     verdict = server._spectrum_verdict(
         _sweep_with_capture(), [_frame(600, 4_000)] * 3, 3.0, "iq"
     )
 
     assert verdict["ok"] is False
-    assert any("rtl_power's own one-second clamp" in f for f in verdict["findings"])
+    said = " ".join(verdict["findings"])
+    assert "cannot tell this engine from rtl_power" in said
+    # ...and it does NOT claim the rate equals the clamp, which is what it used to.
+    assert "no better than" not in said
 
 
 def test_a_healthy_run_passes_and_says_what_it_measured() -> None:

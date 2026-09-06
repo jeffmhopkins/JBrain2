@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b✅ W7c✅ W7d◻️
+> **Status:** Shipped 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b✅ W7c✅ W7d✅ · every one verified ON AIR
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -618,8 +618,8 @@ it would be measuring something else.
 **W7a ✅ shipped 2026-09-06** — C8, C18, C19, C26, B5: the latent correctness bugs.
 **W7b ✅ shipped 2026-09-06** — C20, C23, C28, B4, and C17 as a probe rung.
 **W7c ✅ shipped 2026-09-06** — C21 (measured on air and worse than filed) and C22.
-**W7d** — C29 answered and cut, C27 asked, C25 bounded and closed. Merged; the
-on-air reading of both is what closes it, as it has been for every wave here.
+**W7d ✅ shipped 2026-09-06** — C29 answered, cut, and verified across the whole hop
+ladder; C27 and C17 asked and ANSWERED on the box; C25 bounded and closed.
 
 
 ## W7a — what shipped (2026-09-06)
@@ -841,7 +841,34 @@ plan keeps finding. Both now derive the ring from `(passband_hz, passband_centre
 
 ## W7d — the last three, all of them questions for the box (2026-09-06)
 
-### C29 — the settle a hop was paying is zero, and C18 is what let us see that
+### C29 — the settle a hop was paying is zero, and the whole ladder moved
+
+**VERIFIED ON AIR after the change**, the hop ladder measured end to end for the second
+time:
+
+| span | hops | before | **after** |
+|---|---|---|---|
+| 5 MHz | 3 | 4.74 fps | **8.20** |
+| 10 MHz | 6 | 2.75 | **4.32** |
+| 15 MHz | 8 | 2.00 | **3.16** |
+| 20 MHz | 11 | 1.50 | **2.40** |
+| 25 MHz | 13 | 1.25 | **1.97** |
+| **30 MHz** | **16** | **1.00** | **1.50** |
+
+The rule of thumb goes from `≈ 15 / hops` to **`≈ 25 / hops`**, and **every rung of the
+ladder is now above the one-second clamp** — including the top one, which was exactly at
+it. 1.00 → 1.50 fps is precisely what removing 480 ms from a ~1000 ms row predicts.
+
+What is left at 16 hops is 512 ms of `setFrequency`, which is the driver's, not ours.
+
+**And it made a finding false.** At 1.50 fps `spectrum-probe` still said *"1.5 fps is no
+better than rtl_power's own one-second clamp"* — but 1.5 is half again quicker than 1.0.
+`RTL_POWER_CEILING_FPS` is a DISCRIMINATOR with margin, not the clamp itself, and the
+sentence claimed equality with the clamp. Reworded to say what the number means: a rate at
+or under it cannot tell the two engines apart, so the picture is real but its rate is no
+longer evidence of which engine drew it.
+
+### How it was measured, and why C18 is what let us see it
 
 At the top of the hop ladder a 30 MHz row took ~1 s — **1.0 fps, exactly `rtl_power`'s
 own clamp**, the ceiling this engine exists to remove. The cost is per-RETUNE: sixteen
@@ -875,19 +902,59 @@ run above reports `gain_db: 0.0, was_automatic: false`, which is W7a showing its
 The choice C29 posed was "cut the per-hop cost or lower `MAX_HOPS`". The measurement
 chose: cut the cost. Nothing about the ladder's reach changes.
 
-### C27 — asked, as a rung
+### C27 — ANSWERED: there is nothing to ask for
 
-`setBandwidth` is called nowhere in this engine, so librtlsdr picks the IF bandwidth from
-the sample rate on its own — and that automatic choice is exactly the rolloff
-`hop_usable_bins` throws a sixth of every capture away to avoid. `probe`'s `if_bandwidth`
-rung measures the capture's own shape (median of the middle third against the outer
-sixth, averaged in POWER over six frames, against the receiver's noise floor so the shape
-is the filter's) with the automatic bandwidth and again with an explicit one, and reports
-the decibels of edge rolloff recovered. It hands the radio back as it found it.
+The rung ran on the box. **The driver's automatic bandwidth is already the full sample
+rate**, so asking explicitly changes nothing:
 
-If the explicit bandwidth flattens those edges, `TRUSTED_FILL` is leaving picture on the
-table. If it changes nothing, the sixth is the honest price and the constant stays. Which
-it is, is a property of this tuner.
+```
+if_bandwidth: supported true
+              was_hz 256000.0   asked_hz 256000.0   took_hz 256000.0
+              automatic {middle -55.68, edge -58.19, rolloff 2.50 dB}
+              explicit  {middle -56.59, edge -59.34, rolloff 2.75 dB}
+              recovered_db -0.25
+```
+
+`was_hz == asked_hz == took_hz`. C27's premise was that librtlsdr picks a NARROWER
+automatic bandwidth than the rate and that `TRUSTED_FILL` is paying for it; it does not.
+The -0.25 dB is scatter between two six-frame averages, not a regression.
+
+`TRUSTED_FILL = 5/6` therefore stands on its own footing rather than on a filter setting
+nobody had asked about. (What the same rung DOES show is the shape itself: 2.50 dB of
+rolloff across the outer sixth at this rate. Whether that justifies discarding a sixth is
+a different question from C27's, and one for whoever asks it at 2.4 MS/s rather than at
+the probe's 256 kHz.)
+
+### C17 — ANSWERED: there is a clock, and its step is exactly twice what it should be
+
+The other rung, on the same run:
+
+```
+stream_clock: reads 12   time_ns_filled true   time_ns_advances true
+              expected_step_ns  97,000,000
+              median_step_ns   194,000,000
+              flags_seen [4]
+```
+
+SoapyRTLSDR **does** fill `timeNs`, it **does** advance, and flag 4 is
+`SOAPY_SDR_HAS_TIME` — the driver is explicitly asserting the timestamp is valid. And the
+step is **2.00x** what one delivered buffer's worth of time comes to.
+
+So the clock exists and cannot yet be used to say how much an overflow threw away,
+because a factor of two between a clock and the samples it stamps has to be explained
+before either is trusted — a stream clock that reads like time and is off by two is the
+same shape of trap this plan has now named seven times. The rung reports both numbers
+side by side, which is what makes the discrepancy visible at all; the next person to want
+"how much was lost" starts from a measurement rather than from the API docs.
+
+### The rung as originally written
+
+`probe`'s `if_bandwidth` rung measures the capture's own shape — median of the middle
+third against the outer sixth, averaged in POWER over six frames (a mean of decibels is a
+geometric mean of powers and reads low on anything that is not flat), against the
+receiver's noise floor so the shape is the filter's and not the signal's — with the
+automatic bandwidth and again with an explicit one, and hands the radio back as it found
+it. `stream_clock` is its twin for C17.
 
 ### C25 — bounded, and the instrument that cannot measure it
 
