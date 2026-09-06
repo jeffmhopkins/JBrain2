@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jbrain.sdr.health import session_for
+from jbrain.sdr.health import session_for, shown
 
 
 def _two_radios() -> dict[str, Any]:
@@ -132,3 +132,66 @@ class TestWhatTheSidecarIsRunningOn:
 
         assert await resolve.busy_serials(None) == []
         assert await resolve.busy_serials("") == []
+
+
+class TestWhichSessionAnOwnerSees:
+    """One composer icon, several radios — so something has to choose, and B7 moved that
+    choice OUT of the radio process.
+
+    It was three purposes deep inside `listen.Tuner`, feeding a `listening` field the api
+    reshaped anyway. Presentation policy in the sidecar is two policies that can
+    disagree; the api already holds every session, so it decides.
+    """
+
+    def test_the_tuner_wins_over_a_service(self) -> None:
+        """Order is what a person is most likely asking about: they started listening,
+        the APRS logger has been running for a week."""
+        picked = shown(
+            [
+                {"purpose": "aprs", "serial": "a", "session_id": "1"},
+                {"purpose": "listen", "serial": "b", "session_id": "2"},
+            ]
+        )
+
+        assert picked is not None and picked["session_id"] == "2"
+
+    def test_a_service_wins_over_a_spectrum(self) -> None:
+        picked = shown(
+            [
+                {"purpose": "spectrum", "serial": "a", "session_id": "1"},
+                {"purpose": "aprs", "serial": "b", "session_id": "2"},
+            ]
+        )
+
+        assert picked is not None and picked["session_id"] == "2"
+
+    def test_serial_only_breaks_a_tie(self) -> None:
+        """Deterministic without being arbitrary: two reads that changed nothing must
+        not disagree about which icon is lit."""
+        picked = shown(
+            [
+                {"purpose": "listen", "serial": "77192819", "session_id": "1"},
+                {"purpose": "listen", "serial": "09022796", "session_id": "2"},
+            ]
+        )
+
+        assert picked is not None and picked["session_id"] == "2"
+
+    def test_a_purpose_it_has_never_heard_of_sorts_last_rather_than_raising(self) -> None:
+        """A newer sidecar can hold a job this build has no name for. Last is the right
+        place for it — and an exception would be the wrong answer to an icon."""
+        picked = shown(
+            [
+                {"purpose": "somethingnew", "serial": "a", "session_id": "1"},
+                {"purpose": "spectrum", "serial": "b", "session_id": "2"},
+            ]
+        )
+
+        assert picked is not None and picked["session_id"] == "2"
+        # ...and on its own it is still shown, rather than the icon going dark.
+        alone = shown([{"purpose": "somethingnew", "serial": "a", "session_id": "1"}])
+        assert alone is not None and alone["session_id"] == "1"
+
+    def test_nothing_running_is_nothing_shown(self) -> None:
+        assert shown([]) is None
+        assert shown(["not a session", None]) is None

@@ -1990,3 +1990,41 @@ def test_a_retune_the_session_refused_is_reported_rather_than_swallowed() -> Non
 
     assert report["accepted"] is False
     assert "released" in report["refused"]
+
+
+def test_a_spectrum_probe_finds_ITS_session_while_another_radio_listens(
+    sidecar: str,
+) -> None:
+    """The probe used to ask for "the" session and then check the id, which on a box
+    with a second radio listening was never its own — so it reported the spectrum
+    session gone while that session was measuring perfectly.
+
+    B7 is what exposed it: with the purpose ranking in the sidecar, "the" session was
+    the listening one and the mismatch read as correct code. It asks by id now.
+    """
+    status, _ = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WHIP},
+    )
+    assert status == 200
+
+    status, body = _post(
+        sidecar,
+        "/spectrum/probe",
+        {
+            "start_hz": 144_000_000,
+            "stop_hz": 144_200_000,
+            "bin_hz": 2_400_000 / 512,
+            "seconds": 1,
+            "serial": WIRE,
+            **TEST_CAPTURE,
+        },
+    )
+
+    assert status == 200
+    assert "gone" not in body["summary"], body
+    assert body["frames"] > 0
+    # ...and the probe released only its own radio: the listener is still up.
+    _, health = _get(sidecar, "/healthz")
+    assert [s["serial"] for s in health["sessions"]] == [WHIP]

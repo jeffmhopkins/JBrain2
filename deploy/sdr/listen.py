@@ -2708,42 +2708,41 @@ class Tuner:
             self._reap()
             return [self._sessions[k] for k in sorted(self._sessions)]
 
-    #: How the omnibox's ONE icon chooses between live sessions: prefer what a person is
-    #: most likely asking about — the tuner they opened — then a service, then a sweep.
-    #: Serial only BREAKS A TIE, so the answer is deterministic without being arbitrary.
-    _SHOWN_FIRST = {
-        PURPOSE_LISTEN: 0,
-        PURPOSE_APRS: 1,
-        PURPOSE_SPECTRUM: 2,
-    }
+    @staticmethod
+    def _first(live: list[Session]) -> Session | None:
+        """The LISTENING session, else the lowest serial. Not a presentation ranking.
 
-    @classmethod
-    def _worth_showing(cls, live: list[Session]) -> Session | None:
-        """The one to draw, out of a snapshot the caller already has."""
+        **The purpose table that used to live here has moved to the api** (B7). Which
+        session an owner should SEE is presentation policy, and it was being decided in
+        the radio process — three purposes deep, with a tie-break on serial, feeding a
+        `listening` field the api then reshaped anyway. The api holds `sessions` and
+        already reshapes them; deciding there means one policy rather than two that can
+        disagree, and it stops the sidecar having an opinion about a composer icon.
+
+        What is left is what this process actually needs: a deterministic "the one
+        session" for routes that mean the tuner, and a serial lookup. Deterministic
+        rather than arbitrary, because two reads that changed nothing must not disagree."""
         if not live:
             return None
-        rank = len(cls._SHOWN_FIRST)
-        return min(live, key=lambda s: (cls._SHOWN_FIRST.get(s.purpose, rank), s.serial or ""))
+        listening = [s for s in live if s.purpose == PURPOSE_LISTEN]
+        return min(listening or live, key=lambda s: s.serial or "")
 
     def current(self, serial: str | None = None) -> Session | None:
-        """One session: the named radio's, or the one worth showing.
-
-        Deterministic rather than arbitrary, because "which session is showing" must not
-        change between two reads that changed nothing."""
+        """The named radio's session, or the one this process means by "the tuner"."""
         live = self.sessions()
         if serial is not None:
             return next((s for s in live if s.serial == serial), None)
-        return self._worth_showing(live)
+        return self._first(live)
 
     def snapshot(self) -> tuple[Session | None, list[Session]]:
-        """Every live session, and the one worth showing, from ONE reading.
+        """Every live session, and the tuner's, from ONE reading.
 
         `/healthz` reports both, and taking them from two calls let a session appear in
         `sessions` but not in `listening` — or the reverse — for callers that reasonably
         assume `listening` is one of `sessions`. `health.session_for`'s fallback assumes
         exactly that."""
         live = self.sessions()
-        return self._worth_showing(live), live
+        return self._first(live), live
 
     def find(self, session_id: str) -> Session | None:
         """The session with this id, whichever radio it is on."""

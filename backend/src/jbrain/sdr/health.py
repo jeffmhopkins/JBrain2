@@ -20,6 +20,30 @@ from __future__ import annotations
 
 from typing import Any
 
+#: Which session an owner should SEE when a box holds several, best first. Serial only
+#: BREAKS A TIE, so the answer is deterministic without being arbitrary.
+#:
+#: **This lives here, not in the sidecar** (B7). It is presentation policy — it decides
+#: one composer icon — and it was being decided in the radio process, three purposes
+#: deep, feeding a field the api reshaped anyway. The api already holds every session;
+#: deciding here is one policy rather than two that can disagree.
+SHOWN_FIRST = ("listen", "aprs", "spectrum")
+
+
+def shown(sessions: list[Any]) -> dict[str, Any] | None:
+    """The one session to put in front of a person, out of every live one."""
+    rows = [s for s in sessions if isinstance(s, dict)]
+    if not rows:
+        return None
+    rank = len(SHOWN_FIRST)
+
+    def order(session: dict[str, Any]) -> tuple[int, str]:
+        purpose = str(session.get("purpose") or "")
+        place = SHOWN_FIRST.index(purpose) if purpose in SHOWN_FIRST else rank
+        return place, str(session.get("serial") or "")
+
+    return min(rows, key=order)
+
 
 def session_for(health: dict[str, Any] | None, purpose: str) -> dict[str, Any]:
     """The session holding a radio for this job, or `{}` — falsy, so callers can ask

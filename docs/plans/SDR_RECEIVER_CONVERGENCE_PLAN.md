@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c◻️ W6◻️ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6◻️ W7◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -41,13 +41,13 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 
 | # | Delete | Replace with | Why it goes |
 |---|---|---|---|
-| **B1** | The `rtl_power` **spectrum** fallback (`_spectrum_cmd`, `_pump_spectrum`, `Stitch`, ~180 lines) | An honest refusal naming the driver | **[V]** Both engines land on the same `Frame.db`, the same colour map, and the same `peaks.find` — **whose output reaches the agent's tools as measurement**. `iq.py` emits true dBFS; `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes what a number *means*, feeding an LLM that reads it as fact, is a correctness bug wearing a robustness costume. |
-| **B2** | `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `sweep_csv`, its lifecycle rule | A `SurveySink` over a `spectrum` session, emitting the CSV shape `backend/src/jbrain/sdr/sweep.py` already parses | Removes a purpose, a lifecycle, a temp file, and gains shortwave surveys. Its only caller is one debug route. |
+| **B1 ✅** | The `rtl_power` **spectrum** fallback (`_spectrum_cmd`, `_pump_spectrum`, `Stitch`, ~180 lines) | An honest refusal naming the driver | **[V]** Both engines land on the same `Frame.db`, the same colour map, and the same `peaks.find` — **whose output reaches the agent's tools as measurement**. `iq.py` emits true dBFS; `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes what a number *means*, feeding an LLM that reads it as fact, is a correctness bug wearing a robustness costume. |
+| **B2 ✅** | `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `sweep_csv`, its lifecycle rule | A `SurveySink` over a `spectrum` session, emitting the CSV shape `backend/src/jbrain/sdr/sweep.py` already parses | Removes a purpose, a lifecycle, a temp file, and gains shortwave surveys. Its only caller is one debug route. |
 | **B3 ✅** | `peaks._median` + `_local_floors` — a pure-Python `sorted()` per bin | `np.lib.stride_tricks.sliding_window_view` + `np.partition` on a stride, `np.interp` back | **[V]** 238–1910 ms against a 100 ms budget, on the capture thread. Vectorised: **0.88 ms**. |
 | **B4** | The gap-based fold at `peaks.py:118` | A minimum peak-to-peak distance (`0.6 × channel_hz`, the number the client already uses) | **[R]** Two stations one raster apart always have a clear gap smaller than the raster, so they always merge. Measured: two FM stations 200 kHz apart → 1 signal. |
 | **B5** | `_Fir.delay` (`demod.py:297`) | — | No caller anywhere in `deploy/`. |
 | **B6 ✅** | `server.py`'s duplicate `MODES`, `MIN_HZ`, `MAX_HZ`, and `WBFM_SAMPLE_RATE = 171_000` | Import from `listen` | **[V]** The constant is dead *and* contradicts `listen.py:344`'s measured 192_000, which carries two paragraphs explaining why 171 kHz was wrong. |
-| **B7** | `_SHOWN_FIRST` / `_worth_showing` (`listen.py:2509`) | The same policy in `backend/.../sdr.py`, which already reshapes `SessionInfo` | Presentation policy in the radio process. Mostly stops being a question after A1. |
+| **B7 ✅** | `_SHOWN_FIRST` / `_worth_showing` (`listen.py:2509`) | `health.shown`, called by `/api/sdr/status`, which already reshapes `SessionInfo` | Presentation policy in the radio process. **[V]** Removing it exposed `_watch_spectrum` reading `TUNER.current()` and comparing ids — on a two-radio box it reported the spectrum session gone while it was measuring. |
 
 **Kept deliberately — do not delete:**
 `rtl_fm` under `listen` (a genuine degraded mode, visible via `SessionInfo.engine`, and CLAUDE.md #10 says an owner with no terminal must not lose audio to a driver regression); **direwolf** (a decoder, not a driver — bit sync, NRZI, HDLC, CRC; reimplementing it *would* be the reinvention); `http.server` and hand-rolled routing (correct under apt-only); `_park`/`reap_survivors` (a process wedged in a USB ioctl does not die for SIGKILL either); the per-radio lease that refuses rather than queues; self-describing `Frame`s; MP3 for late joiners.
@@ -264,7 +264,7 @@ and each is separately deployable and verifiable on air:
 **W5a ✅ shipped 2026-09-06** — B1, the `rtl_power` SPECTRUM;
 **W5b ✅ shipped 2026-09-06** — B2/A5, `/sweep` as a spectrum session with `SurveyRows`
 emitting the CSV shape the backend already parses, and `PURPOSE_SURVEY` deleted with it;
-**W5c** — B7, `_worth_showing` moved to the backend.
+**W5c ✅ shipped 2026-09-06** — B7, `_worth_showing` moved to the backend.
 
 ## W5a — what shipped (2026-09-06)
 
@@ -374,6 +374,41 @@ survey could never reach shortwave while a waterfall of the same range could.
   bin up the whole window becomes its own floor and reads as 0% occupied). The two live
   in different packages and different containers, joined only by a line of text, so
   asserting the shape from one side would only assert what that side believes.
+
+**VERIFIED ON AIR 2026-09-06.** 2 m, 20 s: 16 one-second rows, 1278 bins at 4687 Hz,
+floor −52.8 dBFS, one steady carrier at 147.454 MHz. **40 m, 15 s — a band the old
+engine could not measure at all**: 13 rows, 1024 bins at **exactly 1000 Hz** (1 kHz asked
+for off a 250 Hz capture is four bins folded, and the row says 1000), floor −58.2 dBFS
+over 6.613–7.637 MHz. Both `complete: true`, both released the radio.
+
+## W5c — what shipped (2026-09-06)
+
+**Which session an owner SEES is decided in the api, not in the radio process.**
+
+`Tuner._SHOWN_FIRST` ranked three purposes (`listen`, `aprs`, `spectrum`) and fed a
+`listening` field the api reshaped anyway. That is presentation policy — it decides ONE
+composer icon — living three purposes deep in the process that owns the hardware, and it
+was a second copy of a decision the api was already positioned to make: `/api/sdr/status`
+holds every session, and the PWA reads its answer, not the sidecar's.
+
+Now `health.shown(sessions)` holds the ranking, `SHOWN_FIRST` beside it, and
+`/api/sdr/status` calls it. The sidecar keeps `Tuner._first`, which is what that process
+actually needs and no longer pretends to be a ranking: the LISTENING session, else the
+lowest serial. `/healthz.listening` therefore means the tuner's session — narrower than
+before, and read by the api only through the old-build fallback, for the seconds during
+an update when the two containers are different builds.
+
+**It uncovered a live bug.** `_watch_spectrum` — the `listen-probe`/`sweep` debug path —
+read `TUNER.current()` and then checked the id, so on a two-radio box with something
+listening it reported *"the spectrum session was gone before a frame arrived"* while the
+spectrum session was measuring perfectly. It asks `TUNER.find(session_id)` now. Only
+taking the ranking out made the mismatch visible; with it in, the bug reads as correct
+code.
+
+Tests: `TestWhichSessionAnOwnerSees` (6 cases) on `shown`, and a first test file for
+`GET /api/sdr/status` itself (6 cases) — a route with no test until now. Every case makes
+the sidecar's `listening` DIFFER from the right answer, because one that lets the two
+agree proves nothing.
 
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 

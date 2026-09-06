@@ -933,16 +933,18 @@ class TestOneSessionPerRadio:
         assert tuner.for_purpose(listen.PURPOSE_APRS).id == aprs.session_id
         assert tuner.for_purpose(listen.PURPOSE_SPECTRUM) is None
 
-    def test_current_prefers_the_tuner_over_a_service(self, tuner) -> None:
-        """The omnibox draws ONE icon, so `current` has to pick — and pick the same way
-        twice, or "which session is showing" changes between two reads that changed
-        nothing. Order is what a person is most likely asking about.
+    def test_current_means_the_LISTENING_session(self, tuner) -> None:
+        """`current()` with no serial is how this process says "the tuner", so a radio
+        holding a service must not answer it.
 
         The listening session is on the HIGHER serial deliberately. With it on the lower
-        one, `min` by (priority, serial) and plain serial order agree, and an earlier
-        cut of this test passed with the priority map deleted — proving only that
-        sorting happened. This is the rule the whole PWA reads through
-        `/api/sdr/status.listening`, so it has to be the thing under test."""
+        one, "listening first" and plain serial order agree, and an earlier cut of this
+        test passed with the purpose filter deleted — proving only that sorting
+        happened.
+
+        This is no longer a presentation ranking: B7 moved "which session an owner SEES"
+        to the api (`health.shown`), which holds every session anyway. What is left here
+        is a deterministic answer for routes that mean the tuner."""
         tuner.start(
             144_390_000, "fm", None, purpose=listen.PURPOSE_APRS, serial="09022796"
         )
@@ -954,8 +956,8 @@ class TestOneSessionPerRadio:
         assert tuner.current("nosuchserial") is None
 
     def test_current_breaks_a_TIE_by_serial(self, tuner) -> None:
-        """Priority first, serial only to break a tie — so two sessions of the same
-        purpose still answer the same way on every read."""
+        """Serial only breaks a tie — two reads that changed nothing must not disagree
+        about which session is "the tuner"."""
         tuner.start(146_520_000, "fm", None, serial="77192819")
         tuner.start(99_300_000, "wbfm", None, serial="09022796")
 

@@ -43,7 +43,7 @@ from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
-from jbrain.sdr.health import session_for
+from jbrain.sdr.health import session_for, shown
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
@@ -111,7 +111,10 @@ class SdrStatusOut(BaseModel):
     the ONE the omnibox should draw and prefers the tuner: with APRS on one dongle and
     the tuner on another, a screen reading `listening.purpose` to ask "is APRS logging?"
     is told no while it is running — which is how the APRS tab put up a contention panel
-    and an inert button in front of the owner."""
+    and an inert button in front of the owner.
+
+    Which one that is gets decided HERE, by `health.shown`, out of `sessions` — not by
+    the sidecar, which sends its own `listening` meaning only the tuner's session."""
 
     available: bool
     listening: dict[str, Any] | None
@@ -234,13 +237,22 @@ async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
         return SdrStatusOut(available=False, listening=None)
     live = health.get("sessions")
     one = health.get("listening")
+    # An OLDER sidecar sends no `sessions`; it can hold only one thing, so `listening` IS
+    # the list. Same fallback as `health.session_for`, for the seconds during an update
+    # when the two containers are different builds.
+    rows = live if isinstance(live, list) else ([one] if isinstance(one, dict) else [])
+    # Each row is checked too, because `SdrStatusOut.sessions` is typed and a body this
+    # route cannot model would otherwise 500 — darkening the composer icon over a radio
+    # that is working. Dropping the row it could not read is the smaller loss.
+    sessions = [s for s in rows if isinstance(s, dict)]
     return SdrStatusOut(
         available=True,
-        listening=one,
-        # An OLDER sidecar sends no `sessions`; it can hold only one thing, so
-        # `listening` IS the list. Same fallback as `health.session_for`, for the seconds
-        # during an update when the two containers are different builds.
-        sessions=live if isinstance(live, list) else ([one] if isinstance(one, dict) else []),
+        # DECIDED HERE (B7). The sidecar used to rank the purposes and send its answer;
+        # that is presentation policy in the radio process, and this route reshapes
+        # `SessionInfo` anyway. Its `listening` is now what its name says — the tuner's
+        # session — and reaches this line only through the old-build fallback above.
+        listening=shown(sessions),
+        sessions=sessions,
     )
 
 
