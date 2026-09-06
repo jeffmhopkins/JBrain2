@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b✅ W7c◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -44,7 +44,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **B1 ✅** | The `rtl_power` **spectrum** fallback (`_spectrum_cmd`, `_pump_spectrum`, `Stitch`, ~180 lines) | An honest refusal naming the driver | **[V]** Both engines land on the same `Frame.db`, the same colour map, and the same `peaks.find` — **whose output reaches the agent's tools as measurement**. `iq.py` emits true dBFS; `rtl_power` emits its own uncalibrated scale. A silent engine swap that changes what a number *means*, feeding an LLM that reads it as fact, is a correctness bug wearing a robustness costume. |
 | **B2 ✅** | `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `sweep_csv`, its lifecycle rule | A `SurveySink` over a `spectrum` session, emitting the CSV shape `backend/src/jbrain/sdr/sweep.py` already parses | Removes a purpose, a lifecycle, a temp file, and gains shortwave surveys. Its only caller is one debug route. |
 | **B3 ✅** | `peaks._median` + `_local_floors` — a pure-Python `sorted()` per bin | `np.lib.stride_tricks.sliding_window_view` + `np.partition` on a stride, `np.interp` back | **[V]** 238–1910 ms against a 100 ms budget, on the capture thread. Vectorised: **0.88 ms**. |
-| **B4** | The gap-based fold at `peaks.py:118` | A minimum peak-to-peak distance (`0.6 × channel_hz`, the number the client already uses) | **[R]** Two stations one raster apart always have a clear gap smaller than the raster, so they always merge. Measured: two FM stations 200 kHz apart → 1 signal. |
+| **B4 ✅** | The gap-based fold at `peaks.py:118` | A minimum peak-to-peak distance (`0.6 × channel_hz`, the number the client already uses) | **[R]** Two stations one raster apart always have a clear gap smaller than the raster, so they always merge. Measured: two FM stations 200 kHz apart → 1 signal. |
 | **B5 ✅** | `_Fir.delay` (`demod.py:297`) | — | No caller anywhere in `deploy/`. |
 | **B6 ✅** | `server.py`'s duplicate `MODES`, `MIN_HZ`, `MAX_HZ`, and `WBFM_SAMPLE_RATE = 171_000` | Import from `listen` | **[V]** The constant is dead *and* contradicts `listen.py:344`'s measured 192_000, which carries two paragraphs explaining why 171 kHz was wrong. |
 | **B7 ✅** | `_SHOWN_FIRST` / `_worth_showing` (`listen.py:2509`) | `health.shown`, called by `/api/sdr/status`, which already reshapes `SessionInfo` | Presentation policy in the radio process. **[V]** Removing it exposed `_watch_spectrum` reading `TUNER.current()` and comparing ids — on a two-radio box it reported the spectrum session gone while it was measuring. |
@@ -84,18 +84,18 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C14 ✅** | SSB is modelled with a symmetric `channel_half_hz`, but SSB is one-sided: the strip shades ±3.4 kHz while the demodulator hears +300…+3400 only. A user centring a signal in the shaded box puts half of it in the rejected sideband. | **[R]** |
 | **C15 ✅** | `_DcBlock`'s real −3 dB corner is ~7 Hz, not the 31 Hz documented (31.25 is the boxcar's first *null*, where the response is 0 dB), and it overshoots +2 dB at 20 Hz. | **[R]** |
 | **C16 ✅ declined** | De-emphasis is convolved in at the **IF** rate, making wide FM's back end 771 taps where the anti-alias filter alone is 481. `gr-analog` runs it at the audio rate. 12.3 → 8.0 Mmac/s. | **[R]** |
-| **C17** | `readStream`'s `flags` and `timeNs` are discarded, so `Reading.torn` can say *something* was lost but never *how much* — the one number a waterfall needs to place a row honestly. Frame time is wall-clock captured before the read. | **[R]** |
+| **C17 ◻️ rung** | `readStream`'s `flags` and `timeNs` are discarded, so `Reading.torn` can say *something* was lost but never *how much* — the one number a waterfall needs to place a row honestly. Frame time is wall-clock captured before the read. | **[R]** |
 | **C18 ✅** | `_settle_fixed_gain` uses `or`, so a measured gain of exactly **0.0 dB** — the value this box actually had — is treated as absent and replaced by 30. The "fixed gain" comparison was against a different gain. | **[R]** |
 | **C19 ✅** | `radio._claim` uses exact-match keying where `listen.blocking_key` has the correct rule (an unnamed holder blocks everything). Guarded one layer up today, so latent. | **[R]** |
-| **C20** | Half-bin convention conflict: `peaks.py` treats `start_hz + i·bin_hz` as the bin **centre** (correct, verified); `sdrTuning.ts` and `server.py:222` add a further half bin. The box's peak frequencies and the tuning readout are on two different grids. | **[R]** |
+| **C20 ✅** | Half-bin convention conflict: `peaks.py` treats `start_hz + i·bin_hz` as the bin **centre** (correct, verified); `sdrTuning.ts` and `server.py:222` add a further half bin. The box's peak frequencies and the tuning readout are on two different grids. | **[R]** |
 | **C21** | `_channel_floor`'s outer ring for wide FM is 90–180 kHz off centre — where the 200 kHz raster puts the neighbour's sideband. On a crowded dial the "noise floor" is a neighbouring station. | **[S]** |
 | **C22** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
-| **C23** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
+| **C23 ✅** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
 | **C24 ✅** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
 | **C25** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
 | **C26 ✅** | Gain is written on the direct-sampling path, where the tuner is bypassed and the number is fiction. | **[R]** |
 | **C27** | `setBandwidth` is never called; librtlsdr's automatic IF bandwidth is exactly the rolloff `hop_usable_bins` throws away a sixth of every capture to avoid. Setting it explicitly might buy much of that back. | **[S]** probe rung, not a blind change |
-| **C28** | `hop_usable_bins` is `bins * 5 // 6` in `listen.py` and `TRUSTED_FILL` in `bands.py`. They agree today; changing the constant desynchronises the planner from the stitcher silently, and the stitched row's bin→Hz mapping is then wrong with nothing to detect it. | **[R]** |
+| **C28 ✅** | `hop_usable_bins` is `bins * 5 // 6` in `listen.py` and `TRUSTED_FILL` in `bands.py`. They agree today; changing the constant desynchronises the planner from the stitcher silently, and the stitched row's bin→Hz mapping is then wrong with nothing to detect it. | **[R]** |
 
 ## D — Verified correct: do not churn
 
@@ -616,8 +616,8 @@ it would be measuring something else.
 
 **W7 — Loose ends.**
 **W7a ✅ shipped 2026-09-06** — C8, C18, C19, C26, B5: the latent correctness bugs.
-**W7b** — C17, C20, C22, C23, C28, B4, and probe rungs for C21/C25/C27/C29 rather than
-guesses. **Plus C29, found by W5a's own
+**W7b ✅ shipped 2026-09-06** — C20, C23, C28, B4, and C17 as a probe rung.
+**W7c** — C22, and rungs for C21/C25/C27/C29. **Plus C29, found by W5a's own
 on-air verification:** a 16-hop row takes ~1 s, all of it in sixteen `setFrequency` +
 settle pairs, so at the top of the hop ladder the engine hits the exact clamp it exists
 to remove (measured table above). Either cut the per-hop cost or lower `MAX_HOPS` to
@@ -701,6 +701,84 @@ there is a tuner to have an opinion about.
 ### B5
 
 `_Fir.delay` had no caller anywhere in `deploy/`. Deleted.
+
+
+## W7b — what shipped (2026-09-06)
+
+### C20 — two frequency grids, half a bin apart
+
+`iq.Spectrometer.start_hz` is `center_hz - (n // 2) * bin_hz` and `fftshift` puts DC in
+bin `n // 2`, so **`start_hz + i * bin_hz` addresses bin `i` exactly** — which
+`Spectrum.stop_hz`'s own comment says, and which `peaks.py` does. Two other places added
+half a bin: `server._channel_centre` and `sdrTuning.ts`'s `hzOf`.
+
+So the box's peak frequencies and the tuning readout sat on grids **46.9 Hz apart** on a
+93.75 Hz channel row, 293 Hz on a band one. Small, and exactly the kind of thing that is
+never traced, because both numbers look right on their own. The sidecar test now asserts
+the two AGREE rather than checking either against arithmetic it does over again.
+
+### B4 — two stations one raster apart were one signal
+
+The fold asked whether the GAP between two above-threshold stretches was wider than a
+whole channel. Two stations one raster apart never have such a gap: each is most of a
+channel wide, and what separates their skirts is the remainder. **MEASURED: two FM
+stations 200 kHz apart came back as ONE signal** — the failure where a band reads emptier
+than it is.
+
+Two rules now, because there are two questions:
+
+1. **Adjacency**, broken only by a gap wider than `MIN_FOLD_BINS`, so noise dipping one
+   bin inside a carrier does not split it.
+2. **The raster, against a run's WIDTH.** A run 380 kHz wide on a 200 kHz raster is not
+   one station with a carrier twice the legal width; it is two. A run holds
+   `round(width / channel)` of them, and each equal share's strongest bin is where one
+   is — the division puts its boundaries at the midpoints, which is where the skirts
+   meet.
+3. ...then the same raster the other way, at 0.6, to put back what adjacency oversplits:
+   a carrier with a deep notch arrives as two runs 90 kHz apart, and on a 200 kHz raster
+   that is one station. 0.6 is the share `sdrPeaks.ts` already merges with — a box that
+   split more finely than the client merges would send pills the client has to un-split.
+
+Four cases pinned; one of them (the two stations) fails on the old rule and three are
+regression guards for what the old rule got right.
+
+### C23 — the wire form was built once per subscriber
+
+`as_dict` rounds 4096 bins in a Python comprehension, and `/listen/spectrum` called it
+PER SUBSCRIBER PER FRAME — the exact per-row cost `iq.py` says it eliminated with
+`np.round`, still paid on this path and multiplied by however many people are watching.
+A `Frame` is frozen and every subscriber gets the same bytes, so the second reader was
+recomputing a value that cannot differ. Memoised, with the cache `init=False` and
+`compare=False` so `dataclasses.replace` — which is how peaks are added to a frame that
+has often already been serialised — hands back a frame whose cache is EMPTY rather than
+one carrying the pre-peaks answer.
+
+### C28 — one arithmetic, two containers, no way to notice
+
+`bands.py` PLANS a hopped row and `listen.py` STITCHES what comes back, and they cannot
+import each other: the sidecar ships in its own apt-only image. The copy was spelled
+`5 // 6` inside an expression, which a reader cannot see is a copy — and a drift produces
+a stitched row whose bin-to-hertz mapping is wrong with nothing anywhere to say so.
+
+Named `TRUSTED_FILL` on both sides now, and `supervisor/tests/test_sdr_hops.py` loads
+BOTH modules in one process and holds them equal: the constant, `hop_usable_bins` across
+every rung of `HOP_BINS_LADDER`, and `hop_centres` for a real 2 m plan. Changing one side
+is a CI failure instead of a silent lie.
+
+### C17 — asked rather than guessed
+
+`readStream`'s `flags` and `timeNs` were discarded. The question behind C17 is *how much
+did an overflow throw away?* — the one number a waterfall needs to place a row honestly —
+and `SOAPY_SDR_OVERFLOW` is a flag with no magnitude. Only a stream clock could answer,
+because the jump between two `timeNs` values IS the loss.
+
+Whether SoapyRTLSDR fills one on this board is a fact, not a design choice, so this ships
+as **`probe`'s `stream_clock` rung**: does `timeNs` get filled, does it ADVANCE, and is
+its step one buffer's worth of time at the achieved rate (compared against what a read
+DELIVERED, not what was asked for — `readStream` returns at most what is left of the
+buffer it is draining). The alternative on offer — overflows times `bufflen` — is an
+estimate that would be read as a measurement, which is the failure this plan has named
+six times.
 
 
 ## W1 — what shipped, and what it measured (2026-09-06)

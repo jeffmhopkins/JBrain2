@@ -207,7 +207,13 @@ def _channel_centre(frame: "listen.Frame", middle: float) -> tuple[float, int]:
     while high < len(frame.db) - 1 and frame.db[high + 1] >= edge:
         high += 1
     centre_bin = (low + high) / 2.0
-    return frame.start_hz + (centre_bin + 0.5) * frame.bin_hz - middle, peak_at
+    # NO half bin (C20). `iq.Spectrometer.start_hz` is bin 0's CENTRE — `fftshift` puts
+    # DC in bin `n // 2`, so `start_hz + i * bin_hz` addresses bin `i` exactly, which is
+    # what `Spectrum.stop_hz`'s own comment says and what `peaks.py` does. Adding half a
+    # bin here put this readout and the box's own peak frequencies on two grids half a
+    # bin apart: 46.9 Hz on a 93.75 Hz channel row, 293 Hz on a band one. Small, and
+    # exactly the kind of thing that is never traced because both numbers look right.
+    return frame.start_hz + centre_bin * frame.bin_hz - middle, peak_at
 
 
 #: How many of a band row's signals the probe reports. Enough to say what the dial

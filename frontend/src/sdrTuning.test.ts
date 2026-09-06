@@ -24,7 +24,7 @@ function row(
   const startHz = TUNED_HZ - (BINS / 2) * BIN_HZ;
   const db: number[] = [];
   for (let i = 0; i < BINS; i += 1) {
-    const hz = startHz + (i + 0.5) * BIN_HZ - TUNED_HZ;
+    const hz = startHz + i * BIN_HZ - TUNED_HZ;
     const away = Math.abs(hz - offsetHz);
     // A ripple on the floor and on the top, so nothing here passes by being perfectly
     // smooth — the flat top wanders, which is the jitter the midpoint rule exists for.
@@ -54,7 +54,7 @@ function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = 
   const startHz = TUNED_HZ - (bins / 2) * binHz;
   const db: number[] = [];
   for (let i = 0; i < bins; i += 1) {
-    const hz = startHz + (i + 0.5) * binHz - TUNED_HZ;
+    const hz = startHz + i * binHz - TUNED_HZ;
     const away = Math.abs(hz - offsetHz);
     db.push((away <= widthHz / 2 ? peakDb : floorDb) + Math.sin(i * 1.7) * 0.8);
   }
@@ -130,7 +130,7 @@ describe("tuningOf", () => {
     const near = row(0);
     const startHz = near.startHz;
     for (let i = 0; i < near.db.length; i += 1) {
-      const hz = startHz + (i + 0.5) * BIN_HZ - TUNED_HZ;
+      const hz = startHz + i * BIN_HZ - TUNED_HZ;
       if (Math.abs(hz - 13_000) <= 1_500) near.db[i] = -40;
     }
     expect(tuningOf(near, TUNED_HZ)?.offsetHz).toBeCloseTo(0, -2);
@@ -233,5 +233,26 @@ describe("a one-sided passband (C14)", () => {
     expect(wrong?.spilled).toBeGreaterThan(0.4);
     expect(right?.spilled).toBeLessThan(0.05);
     expect(spillLabel(wrong as never)).not.toBe("");
+  });
+});
+
+describe("the bin-to-hertz convention (C20)", () => {
+  // `startHz` is bin 0's CENTRE. The sidecar's `iq.Spectrometer.start_hz` is
+  // `center_hz - (n // 2) * bin_hz`, and `fftshift` puts DC in bin `n / 2` — so
+  // `startHz + i * binHz` addresses bin `i` exactly, which is what `Spectrum.stop_hz`'s
+  // own comment says and what `peaks.py` does. This file added half a bin, so the
+  // readout and the box's own peak frequencies sat on grids 46.9 Hz apart.
+  it("puts a signal centred on the dial at zero offset, not half a bin off", () => {
+    const centred = tuningOf(row(0), TUNED_HZ);
+
+    expect(centred?.offsetHz).toBe(0);
+    expect(centred?.errorHz).toBe(0);
+  });
+
+  it("reads a whole number of bins as a whole number of bins", () => {
+    // Four bins high is 375 Hz at this raster, not 375 + 46.875.
+    const off = tuningOf(row(4 * BIN_HZ), TUNED_HZ);
+
+    expect(off?.offsetHz).toBeCloseTo(4 * BIN_HZ, 6);
   });
 });
