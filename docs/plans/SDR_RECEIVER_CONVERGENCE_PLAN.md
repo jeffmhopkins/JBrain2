@@ -297,6 +297,39 @@ last caller went with the tier.
   everything below 24 MHz while `rtl_power` was the engine down there. Its own comment
   said "DELETE THIS WITH THAT GUARD, in the same wave" — this is that wave, and the real
   rule it was hiding (below 24 MHz a picture is one capture or nothing) is now reachable.
+**VERIFIED ON AIR 2026-09-06, and it corrects a claim this repo has been making.**
+2 m SSB draws at 10.14 fps, 4096 bins of 250 Hz, `ok: true`, no findings. **40 m — a
+band the PWA greyed out until this wave — draws at 10.2 fps**, `ok: true`, floor
+−51.3 dBFS and nothing on it, which is F0's dead HF input showing up as an empty picture
+rather than a sentence about software, exactly as intended. A hand-typed 40 MHz span
+comes back *"40 MHz at once is more than the waterfall can stitch in one row (31.8 MHz).
+Pick a narrower piece of it, or a band section."*
+
+But the hop ladder was measured across its whole range for the first time, and **the
+frame rate is `≈ 15 / hops`**:
+
+| span | hops | bin | fps |
+|---|---|---|---|
+| 5 MHz | 3 | 2343 Hz | 4.74 |
+| 10 MHz | 6 | 4687 Hz | 2.75 |
+| 15 MHz | 8 | 4687 Hz | 2.00 |
+| 20 MHz | 11 | 9375 Hz | 1.50 |
+| 25 MHz | 13 | 9375 Hz | 1.25 |
+| **30 MHz** | **16** | 9375 Hz | **1.00** |
+
+**At the top of the ladder this engine is exactly as slow as the tool it replaced**, and
+`spectrum-probe` says so in a finding it already had: *"1.0 fps is no better than
+rtl_power's own one-second clamp, which is the ceiling this engine exists to remove."*
+The cost is per-RETUNE, not per-sample — F0 measured `setFrequency` at 32 ms and
+`SETTLE_S` is 30 ms, so sixteen hops is ~1 s before a single FFT runs, while the samples
+themselves are 0.43 ms a hop (`HOP_SEGMENTS = 4`).
+
+So "finer bins than rtl_power AND without its one-second clamp" holds to about 15 MHz
+and is **false at the top of the range** — which also settles why B1 refuses above 31.8 MHz
+rather than raising `MAX_HOPS`: more hops is slower, not wider. Filed for W7: either cut
+the per-hop cost (the settle is a discard, and a hop could overlap the previous hop's
+transform) or lower `MAX_HOPS` to where the claim is true, and say the number either way.
+
 - **The test surgery is the honest cost of the deletion**, and it is most of the diff:
   `TestTheLiveSpectrum` and the server's spectrum cases were written against a fake
   `rtl_power` writing CSV, and now drive the real transform against a fake DEVICE. Two
@@ -306,7 +339,12 @@ last caller went with the tier.
 
 **W6 — Filter design becomes a specification.** C12 (Kaiser + a `(pass, stop, atten)` signature), C16, C13, C14, C15, C24.
 
-**W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and C27 need hardware: add probe rungs rather than guessing.
+**W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
+C27 need hardware: add probe rungs rather than guessing. **Plus C29, found by W5a's own
+on-air verification:** a 16-hop row takes ~1 s, all of it in sixteen `setFrequency` +
+settle pairs, so at the top of the hop ladder the engine hits the exact clamp it exists
+to remove (measured table above). Either cut the per-hop cost or lower `MAX_HOPS` to
+where the claim holds — and say which.
 
 
 ## W1 — what shipped, and what it measured (2026-09-06)
