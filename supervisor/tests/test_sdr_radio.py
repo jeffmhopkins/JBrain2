@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -632,10 +634,21 @@ def test_an_unnamed_handle_blocks_every_radio() -> None:
         assert listen.blocking_key(held, WIRE) == radio.ANY_DEVICE
 
 
-def test_the_unnamed_key_is_the_one_the_lease_already_uses() -> None:
-    """Copied rather than imported, because `listen` imports this module at F6 and a
-    cycle would be paid at import time — so the copy is pinned here instead."""
-    assert radio.ANY_DEVICE == listen.ANY_DEVICE
+def test_the_unnamed_key_and_its_RULE_are_one_thing_in_one_place() -> None:
+    """They used to be two constants and one function, in two modules, pinned equal by
+    this test. C19 is what a pinned copy costs: `radio._claim` matched keys exactly
+    because the rule was one import away in the layer above it.
+
+    Both now live HERE, which is the lower layer — `listen` imports this module, and the
+    reverse would be a cycle paid at import time by every caller."""
+    assert listen.ANY_DEVICE == radio.ANY_DEVICE
+    # By SOURCE FILE, not by identity: these tests load each sidecar module by path, so
+    # the `radio` inside `listen` is a second module object and `is` would compare two
+    # copies of the same function. Where the function is DEFINED is the claim.
+    assert inspect.getsourcefile(listen.blocking_key) == inspect.getsourcefile(
+        radio.blocking_key
+    )
+    assert str(inspect.getsourcefile(radio.blocking_key)).endswith("radio.py")
 
 
 def test_a_handle_that_will_not_close_keeps_blocking_the_reset() -> None:
@@ -1449,15 +1462,38 @@ def test_the_hop_cost_is_a_reading_not_a_finding() -> None:
     assert not [say for say in out["findings"] if "wall clock" in say]
 
 
+#: Above `DIRECT_MAX_HZ`, so the tuner is in the path and its gain means something.
+#: `PROBE_CENTER_HZ` is WWV on 10 MHz, which is NOT — see the bypass test below.
+TUNER_PROBE_HZ = 146_940_000
+
+
 def test_an_automatic_gain_is_a_finding_on_a_spectrum_instrument() -> None:
     """Nothing in this engine ever set the gain, so it runs at librtlsdr's default,
     which is automatic. A waterfall whose gain moves has a dB scale that means nothing
     from row to row, and on a hopped band every seam becomes a gain step drawn as if
-    the band itself had changed."""
-    out = radio.probe(driver=_FakeDriver(gain_auto=True))
+    the band itself had changed.
+
+    Asked at a TUNER frequency since C26: at the probe's own 10 MHz default there is no
+    tuner in the path, so there is no gain loop to find."""
+    out = radio.probe(driver=_FakeDriver(gain_auto=True), center_hz=TUNER_PROBE_HZ)
 
     assert out["gain"]["automatic"] is True
     assert [say for say in out["findings"] if "gain is AUTOMATIC" in say]
+
+
+def test_the_probe_says_there_is_NO_gain_control_below_the_tuner() -> None:
+    """C26, in the place it mattered most. `PROBE_CENTER_HZ` is 10 MHz — under
+    `direct_samp`, where the tuner is powered down and out of the signal path — so every
+    gain finding the probe made at its own default was about a value the driver had
+    stored and nothing had passed through. The probe IS the instrument; a fiction here
+    is a fiction with authority."""
+    out = radio.probe(driver=_FakeDriver(gain_auto=True))
+
+    assert out["gain"] == {"tuner_bypassed": True}
+    assert out["retune_settle_fixed_gain"]["tuner_bypassed"] is True
+    # ...and no VERDICT about a stage that is not in the path. Not a finding either:
+    # a finding names something someone could act on, and this names the band.
+    assert not [say for say in out["findings"] if "gain" in say]
 
 
 def test_the_settle_is_asked_again_with_the_gain_nailed_down() -> None:
@@ -1467,7 +1503,7 @@ def test_the_settle_is_asked_again_with_the_gain_nailed_down() -> None:
     must hand the radio back configured as it found it either way."""
     driver = _FakeDriver(gain_auto=True)
 
-    out = radio.probe(driver=driver)
+    out = radio.probe(driver=driver, center_hz=TUNER_PROBE_HZ)
 
     assert out["retune_settle_fixed_gain"]["was_automatic"] is True
     # Given back, not left fixed: the next reading would otherwise be of our own change.
@@ -1721,3 +1757,201 @@ def test_the_ladder_says_so_when_the_queue_is_NOT_the_settle() -> None:
     )
 
     assert findings and "NOT what the settle is made of" in findings[0]
+
+
+# -- W7a: the SWIG binding's own teardown (C8) ---------------------------------------
+
+
+class _SwigDevice:
+    """A `SoapySDR.Device` proxy, with the 0.8.1 binding's own `close`/`__del__`.
+
+    Copied from `/usr/lib/python3/dist-packages/SoapySDR.py` rather than paraphrased:
+    the whole defect is that the static `Device.unmake` bypasses the `__closed__` flag
+    this sets, so a paraphrase that dropped the flag would test nothing."""
+
+    def __init__(self, unmade: list[str]) -> None:
+        self._unmade = unmade
+
+    def unmake_static(self) -> None:
+        if "__closed__" in self.__dict__ or self._unmade:
+            raise RuntimeError("SoapySDR::Device::unmake() unknown device")
+        self._unmade.append("unmake")
+
+    def close(self) -> None:
+        try:
+            self.__getattribute__("__closed__")
+        except AttributeError:
+            self.unmake_static()
+        setattr(self, "__closed__", True)  # noqa: B010 - the binding writes it this way
+
+    def __del__(self) -> None:
+        self.close()
+
+
+def _soapy_over(device: _SwigDevice) -> Any:
+    """A `_Soapy` whose import already happened, holding a stand-in SoapySDR module."""
+    driver = radio._Soapy.__new__(radio._Soapy)
+    driver._sdr = SimpleNamespace(  # type: ignore[attr-defined]
+        Device=SimpleNamespace(unmake=lambda d: d.unmake_static())
+    )
+    return driver
+
+
+def test_a_device_is_torn_down_through_the_bindings_OWN_close() -> None:
+    """C8, and MEASURED ON THE BOX: every teardown printed
+
+        Exception ignored in: <function Device.__del__ ...>
+        RuntimeError: SoapySDR::Device::unmake() unknown device
+
+    The static `Device.unmake` frees the device and leaves the proxy believing it still
+    owns one, so the deleter frees it again. `close()` does the same unmake and sets the
+    flag the deleter checks — the binding's own comment calls it "manually unmake and
+    flag for future calls and the deleter"."""
+    unmade: list[str] = []
+    device = _SwigDevice(unmade)
+
+    _soapy_over(device).unmake(device)
+
+    assert unmade == ["unmake"], "the device must actually be torn down"
+    # ...and the deleter, running later, must be a no-op rather than a second free.
+    device.__del__()
+    assert unmade == ["unmake"]
+
+
+def test_the_static_unmake_is_what_the_deleter_TRIPS_over() -> None:
+    """The other half, so the test above cannot pass by not exercising the trap: taking
+    the route this file used to take reproduces the box's traceback exactly."""
+    unmade: list[str] = []
+    device = _SwigDevice(unmade)
+
+    device.unmake_static()  # what `_Soapy.unmake` used to do
+
+    with pytest.raises(RuntimeError, match="unknown device"):
+        device.__del__()
+
+    # The flag the real `close` would have set, so the collector's own `__del__` does
+    # not trip the same trap again and turn this into an unraisable at GC time — which
+    # is, precisely, what the box was doing.
+    setattr(device, "__closed__", True)  # noqa: B010
+
+
+def _gains_asked_for(monkeypatch, state: dict[str, Any]) -> list[float | None]:
+    """What `_settle_fixed_gain` asks the radio to be set to, given this gain state."""
+    asked: list[float | None] = []
+    held = radio.Radio.open(driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER)
+    monkeypatch.setattr(radio.Radio, "gain_state", lambda _self: dict(state))
+    monkeypatch.setattr(radio.Radio, "set_gain", lambda _self, db: asked.append(db))
+    try:
+        radio._settle_fixed_gain(held, 101_000_000)
+    finally:
+        held.close()
+    return asked
+
+
+def test_a_measured_gain_of_ZERO_is_a_gain_and_not_an_absence(monkeypatch) -> None:
+    """C18, and the sixth instance in this project of a number that looks like the
+    quantity and is not — here, a falsy one read as a missing one.
+
+    `_settle_fixed_gain` exists to answer "is the settle a PLL relock or an AGC loop?",
+    which it can only do by taking the same reading twice at the SAME gain. It picked
+    the gain with `or`, so a measured **0.0 dB** — the value this box actually had —
+    was replaced by 30, and the "fixed gain" reading ran at a different gain from the
+    automatic one it was being compared against. It did not fail; it answered a
+    different question."""
+    asked = _gains_asked_for(monkeypatch, {"gain_db": 0.0, "automatic": False})
+
+    assert asked[0] == 0.0, "0.0 dB is a gain, not an absence"
+    assert radio.SETTLE_FIXED_GAIN_DB not in asked
+
+
+def test_a_radio_that_cannot_say_its_gain_still_gets_one(monkeypatch) -> None:
+    """The branch `or` was there for, kept: with nothing to hold, fix it in the middle
+    of the R820T2's range rather than leave the loop running under the stopwatch."""
+    asked = _gains_asked_for(monkeypatch, {"automatic": True})
+
+    assert asked[0] == radio.SETTLE_FIXED_GAIN_DB
+    # ...and it is handed back afterwards, because a probe that leaves the radio
+    # configured differently from how it found it makes the NEXT reading a lie.
+    assert asked[-1] is None
+
+
+def test_a_real_measured_gain_is_the_one_that_is_held(monkeypatch) -> None:
+    """Neither zero nor absent — the ordinary case, so the two above cannot both pass
+    on a function that ignores its input."""
+    asked = _gains_asked_for(monkeypatch, {"gain_db": 14.4, "automatic": False})
+
+    assert asked[0] == 14.4
+
+
+def test_an_UNNAMED_handle_blocks_a_named_claim(monkeypatch) -> None:
+    """C19. Three things hold a dongle now — a session, a capture, and this module's own
+    `_open` device handles — and `_claim` was matching keys exactly while the rule sat
+    one layer up in `listen`. A handle opened with NO serial is on whichever device
+    librtlsdr enumerated first, so nothing can prove it is not the radio being asked
+    for; two handles on one dongle fail as garbled audio rather than as an error.
+
+    Latent, because the lease refuses one layer above this. `blocking_key` lives in this
+    module now and `_claim` is its third caller, so it cannot go back to being latent in
+    a different way."""
+    unnamed = radio.Radio.open(driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER)
+    try:
+        assert unnamed.key == radio.ANY_DEVICE
+
+        with pytest.raises(radio.RadioBusy, match="already holds a device handle"):
+            radio.Radio.open(
+                driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER, serial="09022796"
+            )
+    finally:
+        unnamed.close()
+
+
+def test_a_named_handle_blocks_an_unnamed_claim(monkeypatch) -> None:
+    """The other direction, which the exact-match keying also let through: an unnamed
+    request cannot prove it will not open the very radio already held."""
+    named = radio.Radio.open(
+        driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER, serial="09022796"
+    )
+    try:
+        with pytest.raises(radio.RadioBusy, match="already holds a device handle"):
+            radio.Radio.open(driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER)
+    finally:
+        named.close()
+
+
+def test_two_named_handles_on_DIFFERENT_radios_still_both_open() -> None:
+    """...and the whole point of the two-dongle box, so the fix above cannot have been
+    "refuse everything"."""
+    whip = radio.Radio.open(
+        driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER, serial="09022796"
+    )
+    try:
+        wire = radio.Radio.open(
+            driver=_FakeDriver(), rate_hz=RATE, center_hz=CENTER, serial="77192819"
+        )
+        wire.close()
+    finally:
+        whip.close()
+
+
+def test_the_gain_is_not_written_where_there_is_no_tuner() -> None:
+    """C26. Every gain stage an R820T2 has is IN the tuner, and `direct_samp` powers the
+    tuner down and wires the antenna straight to the ADC. Writing a gain there and
+    reading it back produces a number that looks like a measurement and is fiction —
+    the recurring failure this plan keeps naming."""
+    driver = _FakeDriver()
+    held = radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=7_200_000, direct=True
+    )
+    try:
+        before = len([c for c in driver.log if c[0] in ("setGain", "setGainMode")])
+
+        held.set_gain(28.0)
+
+        after = [c for c in driver.log if c[0] in ("setGain", "setGainMode")]
+        assert len(after) == before, (
+            "the tuner is powered down; there is nothing to set"
+        )
+        # ...and the reading says so, instead of handing back the driver's stored value.
+        assert held.gain_state() == {"tuner_bypassed": True}
+    finally:
+        held.close()

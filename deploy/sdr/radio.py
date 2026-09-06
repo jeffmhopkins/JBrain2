@@ -148,11 +148,43 @@ DIRECT_SAMP = "direct_samp"
 DIRECT_Q_BRANCH = "2"
 DIRECT_OFF = "0"
 
-#: The device key an unnamed handle takes — the same value as `listen.ANY_DEVICE`, and
-#: NOT imported from there: `listen` imports this module at F6, and a cycle between the
-#: two would be paid for at import time by every caller. `test_sdr_radio.py` asserts the
-#: two are equal, so the copy cannot drift into a second answer about what blocks what.
+#: The device key an unnamed handle takes. `listen.ANY_DEVICE` is this value — imported
+#: from here rather than copied, because this is the lower layer: `listen` imports this
+#: module, and the reverse would be a cycle paid for at import time by every caller.
 ANY_DEVICE = ""
+
+
+def blocking_key(held: object, key: str) -> str | None:
+    """Which held device stops `key` from being taken, if any.
+
+    **An UNNAMED holder conflicts with everything, and so does an unnamed request.** A
+    session or capture started with no serial opens whichever device librtlsdr
+    enumerates first, so nothing can prove it is not on the radio a second caller is
+    asking for. Refusing is the only honest answer: the alternative is two processes
+    fighting over one dongle, which fails as garbled audio rather than as an error. In
+    practice the api resolves a serial whenever it can see the USB scan, so this is the
+    one-dongle box — where one holder was always the limit — and the scan-unreachable
+    case, where caution is the point.
+
+    **It lives HERE, not in `listen`** (C19). Three things hold a dongle now — a
+    pipeline session, a one-shot capture, and this module's own `_open` device handles —
+    and `_claim` was matching keys exactly while the rule sat one layer up, so an
+    unnamed handle did not block a named claim and two handles could land on one radio.
+    Guarded by the lease today, which is what made it latent rather than a bug anyone
+    had seen. The rule stated twice is a rule that can disagree with itself, and the
+    symptom would be the two of them on one dongle.
+
+    Sorted, so "which one is blocking" does not depend on dict insertion order — the
+    same reason the radio list is sorted by serial.
+    """
+    keys = sorted(held)  # type: ignore[call-overload]
+    if key in keys:
+        return key
+    if ANY_DEVICE in keys:
+        return ANY_DEVICE
+    if key == ANY_DEVICE and keys:
+        return keys[0]
+    return None
 
 
 class RadioError(RuntimeError):
@@ -175,6 +207,23 @@ class Device(Protocol):
 
     camelCase because that is SoapySDR's C++ API surface coming through SWIG unchanged;
     renaming it here would mean a shim whose only job is to be pretty."""
+
+    def close(self) -> None:
+        """The binding's OWN teardown, and the only correct one (C8).
+
+        `SoapySDR.py` 0.8.1, verbatim:
+
+            #manually unmake and flag for future calls and the deleter
+            def close(self):
+                try: getattr(self, '__closed__')
+                except AttributeError: Device.unmake(self)
+                setattr(self, '__closed__', True)
+
+            def __del__(self): self.close()
+
+        The flag is the point. Calling the static `Device.unmake(device)` — which this
+        file did — tears the device down without setting it, so the deleter unmakes a
+        SECOND time when the proxy is collected."""
 
     def setSampleRate(self, direction: int, channel: int, rate: float) -> None: ...
 
@@ -429,7 +478,20 @@ class _Soapy:
         return tried
 
     def unmake(self, device: Device) -> None:
-        self._sdr.Device.unmake(device)
+        """`close()`, not the static `Device.unmake()` (C8).
+
+        MEASURED ON THE BOX 2026-09-06, in `logs sdr`, after every single teardown:
+
+            Exception ignored in: <function Device.__del__ ...>
+              File ".../SoapySDR.py", line 1801, in close
+                except AttributeError: Device.unmake(self)
+            RuntimeError: SoapySDR::Device::unmake() unknown device
+
+        The static unmake works and then leaves the proxy still believing it owns a
+        device, so the deleter unmakes a freed handle. `close()` does the same unmake and
+        sets the `__closed__` flag the deleter checks — see `Device.close` above for the
+        binding's own source and its own comment saying that is what it is for."""
+        device.close()
 
     def version(self) -> str:
         return f"api {self._sdr.getAPIVersion()} abi {self._sdr.getABIVersion()}"
@@ -515,8 +577,14 @@ def holders() -> dict[str, str]:
 
 def _claim(key: str, radio: "Radio") -> None:
     with _open_lock:
-        held = _open.get(key)
-        if held is not None:
+        # `blocking_key`, not `_open.get(key)` (C19). An exact match let an UNNAMED
+        # handle — one opened with no serial, on whichever device librtlsdr enumerated
+        # first — sit alongside a named claim for a radio nobody could prove was a
+        # different one. Two handles on one dongle fail as garbled audio rather than as
+        # an error, which is why the rule is one function and this is the third caller.
+        hit = blocking_key(_open, key)
+        if hit is not None:
+            held = _open[hit]
             raise RadioBusy(f"this process already holds a device handle ({held.doing})")
         _open[key] = radio
 
@@ -825,6 +893,13 @@ class Radio:
     def _gain_state_locked(self) -> dict[str, Any]:
         device = self._require_device()
         out: dict[str, Any] = {}
+        if self._direct:
+            # NOT the driver's numbers (C26). Under `direct_samp` the tuner is powered
+            # down and out of the path, so `getGain` answers with a stored value no
+            # signal went through — a reading that looks like a measurement and is not.
+            # Saying there is no gain control is the honest answer, and it is also what
+            # `bands.SectionOut.direct_sampling` already tells the PWA.
+            return {"tuner_bypassed": True}
         with contextlib.suppress(Exception):
             out["automatic"] = bool(device.getGainMode(self._driver.RX, CHANNEL))
         with contextlib.suppress(Exception):
@@ -840,8 +915,18 @@ class Radio:
 
         A spectrum instrument wants the first: a waterfall whose gain moves has a dB
         scale that means nothing from row to row, and every hop seam becomes a gain
-        step drawn as if the band had changed."""
+        step drawn as if the band had changed.
+
+        **A no-op under `direct_samp`** (C26). Every gain stage an R820T2 has is IN the
+        tuner, and direct sampling powers the tuner down and wires the antenna to the
+        ADC — so there is nothing left to set, and `getGain` afterwards reports whatever
+        the driver last stored rather than anything the signal passed through. Writing
+        it produced a number that reads like a measurement and is fiction, which is the
+        recurring failure this plan keeps naming. `gain_state` says so in the same
+        words."""
         with self._io_lock:
+            if self._direct:
+                return
             device = self._require_device()
             if db is None:
                 device.setGainMode(self._driver.RX, CHANNEL, True)
@@ -1256,7 +1341,15 @@ def _settle_fixed_gain(radio: Radio, other_hz: int) -> dict[str, Any]:
     under a millisecond. If the settle collapses with the gain fixed, it was never a
     relock and the fix is to fix the gain, which a spectrum instrument wants anyway."""
     before = radio.gain_state()
-    radio.set_gain(float(before.get("gain_db") or SETTLE_FIXED_GAIN_DB))
+    # `is None`, not `or` (C18). A measured gain of exactly **0.0 dB** is falsy, and
+    # 0.0 dB is the value this box actually had before F-something set a real one — so
+    # the "fixed gain" reading was taken at 30 dB while the automatic one ran at 0, and
+    # the two numbers the whole comparison exists to put side by side were measured on
+    # different gains. The comparison did not fail; it answered a different question.
+    measured = before.get("gain_db")
+    radio.set_gain(
+        SETTLE_FIXED_GAIN_DB if measured is None else float(measured)
+    )
     try:
         out = _settle_after_retune(radio, other_hz)
     finally:
@@ -1264,8 +1357,15 @@ def _settle_fixed_gain(radio: Radio, other_hz: int) -> dict[str, Any]:
         # differently from how it found it makes the NEXT reading a lie.
         if before.get("automatic"):
             radio.set_gain(None)
-    out["gain_db"] = radio.gain_state().get("gain_db")
+    after = radio.gain_state()
+    out["gain_db"] = after.get("gain_db")
     out["was_automatic"] = before.get("automatic")
+    if after.get("tuner_bypassed"):
+        # Say it, rather than reporting two Nones and letting a reader take them for a
+        # driver that would not answer (C26). Under `direct_samp` there is no gain stage
+        # in the path at all, so "fixed gain" and "automatic gain" are the same reading
+        # and the comparison this function exists for has nothing to compare.
+        out["tuner_bypassed"] = True
     return out
 
 
@@ -1566,6 +1666,14 @@ def _settle_findings(settle: dict[str, Any]) -> list[str]:
 
 def _gain_findings(gain: dict[str, Any]) -> list[str]:
     """Nothing in this engine ever sets the gain, so whatever it is, it is a default."""
+    if gain.get("tuner_bypassed"):
+        # NO finding, and that is the fix (C26). `PROBE_CENTER_HZ` is WWV on 10 MHz, so
+        # the probe's own default runs under `direct_samp` with the tuner powered down —
+        # and every gain verdict it reached there was about a value the driver had
+        # stored and nothing had passed through. Not a finding either, because a finding
+        # names something someone could act on and this names a property of the band:
+        # `out["gain"]` carries `tuner_bypassed`, which is where a reader looks.
+        return []
     if gain.get("automatic"):
         return [
             "the tuner's gain is AUTOMATIC — nothing in this engine ever sets it. A "

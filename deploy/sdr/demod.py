@@ -410,11 +410,6 @@ class _Fir:
         self._tail = np.zeros(self._taps.size - 1, dtype=self._dtype)
         self._phase = 0
 
-    @property
-    def delay(self) -> int:
-        """Group delay in OUTPUT samples — what this stage costs in latency."""
-        return (self._taps.size - 1) // 2 // self._m
-
     def feed(self, x: np.ndarray) -> np.ndarray:
         buf = np.concatenate([self._tail, x.astype(self._dtype, copy=False)])
         valid = buf.size - self._taps.size + 1

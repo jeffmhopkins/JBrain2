@@ -545,37 +545,21 @@ def validate_serial(serial: object) -> str | None:
 
 
 #: The device key a session with no serial takes. Not a serial, and cannot collide with
-#: one: `validate_serial` requires at least one character.
-ANY_DEVICE = ""
+#: one: `validate_serial` requires at least one character. From `radio.py`, which is the
+#: layer `blocking_key` moved to — the two were separate constants asserted equal by a
+#: test, which is the arrangement C19 is about.
+ANY_DEVICE = radio.ANY_DEVICE
 
 
-def blocking_key(held: object, key: str) -> str | None:
-    """Which held device stops `key` from being taken, if any.
-
-    **An UNNAMED holder conflicts with everything, and so does an unnamed request.** A
-    session or capture started with no serial opens whichever device librtlsdr
-    enumerates first, so nothing can prove it is not on the radio a second caller is
-    asking for. Refusing is the only honest answer: the alternative is two processes
-    fighting over one dongle, which fails as garbled audio rather than as an error. In
-    practice the api resolves a serial whenever it can see the USB scan, so this is the
-    one-dongle box — where one holder was always the limit — and the scan-unreachable
-    case, where caution is the point.
-
-    One function because there are two things that hold a radio (a pipeline session and
-    a one-shot capture) and they must agree; the rule stated twice is a rule that can
-    disagree with itself, and the symptom would be the two of them on one dongle.
-
-    Sorted, so "which one is blocking" does not depend on dict insertion order — the
-    same reason the radio list is sorted by serial.
-    """
-    keys = sorted(held)  # type: ignore[call-overload]
-    if key in keys:
-        return key
-    if ANY_DEVICE in keys:
-        return ANY_DEVICE
-    if key == ANY_DEVICE and keys:
-        return keys[0]
-    return None
+#: Which held device stops a key from being taken. **It lives in `radio.py` now** (C19).
+#:
+#: There are now THREE registries with a claim on a dongle — a pipeline session, a
+#: one-shot capture, and `radio._open`'s in-process device handles — and the third was
+#: keying on exact matches while this rule was one import away. Re-exported here because
+#: `server.py` and this module's own `Tuner` ask for it by this name, and because the
+#: docstring's point stands: a rule stated twice is a rule that can disagree with itself,
+#: and the symptom is two of them on one dongle.
+blocking_key = radio.blocking_key
 
 
 def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:

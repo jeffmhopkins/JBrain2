@@ -1,6 +1,6 @@
 # SDR receiver convergence — one capture, many sinks, and the subprocesses go
 
-> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7◻️
+> **Status:** In progress · **Last verified:** 2026-09-06 · **Waves:** W1✅ W2✅ W3✅ W4✅ W5a✅ W5b✅ W5c✅ W6a✅ W6b✅ W7a✅ W7b◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk — W5 *removes* a temp-file path (rule 2); no new table,
@@ -45,7 +45,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **B2 ✅** | `PURPOSE_SURVEY`, `_sweep_cmd`, `_start_sweep_pipeline`, `sweep_csv`, its lifecycle rule | A `SurveySink` over a `spectrum` session, emitting the CSV shape `backend/src/jbrain/sdr/sweep.py` already parses | Removes a purpose, a lifecycle, a temp file, and gains shortwave surveys. Its only caller is one debug route. |
 | **B3 ✅** | `peaks._median` + `_local_floors` — a pure-Python `sorted()` per bin | `np.lib.stride_tricks.sliding_window_view` + `np.partition` on a stride, `np.interp` back | **[V]** 238–1910 ms against a 100 ms budget, on the capture thread. Vectorised: **0.88 ms**. |
 | **B4** | The gap-based fold at `peaks.py:118` | A minimum peak-to-peak distance (`0.6 × channel_hz`, the number the client already uses) | **[R]** Two stations one raster apart always have a clear gap smaller than the raster, so they always merge. Measured: two FM stations 200 kHz apart → 1 signal. |
-| **B5** | `_Fir.delay` (`demod.py:297`) | — | No caller anywhere in `deploy/`. |
+| **B5 ✅** | `_Fir.delay` (`demod.py:297`) | — | No caller anywhere in `deploy/`. |
 | **B6 ✅** | `server.py`'s duplicate `MODES`, `MIN_HZ`, `MAX_HZ`, and `WBFM_SAMPLE_RATE = 171_000` | Import from `listen` | **[V]** The constant is dead *and* contradicts `listen.py:344`'s measured 192_000, which carries two paragraphs explaining why 171 kHz was wrong. |
 | **B7 ✅** | `_SHOWN_FIRST` / `_worth_showing` (`listen.py:2509`) | `health.shown`, called by `/api/sdr/status`, which already reshapes `SessionInfo` | Presentation policy in the radio process. **[V]** Removing it exposed `_watch_spectrum` reading `TUNER.current()` and comparing ids — on a two-radio box it reported the spectrum session gone while it was measuring. |
 
@@ -70,7 +70,7 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C5 ✅** | **`_build_channel` builds a 53-tap wide-FM filter its own docstring says it returns `None` for.** Introduced 2026-09-06 when the guard moved from `view_half_hz` to `0.45 × if_rate`. Costs 18% of the wide-FM chain and narrows the signal. | **[V]** |
 | **C6 ✅** | **The detection baseline window can only grow and is never clamped to the row.** `max(400 kHz, 21 × channel_hz)` exceeds the whole row for any sweep < 400 kHz, every 256 kS/s capture, and any 200 kHz raster — silently degrading to a global median. This is the 162.55 blind spot generalised, and a test currently *pins* the behaviour. | **[V]** the constants, and the on-air miss |
 | **C7 ✅** | **`SessionInfo.engine` is never set to `"rtl_power"` and never set in `_start_iq_spectrum`.** A waterfall on our own engine reports `"rtl_fm"`. `server.py:1175` works around it by reading a private attribute with a `noqa`. | **[V]** |
-| **C8** | `Device.unmake(device)` bypasses the SWIG binding's own deleter, so `__del__` unmakes a second time and throws inside the destructor on every teardown. | **[R]** binding source read |
+| **C8 ✅** | `Device.unmake(device)` bypasses the SWIG binding's own deleter, so `__del__` unmakes a second time and throws inside the destructor on every teardown. | **[R]** binding source read |
 | **C9** | `QUEUE_BUFFERS = 4` is a spectrum-path tuning applied to the listening path: 41 ms of ring at 2.4 MS/s, and SoapyRTLSDR discards the **entire** fifo on one overflow event. Any ffmpeg stall over 41 ms tears audio. A listening session never retunes mid-session, so the shallow ring buys nothing there. | **[R]** |
 | **C10 ✅** | The DC/LO bin is excised in the *probe* (`radio.py:1000`) and nowhere in production. On a stitched hop row that is a comb of up to 11 phantom stations, and `steady` is precisely the classifier that cannot absorb it. | **[R]** |
 | **C11 ✅** | Welch segments do not overlap; the textbook and `scipy.signal.welch`'s default is 50%. On the tuning row: per-bin σ **1.49 → 1.09 dB**, and an empty channel's apparent SNR falls from a mean of 3.89 dB to 3.08 — against a 6 dB threshold with only ~0.7 dB of headroom today. | **[R]** |
@@ -85,15 +85,15 @@ independently re-run; **[S]** is suspected and needs hardware to settle.
 | **C15 ✅** | `_DcBlock`'s real −3 dB corner is ~7 Hz, not the 31 Hz documented (31.25 is the boxcar's first *null*, where the response is 0 dB), and it overshoots +2 dB at 20 Hz. | **[R]** |
 | **C16 ✅ declined** | De-emphasis is convolved in at the **IF** rate, making wide FM's back end 771 taps where the anti-alias filter alone is 481. `gr-analog` runs it at the audio rate. 12.3 → 8.0 Mmac/s. | **[R]** |
 | **C17** | `readStream`'s `flags` and `timeNs` are discarded, so `Reading.torn` can say *something* was lost but never *how much* — the one number a waterfall needs to place a row honestly. Frame time is wall-clock captured before the read. | **[R]** |
-| **C18** | `_settle_fixed_gain` uses `or`, so a measured gain of exactly **0.0 dB** — the value this box actually had — is treated as absent and replaced by 30. The "fixed gain" comparison was against a different gain. | **[R]** |
-| **C19** | `radio._claim` uses exact-match keying where `listen.blocking_key` has the correct rule (an unnamed holder blocks everything). Guarded one layer up today, so latent. | **[R]** |
+| **C18 ✅** | `_settle_fixed_gain` uses `or`, so a measured gain of exactly **0.0 dB** — the value this box actually had — is treated as absent and replaced by 30. The "fixed gain" comparison was against a different gain. | **[R]** |
+| **C19 ✅** | `radio._claim` uses exact-match keying where `listen.blocking_key` has the correct rule (an unnamed holder blocks everything). Guarded one layer up today, so latent. | **[R]** |
 | **C20** | Half-bin convention conflict: `peaks.py` treats `start_hz + i·bin_hz` as the bin **centre** (correct, verified); `sdrTuning.ts` and `server.py:222` add a further half bin. The box's peak frequencies and the tuning readout are on two different grids. | **[R]** |
 | **C21** | `_channel_floor`'s outer ring for wide FM is 90–180 kHz off centre — where the 200 kHz raster puts the neighbour's sideband. On a crowded dial the "noise floor" is a neighbouring station. | **[S]** |
 | **C22** | Neither `Frame` nor `Reduced` carries `bin_hz`-relative floor semantics or `gain_db`, so a floor from an older run is silently incomparable — the same class as the AGC bug just fixed. Thresholds calibrated at one resolution do not transfer to another. | **[R]** |
 | **C23** | `Frame.as_dict` does `[round(v,1) for v in self.db]` per subscriber per frame — the exact per-row cost `iq.py` says it eliminated with `np.round`, still paid on this path. | **[R]** |
 | **C24 ✅** | Any stage with `m == 1` raises from the constructor (cutoff lands exactly on Nyquist). Unreachable from `listen.py` today; a trap for any new capture rate. | **[R]** reproducible |
 | **C25** | No ppm/`CORR` correction anywhere. Low on a TCXO dongle (~80 Hz at 162 MHz), but two dongles will differ from each other. | **[R]** |
-| **C26** | Gain is written on the direct-sampling path, where the tuner is bypassed and the number is fiction. | **[R]** |
+| **C26 ✅** | Gain is written on the direct-sampling path, where the tuner is bypassed and the number is fiction. | **[R]** |
 | **C27** | `setBandwidth` is never called; librtlsdr's automatic IF bandwidth is exactly the rolloff `hop_usable_bins` throws away a sixth of every capture to avoid. Setting it explicitly might buy much of that back. | **[S]** probe rung, not a blind change |
 | **C28** | `hop_usable_bins` is `bins * 5 // 6` in `listen.py` and `TRUSTED_FILL` in `bands.py`. They agree today; changing the constant desynchronises the planner from the stitcher silently, and the stitched row's bin→Hz mapping is then wrong with nothing to detect it. | **[R]** |
 
@@ -614,12 +614,93 @@ it would be measuring something else.
 | 144.0 usb (the same carrier moved to the passband edge) | **+13.1 dB** | The AGC follows the signal down — the same carrier, eight decibels weaker through the filter, eight decibels more gain. |
 | 128.5 am (a dead air-band channel) | **+20.4 dB** | And the probe still says *"nothing is transmitting here: the strongest bin is 2.9 dB over the channel's own noise floor"*. **This is the C13 design property on air**: the AGC made the hiss audible without making the level meter lie about it, because `audio_rms` is measured before the gain. |
 
-**W7 — Loose ends.** C8, C17, C18, C19, C20, C22, C23, C25, C26, C28, B4, B5. C21 and
-C27 need hardware: add probe rungs rather than guessing. **Plus C29, found by W5a's own
+**W7 — Loose ends.**
+**W7a ✅ shipped 2026-09-06** — C8, C18, C19, C26, B5: the latent correctness bugs.
+**W7b** — C17, C20, C22, C23, C28, B4, and probe rungs for C21/C25/C27/C29 rather than
+guesses. **Plus C29, found by W5a's own
 on-air verification:** a 16-hop row takes ~1 s, all of it in sixteen `setFrequency` +
 settle pairs, so at the top of the hop ladder the engine hits the exact clamp it exists
 to remove (measured table above). Either cut the per-hop cost or lower `MAX_HOPS` to
 where the claim holds — and say which.
+
+
+## W7a — what shipped (2026-09-06)
+
+Five things that were each one line of wrongness with a paragraph of consequence.
+
+### C8 — every teardown threw inside the destructor, and the box was saying so
+
+**FOUND IN `logs sdr` ON THE BOX**, after every single radio teardown:
+
+```
+Exception ignored in: <function Device.__del__ at 0x...>
+  File "/usr/lib/python3/dist-packages/SoapySDR.py", line 1801, in close
+    except AttributeError: Device.unmake(self)
+RuntimeError: SoapySDR::Device::unmake() unknown device
+```
+
+The binding (`python3-soapysdr` 0.8.1, extracted and read rather than guessed at) is:
+
+```python
+    #manually unmake and flag for future calls and the deleter
+    def close(self):
+        try: getattr(self, '__closed__')
+        except AttributeError: Device.unmake(self)
+        setattr(self, '__closed__', True)
+
+    def __del__(self): self.close()
+```
+
+`_Soapy.unmake` called the STATIC `Device.unmake(device)`, which tears the device down
+without setting `__closed__` — so the deleter unmade a freed handle. `device.close()`
+does the same unmake and sets the flag; the binding's own comment says that is what it
+is for. The test copies those seven lines verbatim rather than paraphrasing them,
+because the flag is the entire defect.
+
+### C18 — a measured gain of 0.0 dB read as "no gain"
+
+`_settle_fixed_gain` exists to answer *is the settle a PLL relock or an AGC loop?*, which
+it can only do by taking the same reading twice at the SAME gain. It picked that gain
+with `or`, so a measured **0.0 dB** — the value this box actually had — was falsy and
+replaced by 30. The comparison did not fail; it answered a different question.
+
+**The sixth instance in this project of a number that looks like the quantity and is
+not**, after median-as-floor (×2), max-as-clipping, level-as-signal-presence,
+per-bin-FFT-max-as-suppression, and peaks-under-AGC-as-stations.
+
+### C19 — the rule about what blocks what, stated twice
+
+`blocking_key` has the correct rule (an unnamed holder blocks everything, and an unnamed
+request is blocked by anything) and lived in `listen`. `radio._claim` — the THIRD thing
+that holds a dongle, after a session and a capture — matched keys exactly, so an unnamed
+device handle did not block a named claim and two handles could land on one radio. Fails
+as garbled audio rather than as an error.
+
+`blocking_key` and `ANY_DEVICE` live in `radio.py` now, which is the lower layer, and
+`listen` re-exports both. The test that used to pin the two copies equal now pins them
+IDENTICAL — the copy is what C19 cost.
+
+### C26 — a gain written where there is no tuner
+
+Every gain stage an R820T2 has is in the tuner, and `direct_samp` powers the tuner down
+and wires the antenna to the ADC. `set_gain` wrote anyway and `getGain` read back
+whatever the driver had stored — a number that reads like a measurement and is fiction.
+`set_gain` is a no-op there now and `gain_state` answers `{"tuner_bypassed": True}`,
+which the retune probe passes through rather than reporting two nulls a reader could take
+for a driver that would not answer.
+
+**It mattered most in the probe, which is the instrument.** `PROBE_CENTER_HZ` is WWV on
+10 MHz — under `direct_samp` — so `radio.probe`'s own default was reaching a verdict
+about the tuner's gain (*"the tuner's gain is AUTOMATIC"*) at a frequency where the tuner
+is powered down and out of the path. A fiction in the probe is a fiction with authority.
+`_gain_findings` returns nothing there now; the fact rides in `out["gain"]`, because a
+FINDING names something someone could act on and this names a property of the band. The
+two probe tests that exercised the automatic-gain verdict ask at 146.94 MHz now, where
+there is a tuner to have an opinion about.
+
+### B5
+
+`_Fir.delay` had no caller anywhere in `deploy/`. Deleted.
 
 
 ## W1 — what shipped, and what it measured (2026-09-06)
