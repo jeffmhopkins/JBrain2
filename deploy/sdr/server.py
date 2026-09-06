@@ -1305,8 +1305,13 @@ class Handler(BaseHTTPRequestHandler):
         self, sweep: listen.Sweep, seconds: float, session_id: str
     ) -> dict[str, Any]:
         """Collect frames for `seconds` and reduce them to a verdict."""
-        session = TUNER.current()
-        if session is None or session.id != session_id:
+        # BY ID. This read `TUNER.current()` and then checked the id, which on a
+        # two-radio box answered with whichever session the sidecar ranked first — so a
+        # probe running beside a listening session reported "the spectrum session was
+        # gone" while it was measuring perfectly. Found by B7, which is what took that
+        # ranking out of this process.
+        session = TUNER.find(session_id)
+        if session is None:
             return {
                 "ok": False,
                 "summary": "the spectrum session was gone before a frame arrived",
