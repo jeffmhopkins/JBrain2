@@ -132,6 +132,32 @@ MAX_SWEEP_SECONDS = 900
 MIN_SWEEP_BIN_HZ = 100
 MAX_SWEEP_BIN_HZ = 100_000
 MAX_SWEEP_SPAN_HZ = 60_000_000
+
+#: The tuner gain a MEASURING session uses when the caller names none.
+#:
+#: Measuring, not listening: a survey and a live spectrum exist to compare levels —
+#: across a band, across a row, and across runs — and AGC destroys exactly that. Both
+#: paths already said so in a comment and then applied it only `if self.gain`, so the
+#: default was the thing the comment warned against. (Listening keeps AGC, where a
+#: moving gain costs nothing and loudness is the point.)
+#:
+#: MEASURED ON AIR 2026-09-06, three 162.3-162.7 sweeps each way:
+#:
+#:   AGC       floor -7.4 / -7.3 / -7.5   steady: 162.35 AND 162.550, peaks 3.7-6.7
+#:   30 dB     floor -29.1 / -29.3 / -29.2  steady: 162.550 only, peaks -0.3 to 0.1
+#:
+#: So a fixed gain does three things. The floor stops drifting (0.2 dB of spread
+#: against a wandering one), the peak stops drifting (0.4 dB), and **the station at
+#: 162.35 disappears** — it is not a NOAA channel and never was, it was AGC breathing.
+#: The real station also reads ~29 dB over the floor instead of 11.
+#:
+#: 30 dB is where the ladder puts it, not a guess. On 162.550 through the fixed listen
+#: chain: gain 0 gives 20.2 dB SNR, 10-30 gives 40.5/41.4/39.7, 40 gives 32.8. The
+#: bottom of the range really is ~20 dB DEAFER, which is the opposite of what this
+#: repo concluded when it measured the same ladder on an empty channel. And it does not
+#: overload the loud end: at 30 dB the strongest station on the FM dial reads -11.2
+#: dBFS with no clipping, which is 19 dB of headroom.
+MEASURING_GAIN_DB = 30.0
 # How long a non-session claim on a radio (a one-shot `capture`) stays good. Longer than
 # any capture the sidecar will run — server.py caps one at 120 s — plus room for device
 # open and tuner settle on a cold radio, so an expiry is always a LEAK rather than a slow
@@ -1127,10 +1153,12 @@ class Session:
             "-i", "1",
             "-e", str(int(span.seconds)),
         ]  # fmt: skip
-        if self.gain:
-            # Fixed gain, never AGC. A floor that moves with the signal makes dB values
-            # incomparable across the sweep, and every threshold built on them drifts.
-            cmd += ["-g", str(self.gain)]
+        # Fixed gain, never AGC — and NEVER means when the caller named none either,
+        # which is what this got wrong. A floor that moves with the signal makes dB
+        # values incomparable across the sweep, and every threshold built on them
+        # drifts; on air that hid a real station on half its runs and invented one that
+        # is not on the channel plan (`MEASURING_GAIN_DB`).
+        cmd += ["-g", str(self.gain or MEASURING_GAIN_DB)]
         cmd += self._device_args()
         return [*cmd, self.sweep_csv]
 
@@ -1197,11 +1225,11 @@ class Session:
             "-f", f"{span.start_hz}:{span.stop_hz}:{span.bin_hz}",
             "-i", str(SPECTRUM_INTERVAL_S),
         ]  # fmt: skip
-        if self.gain:
-            # Fixed gain for the same reason the survey fixes it: a floor that moves
-            # with the signal makes the colours mean nothing across the picture, and a
-            # waterfall whose scale drifts is one nobody can read a weak signal off.
-            cmd += ["-g", str(self.gain)]
+        # Fixed gain for the same reason the survey fixes it, and defaulted for the
+        # same reason: a floor that moves with the signal makes the colours mean nothing
+        # across the picture, and a waterfall whose scale drifts is one nobody can read
+        # a weak signal off.
+        cmd += ["-g", str(self.gain or MEASURING_GAIN_DB)]
         cmd += self._device_args()
         return [*cmd, "-"]
 
@@ -1442,6 +1470,15 @@ class Session:
             raise RadioUnavailable(str(busy)) from busy
         except radio.RadioError as failed:
             raise RadioUnavailable(str(failed)) from failed
+        # THE GAIN, which this path dropped on the floor exactly as the listening one
+        # did — `radio.Radio.open` touches it not at all, so a waterfall ran at whatever
+        # librtlsdr happened to leave the dongle at. Worse here than for audio: a
+        # picture whose dB scale is a property of the previous session is one where no
+        # two rows, and no two runs, mean the same thing. Suppressed broadly, as
+        # `radio.gain_state` is: a driver that will not take a gain is a setting this
+        # session does without, not a reason to refuse to draw.
+        with contextlib.suppress(Exception):
+            self._radio.set_gain(float(self.gain) if self.gain else MEASURING_GAIN_DB)
         self._spectrometer = iq.Spectrometer(bins, rate_hz)
         self._threads = [threading.Thread(target=self._pump_iq_spectrum, daemon=True)]
         for thread in self._threads:
