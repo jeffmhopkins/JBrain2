@@ -352,7 +352,7 @@ def find(
     # a snapped number nobody can compare against what was seen is exactly the kind of
     # number this file exists not to produce.
     grid = raster_origin(measured, channel_hz) if origin is None else origin
-    return [
+    labelled = [
         {
             "hz": round(_snapped(hz, grid, channel_hz) or hz, 1),
             "measured_hz": round(hz, 1),
@@ -361,3 +361,27 @@ def find(
         }
         for hz, (_index, value, excess) in zip(measured, shown, strict=True)
     ]
+    return _one_per_channel(labelled)
+
+
+def _one_per_channel(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per channel, keeping the strongest — order otherwise preserved.
+
+    SNAPPING CAN COLLIDE, and nothing downstream can undo it. The adjacency rule breaks
+    a run on a gap wider than `MIN_FOLD_BINS`, which is right for two stations a few
+    bins apart and wrong for one wideband-FM carrier whose middle dips below the
+    threshold in the row that happened to be measured: two runs, two peaks, both landing
+    on the same channel once snapped. The viewer holds peaks by frequency, so it kept
+    both — REPORTED as two pills reading 106.100 side by side, +23.2 and +22.3 dB.
+
+    The strongest wins rather than the first, because "first" here means "leftmost bin",
+    which is the shoulder of a carrier rather than its middle."""
+    best: dict[float, dict[str, Any]] = {}
+    for signal in signals:
+        at = signal["hz"]
+        held = best.get(at)
+        if held is None or signal["db"] > held["db"]:
+            best[at] = signal
+    # Back into the order they were found in — strongest first, which is what every
+    # caller reads them as.
+    return [signal for signal in signals if best.get(signal["hz"]) is signal]

@@ -2122,3 +2122,52 @@ def test_the_channel_floor_is_taken_from_NOISE_not_from_the_neighbour() -> None:
     empty = server._channel_floor(_fm_channel_row(neighbour_db=-80.0))
 
     assert abs(crowded - empty) < 1.0, (crowded, empty)
+
+
+def _row(levels: list[float]) -> Any:
+    return listen.Frame(at=0.0, start_hz=88_000_000, bin_hz=9375, db=levels)
+
+
+def test_the_probe_says_whether_the_picture_HOLDS_STILL() -> None:
+    """The owner's question, which nothing on the box could answer: "the spectrum is
+    intermittent... it's not a continuous bar, it has like little blank sections in it".
+
+    A waterfall is a picture of time, so an intermittent one is either rows that lost
+    bins or a carrier measured in some rows and not others. Those have different causes
+    and the same appearance, and guessing between them from a photograph already cost
+    one wrong fix.
+    """
+    steady = [_row([-60.0, -60.0, -20.0, -60.0]) for _ in range(6)]
+
+    verdict = server._steadiness(steady)
+
+    assert verdict["rows"] == 6
+    assert verdict["gaps"] == 0
+    assert verdict["carrier_bin"] == 2
+    assert verdict["carrier_seen_in"] == 6
+    assert verdict["carrier_swing_db"] == 0.0
+
+
+def test_a_carrier_that_BLINKS_is_counted_as_blinking() -> None:
+    """The dwell case: an FM carrier is on continuously, so a bin that stands up in
+    half the rows is the measurement blinking rather than the station."""
+    on = _row([-60.0, -60.0, -20.0, -60.0])
+    off = _row([-60.0, -60.0, -58.0, -20.0])
+
+    # The LAST row names the carrier bin, so it has to be one the carrier is in.
+    verdict = server._steadiness([off, on, off, on])
+
+    assert verdict["carrier_seen_in"] == 2
+    assert verdict["carrier_swing_db"] == 38.0
+
+
+def test_bins_that_measured_NOTHING_are_counted_as_holes() -> None:
+    """`peaks.find` skips them and the PWA paints them transparent, both deliberately —
+    a bin that measured nothing is not a quiet bin. So a row that lost a hop draws as a
+    hole in the picture, which is the other thing "blank sections" could mean."""
+    torn = _row([-60.0, float("nan"), -20.0, float("nan")])
+
+    verdict = server._steadiness([torn, torn])
+
+    assert verdict["gaps"] == 4
+    assert verdict["gaps_per_row"] == 2.0

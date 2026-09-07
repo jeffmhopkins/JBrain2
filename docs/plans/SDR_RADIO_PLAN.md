@@ -735,6 +735,26 @@ did nothing at all for the picture. Measured on the box with `spectrum-probe
   sections in it", and it survived the dwell change because the dwell was never its
   cause. The backing store now matches the device (`backingRatio`).
 
+**The striping outlived the renderer fix, and is now MEASURED rather than guessed
+(2026-09-07).** `backingRatio` was aimed at a compositor artefact and the owner still
+reports "blank sections". Two mechanisms produce the same picture and have opposite
+fixes — rows that lost bins (a hop that drops a USB block leaves NaN, which `peaks.find`
+skips and the PWA paints transparent, both deliberately) versus a carrier measured in
+some rows and not others (a 6.8 ms look at a wideband-FM station is a look at its
+MODULATION, which sloshes between bins slower than the window). Guessing between them
+from a photograph has now cost two wrong fixes, so `spectrum-probe` answers it:
+`steadiness` reports `gaps` (bins no measurement reached) and `carrier_seen_in` (how
+many rows the last row's strongest bin still stood up in). Read it before choosing.
+
+The owner's own hypothesis — publish only a fully swept row — is already what happens:
+`_sweep_hops` fills every hop of the array and publishes once. It is not the cause.
+
+**A channel can only be reported once (2026-09-07).** Snapping can collide: two runs
+120–140 kHz apart are wider than `SAME_SIGNAL_SHARE` so `find` keeps them separate, and
+each within `MAX_RASTER_PULL` of the same channel so both snap onto it. The viewer holds
+peaks by frequency and kept both — REPORTED as two pills reading 106.100 side by side.
+`_one_per_channel` keeps the strongest.
+
 **Where the ~8.3 s actually came from (2026-09-07).** It was read as a pipeline
 latency for five days and it was not one. `playSdrAudio` fires from the session poll the
 moment a listening session appears — not a user gesture — so a phone refuses the

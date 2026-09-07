@@ -539,3 +539,51 @@ def test_the_grid_a_row_settles_is_the_one_a_caller_can_hold() -> None:
     assert settled == 100_000.0
     # US FM sits on 88.1, 88.3, ... — half a channel off the 88.0 the band starts at.
     assert peaks._snapped(88_309_000.0, settled, 200_000) == 88_300_000.0
+
+
+def test_two_runs_that_snap_to_ONE_channel_are_one_signal() -> None:
+    """Snapping can collide, and nothing downstream can undo it.
+
+    The adjacency rule breaks a run on a gap wider than `MIN_FOLD_BINS`, which is right
+    for two stations a few bins apart and wrong for one wideband-FM carrier whose middle
+    dips below the threshold in the row that happened to be measured: two runs, two
+    peaks, both landing on the same channel once snapped. The viewer holds peaks by
+    frequency and kept both — REPORTED as two pills reading 106.100 side by side, at
+    +23.2 and +22.3 dB.
+    """
+    # 130 kHz apart, which is the only window where this can happen: wider than
+    # SAME_SIGNAL_SHARE (120 kHz) so `find` keeps them separate, and each within
+    # MAX_RASTER_PULL (70 kHz) of 106.100 so both snap onto it.
+    row = _dial_at(
+        bin_hz=9375,
+        bins=2000,
+        start_hz=88_000_000,
+        stations_hz=[106_035_000.0, 106_165_000.0],
+        half_hz=20_000.0,
+    )
+
+    found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000, origin=100_000.0)
+
+    labels = [signal["hz"] for signal in found]
+    assert labels == sorted(set(labels)), f"a channel reported twice: {labels}"
+    assert 106_100_000.0 in labels
+
+
+def test_collapsing_a_channel_keeps_the_STRONGEST_reading_of_it() -> None:
+    """Not the first. "First" here means the leftmost bin, which is a carrier's shoulder
+    rather than its middle — so first-wins would report every collided station a few dB
+    quieter than it actually was, which is a level the agent reads."""
+
+    def signal(hz: float, measured: float, db: float) -> dict[str, float]:
+        return {"hz": hz, "measured_hz": measured, "db": db, "over_db": db + 39.0}
+
+    collided = [
+        signal(106_100_000.0, 106_060_000.0, -30.0),
+        signal(106_100_000.0, 106_140_000.0, -20.0),
+        signal(98_500_000.0, 98_490_000.0, -12.0),
+    ]
+
+    kept = peaks._one_per_channel(collided)
+
+    assert [signal["db"] for signal in kept] == [-20.0, -12.0]
+    assert [signal["hz"] for signal in kept] == [106_100_000.0, 98_500_000.0]
