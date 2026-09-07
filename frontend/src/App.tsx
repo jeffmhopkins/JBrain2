@@ -515,6 +515,7 @@ export function App() {
           onOpenEntity={setEntityView}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
+          onOpenRadio={() => setCard("radio")}
           onOpenVitals={() => setCard("vitals")}
           compose={compose}
           onComposeConsumed={clearCompose}

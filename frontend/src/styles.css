@@ -26070,6 +26070,63 @@ button.wf-sigpill {
   font-size: var(--fs-secondary);
 }
 
+/* --- the omnibox radio sheet (SdrRadiosSheet.tsx, shape D) ------------------------
+   docs/mocks/omnibox-radios/d-radio-then-task.html: pick the radio, then see and change
+   what it is doing. The row is drawn only when there is more than one radio. */
+.radio-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.radio-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.radio-tab[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.radio-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.radio-tab-job {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+/* Coloured by JOB, unlike `.dot` on the Radios tab, which is coloured by health: on
+   this row every radio is working, and the only question is which one is doing what. */
+.radio-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.radio-dot.job-listen {
+  background: var(--ok);
+}
+.radio-dot.job-aprs {
+  background: var(--violet);
+}
+.radio-dot.job-spectrum {
+  background: var(--amber);
+}
+
 /* --- the Radios tab (SdrRadiosTab.tsx, shape A) ---------------------------------- */
 .rcard {
   display: flex;

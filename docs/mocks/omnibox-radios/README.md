@@ -32,3 +32,26 @@ omnibox icon is a **control** rather than a window.
 and the sheet gains a way to stop a running job. Guard the destructive edge —
 switching a radio that is mid-job ends that job, and the sheet must say so
 before it does.
+
+**Shipped 2026-09-07** as `frontend/src/components/SdrRadiosSheet.tsx`. What the
+implementation settled beyond the mock:
+
+- The tab row is drawn **only when more than one radio has a tab** — with a
+  single dongle it offers a choice that does not exist, and D's accepted cost
+  (chrome before content) is then paid for nothing. A radio the USB scan cannot
+  see still gets a tab when a service is dedicated to it: that job waits for its
+  dongle rather than moving, so it is still the radio the job is on.
+- The **Doing** row is not reimplemented. The sheet mounts `RadioJob`, the same
+  component the Radios tab uses, so the release-then-take, the two-step arming
+  for a job that needs a band, and the confirm the cost note demanded ("that
+  stops APRS on this radio — tap again") come with it rather than being written
+  a second time and drifting.
+- The APRS **health line** is not drawn here: the sheet fetches no log, because
+  a poll behind the composer for one line is not worth it. The way to the log —
+  the Radio screen, which owns that poll — is the surface's own button.
+- The omnibox icon's condition moved from `listening !== null` to
+  `anyHeld(sdr)`. `listening` is the one session the icon DRAWS and it prefers
+  the tuner, so a box whose only radio was decoding APRS or sweeping showed no
+  icon at all — the sheet would have had no way in.
+- `SdrTunerSheet`, the wrapper this replaces, is gone; its controls live on as
+  `SdrTunerControls.tsx`, mounted by this sheet and by the Radios tab.

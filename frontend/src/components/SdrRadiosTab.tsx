@@ -25,7 +25,7 @@ import { type SdrRadio, type SdrRadios, labelFor, roleLabel } from "../sdrRadios
 import { type SdrListening, useSdrSession } from "../sdrSession";
 import { SdrBandSheet } from "./SdrBandSheet";
 import { SdrSpectrumJob } from "./SdrSpectrumJob";
-import { SdrTunerControls } from "./SdrTunerSheet";
+import { SdrTunerControls } from "./SdrTunerControls";
 
 export function SdrRadiosTab({
   /** The screen's poll counter. The roster follows it rather than owning a second
@@ -159,25 +159,14 @@ function RadioDetail({
   onChanged: () => void;
   onOpenAprs: () => void;
 }) {
-  const sdr = useSdrSession();
-  const session = sessionOn(sdr, radio.serial);
-  const job = session ? jobOf(session) : "idle";
+  // Only what RESETTING a radio needs. Everything about its job — the release-then-take,
+  // the confirm, the two-step arming — moved to `RadioJob`, which the omnibox sheet
+  // shares (`docs/mocks/omnibox-radios/README.md`).
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A job that needs a band is chosen in two steps: the button arms it, the sheet
-  // picks. Listening needs a frequency and a mode, and a waterfall needs a span —
-  // neither is a thing this screen can invent for the owner.
-  const [arming, setArming] = useState<"listen" | "spectrum" | null>(null);
-  // DESIGN.md: destructive actions get an inline confirm, the button morphing to "Tap
-  // again". Every job change on a BUSY radio stops what it is doing, and one of those
-  // is an APRS log the owner may have armed on a schedule — the silent loss the
-  // sidecar's own `_stop` is written against. Cleared whenever anything else happens,
-  // so a stale arm cannot fire on the next tap.
-  const [confirm, setConfirm] = useState<string | null>(null);
 
   async function run(what: () => Promise<unknown>, whenItFails: string) {
     setBusy(true);
-    setConfirm(null);
     try {
       await what();
       setError(null);
@@ -191,9 +180,84 @@ function RadioDetail({
     }
   }
 
-  /** Free the radio before giving it another job. The api names the SERIAL on the way
-   *  back in, so the re-take asks for THIS radio rather than whichever is free — which
-   *  is what stops the window between the two becoming a different antenna. */
+  return (
+    <>
+      <div className="rdetail-top">
+        <button type="button" className="radio-back" onClick={onBack} aria-label="Back">
+          ‹
+        </button>
+        <h2 className="rdetail-title">{labelFor(radio)}</h2>
+      </div>
+      {radio.description && <p className="rdesc">{radio.description}</p>}
+      <div className="rstate">
+        <span className="rser">{radio.serial}</span>
+        <span className="rused">{roleLabel(radio.role)}</span>
+      </div>
+
+      <RadioJob
+        radio={radio}
+        radios={radios}
+        log={log}
+        onChanged={onChanged}
+        onOpenAprs={onOpenAprs}
+      />
+
+      {error && (
+        <p className="radio-error" role="alert">
+          {error}
+        </p>
+      )}
+      <ResetRadio radio={radio} busy={busy} onRun={run} />
+    </>
+  );
+}
+
+/**
+ * What one radio is doing, and how to change it — the whole control layer, with none of
+ * the chrome around it.
+ *
+ * Shared by the Radios tab and the omnibox sheet (binding spec
+ * `docs/mocks/omnibox-radios/d-radio-then-task.html`), because the risky part of this
+ * screen is not its layout: it is the release-then-take, the confirm before a running
+ * job is stopped, and the two-step arming for a job that needs a band. A second copy of
+ * that for the sheet would be a second place for those to drift, and the one that drifts
+ * silently takes the owner's APRS log with it.
+ */
+export function RadioJob({
+  radio,
+  radios,
+  log,
+  onChanged,
+  onOpenAprs,
+}: {
+  radio: SdrRadio;
+  radios: SdrRadios;
+  log: AprsLogState | null;
+  onChanged: () => void;
+  onOpenAprs: () => void;
+}) {
+  const sdr = useSdrSession();
+  const session = sessionOn(sdr, radio.serial);
+  const job = session ? jobOf(session) : "idle";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [arming, setArming] = useState<"listen" | "spectrum" | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+
+  async function run(what: () => Promise<unknown>, whenItFails: string) {
+    setBusy(true);
+    setConfirm(null);
+    try {
+      await what();
+      setError(null);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : whenItFails);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function free(): Promise<void> {
     if (session) await api.sdrStop(session.session_id);
   }
@@ -229,8 +293,6 @@ function RadioDetail({
       }, "Couldn't start the spectrum.");
       return;
     }
-    // Listening is one frequency. A section gives its centre and its mode; a manual
-    // entry gives the frequency itself, and inherits the mode of wherever it landed.
     const hz = range.section && section ? section.centre_hz : (range.startMhz ?? 0) * 1_000_000;
     const mode = section?.mode ?? "wbfm";
     void run(async () => {
@@ -241,18 +303,6 @@ function RadioDetail({
 
   return (
     <>
-      <div className="rdetail-top">
-        <button type="button" className="radio-back" onClick={onBack} aria-label="Back">
-          ‹
-        </button>
-        <h2 className="rdetail-title">{labelFor(radio)}</h2>
-      </div>
-      {radio.description && <p className="rdesc">{radio.description}</p>}
-      <div className="rstate">
-        <span className="rser">{radio.serial}</span>
-        <span className="rused">{roleLabel(radio.role)}</span>
-      </div>
-
       {error && (
         <p className="radio-error" role="alert">
           {error}
@@ -320,8 +370,6 @@ function RadioDetail({
           <p className="radio-hint">Idle — nothing is holding this radio.</p>
         )}
       </div>
-
-      <ResetRadio radio={radio} busy={busy} onRun={run} />
 
       {arming && <SdrBandSheet purpose={arming} onPick={picked} onClose={() => setArming(null)} />}
     </>
