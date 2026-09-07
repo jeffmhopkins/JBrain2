@@ -336,6 +336,20 @@ class TestTheCaptureBehindALiveRow:
 
         assert any("IF rolloff" in p for p in bands.validate((row,)))
 
+    def test_a_span_wider_than_one_stitched_row_is_refused(self) -> None:
+        # Caught the hard way: a 225-265 MHz military air row passed every rule here
+        # and then had NO capture plan at all, because the waterfall stitches at most
+        # sixteen hops — so the band button answered a 400 and the only test that saw
+        # it was in the routes.
+        bad = self._fast(
+            start_hz=225_000_000,
+            stop_hz=265_000_000,
+            live=LIVE_SLOW,
+            sample_rate_hz=0,
+        )
+
+        assert any("stitched from" in p for p in bands.validate((bad,)))
+
     def test_a_direct_capture_that_folds_the_band_is_refused(self) -> None:
         """20 m at 1.024 MS/s reaches 14.762 MHz, so 14.4-14.76 lands back on
         14.04-14.4 inside the same picture."""

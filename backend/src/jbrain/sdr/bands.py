@@ -752,13 +752,15 @@ SECTIONS: tuple[Section, ...] = (
         band="Military air",
         name="UHF air-to-air and guard",
         start_hz=225_000_000,
-        stop_hz=265_000_000,
+        stop_hz=255_000_000,
         mode="am",
         step_hz=25_000,
         channel_hz=25_000,
         note="AM like civil airband and 200 MHz higher. Quiet for hours and then busy, "
         "so a survey says more than a listen — 243.0 is the emergency guard channel "
-        "and is monitored everywhere.",
+        "and is monitored everywhere. The military allocation runs to 400 MHz; this "
+        "row stops at 255 because a wider one is more than the waterfall can stitch "
+        "into a single row.",
         live=LIVE_SLOW,
         sweep_bin_hz=5_000,
         sweep_seconds=600,
@@ -1760,6 +1762,13 @@ def validate(sections: tuple[Section, ...] = SECTIONS) -> list[str]:
             problems.append(
                 f"{where} is below {DIRECT_SAMPLING_MAX_HZ / 1e6:.0f} MHz, where a live "
                 f"view is one capture or nothing — hops cannot be stitched down there"
+            )
+        if s.span_hz > widest_stitchable_hz():
+            problems.append(
+                f"{where} spans {s.span_hz / 1e6:.1f} MHz, wider than the "
+                f"{widest_stitchable_hz() / 1e6:.1f} MHz a row can be stitched from — "
+                f"there is no capture plan for it at all, so the band button would "
+                f"answer a 400"
             )
         problems.extend(_capture_problems(s))
         if s.hops > 1 and not s.continuous and s.sweep_seconds < 300:
