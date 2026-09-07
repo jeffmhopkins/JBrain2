@@ -337,19 +337,16 @@ def min_width_hz(bin_hz: float, channel_hz: int) -> float:
 
 #: How far a channel must stand above the TROUGHS either side of it, in dB.
 #:
-#: **MEASURED AND NOT WIRED IN.** `_has_shape` does not consult this yet, and the reason
-#: is a second measurement: on a 45 s integration it separates perfectly (21 of 21 real
-#: stations kept, 16 of 16 surplus rejected, beating prominence+width which leaves one),
-#: but the worst real station clears by only 1.06 dB while the best artefact reaches
-#: 0.33 — 0.73 dB of daylight. On a SHORT window that gap closes and inverts: measured
-#: on single max-of-4 rows, the worst real station scored -0.14 dB and the best surplus
-#: +1.50. The decision row here is a mean of `HOLD_SWEEPS` sweeps, about 1.8 s, which is
-#: nearer the short case than the long one. Wiring it in at this window would delete real
-#: stations to remove two artefacts, which is the wrong trade.
+#: **It needs a LONG decision window, and only works because there is one.** On a 45 s
+#: integration it separates perfectly, but the worst real station clears by 1.06 dB
+#: against a best artefact of 0.33 — 0.73 dB of daylight — so a noisy row closes the gap.
+#: Measured across sliced windows of the real dial, worst window: at ~1.7 s it kept only
+#: 16 of 21 real stations, at ~3.4 s and beyond 18 of 21 with ZERO artefacts. It rode
+#: unused for exactly one release for that reason. `listen.DECIDE_SWEEPS` is what made it
+#: safe to call, and shortening that window silently un-makes it.
 #:
-#: What it needs is a decision window of ~7 s, separate from the picture's. That is a
-#: real change with a real cost — a burst on a scanner band would take that long to be
-#: reported — so it is a decision to take deliberately rather than a constant to flip.
+#: Prominence and width cannot do this job alone: three skirts survive them at EVERY
+#: window length, including 14 s.
 #:
 #: The last test, and the one that catches what prominence and width leave: a first
 #: adjacent that is genuinely a skirt. The owner named the family — "the peaks are
@@ -425,11 +422,46 @@ def guard_margin_db(
     return here - max(beside)
 
 
+def _channel_bin(
+    index: int, start_hz: float, bin_hz: float, grid: float | None, channel_hz: int
+) -> int | None:
+    """The bin at the CENTRE of the channel this signal would be labelled with.
+
+    **The guard margin has to be anchored here, not on the argmax.** A carrier's loudest
+    bin wanders — that is the whole reason snapping exists — and a carrier with a notch
+    in it can put its argmax right out at a shoulder. Measured from there, the other half
+    of the SAME station sits in one guard band and the station rejects itself. Anchored
+    on the channel, `here` is the channel's own power and the guards are its neighbours,
+    which is the question actually being asked.
+
+    None when this signal has no channel — no grid was established, or it sits too far
+    from any channel to be claimed by one. The guard margin is then not asked at all,
+    which is the honest answer: "is this channel occupied by its own emission, or by its
+    neighbour's skirt" is not a question that survives having no channels."""
+    if grid is None or channel_hz <= 0 or bin_hz <= 0:
+        return None
+    channel = _snapped(start_hz + index * bin_hz, grid, channel_hz)
+    if channel is None:
+        return None
+    return int(round((channel - start_hz) / bin_hz))
+
+
 def _has_shape(
-    db: "Sequence[float]", index: int, bin_hz: float, channel_hz: int, floor_hz: float
+    db: "Sequence[float]",
+    index: int,
+    bin_hz: float,
+    channel_hz: int,
+    floor_hz: float,
+    anchor: int | None = None,
 ) -> bool:
     prominence, width = shape_of(db, index, bin_hz, channel_hz)
-    return prominence >= MIN_PROMINENCE_DB and width >= floor_hz
+    if prominence < MIN_PROMINENCE_DB or width < floor_hz:
+        return False
+    if anchor is None:
+        return True  # no channel, so no channel-relative question to ask
+    margin = guard_margin_db(db, anchor, bin_hz, channel_hz)
+    # NaN means the question could not be ASKED on this band, which is not a failure.
+    return math.isnan(margin) or margin >= MIN_GUARD_MARGIN_DB
 
 
 def find(
@@ -545,6 +577,13 @@ def find(
     # raising the threshold instead keeps only 18 of 21 and capping the count keeps 19.
     # The two families it separates are the two he described — "sidebands, or multiple
     # hits that are very close together".
+    # The grid is settled BEFORE the shape gate, because the guard margin is a question
+    # about a CHANNEL and has to be anchored on one — see `_channel_bin`.
+    grid = (
+        raster_origin([start_hz + at * bin_hz for at, _v, _e in signals[:limit]], channel_hz)
+        if origin is None
+        else origin
+    )
     if shape:
         # WIDTH ONLY WHERE A BAND PLAN SAYS WHAT WIDE MEANS. Prominence is a question
         # about shape and needs no plan; width is a question about bandwidth and cannot
@@ -554,7 +593,14 @@ def find(
         signals = [
             entry
             for entry in signals
-            if _has_shape(db, entry[0], bin_hz, channel_hz, floor_hz)
+            if _has_shape(
+                db,
+                entry[0],
+                bin_hz,
+                channel_hz,
+                floor_hz,
+                _channel_bin(entry[0], start_hz, bin_hz, grid, channel_hz),
+            )
         ]
     shown = signals[:limit]
     # NO HALF-BIN HERE, and it is worth saying why, because it was added once and had to
@@ -580,7 +626,6 @@ def find(
     # `measured_hz` rides alongside so the claim can be checked rather than believed:
     # a snapped number nobody can compare against what was seen is exactly the kind of
     # number this file exists not to produce.
-    grid = raster_origin(measured, channel_hz) if origin is None else origin
     labelled = [
         {
             "hz": round(_snapped(hz, grid, channel_hz) or hz, 1),

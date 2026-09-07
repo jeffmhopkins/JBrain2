@@ -327,6 +327,31 @@ def held_row(history: "Sequence[np.ndarray]") -> "np.ndarray":
     return out
 
 
+#: How many sweeps the DECISION is averaged over — separate from, and much longer than,
+#: the window the picture is drawn from.
+#:
+#: **A short window cannot tell a station from the skirt of the one next door**, however
+#: good the rule reading it. MEASURED on a 45 s integration of the owner's dial, sliced
+#: into windows and scored on the worst one:
+#:
+#:     window   shape only            shape + guard margin
+#:     ~1.7 s   18/21 real, 3/16 bad  16/21 real, 1/16 bad
+#:     ~3.4 s   18/21 real, 3/16 bad  18/21 real, 0/16 bad
+#:     ~7 s     19/21 real, 3/16 bad  18/21 real, 0/16 bad
+#:     ~14 s    19/21 real, 3/16 bad  19/21 real, 0/16 bad
+#:
+#: Two things fall out of that table. Shape alone NEVER clears the skirts — three
+#: survive at every window — so a longer window is not on its own the fix. And the guard
+#: margin needs about two seconds before it works at all, which is why it shipped
+#: written-but-not-called: at the 1.8 s the picture's own window would have given it, it
+#: cost five real stations to remove fifteen artefacts.
+#:
+#: Sixteen sweeps is ~7 s at the dial's measured 2.25 rows a second. **The cost is that
+#: the SIGNAL LIST reacts over seven seconds** — the waterfall still draws every row as
+#: it arrives, so a burst is visible immediately; it is being listed that lags.
+DECIDE_SWEEPS = 16
+
+
 def mean_row(history: "Sequence[np.ndarray]") -> "np.ndarray":
     """The average level of each bin across the sweeps in the window, in dB.
 
@@ -1816,7 +1841,9 @@ class Session:
         )
         wanted = min(wanted, row.size)
         centres = hop_centres(sweep.start_hz, rate_hz, bins, sweep.hops)
-        recent: collections.deque[np.ndarray] = collections.deque(maxlen=HOLD_SWEEPS)
+        # ONE ring, two windows. The picture is the max of the newest `HOLD_SWEEPS` and
+        # the decision is the mean of all `DECIDE_SWEEPS` — see `DECIDE_SWEEPS`.
+        recent: collections.deque[np.ndarray] = collections.deque(maxlen=DECIDE_SWEEPS)
         while not self._stopping and held.alive:
             at = 0.0
             for index, centre in enumerate(centres):
@@ -1842,7 +1869,7 @@ class Session:
                     at=at,
                     start_hz=sweep.start_hz,
                     bin_hz=spectrometer.bin_hz,
-                    db=held_row(recent).tolist(),
+                    db=held_row(list(recent)[-HOLD_SWEEPS:]).tolist(),
                 ),
                 # The picture is the max of the window and the DECISION is its mean —
                 # see `mean_row`. Two different reductions of the same four sweeps,

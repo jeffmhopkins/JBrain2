@@ -812,7 +812,45 @@ the ones frozen with a pre-grid label. A snapped `hz` is a channel and cannot wa
 labelled it, and the strongest sighting still supplies the LEVEL and still supplies the
 frequency where no grid exists.
 
-**The guard margin is measured and deliberately NOT wired in.** On the 45 s integration
+**The guard margin IS wired in now, and what made it safe was a longer decision window
+(2026-09-07).** Prominence and width alone left the skirt family on the dial —
+92.1/92.5/92.7 around 92.3, 96.3/96.7 around 96.5, 98.3/98.7 around 98.5 — and the
+reason was the window, not the rule. Sliced windows of the real dial, scored on the
+WORST one:
+
+| window | shape only | shape + guard |
+|---|---|---|
+| ~1.7 s | 18/21 real, 3/16 surplus | 16/21 real, 1/16 surplus |
+| ~3.4 s | 18/21 real, 3/16 surplus | **18/21 real, 0/16 surplus** |
+| ~7 s | 19/21 real, 3/16 surplus | **18/21 real, 0/16 surplus** |
+| ~14 s | 19/21 real, 3/16 surplus | 19/21 real, 0/16 surplus |
+
+Two things fall out. **Shape alone never clears the skirts** — three survive at every
+window length including 14 s — so a longer window is not on its own the fix. And the
+guard margin needs about two seconds before it works at all, which is why it shipped
+written-but-not-called: at the 1.8 s the picture's window would have given it, it cost
+five real stations to remove fifteen artefacts.
+
+`DECIDE_SWEEPS` (16, ~7 s) is therefore separate from `HOLD_SWEEPS` (4): one ring, two
+windows — the picture is the max of the newest four and the decision is the mean of all
+sixteen. **The cost is that the SIGNAL LIST reacts over seven seconds**; the waterfall
+still draws every row as it arrives, so a burst is visible immediately and only its
+listing lags.
+
+The guard is anchored on the CHANNEL, not on the argmax (`_channel_bin`). A carrier's
+loudest bin wanders, and a notched carrier can put its argmax out at a shoulder — from
+there the other half of the same station sits in a guard band and the station rejects
+itself. It is asked only of a signal that HAS a channel: with no grid there is no
+channel-relative question to ask.
+
+Run end to end through `find` over 7 s windows of the real dial, the gate removes **zero**
+real stations and all of the surplus. One consequence recorded rather than hidden: the
+collision `_one_per_channel` handles — two runs 130 kHz apart snapping to the channel
+between them — is now unreachable on a band with a grid, because a channel whose energy
+is entirely in its neighbours is exactly what the guard rejects. It is kept and unit
+tested for bands with no grid.
+
+**Superseded — the guard margin was measured and deliberately NOT wired in.** On the 45 s integration
 it is the better rule — 21 of 21 real kept, 16 of 16 surplus rejected, where
 prominence+width leaves one — but the worst real station clears by 1.06 dB against a
 best artefact of 0.33, and on a short window that gap closes and inverts (measured on
