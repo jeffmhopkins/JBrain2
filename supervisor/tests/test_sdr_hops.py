@@ -50,6 +50,13 @@ def listen() -> Any:
     return _by_path("sdr_listen_for_hops", _SDR / "listen.py")
 
 
+@pytest.fixture(scope="module")
+def peaks() -> Any:
+    if str(_SDR) not in sys.path:
+        sys.path.insert(0, str(_SDR))
+    return _by_path("sdr_peaks_for_hops", _SDR / "peaks.py")
+
+
 def test_the_two_containers_agree_on_what_a_capture_is_worth(bands, listen) -> None:
     """The constant itself. Spelled `5 // 6` inside an expression on the sidecar until
     C28, which is a copy a reader cannot see is a copy."""
@@ -161,3 +168,56 @@ def test_the_window_is_what_the_constant_says(listen) -> None:
     assert listen.HOLD_SWEEPS == 4
     # At the dial's measured 2.25 rows a second that is ~1.8 s of separate looks.
     assert 1.0 <= listen.HOLD_SWEEPS / 2.25 <= 2.5
+
+
+def test_the_MEAN_row_keeps_a_shape_the_max_row_flattens(listen, peaks) -> None:
+    """Why the picture and the decision are two different reductions of the same sweeps.
+
+    Max-of-N lifts an empty guard band as much as it lifts a carrier, so it flattens the
+    very shape `peaks.find` reads to tell a station from the skirt of the one next door.
+    MEASURED on the owner's dial: a real station's margin over its guard bands is
+    +2.03 dB on the linear mean of four sweeps and -0.05 dB on the max of the same four.
+    Max is right for DRAWING a sloshing carrier and wrong for DECIDING one is there.
+    """
+    guards = (-35.0, -34.0, -33.0, -31.5)
+    sweeps = []
+    for which in range(4):
+        row = np.full(400, -70.0)
+        # Two loud neighbours, which is what bounds the search for a dip — a channel's
+        # guard band is the trough BETWEEN carriers, not the far-off noise floor.
+        row[70:91] = -20.0
+        row[110:131] = -20.0
+        # The guard band either side wanders sweep to sweep, as noise does...
+        row[91:100] = guards[which]
+        row[101:110] = guards[3 - which]
+        # ...while the carrier sits still.
+        row[100] = -30.0
+        sweeps.append(row)
+
+    drawn = listen.held_row(sweeps).tolist()
+    decided = listen.mean_row(sweeps).tolist()
+
+    on_max, _ = peaks.shape_of(drawn, 100, 9375, 200_000)
+    on_mean, _ = peaks.shape_of(decided, 100, 9375, 200_000)
+
+    assert on_mean > on_max
+    # And the difference is the whole margin: the max row cannot tell this carrier from
+    # its surround, the mean row can.
+    assert on_max < peaks.MIN_PROMINENCE_DB <= on_mean
+
+
+def test_the_mean_is_taken_in_LINEAR_power_not_in_decibels(listen) -> None:
+    """A mean of logarithms is a geometric mean, which is not the average power of
+    anything. Two sweeps of -20 and -30 dB average to -22.6 dB of power, not -25."""
+    sweeps = [np.array([-20.0]), np.array([-30.0])]
+
+    assert listen.mean_row(sweeps)[0] == pytest.approx(-22.6, abs=0.05)
+
+
+def test_a_bin_that_measured_nothing_does_not_poison_the_mean(listen) -> None:
+    """`nanmean`, for `fmax`'s reason: NaN is not a level. A bin NaN in every sweep
+    stays NaN, which `peaks.find` skips and the PWA paints transparent."""
+    out = listen.mean_row([np.array([-30.0, np.nan]), np.array([np.nan, np.nan])])
+
+    assert out[0] == pytest.approx(-30.0)
+    assert np.isnan(out[1])

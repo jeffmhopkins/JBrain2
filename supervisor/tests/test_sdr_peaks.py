@@ -51,6 +51,18 @@ def _flat(count: int, level: float = -70.0) -> list[float]:
     return [level] * count
 
 
+def _carrier(row: list[float], at: int, db: float) -> None:
+    """A small peaked carrier, strongest at `at`, wide enough to BE an emission.
+
+    A single bin is 9375 Hz. On a 200 kHz raster that is a receiver birdie, not a
+    station, and `peaks.find` now says so (`MIN_WIDTH_SHARE`) — so a fixture that pokes
+    one bin is testing the rejection rule rather than whatever it meant to test. Five
+    bins is 47 kHz, which clears the width floor, and the taper puts the argmax where
+    the caller asked for it rather than on the leftmost bin of a plateau."""
+    for offset, drop in ((-2, 4.0), (-1, 1.0), (0, 0.0), (1, 1.0), (2, 4.0)):
+        row[at + offset] = db - drop
+
+
 def test_a_carrier_and_its_skirt_are_one_signal() -> None:
     """A 200 kHz FM transmission in a 9375 Hz row lights twenty adjacent bins. Reported
     as bins it reads as twenty stations a few kHz apart, which is not a thing that
@@ -81,7 +93,7 @@ def test_a_bin_that_measured_nothing_is_skipped_not_floored() -> None:
     poisons every comparison around it — the same choice the sweep path makes."""
     row = _flat(400)
     row[200] = math.nan
-    row[100] = -50.0
+    _carrier(row, 100, -50.0)
 
     found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
 
@@ -92,7 +104,7 @@ def test_the_excess_travels_with_the_signal() -> None:
     """`over_db` is what decided it was a signal at all, so it rides along rather than
     being recoverable only by someone still holding the whole row."""
     row = _flat(400)
-    row[100] = -50.0
+    _carrier(row, 100, -50.0)
 
     found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
 
@@ -113,7 +125,7 @@ def test_the_strongest_come_first_and_the_list_is_capped() -> None:
     a list that wants reading — and the cap bounds every viewer's frame."""
     row = _flat(4000)
     for n in range(peaks.MAX_PEAKS + 10):
-        row[50 + n * 60] = -60.0 + n  # each stronger than the last
+        _carrier(row, 50 + n * 60, -60.0 + n)  # each stronger than the last
 
     found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
 
@@ -137,7 +149,7 @@ def test_the_frame_carries_what_it_found() -> None:
     air, and only one of them is looking at the row."""
     listen = _load_listen()
     row = _flat(400)
-    row[100] = -50.0
+    _carrier(row, 100, -50.0)
 
     frame = listen.Frame(
         at=1.0,
@@ -156,6 +168,11 @@ def test_the_frame_carries_what_it_found() -> None:
             "measured_hz": 88_937_500.0,
             "db": -50.0,
             "over_db": 20.0,
+            # The shape that got it past the rejection rule, carried for `measured_hz`'s
+            # reason: a signal kept or dropped on a rule nobody can check is the kind of
+            # number this file exists not to produce.
+            "prominence_db": 20.0,
+            "width_hz": 46875.0,
         }
     ]
 
@@ -587,3 +604,112 @@ def test_collapsing_a_channel_keeps_the_STRONGEST_reading_of_it() -> None:
 
     assert [signal["db"] for signal in kept] == [-20.0, -12.0]
     assert [signal["hz"] for signal in kept] == [106_100_000.0, 98_500_000.0]
+
+
+def test_the_SKIRT_of_a_loud_station_is_not_its_own_signal() -> None:
+    """The owner's diagnosis, made a rule: "the peaks are sometimes sidebands".
+
+    A skirt clears any threshold — it is the side of a loud carrier — and the raster
+    snapper then gives it a clean, plausible, on-channel label. What it does not have is
+    a dip on its inboard side, so it has no prominence. MEASURED on a 45 s integration
+    of the owner's dial: 92.1/92.3/92.5/92.7 is one 12 dB station with three noise
+    channels around it, not four stations.
+    """
+    row = _flat(600)
+    # One carrier at 92.3 with skirts falling away either side, into 92.1 and 92.5.
+    centre = int((92_300_000 - 88_000_000) / 9375)
+    for offset in range(-24, 25):
+        row[centre + offset] = -28.0 - abs(offset) * 0.45
+
+    found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
+
+    assert [round(p["hz"] / 1e5) / 10 for p in found] == [92.3]
+
+
+def test_shape_needs_BOTH_a_bump_and_a_width() -> None:
+    """The two tests catch different families, and neither subsumes the other.
+
+    MEASURED on a 45 s integration of the owner's dial, where 21 stations are real and
+    16 are not:
+
+      * 96.700 and 98.700 are broad flat SHELVES on the side of the two loudest
+        stations — 84.4 kHz wide, which clears the width floor comfortably, with
+        prominence 1.86 and 1.43 dB. Only prominence rejects them.
+      * 101.900, 103.900 and 106.700 are BIRDIES 18.8 kHz wide with prominence 3.2-3.9
+        dB — more prominent than the weakest real station on the band, which has 2.45.
+        Only width rejects them.
+
+    So a gate with either half missing lets a whole family through, and the two families
+    are the two the owner described: "sidebands, or multiple hits very close together".
+    """
+    floor_hz = peaks.min_width_hz(9375, 200_000)
+
+    # A broad flat shelf beside a loud carrier: wide, but barely a bump.
+    shelf = _flat(1600)
+    for offset in range(-9, 10):
+        shelf[400 + offset] = -25.0 - (abs(offset) / 9.0) * 8.0
+    for offset in range(10, 15):
+        shelf[400 + offset] = -34.5
+    for offset in range(15, 27):
+        shelf[400 + offset] = -33.0
+    prominence, width = peaks.shape_of(shelf, 415, 9375, 200_000)
+    assert width >= floor_hz, (
+        "the shelf must be wide enough that only prominence can act"
+    )
+    assert prominence < peaks.MIN_PROMINENCE_DB
+    assert not peaks._has_shape(shelf, 415, 9375, 200_000, floor_hz)
+
+    # A birdie: a clean bump, and far too narrow to be an emission on this raster.
+    birdie = _flat(1600)
+    birdie[400] = -34.0
+    birdie[401] = -34.5
+    prominence, width = peaks.shape_of(birdie, 400, 9375, 200_000)
+    assert prominence >= peaks.MIN_PROMINENCE_DB, (
+        "must be a real bump, so only width acts"
+    )
+    assert width < floor_hz
+    assert not peaks._has_shape(birdie, 400, 9375, 200_000, floor_hz)
+
+
+def test_a_BIRDIE_two_bins_wide_is_not_a_station() -> None:
+    """The other family in the surplus: 19-28 kHz spikes with row-to-row variation of
+    0.25 dB where the band median is 0.29. Something that narrow and that steady is the
+    receiver, not a broadcast emission — a station on a 200 kHz raster is 180 kHz wide.
+
+    Prominence alone does NOT catch these: measured on the owner's dial the birdies run
+    2.6-3.9 dB of prominence while the weakest real station has 2.45. Width is what
+    separates them, and it is why both tests are here.
+    """
+    row = _flat(1600)
+    at = int((101_900_000 - 88_000_000) / 9375)
+    row[at] = -34.0
+    row[at + 1] = -34.5
+
+    assert peaks.find(row, 88_000_000, 9375, channel_hz=200_000) == []
+
+
+def test_a_real_carrier_clears_both_shape_tests() -> None:
+    """The other side of the same rule — it must not be so strict that it deletes the
+    band. A 180 kHz FM carrier is 19 bins wide and stands well clear of the noise."""
+    row = _flat(1600)
+    centre = int((96_500_000 - 88_000_000) / 9375)
+    for offset in range(-10, 11):
+        row[centre + offset] = -25.0 - (offset / 10.0) ** 2 * 6.0
+
+    found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
+
+    assert len(found) == 1
+    assert found[0]["prominence_db"] >= peaks.MIN_PROMINENCE_DB
+    assert found[0]["width_hz"] >= peaks.min_width_hz(9375, 200_000)
+
+
+def test_width_is_not_judged_without_a_BAND_PLAN_to_judge_it_against() -> None:
+    """Prominence is a question about shape and needs no plan. Width is a question about
+    bandwidth and cannot be asked without one — with no raster a signal may legitimately
+    be one bin, and a floor guessed from the transform's own resolution would delete it.
+    """
+    row = _flat(400)
+    row[100] = -50.0
+
+    assert len(peaks.find(row, 88_000_000, 9375, channel_hz=0)) == 1
+    assert peaks.find(row, 88_000_000, 9375, channel_hz=200_000) == []
