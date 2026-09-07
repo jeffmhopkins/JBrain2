@@ -1714,7 +1714,9 @@ class TestTheProbeJudgesTheLEVELAndNotOnlyThePicture:
         the fix is physical; above it there is a gain to lower first. One sentence for
         both is wrong on half the spectrum — and the half it was wrong on is the half
         with an easy fix."""
-        shortwave = listen.Sweep.of(7_100_000, 7_300_000, 250, 60, capture=(256_000, 1_024))
+        shortwave = listen.Sweep.of(
+            7_100_000, 7_300_000, 250, 60, capture=(256_000, 1_024)
+        )
 
         verdict = server._spectrum_verdict(
             shortwave, [self._levelled(0.0, clipped=0.004)] * 5, 3.0, "iq"
