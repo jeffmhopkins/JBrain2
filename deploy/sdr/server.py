@@ -551,6 +551,15 @@ def _steadiness(frames: list["listen.Frame"]) -> dict[str, Any]:
     }
 
 
+#: How little headroom is worth saying something about, in dB below full scale.
+#:
+#: 6 dB is one bit of an eight-bit converter. Above it a band that doubles in level
+#: after dark still has somewhere to go; under it the next loud thing clips, and on the
+#: HF path nothing in software can prevent that — which is why it is said EARLY rather
+#: than reported once the damage is in the picture.
+LOW_HEADROOM_DB = 6.0
+
+
 def _spectrum_verdict(
     sweep: listen.Sweep, frames: list[listen.Frame], elapsed: float, engine: str
 ) -> dict[str, Any]:
@@ -640,6 +649,35 @@ def _spectrum_verdict(
                 f"this engine from rtl_power, whose interval is clamped to one second — "
                 f"the picture is real, but its rate is no longer evidence of which "
                 f"engine drew it"
+            )
+    # THE LEVEL THE ANTENNA DELIVERED, which every dB in `db` is blind to: the row is
+    # normalised power per bin, so a capture pinned against the converter's rails and a
+    # capture with 30 dB spare draw the same shape. It matters most exactly where this
+    # box has no answer for it — below 24 MHz the tuner is powered down, so there is no
+    # gain to trim and the fix is physical (an attenuator, or a filter for whatever is
+    # loudest). Worst frame of the watch rather than the last: one overloaded row is a
+    # row of intermodulation the peak finder reports as stations.
+    levels = [f for f in frames if f.headroom_db is not None]
+    if levels:
+        tightest = min(levels, key=lambda f: f.headroom_db or 0.0)
+        loudest = max(levels, key=lambda f: f.clipped_share)
+        out["level"] = {
+            "headroom_db": tightest.headroom_db,
+            "clipped_share": round(loudest.clipped_share, 6),
+            "rows": len(levels),
+        }
+        if loudest.clipped_share > 0.0:
+            findings.append(
+                f"the converter CLIPPED on {round(loudest.clipped_share * 100, 3)}% of "
+                f"one row's samples — a clipped capture spreads the loudest signal "
+                f"across the whole span as intermodulation, and the peak finder reports "
+                f"that as stations; below 24 MHz there is no gain to turn down, so the "
+                f"fix is an attenuator or a filter for whatever is loudest"
+            )
+        elif (tightest.headroom_db or 0.0) < LOW_HEADROOM_DB:
+            findings.append(
+                f"only {tightest.headroom_db} dB of headroom left at the converter — "
+                f"nothing is clipping yet, but a band that gets louder after dark will"
             )
     finite = [v for v in last.db if v > iq.DB_FLOOR]
     if not finite:

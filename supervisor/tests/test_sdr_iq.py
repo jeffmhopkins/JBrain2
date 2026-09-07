@@ -330,3 +330,91 @@ def test_unsupported_sample_formats_are_refused_by_name() -> None:
         iq.bin_width_hz(RATE, 0)
     with pytest.raises(ValueError, match="at least 2"):
         iq.Spectrometer(1, RATE)
+
+
+class TestHeadroom:
+    """How close the antenna drove the converter to its rails.
+
+    The measurement exists because the HF path has no gain stage at all: below 24 MHz
+    the tuner is powered down and the antenna feeds the ADC directly, so a wire big
+    enough to be worth putting up is a wire big enough to overload it — and clipping
+    does not look like distortion on a waterfall, it looks like extra signals.
+    """
+
+    def test_a_quarter_scale_tone_leaves_twelve_dB(self) -> None:
+        # 0.25 of full scale is exactly 12.04 dB down, and nothing about the window or
+        # the transform is involved: this is the samples themselves.
+        head, clipped = iq.headroom(_tone(4096, 10_000.0, amplitude=0.25))
+
+        assert head == pytest.approx(12.0, abs=0.1)
+        assert clipped == 0.0
+
+    def test_a_tone_at_the_rails_reports_no_headroom_and_says_so_twice(self) -> None:
+        head, clipped = iq.headroom(_tone(4096, 10_000.0, amplitude=1.0))
+
+        # Zero, not "-0.0": the number is read by a person.
+        assert head == 0.0
+        assert math.copysign(1.0, head) > 0
+        # And the share is what distinguishes "touched full scale once" from "sat
+        # there", which a dB figure alone cannot.
+        assert clipped > 0.0
+
+    def test_it_measures_the_BRANCHES_and_not_the_magnitude(self) -> None:
+        # The converter clips I and Q separately. A sample whose magnitude is 1.0 with
+        # neither branch anywhere near its rail is a legal sample, and calling it
+        # clipped would put a warning on a healthy antenna.
+        both = np.array([complex(0.7071, 0.7071)] * 64, dtype=np.complex64)
+
+        head, clipped = iq.headroom(both)
+
+        assert clipped == 0.0
+        assert head == pytest.approx(3.0, abs=0.1)
+
+    def test_a_cs8_buffer_is_measured_on_the_same_scale(self) -> None:
+        # The rail is what int8 can reach, and -128 is a rail as much as +127 is.
+        samples = np.zeros(64, dtype=np.int8)
+        samples[0] = 127
+        samples[1] = -128
+
+        head, clipped = iq.headroom(samples)
+
+        assert head == 0.0
+        assert clipped == pytest.approx(2 / 64)
+
+    def test_digital_silence_floors_rather_than_returning_an_infinity(self) -> None:
+        # log10(0). The caller draws this number.
+        head, clipped = iq.headroom(np.zeros(64, dtype=np.complex64))
+
+        assert head == iq.DB_FLOOR
+        assert clipped == 0.0
+
+    def test_the_frame_carries_it_and_it_survives_json(self) -> None:
+        # The row is the only place the number can reach the owner from, and a numpy
+        # float32 in there is the §6.6 trap: `json.dumps` refuses it.
+        spectrometer = iq.Spectrometer(N, RATE)
+
+        frame = spectrometer.frame(_tone(N * 2, 6_000.0, amplitude=0.5), CENTER)
+
+        assert frame.headroom_db == pytest.approx(6.0, abs=0.1)
+        assert frame.clipped_share == 0.0
+        wire = json.loads(json.dumps(frame.as_dict()))
+        assert wire["headroom_db"] == pytest.approx(6.0, abs=0.1)
+        assert wire["clipped_share"] == 0.0
+
+    def test_a_clipped_frame_and_a_clean_one_can_draw_the_same_picture(self) -> None:
+        """Why this is measured in the time domain at all.
+
+        Both frames are normalised power per bin, so the SHAPE of a clipped capture and
+        a quiet one is the same to within the clipping's own products — which is
+        exactly why a waterfall cannot warn anybody, and why the warning has to come
+        off the samples."""
+        spectrometer = iq.Spectrometer(N, RATE)
+
+        quiet = spectrometer.frame(_tone(N * 2, 6_000.0, amplitude=0.01), CENTER)
+        pinned = spectrometer.frame(_tone(N * 2, 6_000.0, amplitude=1.0), CENTER)
+
+        # The peak bin is the same bin in both, and the pictures differ only by a shift.
+        assert int(np.argmax(quiet.db)) == int(np.argmax(pinned.db))
+        # The levels say what the pictures cannot.
+        assert quiet.headroom_db > 30.0 and quiet.clipped_share == 0.0
+        assert pinned.headroom_db == 0.0 and pinned.clipped_share > 0.0

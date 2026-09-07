@@ -28,6 +28,22 @@ def test_there_are_enough_sections_to_be_worth_a_picker() -> None:
     assert len(bands.SECTIONS) > 20
 
 
+def test_every_amateur_band_under_the_mirror_boundary_is_offered() -> None:
+    """A long wire is an HF antenna, and the table is what it can be pointed at.
+
+    The receiver reaches 0.1-14.4 MHz through the ADC and 24-1766 MHz through the
+    tuner, so 160 through 20 m are ALL of the amateur HF this hardware can hear —
+    17 m up is in the 14.4-24 MHz hole `tuner.aliased` refuses. A row missing here is
+    a band the owner cannot tune from the picker at all, which is exactly the kind of
+    absence nothing else fails on."""
+    ids = {s.id for s in bands.SECTIONS}
+    assert {"160m", "80m", "60m", "40m", "30m", "20m"} <= ids
+    for section in bands.SECTIONS:
+        if section.id in {"160m", "80m", "60m", "40m", "30m", "20m"}:
+            assert section.direct_sampling, f"{section.id} is not on the ADC path"
+            assert section.live == bands.LIVE_FAST, f"{section.id} cannot be watched"
+
+
 class TestTheValidatorActuallyCatchesThings:
     """`validate()` is the only thing standing between a typo and a mis-tuned radio, so
     each of its rules is tested against a row that breaks it. A validator nobody has
