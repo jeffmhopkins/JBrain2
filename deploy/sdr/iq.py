@@ -47,6 +47,7 @@ change nobody asked for.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -107,6 +108,54 @@ def as_complex64(samples: Any) -> np.ndarray:
     raise TypeError(f"expected complex or CS8 (int8) samples, got {arr.dtype}")
 
 
+#: The largest magnitude one I or Q sample can carry, on the 1/128 scale `as_complex64`
+#: uses. int8 reaches -128, so the NEGATIVE rail is exactly 1.0 and the positive one is
+#: 127/128 — a sample at or above this is a code at the end of the converter's range,
+#: which is what "clipped" has to mean when the only evidence is the number itself.
+RAIL = 127.0 / 128.0
+
+
+def headroom(samples: Any) -> tuple[float, float]:
+    """`(headroom_db, clipped_share)` for one frame's samples, in the time domain.
+
+    **The one measurement an HF antenna needs and a spectrum cannot give.** Below
+    24 MHz the R820T2 is powered down and the antenna feeds the ADC directly, so there
+    is no gain stage, no AGC, and NOTHING in software to turn down: level is decided by
+    what is hanging off the SMA. A 70-foot wire on a good night can drive an 8-bit
+    converter into its rails, and the failure does not look like distortion on a
+    waterfall — it looks like SIGNALS. Clipping folds the strongest carrier's energy
+    across the whole span as intermodulation, which the peak finder then reports as
+    stations, at plausible frequencies, with plausible widths (ITU-R SM.2256-1 §3.3).
+    A dB figure that says "3 dB from the top" is the only warning the owner can act
+    on, and the action is physical — an attenuator, or a filter for whatever is loudest.
+
+    `headroom_db` is how far the loudest single I or Q sample sits below full scale, so
+    0 dB means the converter was pinned and 40 dB means most of its range is unused.
+    `clipped_share` is the fraction of samples AT the rail; it stays 0.0 on a healthy
+    frame and a nonzero value is the unambiguous statement, since headroom alone cannot
+    distinguish "just reached full scale once" from "flat-topped for a millisecond".
+
+    Measured on the interleaved float view rather than on complex magnitudes: the ADC
+    clips each branch on its own, and `hypot(I, Q)` reaching 1.0 with neither branch at
+    its rail is a perfectly legal sample."""
+    iq = as_complex64(samples)
+    if iq.size == 0:
+        return (0.0, 0.0)
+    # One pass over I and Q as plain floats — `abs().max()` on the complex array would
+    # compute a magnitude per sample (a square root each) to answer a question about
+    # the branches.
+    branches = np.abs(iq.view(np.float32))
+    peak = float(branches.max())
+    clipped = float(np.count_nonzero(branches >= RAIL)) / float(branches.size)
+    if peak <= 0.0:
+        # A frame of digital silence. Reported as the full range unused rather than as
+        # an infinity, because the caller is drawing it.
+        return (float(DB_FLOOR), clipped)
+    # `max(0.0, ...)` for the sign, not the size: a peak pinned at 1.0 gives -0.0,
+    # which prints as "-0.0 dB" on a surface whose whole job is to be read.
+    return (round(max(0.0, -20.0 * math.log10(min(peak, 1.0))), 1), clipped)
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class Spectrum:
     """One waterfall row: every bin of one frame, in dBFS, low frequency first.
@@ -133,6 +182,16 @@ class Spectrum:
     # a short frame is averaged over fewer segments and is noisier, and that is worth
     # being able to see rather than inferring from the sample count.
     segments: int
+    #: How far the loudest SAMPLE sat below the converter's full scale, in dB, and what
+    #: share of samples reached the rail (`headroom`).
+    #:
+    #: Time-domain, and carried on the row because no spectrum can answer it: every bin
+    #: here is normalised power per bin, so a frame clipping flat and a frame with 30 dB
+    #: to spare can draw the same picture — the second one just draws the truth. On the
+    #: HF path there is no gain stage at all, so this is the ONLY level feedback that
+    #: exists between the antenna and the owner.
+    headroom_db: float = 0.0
+    clipped_share: float = 0.0
 
     @property
     def bins(self) -> int:
@@ -162,6 +221,8 @@ class Spectrum:
             # subscriber per frame (§5), which at 1 fps was invisible and at 10 fps
             # is not.
             "db": np.round(self.db, 1).tolist(),
+            "headroom_db": self.headroom_db,
+            "clipped_share": self.clipped_share,
         }
 
 
@@ -267,10 +328,13 @@ class Spectrometer:
         mean *= self._power_scale
         np.maximum(mean, _POWER_FLOOR, out=mean)
         db = np.fft.fftshift(10.0 * np.log10(mean))
+        head, clipped = headroom(iq)
         return Spectrum(
             at=time.time() if at is None else at,
             start_hz=self.start_hz(center_hz),
             bin_hz=self.bin_hz,
             db=db,
             segments=segments,
+            headroom_db=head,
+            clipped_share=clipped,
         )

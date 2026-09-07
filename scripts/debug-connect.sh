@@ -55,13 +55,23 @@
 #      rate match the requested one, and — the one nothing else can answer — did `bufflen`
 #      actually take, measured as a callback period. Also captures one frame through the
 #      real FFT — the strongest bin EXCLUDING the centre one, since a peak there is the
-#      receiver's own DC offset — so the 10 MHz default is a WWV check. MEASURED on this
-#      box: it comes back `dead` there, a DC spike with no noise floor at 5, 7.15 and 10
-#      MHz alike, so nothing reaches the ADC below 24 MHz. TAKES THE RADIO for a few seconds
+#      receiver's own DC offset — so the 10 MHz default is a WWV check. The ADC path
+#      below 24 MHz IS alive: an early single-frame reading called it `dead` at 5, 7.15
+#      and 10 MHz and that verdict was WRONG — the direct-sampling branch needs a moment
+#      after it is switched, and the probe now reads ten frames and judges the last
+#      (SDR_IQ_SPECTRUM_PLAN F0). MEASURED 2026-09-07 at 7.15 MHz: floor -47.4 dBFS,
+#      `dead: false`. What is still unproven is RECEPTION — on a short indoor whip, with
+#      no gain stage at all below 24 MHz, every HF frame so far is noise with no station
+#      in it, and only a real HF antenna answers that. TAKES THE RADIO for a few seconds
 #      through the same lease as everything else; run it once per dongle with --serial.)
 #   scripts/debug-connect.sh spectrum-probe --section 2m-ssb [--seconds 3] [--serial S]
 #     (F6's twin of soapy-probe: starts a REAL live spectrum, watches it for a few
-#      seconds and gives the radio back. Answers the three things nothing else can —
+#      seconds and gives the radio back. Read `level` on any HF section: `headroom_db`
+#      is how far the loudest SAMPLE of the worst row sat below the converter's full
+#      scale and `clipped_share` is what reached the rail. No picture can tell you this
+#      — every bin is normalised — and below 24 MHz there is no gain stage, so an
+#      antenna that overloads the ADC is fixed with an attenuator or a filter, never a
+#      setting. Answers the three things nothing else can —
 #      which engine actually ran (the sidecar falls back to rtl_power at runtime when a
 #      radio will not open, and a silent downgrade is a waterfall at a tenth of the rate
 #      it claims), whether `bin_hz` on the wire is exactly `rate / bins`, and what the

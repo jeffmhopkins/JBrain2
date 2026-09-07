@@ -985,6 +985,43 @@ SECTIONS: tuple[Section, ...] = (
         continuous=True,
     ),
     _s(
+        id="sw-22m",
+        band="Shortwave",
+        name="22 m broadcast",
+        start_hz=13_570_000,
+        stop_hz=13_870_000,
+        mode="am",
+        step_hz=5_000,
+        channel_hz=5_000,
+        note="A daytime band, and the highest broadcast band that fits under the "
+        "14.4 MHz mirror boundary. The 19 m band folds onto it.",
+        live=LIVE_FAST,
+        # 1.024 MS/s rather than 256 kS/s: 300 kHz of band needs a trusted span of at
+        # least that, and 256 kS/s only carries 213 kHz. The window still holds with
+        # 680 kHz to spare against the 14.4 MHz edge.
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+    ),
+    _s(
+        id="160m",
+        band="160 m",
+        name="Voice (LSB)",
+        start_hz=1_800_000,
+        stop_hz=2_000_000,
+        mode="lsb",
+        step_hz=100,
+        channel_hz=0,
+        note="The bottom of the amateur bands, and a night band only — by day the "
+        "atmosphere absorbs it. A long wire is short here, so expect the local "
+        "stations and not the distant ones.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+    ),
+    _s(
         id="80m",
         band="80 m",
         name="Voice (LSB)",
@@ -1001,6 +1038,30 @@ SECTIONS: tuple[Section, ...] = (
         sweep_seconds=120,
     ),
     _s(
+        id="60m",
+        band="60 m",
+        name="Five channels (USB)",
+        start_hz=5_330_000,
+        stop_hz=5_410_000,
+        mode="usb",
+        step_hz=100,
+        channel_hz=0,
+        note="Not a band but five fixed channels, shared with government users who "
+        "have priority. Upper sideband here by regulation rather than by the "
+        "convention that puts everything below 10 MHz on lower.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        channels=(
+            Channel(5_332_000, "Channel 1"),
+            Channel(5_348_000, "Channel 2"),
+            Channel(5_358_500, "Channel 3"),
+            Channel(5_373_000, "Channel 4"),
+            Channel(5_405_000, "Channel 5"),
+        ),
+    ),
+    _s(
         id="40m",
         band="40 m",
         name="Voice (LSB)",
@@ -1014,6 +1075,23 @@ SECTIONS: tuple[Section, ...] = (
         sample_rate_hz=256_000,
         sweep_bin_hz=1_000,
         sweep_seconds=120,
+    ),
+    _s(
+        id="30m",
+        band="30 m",
+        name="CW and digital",
+        start_hz=10_100_000,
+        stop_hz=10_150_000,
+        mode="usb",
+        step_hz=100,
+        channel_hz=0,
+        note="No voice at all here — Morse and digital modes only, so a waterfall is "
+        "the honest way to watch it. FT8 sits at 10.136 and WSPR at 10.1387.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
     ),
     _s(
         id="20m",

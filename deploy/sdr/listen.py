@@ -1103,6 +1103,16 @@ class Frame:
     #: `bin_hz` was always here; this is the other half, so a reader holding rows across
     #: time can tell a floor that MOVED from a floor measured differently.
     gain_db: float | None = None
+    #: How far the loudest SAMPLE of this frame sat below the converter's full scale,
+    #: and what share of samples reached the rail (`iq.headroom`). None on a row from an
+    #: engine that never saw the samples (`rtl_fm`).
+    #:
+    #: The level control that does not exist in software. `gain_db` above says what the
+    #: TUNER was set to, and below 24 MHz there is no tuner — the antenna feeds the ADC
+    #: directly, so on HF this is the whole story of level, and a wire big enough to
+    #: matter is a wire big enough to overload it.
+    headroom_db: float | None = None
+    clipped_share: float = 0.0
     #: Which picture this row belongs to: the whole capture (`VIEW_BAND`) or the tuned
     #: channel (`VIEW_CHANNEL`). One session now publishes both off the same samples, so
     #: a reader holding rows across time needs the row itself to say which — the
@@ -1146,6 +1156,8 @@ class Frame:
                 "passband_centre_hz": self.passband_centre_hz,
                 "channel_hz": self.channel_hz,
                 "gain_db": self.gain_db,
+                "headroom_db": self.headroom_db,
+                "clipped_share": round(self.clipped_share, 6),
                 "view": self.view,
             }
             # `object.__setattr__` because the dataclass is frozen — which is also what
@@ -1694,6 +1706,8 @@ class Session:
             db=spectrum.db[first : first + keep].tolist(),
             passband_hz=high - low,
             passband_centre_hz=(low + high) / 2.0,
+            headroom_db=spectrum.headroom_db,
+            clipped_share=spectrum.clipped_share,
             view=VIEW_CHANNEL,
         )
 
@@ -1711,6 +1725,8 @@ class Session:
             # precision it was handed.
             bin_hz=spectrum.bin_hz,
             db=spectrum.db_list(),
+            headroom_db=spectrum.headroom_db,
+            clipped_share=spectrum.clipped_share,
             view=VIEW_BAND,
         )
 
@@ -1846,6 +1862,12 @@ class Session:
         recent: collections.deque[np.ndarray] = collections.deque(maxlen=DECIDE_SWEEPS)
         while not self._stopping and held.alive:
             at = 0.0
+            # The WORST hop, not the last: a stitched row is one picture, and a single
+            # hop driven into the rails puts its intermodulation into that picture. The
+            # honest level for the row is the level of the hop that came closest to the
+            # top.
+            worst_headroom: float | None = None
+            worst_clipped = 0.0
             for index, centre in enumerate(centres):
                 if self._stopping or not held.alive:
                     return
@@ -1858,6 +1880,12 @@ class Session:
                 reading = held.read(want)
                 at = at or reading.at
                 spectrum = spectrometer.frame(reading.samples, centre)
+                worst_headroom = (
+                    spectrum.headroom_db
+                    if worst_headroom is None
+                    else min(worst_headroom, spectrum.headroom_db)
+                )
+                worst_clipped = max(worst_clipped, spectrum.clipped_share)
                 row[index * usable : (index + 1) * usable] = spectrum.db[
                     edge : edge + usable
                 ]
@@ -1870,6 +1898,8 @@ class Session:
                     start_hz=sweep.start_hz,
                     bin_hz=spectrometer.bin_hz,
                     db=held_row(list(recent)[-HOLD_SWEEPS:]).tolist(),
+                    headroom_db=worst_headroom,
+                    clipped_share=worst_clipped,
                 ),
                 # The picture is the max of the window and the DECISION is its mean —
                 # see `mean_row`. Two different reductions of the same four sweeps,

@@ -12,6 +12,7 @@ The tuner itself is faked at the process boundary (`subprocess.Popen`), the same
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import math
@@ -1675,6 +1676,79 @@ def _sweep_with_capture() -> Any:
     return listen.Sweep.of(
         144_000_000, 144_400_000, 600, 60, capture=(2_400_000, 4_000)
     )
+
+
+class TestTheProbeJudgesTheLEVELAndNotOnlyThePicture:
+    """What a waterfall cannot say, on the one path where nothing else can say it.
+
+    Below 24 MHz the R820T2 is powered down and the antenna feeds the ADC directly:
+    no gain, no AGC, nothing in software to turn down. An antenna big enough to be
+    worth putting up can drive the converter into its rails, and the result does not
+    read as distortion — it reads as extra stations, because clipping spreads the
+    loudest carrier across the span and the peak finder does its job on the wreckage.
+    """
+
+    def _levelled(self, headroom_db: float, clipped: float = 0.0) -> Any:
+        frame = _frame(600, 4_000)
+        return dataclasses.replace(
+            frame, headroom_db=headroom_db, clipped_share=clipped
+        )
+
+    def test_clipping_is_named_with_what_to_do_about_it(self) -> None:
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(),
+            [self._levelled(30.0)] * 20 + [self._levelled(0.0, clipped=0.004)],
+            3.0,
+            "iq",
+        )
+
+        assert verdict["ok"] is False
+        assert any("CLIPPED" in f for f in verdict["findings"])
+        # The action, not just the diagnosis: there is no software fix down there.
+        assert any("attenuator" in f for f in verdict["findings"])
+
+    def test_the_WORST_row_is_the_verdict_not_the_last_one(self) -> None:
+        # A probe watches for seconds and a band is not equally loud across them. One
+        # overloaded row is a row of phantom signals, so reporting whichever row the
+        # watch happened to stop on would hide it half the time.
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(),
+            [self._levelled(2.0, clipped=0.01)] + [self._levelled(40.0)] * 20,
+            3.0,
+            "iq",
+        )
+
+        assert verdict["level"]["headroom_db"] == 2.0
+        assert verdict["level"]["clipped_share"] == 0.01
+        assert any("CLIPPED" in f for f in verdict["findings"])
+
+    def test_a_tight_but_clean_capture_is_a_warning_rather_than_a_fault(self) -> None:
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(), [self._levelled(3.0)] * 20, 3.0, "iq"
+        )
+
+        assert any("headroom" in f for f in verdict["findings"])
+        assert not any("CLIPPED" in f for f in verdict["findings"])
+
+    def test_a_healthy_level_says_nothing_at_all(self) -> None:
+        # The measurement must not become noise of its own: most captures are fine.
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(), [self._levelled(24.0)] * 20, 3.0, "iq"
+        )
+
+        assert verdict["level"]["headroom_db"] == 24.0
+        assert verdict["findings"] == []
+        assert verdict["ok"] is True
+
+    def test_an_engine_that_never_saw_the_samples_reports_no_level(self) -> None:
+        # `rtl_fm` rows carry no headroom, and inventing 0.0 for them would put a
+        # clipping warning on every frame an engine cannot measure.
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(), [_frame(600, 4_000)] * 20, 3.0, "iq"
+        )
+
+        assert "level" not in verdict
+        assert not any("CLIPPED" in f for f in verdict["findings"])
 
 
 def test_the_probe_reports_the_engine_that_actually_ran() -> None:
