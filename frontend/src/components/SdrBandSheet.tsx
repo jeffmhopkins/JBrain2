@@ -10,8 +10,16 @@
 // expert path reaches anywhere the radio does; it is simply not the ordinary way in,
 // and putting it on the main screen would make the curated list look like a shortcut
 // rather than the answer.
+//
+// **The filter and the Recent group are shape C** of `docs/mocks/band-recents/`, chosen
+// 2026-09-07 over pinning recents alone and over reordering the whole list by use. The
+// table reached 57 sections and the band you want is usually off-screen; at that size
+// the fastest path is not scrolling at all. Empty, the field costs nothing — the list
+// underneath is the one that was always there, with what this device tuned lately on
+// top of it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { type BandPicks, loadPicks, notePick, recentlyPicked } from "../sdrBandPicks";
 import {
   type BandSection,
   type SdrBands,
@@ -40,6 +48,19 @@ export function SdrBandSheet({
   const [bands, setBands] = useState<SdrBands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [picks, setPicks] = useState<BandPicks>(() => loadPicks());
+
+  function choose(section: BandSection) {
+    setPicks(notePick(section.id));
+    onPick({ section: section.id }, section);
+  }
+
+  const found = useMemo(() => (bands ? matching(bands.sections, query) : []), [bands, query]);
+  const recent = useMemo(
+    () => (bands ? recentlyPicked(bands.sections, picks, RECENT_SHOWN) : []),
+    [bands, picks],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -61,30 +82,79 @@ export function SdrBandSheet({
       )}
       {!bands && !error && <p className="radio-empty">Reading the band table…</p>}
       {bands && manual === null && (
-        <div className="bandlist">
-          {byBand(bands.sections).map(([band, sections]) => (
-            <div key={band}>
-              <p className="bgroup">{band}</p>
-              {sections.map((section) => (
-                <BandRow
-                  key={section.id}
-                  section={section}
-                  purpose={purpose}
-                  onPick={() => onPick({ section: section.id }, section)}
-                />
-              ))}
-            </div>
-          ))}
-          <button type="button" className="bitem" onClick={() => setManual("")}>
-            <span className="bband">
-              <span className="bt">Enter a frequency…</span>
-              <span className="bd">
-                Anywhere from {edge(bands.tuner_min_hz)} to {edge(bands.tuner_max_hz)} MHz. Settings
-                are inherited from whichever section it lands in.
+        <>
+          <div className="bfind">
+            <input
+              type="search"
+              className="bfind-in"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Band, group or frequency"
+              aria-label="Filter bands"
+            />
+          </div>
+          <div className="bandlist">
+            {query.trim() !== "" ? (
+              <>
+                <p className="bgroup">
+                  {found.length} of {bands.sections.length}
+                </p>
+                {found.map((section) => (
+                  <BandRow
+                    key={section.id}
+                    section={section}
+                    purpose={purpose}
+                    onPick={() => choose(section)}
+                  />
+                ))}
+                {found.length === 0 && (
+                  <p className="sheet-hint">
+                    Nothing matches. Any frequency the radio reaches can still be entered by hand
+                    below.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {recent.length > 0 && (
+                  <>
+                    <p className="bgroup">Recent</p>
+                    {recent.map((section) => (
+                      <BandRow
+                        key={`recent-${section.id}`}
+                        section={section}
+                        purpose={purpose}
+                        onPick={() => choose(section)}
+                      />
+                    ))}
+                  </>
+                )}
+                {byBand(bands.sections).map(([band, sections]) => (
+                  <div key={band}>
+                    <p className="bgroup">{band}</p>
+                    {sections.map((section) => (
+                      <BandRow
+                        key={section.id}
+                        section={section}
+                        purpose={purpose}
+                        onPick={() => choose(section)}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </>
+            )}
+            <button type="button" className="bitem" onClick={() => setManual("")}>
+              <span className="bband">
+                <span className="bt">Enter a frequency…</span>
+                <span className="bd">
+                  Anywhere from {edge(bands.tuner_min_hz)} to {edge(bands.tuner_max_hz)} MHz.
+                  Settings are inherited from whichever section it lands in.
+                </span>
               </span>
-            </span>
-          </button>
-        </div>
+            </button>
+          </div>
+        </>
       )}
       {bands && manual !== null && (
         <ManualEntry
@@ -97,6 +167,30 @@ export function SdrBandSheet({
         />
       )}
     </Sheet>
+  );
+}
+
+/** How many recently-picked bands lead the list. Four: enough to cover a session's
+ *  worth of habits, few enough that the groups below are still visible without
+ *  scrolling — the whole point of the shape is that the list underneath is unchanged. */
+const RECENT_SHOWN = 4;
+
+/**
+ * The sections a query matches — name, group, note or frequency.
+ *
+ * The frequency is matched as the RANGE READ OFF THE ROW ("7.125-7.300"), not as a
+ * number compared against the edges: someone typing 27 means the CB band, and someone
+ * typing 162 means the weather radio, and neither is asking for a numeric comparison
+ * they would have to be precise about. It is the string the owner can see.
+ */
+export function matching(sections: readonly BandSection[], query: string): BandSection[] {
+  const want = query.trim().toLowerCase();
+  if (want === "") return [...sections];
+  return sections.filter((section) =>
+    [section.name, section.band, section.note, `${edge(section.start_hz)}-${edge(section.stop_hz)}`]
+      .join(" ")
+      .toLowerCase()
+      .includes(want),
   );
 }
 
