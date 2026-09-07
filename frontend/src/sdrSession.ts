@@ -73,8 +73,23 @@ export interface SdrState {
  *  ASK. Falls back to `listening` for an api that predates the field, which can only
  *  ever have had the one session. */
 export function sessionFor(state: SdrState, purpose: string): SdrListening | null {
-  const live = state.sessions ?? (state.listening ? [state.listening] : []);
-  return live.find((s) => (s.purpose ?? "listen") === purpose) ?? null;
+  return liveSessions(state).find((s) => (s.purpose ?? "listen") === purpose) ?? null;
+}
+
+/** Every session the box is holding. One reading of the `sessions`-or-`listening`
+ *  fallback, so a caller cannot forget the older api and see an idle box. */
+export function liveSessions(state: SdrState): SdrListening[] {
+  return state.sessions ?? (state.listening ? [state.listening] : []);
+}
+
+/** Whether the box is holding a radio at all — the omnibox icon's condition.
+ *
+ *  NOT `listening !== null`, which is the one session the icon DRAWS and prefers the
+ *  tuner: a box whose only radio was decoding APRS or sweeping a spectrum showed no
+ *  icon, so the sheet that can now control those jobs had no way in
+ *  (docs/mocks/omnibox-radios/README.md). */
+export function anyHeld(state: SdrState): boolean {
+  return liveSessions(state).length > 0;
 }
 
 /** Whether a held radio is one there is any point hearing. A session whose purpose is

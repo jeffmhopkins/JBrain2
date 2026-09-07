@@ -7,7 +7,7 @@ import { useReadAloud } from "../agent/useReadAloud";
 import { usePlanState } from "../agent/views/registry";
 import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
-import { SdrTunerSheet } from "../components/SdrTunerSheet";
+import { SdrRadiosSheet } from "../components/SdrRadiosSheet";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
 import { useRegisterHomeBack } from "../homeBack";
@@ -15,7 +15,7 @@ import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
-import { useSdrSession } from "../sdrSession";
+import { anyHeld, useSdrSession } from "../sdrSession";
 
 const TOAST_MS = 4000;
 
@@ -40,6 +40,9 @@ interface HomeScreenProps {
   onOpenEntity?: (entityId: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
+  /** Leave for the Radio screen (it opens on the APRS log) — the radio sheet's way
+   *  out to the log, which lives on the screen that polls it. */
+  onOpenRadio: () => void;
   /** Opens the box-vitals detail surface from the top bar's chart. */
   onOpenVitals: () => void;
   /** A handoff (e.g. the calendar's reschedule) that flips to Full Brain and
@@ -68,6 +71,7 @@ export function HomeScreen({
   onOpenNote,
   onOpenSearch,
   onOpenLauncher,
+  onOpenRadio,
   onOpenVitals,
   onOpenNoteById,
   onOpenEntity,
@@ -374,9 +378,11 @@ export function HomeScreen({
         attachEnabled={
           !conversational || fb.supportsVision || (seg.mode === "research" && fb.canAnalyzeImages)
         }
-        // The radio icon appears only while a session holds the tuner — the icon IS
-        // the lease, so this is the same fact the tuner sheet reads.
-        sdrActive={sdr.listening !== null}
+        // The icon appears while the box holds ANY radio, for any job — it is the
+        // lease, not the tuner. Reading `listening` instead hid a radio that was
+        // decoding APRS or sweeping, which is exactly what the sheet behind the icon
+        // now exists to show and control.
+        sdrActive={anyHeld(sdr)}
         onSdrTap={() => setSdrSheet(true)}
         // Long-press a conversation tab → pick the model this chat runs on (that
         // conversation only). Only offered on a conversation surface; the chip in the
@@ -394,8 +400,17 @@ export function HomeScreen({
         planStatus={pillStatus}
         onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
       />
-      {sdrSheet && sdr.listening && (
-        <SdrTunerSheet listening={sdr.listening} onClose={() => setSdrSheet(false)} />
+      {sdrSheet && (
+        // Open on the radio the icon was reflecting; the sheet re-anchors itself if
+        // that one is gone by the time it renders.
+        <SdrRadiosSheet
+          openOn={sdr.listening?.serial ?? null}
+          onOpenAprs={() => {
+            setSdrSheet(false);
+            onOpenRadio();
+          }}
+          onClose={() => setSdrSheet(false)}
+        />
       )}
       {modelSheet && conversational && (
         <AgentModelSheet

@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api/client";
-import { resetSdrSession, sessionFor, subscribeSdr } from "./sdrSession";
+import { anyHeld, resetSdrSession, sessionFor, subscribeSdr } from "./sdrSession";
 
 const LISTENING = {
   session_id: "abc123",
@@ -188,5 +188,25 @@ describe("sessionFor", () => {
 
   it("is idle-safe", () => {
     expect(sessionFor({ available: false, listening: null }, "aprs")).toBeNull();
+  });
+});
+
+describe("anyHeld", () => {
+  // The omnibox icon's condition. It used to be `listening !== null`, which is the one
+  // session the icon DRAWS and prefers the tuner — so a box whose only radio was
+  // decoding APRS or sweeping showed no icon at all, and the sheet that can now control
+  // those jobs had no way in.
+  const APRS = { ...LISTENING, session_id: "s-aprs", purpose: "aprs" };
+
+  it("is true for a radio held for a job that makes no sound", () => {
+    expect(anyHeld({ available: true, listening: null, sessions: [APRS] })).toBe(true);
+  });
+
+  it("is false when the box holds nothing", () => {
+    expect(anyHeld({ available: true, listening: null, sessions: [] })).toBe(false);
+  });
+
+  it("falls back to listening on an api too old to send sessions", () => {
+    expect(anyHeld({ available: true, listening: APRS })).toBe(true);
   });
 });

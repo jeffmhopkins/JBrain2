@@ -1,8 +1,9 @@
-// The tuned-station sheet — the binding spec at docs/mocks/sdr-tuner/a-tuner-sheet.html.
+// The tuner controls — the binding spec at docs/mocks/sdr-tuner/a-tuner-sheet.html.
 //
-// Composes the shared <Sheet> rather than inventing a modal: Sheet.tsx's own header
-// calls bespoke modals a design-doc violation, and composing it inherits all five of
-// its dismiss paths (scrim, Escape, swipe-down, the grab handle, platform Back).
+// Mounted by the omnibox radio sheet (inside the shared <Sheet>) and by the Radios tab,
+// as the `listen` job's surface. The sheet wrapper that used to live here went with the
+// omnibox's move to a per-radio sheet (docs/mocks/omnibox-radios/d-radio-then-task.html):
+// the omnibox opens on a RADIO now, and what is drawn depends on the job it is holding.
 //
 // Content order is binding: readout + tune steppers, mode, signal, transport, actions.
 // Release is a first-class action because it is what hands this session's radio back — and
@@ -29,7 +30,6 @@ import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
 import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
 import { SdrTuningView } from "./SdrTuningView";
-import { Sheet } from "./Sheet";
 import { PauseIcon, PlayIcon } from "./icons";
 
 const MODES = ["wbfm", "fm", "am", "usb"] as const;
@@ -91,15 +91,10 @@ function whyNotTunable(mhzValue: number): string | null {
   return null;
 }
 
-interface Props {
-  listening: SdrListening;
-  onClose: () => void;
-}
-
 interface ControlsProps {
   listening: SdrListening;
-  /** Called after Release succeeds. The sheet dismisses itself; the Radio screen's
-   * Tuner tab has nothing to dismiss and simply falls back to its idle state. */
+  /** Called after Release succeeds. Both mounts simply fall back to their idle state:
+   * the radio the sheet is on stops being held, and its job surface follows. */
   onReleased: () => void;
 }
 
@@ -114,14 +109,6 @@ export function liveTag(behindS: number | null): string {
   // Whole seconds: a tenth of a second of playback delay is not a thing anyone can act
   // on, and the reading is only ever a rough one — the browser's buffer, not a clock.
   return `LIVE −${Math.round(behindS)}s`;
-}
-
-export function SdrTunerSheet({ listening, onClose }: Props) {
-  return (
-    <Sheet title="Tuned station" onClose={onClose}>
-      <SdrTunerControls listening={listening} onReleased={onClose} />
-    </Sheet>
-  );
 }
 
 /** The transport itself — readout, steppers, mode, signal, play/pause, captions,

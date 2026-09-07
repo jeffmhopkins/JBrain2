@@ -14,7 +14,7 @@
 import { mhz } from "./mhz";
 import type { SdrRadio, SdrRadios } from "./sdrRadios";
 import { GENERAL, labelFor } from "./sdrRadios";
-import type { SdrListening, SdrState } from "./sdrSession";
+import { type SdrListening, type SdrState, liveSessions } from "./sdrSession";
 
 /** The jobs a radio can be given, in the order the control offers them. */
 export const JOBS: ReadonlyArray<{ id: string; label: string }> = [
@@ -43,8 +43,7 @@ export function jobOf(session: SdrListening): string {
  *  one-dongle box has always sent, and reading it as "belongs to nothing" would show
  *  such a box as idle while its radio was plainly held. */
 export function sessionOn(state: SdrState, serial: string): SdrListening | null {
-  const live = state.sessions ?? (state.listening ? [state.listening] : []);
-  return live.find((s) => !s.serial || s.serial === serial) ?? null;
+  return liveSessions(state).find((s) => !s.serial || s.serial === serial) ?? null;
 }
 
 export interface StateLine {
