@@ -799,6 +799,30 @@ about this path. Reverted, and the reason is now recorded in `peaks.find` so it 
 "fixed" a third time. C20 exists because those two grids once sat half a bin apart; it
 earned its keep again here.
 
+**The labels were stale, and it looked like more sidebands than there were
+(2026-09-07).** With prominence and width shipped the dial read 22 signals, of which
+only two were surplus — but five of the real ones wore RAW frequencies (96.5 as
+"96.494", 106.1 as "106.084") while the weaker stations either side of them read as
+clean channels. `mergePeaks` keeps the frequency of a signal's STRONGEST sighting, which
+was right when nothing snapped and became staleness the day the box started placing
+signals on a grid: a station's all-time maximum is usually EARLY, often before the
+session had enough signals to establish the grid, so the loudest stations were exactly
+the ones frozen with a pre-grid label. A snapped `hz` is a channel and cannot wander —
+`measuredHz` carries the wander now — so the newest label is adopted whenever the box
+labelled it, and the strongest sighting still supplies the LEVEL and still supplies the
+frequency where no grid exists.
+
+**The guard margin is measured and deliberately NOT wired in.** On the 45 s integration
+it is the better rule — 21 of 21 real kept, 16 of 16 surplus rejected, where
+prominence+width leaves one — but the worst real station clears by 1.06 dB against a
+best artefact of 0.33, and on a short window that gap closes and inverts (measured on
+single max-of-4 rows: worst real -0.14 dB, best surplus +1.50). The decision row is a
+mean of `HOLD_SWEEPS` sweeps, about 1.8 s, which is nearer the short case. Wiring it in
+at this window would delete real stations to remove two artefacts. `guard_margin_db`
+exists, is tested, and `_has_shape` does not call it; what it needs is a ~7 s decision
+window separate from the picture's, which costs a scanner band that long to report a
+burst and is a decision to take deliberately.
+
 **Still open:** the held list in the PWA has no expiry, so it is a union over the whole
 session and one false positive is permanent (`MAX_PEAKS` is 24, so a 37-entry list can
 only be accumulation). A duty cycle would replace it honestly. And the receiver is

@@ -713,3 +713,40 @@ def test_width_is_not_judged_without_a_BAND_PLAN_to_judge_it_against() -> None:
 
     assert len(peaks.find(row, 88_000_000, 9375, channel_hz=0)) == 1
     assert peaks.find(row, 88_000_000, 9375, channel_hz=200_000) == []
+
+
+def test_the_guard_margin_separates_the_real_dial_but_is_not_wired_in() -> None:
+    """The measurement that decided NOT to ship it, kept so the next attempt starts from
+    numbers rather than from scratch.
+
+    On a 45 s integration of the owner's dial it is perfect — 21 of 21 real stations
+    kept and 16 of 16 surplus rejected, beating prominence+width, which leaves one. But
+    the worst real station clears by 1.06 dB against a best artefact of 0.33, and on a
+    short window that 0.73 dB of daylight closes and inverts. The decision row is a mean
+    of `HOLD_SWEEPS` sweeps, about 1.8 s. So the function exists, is correct, and
+    `_has_shape` does not call it.
+    """
+    # A carrier with clean troughs either side: the shape a real station has.
+    row = _flat(1600)
+    at = int((96_500_000 - 88_000_000) / 9375)
+    for offset in range(-9, 10):
+        row[at + offset] = -25.0 - (abs(offset) / 9.0) * 10.0
+
+    assert peaks.guard_margin_db(row, at, 9375, 200_000) >= peaks.MIN_GUARD_MARGIN_DB
+    # ...and it is not consulted: a shape that passes prominence and width is kept even
+    # where the guard margin would reject it.
+    assert peaks._has_shape(row, at, 9375, 200_000, peaks.min_width_hz(9375, 200_000))
+
+
+def test_the_guard_margin_is_not_ASKED_where_a_channel_is_a_few_bins_wide() -> None:
+    """Its guards sit half a channel out and are half a channel wide, so on a plan whose
+    channels are three bins across they land inside the neighbours' skirts and measure
+    nothing. NaN says "not asked", which a caller must not read as "failed" — and it is
+    what keeps this away from 2 m repeater pairs and 25 kHz airband, where two adjacent
+    occupied channels is the design rather than a defect."""
+    row = _flat(400)
+    row[200] = -30.0
+
+    assert math.isnan(peaks.guard_margin_db(row, 200, 9375, 25_000))
+    assert math.isnan(peaks.guard_margin_db(row, 200, 9375, 0))
+    assert not math.isnan(peaks.guard_margin_db(row, 200, 9375, 200_000))

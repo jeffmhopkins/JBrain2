@@ -90,17 +90,26 @@ export function mergePeaks(held: readonly HeldPeak[], row: SpectrumRow): HeldPea
       kept.push({ ...candidate, live: false });
       continue;
     }
-    // A MATCHED signal keeps the frequency of its STRONGEST sighting, and this is what
-    // makes a held pill tappable. It used to take the newest row's frequency instead,
-    // so the number under the owner's thumb changed ten times a second and a
-    // tap-then-confirm could not land twice on the same one. The strongest sighting is
-    // also the best estimate of where the station actually is: the wander is noise
-    // moving which bin of the skirt wins, and the skirt is loudest at the middle.
-    kept.push(
-      found.db > candidate.db
-        ? { ...found, seen: now, live: true }
-        : { ...candidate, db: candidate.db, seen: now, live: true },
-    );
+    // A MATCHED signal keeps the level of its STRONGEST sighting, and its frequency
+    // from the strongest sighting too — UNLESS the box put a channel label on it.
+    //
+    // Strongest-wins is what makes a held pill tappable. Taking the newest row's
+    // frequency changed the number under the owner's thumb ten times a second, so a
+    // tap-then-confirm could not land twice on the same one, and the wander is real:
+    // it is noise moving which bin of a skirt wins.
+    //
+    // **A SNAPPED label does not wander, so it does not need protecting from itself.**
+    // Once the box can place a signal on its channel grid, `hz` is the channel and
+    // `measuredHz` carries the wander — the two goals stopped conflicting the day
+    // snapping shipped, and keeping the older label became pure staleness. It showed:
+    // a station's all-time strongest sighting is usually EARLY, often before the
+    // session had enough signals to establish the grid at all, so the loudest stations
+    // on the dial were exactly the ones frozen with a raw label. 96.5 read "96.494" and
+    // 106.1 read "106.084" while the weaker stations either side of them, whose maxima
+    // came later, read as clean channels.
+    const winner = found.db > candidate.db ? found : candidate;
+    const labelled = found.hz !== found.measuredHz;
+    kept.push({ ...winner, hz: labelled ? found.hz : winner.hz, seen: now, live: true });
   }
 
   // Evicted by STRENGTH, then ordered by FREQUENCY. Two different questions: which to

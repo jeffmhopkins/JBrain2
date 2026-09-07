@@ -229,3 +229,39 @@ describe("which markers carry their frequency", () => {
     expect(named.size).toBe(2);
   });
 });
+
+describe("which frequency a held pill keeps", () => {
+  it("adopts the box's channel label, even from a quieter sighting", () => {
+    // A station's all-time strongest sighting is usually EARLY, often before the
+    // session has enough signals to establish the grid at all — so the loudest stations
+    // on the dial were exactly the ones frozen with a raw label. Seen on air: 96.5 read
+    // "96.494" and 106.1 read "106.084" while the weaker stations either side of them,
+    // whose maxima came later, read as clean channels.
+    const loudButRaw = row([{ hz: 96_493_750, db: -12 }], 200_000);
+    const quietButLabelled: SpectrumRow = {
+      ...row([{ hz: 96_500_000, db: -20 }], 200_000),
+      peaks: [{ hz: 96_500_000, measuredHz: 96_493_750, db: -20, overDb: 12 }],
+    };
+
+    const held = mergePeaks(mergePeaks([], loudButRaw), quietButLabelled);
+
+    expect(held).toHaveLength(1);
+    expect(held[0]?.hz).toBe(96_500_000);
+    // ...while the LEVEL still comes from the strongest sighting, which is what makes
+    // the list orderable and evictable.
+    expect(held[0]?.db).toBe(-12);
+  });
+
+  it("keeps the strongest sighting's frequency when the box could not label it", () => {
+    // With no grid — a band with no raster, or one the box abstained on — `hz` IS the
+    // measurement and it wanders bin to bin. Taking the newest then changes the number
+    // under the owner's thumb, and a tap-then-confirm cannot land twice on the same one.
+    const loud = row([{ hz: 144_100_000, db: -12 }], 0);
+    const quiet = row([{ hz: 144_109_375, db: -20 }], 0);
+
+    const held = mergePeaks(mergePeaks([], loud), quiet);
+
+    expect(held).toHaveLength(1);
+    expect(held[0]?.hz).toBe(144_100_000);
+  });
+});
