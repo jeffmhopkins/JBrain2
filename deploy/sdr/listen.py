@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import math
 import os
 import dataclasses
 import queue
@@ -1225,6 +1226,9 @@ class Session:
         self.kiss_port = KISS_PORT_BASE + (int(self.id[:4], 16) % KISS_PORT_SPAN)
         # A raw-PCM tap for `listen-probe`, off unless a probe asks. Bounded, because
         # a tap left on by a failed probe must not grow for the life of the session.
+        # The channel grid this session settled on, once a row could establish it — see
+        # `_publish_frame`. None until then, and never re-derived after.
+        self._grid: float | None = None
         self._tap: collections.deque[bytes] | None = None
         self._seg: list[bytes] = []
         self._seg_started = time.time()
@@ -1732,6 +1736,17 @@ class Session:
         segments = HOP_SEGMENTS
         want = bins * segments
         row = np.full(usable * sweep.hops, iq.DB_FLOOR, dtype=np.float64)
+        # **Published cropped to what was ASKED FOR.** Whole hops cannot tile an
+        # arbitrary span exactly, so the plan overshoots: the FM dial is 88–108, and
+        # eleven hops of 1.9875 MHz reach 109.8625. Publishing the overshoot presented
+        # 1.86 MHz of out-of-band noise as part of the dial, and `peaks.find` — which
+        # judges every bin against its neighbours and cannot know the band ended —
+        # duly reported stations at 108.3, 108.7, 109.1, 109.4 and 109.7, where by law
+        # there are none. The capture still covers whole hops; only the row is trimmed.
+        wanted = max(
+            1, math.ceil((sweep.stop_hz - sweep.start_hz) / spectrometer.bin_hz)
+        )
+        wanted = min(wanted, row.size)
         centres = hop_centres(sweep.start_hz, rate_hz, bins, sweep.hops)
         while not self._stopping and held.alive:
             at = 0.0
@@ -1755,7 +1770,7 @@ class Session:
                     at=at,
                     start_hz=sweep.start_hz,
                     bin_hz=spectrometer.bin_hz,
-                    db=row.tolist(),
+                    db=row[:wanted].tolist(),
                 )
             )
 
@@ -1775,15 +1790,26 @@ class Session:
         # row whose peaks nobody looked for — and a viewer cannot disagree with the
         # agent about what was on the air, because neither of them decides.
         if frame.view != VIEW_CHANNEL and self.tuner_gain_db is not None:
-            frame = dataclasses.replace(
-                frame,
-                peaks=peaks.find(
-                    frame.db,
-                    frame.start_hz,
-                    frame.bin_hz,
-                    channel_hz=self.sweep.channel_hz if self.sweep else 0,
-                ),
+            channel_hz = self.sweep.channel_hz if self.sweep else 0
+            # THE GRID IS REMEMBERED, not re-derived per row. `peaks.raster_origin` reads
+            # the origin off the signals themselves, and a row whose signals happen not
+            # to agree reports raw measurements — so the labels flickered between snapped
+            # and unsnapped, and a viewer holding peaks across rows collected the same
+            # station twice under two names. Measured on the FM dial: 50 held signals for
+            # 21 on the air. The band's grid does not move while a session is tuned to it,
+            # so the first row that can establish it settles it for the rest.
+            found = peaks.find(
+                frame.db,
+                frame.start_hz,
+                frame.bin_hz,
+                channel_hz=channel_hz,
+                origin=self._grid,
             )
+            if self._grid is None:
+                self._grid = peaks.raster_origin(
+                    [signal["measured_hz"] for signal in found], channel_hz
+                )
+            frame = dataclasses.replace(frame, peaks=found)
         # A CHANNEL row is left without peaks on purpose. `peaks.find` answers "what
         # stands above the noise across this BAND", and its baseline is a rolling median
         # over `BASELINE_SPAN_HZ` — 400 kHz, which on a 32 kHz row is the whole picture.

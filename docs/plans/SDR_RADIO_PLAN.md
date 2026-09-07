@@ -705,6 +705,36 @@ in the sidecar: below a level floor nothing is sent, because whisper answers an 
 band with fluent invented sentences. Binding spec:
 `../mocks/sdr-tuner/f-live-captions.html`.
 
+**Three defects the FM dial kept after the first fix (2026-09-07).** Raising the hop
+dwell settled where a peak is reported; it did not settle how many are reported, and it
+did nothing at all for the picture. Measured on the box with `spectrum-probe
+--section fm-broadcast`:
+
+- **The published row overshot the band by 1.86 MHz.** Whole hops cannot tile an
+  arbitrary span, so the planner rounds up: 88–108 MHz is eleven hops of 1.9875 MHz,
+  reaching 109.8625. Right for the CAPTURE — the alternative is a gap at the top of the
+  band — and wrong for the row. `peaks.find` judges each bin against its neighbours and
+  cannot know the band ended, so it reported stations at 108.3, 108.7, 109.1, 109.4 and
+  109.7, where by law there are none. The row is now trimmed to the span that was asked
+  for; the capture still covers whole hops.
+- **The channel grid was re-derived per row.** `raster_origin` reads the origin off the
+  signals themselves, so a row whose signals happen not to agree
+  (`MIN_RASTER_AGREEMENT`) reports raw measurements while the next row snaps them — and
+  a viewer holding peaks across rows collects ONE station twice, under a snapped and an
+  unsnapped name. That is the 50-held-for-21-on-air the owner saw. A band's grid does
+  not move while a session is tuned to it, so the first row that can establish it now
+  settles it for the rest of the session (`Session._grid`).
+- **The striping was never a measurement problem.** The waterfall built a backing store
+  at `min(devicePixelRatio, 2)`, so on a 3x phone the compositor upscaled it by 1.5 with
+  its own filter. At one device pixel per measurement — what `rowPixelsFor` returns
+  whenever the wanted history is taller than the display, which is the normal case —
+  each row becomes one and a half PHYSICAL pixels, so consecutive rows land alternately
+  on and off the pixel grid and blend differently: regular banding at exactly the row
+  pitch, across the whole width, the noise floor included. That last part is what says
+  it is not a signal. REPORTED as "it's not a continuous bar, it has like little blank
+  sections in it", and it survived the dwell change because the dwell was never its
+  cause. The backing store now matches the device (`backingRatio`).
+
 **Where the ~8.3 s actually came from (2026-09-07).** It was read as a pipeline
 latency for five days and it was not one. `playSdrAudio` fires from the session poll the
 moment a listening session appears — not a user gesture — so a phone refuses the

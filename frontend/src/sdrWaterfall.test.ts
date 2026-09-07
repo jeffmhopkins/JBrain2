@@ -10,6 +10,7 @@ import type { SpectrumRow } from "./sdrSpectrum";
 import {
   CALIBRATION_SECONDS,
   HISTORY_SECONDS,
+  backingRatio,
   calibrate,
   calibrated,
   frameRate,
@@ -314,5 +315,33 @@ describe("how tall one measurement row is drawn", () => {
 
   it("does not draw fat blocks for a very slow stream", () => {
     expect(rowPixelsFor(1, 440)).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("the backing store a display needs", () => {
+  it("matches a 3x phone rather than capping under it", () => {
+    // THE STRIPING. A 2x backing store on a 3x screen is upscaled 1.5x by the
+    // compositor, with its own filter. At one device pixel per measurement — which is
+    // what `rowPixelsFor` returns whenever the wanted history is taller than the display
+    // — each row becomes one and a half PHYSICAL pixels, so consecutive rows land
+    // alternately on and off the pixel grid and blend differently. Regular banding at
+    // the row pitch, across the whole width, noise floor included.
+    expect(backingRatio(3)).toBe(3);
+    expect(backingRatio(2)).toBe(2);
+  });
+
+  it("never asks for less than one pixel per pixel", () => {
+    // A ratio under 1 would build a backing store smaller than the box it is drawn in,
+    // which is the same resample in the other direction.
+    expect(backingRatio(1)).toBe(1);
+    expect(backingRatio(0.5)).toBe(1);
+    expect(backingRatio(0)).toBe(1);
+    expect(backingRatio(Number.NaN)).toBe(1);
+  });
+
+  it("stops at 3, because the ring is width times height", () => {
+    // A phone at 3x is already 1290 columns of offscreen. Nothing that reads this
+    // picture ships a 4x display, and the memory is real.
+    expect(backingRatio(4)).toBe(3);
   });
 });

@@ -182,7 +182,7 @@ RASTER_ANCHORS = (0.0, 0.5)
 MAX_ANCHOR_ERROR = 0.15
 
 
-def _raster_origin(freqs: list[float], channel_hz: int) -> float | None:
+def raster_origin(freqs: list[float], channel_hz: int) -> float | None:
     """Where the channel grid actually sits, measured from the signals themselves.
 
     **The spacing is in the band plan; the ORIGIN is not, and assuming one is how a
@@ -243,6 +243,7 @@ def find(
     channel_hz: int = 0,
     snr_db: float = SNR_DB,
     limit: int = MAX_PEAKS,
+    origin: float | None = None,
 ) -> list[dict[str, Any]]:
     """The signals in one row, strongest first.
 
@@ -251,9 +252,16 @@ def find(
     which is the number that decides whether it is a signal at all, so it travels with it
     rather than being recoverable only by someone holding the whole row.
 
-    `hz` is snapped to the channel grid when `channel_hz` is given AND this row's signals
-    agree on where that grid sits (`_raster_origin`); otherwise it is the measured peak
-    and equals `measured_hz`.
+    `hz` is snapped to the channel grid when `channel_hz` is given and a grid is known;
+    otherwise it is the measured peak and equals `measured_hz`.
+
+    `origin` is a grid ALREADY ESTABLISHED — pass the one a previous row settled on and
+    this row uses it rather than re-deriving. That is what a caller holding a session
+    should do, because deriving per row is not stable: a row whose signals happen not to
+    agree (`MIN_RASTER_AGREEMENT`) reports raw measurements, the next row snaps them, and
+    the viewer holding peaks across rows sees ONE station arrive twice under two labels.
+    Measured on the FM dial: 50 held signals for 21 on the air, most of the surplus being
+    the same stations wearing both a snapped and an unsnapped name.
 
     A bin that measured nothing is not a quiet bin (a hop that lost a block leaves NaN),
     and letting one through poisons every comparison: it is skipped rather than floored,
@@ -343,10 +351,10 @@ def find(
     # `measured_hz` rides alongside so the claim can be checked rather than believed:
     # a snapped number nobody can compare against what was seen is exactly the kind of
     # number this file exists not to produce.
-    origin = _raster_origin(measured, channel_hz)
+    grid = raster_origin(measured, channel_hz) if origin is None else origin
     return [
         {
-            "hz": round(_snapped(hz, origin, channel_hz) or hz, 1),
+            "hz": round(_snapped(hz, grid, channel_hz) or hz, 1),
             "measured_hz": round(hz, 1),
             "db": round(value, 1),
             "over_db": round(excess, 1),

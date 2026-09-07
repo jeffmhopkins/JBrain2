@@ -1493,6 +1493,33 @@ class TestTheLiveSpectrum:
         assert len(frame.db) == self.CAPTURE[1]
         assert frame.bin_hz == self.CAPTURE[0] / self.CAPTURE[1]
 
+    def test_a_stitched_row_STOPS_where_the_band_asked_for_does(self, tuner) -> None:
+        """Whole hops cannot tile an arbitrary span, so the plan rounds UP and the
+        capture reaches past the stop. That is right for the capture — the alternative
+        is a gap at the top of the band — and wrong for the row.
+
+        Publishing the overshoot presented 1.86 MHz of out-of-band noise as part of the
+        FM dial, and `peaks.find` judges each bin against its neighbours and cannot
+        know the band ended: it reported stations at 108.3, 108.7, 109.1, 109.4 and
+        109.7, where by law there are none. MEASURED on the box: a row requested as
+        88-108 came back stopping at 109.8625.
+        """
+        rate_hz, bins = self.CAPTURE
+        usable = listen.hop_usable_bins(bins)
+        bin_hz = rate_hz / bins
+        # Two and a half hops' worth: a span whole hops cannot tile, which is the case.
+        stop = 144_000_000 + int(usable * 2.5 * bin_hz)
+        session = self._start(tuner, sweep=self._sweep(144_000_000, stop, hops=3))
+        sub = session.subscribe_frames()
+
+        frame = sub.get(timeout=5)
+
+        assert frame is not None
+        assert frame.stop_hz >= stop, "the row must still cover the whole band"
+        # ...and not a whole channel past it. Untrimmed this row is three full hops.
+        assert frame.stop_hz < stop + bin_hz
+        assert len(frame.db) < usable * 3
+
     def test_a_viewer_arriving_late_is_not_shown_a_blank_canvas(self, tuner) -> None:
         """The seeded row. Without it a waterfall opens on nothing for up to a whole
         interval, which reads as a radio that did not start."""
