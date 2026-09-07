@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C &mdash; Filter first</title><link rel="stylesheet" href="_shared.css">
+<style>
+  .find { margin: 0 16px 8px; display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+  .find input { flex: 1; background: none; border: 0; color: var(--text); font: inherit; outline: none; }
+  .find input::placeholder { color: var(--text-3); }
+  .hint { padding: 10px 16px; font-size: 12px; color: var(--text-3); }
+  mark { background: var(--steel-tint); color: var(--accent); border-radius: 2px; }
+  .when { font-size: 11px; color: var(--text-3); margin-left: 10px; white-space: nowrap; }
+</style>
+<div class="phone">
+  <div class="note"><b>C &mdash; Filter first.</b> With 57 bands the fastest path is not scrolling at
+  all. A field at the top matches the name, the group or the frequency &mdash; type <b>40</b>, or
+  <b>air</b>, or <b>27</b>. Empty, it shows what you tuned recently and then the full list. Try
+  typing, and tap a row to see it join the recents.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Choose a band</div>
+    <div class="find"><span style="color:var(--text-3)">&#9906;</span>
+      <input id="q" placeholder="Band, group or frequency" autocomplete="off"></div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<script src="_bands.js"></script>
+<script>
+let recent = Object.entries(HISTORY).sort((a,b) => a[1].at - b[1].at).map(([id,h]) => ({id, at: h.at}));
+const byId = Object.fromEntries(BANDS.map(b => [b.id, b]));
+const hit = (b, q) => (b.name + ' ' + b.band + ' ' + b.hz + ' ' + b.note).toLowerCase().includes(q);
+const mark = (s, q) => q ? s.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>') : s;
+
+function row(b, q, extra) {
+  return `<button class="row" data-id="${b.id}">
+    <span class="txt"><span class="t">${mark(b.name, q)}${b.isNew ? ' <span class="tag new">new</span>' : ''}</span>
+    <span class="d">${mark(b.band, q)} &middot; ${b.note}</span></span>
+    <span class="hz">${mark(b.hz, q)}</span>${extra || ''}</button>`;
+}
+function draw() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  let html = '';
+  if (q) {
+    const found = BANDS.filter(b => hit(b, q));
+    html += `<p class="group">${found.length} of ${BANDS.length}</p>`;
+    if (!found.length) html += '<p class="hint">Nothing matches. Every frequency the radio reaches can still be typed in by hand.</p>';
+    for (const b of found) html += row(b, q);
+  } else {
+    html += '<p class="group">Recent</p>';
+    for (const r of recent.slice(0, 4)) html += row(byId[r.id], '', `<span class="when">${AGO(r.at)}</span>`);
+    let group = null;
+    for (const b of BANDS) {
+      if (b.band !== group) { group = b.band; html += `<p class="group">${group}</p>`; }
+      html += row(b, '');
+    }
+  }
+  document.getElementById('list').innerHTML = html;
+  document.querySelectorAll('.row').forEach(el => el.onclick = () => {
+    const id = el.dataset.id;
+    recent = [{id, at: 0}].concat(recent.filter(r => r.id !== id).map(r => ({id: r.id, at: r.at + 1})));
+    document.getElementById('q').value = '';
+    draw();
+    const first = document.querySelector('.row');
+    if (first) first.classList.add('picked');
+  });
+}
+document.getElementById('q').oninput = draw;
+draw();
+</script>

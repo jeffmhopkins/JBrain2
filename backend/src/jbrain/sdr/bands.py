@@ -686,6 +686,116 @@ SECTIONS: tuple[Section, ...] = (
     ),
     # --- 2 m --------------------------------------------------------------------------
     _s(
+        id="wxsat",
+        band="Weather satellites",
+        name="NOAA APT and Meteor",
+        start_hz=137_000_000,
+        stop_hz=138_000_000,
+        mode="fm",
+        step_hz=5_000,
+        channel_hz=0,
+        note="Polar orbiters, so a pass is 10-15 minutes and then nothing until the "
+        "next one. The picture is in the sound — APT is an audio-frequency image, "
+        "which is why the recording matters more here than the listening.",
+        live=LIVE_FAST,
+        # 1.6 MS/s: a 1 MHz band needs more than the 853 kHz 1.024 MS/s can be trusted
+        # with, and this is the next rung.
+        sample_rate_hz=1_600_000,
+        sweep_bin_hz=5_000,
+        sweep_seconds=120,
+        channels=(
+            Channel(137_100_000, "NOAA-19"),
+            Channel(137_620_000, "NOAA-15"),
+            Channel(137_912_500, "NOAA-18"),
+        ),
+    ),
+    _s(
+        id="rail",
+        band="Railroad",
+        name="AAR road channels",
+        start_hz=160_200_000,
+        stop_hz=161_600_000,
+        mode="fm",
+        step_hz=7_500,
+        channel_hz=7_500,
+        note="Dispatchers, defect detectors and yard crews. Narrowbanded to 7.5 kHz "
+        "spacing, so a receiver set to the old 15 kHz grid hears every other channel.",
+        live=LIVE_FAST,
+        sample_rate_hz=2_048_000,
+        sweep_bin_hz=5_000,
+        sweep_seconds=120,
+    ),
+    _s(
+        id="ais",
+        band="AIS",
+        name="Ship positions",
+        start_hz=161_900_000,
+        stop_hz=162_100_000,
+        mode="fm",
+        step_hz=25_000,
+        channel_hz=25_000,
+        note="DATA, not voice: 9600-baud bursts that sound like noise and look like "
+        "ticks on a waterfall. Two channels, both busy anywhere near a coast or a "
+        "river.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=5_000,
+        sweep_seconds=120,
+        continuous=True,
+        channels=(
+            Channel(161_975_000, "AIS A"),
+            Channel(162_025_000, "AIS B"),
+        ),
+    ),
+    _s(
+        id="milair",
+        band="Military air",
+        name="UHF air-to-air and guard",
+        start_hz=225_000_000,
+        stop_hz=265_000_000,
+        mode="am",
+        step_hz=25_000,
+        channel_hz=25_000,
+        note="AM like civil airband and 200 MHz higher. Quiet for hours and then busy, "
+        "so a survey says more than a listen — 243.0 is the emergency guard channel "
+        "and is monitored everywhere.",
+        live=LIVE_SLOW,
+        sweep_bin_hz=5_000,
+        sweep_seconds=600,
+        channels=(Channel(243_000_000, "Guard"),),
+    ),
+    _s(
+        id="paging",
+        band="Paging",
+        name="POCSAG and FLEX",
+        start_hz=929_000_000,
+        stop_hz=932_000_000,
+        mode="fm",
+        step_hz=12_500,
+        channel_hz=25_000,
+        note="DATA, and still carrying hospital and utility traffic. Loud, brief "
+        "bursts — the band looks empty between them and never is for long.",
+        live=LIVE_SLOW,
+        sweep_bin_hz=5_000,
+        sweep_seconds=600,
+    ),
+    _s(
+        id="vhf-low",
+        band="Low VHF",
+        name="30-50 MHz land mobile",
+        start_hz=30_000_000,
+        stop_hz=50_000_000,
+        mode="fm",
+        step_hz=12_500,
+        channel_hz=12_500,
+        note="Forestry, utilities, some state agencies — and the band where distant "
+        "stations appear out of nowhere when the ionosphere is open, because 30-50 MHz "
+        "is low enough to skip.",
+        live=LIVE_SLOW,
+        sweep_bin_hz=5_000,
+        sweep_seconds=600,
+    ),
+    _s(
         id="2m-ssb",
         band="2 m",
         name="Weak signal and SSB",
@@ -896,7 +1006,111 @@ SECTIONS: tuple[Section, ...] = (
         sweep_bin_hz=5_000,
         sweep_seconds=180,
     ),
+    # --- the tuner's bottom end: HF to a listener, the TUNER path to the radio --------
+    # These four are above 24 MHz, so the R820T2 is in circuit — which means a gain
+    # stage, no 28.8 MHz fold, and none of the direct path's limits. They are here
+    # rather than with the VHF rows because nobody looking for 10 m thinks of it as VHF.
+    _s(
+        id="12m",
+        band="12 m",
+        name="Voice (USB)",
+        start_hz=24_890_000,
+        stop_hz=24_990_000,
+        mode="usb",
+        step_hz=100,
+        channel_hz=0,
+        note="The lowest band the TUNER reaches, and the first one above the "
+        "14.4-24 MHz hole. Open in daylight when the sun is active, dead when it "
+        "is not.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+    ),
+    _s(
+        id="cb",
+        band="CB",
+        name="Citizens band",
+        start_hz=26_965_000,
+        stop_hz=27_405_000,
+        mode="am",
+        step_hz=10_000,
+        channel_hz=10_000,
+        note="Forty channels, AM, and licence-free. Local traffic any time; when the "
+        "band opens it fills with stations a thousand miles off on the same channels.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=2_500,
+        sweep_seconds=120,
+        channels=(
+            Channel(27_065_000, "Ch 9 — emergency"),
+            Channel(27_185_000, "Ch 19 — highway"),
+            Channel(27_385_000, "Ch 38 LSB — SSB calling"),
+        ),
+    ),
+    _s(
+        id="10m",
+        band="10 m",
+        name="The whole band",
+        start_hz=28_000_000,
+        stop_hz=29_700_000,
+        mode="usb",
+        step_hz=100,
+        channel_hz=0,
+        note="Nearly two megahertz wide, and the band that tells you the most about "
+        "the ionosphere: the beacons near 28.2 transmit around the clock from every "
+        "continent, so hearing one IS the propagation report. FM repeaters live at the "
+        "top — the 10 m FM row draws those.",
+        live=LIVE_FAST,
+        # 2.048 MS/s: 1.7 MHz of band needs a trusted span of at least that, and this
+        # is the smallest rung that carries it (1.706 MHz).
+        sample_rate_hz=2_048_000,
+        sweep_bin_hz=2_500,
+        sweep_seconds=120,
+        channels=(
+            Channel(28_200_000, "Beacon window"),
+            Channel(28_400_000, "SSB calling"),
+        ),
+    ),
+    _s(
+        id="10m-fm",
+        band="10 m",
+        name="FM simplex and repeaters",
+        start_hz=29_500_000,
+        stop_hz=29_700_000,
+        mode="fm",
+        step_hz=20_000,
+        channel_hz=20_000,
+        note="FM on a shortwave band, which sounds wrong and is not: when 10 m opens, "
+        "these repeaters carry distant stations in broadcast-quality audio.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=5_000,
+        sweep_seconds=120,
+        channels=(Channel(29_600_000, "Simplex calling"),),
+    ),
     # --- HF (direct sampling; listen only) --------------------------------------------
+    _s(
+        id="ndb",
+        band="Long wave",
+        name="Aeronautical beacons",
+        start_hz=200_000,
+        stop_hz=400_000,
+        mode="am",
+        step_hz=1_000,
+        channel_hz=0,
+        note="Non-directional beacons: an unmodulated carrier with a two or three "
+        "letter Morse ident every few seconds, and nothing else. They carry for "
+        "hundreds of miles after dark, and the ident is how you know whose you have. "
+        "UNMEASURED on this box — nothing here has ever received below 530 kHz, and "
+        "the dongle's own input may roll off before this, so a quiet row is as likely "
+        "to be the hardware as the band.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+    ),
     _s(
         id="mw",
         band="Medium wave",
@@ -913,6 +1127,60 @@ SECTIONS: tuple[Section, ...] = (
         # (`R/2 = 1.024 <= fc = 1.115`) holds, the whole MW band clears the IF
         # rolloff at 57% fill, and the rate is exact where 1.5 MS/s is not.
         sample_rate_hz=2_048_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+    ),
+    _s(
+        id="120m",
+        band="Tropical bands",
+        name="120 m broadcast",
+        start_hz=2_300_000,
+        stop_hz=2_495_000,
+        mode="am",
+        step_hz=5_000,
+        channel_hz=5_000,
+        note="Domestic broadcasters in the tropics, running low power for their own "
+        "countries and never meant to be heard here. Night only, and a long wire is "
+        "the whole difference between hearing them and not.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+    ),
+    _s(
+        id="90m",
+        band="Tropical bands",
+        name="90 m broadcast",
+        start_hz=3_200_000,
+        stop_hz=3_400_000,
+        mode="am",
+        step_hz=5_000,
+        channel_hz=5_000,
+        note="The other tropical band, and the one CHU's 3.330 MHz time signal sits "
+        "in — a Canadian carrier that is always there, which makes it a free check "
+        "that the antenna is working.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+        channels=(Channel(3_330_000, "CHU Canada"),),
+    ),
+    _s(
+        id="sw-60m",
+        band="Shortwave",
+        name="60 m broadcast",
+        start_hz=4_750_000,
+        stop_hz=5_060_000,
+        mode="am",
+        step_hz=5_000,
+        channel_hz=5_000,
+        note="Tropical broadcasters and a few internationals, best in the hours "
+        "either side of local midnight.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
         sweep_bin_hz=1_000,
         sweep_seconds=120,
         continuous=True,
@@ -1005,6 +1273,110 @@ SECTIONS: tuple[Section, ...] = (
         continuous=True,
     ),
     _s(
+        id="11m-sw",
+        band="Shortwave",
+        name="11 m broadcast",
+        start_hz=25_600_000,
+        stop_hz=26_100_000,
+        mode="am",
+        step_hz=5_000,
+        channel_hz=5_000,
+        note="Nearly empty most years and worth checking anyway: anything heard here "
+        "means the band is wide open, because almost nobody transmits into it. The "
+        "only shortwave band above 24 MHz, so this one comes through the TUNER — "
+        "which means a gain stage and no 28.8 MHz fold, unlike every row below it.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+    ),
+    # --- HF utility: the stations that are not broadcasting at anybody ----------------
+    _s(
+        id="hf-air-5",
+        band="Aviation HF",
+        name="5 MHz oceanic",
+        start_hz=5_450_000,
+        stop_hz=5_730_000,
+        mode="usb",
+        step_hz=1_000,
+        channel_hz=3_000,
+        note="Airliners over the ocean, out of VHF range of anybody, reading position "
+        "reports to a ground station a continent away. Night band. VOLMET weather "
+        "broadcasts share it on a schedule.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+    ),
+    _s(
+        id="hf-air-8",
+        band="Aviation HF",
+        name="8 MHz oceanic",
+        start_hz=8_815_000,
+        stop_hz=9_040_000,
+        mode="usb",
+        step_hz=1_000,
+        channel_hz=3_000,
+        note="The same traffic as the 5 MHz band, on the frequencies that work in "
+        "daylight. Which of the two is busy is itself a reading of the ionosphere.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+    ),
+    _s(
+        id="hf-air-11",
+        band="Aviation HF",
+        name="11 MHz and HFGCS",
+        start_hz=11_175_000,
+        stop_hz=11_400_000,
+        mode="usb",
+        step_hz=1_000,
+        channel_hz=3_000,
+        note="11.175 is the US Air Force global network — phone patches, and the "
+        "coded voice messages that arrive with no explanation. The rest is oceanic "
+        "air traffic.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        channels=(Channel(11_175_000, "HFGCS primary"),),
+    ),
+    _s(
+        id="hf-air-13",
+        band="Aviation HF",
+        name="13 MHz oceanic",
+        start_hz=13_200_000,
+        stop_hz=13_360_000,
+        mode="usb",
+        step_hz=1_000,
+        channel_hz=3_000,
+        note="The daytime end of the oceanic bands, and the last of them under the "
+        "14.4 MHz boundary.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+    ),
+    _s(
+        id="marine-hf",
+        band="Marine HF",
+        name="Ship SSB and weatherfax",
+        start_hz=8_100_000,
+        stop_hz=8_600_000,
+        mode="usb",
+        step_hz=1_000,
+        channel_hz=3_000,
+        note="Ships working coast stations, and the US Coast Guard's radiofax on "
+        "8503.9 — a weather chart sent as sound, on a schedule, every day.",
+        live=LIVE_FAST,
+        sample_rate_hz=1_024_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        channels=(Channel(8_503_900, "NMG radiofax"),),
+    ),
+    _s(
         id="160m",
         band="160 m",
         name="Voice (LSB)",
@@ -1092,6 +1464,29 @@ SECTIONS: tuple[Section, ...] = (
         sweep_bin_hz=1_000,
         sweep_seconds=120,
         continuous=True,
+    ),
+    _s(
+        id="20m-cw",
+        band="20 m",
+        name="CW and digital",
+        start_hz=14_000_000,
+        stop_hz=14_150_000,
+        mode="usb",
+        step_hz=100,
+        channel_hz=0,
+        note="The bottom half of 20 m, where the voice stops and FT8 at 14.074 is the "
+        "busiest signal on HF — a wall of tones that is worth watching even if you "
+        "never decode it. Separate from the voice row because no single capture "
+        "covers both and stays inside the 14.4 MHz boundary.",
+        live=LIVE_FAST,
+        sample_rate_hz=256_000,
+        sweep_bin_hz=1_000,
+        sweep_seconds=120,
+        continuous=True,
+        channels=(
+            Channel(14_074_000, "FT8"),
+            Channel(14_095_600, "WSPR"),
+        ),
     ),
     _s(
         id="20m",

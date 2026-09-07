@@ -1,0 +1,57 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A &mdash; Recent on top</title><link rel="stylesheet" href="_shared.css">
+<style>
+  .recent .row { background: var(--surface-2); }
+  .recent .row + .row { border-top: 1px solid var(--border); }
+  .when { font-size: 11px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+  .recent .hz { margin-left: 10px; }
+</style>
+<div class="phone">
+  <div class="note"><b>A &mdash; Recent on top.</b> The last few bands you picked, pinned above the
+  full list. Everything below is exactly the list you have today, in the same order. Tap any row
+  and watch it move to the top.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Choose a band</div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<script src="_bands.js"></script>
+<script>
+const KEEP = 5;
+let recent = Object.entries(HISTORY).sort((a,b) => a[1].at - b[1].at).map(([id,h]) => ({id, at: h.at}));
+const byId = Object.fromEntries(BANDS.map(b => [b.id, b]));
+
+function row(b, extra) {
+  return `<button class="row" data-id="${b.id}">
+    <span class="txt"><span class="t">${b.name}${b.isNew ? ' <span class="tag new">new</span>' : ''}</span>
+    <span class="d">${b.band} &middot; ${b.note}</span></span>
+    ${extra || `<span class="hz">${b.hz}</span>`}</button>`;
+}
+function draw() {
+  let html = '';
+  if (recent.length) {
+    html += '<div class="recent"><p class="group">Recent</p>';
+    for (const r of recent.slice(0, KEEP)) {
+      const b = byId[r.id];
+      html += row(b, `<span class="hz">${b.hz}</span><span class="when">${AGO(r.at)}</span>`);
+    }
+    html += '</div>';
+  }
+  let group = null;
+  for (const b of BANDS) {
+    if (b.band !== group) { group = b.band; html += `<p class="group">${group}</p>`; }
+    html += row(b);
+  }
+  document.getElementById('list').innerHTML = html;
+  document.querySelectorAll('.row').forEach(el => el.onclick = () => pick(el.dataset.id));
+}
+function pick(id) {
+  recent = [{id, at: 0}].concat(recent.filter(r => r.id !== id).map(r => ({id: r.id, at: r.at + 1})));
+  draw();
+  const first = document.querySelector('.recent .row');
+  if (first) first.classList.add('picked');
+  document.getElementById('list').scrollTop = 0;
+}
+draw();
+</script>
