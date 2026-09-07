@@ -111,6 +111,11 @@ function show() {
 beforeEach(() => {
   vi.spyOn(api, "getSdrBands").mockResolvedValue(BANDS as never);
   vi.stubGlobal("EventSource", FakeSource);
+  // A fresh device each time. The band picker remembers what was tuned here
+  // (`sdrBandPicks`), and a pick left behind by an earlier test puts that band in the
+  // sheet TWICE — once under Recent and once in its own group, which is correct on the
+  // phone and ambiguous to a `getByText`.
+  localStorage.clear();
 });
 
 afterEach(() => {

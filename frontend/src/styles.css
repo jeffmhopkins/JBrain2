@@ -25993,6 +25993,26 @@ button.wf-sigpill {
 }
 
 /* --- the band picker (SdrBandSheet.tsx) ------------------------------------------ */
+/* Shape C (docs/mocks/band-recents): with 57 sections the fastest path is not scrolling.
+   The field sits above the list and changes nothing while it is empty. */
+.bfind {
+  display: flex;
+  margin: 0 0 8px;
+}
+.bfind-in {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.bfind-in::placeholder {
+  color: var(--text-3);
+}
 .bandlist {
   max-height: 60vh;
   overflow-y: auto;

@@ -44,6 +44,37 @@ def test_every_amateur_band_under_the_mirror_boundary_is_offered() -> None:
             assert section.live == bands.LIVE_FAST, f"{section.id} cannot be watched"
 
 
+def test_the_table_covers_both_signal_paths_either_side_of_the_hole() -> None:
+    """The 14.4-24 MHz hole is the receiver's, and everything else is offerable.
+
+    Below 14.4 the ADC is fed directly; above 24 the tuner is. A band table that stops
+    at the ADC's edge would hide 12 m, CB and 10 m — all of them reachable, none of
+    them amateur-only — and one that offered anything inside the hole would tune a
+    frequency and deliver `28.8 MHz - f` instead."""
+    reachable = {s.id for s in bands.SECTIONS}
+    # Either side of the hole, on the two different paths.
+    assert {"20m-cw", "hf-air-13", "ndb", "marine-hf"} <= reachable
+    assert {"12m", "cb", "10m", "11m-sw"} <= reachable
+    for section in bands.SECTIONS:
+        low, high = section.start_hz, section.stop_hz
+        assert not (bands.NYQUIST_HZ < low < bands.DIRECT_SAMPLING_MAX_HZ), (
+            f"{section.id} starts inside the 14.4-24 MHz hole"
+        )
+        assert not (bands.NYQUIST_HZ < high < bands.DIRECT_SAMPLING_MAX_HZ), (
+            f"{section.id} ends inside the 14.4-24 MHz hole"
+        )
+
+
+def test_the_picker_never_shows_one_group_label_twice() -> None:
+    """`byBand` groups CONSECUTIVE rows sharing a label, so a row filed away from its
+    own family silently splits the group in two — the owner then sees "Shortwave"
+    twice, with no way to tell which half holds what they are looking for."""
+    labels = [s.band for s in bands.SECTIONS]
+    runs = [label for i, label in enumerate(labels) if i == 0 or labels[i - 1] != label]
+
+    assert len(runs) == len(set(runs)), f"a band label is split across the table: {runs}"
+
+
 class TestTheValidatorActuallyCatchesThings:
     """`validate()` is the only thing standing between a typo and a mis-tuned radio, so
     each of its rules is tested against a row that breaks it. A validator nobody has
@@ -304,6 +335,20 @@ class TestTheCaptureBehindALiveRow:
         row = self._fast(stop_hz=146_000_000, sample_rate_hz=2_048_000)
 
         assert any("IF rolloff" in p for p in bands.validate((row,)))
+
+    def test_a_span_wider_than_one_stitched_row_is_refused(self) -> None:
+        # Caught the hard way: a 225-265 MHz military air row passed every rule here
+        # and then had NO capture plan at all, because the waterfall stitches at most
+        # sixteen hops — so the band button answered a 400 and the only test that saw
+        # it was in the routes.
+        bad = self._fast(
+            start_hz=225_000_000,
+            stop_hz=265_000_000,
+            live=LIVE_SLOW,
+            sample_rate_hz=0,
+        )
+
+        assert any("stitched from" in p for p in bands.validate((bad,)))
 
     def test_a_direct_capture_that_folds_the_band_is_refused(self) -> None:
         """20 m at 1.024 MS/s reaches 14.762 MHz, so 14.4-14.76 lands back on

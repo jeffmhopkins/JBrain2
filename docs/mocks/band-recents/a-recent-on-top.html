@@ -1,0 +1,168 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A &mdash; Recent on top</title><style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --green-tint: rgba(143,188,154,.13);
+  --amber-tint: rgba(201,163,106,.13); --violet-tint: rgba(164,147,201,.13);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.note {
+  padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+.note b { color: var(--text); font-weight: 600; }
+.sheet {
+  background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0; overflow: hidden;
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 10px; font-size: 17px; font-weight: 600; }
+.list { max-height: 70vh; overflow-y: auto; padding-bottom: 10px; }
+.group {
+  padding: 12px 16px 4px; font-size: 11px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 16px;
+  background: none; border: 0; border-top: 1px solid transparent; color: var(--text);
+  font: inherit; text-align: left;
+}
+.row:hover { background: var(--surface-2); }
+.row .txt { min-width: 0; }
+.row .t { display: block; font-size: 14px; }
+.row .d {
+  display: block; font-size: 12px; color: var(--text-3); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.row .hz { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tag {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px; background: var(--steel-tint); color: var(--accent);
+}
+.tag.hf { background: var(--violet-tint); color: var(--violet); }
+.tag.new { background: var(--green-tint); color: var(--green); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.picked { animation: flash .5s ease; }
+@keyframes flash { from { background: var(--steel-tint); } to { background: transparent; } }
+</style>
+<style>
+  .recent .row { background: var(--surface-2); }
+  .recent .row + .row { border-top: 1px solid var(--border); }
+  .when { font-size: 11px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+  .recent .hz { margin-left: 10px; }
+</style>
+<div class="phone">
+  <div class="note"><b>A &mdash; Recent on top.</b> The last few bands you picked, pinned above the
+  full list. Everything below is exactly the list you have today, in the same order. Tap any row
+  and watch it move to the top.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Choose a band</div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<script>
+// A representative slice of jbrain/sdr/bands.py — enough rows that the list is
+// genuinely long, with the real group labels, notes and ranges.
+const BANDS = [
+  ["fm-broadcast", "FM broadcast", "The dial", "88.0-108.0", "Commercial FM."],
+  ["wx", "NOAA weather", "Weather radio", "162.400-162.550", "Forecasts around the clock."],
+  ["air-tower", "Airband", "Tower and ground", "118.0-120.0", "Local control."],
+  ["air-centre", "Airband", "Centre", "132.0-134.0", "En-route control."],
+  ["marine", "Marine VHF", "Ship and shore", "156.0-157.5", "Ch 16 is the calling channel."],
+  ["gmrs", "GMRS and FRS", "Repeater outputs", "462.5-462.75", "Families and small businesses."],
+  ["wxsat", "Weather satellites", "NOAA APT and Meteor", "137.0-138.0", "A pass is 10-15 minutes.", 1],
+  ["rail", "Railroad", "AAR road channels", "160.2-161.6", "Dispatchers and defect detectors.", 1],
+  ["ais", "AIS", "Ship positions", "161.9-162.1", "Data, not voice.", 1],
+  ["milair", "Military air", "UHF air-to-air and guard", "225-265", "AM, 200 MHz above civil airband.", 1],
+  ["paging", "Paging", "POCSAG and FLEX", "929-932", "Loud, brief bursts.", 1],
+  ["vhf-low", "Low VHF", "30-50 MHz land mobile", "30-50", "Low enough to skip.", 1],
+  ["2m-aprs", "2 m", "APRS", "144.3-145.1", "Position beacons on 144.390."],
+  ["2m-repeaters", "2 m", "Repeater outputs", "146.0-148.0", "Where the conversations are."],
+  ["70cm-simplex", "70 cm", "Simplex", "445.0-447.0", "Direct, no repeater."],
+  ["6m-ssb", "6 m", "Voice (USB)", "50.1-50.3", "The magic band."],
+  ["12m", "12 m", "Voice (USB)", "24.89-24.99", "First band above the 14.4-24 hole.", 1],
+  ["cb", "CB", "Citizens band", "26.965-27.405", "Forty channels, AM, licence-free.", 1],
+  ["10m", "10 m", "The whole band", "28.0-29.7", "Beacons near 28.2 are the propagation report.", 1],
+  ["10m-fm", "10 m", "FM simplex and repeaters", "29.5-29.7", "FM on a shortwave band.", 1],
+  ["ndb", "Long wave", "Aeronautical beacons", "0.200-0.400", "A carrier and a Morse ident.", 1],
+  ["mw", "Medium wave", "AM broadcast", "0.530-1.700", "Local by day, distant by night."],
+  ["120m", "Tropical bands", "120 m broadcast", "2.300-2.495", "Never meant to be heard here.", 1],
+  ["90m", "Tropical bands", "90 m broadcast", "3.200-3.400", "CHU's time signal is in it.", 1],
+  ["sw-60m", "Shortwave", "60 m broadcast", "4.750-5.060", "Best either side of midnight.", 1],
+  ["sw-49m", "Shortwave", "49 m broadcast", "5.900-6.200", "The most reliable after dark."],
+  ["sw-41m", "Shortwave", "41 m broadcast", "7.200-7.450", "Evening band."],
+  ["sw-31m", "Shortwave", "31 m broadcast", "9.400-9.900", "Day and night."],
+  ["sw-22m", "Shortwave", "22 m broadcast", "13.570-13.870", "Daytime. A 71 ft wire is a full wave here.", 1],
+  ["11m-sw", "Shortwave", "11 m broadcast", "25.600-26.100", "Anything heard means wide open.", 1],
+  ["hf-air-5", "Aviation HF", "5 MHz oceanic", "5.450-5.730", "Airliners out of VHF range.", 1],
+  ["hf-air-11", "Aviation HF", "11 MHz and HFGCS", "11.175-11.400", "Coded voice with no explanation.", 1],
+  ["marine-hf", "Marine HF", "Ship SSB and weatherfax", "8.100-8.600", "A weather chart sent as sound.", 1],
+  ["160m", "160 m", "Voice (LSB)", "1.800-2.000", "Night band."],
+  ["80m", "80 m", "Voice (LSB)", "3.600-4.000", "Where the evening nets live."],
+  ["60m", "60 m", "Five channels (USB)", "5.330-5.410", "Shared with government users."],
+  ["40m", "40 m", "Voice (LSB)", "7.125-7.300", "The dependable band."],
+  ["30m", "30 m", "CW and digital", "10.100-10.150", "No voice at all."],
+  ["20m-cw", "20 m", "CW and digital", "14.000-14.150", "FT8 at 14.074.", 1],
+  ["20m", "20 m", "Voice (USB)", "14.150-14.350", "The long-distance daytime band."],
+  ["wwv-5", "Time signal", "WWV 5 MHz", "4.900-5.100", "A carrier that is always there."],
+  ["wwv-10", "Time signal", "WWV 10 MHz", "9.900-10.100", "The same broadcast as 5 MHz."],
+].map(([id, band, name, hz, note, isNew]) => ({ id, band, name, hz, note, isNew: !!isNew }));
+
+// A plausible history: what this owner has actually tuned, most-picked first.
+const HISTORY = {
+  "fm-broadcast": { n: 34, at: 6 }, "2m-aprs": { n: 21, at: 1 }, "wx": { n: 12, at: 40 },
+  "40m": { n: 9, at: 2 }, "sw-31m": { n: 7, at: 20 }, "2m-repeaters": { n: 6, at: 3 },
+  "air-centre": { n: 4, at: 70 }, "wwv-10": { n: 3, at: 5 }, "marine": { n: 2, at: 200 },
+};
+const AGO = (h) => (h < 1 ? "just now" : h < 24 ? h + "h ago" : Math.round(h / 24) + "d ago");
+</script>
+<script>
+const KEEP = 5;
+let recent = Object.entries(HISTORY).sort((a,b) => a[1].at - b[1].at).map(([id,h]) => ({id, at: h.at}));
+const byId = Object.fromEntries(BANDS.map(b => [b.id, b]));
+
+function row(b, extra) {
+  return `<button class="row" data-id="${b.id}">
+    <span class="txt"><span class="t">${b.name}${b.isNew ? ' <span class="tag new">new</span>' : ''}</span>
+    <span class="d">${b.band} &middot; ${b.note}</span></span>
+    ${extra || `<span class="hz">${b.hz}</span>`}</button>`;
+}
+function draw() {
+  let html = '';
+  if (recent.length) {
+    html += '<div class="recent"><p class="group">Recent</p>';
+    for (const r of recent.slice(0, KEEP)) {
+      const b = byId[r.id];
+      html += row(b, `<span class="hz">${b.hz}</span><span class="when">${AGO(r.at)}</span>`);
+    }
+    html += '</div>';
+  }
+  let group = null;
+  for (const b of BANDS) {
+    if (b.band !== group) { group = b.band; html += `<p class="group">${group}</p>`; }
+    html += row(b);
+  }
+  document.getElementById('list').innerHTML = html;
+  document.querySelectorAll('.row').forEach(el => el.onclick = () => pick(el.dataset.id));
+}
+function pick(id) {
+  recent = [{id, at: 0}].concat(recent.filter(r => r.id !== id).map(r => ({id: r.id, at: r.at + 1})));
+  draw();
+  const first = document.querySelector('.recent .row');
+  if (first) first.classList.add('picked');
+  document.getElementById('list').scrollTop = 0;
+}
+draw();
+</script>
