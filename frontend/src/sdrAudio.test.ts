@@ -15,6 +15,8 @@ import {
   playSdrAudio,
   resetSdrAudio,
   sdrAnalyser,
+  sdrAudioLag,
+  sdrHeardAt,
   sdrLevels,
   stopSdrAudio,
   subscribeSdrAudio,
@@ -220,5 +222,181 @@ describe("the tape's history", () => {
     // A new session starts from nothing; the previous station's audio is not its past.
     expect(sdrLevels().levels[0]).toBe(0);
     expect(sdrLevels().at).toBe(0);
+  });
+});
+
+describe("a context that goes away under the tap", () => {
+  /** A context that starts running, can be suspended, and counts resume attempts. */
+  class Interruptible {
+    static last: Interruptible | null = null;
+    state = "running";
+    resumes = 0;
+    destination = { id: "speakers" };
+    node = {
+      fftSize: 8,
+      smoothingTimeConstant: 0,
+      connect: vi.fn(),
+      // A live analyser hands back a real waveform; a suspended one hands back 128s,
+      // which is silence — and that is the whole defect.
+      getByteTimeDomainData: (out: Uint8Array) => {
+        out.fill(this.state === "running" ? 200 : 128);
+      },
+    };
+    constructor() {
+      Interruptible.last = this;
+    }
+    resume() {
+      this.resumes += 1;
+      return Promise.resolve();
+    }
+    createMediaElementSource() {
+      return { connect: vi.fn() };
+    }
+    createAnalyser() {
+      return this.node;
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    stopSdrAudio();
+  });
+
+  it("keeps trying to resume, because the audio came back without it", () => {
+    // `sdrAnalyser` resumes the context once and then returns the cached node for ever.
+    // iOS suspends the context on any interruption, and the ELEMENT recovers on its own
+    // because it reaches the speakers without the graph — so nothing was left to notice
+    // the analyser had stopped. REPORTED as "the live waveform is intermittent, but the
+    // spectrum is good".
+    vi.useFakeTimers();
+    vi.stubGlobal("AudioContext", Interruptible);
+    playSdrAudio();
+    pretendPlaying(element());
+    expect(sdrAnalyser()).not.toBeNull();
+    const ctx = Interruptible.last as Interruptible;
+    const before = ctx.resumes;
+
+    ctx.state = "suspended";
+    vi.advanceTimersByTime(500);
+
+    expect(ctx.resumes).toBeGreaterThan(before);
+  });
+
+  it("does not stack a resume per tick while one is in flight", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("AudioContext", Interruptible);
+    playSdrAudio();
+    pretendPlaying(element());
+    sdrAnalyser();
+    const ctx = Interruptible.last as Interruptible;
+    const before = ctx.resumes;
+
+    ctx.state = "suspended";
+    vi.advanceTimersByTime(1000); // ~20 ticks at SAMPLE_HZ
+
+    // One attempt, not twenty: a rejected resume must not become a promise per tick.
+    expect(ctx.resumes - before).toBe(1);
+  });
+
+  it("records no level at all while it cannot hear, rather than recording silence", () => {
+    // The tape's claim is "this is what came through", so a flat line means nothing
+    // came through. A suspended analyser reports 128s; writing those puts a measurement
+    // in the tape that was never taken — which is what drew a dead line through audio
+    // the owner could hear.
+    vi.useFakeTimers();
+    vi.stubGlobal("AudioContext", Interruptible);
+    playSdrAudio();
+    pretendPlaying(element());
+    sdrAnalyser();
+    const ctx = Interruptible.last as Interruptible;
+
+    vi.advanceTimersByTime(500); // running: real levels go in
+    const heard = sdrLevels().at;
+    expect(heard).toBeGreaterThan(0);
+
+    ctx.state = "suspended";
+    vi.advanceTimersByTime(1000);
+
+    // The write pointer has not moved: no invented silence.
+    expect(sdrLevels().at).toBe(heard);
+  });
+});
+
+describe("how far behind the air the speaker is", () => {
+  /** jsdom's play() is not implemented, so the refusal path — the one that matters
+   *  here — is unreachable without saying what the browser did. */
+  function playAnswers(with_: "yes" | "no"): void {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() =>
+      with_ === "yes" ? Promise.resolve() : Promise.reject(new Error("NotAllowedError")),
+    );
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("drops the stream the browser refused, rather than buffering it unheard", async () => {
+    // THE EIGHT SECONDS. `playSdrAudio` fires from the session poll, which is not a user
+    // gesture, so a phone refuses it — and the refusal does not stop the LOAD. The
+    // element went on pulling live audio into its buffer for as long as it took the
+    // owner to reach the play button, and playback then started at the top of that
+    // buffer and stayed exactly that far behind the air for the whole session.
+    playAnswers("no");
+
+    playSdrAudio(1000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(element()?.hasAttribute("src")).toBe(false);
+    expect(isSdrPlaying()).toBe(false);
+  });
+
+  it("still anchors the stream the owner re-opened by hand", async () => {
+    // The tap has no clock reading of its own — only the poll gets those — so before
+    // this the reconnect anchored to null and threw the caption timeline away.
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    playAnswers("no");
+    playSdrAudio(1000); // the poll: the box's clock reads 1000
+    await vi.advanceTimersByTimeAsync(4000);
+
+    playAnswers("yes");
+    toggleSdrAudio(); // the owner's tap, four seconds later
+    const el = element();
+    pretendPlaying(el);
+    Object.defineProperty(el as HTMLAudioElement, "currentTime", {
+      value: 2,
+      configurable: true,
+    });
+
+    // Anchored at 1004 — the box's clock carried forward — so two seconds in, the ear
+    // is at 1006. Anchoring to the stale 1000 would put every caption four seconds out.
+    expect(sdrHeardAt()).toBeCloseTo(1006, 3);
+  });
+
+  it("measures the delay rather than asserting it", () => {
+    // "~8.3 s" lived in a comment for months with nothing on screen able to contradict
+    // it, and the owner has no terminal to measure from (CLAUDE.md #10).
+    playAnswers("yes");
+    playSdrAudio(1000);
+    const el = element() as HTMLAudioElement;
+    pretendPlaying(el);
+    Object.defineProperty(el, "buffered", {
+      value: { length: 1, end: () => 9.2 },
+      configurable: true,
+    });
+    Object.defineProperty(el, "currentTime", { value: 1, configurable: true });
+
+    expect(sdrAudioLag()).toBeCloseTo(8.2, 3);
+  });
+
+  it("reports no delay at all when nothing is playing", () => {
+    // A paused element's buffer is not a measurement of anything the owner can hear.
+    playAnswers("yes");
+    playSdrAudio(1000);
+
+    expect(sdrAudioLag()).toBeNull();
   });
 });

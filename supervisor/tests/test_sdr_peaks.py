@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -147,7 +148,16 @@ def test_the_frame_carries_what_it_found() -> None:
     )
 
     wire = frame.as_dict()
-    assert wire["peaks"] == [{"hz": 88_937_500.0, "db": -50.0, "over_db": 20.0}]
+    # `measured_hz` alongside `hz`, and here they are EQUAL: one signal cannot establish
+    # where a channel grid sits, so `_raster_origin` abstains and nothing is snapped.
+    assert wire["peaks"] == [
+        {
+            "hz": 88_937_500.0,
+            "measured_hz": 88_937_500.0,
+            "db": -50.0,
+            "over_db": 20.0,
+        }
+    ]
 
 
 def test_a_quiet_row_carries_an_empty_list_not_a_missing_key() -> None:
@@ -296,3 +306,195 @@ def test_with_no_band_plan_only_adjacency_decides() -> None:
     found = peaks.find(db, 95_000_000, bin_hz)
 
     assert len(found) == 2, found
+
+
+def _dial_at(
+    bin_hz: float,
+    bins: int,
+    start_hz: float,
+    stations_hz: Sequence[float],
+    half_hz: float = 60_000.0,
+):
+    """A row with a real hump at each named frequency — highest at the centre.
+
+    A ROUNDED top, not the flat ragged one the counting tests use: these tests ask WHERE
+    a signal was reported, so the fixture has to have an unambiguous answer. The ripple
+    stays, small enough not to move the peak but large enough that nothing here
+    passes by being perfectly smooth."""
+    db = [-90.0 + (i % 5) * 0.4 for i in range(bins)]
+    half = max(1.0, half_hz / bin_hz)
+    for hz in stations_hz:
+        centre = (hz - start_hz) / bin_hz
+        for i in range(bins):
+            away = abs(i - centre) / half
+            if away <= 1.0:
+                # Loudest at the CENTRE, falling 8 dB to the skirt. Louder wins
+                # where two overlap, which is what a receiver sees.
+                level = -42.0 - 8.0 * away * away + ((i * 7) % 11) * 0.05
+                db[i] = max(db[i], level)
+    return db
+
+
+def test_a_station_is_reported_as_its_CHANNEL_not_as_where_the_snapshot_peaked() -> (
+    None
+):
+    """A hopped row samples each slice for a fraction of a millisecond, and a
+    wideband-FM carrier sweeps its own ±75 kHz of deviation the whole time — so the
+    argmax of one snapshot is where the modulation happened to be.
+
+    MEASURED ON THE DIAL: peaks landing -25.0, +15.6, +15.6 and +3.1 kHz off their
+    channels, and `88.263` and `88.356` BOTH reported for 88.3 — one station, two pills,
+    93 kHz apart. On a band with a raster a signal is a channel, so that is what it is
+    called; `measured_hz` keeps what was actually seen."""
+    start, bin_hz = 88_000_000.0, 9_375.0
+    # Real US FM channels — 88.1 + n*200 kHz — each nudged by a plausible snapshot
+    # error.
+    truth = [88_100_000, 88_700_000, 89_300_000, 90_100_000, 90_700_000]
+    wobble = [-15_600, 15_600, -21_900, 3_100, 18_700]
+    db = _dial_at(
+        bin_hz, 2332, start, [t + w for t, w in zip(truth, wobble, strict=True)]
+    )
+
+    found = peaks.find(db, start, bin_hz, channel_hz=200_000)
+
+    assert len(found) == len(truth)
+    for entry, want in zip(sorted(found, key=lambda e: e["hz"]), truth, strict=True):
+        # Within a bin of the real channel. The grid ORIGIN is estimated from peaks that
+        # sit on bin centres, so it cannot be located finer than about one bin —
+        # 9.4 kHz here, against the ±60 kHz scatter it replaces.
+        assert abs(entry["hz"] - want) <= bin_hz, (entry, want)
+        # The measurement is still there to check the claim against.
+        assert abs(entry["measured_hz"] - entry["hz"]) < 100_000, entry
+    assert any(e["measured_hz"] != e["hz"] for e in found)
+
+
+def test_the_same_station_gets_the_same_LABEL_row_after_row() -> None:
+    """The bug, stated as a property. One station reported at 88.263 on one row and
+    88.356 on the next is two pills 93 kHz apart, and the owner's dial filled with 66 of
+    them for a band that has about 25 stations.
+
+    Snapping does not merely reduce the scatter — it removes it. Two rows that saw the
+    same dial through different snapshots must produce the SAME labels, or the pills
+    still multiply."""
+    start, bin_hz = 88_000_000.0, 9_375.0
+    truth = [88_100_000, 88_700_000, 89_300_000, 90_100_000, 90_700_000]
+    first = [-15_600, 15_600, -21_900, 3_100, 18_700]
+    second = [18_700, -21_900, 15_600, -15_600, 3_100]
+
+    rows = [
+        peaks.find(
+            _dial_at(
+                bin_hz, 2332, start, [t + w for t, w in zip(truth, wob, strict=True)]
+            ),
+            start,
+            bin_hz,
+            channel_hz=200_000,
+        )
+        for wob in (first, second)
+    ]
+
+    labels = [sorted(e["hz"] for e in row) for row in rows]
+    assert labels[0] == labels[1], labels
+    # ...and they really were different measurements, so this is not passing by the two
+    # rows being identical.
+    assert sorted(e["measured_hz"] for e in rows[0]) != sorted(
+        e["measured_hz"] for e in rows[1]
+    )
+
+
+def test_scatter_too_wide_to_BE_a_grid_is_not_called_one() -> None:
+    """The abstain that couples this to the dwell, and it is the honest half of the fix.
+
+    With `HOP_SEGMENTS = 4` each hop saw 0.43 ms and peaks landed up to ±60 kHz off
+    their channels — a third of a 200 kHz raster, which is not a grid anyone can point
+    at. The threshold refuses it rather than rounding noise onto a band plan. What makes
+    the snap work is the INTEGRATION (64 segments, 6.8 ms), which is why the two shipped
+    together: this rule is what says so out loud if the dwell is ever cut back."""
+    start, bin_hz = 88_000_000.0, 9_375.0
+    truth = [88_100_000, 88_700_000, 89_300_000, 90_100_000, 90_700_000]
+    as_it_was = [-25_000, 15_600, -46_000, 3_100, 56_000]
+    db = _dial_at(
+        bin_hz, 2332, start, [t + w for t, w in zip(truth, as_it_was, strict=True)]
+    )
+
+    found = peaks.find(db, start, bin_hz, channel_hz=200_000)
+
+    assert len(found) == len(truth)
+    for entry in found:
+        assert entry["hz"] == entry["measured_hz"], entry
+
+
+def test_the_grid_ORIGIN_is_measured_and_not_assumed() -> None:
+    """The spacing is in the band plan; the origin is not. US FM is 200 kHz spaced and
+    sits half a channel off the 88.0 its band starts at, while airband is 25 kHz spaced
+    and sits ON 118.000. Assuming either rule labels the other band wrong by half a
+    channel — so the phase is taken from the signals themselves."""
+    bin_hz = 9_375.0
+    # A band whose stations sit ON the band edge's multiples, not half a channel in.
+    start = 118_000_000.0
+    truth = [118_050_000, 118_150_000, 118_300_000, 118_450_000, 118_600_000]
+    scatter = [4_000, -5_000, 4_500, -3_000, 5_000]
+    db = _dial_at(
+        bin_hz,
+        800,
+        start,
+        [t + w for t, w in zip(truth, scatter, strict=True)],
+        half_hz=15_000,
+    )
+
+    found = peaks.find(db, start, bin_hz, channel_hz=50_000)
+
+    # EXACTLY the channels, which is the discriminating part: the grid here sits ON the
+    # multiples of 50 kHz, and a rule that assumed FM's half-channel offset would put
+    # every one of them 25 kHz out. The measured phase is what tells them apart.
+    assert sorted(e["hz"] for e in found) == truth
+    # ...and the peaks really were off-channel, so this is not passing by them landing
+    # on the right answer unaided. `any`, not `all`: a peak whose bin happens to centre
+    # on its own channel is a legitimate outcome, not a failure to snap.
+    assert any(e["measured_hz"] != e["hz"] for e in found)
+
+
+def test_a_band_with_NO_grid_is_left_where_it_was_found() -> None:
+    """The abstain, and the reason this is a measurement rather than a formula: signals
+    that do not agree on a phase must not be snapped onto one. Rounding them would
+    invent a band plan and report it as fact."""
+    start, bin_hz = 400_000_000.0, 9_375.0
+    # Deliberately off any 200 kHz grid, and scattered in phase.
+    scattered = [400_137_000, 400_611_000, 401_044_000, 401_723_000, 402_069_000]
+    db = _dial_at(bin_hz, 800, start, scattered)
+
+    found = peaks.find(db, start, bin_hz, channel_hz=200_000)
+
+    assert found, "the signals are still found"
+    for entry in found:
+        assert entry["hz"] == entry["measured_hz"], entry
+
+
+def test_too_few_signals_cannot_establish_a_grid() -> None:
+    """Three peaks can agree on a spacing by coincidence; a dial-full cannot. Below
+    `MIN_RASTER_PEAKS` nothing is snapped, however tempting the arithmetic looks."""
+    start, bin_hz = 88_000_000.0, 9_375.0
+    db = _dial_at(bin_hz, 800, start, [88_120_000, 88_520_000])
+
+    found = peaks.find(db, start, bin_hz, channel_hz=200_000)
+
+    assert len(found) == 2
+    for entry in found:
+        assert entry["hz"] == entry["measured_hz"]
+
+
+def test_a_signal_far_from_every_channel_keeps_its_own_frequency() -> None:
+    """A grid the row agrees on does not make every signal a member of it: a pirate or a
+    spur sitting between two channels is nearer neither, and calling it one would
+    move it by up to half a raster."""
+    start, bin_hz = 88_000_000.0, 9_375.0
+    on_grid = [88_100_000, 88_700_000, 89_300_000, 90_100_000]
+    stray = 90_800_000.0  # 100 kHz off — exactly between two channels
+    db = _dial_at(bin_hz, 2332, start, [*on_grid, stray])
+
+    found = peaks.find(db, start, bin_hz, channel_hz=200_000)
+    by_measured = {e["measured_hz"]: e for e in found}
+    odd = min(by_measured, key=lambda hz: abs(hz - stray))
+
+    assert abs(odd - stray) < bin_hz
+    assert by_measured[odd]["hz"] == odd, "left where it was found"

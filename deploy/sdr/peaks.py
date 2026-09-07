@@ -149,6 +149,92 @@ def _local_floors(
     return sampled if stride == 1 else np.interp(np.arange(n), at, sampled)
 
 
+#: How many signals a row needs before its grid PHASE is worth estimating. Three peaks
+#: can agree on a spacing by coincidence; a dial-full cannot.
+MIN_RASTER_PEAKS = 4
+#: How tightly they must agree, as the resultant length of the phases taken as unit
+#: vectors — 1.0 is every signal on the same grid, 0.0 is scattered.
+#:
+#: **Flat, and there is a regime where flat is wrong.** A peak sits on a bin centre, so
+#: signals exactly on grid still arrive quantised, and how much that scatters their phase
+#: depends on how coarse a bin is against the channel. MEASURED, for stations perfectly
+#: on grid:
+#:
+#:     bin/channel   0.05   0.19   0.38   0.44   0.56
+#:     resultant     0.998  0.967  0.859  0.652  0.445
+#:
+#: Past about 0.44 a perfect grid cannot clear 0.7, and this would abstain on it. Every
+#: pairing this box actually uses is 0.05-0.38 — 9.4 kHz bins against rasters of 200,
+#: 50 and 25 kHz — so the case is unreachable, and a normalisation for it was built,
+#: measured, and taken out again rather than shipped untested. The number is here so the
+#: next coarse sweep of a narrow raster is a known limit rather than a surprise.
+MIN_RASTER_AGREEMENT = 0.7
+#: How far off its channel a signal may sit and still be called that channel. Beyond half
+#: a raster it is nearer the next one; 0.35 leaves a margin where nothing is claimed.
+MAX_RASTER_PULL = 0.35
+#: The only two places a real band plan anchors its grid: on the round number, or half a
+#: channel off it. Airband is 25 kHz from 118.000 and NOAA 25 kHz from 162.400 (both
+#: zero); US FM is 200 kHz sitting on 88.1 against a band that starts at 88.0, and
+#: European FM 100 kHz from 87.5 (both half). Nothing in the wild anchors a third of a
+#: channel along.
+RASTER_ANCHORS = (0.0, 0.5)
+#: How near an anchor the measured phase must land to be called that anchor.
+MAX_ANCHOR_ERROR = 0.15
+
+
+def _raster_origin(freqs: list[float], channel_hz: int) -> float | None:
+    """Where the channel grid actually sits, measured from the signals themselves.
+
+    **The spacing is in the band plan; the ORIGIN is not, and assuming one is how a
+    whole dial ends up labelled 100 kHz wrong.** US FM is 200 kHz spaced and sits on
+    88.1, 88.3, ... — half a channel off the 88.0 the band starts at — while airband is
+    25 kHz spaced and sits ON 118.000. Neither offset is recorded anywhere, and there is
+    no rule that derives both.
+
+    So it is measured. Each signal's position within one channel is a PHASE, and phases
+    are circular — 199 kHz and 1 kHz are 2 kHz apart, not 198 — so they are averaged as
+    unit vectors. The resultant length says how much the signals agree: a dial of real
+    stations lands them almost on top of each other, and a band with no grid scatters
+    them evenly and cancels.
+
+    The average is then RESOLVED to one of `RASTER_ANCHORS` rather than used directly,
+    because a raw average is a different number on every row and would give one station a
+    different label each time — which is the defect this exists to fix, merely smaller.
+
+    **Returns None when the signals do not agree, and when their agreement is not on any
+    anchor a band plan uses** — the two reasons this is a measurement and not a
+    formula."""
+    if channel_hz <= 0 or len(freqs) < MIN_RASTER_PEAKS:
+        return None
+    phases = [2.0 * math.pi * (hz % channel_hz) / channel_hz for hz in freqs]
+    x = sum(math.cos(a) for a in phases) / len(phases)
+    y = sum(math.sin(a) for a in phases) / len(phases)
+    if math.hypot(x, y) < MIN_RASTER_AGREEMENT:
+        return None
+    phase = (math.atan2(y, x) % (2.0 * math.pi)) / (2.0 * math.pi)
+    # MEASURED, then CHECKED against what band plans actually do — and this second step is
+    # what makes the label hold still. The raw estimate carries the residual of whichever
+    # peaks this row happened to see, so two rows of the same dial land on grids a few
+    # kHz apart; snapping to them gives one station two labels again, just closer
+    # together. Every real plan anchors on the round number or half a channel off it, so
+    # the estimate is resolved to whichever it is near, and to NEITHER when it is near
+    # neither. Two rows then agree exactly, because they are agreeing on a convention
+    # rather than on an average.
+    for anchor in RASTER_ANCHORS:
+        away = abs((phase - anchor + 0.5) % 1.0 - 0.5)
+        if away <= MAX_ANCHOR_ERROR:
+            return anchor * channel_hz
+    return None
+
+
+def _snapped(hz: float, origin: float | None, channel_hz: int) -> float | None:
+    """The channel this signal is in, or None when it is not close enough to one."""
+    if origin is None:
+        return None
+    channel = round((hz - origin) / channel_hz) * channel_hz + origin
+    return channel if abs(hz - channel) <= MAX_RASTER_PULL * channel_hz else None
+
+
 def find(
     db: list[float],
     start_hz: float,
@@ -160,10 +246,14 @@ def find(
 ) -> list[dict[str, Any]]:
     """The signals in one row, strongest first.
 
-    Each is `{hz, db, over_db}`: where it is, how strong it is, and how far it stands
-    above the noise around it — which is the number that decides whether it is a signal
-    at all, so it travels with it rather than being recoverable only by someone holding
-    the whole row.
+    Each is `{hz, measured_hz, db, over_db}`: which channel it is in, where its energy
+    actually peaked, how strong it is, and how far it stands above the noise around it —
+    which is the number that decides whether it is a signal at all, so it travels with it
+    rather than being recoverable only by someone holding the whole row.
+
+    `hz` is snapped to the channel grid when `channel_hz` is given AND this row's signals
+    agree on where that grid sits (`_raster_origin`); otherwise it is the measured peak
+    and equals `measured_hz`.
 
     A bin that measured nothing is not a quiet bin (a hop that lost a block leaves NaN),
     and letting one through poisons every comparison: it is skipped rather than floored,
@@ -238,11 +328,28 @@ def find(
             if all(abs(entry[0] - other[0]) >= apart_bins for other in kept):
                 kept.append(entry)
         signals = kept
+    shown = signals[:limit]
+    measured = [start_hz + index * bin_hz for index, _v, _e in shown]
+    # SNAPPED TO THE CHANNEL, when the row's own signals agree there is one.
+    #
+    # A hopped row samples each slice for a fraction of a millisecond, and a wideband-FM
+    # carrier's instantaneous spectrum swings across its own +-75 kHz of deviation — so
+    # the argmax of one snapshot is where the modulation happened to be, not where the
+    # station is. MEASURED ON THE DIAL: peaks landing -25.0, +15.6, +15.6, +3.1 kHz off
+    # their channels, and 88.263 and 88.356 both reported for 88.3 — one station, two
+    # pills, 93 kHz apart.
+    #
+    # On a band with a raster a signal IS a channel, so that is what it is called.
+    # `measured_hz` rides alongside so the claim can be checked rather than believed:
+    # a snapped number nobody can compare against what was seen is exactly the kind of
+    # number this file exists not to produce.
+    origin = _raster_origin(measured, channel_hz)
     return [
         {
-            "hz": round(start_hz + index * bin_hz, 1),
+            "hz": round(_snapped(hz, origin, channel_hz) or hz, 1),
+            "measured_hz": round(hz, 1),
             "db": round(value, 1),
             "over_db": round(excess, 1),
         }
-        for index, value, excess in signals[:limit]
+        for hz, (_index, value, excess) in zip(measured, shown, strict=True)
     ]

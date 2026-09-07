@@ -25,7 +25,15 @@
  *  same frames, so "what is on the air" cannot have two answers depending on who asked.
  *  `overDb` travels with it because it is what decided it was a signal at all. */
 export interface SpectrumPeak {
+  /** The CHANNEL this signal is in, when the box could establish a grid — otherwise the
+   *  same as `measuredHz`. This is what a pill is labelled with, and what makes the same
+   *  station keep the same label row after row. */
   hz: number;
+  /** Where its energy actually peaked. A hopped row sees each slice for milliseconds and
+   *  a wideband-FM carrier sweeps its own deviation the whole time, so this moves from
+   *  row to row even when the station does not. Kept so the label can be CHECKED against
+   *  what was seen rather than believed. */
+  measuredHz: number;
   db: number;
   overDb: number;
 }
@@ -191,10 +199,17 @@ function parsePeaks(raw: unknown): SpectrumPeak[] {
   const out: SpectrumPeak[] = [];
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { hz, db, over_db: over } = entry as Record<string, unknown>;
+    const { hz, measured_hz: measured, db, over_db: over } = entry as Record<string, unknown>;
     if (typeof hz !== "number" || !Number.isFinite(hz)) continue;
     if (typeof db !== "number" || !Number.isFinite(db)) continue;
-    out.push({ hz, db, overDb: typeof over === "number" && Number.isFinite(over) ? over : 0 });
+    out.push({
+      hz,
+      // A box older than the snap sends no measurement, and this box sends none on a
+      // band where it could not establish a grid. In both, the label IS the measurement.
+      measuredHz: typeof measured === "number" && Number.isFinite(measured) ? measured : hz,
+      db,
+      overDb: typeof over === "number" && Number.isFinite(over) ? over : 0,
+    });
   }
   return out;
 }

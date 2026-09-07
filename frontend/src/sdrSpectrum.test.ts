@@ -347,3 +347,26 @@ describe("the signals a row found", () => {
     expect(parseRow(frame())).toMatchObject({ peaks: [] });
   });
 });
+
+describe("a peak's channel and its measurement", () => {
+  it("carries both, so the label can be checked against what was seen", () => {
+    // The box snaps a signal to its channel when it can establish the grid; the argmax
+    // it actually saw rides alongside. A label nobody can compare against the
+    // measurement is exactly the kind of number this project keeps finding.
+    const row = parseRow(
+      frame({ peaks: [{ hz: 88_100_000, measured_hz: 88_084_400, db: -40, over_db: 22 }] }),
+    );
+
+    expect(row).toMatchObject({
+      peaks: [{ hz: 88_100_000, measuredHz: 88_084_400, db: -40, overDb: 22 }],
+    });
+  });
+
+  it("treats a missing measurement as equal to the label", () => {
+    // Two cases, same answer: a box older than the snap, and this box on a band where it
+    // could not establish a grid. In both the label IS the measurement.
+    const row = parseRow(frame({ peaks: [{ hz: 90_300_000, db: -50, over_db: 14 }] }));
+
+    expect(row).toMatchObject({ peaks: [{ hz: 90_300_000, measuredHz: 90_300_000 }] });
+  });
+});

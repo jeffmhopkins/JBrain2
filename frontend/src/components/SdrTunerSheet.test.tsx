@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import { resetSdrCaptions } from "../sdrCaptions";
 import type { SdrListening } from "../sdrSession";
-import { SdrTunerSheet } from "./SdrTunerSheet";
+import { SdrTunerSheet, liveTag } from "./SdrTunerSheet";
 
 // The caption stream, faked at the EventSource seam so a test can deliver a segment.
 class FakeEventSource {
@@ -363,5 +363,26 @@ describe("live captions in the tuner", () => {
     // The caption sits on the tape's face, not in a row of its own.
     expect(sure.closest(".sdr-face")).not.toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe("what the transport calls live", () => {
+  it("says LIVE when the speaker is near the air", () => {
+    expect(liveTag(0)).toBe("LIVE");
+    expect(liveTag(1.4)).toBe("LIVE");
+  });
+
+  it("says how far behind once it is behind", () => {
+    // The tag read LIVE straight through the eight seconds the element ran behind the
+    // air — a label naming a quantity it never measured, which is the recurring defect
+    // in this subsystem rather than a one-off.
+    expect(liveTag(8.3)).toBe("LIVE −8s");
+    expect(liveTag(2)).toBe("LIVE −2s");
+  });
+
+  it("says LIVE when there is nothing to measure", () => {
+    // No element, or one with no buffered range yet: an unknown delay is not a claim
+    // that the radio is late.
+    expect(liveTag(null)).toBe("LIVE");
   });
 });

@@ -33,6 +33,8 @@ const listeners = new Set<Listener>();
 // and this module owns the only element there is.
 let audioCtx: AudioContext | null = null;
 let analyserNode: AnalyserNode | null = null;
+/** A `resume()` already in flight, so the sampler cannot stack one per tick. */
+let resuming = false;
 let tapped = false;
 let armed = false;
 
@@ -58,6 +60,17 @@ let sampler: ReturnType<typeof setInterval> | null = null;
 let samples: Uint8Array<ArrayBuffer> | null = null;
 // The box's clock at the moment this stream was opened; see playSdrAudio.
 let anchor: number | null = null;
+// The last box-clock reading the session poll handed us, paired with the local clock
+// when it arrived, so a stream re-opened LATER can still be anchored. Without this a
+// reconnect (an autoplay refusal recovered by the owner's tap) had no `serverNow` to
+// anchor from and threw the caption timeline away.
+let boxClock: { at: number; local: number } | null = null;
+
+/** The box's clock right now, carried forward from the last reading, or null. */
+function boxNow(): number | null {
+  if (!boxClock) return null;
+  return boxClock.at + (Date.now() - boxClock.local) / 1000;
+}
 
 /**
  * The box-clock time of the audio coming out of the speaker RIGHT NOW, or null
@@ -75,6 +88,36 @@ export function sdrHeardAt(): number | null {
   return anchor + element.currentTime;
 }
 
+/**
+ * Past this many seconds behind the air, the transport stops calling itself simply
+ * LIVE. Two seconds is about the delay of a normal buffered start, and small enough
+ * that nothing about listening feels wrong; the number only appears when something is
+ * actually adrift, so it is a fault light rather than one more readout.
+ */
+export const AUDIO_LATE_S = 2;
+
+/**
+ * How far behind the air the speaker is, in seconds, or null when nothing is playing.
+ *
+ * The element has fetched up to `buffered.end` and is playing at `currentTime`, so the
+ * difference is audio that has arrived and not yet been heard — which on a LIVE stream
+ * is the whole of the delay this side of the network. Measured rather than assumed,
+ * because "~8.3 s" sat in a comment as a pipeline constant while nothing on screen could
+ * contradict it — and it was not one (see `refused()`). The owner has no terminal to
+ * measure from (CLAUDE.md #10), so the reading has to be on the face of the thing.
+ */
+export function sdrAudioLag(): number | null {
+  const el = element;
+  if (!el || !isSdrPlaying()) return null;
+  try {
+    const ranges = el.buffered;
+    if (ranges.length === 0) return null;
+    return Math.max(0, ranges.end(ranges.length - 1) - el.currentTime);
+  } catch {
+    return null; // an element mid-teardown has no buffer to report
+  }
+}
+
 /** The rolling level history: oldest-to-newest is `at` forward, wrapping. */
 export function sdrLevels(): { levels: Float32Array; at: number; length: number } {
   return { levels, at: levelAt, length: TAPE_LEN };
@@ -83,6 +126,35 @@ export function sdrLevels(): { levels: Float32Array; at: number; length: number 
 function sample(): void {
   const node = analyserNode;
   if (!node || !isSdrPlaying()) return;
+  // THE CONTEXT CAN GO AWAY UNDER US, and the audio does not go with it.
+  //
+  // `sdrAnalyser` resumes the context once, when it takes the tap, and then never looks
+  // again — it returns the cached node on every later call. iOS suspends an AudioContext
+  // on any interruption (screen lock, app switch, a call, another app taking audio), and
+  // on the way back the ELEMENT resumes on its own because it reaches the speakers
+  // without the graph. The analyser does not. `getByteTimeDomainData` then returns a
+  // buffer of 128s for ever, which is silence — so the tape drew a flat line through
+  // audio the owner could hear perfectly. REPORTED as "the live waveform is intermittent,
+  // but the spectrum is good", which is exactly the shape of it: the spectrum comes down
+  // the frames stream and never touched this context.
+  const ctx = audioCtx;
+  if (ctx && ctx.state !== "running") {
+    if (ctx.state === "suspended" && !resuming) {
+      // Guarded, because this runs at `SAMPLE_HZ` and a rejected resume would otherwise
+      // stack a promise per tick. Allowed without a fresh gesture because the element is
+      // already playing — the gesture that started it is what this is recovering.
+      resuming = true;
+      void Promise.resolve(ctx.resume())
+        .catch(() => {})
+        .finally(() => {
+          resuming = false;
+        });
+    }
+    // NOTHING IS WRITTEN. A suspended analyser reports silence, and recording that would
+    // put a measurement in the tape that was never taken — the tape's whole claim is
+    // "this is what came through", and a flat line means nothing came through.
+    return;
+  }
   if (!samples || samples.length !== node.fftSize) {
     samples = new Uint8Array(new ArrayBuffer(node.fftSize));
   }
@@ -138,6 +210,32 @@ function ensure(): HTMLAudioElement | null {
   return el;
 }
 
+/**
+ * A play() the browser refused, with the connection dropped behind it.
+ *
+ * THIS IS WHERE THE EIGHT SECONDS CAME FROM. `playSdrAudio` fires from the session
+ * poll the moment a listening session appears, which is not a user gesture, so a phone
+ * refuses it. The refusal does not stop the LOAD: the element goes on pulling the live
+ * stream into its buffer, unheard, for as long as it takes the owner to reach the play
+ * button. When they press it, playback starts at media position ZERO — the top of that
+ * buffer — and stays exactly that far behind the air for the rest of the session. It
+ * measured a constant ~8.3 s, which is not a pipeline latency at all but the length of
+ * the wait before someone pressed play.
+ *
+ * So a refusal drops the src. Nothing accumulates, and the owner's tap re-points at
+ * the stream and starts where the air is now (`toggleSdrAudio` already makes exactly
+ * this move on resume, for exactly this reason).
+ */
+function refused(el: HTMLAudioElement): void {
+  try {
+    el.removeAttribute("src");
+    el.load();
+  } catch {
+    // best effort: an element that will not let go of the stream is still paused
+  }
+  announce();
+}
+
 function attempt(el: HTMLAudioElement): void {
   // play() returns a Promise in modern browsers but `undefined` in older ones (and in
   // jsdom), so it cannot be chained blind — and it can throw outright rather than
@@ -147,9 +245,9 @@ function attempt(el: HTMLAudioElement): void {
   // play button is how the owner recovers from it.
   try {
     const started: unknown = el.play();
-    if (started instanceof Promise) started.catch(announce);
+    if (started instanceof Promise) started.catch(() => refused(el));
   } catch {
-    announce();
+    refused(el);
   }
 }
 
@@ -160,6 +258,7 @@ export function playSdrAudio(serverNow?: number): void {
   // Re-pointing at the same src would restart the stream mid-listen, so only set it
   // when it is not already ours. The browser resolves src to an absolute URL, hence
   // the suffix test rather than equality.
+  if (typeof serverNow === "number") boxClock = { at: serverNow, local: Date.now() };
   if (!el.src.endsWith(SDR_AUDIO_SRC)) {
     el.src = SDR_AUDIO_SRC;
     // Anchor the stream's timeline to the BOX's clock at the instant we asked for it.
@@ -167,7 +266,11 @@ export function playSdrAudio(serverNow?: number): void {
     // moment: media position 0 was on the air at `serverNow`, and media position t
     // was on the air at `serverNow + t`. That mapping is what lets a caption be held
     // until the listener actually reaches the audio it describes.
-    anchor = typeof serverNow === "number" ? serverNow : null;
+    //
+    // Read through `boxNow()` rather than from the argument, so a stream re-opened by
+    // the owner's tap — which has no reading of its own to pass — is anchored from the
+    // last one the poll gave us, carried forward by the elapsed local time.
+    anchor = boxNow();
   }
   if (el.paused) attempt(el);
   armAnalyser();
@@ -186,6 +289,7 @@ export function stopSdrAudio(): void {
   }
   element.remove();
   element = null;
+  boxClock = null;
   stopSampling();
   announce();
 }
@@ -307,7 +411,9 @@ export function resetSdrAudio(): void {
   analyserNode = null;
   tapped = false;
   armed = false;
+  resuming = false;
   anchor = null;
+  boxClock = null;
   stopSampling();
   samples = null;
 }

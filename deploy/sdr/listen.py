@@ -282,10 +282,25 @@ VIEWS = (VIEW_BAND, VIEW_CHANNEL, VIEW_ALL)
 #: The most a single frame may average. Bounds the read buffer, and past this the row
 #: is a long enough exposure that a burst inside it is smeared rather than seen.
 MAX_IQ_SEGMENTS = 128
-#: Segments per HOP. Small on purpose: a hopping sweep is already time-limited by the
-#: retunes, so averaging harder inside a hop buys noise performance at the price of the
-#: one thing that is scarce here.
-HOP_SEGMENTS = 4
+#: Segments per HOP — how much signal each slice of a stitched row is actually made of.
+#:
+#: **Four was too few, and it was not a noise-performance question at all.** At 256 bins
+#: and 2.4 MS/s, four segments is `256 * 4 / 2.4e6` = **0.43 ms of signal per hop** — and
+#: a wideband-FM carrier's instantaneous spectrum sweeps across its own ±75 kHz of
+#: deviation continuously. A 0.43 ms look does not measure where a station IS; it
+#: measures where its modulation happened to be during that fraction of a millisecond.
+#:
+#: REPORTED BY THE OWNER and reproduced on the dial: the waterfall drew dashes instead of
+#: lines, and peaks landed up to ±60 kHz off their channels — `88.263` and `88.356` both
+#: reported for 88.3, one station as two signals 93 kHz apart. Sixty-six of them for a
+#: band with about twenty-five stations, most going stale as the next row put them
+#: somewhere else.
+#:
+#: 64 segments is **6.8 ms**, which averages across enough of the modulation for the peak
+#: to settle onto the carrier. It costs about 51 ms on an eight-hop row — 2.5 fps to
+#: ~2.2 — and C29 is what pays for it: cutting the per-hop settle freed ~480 ms a row, and
+#: spending it on more rows rather than truer ones was the wrong buy.
+HOP_SEGMENTS = 64
 
 
 def segments_for(bins: int, rate_hz: int) -> int:
@@ -397,9 +412,20 @@ def reap_survivors() -> int:
 # How long a parsed audio level stays claimable by an arriving frame. The measured
 # pairing is sub-millisecond; this is slack for a loaded box, not a guess.
 _LEVEL_WINDOW_S = 2.0
-AUDIO_BITRATE = (
-    "64k"  # MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this
-)
+#: MP3 at 16 kHz mono; the demodulated audio is the ceiling, not this.
+AUDIO_BITRATE_BPS = 64_000
+AUDIO_BITRATE = f"{AUDIO_BITRATE_BPS // 1000}k"
+#: How much ENCODED audio one read hands on to the listeners, as a DURATION.
+#:
+#: `_CHUNK` was sized as a PCM read — 4096 bytes of signed-16-bit 16 kHz mono is 128 ms,
+#: a sensible granularity — and was then reused on the compressed side, where the same
+#: 4096 bytes is 512 ms at 64 kbps. `read()` blocks until it has a FULL buffer, so every
+#: listener waited half a second for audio the encoder had already finished with. The
+#: number looked like the quantity and was not, which is this subsystem's recurring
+#: defect rather than a one-off. Expressed in time here so it cannot drift again when
+#: the bitrate moves.
+AUDIO_CHUNK_S = 0.064
+AUDIO_CHUNK = max(256, int(AUDIO_BITRATE_BPS / 8 * AUDIO_CHUNK_S))
 # Wide FM's demodulation rate. **192 k, not rtl_fm's documented 171 k**, for two
 # measured reasons that both bite at 171:
 #
@@ -452,7 +478,13 @@ KISS_PORT_SPAN = 100
 # pump or grow without bound. Its queue is small and we DROP for that subscriber
 # rather than block everyone — live audio is worthless late, so dropping is the
 # correct backpressure here.
-_SUB_QUEUE_CHUNKS = 64
+#
+# In SECONDS, because it was 64 chunks and a chunk was half a second of MP3: a
+# subscriber could fall half a minute behind and still be considered "briefly behind",
+# which is not what the paragraph above says this queue is for. Four seconds is slack
+# for a phone that stalls on a lock screen and no more.
+_SUB_QUEUE_S = 4.0
+_SUB_QUEUE_CHUNKS = max(4, int(_SUB_QUEUE_S / AUDIO_CHUNK_S))
 
 
 class SdrBusy(RuntimeError):
@@ -2240,7 +2272,7 @@ KISSPORT {self.kiss_port}
             return
         try:
             while not self._stopping:
-                chunk = enc.stdout.read(_CHUNK)
+                chunk = enc.stdout.read(AUDIO_CHUNK)
                 if not chunk:
                     break
                 with self._lock:

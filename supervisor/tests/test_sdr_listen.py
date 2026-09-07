@@ -3321,3 +3321,54 @@ def test_a_hop_does_not_pay_a_settle_this_radio_does_not_need(iq_tuner) -> None:
     # ...and the LISTENING path keeps the number that was measured under its own AGC,
     # which is what moves the level there (1.47 dB sigma against 0.09 fixed).
     assert listen.radio.SETTLE_S > listen.radio.HOP_SETTLE_S
+
+
+def test_a_hop_integrates_long_enough_to_see_past_the_MODULATION() -> None:
+    """The owner's report, as arithmetic. `HOP_SEGMENTS` decides how much signal each
+    slice of a stitched row is made of, and at four segments it was 0.43 ms — while a
+    wideband-FM carrier sweeps its own ±75 kHz of deviation continuously.
+
+    A look that short does not measure where a station is; it measures where the
+    modulation happened to be. On the dial that drew a striped waterfall and put peaks
+    ±60 kHz off their channels, so one station arrived as several signals and the held
+    list filled with pills that went stale as fast as they appeared.
+
+    The number that matters is the DWELL, not the segment count, so that is what this
+    checks — a future change to the bin count must not quietly undo it."""
+    rate_hz, bins = 2_400_000, 256
+    dwell_ms = bins * listen.HOP_SEGMENTS / rate_hz * 1000.0
+
+    assert dwell_ms >= 5.0, f"{dwell_ms:.2f} ms is a snapshot of the modulation"
+    # ...and bounded, because a row is still a row: past this the hop is a long enough
+    # exposure that a burst inside it is smeared rather than seen.
+    assert listen.HOP_SEGMENTS <= listen.MAX_IQ_SEGMENTS
+
+
+def test_the_encoded_read_is_sized_in_TIME_and_not_in_pcm_bytes() -> None:
+    """`read()` blocks until its buffer is FULL, so the chunk size IS the delay.
+
+    It was `_CHUNK` — 4096 bytes, sized as 128 ms of signed-16-bit 16 kHz PCM, which is
+    a sensible granularity — reused on the compressed side, where the same 4096 bytes
+    is 512 ms at 64 kbps. Every listener therefore waited half a second for audio the
+    encoder had already finished with, on top of whatever the browser buffered. The
+    number looked like the quantity and was not.
+    """
+    per_read_s = listen.AUDIO_CHUNK / (listen.AUDIO_BITRATE_BPS / 8)
+
+    assert per_read_s == pytest.approx(listen.AUDIO_CHUNK_S, abs=0.005)
+    assert per_read_s <= 0.1
+    # The trap this replaces, still true of the PCM chunk: the SAME byte count is a
+    # different duration on each side of the encoder.
+    assert listen._CHUNK / (listen.AUDIO_BITRATE_BPS / 8) > 0.4
+
+
+def test_a_stalled_listener_is_dropped_after_seconds_not_half_a_minute() -> None:
+    """The queue is documented as holding a subscriber that is BRIEFLY behind.
+
+    At 64 chunks of half a second it held 32 s, which is not brief by any reading of
+    "live audio is worthless late" — and a phone coming back from a lock screen would
+    play out half a minute of stale radio before reaching the air.
+    """
+    held_s = listen._SUB_QUEUE_CHUNKS * listen.AUDIO_CHUNK_S
+
+    assert 2.0 <= held_s <= 8.0

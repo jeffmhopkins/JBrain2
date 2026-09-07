@@ -33,7 +33,7 @@ function row(
     gainDb: null,
     channelHz,
     view: "band" as const,
-    peaks: peaks.map((p) => ({ ...p, overDb: 12 })),
+    peaks: peaks.map((p) => ({ measuredHz: p.hz, ...p, overDb: 12 })),
   };
 }
 
@@ -170,8 +170,8 @@ describe("holding a signal across rows", () => {
 
 describe("what the toggle chooses", () => {
   const held: HeldPeak[] = [
-    { hz: 100_000_000, db: -40, overDb: 20, seen: 100, live: true },
-    { hz: 102_000_000, db: -60, overDb: 9, seen: 90, live: false },
+    { hz: 100_000_000, measuredHz: 100_000_000, db: -40, overDb: 20, seen: 100, live: true },
+    { hz: 102_000_000, measuredHz: 102_000_000, db: -60, overDb: 9, seen: 90, live: false },
   ];
 
   it("live shows only what the newest row found", () => {
