@@ -11,7 +11,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { mhz } from "../mhz";
-import { isSdrPlaying, subscribeSdrAudio, toggleSdrAudio } from "../sdrAudio";
+import {
+  AUDIO_LATE_S,
+  isSdrPlaying,
+  sdrAudioLag,
+  subscribeSdrAudio,
+  toggleSdrAudio,
+} from "../sdrAudio";
 import {
   sdrCaptions,
   startSdrCaptions,
@@ -100,6 +106,14 @@ interface ControlsProps {
 function elapsed(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+/** LIVE, or LIVE and how far behind — see the transport row. */
+export function liveTag(behindS: number | null): string {
+  if (behindS === null || behindS < AUDIO_LATE_S) return "LIVE";
+  // Whole seconds: a tenth of a second of playback delay is not a thing anyone can act
+  // on, and the reading is only ever a rough one — the browser's buffer, not a clock.
+  return `LIVE −${Math.round(behindS)}s`;
 }
 
 export function SdrTunerSheet({ listening, onClose }: Props) {
@@ -419,7 +433,11 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
         </button>
         <span className={`sdr-livedot${playing ? " sdr-livedot-on" : ""}`} aria-hidden="true" />
         <span className={`sdr-livetag${playing ? " sdr-livetag-on" : ""}`}>
-          {playing ? "LIVE" : "PAUSED"}
+          {/* LIVE was printed whatever the delay, including through the eight seconds
+              the element used to run behind the air — a label that named the quantity
+              and did not measure it. It now says how far behind when it is behind, and
+              re-reads on the session poll's own second. */}
+          {playing ? liveTag(sdrAudioLag()) : "PAUSED"}
         </span>
         <button
           type="button"

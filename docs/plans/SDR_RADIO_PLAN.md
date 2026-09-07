@@ -1,6 +1,6 @@
 # SDR radio — spectrum launcher, agent tools, and a transcribed recordings library
 
-> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
+> **Status:** In progress · **Last verified:** 2026-09-07 · **Waves:** S0a✅ S0b-i✅ S0b-ii◻️(built, on-box gate pending) S1◻️ S2◻️ S3◻️ S4◻️ (S0a — the debug USB probe — shipped and **validated on the box**: it found a Nooelec NESDR SMArt v5, `0bda:2838`, serial `09022796`, held by `dvb_usb_rtl28xxu`, exactly the found-but-not-ready case it was built to distinguish. S0b-i — the DVB blacklist through the no-terminal update path — shipped on-branch. S0b-ii is the sidecar + client, then the on-box gate.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: transcription runs through the
 > existing whisper client (rule 1 governs *completions*; speech-to-text already sits
@@ -379,11 +379,24 @@ Three decisions worth keeping:
   so a still image of a sweep and the live picture of the same band are the same picture.
   (This is why no new DESIGN.md colour token was needed, which the mock round had left
   open.)
-- **No delay is applied to the rows.** Captions are held ~8.3 s to match the ear; an
-  early sketch said the waterfall should be too. It should not — a spectrum session is
-  its own purpose on its own radio and produces no audio, so there is nothing to align
-  with. Alignment becomes a real question the day one radio both demodulates and draws,
-  which is the `fast` tier above.
+- **A row is drawn when its audio is heard, whenever there is audio to match it.** This
+  read the other way round until the day it named arrived: a spectrum session is its own
+  purpose on its own radio and makes no sound, so there was nothing to align with, and a
+  delay added in advance would only have made the picture late. One radio now both
+  demodulates and draws, off the same samples, so every row of a LISTENING session has
+  an ear. A spectrum-only session still draws straight through, and so does a paused
+  radio.
+
+  **Order matters, and the first pass got it wrong (2026-09-07).** The hold was built
+  while playback was still ~8 s behind, which made a correct mechanism look like an
+  eight-second penalty — the owner's answer was "I'd rather have more real time with the
+  spectrum and the audio versus the closed captioning being in sync", and the hold was
+  thrown away. It is back, in the right order: **cut the audio latency first, then close
+  what is left exactly.** `Frame.at` and the audio anchor are the same box clock, so the
+  closing is exact rather than approximate. The owner's ranking is on the record — "is
+  there a way to perfectly sync the spectrum to the audio? that's the most important
+  thing to actually be synced" — and the thing this delays is the PICTURE, never the
+  sound.
 - **Shortwave listens and cannot be drawn.** `rtl_power` hardcodes direct-sampling mode
   1 — the ADC's I branch — while this hardware wires Q, so the band picker disables those
   rows with the reason on them rather than offering a tap that ends in a 400.
@@ -692,9 +705,52 @@ in the sidecar: below a level floor nothing is sent, because whisper answers an 
 band with fluent invented sentences. Binding spec:
 `../mocks/sdr-tuner/f-live-captions.html`.
 
-**Caption timing (2026-09-02).** Two lags decide whether a caption lines up with the
-speech, and they point opposite ways. Playback sits a constant ~8.3 s behind the live
-edge (measured in Chromium against the real sidecar over 130 s — stable, not drifting),
+**Where the ~8.3 s actually came from (2026-09-07).** It was read as a pipeline
+latency for five days and it was not one. `playSdrAudio` fires from the session poll the
+moment a listening session appears — not a user gesture — so a phone refuses the
+`play()`. The refusal does not stop the LOAD: the element went on pulling the live
+stream into its buffer, unheard, until the owner reached the play button, and playback
+then began at media position zero and stayed exactly that far behind the air for the
+rest of the session. The "constant, stable, not drifting" 8.3 s was the length of the
+wait before someone pressed play. Three changes, all shipped together:
+
+- **A refused `play()` drops the src** (`sdrAudio.ts` `refused()`), so nothing
+  accumulates unheard and the owner's tap starts where the air is now.
+- **The encoded read is sized in TIME** (`listen.py` `AUDIO_CHUNK_S`). `_pump_audio`
+  read `_CHUNK` = 4096 bytes, sized as 128 ms of 16 kHz PCM and reused on the compressed
+  side where the same bytes are 512 ms at 64 kbps — and `read()` blocks until full, so
+  every listener waited half a second for audio the encoder had finished with. The same
+  correction drops the drop-a-slow-subscriber queue from 32 s to 4 s, which is what the
+  comment above it always claimed it was.
+- **The transport measures rather than asserts.** `sdrAudioLag()` reads
+  `buffered.end − currentTime`, and the tag that said LIVE straight through eight
+  seconds of delay now says `LIVE −8s` when it is behind. The owner has no terminal
+  (CLAUDE.md #10), so a figure nothing on screen could contradict is a figure that stays
+  wrong for five days.
+- **A drift watchdog rejoins the live edge** (`sdrAudio.ts` `checkDrift()`). `<audio>`
+  offers no way to ask for a short buffer: it plays what it has at 1×, so a stall — a
+  lock screen, a lost second of network — is paid back as PERMANENT delay that nothing
+  ever catches up. Re-pointing at the stream is the one move that does, because MP3 has
+  no header and the sidecar simply starts sending from where the air is now. Measured
+  against the stream's OWN floor rather than a fixed ceiling: a browser that always
+  buffers three seconds is not late, and a ceiling under whatever it chose would put a
+  gap in the audio every few seconds chasing a delay that was never going away. It runs
+  ahead of the analyser in the sampler, not behind it — hanging it off the Web Audio tap
+  would have meant a device that refuses an AudioContext silently loses the correction
+  too, on the very device most likely to need it.
+
+**What remains, and what it is bounded by.** The audio path's own contribution is now
+~64 ms of chunking plus the encoder; everything else is the browser's start-up buffer,
+which `<audio>` does not expose a knob for. The watchdog bounds it from growing. Going
+lower than whatever the browser picks needs Media Source Extensions — appending MP3
+frames and driving the buffer directly — which is a real build and is not taken here.
+The spectrum is synced to whatever that residual turns out to be, exactly, so the
+residual costs sync nothing.
+
+**Caption timing (2026-09-02, revised 2026-09-07).** Two lags decide whether a caption
+lines up with the speech, and they point opposite ways. Playback sat a constant ~8.3 s
+behind the live edge (measured in Chromium against the real sidecar over 130 s — stable,
+not drifting, and diagnosed above),
 so a caption shown when it *arrives* lands seconds before the words are heard; the
 client therefore holds each one until `sdrHeardAt()` — the box-clock time of the audio
 at the speaker, anchored on `started_at + elapsed_s` — reaches its start. Against that,
@@ -708,7 +764,10 @@ ends, so segment length plus transcription is how far behind the words it can be
 `large-v3-turbo` at ~9.8 s that floor is ~20 s, well past the ear's 8.3 s, so captions
 still trail the speech. Closing the rest needs a deliberately delayed audio path (prime
 each listener with a rolling MP3 backlog so playback starts further back) or a smaller
-model; both are owner decisions and neither is taken here.
+model; both are owner decisions. **The delayed-audio option is now REFUSED** — asked
+2026-09-07, the owner chose real-time audio and spectrum over captions that line up. The
+hold in `sdrCaptions.ts` stays and simply has less to hold: with playback near the air,
+a caption's remaining lag is whisper's floor, which is the honest one.
 
 The ~9.8 s is INFERENCE, measured across 26 consecutive calls with the model resident.
 An earlier reading of the same flat-in-clip-length number blamed model load/unload; it

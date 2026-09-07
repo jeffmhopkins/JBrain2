@@ -4,6 +4,7 @@
 // the new band with the old band's history under it.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { playSdrAudio, resetSdrAudio } from "./sdrAudio";
 import {
   type SpectrumRow,
   parseRow,
@@ -345,5 +346,151 @@ describe("the signals a row found", () => {
 
   it("reads a row from a box that does not report them at all", () => {
     expect(parseRow(frame())).toMatchObject({ peaks: [] });
+  });
+});
+
+describe("a peak's channel and its measurement", () => {
+  it("carries both, so the label can be checked against what was seen", () => {
+    // The box snaps a signal to its channel when it can establish the grid; the argmax
+    // it actually saw rides alongside. A label nobody can compare against the
+    // measurement is exactly the kind of number this project keeps finding.
+    const row = parseRow(
+      frame({ peaks: [{ hz: 88_100_000, measured_hz: 88_084_400, db: -40, over_db: 22 }] }),
+    );
+
+    expect(row).toMatchObject({
+      peaks: [{ hz: 88_100_000, measuredHz: 88_084_400, db: -40, overDb: 22 }],
+    });
+  });
+
+  it("treats a missing measurement as equal to the label", () => {
+    // Two cases, same answer: a box older than the snap, and this box on a band where it
+    // could not establish a grid. In both the label IS the measurement.
+    const row = parseRow(frame({ peaks: [{ hz: 90_300_000, db: -50, over_db: 14 }] }));
+
+    expect(row).toMatchObject({ peaks: [{ hz: 90_300_000, measuredHz: 90_300_000 }] });
+  });
+});
+
+describe("drawing a row when its audio is heard", () => {
+  /** Put the listener's ear at a known point on the box's clock — the same trick
+   *  sdrCaptions.test.ts uses, because it is the same alignment. */
+  function earAt(boxClock: number, played: number): void {
+    playSdrAudio(boxClock);
+    const el = document.querySelector("audio");
+    if (!el) throw new Error("no audio element");
+    Object.defineProperty(el, "paused", { value: false, configurable: true });
+    Object.defineProperty(el, "currentTime", { value: played, configurable: true });
+  }
+
+  afterEach(() => {
+    resetSdrAudio();
+    vi.useRealTimers();
+  });
+
+  function rows(): number[] {
+    const seen: number[] = [];
+    subscribeSdrSpectrum((_state, row) => {
+      if (row) seen.push(row.at);
+    });
+    return seen;
+  }
+
+  it("holds a row until the speaker reaches it", () => {
+    // THE REPORT: "the spectrum and the actual audio out of my speakers are not
+    // matched", and named the most important thing to get right. Rows come over SSE at
+    // the live edge; the ear is behind it. Both are stamped on the box's own clock, so
+    // this closes the gap exactly rather than approximately.
+    vi.useFakeTimers();
+    earAt(1000, 0); // the speaker is playing the air of one second 1000
+    const stream = openStream();
+    const seen = rows();
+
+    stream.onmessage?.(new MessageEvent("message", { data: frame({ at: 1004 }) }));
+    vi.advanceTimersByTime(500);
+
+    expect(seen).toEqual([]); // four seconds of air the owner has not heard yet
+  });
+
+  it("draws it when the audio arrives, and not before", () => {
+    vi.useFakeTimers();
+    earAt(1000, 0);
+    const stream = openStream();
+    const seen = rows();
+    stream.onmessage?.(new MessageEvent("message", { data: frame({ at: 1004 }) }));
+    vi.advanceTimersByTime(500);
+
+    // The listener has now played four seconds, so 1004 is what is coming out.
+    const el = document.querySelector("audio") as HTMLAudioElement;
+    Object.defineProperty(el, "currentTime", { value: 4, configurable: true });
+    vi.advanceTimersByTime(100);
+
+    expect(seen).toEqual([1004]);
+  });
+
+  it("draws every row that came due, in order, not just the newest", () => {
+    // The difference from captions. Each row is a LINE of the waterfall: dropping the
+    // ones that came due together would eat the history the picture exists to show,
+    // where an older caption is simply past being worth reading.
+    vi.useFakeTimers();
+    earAt(1000, 0);
+    const stream = openStream();
+    const seen = rows();
+    for (const at of [1001, 1002, 1003]) {
+      stream.onmessage?.(new MessageEvent("message", { data: frame({ at }) }));
+    }
+
+    const el = document.querySelector("audio") as HTMLAudioElement;
+    Object.defineProperty(el, "currentTime", { value: 3, configurable: true });
+    vi.advanceTimersByTime(100);
+
+    expect(seen).toEqual([1001, 1002, 1003]);
+  });
+
+  it("draws straight through when there is no audio to match", () => {
+    // A spectrum session on the Radio tab is its own purpose on its own radio and makes
+    // no sound. Nothing to align with, so nothing is held — and a picture that waited
+    // for an ear that does not exist would simply never draw.
+    vi.useFakeTimers();
+    const stream = openStream();
+    const seen = rows();
+
+    stream.onmessage?.(new MessageEvent("message", { data: frame({ at: 5000 }) }));
+
+    expect(seen).toEqual([5000]);
+  });
+
+  it("draws straight through while the radio is paused", () => {
+    // `sdrHeardAt()` goes on answering from a paused element — `currentTime` just stops
+    // — so aligning to it would freeze the waterfall for as long as the owner left the
+    // radio paused while watching the picture.
+    vi.useFakeTimers();
+    earAt(1000, 0);
+    const el = document.querySelector("audio") as HTMLAudioElement;
+    Object.defineProperty(el, "paused", { value: true, configurable: true });
+    const stream = openStream();
+    const seen = rows();
+
+    stream.onmessage?.(new MessageEvent("message", { data: frame({ at: 9000 }) }));
+
+    expect(seen).toEqual([9000]);
+  });
+
+  it("gives up holding rather than freezing the picture for ever", () => {
+    // Both clocks are the box's own and should not drift, but the anchor is taken once
+    // when the stream is attached. If it is ever wrong in the slow direction, a late
+    // picture is a defect and a frozen one is a broken radio.
+    vi.useFakeTimers();
+    earAt(1000, 0);
+    const stream = openStream();
+    const seen = rows();
+
+    stream.onmessage?.(new MessageEvent("message", { data: frame({ at: 1_000_000 }) }));
+    vi.advanceTimersByTime(500);
+    expect(seen).toEqual([]);
+
+    vi.advanceTimersByTime(21_000);
+
+    expect(seen).toEqual([1_000_000]);
   });
 });

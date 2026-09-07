@@ -9,13 +9,31 @@
 // this is the same kind of thing: a stream the owner turns on, off by default, holding
 // a radio while it runs.
 //
-// **No delay is applied, and that is deliberate.** Captions are held back ~8.3 s to
-// match the ear (sdrCaptions.ts), and an early sketch of this said the waterfall should
-// be too. It should not: a spectrum session is its own purpose on its own radio and
-// produces NO audio, so there is nothing to align with. The day one radio both
-// demodulates and draws — the single-hop `rtl_sdr` + FFT tier bands.py calls `fast` —
-// alignment becomes a real question. It is not one now, and a delay added in advance
-// would only make the picture late.
+// **A row is drawn when its audio is HEARD, whenever there is audio to match it.**
+// This said the opposite until the day it named arrived: a spectrum session is its own
+// purpose on its own radio and makes no sound, so there was nothing to align with, and
+// a delay added in advance would only have made the picture late.
+//
+// One radio now both demodulates and draws — `capture.ChannelSink` takes the sound and
+// the picture from THE SAME SAMPLES — so every row of a listening session has an ear to
+// be matched to. They were not matched: rows arrive over SSE at the live edge while
+// playback sits behind it, so the strip showed a burst before the speaker played it and
+// the waterfall drew a station the owner was not yet hearing. REPORTED as "the spectrum
+// and the actual audio out of my speakers are not matched", and named the most important
+// thing to get right. The tape drawn beside the strip is sampled off the audio element,
+// so it was already on the ear's clock and the two disagreed on screen.
+//
+// **This delays the PICTURE, never the sound.** An earlier pass got the order wrong and
+// built the hold while playback was still eight seconds behind, which made a correct
+// mechanism look like an eight-second penalty. The audio latency is cut first
+// (sdrAudio.ts `refused()` and `checkDrift()`); what is left is small, and this closes
+// it exactly rather than approximately — `Frame.at` and the audio anchor are the same
+// box clock (`time.time()` on the sidecar), so there is nothing to estimate.
+//
+// When nothing is playing — a spectrum-only session on the Radio tab, a paused radio —
+// there is no ear, and rows go straight through exactly as they always did.
+
+import { isSdrPlaying, sdrHeardAt } from "./sdrAudio";
 
 /** One waterfall row, exactly as the sidecar framed it (deploy/sdr/listen.py Frame). */
 /** One signal the sidecar found in a row: where it is, how strong, and how far it
@@ -25,7 +43,15 @@
  *  same frames, so "what is on the air" cannot have two answers depending on who asked.
  *  `overDb` travels with it because it is what decided it was a signal at all. */
 export interface SpectrumPeak {
+  /** The CHANNEL this signal is in, when the box could establish a grid — otherwise the
+   *  same as `measuredHz`. This is what a pill is labelled with, and what makes the same
+   *  station keep the same label row after row. */
   hz: number;
+  /** Where its energy actually peaked. A hopped row sees each slice for milliseconds and
+   *  a wideband-FM carrier sweeps its own deviation the whole time, so this moves from
+   *  row to row even when the station does not. Kept so the label can be CHECKED against
+   *  what was seen rather than believed. */
+  measuredHz: number;
   db: number;
   overDb: number;
 }
@@ -113,9 +139,88 @@ let state: SpectrumState = IDLE;
 let source: EventSource | null = null;
 const listeners = new Set<Listener>();
 
+/** A row waiting for the ear, with the wall-clock moment it arrived — see `release`. */
+interface Held {
+  row: SpectrumRow;
+  queuedAt: number;
+}
+
+// Rows arrive at the LIVE EDGE; the listener is behind it. These wait here until the
+// audio they picture actually reaches the speaker.
+let pending: Held[] = [];
+let releaser: ReturnType<typeof setInterval> | null = null;
+
+// Checked faster than rows arrive — the box caps itself at 10 fps — so a row comes out
+// close to the moment it is due rather than at the mercy of the next arrival, which
+// would also strand the last few rows of a stream that goes quiet.
+const RELEASE_HZ = 20;
+// A row held this long is drawn anyway. Both clocks are the box's own, so they should
+// not drift — but the anchor is taken at the moment the stream is attached, and if it
+// is wrong in the slow direction the picture would simply stop for ever. A late picture
+// is a defect; a frozen one is a broken radio.
+const MAX_HOLD_S = 20;
+// The queue holds the playback delay's worth of rows. This is several times any delay
+// the audio path should now produce, so it bounds a leak without biting in normal
+// running.
+const MAX_HELD = 400;
+
 function publish(next: SpectrumState, row: SpectrumRow | null): void {
   state = next;
   for (const listener of listeners) listener(next, row);
+}
+
+function emit(row: SpectrumRow): void {
+  publish(
+    {
+      on: true,
+      latest: row,
+      band: row.view === "band" ? row : state.band,
+      channel: row.view === "channel" ? row : state.channel,
+      rows: state.rows + 1,
+      error: null,
+    },
+    // The row is handed to subscribers directly rather than read back off the state,
+    // so a canvas draws exactly the rows that arrived — never one twice, never a
+    // skipped one, whatever else re-publishes in between.
+    row,
+  );
+}
+
+function hold(row: SpectrumRow): void {
+  pending.push({ row, queuedAt: Date.now() });
+  if (pending.length > MAX_HELD) pending = pending.slice(-MAX_HELD);
+  release();
+}
+
+/**
+ * Draw a row when its audio is heard, not when it arrives.
+ *
+ * `isSdrPlaying()` as well as the anchor, because `sdrHeardAt()` goes on answering from
+ * a PAUSED element — `currentTime` simply stops — and a radio paused while the owner
+ * watches its picture would freeze the waterfall until they pressed play again. No ear
+ * means no alignment to make, so rows go straight through.
+ *
+ * EVERY due row is released, in arrival order, not just the newest: each one is a line
+ * of the waterfall, and dropping the ones that came due together would eat the history
+ * the picture exists to show. That is the difference from `sdrCaptions`, where only the
+ * newest due caption is worth showing.
+ */
+function release(): void {
+  if (pending.length === 0) return;
+  const heard = isSdrPlaying() ? sdrHeardAt() : null;
+  if (heard === null) {
+    const due = pending;
+    pending = [];
+    for (const entry of due) emit(entry.row);
+    return;
+  }
+  const stale = Date.now() - MAX_HOLD_S * 1000;
+  const still: Held[] = [];
+  for (const entry of pending) {
+    if (entry.row.at <= heard || entry.queuedAt <= stale) emit(entry.row);
+    else still.push(entry);
+  }
+  pending = still;
 }
 
 /** One SSE payload as a row, or null for a keepalive, an error, or a torn frame.
@@ -191,10 +296,17 @@ function parsePeaks(raw: unknown): SpectrumPeak[] {
   const out: SpectrumPeak[] = [];
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { hz, db, over_db: over } = entry as Record<string, unknown>;
+    const { hz, measured_hz: measured, db, over_db: over } = entry as Record<string, unknown>;
     if (typeof hz !== "number" || !Number.isFinite(hz)) continue;
     if (typeof db !== "number" || !Number.isFinite(db)) continue;
-    out.push({ hz, db, overDb: typeof over === "number" && Number.isFinite(over) ? over : 0 });
+    out.push({
+      hz,
+      // A box older than the snap sends no measurement, and this box sends none on a
+      // band where it could not establish a grid. In both, the label IS the measurement.
+      measuredHz: typeof measured === "number" && Number.isFinite(measured) ? measured : hz,
+      db,
+      overDb: typeof over === "number" && Number.isFinite(over) ? over : 0,
+    });
   }
   return out;
 }
@@ -255,6 +367,8 @@ export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
   // surface that wants both needs no second stream.
   const stream = new EventSource(`/api/sdr/spectrum?view=${view}`);
   source = stream;
+  pending = [];
+  releaser ??= setInterval(release, 1000 / RELEASE_HZ);
   stream.onmessage = (event: MessageEvent<string>) => {
     const parsed = parseRow(event.data);
     if (!parsed) return; // a keepalive or a torn frame; the next row is a fresh chance
@@ -262,20 +376,7 @@ export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
       publish({ ...state, on: true, error: parsed.error }, null);
       return;
     }
-    publish(
-      {
-        on: true,
-        latest: parsed,
-        band: parsed.view === "band" ? parsed : state.band,
-        channel: parsed.view === "channel" ? parsed : state.channel,
-        rows: state.rows + 1,
-        error: null,
-      },
-      // The row is handed to subscribers directly rather than read back off the state,
-      // so a canvas draws exactly the rows that arrived — never one twice, never a
-      // skipped one, whatever else re-publishes in between.
-      parsed,
-    );
+    hold(parsed);
   };
   stream.onerror = () => {
     // EventSource reconnects on its own, so a blip is not worth saying anything about.
@@ -291,7 +392,16 @@ export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
 export function stopSdrSpectrum(): void {
   source?.close();
   source = null;
+  stopReleasing();
   publish(IDLE, null);
+}
+
+function stopReleasing(): void {
+  if (releaser !== null) clearInterval(releaser);
+  releaser = null;
+  // Dropped rather than flushed: these are rows the owner never saw, and a picture that
+  // has been closed has nowhere to draw them.
+  pending = [];
 }
 
 /** The current reading, for a component mounting mid-stream. */
@@ -311,6 +421,7 @@ export function subscribeSdrSpectrum(listener: Listener): () => void {
 export function resetSdrSpectrum(): void {
   source?.close();
   source = null;
+  stopReleasing();
   listeners.clear();
   state = IDLE;
 }
