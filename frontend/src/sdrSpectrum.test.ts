@@ -494,3 +494,53 @@ describe("drawing a row when its audio is heard", () => {
     expect(seen).toEqual([1_000_000]);
   });
 });
+
+describe("which picture, and off which radio", () => {
+  it("names the radio and the backfill on the wire", () => {
+    vi.stubGlobal("EventSource", FakeSource);
+
+    startSdrSpectrum({ view: "channel", serial: "09022796", backfill: 120 });
+
+    const url = FakeSource.last?.url ?? "";
+    expect(url).toContain("view=channel");
+    expect(url).toContain("serial=09022796");
+    expect(url).toContain("backfill=120");
+  });
+
+  it("REOPENS when another surface wants a different radio", () => {
+    // The bug the omnibox sheet exposed: two tabs over two radios, one stream. The
+    // second tab's ask used to be ignored — "the first caller's view stands" — so it
+    // sat waiting for rows of a picture nothing was sending it.
+    vi.stubGlobal("EventSource", FakeSource);
+    startSdrSpectrum({ view: "band", serial: "AAA" });
+    const first = FakeSource.last;
+
+    startSdrSpectrum({ view: "channel", serial: "BBB" });
+
+    expect(first?.closed).toBe(true);
+    expect(FakeSource.last).not.toBe(first);
+    expect(FakeSource.last?.url).toContain("serial=BBB");
+  });
+
+  it("leaves the stream alone when the same picture is asked for again", () => {
+    // A re-render must not tear down a running waterfall: every row in flight would be
+    // lost and the canvas would blank.
+    vi.stubGlobal("EventSource", FakeSource);
+    startSdrSpectrum({ view: "band", serial: "AAA", backfill: 120 });
+    const first = FakeSource.last;
+
+    startSdrSpectrum({ view: "band", serial: "AAA", backfill: 120 });
+
+    expect(FakeSource.last).toBe(first);
+    expect(first?.closed).toBe(false);
+  });
+
+  it("still takes a bare view, as every caller before two radios did", () => {
+    vi.stubGlobal("EventSource", FakeSource);
+
+    startSdrSpectrum("band");
+
+    expect(FakeSource.last?.url).toContain("view=band");
+    expect(FakeSource.last?.url).not.toContain("serial=");
+  });
+});

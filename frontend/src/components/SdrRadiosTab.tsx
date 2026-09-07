@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { type AprsLogState, receiverHealth } from "../aprsLog";
+import { ago } from "../aprsStations";
 import type { BandSection, SpectrumRange } from "../sdrBands";
 import { JOBS, jobAllowed, jobLabel, jobOf, sessionOn, stateLine } from "../sdrJobs";
 import { type SdrRadio, type SdrRadios, labelFor, roleLabel } from "../sdrRadios";
@@ -26,6 +27,18 @@ import { type SdrListening, useSdrSession } from "../sdrSession";
 import { SdrBandSheet } from "./SdrBandSheet";
 import { SdrSpectrumJob } from "./SdrSpectrumJob";
 import { SdrTunerControls } from "./SdrTunerControls";
+
+/** How many packets the job surface peeks at when nothing hands it a log. Two, because
+ *  it draws ONE and the second only guards against an empty first page. */
+const APRS_PEEK = 2;
+
+/** How often that peek repeats. Far slower than the Radio screen's own poll: this is a
+ *  "still working?" line behind the composer, not a log anyone is reading. */
+const APRS_PEEK_MS = 20_000;
+
+/** How much of a packet's payload the one-line summary shows. The rest is on the log
+ *  screen; a position report is mostly coordinates and reads as noise at this size. */
+const APRS_INFO_CHARS = 48;
 
 export function SdrRadiosTab({
   /** The screen's poll counter. The roster follows it rather than owning a second
@@ -447,16 +460,50 @@ function BlockedJobs({
 }
 
 function AprsJob({ log, onOpenAprs }: { log: AprsLogState | null; onOpenAprs: () => void }) {
+  // The log this surface can see. The Radios tab hands one down from the screen's own
+  // poll; the omnibox sheet has no poll, and a job surface that can only offer a LINK
+  // says nothing about whether the job is working — which is the one thing an owner
+  // opens it for. So it fetches a couple of packets itself when nobody supplied any.
+  const [own, setOwn] = useState<AprsLogState | null>(null);
+  useEffect(() => {
+    if (log) return;
+    let alive = true;
+    const read = () =>
+      void api.getAprsPackets(APRS_PEEK).then(
+        (next) => alive && setOwn(next),
+        () => undefined, // the link below still works; a failed peek is not an error here
+      );
+    read();
+    const timer = window.setInterval(read, APRS_PEEK_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [log]);
+
+  const seen = log ?? own;
   // The health line, not a signal meter: this family already deleted a meter for
   // measuring the wrong thing, and a quiet packet frequency and a dead receiver are
   // indistinguishable without it.
-  const health = log ? receiverHealth(log) : null;
+  const health = seen ? receiverHealth(seen) : null;
+  const newest = seen?.packets[0] ?? null;
   return (
     <>
       {health && (
         <div className={`aprs-health aprs-health-${health.tone}`}>
           <span className="aprs-dot" aria-hidden="true" />
           <span className="aprs-who">{health.text}</span>
+        </div>
+      )}
+      {newest && (
+        // The LAST PACKET, which is the proof the health line can only summarise: a
+        // callsign that arrived out of the air a minute ago is what "it is working"
+        // looks like. Rendered as TEXT and never as anything else — every field here
+        // is a transmission from a stranger (`aprsLog.ts`).
+        <div className="aprs-last">
+          <span className="aprs-call">{newest.source}</span>
+          <span className="aprs-when">{ago(newest.heard_at)} ago</span>
+          <span className="aprs-info">{newest.info.slice(0, APRS_INFO_CHARS)}</span>
         </div>
       )}
       <button type="button" className="band" onClick={onOpenAprs}>

@@ -184,6 +184,15 @@ RESERVATION_TTL_S = 300.0
 # drawn in the wrong place, so a viewer that has stopped reading is dropped rather than
 # queued — the same backpressure, and for the same reason, as live audio.
 SPECTRUM_QUEUE = 4
+
+#: How many recent rows a session keeps per picture, for a viewer that attaches late.
+#:
+#: Sized against the SUBSCRIBE QUEUE rather than against a canvas: the seed goes into a
+#: queue of `SPECTRUM_QUEUE`, so a history longer than that would silently drop its own
+#: oldest rows on the way out and hand the viewer a gap. 120 rows is a minute of a
+#: 2 fps hopped band and twelve seconds of a 10 fps stare — past either the picture is
+#: scrolled off a phone screen anyway.
+HISTORY_ROWS = 120
 # Widest a live spectrum may be, in bins. Every bin crosses a websocket once a second
 # per viewer, and 4096 is already more than a pixel per bin on any screen the PWA runs
 # on — so this is where "any width" stops being free. A caller that wants more span
@@ -1281,12 +1290,16 @@ class Session:
         # a set since a listening session publishes two pictures off one capture and a
         # viewer that wanted the tuning strip must not be handed band rows.
         self._frames: dict[queue.Queue[Frame | None], str] = {}
-        # The most recent row, handed to a viewer the moment it attaches. Without it the
-        # waterfall opens on a blank canvas for up to a whole interval, which reads as a
-        # radio that did not start.
-        # PER VIEW, because seeding a fresh viewer with "the most recent row" from a
-        # session publishing two kinds would hand a tuning strip a band row half the time.
-        self._last: dict[str, Frame] = {}
+        # The recent rows, handed to a viewer the moment it attaches. Without any of them
+        # the waterfall opens on a blank canvas and fills at the row rate — two a second
+        # on a hopped band — so a viewer that comes BACK to a picture that has been
+        # running for minutes sees a nearly empty one, which reads as a radio that did
+        # not start. MEASURED by the owner switching between the tuner and the spectrum
+        # in the omnibox sheet: one strip of waterfall at the bottom of an empty box.
+        #
+        # PER VIEW, because seeding a fresh viewer from a session publishing two kinds
+        # would hand a tuning strip a band row half the time.
+        self._history: dict[str, collections.deque[Frame]] = {}
         # The I/Q engine's open radio and its transform, or None on the rtl_power path.
         # `_kill` walks processes and this is not one, so teardown reaches it by name —
         # and a Radio left open is exactly the leak `/reset` must not fire under.
@@ -1963,7 +1976,10 @@ class Session:
         # agent's tools as fact, and under a moving gain they are a reading of the
         # receiver rather than of the air (`tuner_gain_db`).
         with self._lock:
-            self._last[frame.view] = frame
+            kept = self._history.get(frame.view)
+            if kept is None:
+                kept = self._history[frame.view] = collections.deque(maxlen=HISTORY_ROWS)
+            kept.append(frame)
             subs = [
                 sub
                 for sub, view in self._frames.items()
@@ -1985,25 +2001,46 @@ class Session:
             except queue.Full:
                 pass
 
-    def subscribe_frames(self, view: str | None = None) -> queue.Queue[Frame | None]:
-        """Attach one viewer to one picture, seeded with the most recent row of it.
+    def subscribe_frames(
+        self, view: str | None = None, backfill: int = 1
+    ) -> tuple[queue.Queue[Frame | None], list[Frame]]:
+        """Attach one viewer to one picture, seeded with the rows already drawn.
 
         `view` defaults to `default_view` — what this session's rows meant before there
         was more than one kind — so a caller that does not know about views keeps
-        getting exactly the stream it used to get."""
+        getting exactly the stream it used to get.
+
+        Returns the queue AND the rows already drawn, because the two cannot travel
+        together: the queue is `SPECTRUM_QUEUE` deep on purpose — a waterfall row is
+        worthless late, so a viewer that falls behind drops rows rather than lagging —
+        and a hundred-row seed pushed into four slots would silently discard itself. The
+        caller writes the seed out first, then pumps the queue.
+
+        `backfill` is how many recent rows to hand back, newest LAST so they are in the
+        order they were measured and a waterfall draws them the way it draws every other
+        row. One is the default because that is what this did before, and a caller with
+        nowhere to put a history — the probes — must not be handed one. A viewer asks
+        for as many as its canvas can show."""
         wanted = view or self.default_view
+        # No upper clamp: the ring is `HISTORY_ROWS` long, so asking for more than it
+        # holds gets what it holds. A second bound here would be a number to keep in
+        # step with that one for no gain.
+        want_rows = max(1, int(backfill))
         sub: queue.Queue[Frame | None] = queue.Queue(maxsize=SPECTRUM_QUEUE)
+        # Subscribed and snapshotted UNDER ONE LOCK, so no row can be published into the
+        # gap between them: taken separately, a viewer either misses a row or is handed
+        # one twice, and on a waterfall both are a line that is not what happened.
         with self._lock:
             self._frames[sub] = wanted
-            seed = [
-                frame
-                for kind, frame in self._last.items()
-                if wanted == VIEW_ALL or wanted == kind
-            ]
-        for frame in seed:
-            with contextlib.suppress(queue.Full):
-                sub.put_nowait(frame)
-        return sub
+            seed: list[Frame] = []
+            for kind, kept in self._history.items():
+                if wanted == VIEW_ALL or wanted == kind:
+                    seed.extend(list(kept)[-want_rows:])
+        # Sorted, because `all` interleaves two pictures whose rows were measured
+        # alternately: concatenating them would replay one whole picture and then the
+        # other, which on a waterfall is two blocks of the past rather than the past.
+        seed.sort(key=lambda frame: frame.at)
+        return sub, seed
 
     def unsubscribe_frames(self, sub: queue.Queue[Frame | None]) -> None:
         with self._lock:
@@ -2625,7 +2662,7 @@ KISSPORT {self.kiss_port}
         # attaches. A seeded row is there so a picture does not open blank; one from
         # before the retune is a picture of somewhere else.
         with self._lock:
-            self._last = {}
+            self._history = {}
 
     def resweep(self, sweep: Sweep) -> None:
         """Point a live spectrum at a different range, in place.
@@ -2655,7 +2692,7 @@ KISSPORT {self.kiss_port}
         def apply() -> None:
             self.sweep = sweep
             self.frequency_hz = sweep.centre_hz
-            self._last = {}
+            self._history = {}
             # THE GRID BELONGS TO THE BAND, not to the session. It was settled once and
             # never cleared, so a session retuned from the FM dial (200 kHz raster,
             # origin 100 kHz) onto a 15 kHz plan went on snapping to an origin of
@@ -3016,16 +3053,28 @@ class Tuner:
         """The session with this id, whichever radio it is on."""
         return next((s for s in self.sessions() if s.id == session_id), None)
 
-    def drawing(self) -> Session | None:
+    def drawing(self, serial: str | None = None) -> Session | None:
         """The session publishing waterfall rows, whatever it is holding a radio for.
 
         A live spectrum first, because that is a session whose ONLY output is the
         picture. A listening session on the I/Q engine draws too — the tuning view of
         the channel it is demodulating — and before this the frames route could not
         reach it, so the one surface that most wants a picture was the one that could
-        not be given one."""
-        return self.for_purpose(PURPOSE_SPECTRUM) or next(
-            (s for s in self.sessions() if s.draws_frames), None
+        not be given one.
+
+        **`serial` names a radio, and without it this preference is a bug on a box with
+        two.** With a spectrum running on one dongle and a tuner on the other, every
+        viewer — including the one asking for the tuner's own channel strip — was handed
+        the spectrum session, and waited for rows of a picture that session does not
+        draw. It read as "waiting for the radio" under audio that was plainly playing.
+        A named radio that is drawing nothing is None rather than somebody else's
+        picture: the wrong picture is worse than none, because nothing says it is
+        wrong."""
+        drawn = [s for s in self.sessions() if s.draws_frames]
+        if serial is not None:
+            return next((s for s in drawn if s.serial == serial), None)
+        return next((s for s in drawn if s.purpose == PURPOSE_SPECTRUM), None) or next(
+            iter(drawn), None
         )
 
     def for_purpose(self, purpose: str) -> Session | None:

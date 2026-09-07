@@ -1484,7 +1484,7 @@ class TestTheLiveSpectrum:
 
     def test_a_viewer_is_handed_the_rows_as_they_are_measured(self, tuner) -> None:
         session = self._start(tuner)
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
 
         frame = sub.get(timeout=5)
 
@@ -1510,7 +1510,7 @@ class TestTheLiveSpectrum:
         # Two and a half hops' worth: a span whole hops cannot tile, which is the case.
         stop = 144_000_000 + int(usable * 2.5 * bin_hz)
         session = self._start(tuner, sweep=self._sweep(144_000_000, stop, hops=3))
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
 
         frame = sub.get(timeout=5)
 
@@ -1521,15 +1521,55 @@ class TestTheLiveSpectrum:
         assert len(frame.db) < usable * 3
 
     def test_a_viewer_arriving_late_is_not_shown_a_blank_canvas(self, tuner) -> None:
-        """The seeded row. Without it a waterfall opens on nothing for up to a whole
-        interval, which reads as a radio that did not start."""
+        """The seed. Without it a waterfall opens on nothing for up to a whole interval,
+        which reads as a radio that did not start.
+
+        It comes back BESIDE the queue rather than in it: the queue is four deep on
+        purpose, so a seed of any size would silently drop most of itself."""
         session = self._start(tuner)
-        early = session.subscribe_frames()
+        early, _ = session.subscribe_frames()
         early.get(timeout=5)  # the pump has certainly published by now
 
-        late = session.subscribe_frames()
+        _late, seed = session.subscribe_frames()
 
-        assert late.get_nowait() is not None
+        assert seed and seed[-1] is not None
+
+    def test_a_viewer_can_ask_for_the_rows_already_drawn(self, tuner) -> None:
+        """What the owner saw: switching away from a running waterfall and back showed
+        one strip at the bottom of an empty box, because the picture restarted from
+        nothing at two rows a second."""
+        session = self._start(tuner)
+        warm, _ = session.subscribe_frames()
+        for _ in range(4):
+            warm.get(timeout=5)
+
+        _sub, seed = session.subscribe_frames(backfill=4)
+
+        assert len(seed) >= 3
+        # Oldest first, so a waterfall draws them in the order they were measured.
+        assert [frame.at for frame in seed] == sorted(frame.at for frame in seed)
+
+    def test_the_history_it_keeps_is_a_RING_and_not_a_log(self, tuner) -> None:
+        """A session runs for days on a box with 512 MB, and a row is thousands of
+        floats. The bound is the deque's own — asserted here rather than by publishing
+        past it, which would take minutes of real capture to reach and would pass
+        vacuously at any size below it."""
+        session = self._start(tuner)
+        sub, _ = session.subscribe_frames()
+        sub.get(timeout=5)
+
+        kept = list(session._history.values())
+
+        assert kept and all(ring.maxlen == listen.HISTORY_ROWS for ring in kept)
+
+    def test_asking_for_more_history_than_exists_gets_what_exists(self, tuner) -> None:
+        session = self._start(tuner)
+        sub, _ = session.subscribe_frames()
+        sub.get(timeout=5)
+
+        _late, seed = session.subscribe_frames(backfill=listen.HISTORY_ROWS * 4)
+
+        assert 0 < len(seed) <= listen.HISTORY_ROWS
 
     def test_a_backed_up_viewer_loses_rows_and_never_wedges_the_pump(
         self, tuner
@@ -1538,8 +1578,8 @@ class TestTheLiveSpectrum:
         else's — the same backpressure live audio takes, and for the same reason: a
         waterfall row drawn late is drawn in the wrong place."""
         session = self._start(tuner)
-        stalled = session.subscribe_frames()
-        reading = session.subscribe_frames()
+        stalled, _ = session.subscribe_frames()
+        reading, _ = session.subscribe_frames()
 
         for _ in range(listen.SPECTRUM_QUEUE + 6):
             assert reading.get(timeout=5) is not None
@@ -1551,7 +1591,7 @@ class TestTheLiveSpectrum:
         blocked for ever, each still reporting a healthy picture of a radio nothing is
         watching — the same leak the packet readers had."""
         session = self._start(tuner)
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
 
         tuner.stop(session.id)
 
@@ -1562,7 +1602,7 @@ class TestTheLiveSpectrum:
 
     def test_moving_the_range_keeps_the_session_and_its_viewers(self, tuner) -> None:
         session = self._start(tuner)
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
         was = session.id
 
         session.resweep(self._sweep(440_000_000, 440_200_000))
@@ -1594,7 +1634,7 @@ class TestTheLiveSpectrum:
         screen that had just lost the waterfall AND the radio. Validated before anything
         is destroyed, the tap costs a sentence."""
         session = self._start(tuner)
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
 
         with pytest.raises(listen.SdrError) as refused:
             session.resweep(listen.Sweep.of(7_125_000, 7_300_000, 250, 0))
@@ -2200,7 +2240,7 @@ class TestIQSpectrumEngine:
         )
         session = tuner.current()
         assert session is not None
-        frame = session.subscribe_frames().get(timeout=5)
+        frame = session.subscribe_frames()[0].get(timeout=5)
 
         assert frame is not None
         # 2.4 MS/s over 4000 bins is 600 Hz EXACTLY, which is why this pairing is in
@@ -2625,7 +2665,7 @@ def test_the_tuning_row_is_centred_on_the_station(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
         frame = sub.get(timeout=5)
         assert frame is not None
         middle = frame.start_hz + (frame.stop_hz - frame.start_hz) / 2
@@ -2643,7 +2683,7 @@ def test_the_tuning_row_is_cropped_to_twice_the_passband(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        frame = session.subscribe_frames().get(timeout=5)
+        frame = session.subscribe_frames()[0].get(timeout=5)
         assert frame is not None
         assert frame.passband_hz == pytest.approx(16_000.0)
         span = frame.stop_hz - frame.start_hz
@@ -2824,13 +2864,13 @@ def test_a_retune_drops_the_old_stations_rows(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        warm = session.subscribe_frames(listen.VIEW_CHANNEL)
+        warm, _ = session.subscribe_frames(listen.VIEW_CHANNEL)
         assert warm.get(timeout=5) is not None
-        assert session._last
+        assert session._history
 
         session.tune(145_000_000)
 
-        assert session._last == {}
+        assert session._history == {}
     finally:
         iq_tuner.stop()
 
@@ -2846,7 +2886,7 @@ def test_a_listening_session_draws_the_band_it_is_sitting_in(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        sub = session.subscribe_frames(listen.VIEW_ALL)
+        sub, _ = session.subscribe_frames(listen.VIEW_ALL)
         seen: dict[str, Any] = {}
         end = time.monotonic() + 6.0
         while time.monotonic() < end and len(seen) < 2:
@@ -2887,7 +2927,7 @@ def test_a_band_row_carries_peaks_and_a_channel_row_does_not(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        sub = session.subscribe_frames(listen.VIEW_ALL)
+        sub, _ = session.subscribe_frames(listen.VIEW_ALL)
         seen: dict[str, Any] = {}
         end = time.monotonic() + 6.0
         while time.monotonic() < end and len(seen) < 2:
@@ -2910,8 +2950,8 @@ def test_a_viewer_is_handed_only_the_picture_it_asked_for(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        band = session.subscribe_frames(listen.VIEW_BAND)
-        channel = session.subscribe_frames(listen.VIEW_CHANNEL)
+        band, _ = session.subscribe_frames(listen.VIEW_BAND)
+        channel, _ = session.subscribe_frames(listen.VIEW_CHANNEL)
         got_band = [band.get(timeout=5) for _ in range(3)]
         got_channel = [channel.get(timeout=5) for _ in range(3)]
 
@@ -2929,7 +2969,7 @@ def test_the_default_view_is_the_one_the_session_always_published(iq_tuner) -> N
         session = iq_tuner.find(info.session_id)
         assert session is not None
         assert session.default_view == listen.VIEW_CHANNEL
-        sub = session.subscribe_frames()
+        sub, _ = session.subscribe_frames()
         assert {sub.get(timeout=5).view for _ in range(3)} == {listen.VIEW_CHANNEL}
     finally:
         iq_tuner.stop()
@@ -2955,7 +2995,7 @@ def test_a_fresh_viewer_is_seeded_with_the_latest_row_of_its_own_view(
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        warm = session.subscribe_frames(listen.VIEW_ALL)
+        warm, _ = session.subscribe_frames(listen.VIEW_ALL)
         seen = set()
         end = time.monotonic() + 6.0
         while time.monotonic() < end and len(seen) < 2:
@@ -2963,8 +3003,8 @@ def test_a_fresh_viewer_is_seeded_with_the_latest_row_of_its_own_view(
         assert len(seen) == 2
 
         # Both pictures have been published, so a seed can now be wrong.
-        late = session.subscribe_frames(listen.VIEW_CHANNEL)
-        assert late.get_nowait().view == listen.VIEW_CHANNEL
+        _late, seed = session.subscribe_frames(listen.VIEW_CHANNEL)
+        assert seed and {frame.view for frame in seed} == {listen.VIEW_CHANNEL}
     finally:
         iq_tuner.stop()
 
@@ -3005,12 +3045,12 @@ def test_the_band_is_transformed_only_while_someone_is_watching_it(iq_tuner) -> 
         session = iq_tuner.find(info.session_id)
         assert session is not None
         # A channel viewer is attached, and the band still costs nothing.
-        channel = session.subscribe_frames(listen.VIEW_CHANNEL)
+        channel, _ = session.subscribe_frames(listen.VIEW_CHANNEL)
         for _ in range(3):
             assert channel.get(timeout=5).view == listen.VIEW_CHANNEL
-        assert listen.VIEW_BAND not in session._last
+        assert listen.VIEW_BAND not in session._history
 
-        band = session.subscribe_frames(listen.VIEW_BAND)
+        band, _ = session.subscribe_frames(listen.VIEW_BAND)
         assert band.get(timeout=5).view == listen.VIEW_BAND
 
         # ...and it stops again when the last band viewer goes.
@@ -3135,7 +3175,7 @@ def test_a_band_row_measured_under_agc_carries_no_peaks(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        sub = session.subscribe_frames(listen.VIEW_BAND)
+        sub, _ = session.subscribe_frames(listen.VIEW_BAND)
         row = sub.get(timeout=5)
         assert row is not None
         assert row.view == listen.VIEW_BAND
@@ -3151,7 +3191,7 @@ def test_a_band_row_at_a_fixed_gain_is_measured(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        sub = session.subscribe_frames(listen.VIEW_BAND)
+        sub, _ = session.subscribe_frames(listen.VIEW_BAND)
         row = sub.get(timeout=5)
         assert row is not None
         assert row.peaks
@@ -3212,7 +3252,7 @@ def test_an_SSB_row_shades_the_sideband_it_can_actually_HEAR(iq_tuner) -> None:
         try:
             session = iq_tuner.find(info.session_id)
             assert session is not None
-            frame = session.subscribe_frames(listen.VIEW_CHANNEL).get(timeout=5)
+            frame = session.subscribe_frames(listen.VIEW_CHANNEL)[0].get(timeout=5)
             assert frame is not None
             # 3100 Hz wide, not 6800: the two edges, not a half-width doubled.
             assert frame.passband_hz == pytest.approx(3_100.0)
@@ -3234,7 +3274,7 @@ def test_a_symmetric_mode_shades_exactly_where_it_always_did(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        frame = session.subscribe_frames(listen.VIEW_CHANNEL).get(timeout=5)
+        frame = session.subscribe_frames(listen.VIEW_CHANNEL)[0].get(timeout=5)
         assert frame is not None
         assert frame.passband_hz == pytest.approx(16_000.0)
         assert frame.passband_centre_hz == 0.0
@@ -3292,7 +3332,7 @@ def test_every_row_says_what_GAIN_it_was_measured_at(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        frame = session.subscribe_frames().get(timeout=5)
+        frame = session.subscribe_frames()[0].get(timeout=5)
         assert frame is not None
 
         assert frame.gain_db == pytest.approx(24.0)
@@ -3308,7 +3348,7 @@ def test_a_row_measured_under_the_radios_OWN_loop_says_so(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        frame = session.subscribe_frames().get(timeout=5)
+        frame = session.subscribe_frames()[0].get(timeout=5)
         assert frame is not None
 
         assert frame.gain_db is None
@@ -3338,7 +3378,7 @@ def test_a_hop_does_not_pay_a_settle_this_radio_does_not_need(iq_tuner) -> None:
     try:
         session = iq_tuner.find(info.session_id)
         assert session is not None
-        session.subscribe_frames().get(timeout=5)
+        session.subscribe_frames()[0].get(timeout=5)
     finally:
         iq_tuner.stop()
 
@@ -3399,3 +3439,56 @@ def test_a_stalled_listener_is_dropped_after_seconds_not_half_a_minute() -> None
     held_s = listen._SUB_QUEUE_CHUNKS * listen.AUDIO_CHUNK_S
 
     assert 2.0 <= held_s <= 8.0
+
+
+class TestWhichRadioIsDrawing:
+    """`drawing()` picks the session a viewer is attached to, and on a two-dongle box
+    picking it by PREFERENCE rather than by name is a bug the owner sees as a dead
+    surface: with a spectrum on one radio and the tuner on the other, every viewer —
+    including the tuner's own channel strip — was handed the spectrum session and waited
+    for rows it does not draw."""
+
+    class _Drawing:
+        """A session as `drawing()` reads it: a serial, a purpose, and whether it
+        draws anything at all."""
+
+        def __init__(self, serial: str, purpose: str, draws: bool = True) -> None:
+            self.serial = serial
+            self.purpose = purpose
+            self.draws_frames = draws
+
+    def _tuner(self, monkeypatch, sessions):
+        tuner = listen.Tuner.__new__(listen.Tuner)
+        monkeypatch.setattr(type(tuner), "sessions", lambda _self: sessions)
+        return tuner
+
+    def test_a_named_radio_gets_ITS_session_and_not_the_preferred_one(
+        self, monkeypatch
+    ) -> None:
+        watching = self._Drawing("BBB", listen.PURPOSE_SPECTRUM)
+        listening = self._Drawing("AAA", listen.PURPOSE_LISTEN)
+        tuner = self._tuner(monkeypatch, [listening, watching])
+
+        assert tuner.drawing(serial="AAA") is listening
+        assert tuner.drawing(serial="BBB") is watching
+
+    def test_a_named_radio_drawing_nothing_is_None_rather_than_someone_elses_picture(
+        self, monkeypatch
+    ) -> None:
+        # The wrong picture is worse than none: every row would draw correctly, at
+        # frequencies the owner is not listening to, with nothing saying so.
+        watching = self._Drawing("BBB", listen.PURPOSE_SPECTRUM)
+        idle = self._Drawing("AAA", listen.PURPOSE_APRS, draws=False)
+        tuner = self._tuner(monkeypatch, [idle, watching])
+
+        assert tuner.drawing(serial="AAA") is None
+
+    def test_with_no_name_it_still_prefers_the_spectrum_session(
+        self, monkeypatch
+    ) -> None:
+        # Unchanged for every caller that predates two radios.
+        watching = self._Drawing("BBB", listen.PURPOSE_SPECTRUM)
+        listening = self._Drawing("AAA", listen.PURPOSE_LISTEN)
+        tuner = self._tuner(monkeypatch, [listening, watching])
+
+        assert tuner.drawing() is watching

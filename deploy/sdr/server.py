@@ -1154,9 +1154,26 @@ class Handler(BaseHTTPRequestHandler):
                 {"detail": f"view must be one of {', '.join(listen.VIEWS)}"},
             )
             return
-        session = TUNER.drawing()
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        named = (query.get("serial", [""])[0] or "").strip() or None
+        try:
+            backfill = int(query.get("backfill", ["1"])[0])
+        except ValueError:
+            backfill = 1
+        # WHICH RADIO, and this is the whole of the bug it fixes. `drawing()` prefers a
+        # spectrum session, so on a two-dongle box with a spectrum running, a viewer
+        # asking for the TUNING strip of a listening radio was attached to the other
+        # radio's band picture and waited for channel rows that could never come. It
+        # read as "waiting for the radio" under audio that was plainly playing.
+        session = TUNER.drawing(serial=named)
         if session is None:
             held = TUNER.sessions()
+            if named and held:
+                self._json(
+                    409,
+                    {"detail": f"radio {named} is not drawing anything"},
+                )
+                return
             if held:
                 # Name the holder rather than saying "idle", which is false and sends
                 # the owner looking for a radio that is plainly in use.
@@ -1166,12 +1183,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(409, {"detail": "nothing is watching the spectrum"})
             return
-        sub = session.subscribe_frames(wanted or None)
+        sub, seeded = session.subscribe_frames(wanted or None, backfill=backfill)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
+            # The rows already drawn, oldest first, before a single live one — so a
+            # viewer that comes back to a picture that has been running for minutes
+            # gets the picture rather than a blank box filling at two rows a second.
+            for frame in seeded:
+                self.wfile.write(json.dumps(frame.as_dict()).encode() + b"\n")
+            self.wfile.flush()
             while True:
                 try:
                     frame = sub.get(timeout=20)
@@ -1254,7 +1277,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         rows = listen.SurveyRows(want_bin_hz)
         lines: list[str] = []
-        sub = session.subscribe_frames(listen.VIEW_BAND)
+        sub, _ = session.subscribe_frames(listen.VIEW_BAND)
         started = time.monotonic()
         deadline = started + sweep.seconds
         stopped_early = False
@@ -1536,7 +1559,7 @@ class Handler(BaseHTTPRequestHandler):
         # THE BAND, named rather than defaulted: this probe's verdict is about a wideband
         # picture, and a session that also drew a channel would otherwise get to answer
         # with rows measured over 32 kHz of one station.
-        sub = session.subscribe_frames(listen.VIEW_BAND)
+        sub, _ = session.subscribe_frames(listen.VIEW_BAND)
         frames: list[listen.Frame] = []
         started = time.monotonic()
         deadline = started + seconds
@@ -1654,7 +1677,7 @@ class Handler(BaseHTTPRequestHandler):
         # a picture of the tuned channel. A band row reaching that arithmetic would report
         # a station's own neighbours as its SNR.
         sub = (
-            session.subscribe_frames(listen.VIEW_CHANNEL) if session.draws_frames else None
+            session.subscribe_frames(listen.VIEW_CHANNEL)[0] if session.draws_frames else None
         )
         # ...and the BAND, when asked, off the very same capture. This is what W3 buys
         # and the only way to see it without a browser: what else was on the air while
@@ -1663,7 +1686,7 @@ class Handler(BaseHTTPRequestHandler):
         # Subscribing is also what turns the band transform ON (`capture.BandSink`), so
         # a probe that does not ask costs nothing.
         band_sub = (
-            session.subscribe_frames(listen.VIEW_BAND)
+            session.subscribe_frames(listen.VIEW_BAND)[0]
             if want_band and session.draws_frames
             else None
         )

@@ -55,3 +55,24 @@ implementation settled beyond the mock:
   icon at all — the sheet would have had no way in.
 - `SdrTunerSheet`, the wrapper this replaces, is gone; its controls live on as
   `SdrTunerControls.tsx`, mounted by this sheet and by the Radios tab.
+
+**Corrected 2026-09-07, from the owner's own screenshots.** Two tabs over two radios is
+a thing the surfaces underneath had never been asked to do, and three faults fell out of
+it at once:
+
+- **The picture came back blank.** Switching away and back restarted the waterfall from
+  nothing at the row rate — one strip at the bottom of an empty box. A session now keeps
+  its recent rows (`listen.HISTORY_ROWS`) and hands them to a viewer as it attaches, so
+  a picture that has been running for minutes comes back as a picture.
+- **The tuning strip said "waiting for the radio" under audio that was playing.** The
+  spectrum stream served whatever `drawing()` chose, and it PREFERS a spectrum session —
+  so with the other dongle sweeping, the tuner's own channel strip was attached to the
+  sweep and waited for rows that session does not draw. The stream takes a `serial` now,
+  and a named radio drawing nothing is an error rather than somebody else's picture. The
+  PWA also stopped letting "the first caller's view" stand: a surface asking for a
+  different picture reopens the stream instead of inheriting one.
+- **The APRS surface could only offer a link.** Whether the job is working is the one
+  thing an owner opens it for, so it shows the last packet heard — callsign, when, and
+  the start of what it said — fetched by the surface itself when nothing hands it a log.
+  The health line's omission (recorded above as deliberate) stands only where a log is
+  already being polled; behind the composer this peek is what replaces it.
