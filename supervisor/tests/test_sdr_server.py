@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import sys
 import threading
 import time
@@ -2171,3 +2172,28 @@ def test_bins_that_measured_NOTHING_are_counted_as_holes() -> None:
 
     assert verdict["gaps"] == 4
     assert verdict["gaps_per_row"] == 2.0
+
+
+def test_a_CROPPED_hopped_frame_is_not_called_a_fault() -> None:
+    """This check has now cried wolf twice, in opposite directions.
+
+    First it compared a hopped row against one capture's `fft_bins` and called every
+    correct hopped frame wrong. Then the row started being cropped to the span that was
+    asked for — whole hops overshoot it — and comparing against the uncropped hop total
+    called every correct frame wrong again: "2134 bins against the 2332 the capture asks
+    for", measured on fm-broadcast, where 2134 is exactly 88-108 MHz at 9375 Hz.
+    """
+    rate_hz, fft_bins, hops = 2_400_000, 256, 11
+    swept = listen.Sweep.of(
+        88_000_000, 108_000_000, 9375, 60, capture=(rate_hz, fft_bins), hops=hops
+    )
+    cropped = math.ceil((108_000_000 - 88_000_000) / 9375)
+    assert cropped < listen.hop_usable_bins(fft_bins) * hops, "the crop must bite here"
+
+    verdict = server._spectrum_verdict(
+        swept, [_frame(9375, cropped, start_hz=88_000_000)], 3.0, "iq"
+    )
+
+    assert not any("bins per frame" in f for f in verdict["findings"]), verdict[
+        "findings"
+    ]
