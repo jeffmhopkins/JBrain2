@@ -558,19 +558,22 @@ def test_the_grid_a_row_settles_is_the_one_a_caller_can_hold() -> None:
     assert peaks._snapped(88_309_000.0, settled, 200_000) == 88_300_000.0
 
 
-def test_two_runs_that_snap_to_ONE_channel_are_one_signal() -> None:
-    """Snapping can collide, and nothing downstream can undo it.
+def test_a_channel_whose_energy_is_all_in_its_NEIGHBOURS_is_not_reported() -> None:
+    """This asserted the opposite until the guard margin shipped, and the change is a
+    real one rather than a fixture repair.
 
-    The adjacency rule breaks a run on a gap wider than `MIN_FOLD_BINS`, which is right
-    for two stations a few bins apart and wrong for one wideband-FM carrier whose middle
-    dips below the threshold in the row that happened to be measured: two runs, two
-    peaks, both landing on the same channel once snapped. The viewer holds peaks by
-    frequency and kept both — REPORTED as two pills reading 106.100 side by side, at
-    +23.2 and +22.3 dB.
+    Two runs 130 kHz apart both snap to the channel between them — the narrow window
+    where `find` keeps them separate (wider than `SAME_SIGNAL_SHARE`) and both sit
+    within `MAX_RASTER_PULL` of one channel. `_one_per_channel` was the answer:
+    collapse them, keep the strongest. But look at the shape: two humps with a hole
+    between them, on a channel with nothing in it. That is not one station reported
+    twice; it is a channel whose energy is entirely in its neighbours, which is exactly
+    what `guard_margin_db` exists to reject.
+
+    So the collision `_one_per_channel` handles is now unreachable through `find` on any
+    band with a grid. It is kept, still tested directly below, because it is still the
+    right answer where there is no grid to anchor a guard on.
     """
-    # 130 kHz apart, which is the only window where this can happen: wider than
-    # SAME_SIGNAL_SHARE (120 kHz) so `find` keeps them separate, and each within
-    # MAX_RASTER_PULL (70 kHz) of 106.100 so both snap onto it.
     row = _dial_at(
         bin_hz=9375,
         bins=2000,
@@ -581,9 +584,7 @@ def test_two_runs_that_snap_to_ONE_channel_are_one_signal() -> None:
 
     found = peaks.find(row, 88_000_000, 9375, channel_hz=200_000, origin=100_000.0)
 
-    labels = [signal["hz"] for signal in found]
-    assert labels == sorted(set(labels)), f"a channel reported twice: {labels}"
-    assert 106_100_000.0 in labels
+    assert [signal["hz"] for signal in found] == []
 
 
 def test_collapsing_a_channel_keeps_the_STRONGEST_reading_of_it() -> None:
