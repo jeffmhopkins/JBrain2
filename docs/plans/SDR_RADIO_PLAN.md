@@ -379,15 +379,24 @@ Three decisions worth keeping:
   so a still image of a sweep and the live picture of the same band are the same picture.
   (This is why no new DESIGN.md colour token was needed, which the mock round had left
   open.)
-- **No delay is applied to the rows.** Captions are held to match the ear; an early
-  sketch said the waterfall should be too. It should not — a spectrum session is its own
-  purpose on its own radio and produces no audio, so there is nothing to align with.
-  Alignment became a real question the day one radio both demodulates and draws, which
-  is the `fast` tier above and is now how a listening session works. **Asked and
-  answered (2026-09-07): the rows stay at the live edge and the AUDIO comes forward to
-  meet them.** Holding rows back was built and thrown away — the owner's words were "I'd
-  rather have more real time with the spectrum and the audio" — and the delay it would
-  have matched turned out not to be a pipeline latency at all (see Caption timing).
+- **A row is drawn when its audio is heard, whenever there is audio to match it.** This
+  read the other way round until the day it named arrived: a spectrum session is its own
+  purpose on its own radio and makes no sound, so there was nothing to align with, and a
+  delay added in advance would only have made the picture late. One radio now both
+  demodulates and draws, off the same samples, so every row of a LISTENING session has
+  an ear. A spectrum-only session still draws straight through, and so does a paused
+  radio.
+
+  **Order matters, and the first pass got it wrong (2026-09-07).** The hold was built
+  while playback was still ~8 s behind, which made a correct mechanism look like an
+  eight-second penalty — the owner's answer was "I'd rather have more real time with the
+  spectrum and the audio versus the closed captioning being in sync", and the hold was
+  thrown away. It is back, in the right order: **cut the audio latency first, then close
+  what is left exactly.** `Frame.at` and the audio anchor are the same box clock, so the
+  closing is exact rather than approximate. The owner's ranking is on the record — "is
+  there a way to perfectly sync the spectrum to the audio? that's the most important
+  thing to actually be synced" — and the thing this delays is the PICTURE, never the
+  sound.
 - **Shortwave listens and cannot be drawn.** `rtl_power` hardcodes direct-sampling mode
   1 — the ADC's I branch — while this hardware wires Q, so the band picker disables those
   rows with the reason on them rather than offering a tap that ends in a 400.
@@ -718,6 +727,25 @@ wait before someone pressed play. Three changes, all shipped together:
   seconds of delay now says `LIVE −8s` when it is behind. The owner has no terminal
   (CLAUDE.md #10), so a figure nothing on screen could contradict is a figure that stays
   wrong for five days.
+- **A drift watchdog rejoins the live edge** (`sdrAudio.ts` `checkDrift()`). `<audio>`
+  offers no way to ask for a short buffer: it plays what it has at 1×, so a stall — a
+  lock screen, a lost second of network — is paid back as PERMANENT delay that nothing
+  ever catches up. Re-pointing at the stream is the one move that does, because MP3 has
+  no header and the sidecar simply starts sending from where the air is now. Measured
+  against the stream's OWN floor rather than a fixed ceiling: a browser that always
+  buffers three seconds is not late, and a ceiling under whatever it chose would put a
+  gap in the audio every few seconds chasing a delay that was never going away. It runs
+  ahead of the analyser in the sampler, not behind it — hanging it off the Web Audio tap
+  would have meant a device that refuses an AudioContext silently loses the correction
+  too, on the very device most likely to need it.
+
+**What remains, and what it is bounded by.** The audio path's own contribution is now
+~64 ms of chunking plus the encoder; everything else is the browser's start-up buffer,
+which `<audio>` does not expose a knob for. The watchdog bounds it from growing. Going
+lower than whatever the browser picks needs Media Source Extensions — appending MP3
+frames and driving the buffer directly — which is a real build and is not taken here.
+The spectrum is synced to whatever that residual turns out to be, exactly, so the
+residual costs sync nothing.
 
 **Caption timing (2026-09-02, revised 2026-09-07).** Two lags decide whether a caption
 lines up with the speech, and they point opposite ways. Playback sat a constant ~8.3 s

@@ -400,3 +400,115 @@ describe("how far behind the air the speaker is", () => {
     expect(sdrAudioLag()).toBeNull();
   });
 });
+
+describe("keeping playback near the air", () => {
+  /** An element whose lag we can set: `<audio>` gives no way to ask for a short buffer,
+   *  so the only lever is what `buffered.end` and `currentTime` say. */
+  function lagOf(el: HTMLAudioElement, seconds: number, played = 10): void {
+    Object.defineProperty(el, "paused", { value: false, configurable: true });
+    Object.defineProperty(el, "currentTime", { value: played, configurable: true });
+    Object.defineProperty(el, "buffered", {
+      value: { length: 1, end: () => played + seconds },
+      configurable: true,
+    });
+  }
+
+  function start(): HTMLAudioElement {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    playSdrAudio(1000);
+    const el = element();
+    if (!el) throw new Error("no audio element");
+    return el;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("does not fight the buffer the browser chose for itself", () => {
+    // The reason this measures DRIFT from the stream's own floor and not an absolute
+    // ceiling. A browser that always buffers three and a half seconds before it starts
+    // is not LATE — that is simply what it does — and a fixed ceiling below whatever it
+    // picked would reconnect for ever, putting a gap in the audio every few seconds to
+    // chase a delay that was never going to go away.
+    //
+    // Deliberately WIDER than DRIFT_S, which is what makes this a test of the floor
+    // rather than of the threshold: a ceiling at DRIFT_S would tear this stream down.
+    vi.useFakeTimers();
+    const el = start();
+    lagOf(el, 3.5);
+    const load = vi.spyOn(el, "load");
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(load).not.toHaveBeenCalled();
+    expect(sdrAudioLag()).toBeCloseTo(3.5, 3);
+  });
+
+  it("rejoins the live edge once playback falls behind where it was", () => {
+    // A stall — a lock screen, a lost second of network — is paid back by `<audio>` as
+    // PERMANENT delay: it plays what it has at 1x and nothing ever catches it up.
+    // Reconnecting is the one move that does, because MP3 has no header and the sidecar
+    // simply starts sending from wherever the air is now.
+    vi.useFakeTimers();
+    const el = start();
+    lagOf(el, 0.4);
+    vi.advanceTimersByTime(2000); // the floor is established at 0.4 s
+
+    const load = vi.spyOn(el, "load");
+    lagOf(el, 5.0); // the stall
+    vi.advanceTimersByTime(2000);
+
+    expect(load).toHaveBeenCalled();
+    expect(el.getAttribute("src")).toContain(SDR_AUDIO_SRC);
+  });
+
+  it("re-anchors the timeline it just moved", () => {
+    // Position zero is a NEW moment on the box's clock after a rejoin. Keeping the old
+    // anchor would put every caption — and every spectrum row, which is aligned the
+    // same way — out by the whole of the drift that was just corrected.
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const el = start();
+    lagOf(el, 0.4);
+    vi.advanceTimersByTime(2000);
+
+    lagOf(el, 5.0);
+    vi.advanceTimersByTime(2000);
+    Object.defineProperty(el, "currentTime", { value: 0, configurable: true });
+
+    // The drift appears at t=2 s and the watchdog checks once a second, so the rejoin
+    // lands at t=3: the fresh stream's position zero is the air at 1003, not the stale
+    // 1000 the first attach recorded.
+    expect(sdrHeardAt()).toBeCloseTo(1003, 1);
+  });
+
+  it("does not stutter its way through a link that keeps losing ground", () => {
+    // Each rejoin costs an audible gap. A connection falling further behind every
+    // second would otherwise be answered with a gap every second — the stutter being
+    // worse than the delay it is chasing, and no nearer to fixing it.
+    //
+    // A GROWING lag, because a steady one is already handled by the floor resetting
+    // after a rejoin; only a climbing one reaches the rate limit at all.
+    vi.useFakeTimers();
+    const el = start();
+    let behind = 0.4;
+    Object.defineProperty(el, "paused", { value: false, configurable: true });
+    Object.defineProperty(el, "currentTime", { value: 10, configurable: true });
+    Object.defineProperty(el, "buffered", {
+      value: { length: 1, end: () => 10 + behind },
+      configurable: true,
+    });
+    vi.advanceTimersByTime(2000); // the floor is established at 0.4 s
+    const load = vi.spyOn(el, "load");
+
+    for (let second = 0; second < 12; second += 1) {
+      behind += 3;
+      vi.advanceTimersByTime(1000);
+    }
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+});

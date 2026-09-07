@@ -54,6 +54,27 @@ const TAPE_LEN = SAMPLE_HZ * TAPE_WINDOW_S;
 // height without flattening a loud one against the top.
 const TAPE_GAIN = 2.6;
 
+// The lowest lag seen since this stream was attached, and when the drift watchdog last
+// acted. See `checkDrift`.
+let floorLag: number | null = null;
+// -Infinity, not 0: zero would read as "rejoined at the Unix epoch", which is only ever
+// far enough in the past by accident of what the clock happens to say.
+let lastRejoin = Number.NEGATIVE_INFINITY;
+let ticks = 0;
+
+/** How much ABOVE this stream's own best lag counts as drift worth correcting.
+ *
+ *  Measured against the floor rather than an absolute ceiling, because the browser
+ *  decides its own start-up buffer and we do not get a say: an absolute ceiling below
+ *  whatever it chose would reconnect every few seconds for ever, putting a gap in the
+ *  audio to fix a delay that was never going to go away. The floor is what this
+ *  browser, on this link, actually achieved — so this only ever fires on a stream that
+ *  has fallen behind where it already was. */
+const DRIFT_S = 2;
+/** No more than one rejoin this often: a reconnect costs an audible gap, and a slow
+ *  link must not be answered with a stutter every second. */
+const REJOIN_EVERY_S = 15;
+
 const levels = new Float32Array(TAPE_LEN);
 let levelAt = 0;
 let sampler: ReturnType<typeof setInterval> | null = null;
@@ -123,7 +144,50 @@ export function sdrLevels(): { levels: Float32Array; at: number; length: number 
   return { levels, at: levelAt, length: TAPE_LEN };
 }
 
+/**
+ * Rejoin the live edge when playback has fallen behind where it was.
+ *
+ * `<audio>` gives no way to say "keep me near live": it plays what it has at 1x, so any
+ * stall — a lock screen, a lost second of network — is paid back as permanent delay,
+ * and nothing ever catches it up. Reconnecting is the one move that does: MP3 has no
+ * header, so re-pointing at the stream simply starts decoding wherever the sidecar is
+ * NOW. `toggleSdrAudio` has always made exactly this move on resume, for exactly this
+ * reason; this is the same move made without being asked.
+ *
+ * Against the stream's OWN floor, not a fixed ceiling — see `DRIFT_S`. And re-anchored,
+ * because the new position-zero is a new moment on the box's clock; leaving the old
+ * anchor would put every caption out by the whole of the drift that was just corrected.
+ */
+function checkDrift(): void {
+  const el = element;
+  const lag = sdrAudioLag();
+  if (!el || lag === null) return;
+  if (floorLag === null || lag < floorLag) floorLag = lag;
+  const now = Date.now() / 1000;
+  if (lag <= floorLag + DRIFT_S || now - lastRejoin < REJOIN_EVERY_S) return;
+  lastRejoin = now;
+  floorLag = null;
+  try {
+    el.removeAttribute("src");
+    el.load();
+    el.src = SDR_AUDIO_SRC;
+    anchor = boxNow();
+    attempt(el);
+  } catch {
+    // The element refused to be re-pointed; it is still playing, merely late.
+  }
+}
+
 function sample(): void {
+  // FIRST, and before the analyser is looked at. Keeping playback near the air has
+  // nothing to do with drawing the tape, and hanging it off the tap would have meant a
+  // browser that refuses an AudioContext — or one that suspended it — silently loses
+  // the drift correction too, on the very device most likely to need it.
+  //
+  // Decimated: the lag moves on the scale of seconds, and reading `buffered` twenty
+  // times a second to watch it is twenty times the work for the same answer.
+  ticks = (ticks + 1) % SAMPLE_HZ;
+  if (ticks === 0) checkDrift();
   const node = analyserNode;
   if (!node || !isSdrPlaying()) return;
   // THE CONTEXT CAN GO AWAY UNDER US, and the audio does not go with it.
@@ -260,6 +324,8 @@ export function playSdrAudio(serverNow?: number): void {
   // the suffix test rather than equality.
   if (typeof serverNow === "number") boxClock = { at: serverNow, local: Date.now() };
   if (!el.src.endsWith(SDR_AUDIO_SRC)) {
+    // A fresh stream's lag has nothing to do with the last one's.
+    floorLag = null;
     el.src = SDR_AUDIO_SRC;
     // Anchor the stream's timeline to the BOX's clock at the instant we asked for it.
     // The stream is live, so the first byte the sidecar sends is the air at this
@@ -274,7 +340,9 @@ export function playSdrAudio(serverNow?: number): void {
   }
   if (el.paused) attempt(el);
   armAnalyser();
-  if (analyserNode) startSampling();
+  // Unconditionally: the sampler carries the drift watchdog as well as the tape, and
+  // only the tape needs an analyser.
+  startSampling();
 }
 
 /** Release the stream. Called when the lease ends, never when the sheet closes. */
@@ -414,6 +482,9 @@ export function resetSdrAudio(): void {
   resuming = false;
   anchor = null;
   boxClock = null;
+  floorLag = null;
+  lastRejoin = Number.NEGATIVE_INFINITY;
+  ticks = 0;
   stopSampling();
   samples = null;
 }
