@@ -1,0 +1,50 @@
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --green-tint: rgba(143,188,154,.13);
+  --amber-tint: rgba(201,163,106,.13); --violet-tint: rgba(164,147,201,.13);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.note {
+  padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+.note b { color: var(--text); font-weight: 600; }
+.sheet {
+  background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0; overflow: hidden;
+}
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 4px; }
+.job { display: flex; align-items: center; gap: 8px; padding: 10px 16px 6px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.listen { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.aprs { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
+.dot.spectrum { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.dot.idle { background: var(--text-3); box-shadow: none; }
+.job-name { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
+.radio-name { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.headline { padding: 0 16px 2px; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+.sub { padding: 0 16px 12px; font-size: 13px; color: var(--text-2); }
+.face { margin: 0 16px 12px; height: 74px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); position: relative; overflow: hidden; }
+.tape { position: absolute; inset: 0; }
+.transport { display: flex; align-items: center; gap: 10px; padding: 0 16px 16px; }
+.play { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 15px; display: grid; place-items: center; }
+.live { font-size: 11px; letter-spacing: .1em; color: var(--green); }
+.rows { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 6px; }
+.row { display: flex; gap: 10px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.row b { color: var(--text); font-weight: 500; min-width: 84px; }
+.wf { margin: 0 16px 12px; height: 78px; border-radius: 8px; background: linear-gradient(90deg,#0b1a2a,#12324e 8%,#0b1a2a 16%,#0b1a2a 28%,#1b4a6e 34%,#0b1a2a 42%,#0b1a2a 56%,#2a6a94 61%,#0b1a2a 68%,#0b1a2a 82%,#17405f 87%,#0b1a2a 94%); border: 1px solid var(--border); }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
+.pill { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.pill.on { border-color: var(--accent); color: var(--text); }

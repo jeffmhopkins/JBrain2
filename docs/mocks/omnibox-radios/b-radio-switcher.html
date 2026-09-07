@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B &mdash; radio switcher</title><link rel="stylesheet" href="_shared.css">
+<style>
+.seg { display:flex; gap:6px; padding:6px 16px 10px; }
+.tab { flex:1; display:flex; align-items:center; gap:7px; padding:8px 10px; border:1px solid var(--border);
+  border-radius:9px; background:transparent; color:var(--text-2); font-size:12px; font-family:inherit; }
+.tab.on { background:var(--surface-2); border-color:var(--accent); color:var(--text); }
+.tab .who { font-variant-numeric:tabular-nums; }
+.tab .what { margin-left:auto; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3); }
+.tab.on .what { color:var(--text-2); }
+</style>
+<div class="phone">
+  <div class="note"><b>B &mdash; radio switcher.</b> A tab per radio at the top of the sheet, each
+  showing what that radio is doing. Tap to switch. Nothing hidden behind a gesture.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="seg">
+      <button class="tab on" data-i="0"><span class="dot spectrum"></span><span class="who">09022796</span><span class="what">Spectrum</span></button>
+      <button class="tab" data-i="1"><span class="dot aprs"></span><span class="who">77192819</span><span class="what">APRS</span></button>
+    </div>
+    <div id="p0"><div class="job"><span class="dot spectrum"></span><span class="job-name">Spectrum</span><span class="radio-name">Telescoping antenna</span></div>
+ <div class="headline">FM broadcast <span style="font-size:15px;color:var(--text-2);font-weight:400">88&ndash;108</span></div>
+ <div class="sub">2134 bins of 9.4&#8239;kHz &middot; 2 rows a second</div>
+ <div class="wf"></div>
+ <div class="pills"><span class="pill on">96.500</span><span class="pill on">98.500</span><span class="pill on">102.700</span><span class="pill">104.700</span><span class="pill">107.100</span><span class="pill">+14</span></div></div>
+    <div id="p1" hidden><div class="job"><span class="dot aprs"></span><span class="job-name">APRS logging</span><span class="radio-name">Roof discone</span></div>
+ <div class="headline">144.390 <span style="font-size:15px;color:var(--text-2);font-weight:400">NFM</span></div>
+ <div class="sub">2&#8239;m packet · 61 heard today</div>
+ <div class="rows">
+   <div class="row"><b>KJ4ERJ-15</b> 11:52 &middot; 7.2&#8239;km SW</div>
+   <div class="row"><b>W4MLB-10</b> 11:49 &middot; digipeater</div>
+   <div class="row"><b>KI4TTZ-9</b> 11:47 &middot; 22&#8239;km N</div>
+   <div class="row"><b>N4TTN-2</b> 11:44 &middot; weather</div>
+ </div></div>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
+  const i=t.dataset.i; document.getElementById('p0').hidden=(i!=='0'); document.getElementById('p1').hidden=(i!=='1');
+});
+</script>
