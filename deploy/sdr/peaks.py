@@ -335,6 +335,96 @@ def min_width_hz(bin_hz: float, channel_hz: int) -> float:
     return max(MIN_WIDTH_BINS * bin_hz, MIN_WIDTH_SHARE * channel_hz)
 
 
+#: How far a channel must stand above the TROUGHS either side of it, in dB.
+#:
+#: **MEASURED AND NOT WIRED IN.** `_has_shape` does not consult this yet, and the reason
+#: is a second measurement: on a 45 s integration it separates perfectly (21 of 21 real
+#: stations kept, 16 of 16 surplus rejected, beating prominence+width which leaves one),
+#: but the worst real station clears by only 1.06 dB while the best artefact reaches
+#: 0.33 — 0.73 dB of daylight. On a SHORT window that gap closes and inverts: measured
+#: on single max-of-4 rows, the worst real station scored -0.14 dB and the best surplus
+#: +1.50. The decision row here is a mean of `HOLD_SWEEPS` sweeps, about 1.8 s, which is
+#: nearer the short case than the long one. Wiring it in at this window would delete real
+#: stations to remove two artefacts, which is the wrong trade.
+#:
+#: What it needs is a decision window of ~7 s, separate from the picture's. That is a
+#: real change with a real cost — a burst on a scanner band would take that long to be
+#: reported — so it is a decision to take deliberately rather than a constant to flip.
+#:
+#: The last test, and the one that catches what prominence and width leave: a first
+#: adjacent that is genuinely a skirt. The owner named the family — "the peaks are
+#: sometimes sidebands" — and 47 CFR 73.207 minimum separations say two LOCAL
+#: first-adjacent stations essentially cannot exist, so a run of consecutive occupied
+#: channels is one station and its skirts.
+#:
+#: **Measured against the troughs, not against the neighbouring CHANNEL.** The obvious
+#: rule — reject a channel weaker than its neighbour — cannot work, and not for want of
+#: tuning: for any adjacent pair the two margins sum to exactly zero, so it can never
+#: report BOTH members of a pair. Proved over all 99 pairs on the owner's dial, where it
+#: would have deleted 101.3, which is real (a 3.17 dB notch separates it from 101.1,
+#: against 0.09-0.50 dB for the splatter pairs). The trough reference does not have that
+#: antisymmetry: two real neighbours both rise above the dip between them.
+#:
+#: MEASURED on the 45 s integration: the worst of the 21 real stations clears by 1.29 dB
+#: and the best of the 16 surplus reaches 0.60 dB. Anywhere in 0.7-1.2 gives the same
+#: answer; 0.9 is the middle of that.
+MIN_GUARD_MARGIN_DB = 0.9
+
+#: The channel's own half-width, and where the troughs either side are looked for, as
+#: shares of the raster. Chosen by grid search over the real data: 0.25/0.5/0.25 —
+#: a +-50 kHz channel and +-50 kHz guards centred 100 kHz out on a 200 kHz plan.
+GUARD_CHANNEL_SHARE = 0.25
+GUARD_OFFSET_SHARE = 0.5
+
+#: The bins per channel below which the guard test is not asked at all.
+#:
+#: The guard bands sit half a channel out and are half a channel wide, so a plan whose
+#: channels are only a few bins across has guards barely one bin wide, landing inside
+#: the neighbouring carriers' skirts — the margin then measures nothing. On the FM dial
+#: a channel is 21 bins; on a 25 kHz plan at the same resolution it is under three, and
+#: this test must stay out of the way there. It is also why adjacent-occupancy bands —
+#: 2 m repeater pairs, 25 kHz airband, where two neighbours at once is the DESIGN — are
+#: never judged by it.
+MIN_GUARD_BINS_PER_CHANNEL = 8
+
+
+def _band_power(db: "Sequence[float]", centre: int, half: int) -> float:
+    """Mean power across a span of bins, in dB. Linear mean, because a mean of
+    logarithms is a geometric mean and not the average power of anything."""
+    total = 0.0
+    count = 0
+    for at in range(max(0, centre - half), min(len(db), centre + half + 1)):
+        value = db[at]
+        if math.isfinite(value):
+            total += 10.0 ** (value / 10.0)
+            count += 1
+    if count == 0:
+        return math.nan
+    return 10.0 * math.log10(total / count)
+
+
+def guard_margin_db(
+    db: "Sequence[float]", index: int, bin_hz: float, channel_hz: int
+) -> float:
+    """How far this channel stands above the quieter of the two troughs beside it.
+
+    NaN when the band plan cannot support the question — see
+    `MIN_GUARD_BINS_PER_CHANNEL` — so a caller can tell "not asked" from "failed"."""
+    if channel_hz <= 0 or bin_hz <= 0:
+        return math.nan
+    if channel_hz / bin_hz < MIN_GUARD_BINS_PER_CHANNEL:
+        return math.nan
+    half = max(1, int(round(GUARD_CHANNEL_SHARE * channel_hz / bin_hz)))
+    offset = max(1, int(round(GUARD_OFFSET_SHARE * channel_hz / bin_hz)))
+    here = _band_power(db, index, half)
+    low = _band_power(db, index - offset, half)
+    high = _band_power(db, index + offset, half)
+    beside = [side for side in (low, high) if math.isfinite(side)]
+    if not math.isfinite(here) or not beside:
+        return math.nan
+    return here - max(beside)
+
+
 def _has_shape(
     db: "Sequence[float]", index: int, bin_hz: float, channel_hz: int, floor_hz: float
 ) -> bool:
