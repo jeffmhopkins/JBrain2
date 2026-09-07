@@ -32,6 +32,7 @@ import base64
 import io
 import contextlib
 import json
+import math
 import os
 import queue
 import shutil
@@ -485,6 +486,71 @@ def _listen_verdict(
     return out
 
 
+#: A bin this far below the row's own strongest reading is not a signal in that row.
+#: Only used to decide whether a station SEEN in one row is still there in the next,
+#: which is a question about presence rather than about level.
+STEADY_MARGIN_DB = 12.0
+
+
+def _steadiness(frames: list["listen.Frame"]) -> dict[str, Any]:
+    """Does the picture HOLD STILL, row to row — and is any of it missing?
+
+    The question the owner kept asking and nothing could answer: "the spectrum is
+    intermittent... it's not a continuous bar, it has like little blank sections in it".
+    A waterfall is a picture of time, so an intermittent one is either rows that lost
+    bins, or a station that is measured in some rows and not others. Those have
+    completely different causes and the same appearance, and guessing between them from
+    a photograph has already cost one wrong fix (the hop dwell) and one fix aimed at the
+    renderer. So it is measured here, on the box, where the rows are.
+
+    **`gaps`** counts bins no measurement reached. `peaks.find` skips them and the PWA
+    paints them transparent, both deliberately — a bin that measured nothing is not a
+    quiet bin — so a row that lost a hop draws as a hole rather than as a floor.
+
+    **`carrier_seen_in`** takes the strongest bin of the LAST row and asks how many rows
+    had something within `STEADY_MARGIN_DB` of their own strongest at that same bin. An
+    FM carrier is on continuously, so anything short of every row is the measurement
+    blinking, not the station.
+    """
+    rows = len(frames)
+    gaps = 0
+    for frame in frames:
+        gaps += sum(1 for value in frame.db if not math.isfinite(value))
+    last = frames[-1]
+    seen = 0
+    swing = 0.0
+    at = -1
+    if last.db:
+        finite = [(value, index) for index, value in enumerate(last.db) if math.isfinite(value)]
+        if finite:
+            _best, at = max(finite)
+            levels: list[float] = []
+            for frame in frames:
+                if at >= len(frame.db):
+                    continue
+                value = frame.db[at]
+                row_best = max((v for v in frame.db if math.isfinite(v)), default=math.nan)
+                if not math.isfinite(value) or not math.isfinite(row_best):
+                    continue
+                levels.append(value)
+                if value >= row_best - STEADY_MARGIN_DB:
+                    seen += 1
+            if levels:
+                swing = round(max(levels) - min(levels), 1)
+    return {
+        "rows": rows,
+        # Bins no measurement reached, over every row — a hole in the picture.
+        "gaps": gaps,
+        "gaps_per_row": round(gaps / rows, 1) if rows else 0.0,
+        "carrier_bin": at,
+        # How many rows still had the strongest carrier standing up in them.
+        "carrier_seen_in": seen,
+        # How far its level moved across the watch. A wideband-FM carrier sweeps its own
+        # deviation, so a short look at one BIN of it is a look at the modulation.
+        "carrier_swing_db": swing,
+    }
+
+
 def _spectrum_verdict(
     sweep: listen.Sweep, frames: list[listen.Frame], elapsed: float, engine: str
 ) -> dict[str, Any]:
@@ -523,6 +589,7 @@ def _spectrum_verdict(
         # by whichever row the probe happened to stop on.
         "rows_with_any": sum(1 for frame in frames if frame.peaks),
     }
+    out["steadiness"] = _steadiness(frames)
     if sweep.capture is not None:
         rate_hz, fft_bins = sweep.capture
         want = iq.bin_width_hz(rate_hz, fft_bins)
