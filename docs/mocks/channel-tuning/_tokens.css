@@ -1,0 +1,36 @@
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --green-tint: rgba(143,188,154,.13);
+  --amber-tint: rgba(201,163,106,.13); --violet-tint: rgba(164,147,201,.13);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.note {
+  padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+.note b { color: var(--text); font-weight: 600; }
+.sheet {
+  background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0; overflow: hidden;
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.sub { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); }
+.band { padding: 0 16px 10px; font-size: 13px; color: var(--text-2); }
+.wf { margin: 0 16px; height: 132px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0;
+        font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dim { color: var(--text-3); }
