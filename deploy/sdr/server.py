@@ -559,6 +559,38 @@ def _steadiness(frames: list["listen.Frame"]) -> dict[str, Any]:
 #: than reported once the damage is in the picture.
 LOW_HEADROOM_DB = 6.0
 
+#: What share of samples has to reach the rail before it is CLIPPING rather than an
+#: impulse, as a fraction.
+#:
+#: MEASURED 2026-09-07 on the first real use of this check: CB at 27 MHz came back with
+#: `clipped_share: 2e-05` — two samples in a hundred thousand — and the finding called
+#: it overload. That is not overload, it is lightning, an ignition spark or a switching
+#: transient, and on a receiver with no AGC there is nothing to do about a single
+#: impulse and nothing wrong with one. 1e-4 is a sample in ten thousand, which at
+#: 2.4 MS/s is 240 a second: no impulse source produces that, and a front end being
+#: driven into its rails produces far more. The SHARE is still reported under `level`
+#: either way — the number is worth seeing; it just does not raise an alarm on its own.
+CLIPPING_SHARE = 1e-4
+
+
+def _level_fix(sweep: listen.Sweep) -> str:
+    """What to actually do about a capture that is too hot, for THIS band.
+
+    The two signal paths have different answers and the first version of this gave the
+    HF one to both — measured on CB at 27 MHz, which is the tuner path, where the fix is
+    simply a lower gain. Below 24 MHz the tuner is powered down and there is no gain
+    stage at all, so nothing in software can help and the change has to be physical."""
+    if sweep.stop_hz <= radio.DIRECT_MAX_HZ:
+        return (
+            "below 24 MHz the tuner is powered down and there is no gain to turn "
+            "down, so the fix is physical — an attenuator, or a filter for whatever "
+            "is loudest (usually the AM broadcast band)"
+        )
+    return (
+        "this band is on the tuner, so the first thing to try is a lower gain "
+        f"(`--gain`, currently {listen.MEASURING_GAIN_DB:g} dB for a measurement)"
+    )
+
 
 def _spectrum_verdict(
     sweep: listen.Sweep, frames: list[listen.Frame], elapsed: float, engine: str
@@ -666,13 +698,12 @@ def _spectrum_verdict(
             "clipped_share": round(loudest.clipped_share, 6),
             "rows": len(levels),
         }
-        if loudest.clipped_share > 0.0:
+        if loudest.clipped_share >= CLIPPING_SHARE:
             findings.append(
                 f"the converter CLIPPED on {round(loudest.clipped_share * 100, 3)}% of "
                 f"one row's samples — a clipped capture spreads the loudest signal "
                 f"across the whole span as intermodulation, and the peak finder reports "
-                f"that as stations; below 24 MHz there is no gain to turn down, so the "
-                f"fix is an attenuator or a filter for whatever is loudest"
+                f"that as stations; {_level_fix(sweep)}"
             )
         elif (tightest.headroom_db or 0.0) < LOW_HEADROOM_DB:
             findings.append(
