@@ -735,7 +735,24 @@ did nothing at all for the picture. Measured on the box with `spectrum-probe
   sections in it", and it survived the dwell change because the dwell was never its
   cause. The backing store now matches the device (`backingRatio`).
 
-**The striping outlived the renderer fix, and is now MEASURED rather than guessed
+**The striping was the MODULATION, and the picture now holds the strongest of four
+sweeps (2026-09-07).** Measured with the instrument below, 27 rows over 12 s on the FM
+dial: **zero** bins missing, and the band's strongest carrier standing up in **14 of 27
+rows** with a **31.6 dB** swing. So no data was being lost — the same station was simply
+measured and not measured, row after row, which draws as a dashed line. A hop looks for
+6.8 ms and a wideband-FM carrier sweeps its own ±75 kHz continuously, so every segment
+inside that window sees one instant of a modulation that moves on the audio's timescale;
+no amount of averaging INSIDE a hop can fix it.
+
+Three ways out, and the owner chose the first: **a rolling max-hold of `HOLD_SWEEPS`
+sweeps** (~1.8 s of independent looks, same row rate, same resolution — a row now means
+"the strongest reading in the last ~1.8 s", so a burst leaves a short tail); a longer
+dwell per hop (keeps "a row is one measurement" exactly true, drops the rate from ~2.25
+to ~0.7 rows a second); or coarser bins on the dial, so a carrier's whole deviation stays
+in one bin (free and rock solid, but one bin per channel). The max-hold is the reduction
+the PWA already makes when it stacks rows (`holdInto`), so it is the house idiom.
+
+**The striping outlived the renderer fix, and was MEASURED rather than guessed
 (2026-09-07).** `backingRatio` was aimed at a compositor artefact and the owner still
 reports "blank sections". Two mechanisms produce the same picture and have opposite
 fixes — rows that lost bins (a hop that drops a USB block leaves NaN, which `peaks.find`

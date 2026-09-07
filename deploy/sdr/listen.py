@@ -63,7 +63,7 @@ import subprocess
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -283,6 +283,50 @@ VIEWS = (VIEW_BAND, VIEW_CHANNEL, VIEW_ALL)
 #: The most a single frame may average. Bounds the read buffer, and past this the row
 #: is a long enough exposure that a burst inside it is smeared rather than seen.
 MAX_IQ_SEGMENTS = 128
+#: How many sweeps a published row is the strongest of.
+#:
+#: **A wideband-FM carrier's per-BIN power is not steady, and no amount of averaging
+#: inside one hop can make it so.** A hop looks for `HOP_SEGMENTS` segments — 6.8 ms —
+#: and the station's instantaneous frequency sweeps its own ±75 kHz continuously, so
+#: every segment inside that window sees the same instant of the modulation. The energy
+#: moves between bins on the audio's timescale, tens of milliseconds, which is slower
+#: than the look.
+#:
+#: MEASURED on the dial (`spectrum-probe`, 27 rows over 12 s): the strongest carrier in
+#: the band stood up in **14 of 27 rows**, swinging **31.6 dB**, with **zero** bins
+#: missing. So the picture was not losing data — the same station was simply measured
+#: and not measured, row after row, which draws as a dashed line. REPORTED three times
+#: as "the spectrum is intermittent".
+#:
+#: Four sweeps is ~1.8 s of separate looks at each frequency, far enough apart to be
+#: independent of the modulation, and the STRONGEST of them is kept rather than the
+#: mean: a carrier's true level is what it reaches, and a mean of four looks at a
+#: sloshing signal is just a quieter unsteady number. The same reduction the PWA already
+#: makes when it stacks arriving rows into one pixel row (`holdInto`), for the same
+#: reason, so this is the house idiom rather than a new one.
+#:
+#: **The cost, stated: a row means "the strongest reading in the last ~1.8 s", not
+#: "measured now".** A burst therefore leaves a short tail down the waterfall. That is
+#: the trade the owner chose over a slower row rate or coarser bins.
+HOLD_SWEEPS = 4
+
+
+def held_row(history: "Sequence[np.ndarray]") -> "np.ndarray":
+    """The strongest reading of each bin across the sweeps still in the window.
+
+    `np.fmax`, not `np.maximum`: a bin no measurement reached is NaN, and NaN must lose
+    to a real reading rather than poison it. A bin that is NaN in EVERY sweep stays NaN,
+    which is right — `peaks.find` skips it and the PWA paints it transparent, because a
+    bin that measured nothing is not a quiet bin."""
+    rows = list(history)
+    if not rows:
+        raise ValueError("a held row needs at least one sweep")
+    out = rows[0]
+    for row in rows[1:]:
+        out = np.fmax(out, row)
+    return out
+
+
 #: Segments per HOP — how much signal each slice of a stitched row is actually made of.
 #:
 #: **Four was too few, and it was not a noise-performance question at all.** At 256 bins
@@ -1748,6 +1792,7 @@ class Session:
         )
         wanted = min(wanted, row.size)
         centres = hop_centres(sweep.start_hz, rate_hz, bins, sweep.hops)
+        recent: collections.deque[np.ndarray] = collections.deque(maxlen=HOLD_SWEEPS)
         while not self._stopping and held.alive:
             at = 0.0
             for index, centre in enumerate(centres):
@@ -1765,12 +1810,15 @@ class Session:
                 row[index * usable : (index + 1) * usable] = spectrum.db[
                     edge : edge + usable
                 ]
+            # A COPY, because `row` is reused by the next sweep — holding the live array
+            # would make every entry in the window the same array and the max a no-op.
+            recent.append(row[:wanted].copy())
             self._publish_frame(
                 Frame(
                     at=at,
                     start_hz=sweep.start_hz,
                     bin_hz=spectrometer.bin_hz,
-                    db=row[:wanted].tolist(),
+                    db=held_row(recent).tolist(),
                 )
             )
 

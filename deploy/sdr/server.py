@@ -604,9 +604,19 @@ def _spectrum_verdict(
         # flat comparison against `fft_bins` called every correct hopped frame a fault
         # — measured on fm-broadcast, 2026-09-05: "2332 bins against the 256 the
         # capture asks for", where 2332 is exactly 11 hops of 212 usable bins.
+        #
+        # ...and then CROPPED to the span that was asked for, because whole hops
+        # overshoot it. Leaving that out made this cry wolf on every correct hopped
+        # frame all over again — measured on fm-broadcast, 2026-09-07: "2134 bins
+        # against the 2332 the capture asks for", where 2134 is exactly 88-108 MHz at
+        # 9375 Hz. Twice now in the same check, in opposite directions: it has to
+        # follow the whole arithmetic, not the half of it nearest to hand.
         expect = fft_bins
         if sweep.hops > 1:
-            expect = listen.hop_usable_bins(fft_bins) * sweep.hops
+            expect = min(
+                listen.hop_usable_bins(fft_bins) * sweep.hops,
+                math.ceil((sweep.stop_hz - sweep.start_hz) / want),
+            )
         if len(last.db) != expect:
             findings.append(
                 f"{len(last.db)} bins per frame against the {expect} the capture asks "

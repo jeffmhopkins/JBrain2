@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -101,3 +102,62 @@ def test_the_hops_OVERSHOOT_the_span_they_were_planned_for(bands, listen) -> Non
     # Not a rounding error: nearly two megahertz above the top of the band, which is
     # where 108.3, 108.7, 109.1, 109.4 and 109.7 were reported as stations.
     assert reach - stop_hz > 1_000_000
+
+
+def test_a_carrier_that_BLINKS_is_drawn_solid(listen) -> None:
+    """The measured defect, and the whole reason this exists.
+
+    A wideband-FM carrier's per-BIN power is not steady and no averaging inside one
+    6.8 ms hop can make it so: every segment in that window sees the same instant of the
+    modulation, which moves on the audio's timescale. MEASURED on the dial: the band's
+    strongest carrier stood up in 14 of 27 rows, swinging 31.6 dB, with ZERO bins
+    missing — measured and not measured, row after row, which draws as a dashed line.
+    """
+    on = np.array([-60.0, -20.0, -60.0])
+    off = np.array([-60.0, -58.0, -60.0])
+
+    drawn = [
+        listen.held_row([off, on, off, off]),
+        listen.held_row([off, off, off, off]),
+    ]
+
+    # Any sweep in the window carrying the carrier is enough to draw it.
+    assert drawn[0][1] == -20.0
+    # ...and once it has left the window entirely, it goes. A hold that never forgets is
+    # a picture of everything that ever happened, not of the band.
+    assert drawn[1][1] == -58.0
+
+
+def test_the_hold_keeps_the_STRONGEST_reading_not_the_mean(listen) -> None:
+    """A carrier's true level is what it REACHES. A mean of four looks at a sloshing
+    signal is just a quieter unsteady number, and the level is what the agent reads."""
+    swings = [
+        np.array([-40.0]),
+        np.array([-12.0]),
+        np.array([-38.0]),
+        np.array([-35.0]),
+    ]
+
+    assert listen.held_row(swings)[0] == -12.0
+
+
+def test_a_bin_that_measured_NOTHING_never_beats_one_that_did(listen) -> None:
+    """`np.fmax`, not `np.maximum`: NaN must lose to a real reading rather than poison
+    it. A bin NaN in every sweep stays NaN, which is right — `peaks.find` skips it and
+    the PWA paints it transparent, because a bin that measured nothing is not a quiet
+    bin and drawing a floor there would claim a measurement nobody took."""
+    torn = np.array([np.nan, np.nan])
+    real = np.array([-30.0, np.nan])
+
+    out = listen.held_row([torn, real, torn])
+
+    assert out[0] == -30.0
+    assert np.isnan(out[1])
+
+
+def test_the_window_is_what_the_constant_says(listen) -> None:
+    """The cost is stated in seconds, so it has to be derivable from the constant: a row
+    means "the strongest reading in the last HOLD_SWEEPS sweeps", not "measured now"."""
+    assert listen.HOLD_SWEEPS == 4
+    # At the dial's measured 2.25 rows a second that is ~1.8 s of separate looks.
+    assert 1.0 <= listen.HOLD_SWEEPS / 2.25 <= 2.5
