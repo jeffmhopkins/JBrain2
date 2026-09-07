@@ -1704,8 +1704,36 @@ class TestTheProbeJudgesTheLEVELAndNotOnlyThePicture:
 
         assert verdict["ok"] is False
         assert any("CLIPPED" in f for f in verdict["findings"])
-        # The action, not just the diagnosis: there is no software fix down there.
+        # 144 MHz is the TUNER path, where a gain exists to turn down.
+        assert any("lower gain" in f for f in verdict["findings"])
+
+    def test_the_fix_it_names_depends_on_which_signal_path_the_band_is_on(self) -> None:
+        """Measured on CB the first time this ran for real, and it was wrong.
+
+        Below 24 MHz the tuner is powered down and there is no gain stage at all, so
+        the fix is physical; above it there is a gain to lower first. One sentence for
+        both is wrong on half the spectrum — and the half it was wrong on is the half
+        with an easy fix."""
+        shortwave = listen.Sweep.of(7_100_000, 7_300_000, 250, 60, capture=(256_000, 1_024))
+
+        verdict = server._spectrum_verdict(
+            shortwave, [self._levelled(0.0, clipped=0.004)] * 5, 3.0, "iq"
+        )
+
         assert any("attenuator" in f for f in verdict["findings"])
+        assert not any("lower gain" in f for f in verdict["findings"])
+
+    def test_one_sample_at_the_rail_is_an_impulse_and_not_an_alarm(self) -> None:
+        # MEASURED on CB: 2e-05 of samples reached the rail and the first version of
+        # this called it overload. That is lightning or an ignition spark, and on a
+        # receiver with no AGC there is nothing to do about one and nothing wrong with
+        # it. The share is still reported; it just does not raise a finding.
+        verdict = server._spectrum_verdict(
+            _sweep_with_capture(), [self._levelled(20.0, clipped=2e-05)] * 20, 3.0, "iq"
+        )
+
+        assert verdict["level"]["clipped_share"] == 2e-05
+        assert not any("CLIPPED" in f for f in verdict["findings"])
 
     def test_the_WORST_row_is_the_verdict_not_the_last_one(self) -> None:
         # A probe watches for seconds and a band is not equally loud across them. One
