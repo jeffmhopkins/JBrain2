@@ -235,6 +235,113 @@ def _snapped(hz: float, origin: float | None, channel_hz: int) -> float | None:
     return channel if abs(hz - channel) <= MAX_RASTER_PULL * channel_hz else None
 
 
+#: How far a carrier must stand above the dips on BOTH sides of it to be its own signal.
+#:
+#: Topographic prominence, which is what a spectrum analyser calls "peak excursion" —
+#: Keysight's SA mode ships 6 dB by default. It is the one mainstream instrument test
+#: this file did not have, and it is the test that separates a station from the SKIRT of
+#: the station next door: a skirt is monotonic, so it has no dip on its inboard side and
+#: no prominence, however far it stands above the noise floor.
+#:
+#: MEASURED on a 45 s integration of the owner's own dial: 21 real stations, and 16
+#: surplus entries he called noise. At 2.0 dB with the width test below, 21 of 21 real
+#: stations are kept and 15 of the 16 surplus are rejected. The surplus that survives is
+#: one splatter shoulder at 105.9.
+MIN_PROMINENCE_DB = 2.0
+
+#: How wide a real emission is, as a share of its channel — and a floor in bins.
+#:
+#: The other half of the same measurement. The surplus that prominence alone does not
+#: catch is a family of BIRDIES: 19-28 kHz spikes, two or three bins wide, with
+#: row-to-row variation of 0.25 dB where the band median is 0.29. Something that narrow
+#: and that steady is not a modulated emission — it is the receiver.
+#:
+#: A share of the channel rather than a constant, because "wide" means nothing without
+#: the band: 35 kHz is a fifth of an FM channel and more than a whole NOAA one. The bin
+#: floor is what applies where a band has no raster, or where its channels are barely
+#: wider than the transform's own resolution — there, three bins is the least that can
+#: have a shape at all.
+MIN_WIDTH_SHARE = 0.175
+MIN_WIDTH_BINS = 3
+
+#: How far out the flanking dips are looked for. Bounded, exactly as `scipy`'s
+#: `peak_prominences` bounds it with `wlen`: prominence measured to the horizon is a
+#: statement about the whole band, and what is wanted here is whether this signal is
+#: separate from ITS NEIGHBOURS.
+#:
+#: The bin floor has to clear the WIDEST signal the row can hold, because the search
+#: walks across a flat top before it can reach the ground either side. At 12 it did not:
+#: a rectangular 24-bin carrier measured ZERO prominence and was rejected, because the
+#: walk ran out of reach still standing on the signal. Being generous costs nothing —
+#: the search stops the moment it meets a bin higher than the peak, which is exactly
+#: what makes a skirt score zero.
+PROMINENCE_REACH_SHARE = 0.8
+PROMINENCE_REACH_BINS = 32
+
+
+def shape_of(
+    db: "Sequence[float]", index: int, bin_hz: float, channel_hz: int
+) -> tuple[float, float]:
+    """How far this bin stands above the dips either side, and how wide it is.
+
+    Returns `(prominence_db, width_hz)`. Prominence is the peak less the HIGHER of the
+    two flanking minima — the standard topographic definition, and the higher one is
+    what matters: a signal is only separate from its neighbours if it is separate from
+    both. Width is measured at half prominence, which is where the shoulders of a
+    carrier are rather than where the noise happens to cross a threshold.
+
+    Non-finite bins are treated as the end of the search rather than as dips: a bin that
+    measured nothing cannot be evidence that a signal is isolated."""
+    total = len(db)
+    if total == 0 or not 0 <= index < total:
+        return 0.0, 0.0
+    peak = db[index]
+    if not math.isfinite(peak):
+        return 0.0, 0.0
+    reach = max(
+        PROMINENCE_REACH_BINS,
+        int(round(PROMINENCE_REACH_SHARE * channel_hz / bin_hz)) if bin_hz > 0 else 0,
+    )
+
+    def dip(step: int) -> float:
+        """The lowest level between here and the next thing at least as high."""
+        low = peak
+        at = index + step
+        while 0 <= at < total and abs(at - index) <= reach:
+            value = db[at]
+            if not math.isfinite(value):
+                break
+            if value > peak:
+                break  # a higher neighbour bounds the search, as `wlen` does
+            low = min(low, value)
+            at += step
+        return low
+
+    prominence = peak - max(dip(-1), dip(1))
+    # At HALF prominence: the level where a carrier's own shoulders are. Measuring at
+    # the detection threshold instead would make the width depend on the noise floor.
+    edge = peak - prominence / 2.0
+    left = index
+    while left - 1 >= 0 and math.isfinite(db[left - 1]) and db[left - 1] >= edge:
+        left -= 1
+    right = index
+    while right + 1 < total and math.isfinite(db[right + 1]) and db[right + 1] >= edge:
+        right += 1
+    return prominence, (right - left + 1) * bin_hz
+
+
+def min_width_hz(bin_hz: float, channel_hz: int) -> float:
+    """The narrowest thing that can be a real emission on this band."""
+    return max(MIN_WIDTH_BINS * bin_hz, MIN_WIDTH_SHARE * channel_hz)
+
+
+def _has_shape(
+    db: "Sequence[float]", index: int, bin_hz: float, channel_hz: int, floor_hz: float
+) -> bool:
+    prominence, width = shape_of(db, index, bin_hz, channel_hz)
+    return prominence >= MIN_PROMINENCE_DB and width >= floor_hz
+
+
 def find(
     db: list[float],
     start_hz: float,
@@ -244,6 +351,7 @@ def find(
     snr_db: float = SNR_DB,
     limit: int = MAX_PEAKS,
     origin: float | None = None,
+    shape: bool = True,
 ) -> list[dict[str, Any]]:
     """The signals in one row, strongest first.
 
@@ -336,7 +444,38 @@ def find(
             if all(abs(entry[0] - other[0]) >= apart_bins for other in kept):
                 kept.append(entry)
         signals = kept
+    # **SHAPE, last, and it is what makes a station different from its neighbour's
+    # skirt.** Everything above asks how far a bin stands above the noise; nothing above
+    # asks whether it is a bump at all. A skirt clears any threshold — it is the side of
+    # a loud carrier — and has no dip on its inboard side, so it has no prominence. A
+    # receiver birdie has prominence and is three bins wide.
+    #
+    # MEASURED against a 45 s integration of the owner's dial (21 real stations, 16
+    # entries he called noise): this pair keeps 21 of 21 and rejects 15 of 16, where
+    # raising the threshold instead keeps only 18 of 21 and capping the count keeps 19.
+    # The two families it separates are the two he described — "sidebands, or multiple
+    # hits that are very close together".
+    if shape:
+        # WIDTH ONLY WHERE A BAND PLAN SAYS WHAT WIDE MEANS. Prominence is a question
+        # about shape and needs no plan; width is a question about bandwidth and cannot
+        # be asked without one. With no raster a signal may legitimately be one bin, and
+        # a floor guessed from the transform's own resolution would delete it.
+        floor_hz = min_width_hz(bin_hz, channel_hz) if channel_hz > 0 else 0.0
+        signals = [
+            entry
+            for entry in signals
+            if _has_shape(db, entry[0], bin_hz, channel_hz, floor_hz)
+        ]
     shown = signals[:limit]
+    # NO HALF-BIN HERE, and it is worth saying why, because it was added once and had to
+    # come back out. `iq.Spectrometer.start_hz` is bin 0's CENTRE — `fftshift` puts DC in
+    # bin `n // 2` — so `start_hz + index * bin_hz` already addresses bin `index` exactly,
+    # which is what `Spectrum.stop_hz` says and what `server._channel_centre` assumes
+    # (C20 exists because those two once sat half a bin apart).
+    #
+    # An analysis of an `rtl_power` CSV found its grid 5.14 kHz off the channels under
+    # the edge convention and 0.45 kHz under the centre one — but that is a fact about
+    # rtl_power's `hz_low`, which IS a band edge, and not about this path.
     measured = [start_hz + index * bin_hz for index, _v, _e in shown]
     # SNAPPED TO THE CHANNEL, when the row's own signals agree there is one.
     #
@@ -358,8 +497,13 @@ def find(
             "measured_hz": round(hz, 1),
             "db": round(value, 1),
             "over_db": round(excess, 1),
+            # The shape that got it past `_has_shape`, carried for `measured_hz`'s
+            # reason: a signal kept or dropped on a rule nobody can check against the
+            # measurement is exactly the kind of number this file exists not to produce.
+            "prominence_db": round(shape_of(db, index, bin_hz, channel_hz)[0], 1),
+            "width_hz": round(shape_of(db, index, bin_hz, channel_hz)[1], 1),
         }
-        for hz, (_index, value, excess) in zip(measured, shown, strict=True)
+        for hz, (index, value, excess) in zip(measured, shown, strict=True)
     ]
     return _one_per_channel(labelled)
 

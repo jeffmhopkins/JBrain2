@@ -327,6 +327,30 @@ def held_row(history: "Sequence[np.ndarray]") -> "np.ndarray":
     return out
 
 
+def mean_row(history: "Sequence[np.ndarray]") -> "np.ndarray":
+    """The average level of each bin across the sweeps in the window, in dB.
+
+    **The row a DECISION is made on, where `held_row` is the row a picture is drawn
+    from, and they must not be the same array.** Max-hold lifts an empty guard band as
+    much as it lifts a carrier, so it flattens exactly the shape `peaks.find` reads to
+    tell a station from the skirt of the one next door: measured on the owner's dial, a
+    real station's margin over its guard bands is +2.03 dB on the linear mean and
+    -0.05 dB on the max of the same four sweeps. Max-of-N is right for drawing a
+    sloshing carrier and wrong for deciding whether one is there.
+
+    Averaged in LINEAR power and converted back, not averaged in dB: a mean of
+    logarithms is a geometric mean, which is not the average power of anything.
+    `np.nanmean` so a bin that measured nothing in one sweep is skipped rather than
+    poisoning the others; a bin that measured nothing in every sweep stays NaN, which
+    `peaks.find` skips and the PWA paints transparent."""
+    rows = list(history)
+    if not rows:
+        raise ValueError("a mean row needs at least one sweep")
+    linear = np.power(10.0, np.stack(rows) / 10.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return 10.0 * np.log10(np.nanmean(linear, axis=0))
+
+
 #: Segments per HOP — how much signal each slice of a stitched row is actually made of.
 #:
 #: **Four was too few, and it was not a noise-performance question at all.** At 256 bins
@@ -1819,10 +1843,14 @@ class Session:
                     start_hz=sweep.start_hz,
                     bin_hz=spectrometer.bin_hz,
                     db=held_row(recent).tolist(),
-                )
+                ),
+                # The picture is the max of the window and the DECISION is its mean —
+                # see `mean_row`. Two different reductions of the same four sweeps,
+                # because they answer two different questions.
+                decide_on=mean_row(recent).tolist(),
             )
 
-    def _publish_frame(self, frame: Frame) -> None:
+    def _publish_frame(self, frame: Frame, decide_on: list[float] | None = None) -> None:
         # Stamped at the one seam every engine passes through, exactly as the peaks are
         # and for the same reason: a row that did not carry it would be a row the viewer
         # has to guess the band for.
@@ -1847,7 +1875,7 @@ class Session:
             # 21 on the air. The band's grid does not move while a session is tuned to it,
             # so the first row that can establish it settles it for the rest.
             found = peaks.find(
-                frame.db,
+                frame.db if decide_on is None else decide_on,
                 frame.start_hz,
                 frame.bin_hz,
                 channel_hz=channel_hz,
@@ -2571,6 +2599,14 @@ KISSPORT {self.kiss_port}
             self.sweep = sweep
             self.frequency_hz = sweep.centre_hz
             self._last = {}
+            # THE GRID BELONGS TO THE BAND, not to the session. It was settled once and
+            # never cleared, so a session retuned from the FM dial (200 kHz raster,
+            # origin 100 kHz) onto a 15 kHz plan went on snapping to an origin of
+            # 100 kHz — `100000 % 15000` = 10 kHz off every channel on the new band,
+            # confidently and stably, with `measured_hz` the only evidence anything was
+            # wrong. The client already wipes its held peaks on a band change; this is
+            # the same wipe on the box.
+            self._grid = None
 
         self._restart(apply)
 

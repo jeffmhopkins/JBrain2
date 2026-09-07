@@ -735,6 +735,78 @@ did nothing at all for the picture. Measured on the box with `spectrum-probe
   sections in it", and it survived the dwell change because the dwell was never its
   cause. The backing store now matches the device (`backingRatio`).
 
+**The surplus signals were SHAPE, and the rule came from the owner (2026-09-07).** He
+read his own dial correctly — "the peaks are sometimes sidebands or multiple hits that
+are very close together" — and the runs of consecutive channels in his held list
+(92.1/92.3/92.5/92.7, 96.3/96.5/96.7, 98.3/98.5/98.7) are what gave it away: 47 CFR
+§73.207 minimum separations mean two local first-adjacent stations essentially cannot
+exist.
+
+Three researchers were run against a 45 s integration of the real dial. **21 stations
+are real and all 21 were already being reported — recall was never the problem.** The
+16 surplus entries are two families of eight: SKIRTS of a loud neighbour (monotonic, no
+inboard dip) and BIRDIES (18-28 kHz spikes with row-to-row variation of 0.25 dB against
+a band median of 0.29 — no modulation, so not an emission).
+
+What was measured, and what it rules out:
+
+- **Threshold tuning is dead.** Simulated against the repo's own measured per-bin sigma:
+  8 dB, 6 dB and even 4 dB all give ZERO thermal false alarms per row. Not one surplus
+  entry is a noise false alarm, and raising `SNR_DB` only deletes real stations (18 of
+  21 survive at 10 dB, 11 at 12 dB).
+- **A cap cannot separate them.** The weakest real stations sit 2-3 dB BELOW several
+  artefacts in the ranking; top-N keeps 19 of 21 while removing only 14 of 16.
+- **Intermodulation is ruled out**, though it looked plausible: a 3rd-order product of
+  wideband-FM carriers is 450-540 kHz wide and the surplus features measure 18.8-93.8
+  kHz. Correlation between predicted IMD weight and measured excess is -0.18 — the
+  wrong sign.
+- **The first-adjacent rule the owner implied is right 7 times in 8 and fails once**, on
+  101.1/101.3, which is a genuine adjacent pair (a 3.17 dB notch between them, where
+  splatter pairs measure 0.09-0.50 dB). It is not tunable: for any adjacent pair the two
+  margins sum to exactly zero, so such a rule can NEVER report both. Proved over all 99
+  pairs in the band.
+
+**What shipped instead: topographic prominence and width** (`MIN_PROMINENCE_DB`,
+`MIN_WIDTH_SHARE`). Prominence is the "peak excursion" every spectrum analyser has and
+this file did not — Keysight ships 6 dB by default — and it is what a skirt cannot have,
+being monotonic. Width is what a birdie cannot have. **Verified against the real dial
+with the shipped code: 21 of 21 real stations kept, 15 of 16 surplus rejected**, the
+survivor being one splatter shoulder at 105.9. Neither test subsumes the other: the
+shelves (96.7, 98.7) clear the width floor and fail prominence, while the birdies are
+MORE prominent than the weakest real station and fail width.
+
+Width is asked only where a band plan says what wide means; prominence needs no plan and
+always applies. That is what keeps the rule safe on 2 m repeater pairs and 25 kHz
+airband, where adjacent occupancy is the design intent and a first-adjacent rule would
+have been actively harmful.
+
+**And the decision moved off the max-hold row.** `held_row` is the picture; `mean_row`
+is the decision. Max-of-N lifts an empty guard band as much as a carrier, flattening the
+very shape this rule reads — measured, a real station's margin over its guard bands is
++2.03 dB on the linear mean of four sweeps and -0.05 dB on the max of the same four.
+
+One bug found on the way and fixed: `Session._grid` was never cleared on a retune, so a
+session moved from the FM dial onto a 15 kHz plan snapped every label 10 kHz off its
+channel, confidently and stably.
+
+**A second "bug" was reported and was not one.** The analysis found `measured_hz` half a
+bin low, and the half-bin was added — then C20's own test
+(`test_the_probe_and_the_PEAK_FINDER_are_on_one_frequency_grid`) failed, correctly:
+`iq.Spectrometer.start_hz` is bin 0's CENTRE, because `fftshift` puts DC in bin `n // 2`,
+so `start_hz + index * bin_hz` already addresses bin `index` exactly. The 5.14 kHz offset
+that was measured is a fact about `rtl_power`'s `hz_low`, which IS a band edge, and not
+about this path. Reverted, and the reason is now recorded in `peaks.find` so it is not
+"fixed" a third time. C20 exists because those two grids once sat half a bin apart; it
+earned its keep again here.
+
+**Still open:** the held list in the PWA has no expiry, so it is a union over the whole
+session and one false positive is permanent (`MAX_PEAKS` is 24, so a 37-entry list can
+only be accumulation). A duty cycle would replace it honestly. And the receiver is
+COMPRESSED — 27 dB of dynamic range for the whole dial and a noise floor that climbs
+4.5 dB from 88 to 104 MHz, which is front-end hash, not thermal noise. Every margin here
+is small because of that; an FM band-pass or more attenuation would widen them all more
+than any detection rule can.
+
 **The striping was the MODULATION, and the picture now holds the strongest of four
 sweeps (2026-09-07).** Measured with the instrument below, 27 rows over 12 s on the FM
 dial: **zero** bins missing, and the band's strongest carrier standing up in **14 of 27
