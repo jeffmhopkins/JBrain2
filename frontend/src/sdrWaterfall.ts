@@ -208,6 +208,27 @@ export function reduce(db: readonly number[], columns: number, extent = 0): Floa
  *  otherwise draw fat blocks; four keeps a one-row-a-second band legible without them. */
 const MAX_ROW_PIXELS = 4;
 
+/** The canvas backing-store scale for a display, from its device pixel ratio.
+ *
+ *  **It must MATCH the device, not be capped below it.** This was `min(dpr, 2)`, which
+ *  on a phone with a 3x screen makes a backing store the compositor then upscales by
+ *  1.5 — with its own filter, over which nothing here has any say. At one device pixel
+ *  per measurement (`rowPixelsFor` returns 1 whenever the wanted history is taller than
+ *  the display, which is the normal case) each row becomes one and a half PHYSICAL
+ *  pixels, so consecutive rows land alternately on and off the pixel grid and are
+ *  blended differently. That is a regular light/dark banding at exactly the row pitch,
+ *  running across the whole width — the noise floor included, which is what says it is
+ *  not a signal. REPORTED as "the spectrum is intermittent... it's not a continuous bar,
+ *  it has like little blank sections in it", and it survived a change to the DWELL
+ *  because it was never a measurement problem.
+ *
+ *  Capped at 3 for memory: the offscreen ring is `width * height` pixels and a phone at
+ *  3x is already 1290 columns. Nothing ships a 4x display where this picture is read. */
+export function backingRatio(dpr: number): number {
+  if (!Number.isFinite(dpr) || dpr <= 0) return 1;
+  return Math.min(3, Math.max(1, dpr));
+}
+
 export function rowPixelsFor(wantedRows: number, displayRows: number): number {
   /* How many device pixel rows one measurement gets.
    *

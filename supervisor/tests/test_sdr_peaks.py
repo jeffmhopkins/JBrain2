@@ -498,3 +498,44 @@ def test_a_signal_far_from_every_channel_keeps_its_own_frequency() -> None:
 
     assert abs(odd - stray) < bin_hz
     assert by_measured[odd]["hz"] == odd, "left where it was found"
+
+
+def test_a_grid_ALREADY_ESTABLISHED_is_used_rather_than_re_derived() -> None:
+    """A caller holding a session settles the grid once and passes it back.
+
+    Deriving per row is not stable: a row whose signals happen not to agree reports raw
+    measurements, the next row snaps them, and a viewer holding peaks across rows
+    collects ONE station twice under two names. Measured on the FM dial: 50 held signals
+    for 21 on the air, most of the surplus being exactly that.
+    """
+    # Two stations, too few to establish a grid on their own (MIN_RASTER_PEAKS is four),
+    # so this row derives nothing and would report what it measured.
+    row = _dial_at(
+        bin_hz=9375,
+        bins=600,
+        start_hz=88_000_000,
+        stations_hz=[88_310_000.0, 92_690_000.0],
+    )
+
+    alone = peaks.find(row, 88_000_000, 9375, channel_hz=200_000)
+    told = peaks.find(row, 88_000_000, 9375, channel_hz=200_000, origin=100_000.0)
+
+    assert [signal["hz"] for signal in alone] == [
+        signal["measured_hz"] for signal in alone
+    ]
+    assert sorted(signal["hz"] for signal in told) == [88_300_000.0, 92_700_000.0]
+
+
+def test_the_grid_a_row_settles_is_the_one_a_caller_can_hold() -> None:
+    """`raster_origin` is public so the session can remember what `find` would derive.
+
+    Same input, same answer — otherwise the first row would snap to one grid and every
+    row after it to another, which is the flicker this whole mechanism exists to stop.
+    """
+    stations = [88_300_000.0, 89_300_000.0, 92_700_000.0, 96_500_000.0, 101_300_000.0]
+
+    settled = peaks.raster_origin(stations, 200_000)
+
+    assert settled == 100_000.0
+    # US FM sits on 88.1, 88.3, ... — half a channel off the 88.0 the band starts at.
+    assert peaks._snapped(88_309_000.0, settled, 200_000) == 88_300_000.0

@@ -78,3 +78,26 @@ def test_the_two_place_every_hop_at_the_same_frequency(bands, listen) -> None:
     assert listen.hop_centres(start_hz, rate_hz, bins, hops) == bands.hop_centres(
         start_hz, plan
     )
+
+
+def test_the_hops_OVERSHOOT_the_span_they_were_planned_for(bands, listen) -> None:
+    """The fact the crop exists for, asserted rather than assumed.
+
+    Whole hops cannot tile an arbitrary span exactly, so the planner rounds UP and the
+    stitched row reaches past the stop that was asked for. That is correct as a CAPTURE
+    plan — the alternative is a gap at the top of the band — and wrong as a published
+    row.
+    """
+    start_hz, stop_hz = 88_000_000, 108_000_000  # the FM dial
+    plan = bands.hop_plan(start_hz, stop_hz)
+    assert plan is not None, "the FM dial must still be hoppable"
+    rate_hz, bins, hops = plan
+    usable = listen.hop_usable_bins(bins)
+    bin_hz = rate_hz / bins
+
+    reach = start_hz + usable * hops * bin_hz
+
+    assert reach > stop_hz
+    # Not a rounding error: nearly two megahertz above the top of the band, which is
+    # where 108.3, 108.7, 109.1, 109.4 and 109.7 were reported as stations.
+    assert reach - stop_hz > 1_000_000

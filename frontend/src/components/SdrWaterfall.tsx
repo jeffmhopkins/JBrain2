@@ -45,6 +45,7 @@ import {
 } from "../sdrSpectrum";
 import {
   type Scale,
+  backingRatio,
   calibrate,
   calibrated,
   frameRate,
@@ -161,7 +162,7 @@ export function SdrWaterfall({
     let rowPx = 1;
 
     const fit = () => {
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const ratio = backingRatio(window.devicePixelRatio || 1);
       // `clientHeight` is 0 until the box has been laid out, and the ring is sized from
       // it now — so falling back to 1 would build a one-pixel-tall picture and group the
       // whole history into it, then regroup once layout arrived. The prop IS the CSS
