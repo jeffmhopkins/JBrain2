@@ -32,6 +32,15 @@ import {
 import { SdrBandSheet } from "./SdrBandSheet";
 import { SdrWaterfall } from "./SdrWaterfall";
 
+/** How many already-drawn rows to ask the box for when this surface opens.
+ *
+ *  A waterfall shows a few hundred rows and fills at the row rate — two a second on a
+ *  hopped band — so a picture that has been running for minutes came back as one strip
+ *  at the bottom of an empty box every time the owner switched tabs. 120 is what the
+ *  box keeps (`listen.HISTORY_ROWS`): a minute of a hopped band, twelve seconds of a
+ *  stare, and about a phone screen of rows either way. */
+const BACKFILL_ROWS = 120;
+
 export function SdrSpectrumJob({
   serial,
   /** The spectrum session on THIS radio, or null when it is not watching yet. */
@@ -72,17 +81,19 @@ export function SdrSpectrumJob({
   // would hold a socket against a 409, and leaving it open after the owner navigates
   // away would keep a radio's rows flowing through the api for nothing.
   //
-  // `GET /api/sdr/spectrum` serves THE spectrum session, which is safe only because
-  // there can be one: `sdrJobs.jobAllowed` disables Spectrum on a second radio while a
-  // first is watching, naming the one that has it. If that ever stops being true the
-  // route needs a serial — the picture would otherwise be of the other radio's band,
-  // and every row would draw correctly at the wrong frequencies.
+  // **The route takes a SERIAL now, and this comment used to predict why.** It said
+  // that serving "the spectrum session" was safe only while there could be one, and
+  // that the day it stopped being true the route would need a serial. That day was the
+  // omnibox radio sheet: two radios, two tabs, one stream — and the sidecar's own
+  // preference for a spectrum session then handed the TUNER's tab this picture.
   const live = session !== null;
   useEffect(() => {
     if (!live) return;
-    startSdrSpectrum("band");
+    // The RADIO this surface is showing, and as many rows as the waterfall can draw:
+    // switching tabs and back used to restart the picture from nothing.
+    startSdrSpectrum({ view: "band", serial, backfill: BACKFILL_ROWS });
     return () => stopSdrSpectrum();
-  }, [live]);
+  }, [live, serial]);
 
   const point = useCallback(
     async (range: SpectrumRange) => {

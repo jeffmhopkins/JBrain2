@@ -28,6 +28,7 @@ import io
 import json
 import wave
 from typing import Annotated, Any, cast
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -1057,6 +1058,8 @@ async def spectrum(
     settings: SettingsDep,
     _owner: OwnerDep,
     view: Annotated[str | None, Query(pattern="^(band|channel|all)$")] = None,
+    serial: Annotated[str | None, Query(max_length=64)] = None,
+    backfill: Annotated[int, Query(ge=1, le=240)] = 1,
 ) -> StreamingResponse:
     """The waterfall's rows, as server-sent events.
 
@@ -1074,9 +1077,25 @@ async def spectrum(
     `view` picks WHICH picture, on a session that draws two off one capture: the band it
     is sitting in, the channel it is demodulating, or `all` for both interleaved (every
     row says which it is). Omitted keeps whatever that session's rows meant before there
-    was a choice, so a client that never sends it sees no change."""
+    was a choice, so a client that never sends it sees no change.
+
+    `serial` picks WHICH RADIO, and on a two-dongle box a client that omits it is asking
+    for trouble: the sidecar's `drawing()` prefers a spectrum session, so a surface
+    wanting the tuner's own channel strip while the other dongle sweeps was attached to
+    the sweep and waited forever for rows that session does not draw.
+
+    `backfill` is how many already-drawn rows to send before the live ones. A waterfall
+    that has been running for minutes is otherwise redrawn from nothing at the row rate
+    — two a second on a hopped band — so the picture an owner comes back to is one strip
+    at the bottom of an empty box."""
     base = _base(settings)
-    query = f"?view={view}" if view else ""
+    asked = {
+        "view": view,
+        "serial": serial,
+        "backfill": str(backfill) if backfill > 1 else None,
+    }
+    kept = {key: value for key, value in asked.items() if value}
+    query = f"?{urlencode(kept)}" if kept else ""
 
     async def pump():
         client = httpx.AsyncClient(base_url=base, timeout=None)

@@ -481,7 +481,7 @@ def test_a_sweep_whose_radio_goes_away_keeps_what_it_measured(sidecar: str) -> N
     # The rows a viewer would have seen, then the radio going away underneath it.
     session = server.TUNER.find(started[1]["session_id"])
     assert session is not None
-    sub = session.subscribe_frames(listen.VIEW_BAND)
+    sub, _ = session.subscribe_frames(listen.VIEW_BAND)
     rows = listen.SurveyRows(25_000)
     lines = []
     for _ in range(8):

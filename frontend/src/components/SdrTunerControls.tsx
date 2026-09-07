@@ -116,6 +116,11 @@ export function liveTag(behindS: number | null): string {
  * instead of a second, read-only rendering of the same lease: the tab used to show
  * frequency and mode as text while the only way to actually drive the radio was the
  * composer's icon. One implementation, two mounts. */
+/** Rows of the tuning strip to ask for when the sheet opens. The strip's waterfall mode
+ *  draws a history like the band picture does, and it was blank on arrival for the same
+ *  reason (`SdrSpectrumJob.BACKFILL_ROWS`). */
+const BACKFILL_ROWS = 120;
+
 export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,9 +156,15 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     if (!drawing) return;
     // The CHANNEL only: this sheet draws the tuning strip, and the band picture the
     // same session can now produce would cost ~11% of a core with nothing rendering it.
-    startSdrSpectrum("channel");
+    // NAMED, because the sidecar prefers a spectrum session when nobody says: with the
+    // other dongle sweeping, this asked for the channel strip and was handed the sweep.
+    startSdrSpectrum({
+      view: "channel",
+      serial: listening.serial ?? null,
+      backfill: BACKFILL_ROWS,
+    });
     return () => stopSdrSpectrum();
-  }, [drawing]);
+  }, [drawing, listening.serial]);
 
   // Captions hold a whisper model resident on the box's GPU next to the chat model,
   // so they are opt-in and stop with the sheet rather than running unattended.

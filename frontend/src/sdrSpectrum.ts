@@ -135,8 +135,34 @@ const IDLE: SpectrumState = {
   error: null,
 };
 
+/** What a surface wants drawn: which picture, off WHICH RADIO, with how much of what
+ *  has already been drawn.
+ *
+ *  `serial` is not optional in spirit. The sidecar picks the session to stream from, and
+ *  it prefers a spectrum one — so on a two-dongle box the tuner's own channel strip was
+ *  attached to the other radio's band picture and waited for rows that session does not
+ *  draw. A surface that knows which radio it is showing has to say so. */
+export interface SpectrumWanted {
+  view?: SpectrumView | "all";
+  serial?: string | null;
+  /** Rows already drawn to send before the live ones, so a picture that has been
+   *  running for minutes comes back as a picture rather than as a blank box filling at
+   *  the row rate. */
+  backfill?: number;
+}
+
+function query(want: SpectrumWanted): string {
+  const parts = [`view=${want.view ?? "all"}`];
+  if (want.serial) parts.push(`serial=${encodeURIComponent(want.serial)}`);
+  if (want.backfill && want.backfill > 1) parts.push(`backfill=${Math.round(want.backfill)}`);
+  return parts.join("&");
+}
+
 let state: SpectrumState = IDLE;
 let source: EventSource | null = null;
+/** What the open stream was opened FOR, so a surface asking for something else reopens
+ *  it instead of silently inheriting someone else's picture. */
+let openKey: string | null = null;
 const listeners = new Set<Listener>();
 
 /** A row waiting for the ear, with the wall-clock moment it arrived — see `release`. */
@@ -354,18 +380,31 @@ export function sameBand(a: SpectrumRow | null, b: SpectrumRow | null): boolean 
  *  listening session transforms the whole 2.4 MHz band only while someone is
  *  subscribed to it (~11% of one core), so asking for a picture nothing draws is work
  *  the radio does for nobody. `all` is for a surface showing both at once. */
-export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
-  if (source || typeof EventSource === "undefined") {
-    // Already open: the FIRST caller's view stands. There is one stream because there is
-    // one radio drawing, and two surfaces wanting different pictures of it at once does
-    // not happen — the tuner sheet and the Radio tab are different jobs on one dongle.
+export function startSdrSpectrum(want: SpectrumWanted | SpectrumView | "all" = "all"): void {
+  const asked: SpectrumWanted = typeof want === "string" ? { view: want } : want;
+  const key = `${asked.view ?? "all"}|${asked.serial ?? ""}|${asked.backfill ?? 1}`;
+  if (typeof EventSource === "undefined") return;
+  if (source && key === openKey) {
+    // The same picture of the same radio: nothing to reopen, and the rows already
+    // drawn stay on whatever is drawing them.
     publish({ ...state, on: true }, null);
     return;
   }
+  if (source) {
+    // A DIFFERENT picture, which used to be ignored — "the first caller's view stands",
+    // written when the tuner sheet and the Radio tab were different jobs on one dongle.
+    // The omnibox sheet made them two tabs over two radios, so the second tab asked for
+    // a picture it then never received: the tuning strip sat on "waiting for the radio"
+    // under audio that was plainly playing.
+    source.close();
+    source = null;
+    stopReleasing();
+  }
   publish({ ...IDLE, on: true }, null);
+  openKey = key;
   // One socket whichever it is: each row says which picture it belongs to, so a
   // surface that wants both needs no second stream.
-  const stream = new EventSource(`/api/sdr/spectrum?view=${view}`);
+  const stream = new EventSource(`/api/sdr/spectrum?${query(asked)}`);
   source = stream;
   pending = [];
   releaser ??= setInterval(release, 1000 / RELEASE_HZ);
@@ -392,6 +431,7 @@ export function startSdrSpectrum(view: SpectrumView | "all" = "all"): void {
 export function stopSdrSpectrum(): void {
   source?.close();
   source = null;
+  openKey = null;
   stopReleasing();
   publish(IDLE, null);
 }
@@ -421,6 +461,7 @@ export function subscribeSdrSpectrum(listener: Listener): () => void {
 export function resetSdrSpectrum(): void {
   source?.close();
   source = null;
+  openKey = null;
   stopReleasing();
   listeners.clear();
   state = IDLE;

@@ -371,3 +371,67 @@ describe("resetting a radio that will not open", () => {
     expect(await screen.findByRole("button", { name: "Reset this radio" })).toBeTruthy();
   });
 });
+
+describe("what an APRS radio shows about itself", () => {
+  function packets(over: Record<string, unknown> = {}) {
+    return {
+      logging: true,
+      reachable: true,
+      frequency_hz: 144_390_000,
+      packets: [
+        {
+          heard_at: new Date(Date.now() - 90_000).toISOString(),
+          frequency_hz: 144_390_000,
+          source: "W4MLB-10",
+          destination: "APRS",
+          path: ["WIDE1-1"],
+          info: "!2812.34N/08037.56W# digipeater",
+        },
+      ],
+      ...over,
+    };
+  }
+
+  it("shows the last packet it heard, which is the proof it is working", async () => {
+    // A surface that offers only a LINK says nothing about whether the job is running,
+    // and that is the one thing the owner opens it for.
+    box([radio(WHIP, { name: "Desk whip" })], [session({ purpose: "aprs", serial: WHIP })]);
+    const peek = vi.spyOn(api, "getAprsPackets").mockResolvedValue(packets() as never);
+
+    show();
+    fireEvent.click(await screen.findByText("Desk whip"));
+
+    const call = await screen.findByText("W4MLB-10");
+    // The whole line, not just the callsign: when it was heard is what makes a
+    // callsign evidence rather than a label.
+    const line = call.parentElement?.textContent ?? "";
+    expect(line).toMatch(/ago/);
+    expect(line).toContain("digipeater");
+    expect(peek).toHaveBeenCalled();
+  });
+
+  it("still offers the log when the peek fails", async () => {
+    box([radio(WHIP, { name: "Desk whip" })], [session({ purpose: "aprs", serial: WHIP })]);
+    vi.spyOn(api, "getAprsPackets").mockRejectedValue(new Error("nope"));
+
+    show();
+    fireEvent.click(await screen.findByText("Desk whip"));
+
+    expect(await screen.findByText("Open the APRS log")).toBeInTheDocument();
+    expect(screen.queryByText("W4MLB-10")).not.toBeInTheDocument();
+  });
+
+  it("does not peek when the screen already hands it a log", async () => {
+    // The Radios tab polls for the whole screen; a second poll behind it would ask the
+    // box the same question twice at two cadences, which is how two surfaces come to
+    // disagree.
+    box([radio(WHIP, { name: "Desk whip" })], [session({ purpose: "aprs", serial: WHIP })]);
+    const peek = vi.spyOn(api, "getAprsPackets").mockResolvedValue(packets() as never);
+    render(<SdrRadiosTab tick={0} log={packets() as never} onOpenAprs={() => {}} />);
+
+    fireEvent.click(await screen.findByText("Desk whip"));
+
+    expect(await screen.findByText("W4MLB-10")).toBeInTheDocument();
+    expect(peek).not.toHaveBeenCalled();
+  });
+});
