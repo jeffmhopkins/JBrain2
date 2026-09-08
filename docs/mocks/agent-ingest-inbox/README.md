@@ -58,11 +58,18 @@ same control one step further out, onto the stream itself.
   at all** — only that one exists; a second `--fs-micro` line is 9px on the owner's phone,
   about four words. **It also depends on the sibling gate**: B has a host only if note
   conversations are listed in the chats picker (`docs/mocks/agent-ingest/`, option C).
-- **C — "the question comes to the note".** It puts agent turns into the home stream, so the
-  stream gets taller and the newest capture is pushed toward the fold — the rule
-  `Stream.tsx:230-233` exists to protect. It also re-opens the lifecycle chip's documented
-  "analyzed → no chip, the quiet end-state" doctrine (`notes/lifecycle.ts:8`). If home is a
-  capture surface that must stay pristine, C is the wrong answer.
+- **C — "the question comes to the note".** It puts agent turns into the home stream. The
+  stream is a **chat log, not a feed** — notes sort ascending (`useNotes.ts:287`) and the
+  scroller pins the bottom on every append (`Stream.tsx:229-234`) — so a question renders
+  *below* its note, and a question on the newest note lands **between that note and the
+  composer**: an agent turn in the thumb zone directly above "What happened?". What scrolls off
+  the top is older history, not the new capture; the thing crowded is capture itself. It also
+  re-opens the lifecycle chip's documented "analyzed → no chip, the quiet end-state" doctrine
+  (`notes/lifecycle.ts:8`). And it has a **seam**: placement keys on the *note's* age, not the
+  question's, so a note near the two-day edge — and every backdated import — has left the
+  window before its question exists and never appears on home at all. The stream is the fast
+  path; the inbox is the guaranteed one. If home is a capture surface that must stay pristine,
+  C is the wrong answer.
 
 ## Fidelity: what the mocks show, and what does not exist yet
 
@@ -111,6 +118,20 @@ the plan must own; none of it is designed around in the HTML.
 9. **`wiki_stale_claim` has no edge to draw.** Its payload is `{entity_ids, fact_id, summary}`
    on the generic block sequence (`registry.ts:60-61`), so it renders as a summary. An earlier
    draft invented a `hiringStatus` edge panel; it is gone.
+10. **The badge does not count threads.** `reviewCount` is `queue.items.length`
+    (`Launcher.tsx:252-254`) — review items only. A's `8` (3 threads + 5 findings) and C's `6`
+    (1 aged-out thread + 5 findings) both need the count widened to include waiting
+    conversations. B needs no such change, because it shows no badge.
+11. **B changes the picker's default.** Its Waiting bucket is carved out of
+    `SessionsPanel`'s `tab ?? first non-empty` rule (`SessionsPanel.tsx:273-281`,
+    `DESIGN.md:1285-1287`) so Chats keeps landing on Today. Without the carve-out a
+    first-placed non-empty Waiting bucket would be the landing screen every time — louder than
+    a launcher badge, not quieter. It is a real behaviour change to a settled default, not a
+    styling choice.
+12. **An empty lane shows a `0` today.** `ReviewScreen.tsx:534` renders the count pill whenever
+    the count is defined; only the tile badge gates on `> 0` (`Launcher.tsx:370-371`). All
+    three mocks hide the pill at zero. That is a small deliberate improvement, not existing
+    behaviour.
 
 ## How they were built
 
@@ -138,10 +159,15 @@ Standalone, no build step, phone-viewport first, correct in both themes, on the
    does not suppress) or *file a correction note* and wait for the next build. That is defensible
    under non-negotiable #7 — the wiki stays machine-written — but it is slow, and the mocks show
    how slow. Adding verbs is scope; so is fixing dismiss.
-2. **A doc correction rides along either way.** `docs/reference/DESIGN.md:899-953` still
-   describes a **three-lane** review inbox (`pending · deferred · decided`); only two lanes
-   shipped. Whichever variant wins, that section is rewritten to the two tabs and the drift is
-   corrected in the same PR (`docs/DOC_LIFECYCLE.md`).
+2. **Doc corrections ride along either way.** `docs/reference/DESIGN.md:899-953` has drifted
+   from the code in two places, and whichever variant wins, both are corrected in the same PR
+   (`docs/DOC_LIFECYCLE.md`):
+   - it describes a **three-lane** review inbox (`pending · deferred · decided`); only two
+     lanes shipped, and this change replaces them with the two tabs;
+   - `:930-935` describes **defer** and **talk it over** as "two universal escape hatches
+     [that] sit in the footer", but `Footer.tsx` renders only `rfoot-correct` for the pending
+     lane. The mocks show no defer and no talk-it-over because the code has none — the doc is
+     what is stale, not the mock.
 
 *(An earlier variant C — a "Waiting on you" sheet raised from a steel dot in the top bar's
 status cluster — was withdrawn. The owner has already ruled that cluster non-tappable and its

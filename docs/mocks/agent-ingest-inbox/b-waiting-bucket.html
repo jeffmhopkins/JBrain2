@@ -166,7 +166,6 @@
       .rprop { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 52px; padding: 11px 14px; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
       .rprop-label { font-size: var(--fs-secondary); color: var(--text); }
       .rprop-detail { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.4; }
-      .rprop-none { font-size: var(--fs-secondary); color: var(--text-3); padding: 6px 2px; line-height: 1.5; }
       .rdetail-foot { display: flex; padding-top: 2px; }
       .rfoot-correct { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); display: flex; align-items: center; justify-content: center; }
       .answers { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -227,23 +226,24 @@
             <span class="mark">JBrain<i>.</i></span>
             <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
           </div>
+          <!-- Oldest first, newest pinned at the bottom (useNotes.ts:287, Stream.tsx:229-234). -->
           <div class="scroll">
-            <div class="day-header">Today</div>
-            <div class="day-card">
-              <div class="note">
-                <div class="note-head"><span class="dot d-health"></span>08:41</div>
-                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
-              </div>
-              <div class="note">
-                <div class="note-head"><span class="dot d-general"></span>07:12</div>
-                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
-              </div>
-            </div>
             <div class="day-header">Yesterday</div>
             <div class="day-card">
               <div class="note">
                 <div class="note-head"><span class="dot d-general"></span>18:03</div>
                 <div class="note-body">Priya moved to the Marina place in March — finally out of the Sunset.</div>
+              </div>
+            </div>
+            <div class="day-header">Today</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>07:12</div>
+                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
+              </div>
+              <div class="note">
+                <div class="note-head"><span class="dot d-health"></span>08:41</div>
+                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
               </div>
             </div>
           </div>
@@ -433,6 +433,13 @@
           this mock put the question on a second <span class="mono">--fs-micro</span> line; on the
           owner’s phone that is <b>9px, ellipsized to about four words</b>. Dropping it is the honest
           version of B, not a regression.
+          <br /><br />
+          <b class="gap">Walk to wiki items 3–5</b> and the “choose among proposals” header sits over
+          nothing, with <b>correct it</b> as the only way out. That is not a mock omission: the three
+          EMR producers file no <span class="mono">choices</span>, no
+          <span class="mono">accept</span> and no <span class="mono">reject</span>, so
+          <span class="mono">proposalsFor</span> returns an empty list and the block renders exactly
+          this. They need at least a dismiss — README item 3.
         </p>
       </div>
 
@@ -620,12 +627,10 @@
           }
           html += "</div>";
         }
+        // A kind that files no `choices` renders this header over nothing — which is
+        // exactly what ships. The explanation belongs in the frame note, not the device.
         html += '<div class="blk"><h3 class="section-header">choose among proposals</h3>';
-        if (it.proposals.length === 0) {
-          html +=
-            '<p class="rprop-none">This kind files no proposals, so the inbox offers none. ' +
-            "The only way out is “correct it”.</p>";
-        } else {
+        if (it.proposals.length > 0) {
           html += '<div class="rproposals">';
           for (const p of it.proposals)
             html +=

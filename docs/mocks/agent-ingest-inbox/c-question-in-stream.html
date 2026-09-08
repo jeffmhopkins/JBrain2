@@ -97,7 +97,7 @@
       .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; }
       .day-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
       .note { padding: 13px 15px; display: flex; flex-direction: column; gap: 5px; }
-      .note + .note, .ask-block + .note { border-top: 1px solid var(--border); }
+      .note + .note, .ask-block + .note, .answered + .note { border-top: 1px solid var(--border); }
       .note-head { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
       .note-body { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
       .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 14px 16px; display: flex; flex-direction: column; gap: 7px; }
@@ -167,7 +167,6 @@
       .rprop { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 52px; padding: 11px 14px; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
       .rprop-label { font-size: var(--fs-secondary); color: var(--text); }
       .rprop-detail { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.4; }
-      .rprop-none { font-size: var(--fs-secondary); color: var(--text-3); padding: 6px 2px; line-height: 1.5; }
       .rdetail-foot { display: flex; padding-top: 2px; }
       .rfoot-correct { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); display: flex; align-items: center; justify-content: center; }
 
@@ -224,31 +223,10 @@
             <span class="mark">JBrain<i>.</i></span>
             <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
           </div>
+          <!-- Oldest first, newest pinned at the bottom: the stream is a chat log
+               (useNotes.ts:287 sorts ascending; Stream.tsx:229-234 scrolls to
+               scrollHeight on every append). -->
           <div class="scroll">
-            <div class="day-header">Today</div>
-            <div class="day-card">
-              <div class="note">
-                <div class="note-head"><span class="dot d-health"></span>08:41</div>
-                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
-              </div>
-              <div class="ask-block" data-ask>
-                <div class="who">
-                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
-                  asked 6 hours ago · 2 committed
-                </div>
-                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
-                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>Lisinopril</button>
-                  <button type="button" class="pick" data-answer>Atorvastatin</button>
-                  <button type="button" data-answer>Say it another way…</button>
-                </div>
-              </div>
-              <div class="note">
-                <div class="note-head"><span class="dot d-general"></span>07:12</div>
-                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
-              </div>
-            </div>
             <div class="day-header">Yesterday</div>
             <div class="day-card">
               <div class="note">
@@ -270,6 +248,30 @@
                 </div>
               </div>
             </div>
+            <div class="day-header">Today</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>07:12</div>
+                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
+              </div>
+              <div class="note">
+                <div class="note-head"><span class="dot d-health"></span>08:41</div>
+                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
+              </div>
+              <div class="ask-block" data-ask>
+                <div class="who">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                  asked 6 hours ago · 2 committed
+                </div>
+                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
+                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer>Lisinopril</button>
+                  <button type="button" class="pick" data-answer>Atorvastatin</button>
+                  <button type="button" data-answer>Say it another way…</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="composer">
             <div class="modeseg"><span data-on>Entry</span><span>Research</span><span>Full Brain</span></div>
@@ -278,16 +280,27 @@
           </div>
         </div>
         <p class="frame-note">
-          Tap an answer — the block collapses to a one-line “answered” trace and the day card goes
-          back to plain note rows. Nothing was navigated to and nothing was approved.
+          The stream is a <b>chat log, not a feed</b>: notes sort ascending
+          (<span class="mono">useNotes.ts:287</span>) and the scroller pins the bottom on every
+          append (<span class="mono">Stream.tsx:229-234</span>), so the newest capture sits at the
+          foot of the list, just above the composer. Tap an answer — the block collapses to a
+          one-line “answered” trace. Nothing was navigated to and nothing was approved.
           <br /><br />
-          <b class="gap">The cost, plainly:</b> this puts agent turns into the stream. Two open
-          questions already push the newest capture toward the fold, which is the rule
-          <span class="mono">Stream.tsx:230-233</span> exists to protect, and it re-opens the
-          lifecycle chip’s “analyzed → no chip, the quiet end-state” doctrine
-          (<span class="mono">notes/lifecycle.ts:8</span>). C is the loudest variant on the surface
-          the owner looks at most — the defence is that it is <em>content</em> that answers itself
-          away, not a mark that persists until you visit a screen.
+          <b class="gap">The cost, plainly:</b> a question renders <em>below</em> the note it
+          belongs to, so a question on the <b>newest</b> note lands between that note and the
+          composer — an agent turn sitting in the thumb zone directly above “What happened?”
+          whenever one is open. Capture is what gets crowded, not visibility; what scrolls off the
+          top is older history. It also re-opens the lifecycle chip’s “analyzed → no chip, the quiet
+          end-state” doctrine (<span class="mono">notes/lifecycle.ts:8</span>). C is the loudest
+          variant on the surface the owner looks at most — the defence is that it is
+          <em>content</em> that answers itself away, not a mark that persists until you visit a
+          screen.
+          <br /><br />
+          <b class="gap">And a seam:</b> placement keys on the <b>note’s</b> age, not the
+          question’s. Inference is local-only and a first pass can take minutes, so a note near the
+          two-day edge — and <em>every</em> backdated import, like the 12 Aug records note in frame
+          2 — has already left the window by the time its question exists, and never appears on home
+          at all. The stream is the fast path; the inbox is the guaranteed one.
         </p>
       </div>
 
@@ -400,6 +413,13 @@
           The Notes tab holds one row, not three — the other two were answerable on home and are
           gone. That is the claim to test: does an inbox that only shows the aged-out remainder feel
           like a place worth opening, or like a screen that is almost always nearly empty?
+          <br /><br />
+          <b class="gap">Walk to wiki items 3–5</b> and the “choose among proposals” header sits over
+          nothing, with <b>correct it</b> as the only way out. That is not a mock omission: the three
+          EMR producers file no <span class="mono">choices</span>, no
+          <span class="mono">accept</span> and no <span class="mono">reject</span>, so
+          <span class="mono">proposalsFor</span> returns an empty list and the block renders exactly
+          this. They need at least a dismiss — README item 3.
         </p>
       </div>
 
@@ -600,12 +620,10 @@
           }
           html += "</div>";
         }
+        // A kind that files no `choices` renders this header over nothing — which is
+        // exactly what ships. The explanation belongs in the frame note, not the device.
         html += '<div class="blk"><h3 class="section-header">choose among proposals</h3>';
-        if (it.proposals.length === 0) {
-          html +=
-            '<p class="rprop-none">This kind files no proposals, so the inbox offers none. ' +
-            "The only way out is “correct it”.</p>";
-        } else {
+        if (it.proposals.length > 0) {
           html += '<div class="rproposals">';
           for (const p of it.proposals)
             html +=

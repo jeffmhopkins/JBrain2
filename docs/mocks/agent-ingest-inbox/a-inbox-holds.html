@@ -155,7 +155,6 @@
       .rprop { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 52px; padding: 11px 14px; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
       .rprop-label { font-size: var(--fs-secondary); color: var(--text); }
       .rprop-detail { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.4; }
-      .rprop-none { font-size: var(--fs-secondary); color: var(--text-3); padding: 6px 2px; line-height: 1.5; }
       .rdetail-foot { display: flex; padding-top: 2px; }
       .rfoot-correct { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); display: flex; align-items: center; justify-content: center; }
       .rcompose { display: flex; flex-direction: column; gap: 8px; }
@@ -423,6 +422,13 @@
           The proposals are the shipped <span class="mono">.rprop</span> — plain surface, hairline
           border, label in <span class="mono">--text</span> — so nothing renders an accent on its own
           tint.
+          <br /><br />
+          <b class="gap">Walk to items 3–5</b> and the “choose among proposals” header sits over
+          nothing, with <b>correct it</b> as the only way out. That is not a mock omission: the three
+          EMR producers file no <span class="mono">choices</span>, no
+          <span class="mono">accept</span> and no <span class="mono">reject</span>, so
+          <span class="mono">proposalsFor</span> returns an empty list and the block renders exactly
+          this. They need at least a dismiss — README item 3.
         </p>
       </div>
 
@@ -455,8 +461,13 @@
         </div>
         <p class="frame-note">
           Empty segments carry no count pill and the tile carries no badge. There is no zero to
-          clear, no dot, no colour — the absence is the state, which is the rule the Review badge
-          already follows.
+          clear, no dot, no colour — the absence is the state.
+          <br /><br />
+          Half of that is already the rule: the <b>tile badge</b> gates on
+          <span class="mono">reviewCount &gt; 0</span> (<span class="mono">Launcher.tsx:370-371</span>).
+          The <b>segment pill</b> is not — <span class="mono">ReviewScreen.tsx:534</span> renders it
+          whenever the count is defined, so an empty lane shows a <span class="mono">0</span> today.
+          Gating it is a small deliberate change, not existing behaviour.
         </p>
       </div>
     </div>
@@ -626,12 +637,10 @@
           }
           html += "</div>";
         }
+        // A kind that files no `choices` renders this header over nothing — which is
+        // exactly what ships. The explanation belongs in the frame note, not the device.
         html += '<div class="blk"><h3 class="section-header">choose among proposals</h3>';
-        if (it.proposals.length === 0) {
-          html +=
-            '<p class="rprop-none">This kind files no proposals, so the inbox offers none. ' +
-            "The only way out is “correct it”.</p>";
-        } else {
+        if (it.proposals.length > 0) {
           html += '<div class="rproposals">';
           for (const p of it.proposals)
             html +=
