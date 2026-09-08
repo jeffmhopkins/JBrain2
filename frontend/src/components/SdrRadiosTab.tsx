@@ -331,25 +331,27 @@ export function RadioJob({
           buttons a thumb apart should look alike: these were a row of separate pills
           while Mode was one joined pill, so the sheet read as two unrelated widgets
           rather than one dial with two settings. */}
-      <p className="sdr-label">Doing</p>
-      <div className="seg-row sdr-jobs" role="group" aria-label="Doing">
-        {JOBS.map(({ id, label }) => {
-          const why = jobAllowed(radios, sdr, radio, id);
-          return (
-            <button
-              key={id}
-              type="button"
-              className={`seg${job === id ? " seg-on" : ""}`}
-              aria-pressed={job === id}
-              disabled={busy || (why !== null && job !== id)}
-              title={why ?? undefined}
-              onClick={() => choose(id)}
-            >
-              {confirm === id ? "Again?" : label}
-            </button>
-          );
-        })}
-      </div>
+      <fieldset className="seg-set" aria-label="Doing">
+        <legend className="sdr-label">Doing</legend>
+        <div className="seg-row sdr-jobs">
+          {JOBS.map(({ id, label }) => {
+            const why = jobAllowed(radios, sdr, radio, id);
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`seg${job === id ? " seg-on" : ""}`}
+                aria-pressed={job === id}
+                disabled={busy || (why !== null && job !== id)}
+                title={why ?? undefined}
+                onClick={() => choose(id)}
+              >
+                {confirm === id ? "Again?" : label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
       {confirm && session && (
         // Names the job being STOPPED, not the state line: reading that line back
         // produces "that stops not attached." on the awkward cases, and what the owner

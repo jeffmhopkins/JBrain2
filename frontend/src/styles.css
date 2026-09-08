@@ -26309,6 +26309,15 @@ button.wf-sigpill {
    supplies only the accent the tint reads from, exactly as .sdr-modes does. A
    disabled segment still has to look unavailable — the base .seg has no such state,
    because nowhere else in the app is a segment refused. */
+/* The wrapper that lets a labelled segmented row be a real fieldset: no border, no
+   padding, no inline-size quirk — the .seg-row inside carries the whole appearance. */
+.seg-set {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+}
+
 .sdr-jobs {
   --mode: var(--accent);
   --mode-tint: var(--accent-tint);

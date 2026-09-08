@@ -65,6 +65,34 @@ function ctxClass(state = "running") {
   return { Ctx, taps };
 }
 
+/** A stubbed AudioContext whose state the test can move afterwards — the real sequence
+ *  is a tap taken while running, then an OS suspend. Returns a handle on the instance
+ *  the module built, so the test can flip `state` the way an interruption does. */
+function stubContext(resume: () => Promise<void>): { current: { state: string } | null } {
+  const made: { current: { state: string } | null } = { current: null };
+  class FakeContext {
+    state = "running";
+    destination = {};
+    resume = resume;
+    constructor() {
+      made.current = this;
+    }
+    createMediaElementSource() {
+      return { connect: vi.fn(), disconnect: vi.fn() };
+    }
+    createAnalyser() {
+      return {
+        fftSize: 2048,
+        smoothingTimeConstant: 0,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      };
+    }
+  }
+  vi.stubGlobal("AudioContext", FakeContext);
+  return made;
+}
+
 describe("the radio's audio element", () => {
   it("plays from the proxied stream, not the sidecar", () => {
     playSdrAudio();
@@ -274,32 +302,13 @@ describe("putting the supply back after the app was away", () => {
     // so the 20 Hz sampler — the one thing that would notice and recover — is asleep at
     // exactly the moment the context dies. Something has to run on the way back.
     const resume = vi.fn(() => Promise.resolve());
-    const ctx = {
-      state: "running",
-      destination: {},
-      resume,
-      createMediaElementSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-      createAnalyser: () => ({
-        fftSize: 2048,
-        smoothingTimeConstant: 0,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      }),
-    };
-    vi.stubGlobal(
-      "AudioContext",
-      class {
-        constructor() {
-          return ctx;
-        }
-      },
-    );
+    const ctx = stubContext(resume);
     playSdrAudio();
     // The tap succeeds, so the analyser is cached and the re-tap branch is NOT the one
     // under test — this pins the resume itself.
     expect(sdrAnalyser()).not.toBeNull();
     resume.mockClear();
-    ctx.state = "suspended";
+    if (ctx.current) ctx.current.state = "suspended";
 
     ensureSdrAudioLive();
 
@@ -312,30 +321,11 @@ describe("putting the supply back after the app was away", () => {
     // the "suspended" test and was never resumed at all — and it is the state a phone
     // is most often in when the owner comes back to the app.
     const resume = vi.fn(() => Promise.resolve());
-    const ctx = {
-      state: "running",
-      destination: {},
-      resume,
-      createMediaElementSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-      createAnalyser: () => ({
-        fftSize: 2048,
-        smoothingTimeConstant: 0,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      }),
-    };
-    vi.stubGlobal(
-      "AudioContext",
-      class {
-        constructor() {
-          return ctx;
-        }
-      },
-    );
+    const ctx = stubContext(resume);
     playSdrAudio();
     sdrAnalyser();
     resume.mockClear();
-    ctx.state = "interrupted";
+    if (ctx.current) ctx.current.state = "interrupted";
 
     ensureSdrAudioLive();
 
@@ -346,30 +336,11 @@ describe("putting the supply back after the app was away", () => {
   it("leaves a CLOSED context alone", () => {
     // Closed is terminal: resuming it throws, and the recovery would become the fault.
     const resume = vi.fn(() => Promise.resolve());
-    const ctx = {
-      state: "running",
-      destination: {},
-      resume,
-      createMediaElementSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-      createAnalyser: () => ({
-        fftSize: 2048,
-        smoothingTimeConstant: 0,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      }),
-    };
-    vi.stubGlobal(
-      "AudioContext",
-      class {
-        constructor() {
-          return ctx;
-        }
-      },
-    );
+    const ctx = stubContext(resume);
     playSdrAudio();
     sdrAnalyser();
     resume.mockClear();
-    ctx.state = "closed";
+    if (ctx.current) ctx.current.state = "closed";
 
     ensureSdrAudioLive();
 
@@ -402,30 +373,11 @@ describe("putting the supply back after the app was away", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const resume = vi.fn(() => new Promise<void>(() => {})); // never settles
-    const ctx = {
-      state: "running",
-      destination: {},
-      resume,
-      createMediaElementSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-      createAnalyser: () => ({
-        fftSize: 2048,
-        smoothingTimeConstant: 0,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      }),
-    };
-    vi.stubGlobal(
-      "AudioContext",
-      class {
-        constructor() {
-          return ctx;
-        }
-      },
-    );
+    const ctx = stubContext(resume);
     playSdrAudio();
     sdrAnalyser();
     resume.mockClear();
-    ctx.state = "suspended";
+    if (ctx.current) ctx.current.state = "suspended";
 
     ensureSdrAudioLive();
     expect(resume).toHaveBeenCalledTimes(1);

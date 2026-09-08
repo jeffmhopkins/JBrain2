@@ -477,25 +477,29 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
         )}
       </div>
 
-      <p className="sdr-label">Mode</p>
-      <div className="seg-row sdr-modes" role="group" aria-label="Demodulation mode">
-        {MODES.map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            className={`seg${mode === listening.mode ? " seg-on" : ""}`}
-            aria-pressed={mode === listening.mode}
-            disabled={busy}
-            onClick={() =>
-              void act(() =>
-                api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
-              )
-            }
-          >
-            {mode.toUpperCase()}
-          </button>
-        ))}
-      </div>
+      {/* A fieldset with its legend, not a div wearing role="group": the grouping is
+          real, so the element that means it is the one to use. */}
+      <fieldset className="seg-set" aria-label="Demodulation mode">
+        <legend className="sdr-label">Mode</legend>
+        <div className="seg-row sdr-modes">
+          {MODES.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`seg${mode === listening.mode ? " seg-on" : ""}`}
+              aria-pressed={mode === listening.mode}
+              disabled={busy}
+              onClick={() =>
+                void act(() =>
+                  api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
+                )
+              }
+            >
+              {mode.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       {listening.engine !== undefined && listening.engine !== "iq" && (
         // Said rather than left blank, because the owner has no terminal (CLAUDE.md

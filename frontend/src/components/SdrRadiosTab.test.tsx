@@ -246,9 +246,10 @@ describe("giving a radio a job", () => {
     show();
     await open("Desk whip");
 
-    const row = screen.getByRole("group", { name: "Doing" });
-    expect(row).toHaveClass("seg-row");
-    for (const button of row.querySelectorAll("button")) {
+    const group = screen.getByRole("group", { name: "Doing" });
+    const row = group.querySelector(".seg-row");
+    expect(row).not.toBeNull();
+    for (const button of group.querySelectorAll("button")) {
       expect(button).toHaveClass("seg");
     }
   });
