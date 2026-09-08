@@ -400,6 +400,103 @@ async def test_a_settled_merge_still_un_merges_after_a_rebuild(
     assert (tombstone.status, tombstone.merged_into_id) == ("confirmed", None)
 
 
+async def emr_note(maker: async_sessionmaker[AsyncSession], *, media_types: tuple[str, ...]) -> str:
+    """A sweep-eligible health `Records` note carrying `media_types` — the shape
+    migration 0122's stage-2 trigger matches on."""
+    nid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, destination, body,"
+                " ingest_state, integration_state)"
+                " VALUES (:id, :cid, 'health', 'Records', 'emr seed note',"
+                " 'indexed', 'integrated')"
+            ),
+            {"id": nid, "cid": f"emr-{nid[:13]}"},
+        )
+        for media_type in media_types:
+            await s.execute(
+                text(
+                    "INSERT INTO app.attachments (id, note_id, domain_code, sha256,"
+                    " filename, media_type, size_bytes)"
+                    " VALUES (:id, :n, 'health', :sha, 'records', :mt, 10)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "n": nid,
+                    "sha": uuid.uuid4().hex,
+                    "mt": media_type,
+                },
+            )
+    return nid
+
+
+EMR_JOBS = (
+    "SELECT count(*) FROM app.jobs WHERE kind = 'emr_parse' AND status = 'queued'"
+    " AND payload->>'note_id' = :id"
+)
+
+
+async def test_rebuild_re_drives_the_emr_parse_for_a_records_note(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """An EMR note's facts have TWO producers — the generic LLM extraction and the
+    deterministic parsers — and only the first has a re-drive path. The purge takes both
+    halves; re-queuing integration alone returns the note holding only the LLM's read of
+    a medical record, silently, under a docstring that promises the whole graph. So the
+    sweep re-enqueues stage 2 for every note that still matches its markers."""
+    await quiesce(maker)
+    note = await emr_note(maker, media_types=("application/pdf",))
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, EMR_JOBS, id=note) == 1
+
+
+async def test_rebuild_leaves_the_emr_parse_alone_where_stage_two_would_not_fire(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The markers are read off the note, not guessed: a note still holding an ARCHIVE is
+    pre-decryption (stage 1's shape, and its password was scrubbed at intake, so stage 1
+    can never re-run either), and a general note is not an EMR note at all. Re-driving
+    either would queue a parse with nothing to parse."""
+    await quiesce(maker)
+    encrypted = await emr_note(maker, media_types=("application/pdf", "application/zip"))
+    plain = await indexed_note(maker)
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, EMR_JOBS, id=encrypted) == 0
+    assert await count(maker, EMR_JOBS, id=plain) == 0
+
+
+async def test_the_drain_waits_for_the_emr_parse_too(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`emr_parse` writes facts and moves the EMR projections but flips no
+    `integration_state` of its own, so a drain gate watching only `integrate_note` would
+    chain the wiki repair over a graph the parser was still writing — the exact damage
+    (0045/0046) the chain exists to prevent."""
+    await quiesce(maker)
+    note = await emr_note(maker, media_types=("application/pdf",))
+    await rebuild.rebuild_batch(maker, start=True)
+    async with scoped_session(maker, OWNER) as s:
+        # Integration itself is done; only the parse is still outstanding.
+        await s.execute(text("UPDATE app.notes SET integration_state = 'integrated'"))
+        await s.execute(text("UPDATE app.jobs SET status = 'done' WHERE kind <> 'emr_parse'"))
+
+    assert await rebuild.rebuild_batch(maker) is not None
+    assert (await run_row(maker)).status == "draining"
+
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done' WHERE kind = 'emr_parse'"),
+        )
+    await rebuild.rebuild_batch(maker)
+    assert (await run_row(maker)).status == "completed"
+    assert await count(maker, EMR_JOBS, id=note) == 0
+
+
 async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:
     """The privacy purge deletes an episode WHOLE (invariant #11). Nothing re-derives
     one, so doing that in a rebuild would be silent data loss, not a rebuild."""

@@ -8,8 +8,18 @@ composed almost entirely from shipped parts:
 
     candidate note -> purge_note_artifacts(keep_pinned=True)
                    -> notes.integration_state = 'pending_integration'
+                   -> (an EMR note also re-enqueues `emr_parse`)
                    -> backfill_pending_integration drains the re-integration
                    -> wiki_prune + wiki_rebuild('all') + wiki_refresh once it settles
+
+**"The WHOLE graph" has to include the deterministic half.** A health `Records` note's
+facts come from TWO producers, not one: the generic LLM extraction (`integrate_note`)
+and the EMR parsers (`emr_parse`, migration 0122), which are what turn a lab PDF into
+cited analyte readings. Both fan out from one `note.ingested` event at ingest, and only
+the first has a re-drive path — so a purge that re-queued integration alone would return
+a rebuilt EMR note holding only the LLM's read of a medical record, silently, while the
+docstring claimed a whole-graph rebuild. So the sweep re-enqueues `emr_parse` for every
+note that still matches stage 2's markers, in the note's own transaction (`_rebuild_one`).
 
 One transaction per note (the `backfill_deleted_note_artifacts` shape), so a crash
 resumes from the run's cursor instead of starting over and no note is ever left half
@@ -42,13 +52,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from sqlalchemy import Row, text
+from sqlalchemy import Row, bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import queue
 from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import scoped_session
+from jbrain.ingest.pipeline import PDF_MEDIA_TYPE, ZIP_MEDIA_TYPES
 from jbrain.workflow.registry import ActionSpec
 
 log = structlog.get_logger()
@@ -179,6 +190,38 @@ async def _next_batch(
         return [uuid.UUID(str(row[0])) for row in rows]
 
 
+# Re-enqueue the deterministic EMR parse for a note that still matches stage 2's
+# markers (migration 0122's `payload_equals` filter, read off the note itself rather
+# than off a synthesized `note.ingested`): a health `Records` note holding a decrypted
+# PDF and no archive. Re-emitting the ingest event would have been the other option and
+# is worse — it would claim the chunks were rebuilt (they were not), hand integration a
+# SECOND producer alongside the sweep's own `pending_integration` drain, and put stage 1
+# back in scope. Enqueued directly, in the note's own transaction, so the crash window
+# that leaves a note purged-but-unparsed does not exist.
+#
+# ORDERING. None is promised, and none is needed. The queue claims `ORDER BY run_after`
+# and both jobs land in the same instant, exactly as at ingest, where both fan out from
+# one event through a trigger query with no ORDER BY — so re-driving reproduces
+# ingestion's interleaving rather than inventing a new one. The Layer-2 location
+# firewall (ingest/emr/firewall.py) is a property of the PARSER's own lowering, not a
+# pass over the graph: re-driving `emr_parse` restores it for exactly the facts it ever
+# covered, and it never guarded the generic extraction — at ingest or after a rebuild.
+_EMR_REPARSE_SQL = text(
+    "INSERT INTO app.jobs (id, kind, payload)"
+    " SELECT gen_random_uuid(), 'emr_parse', jsonb_build_object('note_id', n.id)"
+    " FROM app.notes n"
+    " WHERE n.id = CAST(:note AS uuid) AND n.domain_code = 'health'"
+    "   AND n.destination = 'Records'"
+    "   AND EXISTS (SELECT 1 FROM app.attachments a"
+    "               WHERE a.note_id = n.id AND a.media_type = :pdf)"
+    "   AND NOT EXISTS (SELECT 1 FROM app.attachments a"
+    "                   WHERE a.note_id = n.id AND a.media_type IN :zips)"
+    "   AND NOT EXISTS (SELECT 1 FROM app.jobs j WHERE j.kind = 'emr_parse'"
+    "                   AND j.status IN ('queued', 'running')"
+    "                   AND j.payload->>'note_id' = n.id::text)"
+).bindparams(bindparam("zips", expanding=True))
+
+
 async def _rebuild_one(
     maker: async_sessionmaker[AsyncSession], run_id: str, note_id: uuid.UUID
 ) -> None:
@@ -186,7 +229,12 @@ async def _rebuild_one(
     back to the Integrator, and advance the run cursor — all or nothing, so a crash
     never leaves a note purged but un-queued and the resume point is always exact.
 
-    Only `integration_state` is written. The wiki's dirty bit is `entities.wiki_built`,
+    An EMR note also gets its deterministic parse re-enqueued here (`_EMR_REPARSE_SQL`),
+    inside the same transaction, so "purged but never re-parsed" is not a reachable
+    state.
+
+    Only `integration_state` is written to the note row. The wiki's dirty bit is
+    `entities.wiki_built`,
     which 0046's triggers flip for us on the purge's fact/mention deletes;
     `notes.wiki_built` is a vestigial column with no reader anywhere in the backend or
     the PWA, so writing it here would look like re-dirtying the wiki while doing
@@ -196,6 +244,10 @@ async def _rebuild_one(
         await session.execute(
             text("UPDATE app.notes SET integration_state = 'pending_integration' WHERE id = :id"),
             {"id": str(note_id)},
+        )
+        await session.execute(
+            _EMR_REPARSE_SQL,
+            {"note": str(note_id), "pdf": PDF_MEDIA_TYPE, "zips": list(ZIP_MEDIA_TYPES)},
         )
         await session.execute(
             text(
@@ -218,7 +270,12 @@ async def _rebuild_one(
 async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
     """Whether every rebuilt note is re-integrated. Both legs matter: a note can be
     un-integrated with no job yet (the reconciler enqueues 100 per call), and a job can
-    be in flight for a note whose state has not flipped."""
+    be in flight for a note whose state has not flipped.
+
+    `emr_parse` counts as in-flight work too: it writes facts and moves the EMR
+    projections, and it flips no `integration_state` of its own, so a job leg that
+    watched only `integrate_note` would chain the wiki repair over a graph the parser
+    was still writing."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pending = (
             await session.execute(
@@ -233,7 +290,8 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
         running = (
             await session.execute(
                 text(
-                    "SELECT count(*) FROM app.jobs WHERE kind = 'integrate_note'"
+                    "SELECT count(*) FROM app.jobs"
+                    " WHERE kind IN ('integrate_note', 'emr_parse')"
                     " AND status IN ('queued', 'running')"
                 )
             )
