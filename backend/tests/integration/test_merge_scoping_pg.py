@@ -49,6 +49,16 @@ NARROWED = SessionContext(
     owner_scoped=True,
 )
 
+# The same narrowed shape with a second domain in scope. Still not a full owner — the
+# only thing the guard asks about — but wide enough that a general -> health promotion
+# and its reversal are both in-scope single-row writes.
+NARROWED_PAIR = SessionContext(
+    principal_id=OWNER.principal_id,
+    principal_kind="owner",
+    domain_scopes=("general", "health"),
+    owner_scoped=True,
+)
+
 
 async def _subject_of(maker: async_sessionmaker[AsyncSession], fact_id: str) -> str:  # noqa: F811
     """A fact's subject entity, read as a FULL owner — the only scope that sees both
@@ -377,9 +387,11 @@ async def _conflict_card(
 async def test_a_narrowed_reopen_of_a_non_merge_resolution_still_works(
     maker: async_sessionmaker[AsyncSession],  # noqa: F811
 ) -> None:
-    """The un-merge guard must not over-reach. Reversing a pin or a retraction is an
-    in-scope single-row write, so a narrowed reopen of a resolution with no merge in
-    it goes through — flip the guard to unconditional and this test is what fails."""
+    """The un-merge guard must not over-reach. Reversing a pin, a retraction or a
+    domain move is an in-scope single-row write, so a narrowed reopen of a resolution
+    with no merge in it goes through — flip the guard to unconditional and this test is
+    what fails. All three non-merge effect kinds run here, because the guard's
+    selectivity is `any(action == "merged")` and each kind has to stay under it."""
     item, fact_a, fact_b = await _conflict_card(maker)
 
     repo = SqlAnalysisRepo(maker)
@@ -396,14 +408,36 @@ async def test_a_narrowed_reopen_of_a_non_merge_resolution_still_works(
     loser = await one_row(maker, OWNER, "SELECT status FROM app.facts WHERE id = :id", id=fact_b)
     assert loser.status == "active"
 
+    # The third kind: a `domain_changed` effect, whose reversal moves the fact back
+    # across a firewall the session can still see both sides of.
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, f"Promoted {uuid.uuid4().hex[:6]}")
+    fact_c = await seed_fact(maker, note, entity, predicate="faxRequest", domain="general")
+    promotion = await seed_item(
+        maker, "domain_promotion", {"fact_id": fact_c, "proposed_domain": "health"}
+    )
+    assert await repo.resolve_review(OWNER, promotion, "accept", {}) is not None
+    moved = await one_row(
+        maker, OWNER, "SELECT domain_code, pinned FROM app.facts WHERE id = :id", id=fact_c
+    )
+    assert (moved.domain_code, moved.pinned) == ("health", True)
+
+    reopened_promotion = await repo.reopen_review(NARROWED_PAIR, promotion)
+    assert reopened_promotion is not None and reopened_promotion["status"] == "open"
+    demoted = await one_row(
+        maker, OWNER, "SELECT domain_code, pinned FROM app.facts WHERE id = :id", id=fact_c
+    )
+    assert (demoted.domain_code, demoted.pinned) == ("general", False)
+
 
 async def test_a_narrowed_batch_collects_the_merge_error_and_commits_the_rest(
     maker: async_sessionmaker[AsyncSession],  # noqa: F811
 ) -> None:
     """The batch's contract is that a bad item is an error while the good ones still
-    commit. The scope guard raises before issuing a statement, so it has not poisoned
-    the transaction and is exactly as collectable as UnknownAction — one merge card
-    must not take 200 good ones down with it."""
+    commit. The scope guard raises before writing anything — its one statement is a
+    SELECT that succeeded — so it has not poisoned the transaction and is exactly as
+    collectable as UnknownAction — one merge card must not take 200 good ones down
+    with it."""
     good, fact_a, _ = await _conflict_card(maker)
     keep, gone, fact = await _cross_scope_pair(maker)
     bad = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": gone})

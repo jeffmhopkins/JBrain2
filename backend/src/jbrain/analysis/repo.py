@@ -1330,8 +1330,9 @@ class SqlAnalysisRepo:
                     )
                 except (UnknownAction, MergeScopeError) as exc:
                     # MergeScopeError belongs here rather than on the floor: the guard
-                    # raises before issuing a statement, so unlike a DB error it has not
-                    # poisoned the transaction, and the batch's advertised contract is
+                    # raises before writing anything — its one statement is a SELECT that
+                    # succeeded — so unlike a DB error it has not poisoned the
+                    # transaction, and the batch's advertised contract is
                     # that a bad item is an error while the good ones still commit.
                     # Aborting 200 cards over one merge card would be the outage.
                     errors.append({"id": item_id, "detail": str(exc)})

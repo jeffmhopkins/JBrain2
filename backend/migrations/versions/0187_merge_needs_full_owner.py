@@ -37,9 +37,11 @@ guarantee.
 
 INSERT is gated as well as UPDATE: `app.entities` grants INSERT to `jbrain_app`
 and its RLS `WITH CHECK` is `has_domain_scope` alone, so without it a narrowed
-session could insert a row that is already a tombstone (and `COPY ... FROM` fires
-the same row triggers). That strands nothing on its own, but "the table enforces
-the rule" has to be true for the whole rule or it is not worth writing down.
+session could insert a row that is already a tombstone. The plain INSERT is the
+only path that needs the gate: `COPY ... FROM` is refused outright for this role
+(`FeatureNotSupportedError: COPY FROM not supported with row-level security`).
+That strands nothing on its own, but "the table enforces the rule" has to be true
+for the whole rule or it is not worth writing down.
 
 Every other write to `app.entities` — status confirm, summary/embedding refresh,
 image, re-projection, ordinary entity creation — is untouched, so the narrowed
