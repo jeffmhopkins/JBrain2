@@ -213,8 +213,24 @@ async def file_review_correction(
     instead of resolving one. EXPLICITLY owner-gated like the wiki correction path: minting
     an owner_correction is the one privileged write that force-supersedes the graph. The
     card is resolved separately (action `correct`, carrying this note id) once the id is in
-    hand, mirroring the wiki flow's create-then-drive shape."""
+    hand, mirroring the wiki flow's create-then-drive shape.
+
+    409 when the target card declares `correctable: false`. That flag also drops the
+    footer's composer in the UI, but a rendering hint is not a gate: the one card that
+    sets it (the EMR location firewall's) exists BECAUSE a value was held out of the
+    domain the card sits in, and a correction lands pinned at full weight in that same
+    domain — so the refusal has to hold for any caller, not just the shipped one."""
     ctx = ctx_for(owner)
+    # Read the card on the caller's own scoped session — never a widened one — so the
+    # gate sees exactly the card the caller can see.
+    if not await get_analysis_repo(request).review_correctable(ctx, item_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "review item is not correctable: a correction would file the held"
+                " value back into the domain it was kept out of"
+            ),
+        )
     maker = get_session_maker(request)
     try:
         note, created = await get_notes_repo(request).create_note(

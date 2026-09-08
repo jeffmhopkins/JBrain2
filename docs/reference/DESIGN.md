@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-29
+> **Status:** Living · **Last verified:** 2026-09-08
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -973,7 +973,18 @@ the note (it's the human's own). The note is filed with
 like the wiki path), so its facts *force-supersede + pin* what they correct;
 filing it as a plain `human` note instead let a same-value correction of a
 prose-valued attribute read as a fresh conflict and spawn another collision
-card — the correction spawned reviews rather than resolving one. The planned third mode, **talk it over
+card — the correction spawned reviews rather than resolving one. Because that
+note lands *pinned, in the card's own domain*, a card may declare itself
+**uncorrectable** (`correctable: false` on its payload) and drop the footer
+affordance: the EMR location firewall's `firewall_address` card exists precisely
+because a value was held OUT of the domain the card sits in, so *correct it*
+there would offer re-planting the leak as the way out. The flag is a gate, not only
+a render hint: the endpoint loads the target card on the caller's own scoped session
+and **409s** a payload that says `correctable: false`, because it is reachable by
+anything that is not the shipped UI. Absence keeps meaning *correctable* (server and
+client both read it as `correctable !== false`). Such a card MUST advertise
+its own verb in `choices` (the firewall's is `dismiss`) — a card with neither
+renders with no controls at all. The planned third mode, **talk it over
 with the assistant**, is the conversational version of the same — the
 assistant drafts that correction-note body from your intent; until that
 handoff is wired the footer affordance parks the item for the assistant.
