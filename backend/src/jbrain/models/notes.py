@@ -59,6 +59,14 @@ class Note(Base):
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When the SERVER received the row (migration 0189). `created_at` above is the
+    # CLIENT's capture time — the offline outbox flushes later, so a note can arrive
+    # long after it was captured. Anything timing the note's ARRIVAL (the reconciler's
+    # attachment settle window) must read this, never created_at, which a backdated
+    # flush puts past the window the instant it lands. Server-stamped, never settable.
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     # Client's capture-time UTC offset in minutes east of UTC; lets the
     # extraction anchor be the note's LOCAL date even though created_at
     # round-trips through timestamptz as a UTC instant.
