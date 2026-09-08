@@ -130,6 +130,12 @@
       .asking-line b { color: var(--amber); font-weight: 400; }
 
       /* ================= THE RECORD TAB ================= */
+      /* the empty state — a note the agent wrote nothing from (DESIGN.md implementation rule 4) */
+      .empty { border: 1px dashed var(--border); border-radius: var(--r-card); background: var(--surface); padding: 22px 18px; text-align: center; display: flex; flex-direction: column; gap: 9px; align-items: center; }
+      .empty .eico { width: 34px; height: 34px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-3); display: grid; place-items: center; }
+      .empty .eico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .empty .et { font-size: var(--fs-body); color: var(--text); }
+      .empty .em { font-size: var(--fs-secondary); color: var(--text-3); line-height: 1.5; max-width: 30ch; }
       .sect { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
       .rec-sum { display: flex; gap: 8px; flex-wrap: wrap; }
       .stat { flex: 1; min-width: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 9px 11px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow-card); }
@@ -139,6 +145,10 @@
 
       .tagrow { display: flex; flex-wrap: wrap; gap: 6px; }
       .ttag { font-size: var(--fs-micro); padding: 3px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+      /* Dates — the app's temporal_tokens row, which Record has to absorb along with the rest of Analysis */
+      .tokrow { display: flex; flex-wrap: wrap; gap: 6px; }
+      .tok { font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-2); border: 1px solid var(--border); }
+      .tok .ph { color: var(--text-3); margin-left: 5px; }
 
       .grp { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
       .wchip + .wchip { border-top: 1px solid var(--border); }
@@ -271,8 +281,8 @@
       row — <b>1 clarification · added in conversation</b> — that expands into a dated log where each block quotes the question it
       answered. Clarifications read as <i>a record of additions</i>, never as more of your prose. <b>The tab bar changes here, and
       only here:</b> <b class="k">Record</b> replaces Analysis and <b>absorbs all of it</b> — the generated title and tags, the
-      salient facts (which are now literally the write ledger, grouped by entity), the entity chips, the wiki backlinks, and the
-      settled Sources card at its foot. Attachments keeps its name and its manifest. Answer the question in frame 3 and watch the
+      salient facts (which are now literally the write ledger, grouped by entity), the entity chips, the resolved
+      <b>Dates</b>, and the settled Sources card at its foot — every section <code>AnalysisTab.tsx</code> renders today. Attachments keeps its name and its manifest. Answer the question in frame 3 and watch the
       log in frames 1 and 2 take the block.
     </div>
 
@@ -435,7 +445,7 @@
             </div>
 
             <div class="rec-sum">
-              <div class="stat"><span class="n" id="statW">8</span><span class="l">values written</span></div>
+              <div class="stat"><span class="n" id="statW">7</span><span class="l">values written</span></div>
               <div class="stat warn"><span class="n">1</span><span class="l">held</span></div>
               <div class="stat warn"><span class="n" id="statA">1</span><span class="l">asking</span></div>
             </div>
@@ -554,6 +564,13 @@
               </div>
             </div>
 
+            <div class="sect">dates</div>
+            <div class="tokrow">
+              <span class="tok">Nov 2026<span class="ph">“the November follow-up”</span></span>
+              <span class="tok">Mar 2026<span class="ph">“March”</span></span>
+              <span class="tok">Sep 8, 2026<span class="ph">“this morning”</span></span>
+            </div>
+
             <div class="sect">sources</div>
             <div class="srcs">
               <div class="srcrow">note text · 412 chars <span class="st">✓</span></div>
@@ -576,6 +593,61 @@
               about Me?”, not “what did the agent do at 07:16”. Every row still carries <b>when</b> and <b>from what</b> — the
               body, a photo, or a clarification you gave — so the chronology is recoverable without being the organising idea. The
               one thing that belongs to no entity, a truncated pass, still gets a row rather than being dropped.
+            </p>
+          </div>
+          <output class="toast"></output>
+        </div>
+      </div>
+
+      <!-- ============ 4 · THE EMPTY RECORD ============ -->
+      <div class="frame">
+        <div class="frame-lab">4 · nothing to record <b>— the failure mode of spending a tab</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button" aria-label="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Note</span> <span class="sub">· general</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:11px"></span><span style="height:7px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:6px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:10px"></span></span>
+          </div>
+          <div class="screen">
+            <div class="tabs" role="tablist">
+              <button type="button" role="tab" aria-selected="false" data-toast="the note itself — “remind me to look at that thing”">Note</button>
+              <button type="button" role="tab" aria-selected="false" data-toast="no attachments on this one">Attachments</button>
+              <button type="button" role="tab" aria-selected="true" aria-label="Record, nothing written">Record</button>
+            </div>
+
+            <div class="empty">
+              <span class="eico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h9M5 17h6" /></svg></span>
+              <div class="et">Nothing to record here.</div>
+              <p class="em">
+                I read this note and found no entity I could name and no value I could put on one. It is kept, indexed and
+                searchable exactly as you wrote it — this tab is empty, not the note.
+              </p>
+            </div>
+
+            <div class="sect">this note, analysed</div>
+            <div class="tagrow"><span class="ttag">reminder</span></div>
+
+            <div class="sect">sources</div>
+            <div class="srcs">
+              <div class="srcrow">note text · 41 chars <span class="st">✓</span></div>
+              <div class="srcfoot">
+                analysed Sep 8 · on-box · gpt-oss-120b
+                <button class="rerun" type="button" data-toast="re-runs the pass over the note as it now stands">re-run →</button>
+              </div>
+            </div>
+
+            <button class="talk" type="button" data-toast="the conversation exists even when the ledger is empty — one turn, and nothing to ask about">
+              <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.4 7.2L3 21l1.8-6.6A8 8 0 1 1 21 12Z" /></svg>
+              open the conversation · 1 turn
+              <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+            </button>
+
+            <p class="footnote">
+              This is the state that decides whether Record earns a permanent tab. Plenty of notes are a line of text with no
+              graph in them — and under C, every one of them costs a third of the tab bar to say “nothing”. The empty state has
+              to read as <b>a fact about this note</b>, never as a failure or a thing to fix, and it must not offer a button:
+              there is nothing for you to do. A and B pay nothing here, because neither adds a surface — A shows no chips and B
+              shows no strip. Weigh that against C's grouping before you choose.
             </p>
           </div>
           <output class="toast"></output>
@@ -643,17 +715,25 @@
         both: {
           said: "lipid panel + CMP",
           text: "Lipid panel and a CMP, same as March.",
-          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP"]],
+          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP", "health"]],
         },
         cmp: {
           said: "just a CMP",
           text: "Just a CMP this time — she only wants the potassium watched on the losartan.",
           edges: [
-            ["appt:okonjo-nov", ".lab_orders", "CMP"],
-            ["losartan", ".monitored_by", "serum potassium"],
+            ["appt:okonjo-nov", ".lab_orders", "CMP", "health"],
+            ["losartan", ".monitored_by", "serum potassium", "health"],
           ],
         },
       };
+
+      // the floor is a property of the predicate, not of the note — so the row reads it off the edge
+      function domLine(dom) {
+        const chip = '<span class="dom ' + dom + '"><span class="d"></span>' + dom + "</span>";
+        return dom === "general"
+          ? '<span class="wmeta">landed in ' + chip + " — the same floor as this note</span>"
+          : '<span class="wmeta">landed in ' + chip + ' — above this note\'s <span class="dom general"><span class="d"></span>general</span></span>';
+      }
 
       function edgeRows(edges) {
         return edges
@@ -663,8 +743,7 @@
               '</span><span class="arr">→</span><span class="val">' + e[2] +
               '</span></span><span class="wmeta"><span class="ok">written</span> · an ordinary assertion, sourced to your ' +
               'clarification block — <b style="color: var(--text-2); font-weight: 400">nothing is pinned</b>.</span>' +
-              '<span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span> — above this note\'s ' +
-              '<span class="dom general"><span class="d"></span>general</span></span>' +
+              domLine(e[3]) +
               '<span class="wsrc">from <b>your clarification of just now</b></span></div>',
           )
           .join("");
@@ -678,7 +757,8 @@
             return;
           }
           const a = ANSWERS[key];
-          const total = 8 + a.edges.length;
+          // 7 written + 1 held = the 8 rows below; an answer only ever adds written ones
+          const total = 7 + a.edges.length;
           const card = document.getElementById("q1");
           card.classList.add("done");
           document.getElementById("q1settled").textContent = "you answered · " + a.said;

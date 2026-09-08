@@ -1,14 +1,18 @@
 # Note conversations — where a note's agent thread lives
 
-> **Status:** GUI gate **settled** — the owner chose **C**, `c-unified-conversations.html`,
-> and the choice is ratified in `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1**
-> ("one agent, one conversation type"): a note thread and a Full Brain chat are the same
-> `AgentSession`, and that conversation lives on the **conversations surface**, not on the
-> note screen. A and B are retained as the record. **One part of C is superseded**: its
-> `Asking` bucket is replaced by the **two-tab inbox** (**D4**) with questions findable
-> from the notes tab (**D5**) — the mock's segmented `Today · Older · Asking` picker is no
-> longer the queue answer. Companion dossier:
-> `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Follow-on round (what the *note screen*
+> **Status:** GUI gate **settled on C**, `c-unified-conversations.html` — but read how.
+> Choosing C was a **delegated** call made inside this round, **not an owner gate
+> outcome**, and no ratified decision names a variant letter. What the owner ratified is
+> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation
+> type: a note conversation is the same agent, loop and memory as chat"*, which in the
+> owner's own words at the gate meant a note conversation and a chat should be literally
+> the same thing, and **not a hidden path**. D1 ratifies C *in substance*: one
+> `AgentSession`, reached from the conversations surface rather than the note screen.
+> **Cite D1 for that, never "the owner chose C".** A and B are retained as the record.
+> **One part of C is superseded**: its `Asking` bucket is replaced by the **two-tab
+> inbox** (**D4**), with questions findable from the notes tab (**D5**) — so the mock's
+> segmented `Today · Older · Asking` picker is no longer the queue answer.
+> Companion dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Follow-on round (what the *note screen*
 > becomes under this model): `docs/mocks/agent-ingest-note-body/`. Nothing is built.
 > **Last verified:** 2026-09-08.
 

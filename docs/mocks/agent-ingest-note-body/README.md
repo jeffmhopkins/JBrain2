@@ -7,12 +7,20 @@
 
 ## What is already settled, and therefore not on offer here
 
-**The conversation does not live on the note screen.** The companion round
-(`docs/mocks/agent-ingest/`) chose **C — unified conversations**, and the plan ratifies it
-as **D1, "one agent, one conversation type"**: a note thread and a Full Brain chat are the
-same `AgentSession`, reached from the conversations surface. (That round's README still
-said "gate open" — stale, since ratification; **fixed in this branch**. Its `Asking`
-bucket is separately superseded by the two-tab inbox, D4/D5.)
+**The conversation does not live on the note screen.** The authority is
+`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation
+type: a note conversation is the same agent, loop and memory as chat"* — which the owner
+ratified in their own words at the gate: a note conversation and a chat should be
+literally the same thing, a new note-ingesting conversation and **not a hidden path**.
+One conversation type means one place to find it, and that place is the conversations
+surface.
+
+**Cite D1, not a variant letter.** The companion round (`docs/mocks/agent-ingest/`)
+landed on **C — unified conversations**, and D1 ratifies C in substance — but choosing C
+was a *delegated* call made inside that round, never an owner gate outcome, and no
+ratified decision names a variant. That round's README claimed "the owner chose C";
+it is wrong and is **fixed in this branch**, along with its stale "gate open" header. Its
+`Asking` bucket is separately superseded by the two-tab inbox (**D4**/**D5**).
 
 So all three variants below put the transcript in the same place — behind one identical
 **`open the conversation · N turns →`** row — and none of them re-opens that question. A
@@ -111,7 +119,7 @@ answer live.
 |---|---|---|---|---|
 | **A** | `a-living-document.html` | **Prose, in document flow** — the frozen body under a `captured 07:14 · your words, unchanged` seal, then an `added since` rule, then dated steel-ruled blocks. One continuous piece of writing that grew. | **Anchored to the sentence that caused them** — an indented elbow chip under each paragraph. | **Unchanged**: Note · Attachments · Analysis. Analysis keeps everything it has today. |
 | **B** | `b-as-captured.html` | **A version, chosen by a control** — a two-segment `as captured · as it stands (+N)` at the head of the tab. *As captured* is the frozen original alone; *as it stands* adds every dated block, and is what the agent re-reads. | **One chronological strip** under the note — `what this note wrote · 8 · 1 held · 1 failed`, collapsed to a line, expanding to time-ordered rows under time rules. | **Unchanged**: Note · Attachments · Analysis. Analysis keeps everything it has today. |
-| **C** | `c-note-and-record.html` | **A folded log** — one row, `1 clarification · added in conversation`, expanding to dated blocks that each quote the question they answered. The note itself opens exactly as captured. | **Collected in a ledger, grouped by entity**, on the Record tab. | **Changes**: Note · Attachments · **Record**. Record **replaces Analysis and absorbs all of it** — generated title + tags, the salient facts (which *are* the write ledger), entity chips, wiki backlinks, and the settled Sources card at its foot. Attachments keeps its name and its manifest. |
+| **C** | `c-note-and-record.html` | **A folded log** — one row, `1 clarification · added in conversation`, expanding to dated blocks that each quote the question they answered. The note itself opens exactly as captured. | **Collected in a ledger, grouped by entity**, on the Record tab. | **Changes**: Note · Attachments · **Record**. Record **replaces Analysis and absorbs all of it** — generated title + tags, the salient facts (which *are* the write ledger), entity chips, the resolved **Dates** row, and the settled Sources card at its foot — every section `AnalysisTab.tsx` renders today. Attachments keeps its name and its manifest. **Frame 4** draws the empty state — a note with nothing in it to record. |
 
 ### What each one commits you to
 
@@ -123,9 +131,38 @@ answer live.
   answers "what happened when" and not "what does this note say about Me" — one entity's
   values are scattered under four time rules and have to be reassembled by the reader.
 - **C — the note, and the record.** *Cost:* one story in two places, so the link between
-  *what you said* and *what it changed* is a tap rather than a glance; and Record is now a
-  big tab carrying both the analysis and the ledger, which is a real consolidation to get
-  right rather than a free rename.
+  *what you said* and *what it changed* is a tap rather than a glance; Record is now a big
+  tab carrying both the analysis and the ledger, which is a real consolidation to get right
+  rather than a free rename; and on a note the agent wrote nothing from, **a third of the
+  tab bar exists to say "nothing"** — C's frame 4 draws that empty state, which A and B
+  never pay because neither adds a surface.
+
+### The recommendation is not unanimous, and that is deliberate
+
+Two of us looked at this round and reached different answers. Both cases are here in full
+because the disagreement is the useful part.
+
+**The case for B** (the reviewer's). *As captured / as it stands* settles "which words are
+mine" with **a control**, not a typographic convention the reader has to learn — the
+strongest single answer in the round to the D6 legibility problem, and the only one that
+cannot be misread. B's stated cost, the flat chronology, is **mitigated by a surface B
+keeps**: Analysis is untouched, and its entity hub already answers "what does the graph
+know about Me?" — so B does not have to solve grouping in the strip, because grouping
+already exists one tab over. B changes nothing structural: no tab is renamed, nothing is
+merged, and the whole proposal is one segmented control plus a collapsed strip.
+
+**The case for C** (mine). Grouping by entity is the question a note is actually re-read
+with a year later, and C is the only variant that answers it *about this note* rather than
+about the graph in general. C is also the only one whose second surface has a coherent job
+once Record absorbs Analysis — A's loose tail and B's strip are both additions to a screen
+that already has an owner.
+
+**Where they collide.** C's folded log and B's segment solve the *same* problem, so they
+cannot both be adopted: put them on one screen and every clarification block appears twice,
+once inline under *as it stands* and once filed in the log. Taking B's control means
+deleting C's log — which is B's whole clarification treatment with C's ledger under it, a
+**fourth variant**, not an à-la-carte swap. It is not offered here. Pick a variant; what you
+pick becomes the spec.
 
 ## Open questions for the owner
 
@@ -138,7 +175,8 @@ answer live.
    telling the agent it was wrong. If that is wrong, the log's affordances change.
 3. **C only:** is folding Analysis into Record the right consolidation, or should Record
    be a fourth tab and Analysis stay as it is? Four tabs is a lot on a phone; two
-   overlapping tabs is worse.
+   overlapping tabs is worse. Frame 4 is the sharp end of this — on a note the agent wrote
+   nothing from, C spends a permanent tab to say so.
 4. Should the chip's collapsed line name the **predicate** (`Me · blood pressure`) or only
    the **count** (`Me · 4 edges`)? The mocks show the former on A and B and the latter on
    C's grouped rows — the difference between a scannable margin and a noisy one when a note

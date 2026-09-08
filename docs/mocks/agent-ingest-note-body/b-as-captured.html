@@ -133,6 +133,7 @@
       .strip[data-open="true"] .strip-caret { transform: rotate(90deg); }
       .strip-body { display: none; border-top: 1px solid var(--border); flex-direction: column; }
       .strip[data-open="true"] .strip-body { display: flex; }
+      .strip-more { font-size: var(--fs-micro); color: var(--text-3); padding: 11px 13px; border-top: 1px solid var(--border); }
       .when-rule { font-size: var(--fs-micro); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); padding: 9px 13px 4px; background: var(--bg); border-bottom: 1px solid var(--border); }
 
       /* ---- the "entity modified" chip (D3) ---- */
@@ -284,7 +285,7 @@
             <div class="tabs" role="tablist">
               <button type="button" role="tab" aria-selected="true">Note</button>
               <button type="button" role="tab" aria-selected="false" data-toast="the settled attachments manifest — unchanged by this design">Attachments <span class="cnt">1</span></button>
-              <button type="button" role="tab" aria-selected="false" data-toast="the settled Analysis tab — title, tags, facts, entity chips, backlinks, Sources card — unchanged">Analysis</button>
+              <button type="button" role="tab" aria-selected="false" data-toast="the settled Analysis tab — title, tags, facts, entity chips, resolved dates, Sources card — unchanged">Analysis</button>
             </div>
 
             <div class="vers" role="group" aria-label="which version of the note">
@@ -643,14 +644,97 @@
             </p>
 
             <div class="strip" data-open="false">
-              <button class="strip-head" type="button" aria-expanded="false" data-toast="nineteen rows under five time rules — one flat chronology, no grouping">
+              <button class="strip-head" type="button" aria-expanded="false">
                 <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg></span>
                 <span class="main">
                   <span class="t">what this note wrote · 19</span>
-                  <span class="m">in order · <span class="warn">2 held</span> · <span class="bad">1 failed</span> · 2 from a photo</span>
+                  <span class="m">in order · <span class="warn">1 held</span> · <span class="bad">1 failed, retried</span> · 2 from a photo</span>
                 </span>
                 <svg class="strip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
               </button>
+              <div class="strip-body">
+                <div class="when-rule">Sep 8 · 07:16 — the first pass, from the body and the photo</div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                    <span class="wchip-arg">blood pressure · health</span><span class="wstate ok">written</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                    <span class="wchip-arg">medication · health</span><span class="wstate sup">replaced</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                    <span class="wchip-arg">weight · health</span><span class="wstate held">held</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Losartan</span>
+                    <span class="wchip-arg">new entity · Drug · health</span><span class="wstate ok">written</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--steel)"></span><span class="wchip-lab">Dr. Okonjo</span>
+                    <span class="wchip-arg">specialty · general</span><span class="wstate err">failed</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="when-rule">Sep 8 · 07:31 — the retry</div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--steel)"></span><span class="wchip-lab">Dr. Okonjo</span>
+                    <span class="wchip-arg">specialty · general</span><span class="wstate ok">written</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="when-rule">Sep 8 · 09:04 — you answered “which panel?”</div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Nov follow-up</span>
+                    <span class="wchip-arg">lab orders · health</span><span class="wstate ok">written</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="when-rule">Sep 21 · you answered “has the swelling gone?”</div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                    <span class="wchip-arg">symptom · health</span><span class="wstate sup">closed</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="when-rule">Oct 2 · the script photo, re-read at higher resolution</div>
+                <div class="wchip" data-open="false">
+                  <button class="wchip-row" type="button" aria-expanded="false">
+                    <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Losartan</span>
+                    <span class="wchip-arg">prescriber · health</span><span class="wstate ok">written</span>
+                    <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                  <div class="wchip-det"><div class="wrow"><span class="wmeta">Every row opens to the same anatomy as frame 2 — the edge, why it landed where it did, and the words it came from.</span></div></div>
+                </div>
+                <div class="strip-more">
+                  …and ten more rows in the same shape. <b style="color: var(--text-2); font-weight: 400">Me appears under four
+                  of these five rules</b> — that is the cost this variant is asking you to accept.
+                </div>
+              </div>
             </div>
 
             <p class="footnote">
@@ -745,17 +829,25 @@
         both: {
           said: "lipid panel + CMP",
           text: "Lipid panel and a CMP, same as March.",
-          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP"]],
+          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP", "health"]],
         },
         cmp: {
           said: "just a CMP",
           text: "Just a CMP this time — she only wants the potassium watched on the losartan.",
           edges: [
-            ["appt:okonjo-nov", ".lab_orders", "CMP"],
-            ["losartan", ".monitored_by", "serum potassium"],
+            ["appt:okonjo-nov", ".lab_orders", "CMP", "health"],
+            ["losartan", ".monitored_by", "serum potassium", "health"],
           ],
         },
       };
+
+      // the floor is a property of the predicate, not of the note — so the row reads it off the edge
+      function domLine(dom) {
+        const chip = '<span class="dom ' + dom + '"><span class="d"></span>' + dom + "</span>";
+        return dom === "general"
+          ? '<span class="wmeta">landed in ' + chip + " — the same floor as this note</span>"
+          : '<span class="wmeta">landed in ' + chip + ' — above this note\'s <span class="dom general"><span class="d"></span>general</span></span>';
+      }
 
       function edgeRows(edges) {
         return edges
@@ -765,8 +857,7 @@
               '</span><span class="arr">→</span><span class="val">' + e[2] +
               '</span></span><span class="wmeta"><span class="ok">written</span> · an ordinary assertion, sourced to your ' +
               'clarification block — <b style="color: var(--text-2); font-weight: 400">nothing is pinned</b>.</span>' +
-              '<span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span> — above this note\'s ' +
-              '<span class="dom general"><span class="d"></span>general</span></span></div>',
+              domLine(e[3]) + "</div>",
           )
           .join("");
       }
