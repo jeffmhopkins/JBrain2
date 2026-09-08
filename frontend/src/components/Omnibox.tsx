@@ -26,7 +26,6 @@ import {
   ImageIcon,
   MedicalIcon,
   PlusIcon,
-  RadioIcon,
   SearchIcon,
   SendIcon,
   StopIcon,
@@ -103,9 +102,7 @@ interface OmniboxProps {
    * agent-model sheet for that mode. Only conversation tabs fire it; a long press
    * suppresses the tab-switch tap that would otherwise follow. Absent = no long press. */
   /** A session holds the tuner. Gates the composer's radio icon entirely. */
-  sdrActive?: boolean;
   /** Opens the tuner sheet. The icon stays inert without it, like the plan pill. */
-  onSdrTap?: () => void;
   onLongPressTab?: ((mode: Mode) => void) | undefined;
   /** The active conversation's model pick, shown as a chip in the composer foot so the
    * owner sees the turn isn't on the default route. Null/absent = the default. */
@@ -137,8 +134,6 @@ export function Omnibox({
   onClearApptRef,
   onLateralSwipe,
   attachEnabled = true,
-  sdrActive,
-  onSdrTap,
   onLongPressTab,
   modelLabel,
   planStatus,
@@ -465,22 +460,9 @@ export function Omnibox({
                 </span>
               ))}
             <div className="foot-icons">
-              {/* The radio icon exists ONLY while a session holds the tuner: the icon
-                  IS the lease, so its presence and the radio being held are one fact
-                  rather than two that can disagree. Left of the clip, and --steel
-                  rather than --text-2 because unlike attach it reports live state
-                  (docs/mocks/sdr-tuner/a-tuner-sheet.html). */}
-              {sdrActive && onSdrTap && (
-                <button
-                  type="button"
-                  className="icon-btn sdr-btn"
-                  aria-label="Tuned radio"
-                  onClick={onSdrTap}
-                >
-                  <RadioIcon size={24} />
-                  <span className="sdr-live" aria-hidden="true" />
-                </button>
-              )}
+              {/* The radio icon moved to the top bar, beside the vitals: this row is
+                  controls you reach for, and a held lease is a readout of what the box
+                  is doing. See TopBar. */}
               {attachEnabled && (
                 <button
                   type="button"

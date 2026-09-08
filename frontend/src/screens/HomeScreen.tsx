@@ -260,7 +260,12 @@ export function HomeScreen({
 
   return (
     <>
-      <TopBar syncStatus={notes.syncStatus} session={fbSession} onOpenVitals={onOpenVitals} />
+      <TopBar
+        syncStatus={notes.syncStatus}
+        session={fbSession}
+        onOpenVitals={onOpenVitals}
+        radio={anyHeld(sdr) ? { onOpen: () => setSdrSheet(true) } : undefined}
+      />
       {conversational ? (
         <FullBrainSurface
           fb={fb}
@@ -382,8 +387,6 @@ export function HomeScreen({
         // lease, not the tuner. Reading `listening` instead hid a radio that was
         // decoding APRS or sweeping, which is exactly what the sheet behind the icon
         // now exists to show and control.
-        sdrActive={anyHeld(sdr)}
-        onSdrTap={() => setSdrSheet(true)}
         // Long-press a conversation tab → pick the model this chat runs on (that
         // conversation only). Only offered on a conversation surface; the chip in the
         // foot shows the active pick.
