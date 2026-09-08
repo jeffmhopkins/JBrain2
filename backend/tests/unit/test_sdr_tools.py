@@ -548,6 +548,39 @@ async def test_one_section_carries_its_named_channels(tools) -> None:
     assert "144.1-144.3 MHz" in out
 
 
+async def test_a_complete_plan_says_it_is_the_only_legal_set(tools) -> None:
+    """The difference the model has to act on. Told CB is a complete plan it will not
+    invent 27.100, which is a radio-control frequency no voice station may use; told
+    the same about airband it would refuse most of a band allocated per facility."""
+    out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "cb"}, None)
+
+    assert "only legal on these" in out
+    # The irregularity is the information: no arithmetic on 10 kHz produces this, so
+    # the forty are spelled out rather than summarised.
+    assert "27.255 MHz Ch 23" in out
+    assert "27.235 MHz Ch 24" in out
+
+
+async def test_a_hundred_channel_raster_is_described_rather_than_listed(tools) -> None:
+    """The AM dial is 118 channels of pure arithmetic. Printing them spends a thousand
+    tokens saying what one sentence says exactly — and would crowd out the sections the
+    model actually needed."""
+    out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "mw"}, None)
+
+    assert "118 channels from 530" in out
+    assert "Nothing between them is a legal frequency" in out
+    assert out.count("MHz 5") < 5
+
+
+async def test_landmark_channels_are_still_listed_as_landmarks(tools) -> None:
+    """A section without a complete plan is tuned freely, and calling its handful of
+    named spots a complete plan would tell the model the rest of the band is illegal."""
+    out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "air-guard"}, None)
+
+    assert "Named channels:" in out
+    assert "only legal on these" not in out
+
+
 async def test_an_unknown_section_says_how_to_find_a_real_one(tools) -> None:
     out = await tools(lambda _p, _b: None)["sdr_read"]({"section": "no-such-band"}, None)
 

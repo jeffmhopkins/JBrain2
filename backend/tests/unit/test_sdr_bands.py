@@ -143,6 +143,125 @@ class TestTheValidatorActuallyCatchesThings:
     def test_duplicate_ids_are_refused(self) -> None:
         assert any("duplicate id" in p for p in bands.validate((self._row(), self._row())))
 
+    def test_a_complete_plan_with_no_channels_is_refused(self) -> None:
+        """`channel_plan` is what lets ± count in channels. Set on a section with no
+        channel list, the steppers would have nothing to count and would do nothing."""
+        bad = self._row(channel_plan=True)
+
+        assert any("lists no channels" in p for p in bands.validate((bad,)))
+
+    def test_two_channels_at_one_frequency_are_refused(self) -> None:
+        """Stepping between them would not move the radio, so ± would appear stuck."""
+        bad = self._row(
+            channel_plan=True,
+            channels=(
+                Channel(144_500_000, "Ch 1"),
+                Channel(144_500_000, "Ch 2"),
+            ),
+        )
+
+        assert any("would not move the radio" in p for p in bands.validate((bad,)))
+
+    def test_landmark_channels_may_repeat_a_frequency(self) -> None:
+        """The rule is about a PLAN, not about the table. Landmark rows name notable
+        spots and two names for one spot is a labelling choice, not a broken dial."""
+        ok = self._row(
+            channels=(
+                Channel(144_500_000, "Calling"),
+                Channel(144_500_000, "Net"),
+            ),
+        )
+
+        assert bands.validate((ok,)) == []
+
+
+class TestTheChannelPlansThemselves:
+    """The plans the tuner counts in. Each of these is regulatory data that nothing else
+    in the system re-derives, so a wrong entry is a dial that lands somewhere no station
+    can legally be — and sounds exactly like a quiet channel."""
+
+    def _plan(self, section_id: str) -> bands.Section:
+        section = next(s for s in bands.SECTIONS if s.id == section_id)
+        assert section.channel_plan, f"{section_id} is not marked a complete plan"
+        return section
+
+    def test_cb_has_forty_channels(self) -> None:
+        assert len(self._plan("cb").channels) == 40
+
+    def test_cb_channel_23_sits_above_24_and_25(self) -> None:
+        """The 1977 expansion put the three new channels below the old top one instead
+        of renumbering, and every CB radio since steps 22 → 23 → 24 BACKWARDS in
+        frequency. It is the reason this is a list rather than a step size: no
+        arithmetic on 10 kHz produces it, and a dial that "fixed" it would disagree with
+        every other radio in earshot."""
+        at = {c.name: c.hz for c in self._plan("cb").channels}
+
+        assert at["Ch 23"] == 27_255_000
+        assert at["Ch 23"] > at["Ch 24"] > at["Ch 22"]
+
+    def test_cb_leaves_the_five_radio_control_frequencies_out(self) -> None:
+        """26.995 through 27.195 on the odd 50s are the R/C channels. A plan that filled
+        them in would offer five channels that no voice radio can transmit on."""
+        used = {c.hz for c in self._plan("cb").channels}
+
+        assert used.isdisjoint({26_995_000, 27_045_000, 27_095_000, 27_145_000, 27_195_000})
+
+    def test_cb_walks_in_channel_order_not_frequency_order(self) -> None:
+        """The tuple order IS the order ± walks, so it has to be the radio's order."""
+        numbers = [int(c.name.removeprefix("Ch ")) for c in self._plan("cb").channels]
+
+        assert numbers == list(range(1, 41))
+
+    def test_the_fm_dial_is_only_odd_tenths(self) -> None:
+        """47 CFR 73.201 is 87.9 + 0.2n, so 89.0 FM cannot exist. The check is on the
+        hundred-kilohertz digit being odd, which is exactly the property a stepper that
+        drifted half a channel would break."""
+        plan = self._plan("fm-broadcast")
+
+        assert len(plan.channels) == 100
+        assert all((c.hz // 100_000) % 2 == 1 for c in plan.channels)
+
+    def test_the_fm_dial_is_named_the_way_people_say_it(self) -> None:
+        """FM channels ARE numbered — 73.201 calls 101.5 "channel 268" — and nobody has
+        ever asked for channel 268. A pill reading `Ch 268` would be a worse dial than
+        one with no channels at all."""
+        names = [c.name for c in self._plan("fm-broadcast").channels]
+
+        assert names[0] == "88.1"
+        assert "101.5" in names
+
+    def test_the_am_dial_is_named_in_kilohertz(self) -> None:
+        """ "Ten-ten WINS", not "1.010 MHz" — it is what is printed on the radio."""
+        plan = self._plan("mw")
+
+        assert [c.name for c in plan.channels][:2] == ["530", "540"]
+        assert plan.channels[-1].hz == 1_700_000
+
+    def test_the_walkie_talkie_plan_stops_at_7_and_resumes_at_15(self) -> None:
+        """Channels 8-14 are the half-watt 467 MHz interstitials, a different band that
+        this section does not cover. Counting past 7 lands on 15 — which is what the
+        radios do too, and which no step size on a 12.5 kHz raster would produce."""
+        numbers = [int(c.name.removeprefix("Ch ")) for c in self._plan("gmrs").channels]
+
+        assert numbers == [*range(1, 8), *range(15, 23)]
+
+    def test_the_walkie_talkie_channels_interleave_in_frequency(self) -> None:
+        """1-7 are the interstitials, 15-22 the mains, and they sit 12.5 kHz apart from
+        each other — so channel order and frequency order genuinely differ here."""
+        plan = self._plan("gmrs")
+        in_order = sorted(c.hz for c in plan.channels)
+
+        assert in_order[0] == 462_550_000  # Ch 15
+        assert in_order[1] == 462_562_500  # Ch 1
+        assert [c.hz for c in plan.channels] != in_order
+
+    def test_airband_is_not_claimed_as_a_complete_plan(self) -> None:
+        """Airband is allocated per facility: the few named channels are landmarks, and
+        a ± that walked only between them would refuse most of the band."""
+        air = [s for s in bands.SECTIONS if s.band == "Airband"]
+
+        assert air and not any(s.channel_plan for s in air)
+
 
 class TestWhatTheHardwareCanReach:
     def test_every_section_can_now_be_surveyed(self) -> None:

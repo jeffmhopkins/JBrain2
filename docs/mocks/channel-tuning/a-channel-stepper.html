@@ -32,8 +32,13 @@ body {
 .title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
 .sub { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); }
 .band { padding: 0 16px 10px; font-size: 13px; color: var(--text-2); }
-.wf { margin: 0 16px; height: 132px; border: 1px solid var(--border); border-radius: 10px;
+.wf { margin: 0 16px; height: 118px; border: 1px solid var(--border); border-radius: 10px;
       background: #0a0c10; position: relative; overflow: hidden; }
+  /* The tuning strip exactly as it is today: raw bins, the tuned channel marked, and
+     NOTHING drawn from the channel plan. Shape A adds a step size, not a picture. */
+  .wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .5; }
+  .wf .here { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--accent);
+    border-right: 1px solid var(--accent); background: rgba(127,167,201,.09); }
 .axis { display: flex; justify-content: space-between; padding: 4px 16px 0;
         font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -66,11 +71,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
 </style>
 <div class="phone">
-  <div class="note"><b>A &mdash; The dial counts in channels.</b> Nothing new on screen: the <b>&minus; step +</b> row the tuner already has starts counting in CHANNELS when the band has them. Tap the middle pill for the list. Typing a frequency still works &mdash; this is a step size, never a mode that locks you in. Try the steppers, and switch bands to see CB’s irregular raster (23 sits above 24) handled by counting rather than by arithmetic.</div>
+  <div class="note"><b>A &mdash; The dial counts in channels.</b> Nothing new on screen: the <b>&minus; step +</b> row the tuner already has starts counting in CHANNELS when the band has them. Tap the middle pill for the list. Typing a frequency still works &mdash; this is a step size, never a mode that locks you in.<br><br><b>The picture is untouched.</b> The strip above the readout is the tuning view exactly as it is today &mdash; raw bins, nothing drawn from the channel plan. Stepping moves the marker; it does not replace what the marker sits on. Try the steppers, and switch bands to see CB’s irregular raster (23 sits above 24) handled by counting rather than by arithmetic.</div>
   <div class="sheet">
     <div class="grab"></div>
     <div class="title">Listen</div>
     <div class="seg" id="bands"></div>
+    <div class="wf" id="wf"></div>
+    <div class="axis"><span id="lo"></span><span id="hi"></span></div>
     <div class="readout" id="hz"></div>
     <div class="rmode" id="mode"></div>
     <div class="steprow">
@@ -160,6 +167,21 @@ function draw() {
   const b = band(), c = chan();
   $("bands").innerHTML = Object.entries(BANDS).map(([k, v]) =>
     `<button type="button" data-b="${k}" aria-pressed="${k === bandKey}">${v.label.split(" · ")[0]}</button>`).join("");
+  $("lo").textContent = b.lo.toFixed(b.unit); $("hi").textContent = b.hi.toFixed(b.unit);
+  const span = b.hi - b.lo;
+  // Raw bins with a little noise — the point being that this is the same picture as
+  // before, with no lanes and no channel numbers on it.
+  let bins = "";
+  for (let x = 0; x < 100; x++) {
+    const f = b.lo + span * (x + .5) / 100;
+    const near = b.chans.find((k) => Math.abs(k.mhz - f) < span / 200 && SEEN[bandKey][k.n]);
+    const hit = near ? SEEN[bandKey][near.n] : null;
+    const h = (hit ? 18 + hit.db * 2.2 : 0) + 4 + ((x * 37) % 11);
+    bins += `<span class="bin" style="left:${x}%;height:${Math.min(94, h)}%"></span>`;
+  }
+  $("wf").innerHTML = bins +
+    `<span class="here" style="left:${(c.mhz - c.bw / 2000 - b.lo) / span * 100}%;
+      width:${Math.max(1.2, (c.bw / 1000) / span * 100)}%"></span>`;
   $("hz").innerHTML = `${fmt(b, c)}<small>MHz</small>`;
   $("mode").textContent = c.mode;
   $("pill").innerHTML = `<b>Ch ${c.n}</b><span>${fmt(b, c)} MHz${c.note ? " · " + c.note : ""}</span>`;

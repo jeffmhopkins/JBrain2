@@ -609,6 +609,13 @@ class SectionOut(BaseModel):
     """The high edge of that image, mapped from this section's own START — the fold
     reverses, so the two edges cross over."""
     channels: list[ChannelOut]
+    channel_plan: bool
+    """Whether `channels` is the whole legal set here rather than a few landmarks.
+
+    It is what lets the tuner's ± count in CHANNELS: on CB there are exactly forty
+    places a signal may be and counting beats arithmetic, while airband's channels are
+    allocated per facility and a ± that walked only between the listed ones would refuse
+    most of the band."""
 
 
 class BandsOut(BaseModel):
@@ -647,6 +654,7 @@ def _section_out(section: bands.Section) -> SectionOut:
         image_start_hz=section.image_start_hz,
         image_stop_hz=section.image_stop_hz,
         channels=[ChannelOut(hz=c.hz, name=c.name, note=c.note) for c in section.channels],
+        channel_plan=section.channel_plan,
     )
 
 

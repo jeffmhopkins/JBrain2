@@ -40,6 +40,7 @@ function section(over: Partial<BandSection> = {}): BandSection {
     image_start_hz: 0,
     image_stop_hz: 0,
     channels: [],
+    channel_plan: false,
     ...over,
   };
 }

@@ -21,6 +21,7 @@ import { ApiError, api } from "../api/client";
 import { type AprsLogState, receiverHealth } from "../aprsLog";
 import { ago } from "../aprsStations";
 import type { BandSection, SpectrumRange } from "../sdrBands";
+import { nearestChannel } from "../sdrChannels";
 import { JOBS, jobAllowed, jobLabel, jobOf, sessionOn, stateLine } from "../sdrJobs";
 import { type SdrRadio, type SdrRadios, labelFor, roleLabel } from "../sdrRadios";
 import { type SdrListening, useSdrSession } from "../sdrSession";
@@ -306,7 +307,11 @@ export function RadioJob({
       }, "Couldn't start the spectrum.");
       return;
     }
-    const hz = range.section && section ? section.centre_hz : (range.startMhz ?? 0) * 1_000_000;
+    // A channelised band opens ON a channel, not at the arithmetic centre of its edges:
+    // the FM dial's centre is 98.000, which no station may legally occupy.
+    const on = section?.channel_plan ? nearestChannel(section, section.centre_hz) : null;
+    const hz =
+      range.section && section ? (on?.hz ?? section.centre_hz) : (range.startMhz ?? 0) * 1_000_000;
     const mode = section?.mode ?? "wbfm";
     void run(async () => {
       await free();

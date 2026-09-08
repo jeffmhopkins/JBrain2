@@ -40,6 +40,7 @@ wondering why a channel carrying AIS or ATV produces noise.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 #: Which band plan these rows encode. Not decoration: a section's `channel_hz` and
@@ -383,6 +384,15 @@ class Section:
     #: from the rate (`fft_bins`), so this one number decides the whole capture.
     sample_rate_hz: int = 0
     channels: tuple[Channel, ...] = field(default_factory=tuple)
+    #: Whether `channels` is the WHOLE legal set here, not a few landmarks.
+    #:
+    #: The distinction is the tuner's, and it decides whether ± can count in channels.
+    #: On CB there are exactly forty places a signal may legally be, so counting is both
+    #: correct and better than arithmetic — the raster has five gaps where the R/C
+    #: channels sit and channel 23 sits ABOVE 24, which no step size reproduces. Airband
+    #: is the opposite: its channels are allocated per facility, the handful listed are
+    #: hints, and a ± that walked only between them would refuse most of the band.
+    channel_plan: bool = False
 
     @property
     def span_hz(self) -> int:
@@ -497,6 +507,35 @@ def _s(**kw: object) -> Section:
     return Section(**kw)  # type: ignore[arg-type]
 
 
+def _raster(
+    first_hz: int, last_hz: int, spacing_hz: int, *, label: Callable[[int], str]
+) -> tuple[Channel, ...]:
+    """A channel plan that is pure arithmetic, generated rather than typed out.
+
+    FM broadcast and the AM dial are 100 and 118 channels of nothing but a first
+    frequency and a spacing, and writing those out by hand is a hundred chances to
+    fat-finger a digit. The irregular plans — CB, FRS/GMRS — are written out instead,
+    because no arithmetic produces them.
+
+    The name is the FREQUENCY, because that is what anyone says. FM channel numbers do
+    exist (73.201 numbers them 201-300) and nobody has ever asked for "channel 250"; a
+    pill reading `Ch 250` where the owner expects `101.5` would be a worse dial than the
+    one that has no channels at all."""
+    return tuple(Channel(hz, label(hz)) for hz in range(first_hz, last_hz + 1, spacing_hz))
+
+
+def _numbered(
+    plan: tuple[tuple[int, int], ...], *, note: dict[int, str] | None = None
+) -> tuple[Channel, ...]:
+    """An irregular plan: (channel number, Hz) pairs, in CHANNEL order.
+
+    Kept in channel order rather than sorted by frequency, because that is the order the
+    ± walks and the order the grid draws — and on CB the two differ: channel 23 sits at
+    27.255, above both 24 and 25, an artefact of the 1977 expansion from 23 channels."""
+    notes = note or {}
+    return tuple(Channel(hz, f"Ch {n}", notes.get(n, "")) for n, hz in plan)
+
+
 #: The table. Ordered as a person would browse it — the everyday bands first, the
 #: amateur bands next, HF last because it needs a different antenna to be worth anything.
 #:
@@ -521,6 +560,12 @@ SECTIONS: tuple[Section, ...] = (
         sweep_bin_hz=25_000,
         sweep_seconds=60,
         continuous=True,
+        channel_plan=True,
+        # 87.9 + 0.2n: every legal US carrier is an ODD tenth. Stepping 200 kHz already
+        # lands on them, so what the plan buys here is the LIST — the whole dial in one
+        # grid instead of a hundred taps — and a ± that cannot drift onto 89.0, which
+        # does not exist.
+        channels=_raster(88_100_000, 107_900_000, 200_000, label=lambda hz: f"{hz / 1e6:.1f}"),
     ),
     _s(
         id="wx",
@@ -552,6 +597,7 @@ SECTIONS: tuple[Section, ...] = (
                 start=1,
             )
         ),
+        channel_plan=True,
     ),
     _s(
         id="air-tower",
@@ -662,6 +708,33 @@ SECTIONS: tuple[Section, ...] = (
         sample_rate_hz=1_024_000,
         sweep_bin_hz=5_000,
         sweep_seconds=180,
+        channel_plan=True,
+        # 47 CFR 95.563. Both halves of the plan that live below 462.75: the eight main
+        # channels 15-22, which carry the GMRS repeater outputs, INTERLEAVED at 12.5 kHz
+        # with the seven interstitials 1-7 that every blister-pack radio starts on.
+        # Channels 8-14 are the half-watt 467 MHz interstitials and are a different band
+        # entirely, which is why counting stops at 7 and jumps to 15 — exactly what the
+        # radios themselves do when you scroll past 7 with the 467 side switched off.
+        channels=_numbered(
+            (
+                (1, 462_562_500),
+                (2, 462_587_500),
+                (3, 462_612_500),
+                (4, 462_637_500),
+                (5, 462_662_500),
+                (6, 462_687_500),
+                (7, 462_712_500),
+                (15, 462_550_000),
+                (16, 462_575_000),
+                (17, 462_600_000),
+                (18, 462_625_000),
+                (19, 462_650_000),
+                (20, 462_675_000),
+                (21, 462_700_000),
+                (22, 462_725_000),
+            ),
+            note=dict.fromkeys(range(15, 23), "GMRS repeater output"),
+        ),
     ),
     _s(
         id="murs",
@@ -683,6 +756,7 @@ SECTIONS: tuple[Section, ...] = (
             Channel(154_570_000, "MURS 4"),
             Channel(154_600_000, "MURS 5"),
         ),
+        channel_plan=True,
     ),
     # --- 2 m --------------------------------------------------------------------------
     _s(
@@ -746,6 +820,7 @@ SECTIONS: tuple[Section, ...] = (
             Channel(161_975_000, "AIS A"),
             Channel(162_025_000, "AIS B"),
         ),
+        channel_plan=True,
     ),
     _s(
         id="milair",
@@ -1044,10 +1119,57 @@ SECTIONS: tuple[Section, ...] = (
         sample_rate_hz=1_024_000,
         sweep_bin_hz=2_500,
         sweep_seconds=120,
-        channels=(
-            Channel(27_065_000, "Ch 9 — emergency"),
-            Channel(27_185_000, "Ch 19 — highway"),
-            Channel(27_385_000, "Ch 38 LSB — SSB calling"),
+        channel_plan=True,
+        channels=_numbered(
+            (
+                (1, 26_965_000),
+                (2, 26_975_000),
+                (3, 26_985_000),
+                (4, 27_005_000),
+                (5, 27_015_000),
+                (6, 27_025_000),
+                (7, 27_035_000),
+                (8, 27_055_000),
+                (9, 27_065_000),
+                (10, 27_075_000),
+                (11, 27_085_000),
+                (12, 27_105_000),
+                (13, 27_115_000),
+                (14, 27_125_000),
+                (15, 27_135_000),
+                (16, 27_155_000),
+                (17, 27_165_000),
+                (18, 27_175_000),
+                (19, 27_185_000),
+                (20, 27_205_000),
+                (21, 27_215_000),
+                (22, 27_225_000),
+                # 23 sits ABOVE 24 and 25. The 1977 expansion from 23 channels put the
+                # three new ones below the old top channel rather than renumbering it,
+                # and every CB radio since has stepped 22 → 23 → 24 backwards in
+                # frequency. No step size reproduces this; the list does.
+                (23, 27_255_000),
+                (24, 27_235_000),
+                (25, 27_245_000),
+                (26, 27_265_000),
+                (27, 27_275_000),
+                (28, 27_285_000),
+                (29, 27_295_000),
+                (30, 27_305_000),
+                (31, 27_315_000),
+                (32, 27_325_000),
+                (33, 27_335_000),
+                (34, 27_345_000),
+                (35, 27_355_000),
+                (36, 27_365_000),
+                (37, 27_375_000),
+                (38, 27_385_000),
+                (39, 27_395_000),
+                (40, 27_405_000),
+            ),
+            # The five gaps in the 10 kHz raster — 26.995, 27.045, 27.095, 27.145,
+            # 27.195 — are where the R/C radio-control channels sit, not rounding.
+            note={9: "emergency", 19: "highway", 38: "SSB calling (LSB)"},
         ),
     ),
     _s(
@@ -1132,6 +1254,11 @@ SECTIONS: tuple[Section, ...] = (
         sweep_bin_hz=1_000,
         sweep_seconds=120,
         continuous=True,
+        channel_plan=True,
+        # Named in KILOHERTZ, which is how every AM station identifies itself and what
+        # is printed on the dial: "ten-ten WINS", not "1.010 MHz". 530 is the travellers'
+        # information channel; the broadcast band proper starts at 540.
+        channels=_raster(530_000, 1_700_000, 10_000, label=lambda hz: f"{hz // 1000}"),
     ),
     _s(
         id="120m",
@@ -1434,6 +1561,7 @@ SECTIONS: tuple[Section, ...] = (
             Channel(5_373_000, "Channel 4"),
             Channel(5_405_000, "Channel 5"),
         ),
+        channel_plan=True,
     ),
     _s(
         id="40m",
@@ -1790,4 +1918,28 @@ def validate(sections: tuple[Section, ...] = SECTIONS) -> list[str]:
         for ch in s.channels:
             if not s.start_hz <= ch.hz <= s.stop_hz:
                 problems.append(f"{where} channel {ch.name} at {ch.hz} is outside it")
+        problems.extend(_plan_problems(s))
+    return problems
+
+
+def _plan_problems(s: Section) -> list[str]:
+    """Whether a section claiming a complete channel plan actually carries one.
+
+    `channel_plan` is what lets ± count in channels instead of kilohertz, so a wrong
+    one is a dial that walks somewhere the owner cannot get back from by counting: a
+    duplicate frequency makes ± stick, and an empty plan makes it do nothing at all."""
+    where = f"{s.id}:"
+    if not s.channel_plan:
+        return []
+    if not s.channels:
+        return [f"{where} claims a complete channel plan but lists no channels"]
+    problems: list[str] = []
+    seen: dict[int, str] = {}
+    for ch in s.channels:
+        if ch.hz in seen:
+            problems.append(
+                f"{where} {ch.name} and {seen[ch.hz]} are both at {ch.hz} — stepping "
+                f"between them would not move the radio"
+            )
+        seen[ch.hz] = ch.name
     return problems

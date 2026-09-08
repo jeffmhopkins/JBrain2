@@ -164,13 +164,46 @@ def _section_detail(section: bands.Section) -> str:
     ]
     if section.note:
         lines.append(section.note)
-    if section.channels:
-        lines.append("Named channels:")
-        lines.extend(
-            f"- {c.hz / 1e6:g} MHz {c.name}" + (f" — {c.note}" if c.note else "")
-            for c in section.channels
-        )
+    lines.extend(_channel_lines(section))
     return "\n".join(lines)
+
+
+#: How many channels are worth spelling out to a model. CB's forty are irregular enough
+#: that the list IS the information — five gaps and channel 23 above 24, none of which
+#: the model can derive. The AM dial's 118 and the FM dial's 100 are pure arithmetic on
+#: a first frequency and a spacing, and printing them spends a thousand tokens saying
+#: what one sentence says exactly.
+MAX_LISTED_CHANNELS = 48
+
+
+def _channel_lines(section: bands.Section) -> list[str]:
+    if not section.channels:
+        return []
+    if not section.channel_plan:
+        # Landmarks: notable spots inside a band that is otherwise tuned freely. The
+        # model needs these named, and there are never many.
+        return ["Named channels:", *(_channel_line(c) for c in section.channels)]
+    if len(section.channels) <= MAX_LISTED_CHANNELS:
+        return [
+            f"Complete channel plan — {len(section.channels)} channels, and a signal "
+            f"is only legal on these:",
+            *(_channel_line(c) for c in section.channels),
+        ]
+    # Too many to print, so say the arithmetic and keep the ones carrying a note —
+    # which are the ones a band plan alone would not tell anybody.
+    first, last = section.channels[0], section.channels[-1]
+    noted = [c for c in section.channels if c.note]
+    return [
+        f"Complete channel plan — {len(section.channels)} channels from "
+        f"{first.name} ({first.hz / 1e6:g} MHz) to {last.name} ({last.hz / 1e6:g} MHz), "
+        f"spaced {section.channel_hz} Hz. Nothing between them is a legal frequency.",
+        *(["Worth knowing:"] if noted else []),
+        *(_channel_line(c) for c in noted),
+    ]
+
+
+def _channel_line(c: bands.Channel) -> str:
+    return f"- {c.hz / 1e6:g} MHz {c.name}" + (f" — {c.note}" if c.note else "")
 
 
 def _radio_roster(answered: tuple[int, dict[str, Any]]) -> str:
