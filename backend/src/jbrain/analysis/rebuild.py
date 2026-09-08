@@ -9,7 +9,7 @@ composed almost entirely from shipped parts:
     candidate note -> purge_note_artifacts(keep_pinned=True)
                    -> notes.integration_state = 'pending_integration'
                    -> backfill_pending_integration drains the re-integration
-                   -> wiki_rebuild('all') once the graph settles
+                   -> wiki_prune + wiki_rebuild('all') + wiki_refresh once it settles
 
 One transaction per note (the `backfill_deleted_note_artifacts` shape), so a crash
 resumes from the run's cursor instead of starting over and no note is ever left half
@@ -21,7 +21,8 @@ a self-enqueue is ever lost.
 (migration 0046) and `wiki_articles.entity_ref` is a soft ref with no FK (0045), so
 re-deriving the graph silently degrades every published revision to chunk-only claims
 and points articles at entity ids that no longer exist. So the sweep does not end at
-the last purge: it waits for re-integration to drain, queues a full `wiki_rebuild`, and
+the last purge: it waits for re-integration to drain, queues the three-job wiki repair
+(`_finish` — prune the orphans, rebuild the survivors, refresh the newly minted), and
 only then marks the run complete.
 
 **RLS.** Runs under SYSTEM_CTX — reconciliation legitimately crosses every domain (E1)
@@ -184,14 +185,16 @@ async def _rebuild_one(
     """Rebuild one note in its OWN transaction: purge its derived artifacts, hand it
     back to the Integrator, and advance the run cursor — all or nothing, so a crash
     never leaves a note purged but un-queued and the resume point is always exact.
-    `wiki_built = false` re-dirties the note for the wiki's mark-and-sweep builder."""
+
+    Only `integration_state` is written. The wiki's dirty bit is `entities.wiki_built`,
+    which 0046's triggers flip for us on the purge's fact/mention deletes;
+    `notes.wiki_built` is a vestigial column with no reader anywhere in the backend or
+    the PWA, so writing it here would look like re-dirtying the wiki while doing
+    nothing at all."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         counts = await purge_note_artifacts(session, note_id, keep_pinned=True)
         await session.execute(
-            text(
-                "UPDATE app.notes SET integration_state = 'pending_integration',"
-                " wiki_built = false WHERE id = :id"
-            ),
+            text("UPDATE app.notes SET integration_state = 'pending_integration' WHERE id = :id"),
             {"id": str(note_id)},
         )
         await session.execute(
@@ -203,6 +206,10 @@ async def _rebuild_one(
                 "     cursor_note_id = CAST(:note AS uuid)"
                 " WHERE id = :run"
             ),
+            # Read-modify-write on the run row. Two workers dragging the same run would
+            # double-count these (and race the cursor backwards); the sweep self-enqueues
+            # one job at a time, so the queue's own single-flight is what keeps that from
+            # happening — the counters are progress display, not an invariant.
             {"purged": counts.purged, "kept": counts.kept, "note": str(note_id), "run": run_id},
         )
         await session.commit()
@@ -243,11 +250,30 @@ async def _set_status(maker: async_sessionmaker[AsyncSession], run_id: str, stat
 
 
 async def _finish(maker: async_sessionmaker[AsyncSession], run_id: str) -> None:
-    """Close the run and chain into the wiki rebuild — the step that keeps published
+    """Close the run and chain into the wiki repair — the step that keeps published
     revisions from silently degrading to chunk-only claims (0046) and articles from
-    pointing at entity ids the rebuild replaced (0045). The job id is recorded on the
-    run so the chain is auditable and a later fire never queues a second rebuild."""
+    pointing at entity ids the rebuild replaced (0045).
+
+    THREE jobs, because no single one covers the damage:
+
+    - `wiki_prune` archives articles whose `entity_ref` the sweep orphaned. It must run
+      FIRST, and it is the only one that can: `wiki_rebuild('all')` iterates
+      `entity_ref FROM wiki_articles WHERE status = 'active'` (wiki/builder.py), i.e.
+      the very refs the sweep just killed — it cannot re-point or archive a dead one.
+    - `wiki_rebuild('all')` re-derives every surviving article, which is what repairs
+      the citations `wiki_citations.fact_id ON DELETE SET NULL` blanked.
+    - `wiki_refresh` builds for entities the re-derivation newly MINTED. They have no
+      article row, so `rebuild` never visits them; refresh is dirty-bit driven and
+      0046's triggers already flipped `entities.wiki_built = false` on the sweep's
+      deletes, so it finds them (and would eventually self-heal on its own schedule —
+      chaining it here just means the owner does not wait for that window).
+
+    The rebuild job's id is recorded on the run so the chain is auditable and a later
+    fire never queues a second one.
+    """
+    await queue.enqueue(maker, queue.SYSTEM_CTX, "wiki_prune", {})
     job_id = await queue.enqueue(maker, queue.SYSTEM_CTX, "wiki_rebuild", {"target": "all"})
+    await queue.enqueue(maker, queue.SYSTEM_CTX, "wiki_refresh", {})
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         await session.execute(
             text(
@@ -332,16 +358,25 @@ def graph_rebuild_handler(maker: async_sessionmaker[AsyncSession]) -> Any:
 
     Two seeded pipelines drive it: the manual one passes `start: true` (the owner's
     "Run now" in Ops -> Automations), the recurring drain one passes nothing and is
-    inert unless a run is open. Returns the notes rebuilt this fire, so an idle drain
-    fire is reaped from the Ops run log (scheduler.REAPABLE_IDLE_SWEEPS).
+    inert unless a run is open.
+
+    The return value drives the idle reap (scheduler.REAPABLE_IDLE_SWEEPS), so it is
+    keyed on WHETHER A RUN EXISTED, not on how many notes this fire moved. Returning
+    the note count would reap the most important fire of all — the last one, which
+    purges nothing, queues the wiki repair and marks the run complete — leaving the
+    owner watching a run that never visibly finishes. It would also erase the whole
+    run of a rebuild over an already-clean corpus, which then reads as "nothing
+    happened" (CLAUDE.md rule 10: the Ops log is the only place they can see this).
     """
 
     async def run(
         payload: dict[str, Any], *, progress: Callable[[str], Awaitable[None]] | None = None
     ) -> int:
         result = await rebuild_batch(maker, start=bool(payload.get("start")))
-        if progress is not None and result.run_id is not None:
+        if result.run_id is None:
+            return 0  # a drain poll with no open run: nothing to show the owner
+        if progress is not None:
             await progress(result.note)
-        return result.processed_now
+        return max(result.processed_now, 1)
 
     return run

@@ -18,6 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain import queue
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
 from jbrain.db.session import scoped_session
@@ -63,6 +64,7 @@ def _registry():  # noqa: ANN202
             TAG_CONSOLIDATE_SPEC,
             *WIKI_SPECS,
             WIKI_LINT_SPEC,
+            GRAPH_REBUILD_SPEC,
         )
     )
 
@@ -810,3 +812,42 @@ async def test_dropped_embed_self_heals_and_is_idempotent(
     # second enqueue.
     await handler({})
     assert await _jobs_for_note(maker, "embed_note", note_id) == 1
+
+
+async def test_seeded_graph_rebuild_triggers_exist_and_start_is_fireable(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0189 seeds the corpus rebuild's two pipelines over one action. This is
+    the ONLY way the owner can start a rebuild — there is no bespoke Ops route — so the
+    seeded manual trigger resolving and enqueueing IS the no-terminal path (CLAUDE.md
+    rule 10). The drain trigger must NOT be manual: the tick fires it on its interval
+    regardless, and a manual one would render a second, identical "Run now" that does
+    nothing unless a run is already open."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        start = (
+            await s.execute(
+                text(
+                    "SELECT t.id, s.schedule_kind FROM app.triggers t"
+                    " JOIN app.schedules s ON s.id = t.on_schedule_id"
+                    " WHERE t.manual AND t.pipeline = 'graph_rebuild_start'"
+                )
+            )
+        ).one()
+        drain = (
+            await s.execute(
+                text(
+                    "SELECT t.manual, t.enabled, s.interval_seconds FROM app.triggers t"
+                    " JOIN app.schedules s ON s.id = t.on_schedule_id"
+                    " WHERE t.pipeline = 'graph_rebuild_drain'"
+                )
+            )
+        ).one()
+    assert start.schedule_kind == "on_demand"  # never fires on a clock
+    assert drain.manual is False
+    assert drain.enabled is True
+    assert drain.interval_seconds == 300
+
+    before = await _jobs_of_kind(maker, "graph_rebuild")
+    fired = await fire_trigger(maker, _registry(), str(start.id))
+    assert fired.pipeline == "graph_rebuild_start"
+    assert await _jobs_of_kind(maker, "graph_rebuild") == before + 1

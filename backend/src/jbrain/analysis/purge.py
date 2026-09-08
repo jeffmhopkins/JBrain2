@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import bindparam, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -45,6 +46,8 @@ from jbrain.models.analysis import (
     NoteAnalysis,
     TemporalToken,
 )
+
+log = structlog.get_logger()
 
 
 def chain_repair_target(
@@ -79,23 +82,48 @@ class PurgeCounts:
 
 
 # Supersession chains are short (a value revised a handful of times); the cap only
-# stops a corrupted cyclic chain from spinning the recursive walk forever.
+# stops a corrupted cyclic chain from spinning the recursive walk forever. Hitting it
+# UNDER-spares, which is the data-loss direction, so the walk logs rather than
+# truncating silently.
 _CHAIN_DEPTH_CAP = 32
 
+# Review-item statuses that record a HUMAN verdict. Open items are re-derivable noise;
+# these two are decisions, and the facts they name must outlive a rebuild.
+_SETTLED_STATUSES = ("resolved", "dismissed")
 
-async def pinned_chain_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
-    """This note's facts whose supersession chain REACHES a pinned fact — the set a
-    rebuild must spare.
+
+async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
+    """This note's facts that a REBUILD must spare, gathered from two independent roots.
 
     A pinned fact is a human decision (an owner correction's force-supersede, or the
     side the owner picked resolving a review card), so it survives re-derivation. But
-    sparing only the pinned row is not enough: the rows it superseded carry the
-    verdict's shape. Purge one and re-derive it and the fresh row lands beside the pin
-    with no chain link, where `decide()` re-flags a pinned head it disagrees with
-    ("Re-flag, never flip", analysis/supersession.py) — one collision card per settled
-    decision, corpus-wide. Sparing the whole chain instead lets the re-derived twin
-    match the surviving row by VALUE, so `decide()` takes its idempotent refresh
-    branch: the row is refreshed in place, its link to the pin intact, no card filed.
+    sparing only the pinned row is not enough, for two unrelated reasons:
+
+    1. **The chain below the pin.** The rows the pin superseded carry the verdict's
+       shape. Purge one, re-derive it, and the fresh row lands beside the pin with no
+       chain link, where `decide()` re-flags a pinned head it disagrees with
+       ("Re-flag, never flip", analysis/supersession.py). Sparing the chain lets the
+       re-derived twin match a surviving row by VALUE, so `decide()` takes its
+       idempotent refresh branch instead.
+
+    2. **The retracted loser of a settled card, which NO chain walk can reach.**
+       Resolving a card writes no supersession edge at all: `repo.py` pins the winner
+       (`superseded_by = NULL`) and marks the loser `status='retracted'`, leaving its
+       `superseded_by` untouched. The loser is therefore not on the winner's chain, and
+       a `superseded_by`-only walk misses it. Deleting it strands the settled card on a
+       dangling `payload.fact_a/fact_b` (jsonb, no FK, so nothing errors) and makes
+       reopen/undo a permanent silent no-op — `_reverse_effects` replays
+       `UPDATE app.facts ... WHERE id = :id` against a row that is gone. So the facts a
+       settled item NAMES are spared directly, by id.
+
+    Derived shadows of a spared fact are spared with it: a resolution cascades onto them
+    and records their prior status in its effects (repo.py), so a shadow outliving its
+    source's verdict is another dangling replay target.
+
+    Sparing the loser is only half of the flood fix. `decide()` filters retracted rows
+    out of `live` before matching, so a spared loser is invisible to it; `_retracted_twin`
+    (analysis/supersession.py) is the half that consults this history. This function is
+    the half that keeps it.
     """
     rows = await session.execute(
         text(
@@ -106,15 +134,50 @@ async def pinned_chain_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> se
                 SELECT w.root, f.superseded_by, w.depth + 1
                 FROM walk w JOIN app.facts f ON f.id = w.cur
                 WHERE f.superseded_by IS NOT NULL AND w.depth < :cap
-            )
-            SELECT DISTINCT w.root
-            FROM walk w JOIN app.facts f ON f.id = w.cur
-            WHERE f.pinned
+            ),
+            pinned_roots AS (
+                SELECT DISTINCT w.root AS id
+                FROM walk w JOIN app.facts f ON f.id = w.cur
+                WHERE f.pinned
+            ),
+            settled AS (
+                SELECT f.id
+                FROM app.review_items ri
+                JOIN app.facts f
+                  ON f.id::text IN (ri.payload->>'fact_a', ri.payload->>'fact_b')
+                WHERE ri.status IN :statuses AND f.note_id = :note
+            ),
+            roots AS (SELECT id FROM pinned_roots UNION SELECT id FROM settled)
+            SELECT id FROM roots
+            UNION
+            SELECT f.id FROM app.facts f JOIN roots r ON f.derived_from_fact_id = r.id
+            WHERE f.note_id = :note
             """
-        ),
-        {"note": str(note_id), "cap": _CHAIN_DEPTH_CAP},
+        ).bindparams(bindparam("statuses", expanding=True)),
+        {"note": str(note_id), "cap": _CHAIN_DEPTH_CAP, "statuses": list(_SETTLED_STATUSES)},
     )
-    return {uuid.UUID(str(row[0])) for row in rows}
+    keep = {uuid.UUID(str(row[0])) for row in rows}
+    truncated = (
+        await session.execute(
+            text(
+                """
+                WITH RECURSIVE walk(cur, depth) AS (
+                    SELECT f.id, 0 FROM app.facts f WHERE f.note_id = :note
+                    UNION ALL
+                    SELECT f.superseded_by, w.depth + 1
+                    FROM walk w JOIN app.facts f ON f.id = w.cur
+                    WHERE f.superseded_by IS NOT NULL AND w.depth < :cap
+                )
+                SELECT count(*) FROM walk WHERE depth >= :cap
+                """
+            ),
+            {"note": str(note_id), "cap": _CHAIN_DEPTH_CAP},
+        )
+    ).scalar_one()
+    if truncated:
+        # Under-sparing is data loss; it must never be silent.
+        log.warning("rebuild_spare_chain_capped", note_id=str(note_id), cap=_CHAIN_DEPTH_CAP)
+    return keep
 
 
 async def purge_note_artifacts(
@@ -130,9 +193,9 @@ async def purge_note_artifacts(
     destructive half with three deliberate exemptions, because a rebuild re-derives
     from notes that still exist rather than honoring a deletion promise:
 
-    1. Facts on a supersession chain reaching a pinned fact survive
-       (`pinned_chain_fact_ids`) — the owner's own decisions, and the rows carrying
-       their verdict.
+    1. Facts a human verdict rests on survive (`rebuild_spare_fact_ids`): the pinned
+       row, the chain it superseded, and — reachable by no chain walk — the retracted
+       loser a settled review item names.
     2. Only OPEN review items go, the discipline the re-extraction sweep already uses
        (analysis/pipeline.py): resolved/dismissed items are HUMAN history. The
        `note_id` sweep is skipped for the same reason — it is status-blind by
@@ -140,7 +203,7 @@ async def purge_note_artifacts(
     3. Agent episodes stay. Nothing re-derives them, so purging them here would be
        silent data loss, not a rebuild.
     """
-    keep_ids = await pinned_chain_fact_ids(session, note_id) if keep_pinned else set()
+    keep_ids = await rebuild_spare_fact_ids(session, note_id) if keep_pinned else set()
     all_facts = (
         await session.execute(
             select(

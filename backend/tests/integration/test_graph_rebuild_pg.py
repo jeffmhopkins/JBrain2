@@ -3,13 +3,16 @@
 The sweep re-derives every note's graph while KEEPING the notes, so it is the privacy
 purge's destructive half with three exemptions that must hold exactly:
 
-- pinned facts — and the rows their supersession chain carries — survive, so a rebuild
-  never re-litigates a decision the owner already made;
-- resolved review history survives (only OPEN cards go);
+- the facts a human verdict rests on survive — the pinned row, the chain it superseded,
+  AND the retracted loser a settled review card names, which no supersession walk can
+  reach (resolving a card writes no chain edge at all) — so a rebuild never
+  re-litigates a decision the owner already made;
+- resolved review history survives (only OPEN cards go) — and survives usefully, with
+  the facts its payload points at;
 - agent episodes survive (nothing re-derives them).
 
 Plus the two properties that make it operable without a terminal: it is resumable from
-its own cursor, and it chains into a full wiki rebuild once re-integration drains.
+its own cursor, and it chains into the three-job wiki repair once re-integration drains.
 """
 
 import uuid
@@ -119,12 +122,16 @@ async def test_rebuild_removes_artifacts_and_requeues_integration(
         )
     (row,) = await fetch(
         maker,
-        "SELECT integration_state, wiki_built, deleted_at FROM app.notes WHERE id = :id",
+        "SELECT integration_state, deleted_at FROM app.notes WHERE id = :id",
         id=note,
     )
     assert row.integration_state == "pending_integration"
-    assert row.wiki_built is False
     assert row.deleted_at is None
+    # The wiki's dirty bit is `entities.wiki_built` — 0046's triggers flip it on the
+    # purge's own fact/mention deletes, which is what re-dirties the article. (The sweep
+    # writes no `notes.wiki_built`: that column has no reader anywhere.)
+    (dirty,) = await fetch(maker, "SELECT wiki_built FROM app.entities WHERE id = :id", id=entity)
+    assert dirty.wiki_built is False
     assert (
         await count(
             maker,
@@ -192,12 +199,17 @@ async def test_resolved_review_history_survives_and_open_cards_go(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """A rebuild is not a deletion promise, so it uses the re-extraction sweep's
-    discipline: only OPEN items go. Resolved/dismissed items are HUMAN history."""
+    discipline: only OPEN items go. Resolved/dismissed items are HUMAN history — and
+    keeping the CARD is worthless if its facts go: `review_items.payload` is jsonb with
+    no FK, so a purged side leaves a dangling pointer that nothing errors on, and
+    reopen/undo silently no-ops forever (`_reverse_effects` replays an UPDATE against a
+    row that is gone). The facts a settled item names are spared with it."""
     await quiesce(maker)
     note = await indexed_note(maker)
     entity = await seed_entity(maker, "Review Subject", status="confirmed")
     fact = await seed_fact(maker, note, entity)
-    open_card = await seed_item(maker, "fact_conflict", {"fact_b": fact, "note_id": note})
+    open_only = await seed_fact(maker, note, entity, predicate="worksFor")
+    open_card = await seed_item(maker, "fact_conflict", {"fact_b": open_only, "note_id": note})
     resolved_card = await seed_item(
         maker, "fact_conflict", {"fact_b": fact, "note_id": note}, status="resolved"
     )
@@ -210,6 +222,39 @@ async def test_resolved_review_history_survives_and_open_cards_go(
     assert await count(maker, ITEM_BY_ID, id=open_card) == 0
     for kept in (resolved_card, resolved_note_card):
         assert await count(maker, ITEM_BY_ID, id=kept) == 1
+    # The settled card's fact survives; the one only an OPEN card cited does not.
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=fact) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=open_only) == 0
+
+
+async def test_the_retracted_loser_of_a_settled_card_survives_a_rebuild(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The loser is reachable by NO supersession walk: resolving a card writes no chain
+    edge — it pins the winner (`superseded_by = NULL`) and marks the loser retracted
+    (analysis/repo.py). A `superseded_by`-only spare set misses it, deletes it, and the
+    re-derived value then lands beside the pinned winner and re-flags: one collision
+    card per settled decision, corpus-wide. Both sides — and the winner's derived
+    shadow, which the resolution cascades onto — must survive."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Verdict Subject", status="confirmed")
+    winner = await seed_fact(maker, note, entity, pinned=True)
+    loser = await seed_fact(maker, note, entity, status="retracted")
+    shadow = await seed_fact(maker, note, entity, derived_from_fact_id=winner)
+    unrelated = await seed_fact(maker, note, entity, predicate="worksFor")
+    card = await seed_item(
+        maker, "attribute_collision", {"fact_a": winner, "fact_b": loser}, status="resolved"
+    )
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+
+    for kept in (winner, loser, shadow):
+        assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=kept) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=unrelated) == 0
+    assert await count(maker, ITEM_BY_ID, id=card) == 1
+    assert progress.kept == 3
+    assert progress.purged == 1
 
 
 async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:

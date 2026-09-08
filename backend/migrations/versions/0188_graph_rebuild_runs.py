@@ -19,15 +19,15 @@ The partial unique index makes two concurrent rebuilds structurally impossible: 
 one row may sit in a non-completed status, so a second "Run now" click continues the
 open run instead of opening a rival that would re-purge from a stale cursor.
 
-Revision ID: 0187
-Revises: 0186
+Revision ID: 0188
+Revises: 0187
 Create Date: 2026-09-08
 """
 
 from alembic import op
 
-revision = "0187"
-down_revision = "0186"
+revision = "0188"
+down_revision = "0187"
 branch_labels = None
 depends_on = None
 

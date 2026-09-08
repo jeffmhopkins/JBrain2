@@ -19,15 +19,15 @@ grants from 0003 cover it unchanged — no new policy, no new grant, and no wide
 narrowed reader that could not see the note still cannot see its receipt time). It
 carries no content beyond a timestamp already implicit in the row's existence.
 
-Revision ID: 0189
-Revises: 0188
+Revision ID: 0190
+Revises: 0189
 Create Date: 2026-09-08
 """
 
 from alembic import op
 
-revision = "0189"
-down_revision = "0188"
+revision = "0190"
+down_revision = "0189"
 branch_labels = None
 depends_on = None
 

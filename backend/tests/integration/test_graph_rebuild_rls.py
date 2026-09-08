@@ -1,4 +1,4 @@
-"""Migration 0187 against real Postgres: RLS isolation for `app.graph_rebuild_runs`
+"""Migration 0188 against real Postgres: RLS isolation for `app.graph_rebuild_runs`
 (CLAUDE.md rule 3 — every new table gets one).
 
 The owner/system posture (`app.is_owner()`, the triggers/schedules precedent): the row
@@ -103,11 +103,18 @@ async def test_only_one_run_may_be_open(maker: async_sessionmaker) -> None:
         await s.execute(
             text("INSERT INTO app.graph_rebuild_runs (status, total_notes) VALUES ('purging', 1)")
         )
-    with pytest.raises(Exception, match="graph_rebuild_runs_one_active"):
-        async with scoped_session(maker, OWNER) as s:
-            await s.execute(
-                text(
-                    "INSERT INTO app.graph_rebuild_runs (status, total_notes)"
-                    " VALUES ('draining', 1)"
+    try:
+        with pytest.raises(Exception, match="graph_rebuild_runs_one_active"):
+            async with scoped_session(maker, OWNER) as s:
+                await s.execute(
+                    text(
+                        "INSERT INTO app.graph_rebuild_runs (status, total_notes)"
+                        " VALUES ('draining', 1)"
+                    )
                 )
-            )
+    finally:
+        # The index is corpus-wide and the test database is shared: an open run left
+        # behind here makes every later `start_run` a silent no-op. There is no DELETE
+        # grant (a run row is audit history), so close it instead.
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(text("UPDATE app.graph_rebuild_runs SET status = 'completed'"))

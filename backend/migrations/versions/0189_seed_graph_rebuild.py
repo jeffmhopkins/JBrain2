@@ -13,15 +13,17 @@ different intents:
 - `graph_rebuild_drain` (no params) is inert unless a run is open, and is the
   resumability backstop: a run stranded by a worker restart, or by a lost
   self-enqueue, is picked back up within the interval, and the draining phase polls
-  here until re-integration settles and the chained `wiki_rebuild` can be queued. It
+  here until re-integration settles and the chained wiki repair can be queued. It
   ships ENABLED because an inert fire is one indexed count query, and the worker reaps
-  a zero-work fire from the Ops run log (scheduler.REAPABLE_IDLE_SWEEPS).
+  a fire that found NO OPEN RUN from the Ops run log (scheduler.REAPABLE_IDLE_SWEEPS).
+  Its trigger is NOT manual: the tick fires schedule-bound triggers regardless, and a
+  manual one would show the owner a second, identical "Run now" that does nothing.
 
 Fixed UUIDs keep the triggers addressable by the Ops/run-log surfaces across
 environments.
 
-Revision ID: 0188
-Revises: 0187
+Revision ID: 0189
+Revises: 0188
 Create Date: 2026-09-08
 """
 
@@ -29,8 +31,8 @@ import json
 
 from alembic import op
 
-revision = "0188"
-down_revision = "0187"
+revision = "0189"
+down_revision = "0188"
 branch_labels = None
 depends_on = None
 
@@ -85,9 +87,12 @@ def upgrade() -> None:
         f" VALUES ('{_DRAIN_SCHEDULE}', 'interval', {_DRAIN_INTERVAL_SECONDS}, 'UTC',"
         f" now() + make_interval(secs => {_DRAIN_INTERVAL_SECONDS}), true)"
     )
+    # manual=false: the tick fires schedule-bound triggers regardless of the flag, and a
+    # manual drain trigger would put a SECOND, identical "Run now" button in Ops beside
+    # the real one — a button that does nothing at all unless a run is already open.
     op.execute(
         "INSERT INTO app.triggers (id, on_schedule_id, pipeline, manual)"
-        f" VALUES ('{_DRAIN_TRIGGER}', '{_DRAIN_SCHEDULE}', 'graph_rebuild_drain', true)"
+        f" VALUES ('{_DRAIN_TRIGGER}', '{_DRAIN_SCHEDULE}', 'graph_rebuild_drain', false)"
     )
 
 
