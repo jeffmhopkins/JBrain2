@@ -63,6 +63,7 @@ from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
@@ -258,6 +259,7 @@ API_ACTION_SPECS = (
     *WIKI_SPECS,
     WIKI_LINT_SPEC,
     TRIAGE_INBOX_SPEC,
+    GRAPH_REBUILD_SPEC,
 )
 
 

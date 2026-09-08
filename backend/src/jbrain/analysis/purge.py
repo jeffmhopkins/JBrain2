@@ -16,9 +16,16 @@ delete, so a failed purge never leaves a half-purged graph. This is a
 sibling of the review-reopen effects-unwind (analysis/repo.py): both repair
 the graph when a write that shaped it is taken back — reopen replays
 recorded effects, the purge re-derives chain repairs from what survives.
+
+`purge_note_artifacts(keep_pinned=True)` is the SECOND caller of this destructive
+half: the corpus rebuild sweep (analysis/rebuild.py), which re-derives from notes
+that still exist. Its three exemptions are on that keyword's docstring — a rebuild
+is not a deletion promise, so pinned decisions, resolved review history and agent
+episodes all survive it.
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -62,16 +69,86 @@ def chain_repair_target(
     return current
 
 
-async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> None:
+@dataclass(frozen=True)
+class PurgeCounts:
+    """What one note's purge removed and spared — the rebuild sweep's per-note
+    progress unit. `kept` is always 0 for a privacy delete: nothing is spared."""
+
+    purged: int
+    kept: int
+
+
+# Supersession chains are short (a value revised a handful of times); the cap only
+# stops a corrupted cyclic chain from spinning the recursive walk forever.
+_CHAIN_DEPTH_CAP = 32
+
+
+async def pinned_chain_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
+    """This note's facts whose supersession chain REACHES a pinned fact — the set a
+    rebuild must spare.
+
+    A pinned fact is a human decision (an owner correction's force-supersede, or the
+    side the owner picked resolving a review card), so it survives re-derivation. But
+    sparing only the pinned row is not enough: the rows it superseded carry the
+    verdict's shape. Purge one and re-derive it and the fresh row lands beside the pin
+    with no chain link, where `decide()` re-flags a pinned head it disagrees with
+    ("Re-flag, never flip", analysis/supersession.py) — one collision card per settled
+    decision, corpus-wide. Sparing the whole chain instead lets the re-derived twin
+    match the surviving row by VALUE, so `decide()` takes its idempotent refresh
+    branch: the row is refreshed in place, its link to the pin intact, no card filed.
+    """
+    rows = await session.execute(
+        text(
+            """
+            WITH RECURSIVE walk(root, cur, depth) AS (
+                SELECT f.id, f.id, 0 FROM app.facts f WHERE f.note_id = :note
+                UNION ALL
+                SELECT w.root, f.superseded_by, w.depth + 1
+                FROM walk w JOIN app.facts f ON f.id = w.cur
+                WHERE f.superseded_by IS NOT NULL AND w.depth < :cap
+            )
+            SELECT DISTINCT w.root
+            FROM walk w JOIN app.facts f ON f.id = w.cur
+            WHERE f.pinned
+            """
+        ),
+        {"note": str(note_id), "cap": _CHAIN_DEPTH_CAP},
+    )
+    return {uuid.UUID(str(row[0])) for row in rows}
+
+
+async def purge_note_artifacts(
+    session: AsyncSession, note_id: uuid.UUID, *, keep_pinned: bool = False
+) -> PurgeCounts:
     """Purge every artifact derived from `note_id`, repairing supersession
-    chains first. A never-analyzed note has nothing here and is a no-op."""
-    doomed = (
+    chains first. A never-analyzed note has nothing here and is a no-op.
+
+    `keep_pinned=False` is the privacy delete this module exists for: total, down to
+    resolved review history and agent episodes.
+
+    `keep_pinned=True` selects the REBUILD posture (analysis/rebuild.py) — the same
+    destructive half with three deliberate exemptions, because a rebuild re-derives
+    from notes that still exist rather than honoring a deletion promise:
+
+    1. Facts on a supersession chain reaching a pinned fact survive
+       (`pinned_chain_fact_ids`) — the owner's own decisions, and the rows carrying
+       their verdict.
+    2. Only OPEN review items go, the discipline the re-extraction sweep already uses
+       (analysis/pipeline.py): resolved/dismissed items are HUMAN history. The
+       `note_id` sweep is skipped for the same reason — it is status-blind by
+       construction and exists to erase a deleted note's frozen snippets.
+    3. Agent episodes stay. Nothing re-derives them, so purging them here would be
+       silent data loss, not a rebuild.
+    """
+    keep_ids = await pinned_chain_fact_ids(session, note_id) if keep_pinned else set()
+    all_facts = (
         await session.execute(
             select(
                 Fact.id, Fact.superseded_by, Fact.valid_from, Fact.entity_id, Fact.object_entity_id
             ).where(Fact.note_id == note_id)
         )
     ).all()
+    doomed = [f for f in all_facts if f.id not in keep_ids]
     doomed_links: dict[uuid.UUID, uuid.UUID | None] = {f.id: f.superseded_by for f in doomed}
     doomed_close: dict[uuid.UUID, datetime | None] = {f.id: f.valid_from for f in doomed}
 
@@ -91,24 +168,39 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
     )
 
     await repair_chains(session, doomed_links, doomed_close)
-    await delete_review_items(session, set(doomed_links), note_id=note_id)
+    await delete_review_items(
+        session,
+        set(doomed_links),
+        note_id=None if keep_pinned else note_id,
+        statuses=("open",) if keep_pinned else None,
+    )
 
-    await session.execute(delete(Fact).where(Fact.note_id == note_id))
+    fact_delete = delete(Fact).where(Fact.note_id == note_id)
+    if keep_ids:
+        fact_delete = fact_delete.where(Fact.id.not_in(keep_ids))
+    await session.execute(fact_delete)
+    # A token a SPARED fact still cites outlives the purge — the FK would abort the
+    # delete otherwise, and `_upsert_tokens` is get-or-create keyed on (phrase,
+    # resolved start), so re-extraction reuses the surviving row instead of
+    # duplicating it. Empty for a privacy delete: every one of the note's tokens goes.
+    doomed_tokens = select(TemporalToken.id).where(TemporalToken.note_id == note_id)
+    if keep_ids:
+        doomed_tokens = doomed_tokens.where(
+            TemporalToken.id.not_in(
+                select(Fact.temporal_token_id).where(
+                    Fact.id.in_(keep_ids), Fact.temporal_token_id.is_not(None)
+                )
+            )
+        )
     # Tokens are per-note by construction (the pipeline only mints them for
     # the note being analyzed), so no other note's fact should cite one — but
     # the FK would abort the whole delete if a stray citation ever appeared,
     # so unhook defensively rather than trust the invariant. Runs after the
-    # fact delete: only other notes' facts can still match.
+    # fact delete: only surviving facts can still match.
     await session.execute(
-        update(Fact)
-        .where(
-            Fact.temporal_token_id.in_(
-                select(TemporalToken.id).where(TemporalToken.note_id == note_id)
-            )
-        )
-        .values(temporal_token_id=None)
+        update(Fact).where(Fact.temporal_token_id.in_(doomed_tokens)).values(temporal_token_id=None)
     )
-    await session.execute(delete(TemporalToken).where(TemporalToken.note_id == note_id))
+    await session.execute(delete(TemporalToken).where(TemporalToken.id.in_(doomed_tokens)))
     await session.execute(delete(EntityMention).where(EntityMention.note_id == note_id))
     await session.execute(delete(NoteAnalysis).where(NoteAnalysis.note_id == note_id))
     await _delete_orphaned_entities(session, candidates)
@@ -118,7 +210,9 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
     await project_appointments(session, candidates)
     await project_emr(session, candidates)
     await project_place_geofences(session, candidates)
-    await _purge_episodes(session, note_id)
+    if not keep_pinned:
+        await _purge_episodes(session, note_id)
+    return PurgeCounts(purged=len(doomed), kept=len(keep_ids))
 
 
 async def _purge_episodes(session: AsyncSession, note_id: uuid.UUID) -> None:
@@ -198,12 +292,12 @@ async def delete_review_items(
     fact_a / fact_b), plus — when `note_id` is given — everything filed for
     the note itself.
 
-    The purge passes note_id and no status filter: resolved history is
+    The privacy purge passes note_id and no status filter: resolved history is
     derived data too, and its frozen display snippets quote the note's text.
     Items created by another note but referencing a doomed fact go as well,
     including the one-doomed-one-surviving case: such a card is unservable
     (one side's evidence is gone) and its choice labels quote the doomed
-    fact's statement. The re-extraction sweep instead passes
+    fact's statement. The re-extraction sweep and the rebuild sweep instead pass
     statuses=('open',) and no note_id: resolved/dismissed items are HUMAN
     history and survive a re-run.
     """

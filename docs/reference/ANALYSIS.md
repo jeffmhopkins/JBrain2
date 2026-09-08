@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-09 — LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-09-08 — The corpus **entity-graph rebuild sweep** (`jbrain.analysis.rebuild`, the `graph_rebuild` action): re-derive the whole graph from the notes while KEEPING them, the acceptance/rollback instrument Ops → Reset could never be. It reuses the purge's destructive half with three exemptions — pinned facts and their supersession chains survive, only OPEN review items are retired, agent episodes are untouched — is resumable from a durable cursor one transaction per note, and chains into a full wiki rebuild (citations are ON DELETE SET NULL and article entity refs have no FK). Fired from Ops → Automations, never scheduled to start itself. Also: the attachment settle window now measures from the server's `notes.received_at`, not the client's `created_at`, so an offline-flushed note with a promised attachment no longer arrives past its own window. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -377,6 +377,25 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   because tearing the note's artifacts down to replay them would discard
   exactly what incremental repair preserves — pins, resolution history, and
   the cross-note supersession evidence other notes' facts hang off.
+- **The corpus rebuild sweep is the one exception to that, and it is an
+  operator instrument, not a re-run path.** `jbrain.analysis.rebuild` re-derives
+  the WHOLE graph from the notes while keeping the notes — the acceptance check
+  on a pipeline change, and the rollback lever, that Ops → Reset (which drops
+  the schema and takes the notes with it) could never be. It reuses the purge's
+  destructive half with three exemptions that answer the rejection above
+  exactly: **pinned facts survive, and so does every fact whose supersession
+  chain reaches one** (the re-derived twin then matches by value and refreshes
+  in place, so a settled decision is never re-litigated into a fresh collision
+  card); **only open review items are retired**, resolved history stands; and
+  agent episodes are untouched, since nothing re-derives them. It runs one
+  transaction per note from a durable cursor, so it is resumable, and it
+  **chains into a full wiki rebuild** — a graph re-derive otherwise degrades
+  every published revision to chunk-only claims (`wiki_citations.fact_id` is
+  ON DELETE SET NULL) and orphans articles to dead entity ids
+  (`wiki_articles.entity_ref` is a soft ref with no FK). It is fired from
+  Ops → Automations ("Run now" on the `graph_rebuild_start` trigger) and
+  reports progress on its run; a recurring drain schedule resumes a run
+  stranded by a restart. Never automatic, never scheduled to start itself.
 - **Human decisions are pinned overrides**: review-inbox resolutions,
   entity merges/rejections, domain corrections, and tag fixes survive any
   reprocessing; auto-supersession cannot override a pinned fact, only
@@ -484,8 +503,12 @@ The integration reconciler (`backfill_pending_integration`) honors the same wait
 else it would body-only integrate during the upload window and defeat the gate —
 bounded by a **settle window** (`INTEGRATION_ATTACHMENT_SETTLE_SECONDS`) so a
 promised attachment that never arrives (a failed upload) integrates on what it has
-rather than stranding. Absent/0 (a plain note, or a client that doesn't send the
-hint) = today's immediate behavior; the common no-attachment path is never delayed.
+rather than stranding. That window is measured from **`notes.received_at`**, the
+server's receipt instant — never `created_at`, which is the *client's* capture time
+(the offline outbox flushes later), so a note captured yesterday and flushed now
+would arrive already past its own window and defeat the gate in exactly the case it
+exists for. Absent/0 (a plain note, or a client that doesn't send the hint) =
+today's immediate behavior; the common no-attachment path is never delayed.
 
 Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the

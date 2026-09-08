@@ -1,0 +1,404 @@
+"""The corpus entity-graph rebuild sweep against real Postgres (analysis/rebuild.py).
+
+The sweep re-derives every note's graph while KEEPING the notes, so it is the privacy
+purge's destructive half with three exemptions that must hold exactly:
+
+- pinned facts — and the rows their supersession chain carries — survive, so a rebuild
+  never re-litigates a decision the owner already made;
+- resolved review history survives (only OPEN cards go);
+- agent episodes survive (nothing re-derives them).
+
+Plus the two properties that make it operable without a terminal: it is resumable from
+its own cursor, and it chains into a full wiki rebuild once re-integration drains.
+"""
+
+import uuid
+from collections.abc import AsyncIterator
+from typing import Any
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
+
+from jbrain.analysis import rebuild
+from jbrain.db.session import scoped_session
+from tests.conftest import docker_available
+from tests.integration.test_note_purge_pg import (
+    seed_entity,
+    seed_fact,
+    seed_graph_extras,
+    seed_item,
+    seed_note,
+)
+from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
+]
+
+
+@pytest.fixture
+async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:  # noqa: F811
+    engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+OPEN_RUNS = "SELECT count(*) FROM app.graph_rebuild_runs WHERE status <> 'completed'"
+ITEM_BY_ID = "SELECT count(*) FROM app.review_items WHERE id = :id"
+QUEUED_JOBS = "SELECT count(*) FROM app.jobs WHERE kind = :kind AND status = 'queued'"
+
+
+async def fetch(maker: async_sessionmaker[AsyncSession], sql: str, **params: Any) -> list[Any]:
+    async with scoped_session(maker, OWNER) as s:
+        return list((await s.execute(text(sql), params)).all())
+
+
+async def count(maker: async_sessionmaker[AsyncSession], sql: str, **params: Any) -> int:
+    (row,) = await fetch(maker, sql, **params)
+    return int(row[0])
+
+
+async def quiesce(maker: async_sessionmaker[AsyncSession]) -> None:
+    """A shared test database carries other suites' rows; the sweep is corpus-wide, so
+    start every case from an empty corpus and an empty queue."""
+    async with scoped_session(maker, OWNER) as s:
+        # No DELETE grant (a run row is audit history): close them instead.
+        await s.execute(text("UPDATE app.graph_rebuild_runs SET status = 'completed'"))
+        # No DELETE grant on jobs either: retire them instead, which is what the
+        # sweep's own dedup and drain checks read (queued/running only).
+        await s.execute(text("UPDATE app.jobs SET status = 'done'"))
+        await s.execute(text("UPDATE app.notes SET ingest_state = 'pending'"))
+
+
+async def indexed_note(maker: async_sessionmaker[AsyncSession]) -> str:
+    """A live note the sweep will pick up: indexed and already integrated."""
+    note = await seed_note(maker)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.notes SET ingest_state = 'indexed',"
+                " integration_state = 'integrated', wiki_built = true WHERE id = :id"
+            ),
+            {"id": note},
+        )
+    return note
+
+
+async def run_row(maker: async_sessionmaker[AsyncSession]) -> Any:
+    (row,) = await fetch(
+        maker,
+        "SELECT status, notes_done, facts_purged, facts_kept, cursor_note_id,"
+        " wiki_rebuild_job_id FROM app.graph_rebuild_runs ORDER BY started_at DESC LIMIT 1",
+    )
+    return row
+
+
+async def test_rebuild_removes_artifacts_and_requeues_integration(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Rebuild Subject", status="confirmed")
+    await seed_graph_extras(maker, note, entity)
+    await seed_fact(maker, note, entity)
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    for table in ("facts", "entity_mentions", "temporal_tokens", "note_analysis"):
+        assert (
+            await count(maker, f"SELECT count(*) FROM app.{table} WHERE note_id = :id", id=note)
+            == 0
+        )
+    (row,) = await fetch(
+        maker,
+        "SELECT integration_state, wiki_built, deleted_at FROM app.notes WHERE id = :id",
+        id=note,
+    )
+    assert row.integration_state == "pending_integration"
+    assert row.wiki_built is False
+    assert row.deleted_at is None
+    assert (
+        await count(
+            maker,
+            "SELECT count(*) FROM app.jobs WHERE kind = 'integrate_note'"
+            " AND status = 'queued' AND payload->>'note_id' = :id",
+            id=note,
+        )
+        == 1
+    )
+
+
+async def test_pinned_fact_and_its_superseded_chain_survive(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A pinned fact is the owner's own decision (D11's force-supersede + pin), and the
+    rows it superseded carry that verdict. Both survive; an unrelated fact does not.
+
+    Sparing the whole chain is what keeps the rebuild from re-litigating: the re-derived
+    twin of a spared row matches it by value, so `decide()` refreshes in place instead of
+    landing a fresh row beside the pin and filing a collision card per settled decision.
+    """
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Pinned Subject", status="confirmed")
+    pin = await seed_fact(maker, note, entity, pinned=True)
+    superseded = await seed_fact(maker, note, entity, status="superseded", superseded_by=pin)
+    ordinary = await seed_fact(maker, note, entity, predicate="worksFor")
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=pin) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=superseded) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=ordinary) == 0
+    # The spared row keeps its link to the pin — the shape the verdict lives in.
+    (row,) = await fetch(
+        maker, "SELECT superseded_by::text AS sup FROM app.facts WHERE id = :id", id=superseded
+    )
+    assert row.sup == pin
+    assert progress.kept == 2
+    assert progress.purged == 1
+
+
+async def test_spared_fact_keeps_the_temporal_token_it_cites(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Purging a token a spared fact cites would either abort on the FK or strand the
+    fact's validity anchor. `_upsert_tokens` is get-or-create, so keeping it also lets
+    re-extraction reuse the row rather than duplicating it."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Token Subject", status="confirmed")
+    _, token = await seed_graph_extras(maker, note, entity)
+    pin = await seed_fact(maker, note, entity, temporal_token_id=token, pinned=True)
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    (row,) = await fetch(
+        maker, "SELECT temporal_token_id::text AS tok FROM app.facts WHERE id = :id", id=pin
+    )
+    assert row.tok == token
+    assert await count(maker, "SELECT count(*) FROM app.temporal_tokens WHERE id = :id", id=token)
+
+
+async def test_resolved_review_history_survives_and_open_cards_go(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A rebuild is not a deletion promise, so it uses the re-extraction sweep's
+    discipline: only OPEN items go. Resolved/dismissed items are HUMAN history."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Review Subject", status="confirmed")
+    fact = await seed_fact(maker, note, entity)
+    open_card = await seed_item(maker, "fact_conflict", {"fact_b": fact, "note_id": note})
+    resolved_card = await seed_item(
+        maker, "fact_conflict", {"fact_b": fact, "note_id": note}, status="resolved"
+    )
+    resolved_note_card = await seed_item(
+        maker, "ambiguous_mention", {"name": "Seedy", "note_id": note}, status="resolved"
+    )
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, ITEM_BY_ID, id=open_card) == 0
+    for kept in (resolved_card, resolved_note_card):
+        assert await count(maker, ITEM_BY_ID, id=kept) == 1
+
+
+async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:
+    """The privacy purge deletes an episode WHOLE (invariant #11). Nothing re-derives
+    one, so doing that in a rebuild would be silent data loss, not a rebuild."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Episode Subject", status="confirmed")
+    await seed_fact(maker, note, entity)
+    episode = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episodes (id, domain_scopes, body)"
+                " VALUES (:id, ARRAY['general'], 'we talked about the seed note')"
+            ),
+            {"id": episode},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episode_refs (id, episode_id, note_id)"
+                " VALUES (gen_random_uuid(), :eid, :nid)"
+            ),
+            {"eid": episode, "nid": note},
+        )
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, "SELECT count(*) FROM app.agent_episodes WHERE id = :id", id=episode)
+
+
+async def test_rebuild_is_resumable_across_fires(maker: async_sessionmaker[AsyncSession]) -> None:
+    """One transaction per note plus a durable cursor: each fire continues where the
+    last stopped, and a fire past the end never re-purges what it already rebuilt."""
+    await quiesce(maker)
+    notes = sorted([await indexed_note(maker) for _ in range(3)])
+    entity = await seed_entity(maker, "Resume Subject", status="confirmed")
+    for note in notes:
+        await seed_fact(maker, note, entity)
+
+    first = await rebuild.rebuild_batch(maker, start=True, limit=1)
+    assert first.processed_now == 1
+    row = await run_row(maker)
+    assert row.notes_done == 1
+    assert str(row.cursor_note_id) == notes[0]
+    assert row.status == "purging"
+    # The fire enqueued its own continuation rather than stopping at the batch.
+    assert await count(maker, QUEUED_JOBS, kind="graph_rebuild") == 1
+
+    second = await rebuild.rebuild_batch(maker, limit=1)
+    assert second.processed_now == 1
+    assert (await run_row(maker)).notes_done == 2
+
+    third = await rebuild.rebuild_batch(maker, limit=1)
+    assert third.processed_now == 1
+    row = await run_row(maker)
+    assert row.notes_done == 3
+    assert row.status == "draining"
+
+    # Past the end: no work, no double-count, no re-purge.
+    fourth = await rebuild.rebuild_batch(maker, limit=1)
+    assert fourth.processed_now == 0
+    assert (await run_row(maker)).notes_done == 3
+
+
+async def test_a_second_start_continues_the_open_run(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two "Run now" clicks must not open rival runs over one corpus — the second
+    continues the first, from its cursor."""
+    await quiesce(maker)
+    for _ in range(2):
+        await indexed_note(maker)
+
+    await rebuild.rebuild_batch(maker, start=True, limit=1)
+    assert await rebuild.start_run(maker) is None
+    await rebuild.rebuild_batch(maker, start=True, limit=1)
+
+    assert await count(maker, OPEN_RUNS) == 1
+    assert (await run_row(maker)).notes_done == 2
+
+
+async def test_rebuild_chains_into_a_wiki_rebuild_once_integration_drains(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`wiki_citations.fact_id` is ON DELETE SET NULL and `wiki_articles.entity_ref` has
+    no FK, so a graph re-derive silently degrades published revisions to chunk-only
+    claims and orphans articles. The sweep therefore is not done at the last purge."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Wiki Subject", status="confirmed")
+    await seed_fact(maker, note, entity)
+
+    await rebuild.rebuild_batch(maker, start=True)
+    assert (await run_row(maker)).status == "draining"
+    # Still integrating: no wiki rebuild yet, and the run stays open.
+    await rebuild.rebuild_batch(maker)
+    row = await run_row(maker)
+    assert row.status == "draining"
+    assert row.wiki_rebuild_job_id is None
+
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("UPDATE app.notes SET integration_state = 'integrated'"))
+        await s.execute(text("UPDATE app.jobs SET status = 'done' WHERE kind = 'integrate_note'"))
+
+    progress = await rebuild.rebuild_batch(maker)
+
+    assert progress.status == "completed"
+    row = await run_row(maker)
+    assert row.status == "completed"
+    assert row.wiki_rebuild_job_id is not None
+    (job,) = await fetch(
+        maker,
+        "SELECT payload->>'target' AS target FROM app.jobs"
+        " WHERE kind = 'wiki_rebuild' AND status = 'queued'",
+    )
+    assert job.target == "all"
+
+    # A later fire finds no open run and queues no second rebuild.
+    assert (await rebuild.rebuild_batch(maker)).run_id is None
+    assert await count(maker, QUEUED_JOBS, kind="wiki_rebuild") == 1
+
+
+async def test_drain_fire_without_a_run_is_inert(maker: async_sessionmaker[AsyncSession]) -> None:
+    """The recurring drain schedule fires every few minutes forever; with no run open it
+    must do nothing at all and report zero work (so the worker reaps its run)."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Inert Subject", status="confirmed")
+    fact = await seed_fact(maker, note, entity)
+
+    progress = await rebuild.rebuild_batch(maker)
+
+    assert progress.run_id is None
+    assert progress.processed_now == 0
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=fact) == 1
+    assert await count(maker, OPEN_RUNS) == 0
+
+
+async def test_deleted_and_unindexed_notes_are_not_rebuilt(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The candidate corpus is live, indexed notes. A soft-deleted note's artifacts are
+    the privacy purge's business, and an un-indexed note has no chunks to re-derive
+    from — re-queuing either would be the sweep manufacturing work it cannot do."""
+    await quiesce(maker)
+    entity = await seed_entity(maker, "Skip Subject", status="confirmed")
+    pending = await seed_note(maker)
+    pending_fact = await seed_fact(maker, pending, entity)
+    deleted = await indexed_note(maker)
+    deleted_fact = await seed_fact(maker, deleted, entity)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": deleted}
+        )
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=pending_fact) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=deleted_fact) == 1
+    assert (await run_row(maker)).notes_done == 0
+
+
+async def test_drain_deadline_chains_the_wiki_rebuild_anyway(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """One note that can never integrate must not hold the wiki chain open forever —
+    the damage that leaves (revisions degraded to chunk-only claims, articles pointing
+    at replaced entity ids) is worse than a wiki rebuilt over a partly-drained graph."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Stuck Subject", status="confirmed")
+    await seed_fact(maker, note, entity)
+
+    await rebuild.rebuild_batch(maker, start=True)
+    assert (await run_row(maker)).status == "draining"
+
+    # The note never integrates; backdate the run past the deadline.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.graph_rebuild_runs SET started_at = now() -"
+                " make_interval(hours => :h) WHERE status <> 'completed'"
+            ),
+            {"h": rebuild.DRAIN_DEADLINE_HOURS + 1},
+        )
+
+    progress = await rebuild.rebuild_batch(maker)
+
+    assert progress.status == "completed"
+    assert (await run_row(maker)).wiki_rebuild_job_id is not None
+    assert await count(maker, QUEUED_JOBS, kind="wiki_rebuild") == 1

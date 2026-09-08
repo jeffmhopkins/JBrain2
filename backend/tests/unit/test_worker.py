@@ -680,6 +680,9 @@ async def test_run_registers_all_job_handlers(
         "entity_hygiene",
         "reembed_stale",
         "tag_consolidate",
+        # The corpus entity-graph rebuild (analysis/rebuild.py) — in-code only; a
+        # migration seeds its manual start trigger and its drain schedule.
+        "graph_rebuild",
         # The wiki builder (Phase-6 Wave C2a) — four in-code actions, likewise not
         # in ACTION_SPECS / the app.actions seed.
         "wiki_refresh",
