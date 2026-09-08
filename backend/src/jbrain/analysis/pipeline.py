@@ -2167,7 +2167,7 @@ class AnalysisPipeline:
 
         if decision.refresh_id is not None:
             # Same identity key, same value: refresh the rendering and provenance in
-            # place — citations survive, no chain link, no duplicate row.
+            # place — no chain link, no duplicate row.
             fact_id = uuid.UUID(decision.refresh_id)
             values: dict[str, Any] = {
                 "statement": fact.statement,
@@ -2175,6 +2175,26 @@ class AnalysisPipeline:
                 "prompt_version": PROMPT_VERSION,
                 "confidence": fact.confidence,
             }
+            # Re-anchor the citation, exactly as the insert paths do. Citations do
+            # NOT survive on their own: a re-ingest deletes every chunk of the note
+            # and `facts.chunk_id` is ON DELETE SET NULL (0006:187), so without this
+            # a refreshed fact keeps a null chunk and silently drops out of its
+            # article — `wiki/builder.py` INNER JOINs chunks. Only for a row THIS
+            # note owns: a refresh may land on another note's fact, whose citation
+            # belongs to that note and is re-anchored by its own re-integration.
+            owner_note_id = (
+                await session.execute(select(Fact.note_id).where(Fact.id == fact_id))
+            ).scalar_one_or_none()
+            if owner_note_id == note_id:
+                anchor = anchor_for.get(fact.entity_ref)
+                base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+                values["chunk_id"] = await self._citation_chunk(
+                    session,
+                    source_chunk_id=base_chunk,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
+                )
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             # Re-analysis healing: a row still held purely by WEIGHT (it carries an
             # open low_confidence_inference card) that the arbiter now rates active is

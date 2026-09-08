@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-09 — LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-09-08 — the write path split in two: `commit_facts` writes one pass of a note's facts, `settle_note` runs everything whole-note (the retraction and card sweeps, the projections, the `NoteAnalysis` stamp) and takes the touched-fact and touched-entity sets as explicit inputs, so a caller that commits over several passes settles their union once. Mentions became an incremental upsert keyed on (chunk, span, entity) plus a reconcile, replacing a wipe-and-reinsert that a second pass would have undone. And the re-extraction refresh path now re-anchors a fact's `chunk_id`: a re-ingest deletes the note's chunks and `facts.chunk_id` is ON DELETE SET NULL, so refreshed facts were silently dropping out of their wiki articles. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -22,11 +22,13 @@ capture (Phase 1)
   → arbiter (plan_intent)          (deterministic: validate the intent, weigh
                                     each fact, partition commit / review / reject;
                                     cross-subject + ambiguous force review)
-  → apply (apply_intent)           (deterministic write through _apply: domain
-                                    floor/ratchet + per-domain derived chunks,
-                                    entity linking [agent resolution, deterministic
-                                    resolver as fallback], per-kind supersession,
-                                    + review-inbox items)
+  → apply (apply_intent)           (deterministic write through commit_facts:
+                                    domain floor/ratchet + per-domain derived
+                                    chunks, entity linking [agent resolution,
+                                    deterministic resolver as fallback], per-kind
+                                    supersession, + review-inbox items; then
+                                    settle_note for the whole-note sweeps,
+                                    projections and the analysis stamp)
 nightly: entity hygiene, merge proposals, summary re-embedding,
          tag consolidation; (Phase 6) wiki triage, wiki_lint health sweep
 ```
@@ -356,10 +358,21 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
 ## Reprocessing and corrections
 
 - Re-extraction (model/prompt upgrade) **upserts on the structural identity
-  key**: same key → update rendering in place (citations survive); key gone
-  → `retracted_by_reextraction` (not a conflict, no inbox noise); new key →
-  insert. `prompt_version` makes corpus re-runs a planned, budgeted
-  migration.
+  key**: same key → update rendering in place, re-anchoring the citation on
+  the note's current chunks; key gone → `retracted_by_reextraction` (not a
+  conflict, no inbox noise); new key → insert. `prompt_version` makes corpus
+  re-runs a planned, budgeted migration. Re-anchoring is not cosmetic: a
+  re-ingest deletes every chunk of the note and `facts.chunk_id` is
+  `ON DELETE SET NULL`, so a refresh that left it alone would strand the fact
+  with no citation — and the wiki builder INNER JOINs chunks, so the article
+  would rebuild without it, silently. Only a fact THIS note owns is
+  re-anchored; a refresh landing on another note's fact leaves that note's
+  citation to its own re-integration.
+- The note's **mentions** are upserted incrementally, keyed on (chunk, span,
+  entity), and a reconcile drops only what the run no longer asserts — a row
+  the run re-asserts keeps its id, so re-analysis no longer churns the
+  co-mention spine (and, with nothing changed, no longer dirties every
+  mentioned entity's article).
 - **Re-run = the same incremental pass [decided]**, on demand via
   `POST /api/notes/{id}/analyze` (202 + job id, a plain `integrate_note` job;
   409 while an analysis is already queued/running, or while ingest/OCR will
@@ -602,8 +615,8 @@ structural identity key so a property restated across groups collapses to one;
 `dropped_facts` sums each group's truncation for the note-level card. A note
 that fits one group makes exactly one call — the short-note path is unchanged.
 Groups run sequentially and a malformed group fails the note like any single
-extraction (the merge is in-memory; `_apply` runs once, after, in one
-transaction). Cross-group coreference is bounded by group size (several
+extraction (the merge is in-memory; the commit + settle pair runs once, after,
+in one transaction). Cross-group coreference is bounded by group size (several
 paragraphs); a context header for later groups is possible future work.
 
 **Per-source extraction [decided: a group never mixes the note body with an

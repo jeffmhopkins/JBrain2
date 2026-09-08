@@ -23,6 +23,7 @@ from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
+from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -30,6 +31,13 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
+
+
+class _NoEmbed:
+    """The builder's claim query never embeds; satisfy the constructor."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 384 for _ in texts]
 
 
 @pytest.fixture
@@ -277,3 +285,60 @@ async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
         ("dismissed", "Alex", note_id),
         ("open", "Alex", other_note),
     }
+
+
+async def _fact_chunk(maker: async_sessionmaker[AsyncSession], note_id: str) -> str | None:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text("SELECT chunk_id::text FROM app.facts WHERE note_id = :n"), {"n": note_id}
+            )
+        ).scalar_one()
+
+
+async def test_refresh_after_reingest_re_anchors_the_citation(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """A re-ingest (an edit, an OCR re-describe, an appended clarification) deletes
+    every chunk of the note, and `facts.chunk_id` is ON DELETE SET NULL — so the
+    note's facts lose their citation. Re-integration then lands on decide()'s
+    refresh path, which must re-anchor: `wiki/builder.py` INNER JOINs chunks, so a
+    fact left with a null chunk silently drops out of its article while the
+    article rebuilds without it."""
+    person = fresh_person()
+    facts = [home_fact(person, "Golden", confidence=0.9)]
+    note_id = await analyzed_note(
+        maker, tmp_path, "Sarah moved to Golden.", extraction(person, facts)
+    )
+    assert await _fact_chunk(maker, note_id) is not None
+
+    # Re-ingest the unchanged body: same note, brand-new chunk ids.
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
+
+    await analyze(maker, note_id, extraction(person, facts))
+
+    chunk_id = await _fact_chunk(maker, note_id)
+    assert chunk_id is not None
+    async with scoped_session(maker, OWNER) as s:
+        # The re-anchored citation points at a LIVE chunk of this note (a dangling
+        # id the FK would have refused, a null one the wiki silently drops).
+        assert (
+            await s.execute(
+                text("SELECT note_id::text FROM app.chunks WHERE id = :c"), {"c": chunk_id}
+            )
+        ).scalar_one() == note_id
+        entity_id = (
+            await s.execute(
+                text("SELECT entity_id FROM app.facts WHERE note_id = :n"), {"n": note_id}
+            )
+        ).scalar_one()
+
+    # And the fact is still a citable claim: this is the builder's own join.
+    builder = WikiBuilder(
+        maker, embed=_NoEmbed(), rewriter=StubRewriter(), embedding_model="fake-embed"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        sourced = await builder._source(s, entity_id)
+    assert sourced is not None
+    assert [c.statement for c in sourced.claims] == [f"{person} moved to Golden."]
