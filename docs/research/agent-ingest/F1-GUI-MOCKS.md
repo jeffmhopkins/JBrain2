@@ -28,6 +28,34 @@ attachment inside a conversation, and the silent queue.
 
 ---
 
+## 0 · Relationship to the sibling dossiers
+
+This gate answers **one** question: *where does a note's conversation live?* Two siblings
+answer adjacent ones, and the owner should pick one option from each rather than reading them
+as rivals.
+
+- **`docs/research/agent-ingest/F2-SILENT-QUEUE.md`** answers *what a question is and how it
+  settles*: a question is a decision the agent has already made, filed with a
+  `default_action` and a `default_at`, which commits itself (visibly, reversibly, marked
+  `assumed`) if the owner stays silent; the working set is capped; ordering is by regret, not
+  recency. Its mocks are `docs/mocks/silent-queue/{a-ambient,b-deck,c-stacks}.html`.
+- **`docs/research/agent-ingest/F3-FRONTEND-TEARDOWN.md`** is the reuse/rewrite map for the
+  frontend as a whole. Where §4's "reuse vs replace" column and F3 disagree on detail, F3 is
+  the more careful count; this dossier's column is scoped to what *each layout* costs.
+
+**Two consequences for the comparison below.** First, F2's decay-to-default makes the
+discoverability axis **less decisive than it looks**: if an unanswered question settles
+itself, then "a bucket you never open" and "a chip that scrolls out of the two-day window"
+stop being data-loss and become merely missed opportunities to overrule. Second, F2 and this
+dossier **genuinely disagree on one point**, and the owner should settle it explicitly: F2
+holds that the queue is *an index, not a destination* — delivered in context, with the list
+screen reached from the launcher tile and **never from home** — whereas option C below puts
+an `Asking` bucket on the home picker. Both readings are defensible (C's bucket is an index
+*inside* the surface the owner is already in, not a second inbox), but they are not the same
+screen. See open question 1.
+
+---
+
 ## 1 · The binding constraints
 
 From the owner, and non-negotiable for every variant:
@@ -145,7 +173,7 @@ bubble is `frontend/src/agent/FullBrainSurface.tsx:419-450`; and a staged Propos
 `preview`, `staged_count`, `last_active_at` and a `parent_session_id` — i.e. **most of what
 a note conversation needs already exists on the session object.**
 
-The inline-approval doctrine (`docs/reference/DESIGN.md:1224-1240`) is the closest existing
+The inline-approval doctrine (`docs/reference/DESIGN.md:1225-1241`) is the closest existing
 relative of an agent question: agent proposes → owner approves/declines/corrects in place →
 a single outcome returns to the agent so it follows up. The answer affordances in all three
 mocks are deliberately drawn as its calmer sibling.
@@ -235,7 +263,7 @@ and the repo has already settled every component it needs.)*
 
 | | Reuses | Replaces / net-new |
 |---|---|---|
-| **A** | Everything on home; the whole `Stream`; the whole Full Brain stack; the edge/citation rendering (`frontend/src/components/AnalysisTab.tsx:78-115`); the tab shell + count pill (`frontend/src/screens/NoteScreen.tsx:388-420`). | One tab body, plus a question-card component and a per-note transcript store. **The smallest diff of the three, by a wide margin** — one screen, no home changes, no navigation changes. Also: the note view is a *layer*, so the Full Brain composer's lateral swipes and the back-gesture stack (`docs/reference/DESIGN.md:1240-1270`) are untouched. |
+| **A** | Everything on home; the whole `Stream`; the whole Full Brain stack; the edge/citation rendering (`frontend/src/components/AnalysisTab.tsx:78-115`); the tab shell + count pill (`frontend/src/screens/NoteScreen.tsx:388-420`). | One tab body, plus a question-card component and a per-note transcript store. **The smallest diff of the three, by a wide margin** — one screen, no home changes, no navigation changes. Also: the note view is a *layer*, so the Full Brain composer's lateral swipes and the back-gesture stack (`docs/reference/DESIGN.md:1193-1206`, `docs/reference/DESIGN.md:1243-1252`) are untouched. |
 | **B** | The `Stream` rows and rail; the outbox; the omnibox shell. | **`Stream.tsx` is rewritten** — its item model becomes note + turns, the day card becomes a unit list, and the rail must not fight the new content. `Omnibox` gains a reply-target mode that changes what a send *means* (`frontend/src/screens/HomeScreen.tsx:339-353`) — the riskiest edit in the whole change, because that is the capture path. Two transcript renderers now exist (the spine and `FullBrainSurface`) and will drift. |
 | **C** | The most, structurally: `AgentSession` (`frontend/src/agent/types.ts:329-361`), `useFullBrain`'s per-session transcripts (`frontend/src/agent/useFullBrain.ts:367`), `FullBrainSurface` + `Bubble` + `AttachmentChip` + `InlineProposal`, the settled chats picker and its 4-action rail, the live-turn glyph. **One transcript renderer for everything.** | **Home is replaced** — `Stream.tsx` stops being the home body, and with it the day-grouped note stream as a concept. Backend-side this is the largest ask: a note must *become* a session (or gain one), and every place that assumes "notes list" vs "sessions list" is touched. |
 
@@ -296,6 +324,14 @@ The reasoning, in order of weight:
    (`frontend/src/screens/HomeScreen.tsx:269-335`). C changes *what the capture body is*, not
    how the screen is built.
 
+**What F2 changes about this.** Under F2's decay-to-default, C's one real weakness — a
+bucket that is never opened — stops being a failure mode: the questions in it settle on their
+own and surface later as `assumed` facts at the point of use. That makes C strictly safer
+than it looks in §4, and it also means the `Asking` bucket can be **demoted to the launcher
+tile** (F2's position) without breaking C's layout: `Today · Older` is a complete home, and
+the bucket is a convenience. I would ship C's home with two buckets and the queue on the
+launcher tile, and add `Asking` only if the owner finds themselves reaching for it.
+
 Two conditions on that recommendation:
 
 - **The firewall question is settled first.** Before any code: does a note conversation
@@ -320,12 +356,16 @@ it takes the largest risk (the capture path) for a benefit (no navigation) that 
 
 ## 6 · Open questions for the owner
 
-1. **Is a persistent count in the composer footer "nagging"?** B's whole discoverability
-   story depends on the answer, and so does whether C's `Asking` count may ever be echoed
-   outside the picker. This is the question that decides the round.
-2. **Should an unanswered question ever escalate?** After a month of silence, does it stay
-   silent forever, quietly become a review-inbox card (where it *is* visible in the launcher
-   badge), or get dropped with the agent committing its best guess at low confidence?
+1. **Does the queue get a place on home at all?** F2 says no — index in context, list on the
+   launcher tile. C says a third bucket on the picker. Settling this settles B as well, since
+   B's whole discoverability story is a persistent count in the composer footer. **Is a
+   standing number on chrome you read all day "nagging"?** This is the question that decides
+   the round.
+2. **Does an unanswered question settle itself?** F2's decay-to-default (commit the default,
+   mark it `assumed`, reversible at the point of use) is assumed by the recommendation above.
+   If the owner instead wants questions to wait forever, A's two-day chip window and C's
+   never-opened bucket both become real data-loss risks and B's always-visible count gets
+   stronger.
 3. **Does a note conversation inherit its note's domain as a hard scope?** And may the owner
    widen it in-thread, or must a broader question start a new chat? (Firewall / RLS —
    `CLAUDE.md` #3.)
