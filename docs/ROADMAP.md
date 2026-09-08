@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-08
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -89,6 +89,23 @@ setting.
 
 **Exit:** search reliably beats manual scanning; retrieval quality validated
 by hand before any LLM consumes it.
+
+**Scheduled — agent-conversation ingestion** (build plan:
+`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`, waves W1–W5): the Phase 3 pipeline
+(extract → Integrator → arbiter → apply) is replaced by **the ordinary agent
+conversation** with the note as turn 0 — one agent, no separate ingest path. The agent
+writes the graph through tools and every call surfaces as an expandable "entity
+modified" chip; correction is a reply, not a review card. **The unified review inbox
+this phase shipped is retired with it** (redirect in W2, delete in W5), along with the
+confidence-split review gate, the question queue, the I5 sensitive hold and correction
+notes as a separate path. Notes gain a frozen original body plus appended clarification
+blocks, which keeps the graph re-derivable from notes alone. Adds `owner_prefs`, a
+standing-instructions document injected into every note conversation. W4 finally builds
+what has never existed — **a graph rebuild that keeps the notes** — which is the
+acceptance instrument, the cutover tool and the rollback lever at once. Risks accepted
+at ratification are listed in the plan; the load-bearing one is that intake is
+third-party text and the agent now holds write tools, so `ASSISTANT.md` #10 is retired
+rather than amended.
 
 ## Phase 3 — Analysis ✅ Shipped
 
