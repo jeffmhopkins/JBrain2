@@ -134,12 +134,15 @@ were wrong.
 ## Waves
 
 **W1 — Commit core, rebuild sweep, and the citation bug.** Extract `commit_facts` from
-`_apply` (one call site, `pipeline.py:533`; ~1,300–1,500 LOC of movement) — **including
-the three projections, the device binding, `_reproject_entities`,
-`_register_declared_aliases`, `repair_chains`, `_sweep_stale_ambiguous`,
-`_sync_truncation_review`, `_upsert_tokens`, `_materialize_inverse` and
-`_propagate_supersession_to_shadows`**. Durable `touched`/`projected` ledger (constraint
-6). Incremental mentions upsert (constraint 7).
+`_apply` (one call site, `pipeline.py:533`) — **including `_register_declared_aliases`,
+`_upsert_tokens`, `_materialize_inverse` and `_propagate_supersession_to_shadows`**. The
+whole-note reconciliation — the three projections, the device binding,
+`_reproject_entities`, `repair_chains`, `_sweep_stale_ambiguous` and
+`_sync_truncation_review` — belongs to `settle_note` instead: it is per-note work that
+must run once after the last commit, not per commit. W1 delivers the SEAM for the
+`touched`/`projected` ledger (constraint 6), not the ledger: `CommitOutcome` is an
+in-memory frozen dataclass, so accumulating that state durably across a whole
+conversation is W2/W3 work. Incremental mentions upsert (constraint 7).
 
 Also here, because they are cheap and independent: **the rebuild sweep** — it composes
 `purge_note_artifacts` + `backfill_pending_integration`, both shipped and already

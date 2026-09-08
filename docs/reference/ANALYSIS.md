@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-09-08 — The corpus **entity-graph rebuild sweep** (`jbrain.analysis.rebuild`, the `graph_rebuild` action): re-derive the whole graph from the notes while KEEPING them, the acceptance/rollback instrument Ops → Reset could never be. It reuses the purge's destructive half with three exemptions — the facts a human verdict rests on survive (the pin, the chain below it, and every fact named by a review item that outlives the purge, which no chain walk reaches), only OPEN review items are retired, agent episodes are untouched — is resumable from a durable cursor one transaction per note, and chains into a three-job wiki repair, prune then rebuild then refresh (citations are ON DELETE SET NULL and article entity refs have no FK). `decide()` now also treats a retracted twin beside a pinned head as a re-extraction, so a rebuild cannot re-litigate a settled review decision into a fresh collision card. Fired from Ops → Automations, never scheduled to start itself. Also: the attachment settle window now measures from the server's `notes.received_at`, not the client's `created_at`, so an offline-flushed note with a promised attachment no longer arrives past its own window. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-09-08 — The corpus **entity-graph rebuild sweep** (`jbrain.analysis.rebuild`, the `graph_rebuild` action): re-derive the whole graph from the notes while KEEPING them, the acceptance/rollback instrument Ops → Reset could never be. It reuses the purge's destructive half with three exemptions — the facts a human verdict rests on survive (the pin, the chain below it, every fact named by a review item that outlives the purge, and every fact or entity MENTION that item's recorded effects will replay by id, which no chain walk and no payload key reaches), only OPEN review items are retired, agent episodes are untouched — is resumable from a durable cursor one transaction per note, and chains into a three-job wiki repair, prune then rebuild then refresh (citations are ON DELETE SET NULL and article entity refs have no FK). "Whole graph" includes the deterministic half: an EMR note's `emr_parse` is re-enqueued alongside its re-integration, since a purge takes both producers' facts and only the generic one had a re-drive path. `decide()` now also refuses to resurrect a retracted row when a pinned head sits beside it OR the resolution's own recorded `retracted` effect names it — so a rebuild can neither re-litigate a settled decision into a fresh collision card nor quietly put a rejected value back. Fired from Ops → Automations, never scheduled to start itself. Also: the attachment settle window now measures from the server's `notes.received_at`, not the client's `created_at`, so an offline-flushed note with a promised attachment no longer arrives past its own window. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -399,17 +399,54 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   CHECK admits (including `inverse_proposal`, which is filed outside
   `decide()`'s `review_kind` and names its fact by `source_fact_id`), so a
   `fact_id` kind or a parked card cannot be missed the way an
-  enumerated-from-the-bug-report list missed both. Sparing is only half of what
+  enumerated-from-the-bug-report list missed both.
+  **A card's payload is not the only way it names a row.** A settled resolution
+  records the ids it MOVED in `resolution->'effects'` — `mention_ids`,
+  `fact_ids`, `object_fact_ids` for a merge fold, `fact_ids` for a predicate
+  remap — and a reopen replays exactly those ids, one UPDATE each. A
+  `merge_proposal` payload holds two ENTITY ids and nothing else, so a
+  payload-only spare set spares none of them: the reopen would restore the
+  entity row (from the recorded prior status, a value) while moving zero
+  mentions and zero facts. A half un-merge, silent, and worse than a clean
+  no-op. So those id arrays are a second spare arm, and the entity-mention wipe
+  is conditional on it for the same reason the fact delete is — a replay finds
+  rows by id or not at all. (The purge is that promise's first half; whether a
+  later re-analysis of the note preserves the mention ids it re-asserts is the
+  mention writer's own contract.)
+  Sparing is only half of what
   keeps a settled decision settled: `decide()` filters retracted rows out of
-  its live set, so it also takes a **retracted twin beside a pinned head as a
-  re-extraction** and refreshes it in place, rather than inserting a fresh
-  active twin and re-flagging the pin — without which one rebuild files one
-  collision card per settled decision, corpus-wide. That match is on value AND
+  its live set, so it also takes a **retracted twin as a re-extraction** and
+  refreshes it in place, rather than inserting a fresh active twin — without
+  which one rebuild files one collision card per settled decision, corpus-wide.
+  Two things can make a retracted row a settled verdict rather than the
+  machine's own `retracted_by_reextraction` (which must still resurrect when
+  its key comes back): a **pinned head** beside it, or the resolution's own
+  recorded **`{"action": "retracted"}` effect** naming it. The second arm is
+  not redundant — a `low_confidence_inference` REJECT retracts and pins
+  *nothing*, so a pinned-head-only guard silently re-mints the value the owner
+  rejected as a fresh active row with no card filed. The effect is also the
+  honest discriminator: it is the decision itself, recorded, not an inference
+  from a neighbouring row. Either way the match is on value AND
   exact `valid_from`, so validity drift on re-extraction still falls through to
   the re-flag; that limit is inherent, not a gap in the spare set. The third
   worry stands unanswered and is
   inherent to a rebuild: **cross-note supersession chains that reach no pin are
-  dissolved and re-derived.** It runs one transaction per note from a durable
+  dissolved and re-derived.**
+  **The re-derive drives BOTH producers.** A health `Records` note's facts come
+  from the generic LLM extraction *and* from the deterministic EMR parsers
+  (`emr_parse`), which are what turn a lab PDF into cited analyte readings; both
+  fan out from one `note.ingested` at ingest, and only the first had a re-drive
+  path. Re-queuing integration alone would hand back a rebuilt medical record
+  holding only the LLM's read of it, silently — so the sweep re-enqueues
+  `emr_parse` for every note still matching stage 2's markers, and the drain
+  waits on that job too before chaining the wiki repair. It is enqueued
+  directly rather than by re-emitting `note.ingested`, which would claim the
+  chunks were rebuilt, give integration a second producer beside the sweep's own
+  drain, and put stage 1 back in scope. No ordering is promised between the two
+  passes and none is at ingest either; the Layer-2 location firewall is a
+  property of the parser's own lowering, so re-driving restores it for exactly
+  the facts it ever covered — it never guarded the generic extraction.
+  It runs one transaction per note from a durable
   cursor, so it is resumable, and it **chains into a three-job wiki repair** —
   `wiki_prune` first (only it can archive an article whose `entity_ref` the
   sweep orphaned; `wiki_rebuild` iterates those very refs and so cannot repair
