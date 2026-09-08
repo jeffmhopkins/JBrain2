@@ -9,10 +9,12 @@ design: sparing a row is worthless if re-integration then files a card anyway, a
 card kind whose fact the spare set misses is deleted with nothing to notice.
 
 So this seeds a settled review card of EVERY kind that names a fact — `fact_a`/`fact_b`
-(fact_conflict, attribute_collision, low_confidence, inverse_proposal) and `fact_id`
-(low_confidence_inference, domain_promotion, wiki_stale_claim) — across every status
-that outlives the purge (`resolved`, `dismissed`, `deferred`), all onto facts a real
-integration produced, all settled through the real `resolve_review`. Then it runs the
+(fact_conflict, attribute_collision, low_confidence), `fact_id`
+(low_confidence_inference, domain_promotion, wiki_stale_claim) and `source_fact_id`
+(inverse_proposal) — across every status that outlives the purge (`resolved`,
+`dismissed`, `deferred`), all onto facts a real integration produced, all settled
+through the real `resolve_review`. Each seeded payload uses the shape its PRODUCTION
+filer writes; a seed that invents a shape tests the fixture, not the sweep. Then it runs the
 real sweep and re-integrates through the real pipeline, and asserts the two things the
 owner would notice: no NEW review card is filed, and the twins are refreshed in place
 rather than landing as fresh rows beside the decision.
@@ -216,7 +218,12 @@ async def test_a_settled_card_of_every_fact_naming_kind_survives_a_rebuild_uncha
     await repo.resolve_review(OWNER, promo_card, "accept", {})
     # dismissed, one per remaining fact-naming kind and key.
     stale_card = await _open_card(maker, "wiki_stale_claim", {"fact_id": ids["motto"]})
-    inverse_card = await _open_card(maker, "inverse_proposal", {"fact_b": ids["ticker"]})
+    # `source_fact_id`, not fact_a/fact_b: inverse_proposal is filed by its own writer
+    # (pipeline.py `_write_inverse`), naming the primary fact the refused reciprocal
+    # would have mirrored.
+    inverse_card = await _open_card(
+        maker, "inverse_proposal", {"source_fact_id": ids["ticker"], "note_id": note_a}
+    )
     lowconf_card = await _open_card(maker, "low_confidence", {"fact_a": ids["founder"]})
     for card in (stale_card, inverse_card, lowconf_card):
         await repo.resolve_review(OWNER, card, "dismiss", {})

@@ -103,11 +103,21 @@ _REBUILD_PURGED_STATUSES = ("open",)
 # `delete_review_items` read this, so the two can never disagree about what a card points
 # at, and a new kind that reuses one of these keys is covered on the day it is added:
 #
-#   fact_a + fact_b : fact_conflict, attribute_collision, low_confidence,
-#                     inverse_proposal. All four are filed from `decide()`'s `review_kind`
-#                     through the two `ReviewItem(kind=decision.review_kind)` sites in
-#                     analysis/pipeline.py (the primary edge and its derived inverse),
+#   fact_a + fact_b : fact_conflict, attribute_collision, low_confidence — exactly the
+#                     three `review_kind`s `decide()` emits (analysis/supersession.py),
+#                     filed through the two `ReviewItem(kind=decision.review_kind)` sites
+#                     in analysis/pipeline.py (the primary edge and its derived inverse),
 #                     which share one payload shape.
+#   source_fact_id  : inverse_proposal. NOT a `decide()` review_kind — it has its own
+#                     filer (pipeline.py `_write_inverse`), the cross-subject firewall arm
+#                     that refuses to auto-write a reciprocal onto another subject's
+#                     stream and proposes it instead, naming the PRIMARY fact it mirrors.
+#                     `resolve_review` has no branch for the kind, so the card only ever
+#                     dismisses/defers/corrects and `_reverse_effects` never replays
+#                     against this key — the harm of dropping it is a dead provenance
+#                     pointer, not a broken undo. Spared regardless: the whole point of
+#                     this constant is that the mapping is complete, not that each entry
+#                     earns its place by current blast radius.
 #   fact_id         : low_confidence_inference (pipeline.py — the held pending_review
 #                     row; REJECT retracts it and does NOT pin, so it reaches neither the
 #                     pin walk nor a fact_a/fact_b lookup, and a two-key spare set
@@ -126,7 +136,7 @@ _REBUILD_PURGED_STATUSES = ("open",)
 #                     the two-tier cutover retired it), and shape_mismatch /
 #                     split_proposal, which the CHECK admits but nothing in the backend
 #                     files.
-_FACT_PAYLOAD_KEYS = ("fact_id", "fact_a", "fact_b")
+_FACT_PAYLOAD_KEYS = ("fact_id", "fact_a", "fact_b", "source_fact_id")
 
 
 async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:

@@ -394,8 +394,10 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   untouched, since nothing re-derives them. Both halves of "a review item that
   outlives the purge" are **derived, never enumerated**: the statuses are the
   complement of the one status the purge deletes, and the payload keys are the
-  single list (`fact_id`, `fact_a`, `fact_b`) that the card-delete reads too —
-  taken kind by kind from every kind the `review_items` CHECK admits, so a
+  single list (`fact_id`, `fact_a`, `fact_b`, `source_fact_id`) that the
+  card-delete reads too — taken kind by kind from every kind the `review_items`
+  CHECK admits (including `inverse_proposal`, which is filed outside
+  `decide()`'s `review_kind` and names its fact by `source_fact_id`), so a
   `fact_id` kind or a parked card cannot be missed the way an
   enumerated-from-the-bug-report list missed both. Sparing is only half of what
   keeps a settled decision settled: `decide()` filters retracted rows out of

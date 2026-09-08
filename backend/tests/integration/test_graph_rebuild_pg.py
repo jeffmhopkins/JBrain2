@@ -309,6 +309,34 @@ async def test_a_rejected_inference_card_keeps_the_fact_it_names_by_fact_id(
     assert (progress.kept, progress.purged) == (1, 1)
 
 
+async def test_an_inverse_proposal_keeps_the_fact_it_names_by_source_fact_id(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`inverse_proposal` is the one kind filed outside `decide()`'s `review_kind`: the
+    cross-subject firewall arm of `_write_inverse` (pipeline.py) refuses to auto-write a
+    reciprocal onto another subject's stream and proposes it instead, naming the PRIMARY
+    fact it mirrors as `payload.source_fact_id` — a key neither `fact_a`/`fact_b` nor
+    `fact_id`. A spare set missing it purges the source while the card survives, leaving
+    a card whose only provenance pointer is dangling. `resolve_review` has no branch for
+    the kind, so no replay breaks here as it does for `fact_id` — but the mapping this
+    module rests on claims to be COMPLETE, and an incomplete one is trusted anyway."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Reciprocal Subject", status="confirmed")
+    source = await seed_fact(maker, note, entity, predicate="reportsTo")
+    unrelated = await seed_fact(maker, note, entity, predicate="worksFor")
+    card = await seed_item(
+        maker, "inverse_proposal", {"source_fact_id": source}, status="dismissed"
+    )
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, ITEM_BY_ID, id=card) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=source) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=unrelated) == 0
+    assert (progress.kept, progress.purged) == (1, 1)
+
+
 async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:
     """The privacy purge deletes an episode WHOLE (invariant #11). Nothing re-derives
     one, so doing that in a rebuild would be silent data loss, not a rebuild."""
