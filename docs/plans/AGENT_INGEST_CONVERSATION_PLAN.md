@@ -15,6 +15,12 @@ the note, writes what it means through tools, and shows you what it did. You cor
 by talking to it. Deterministic code still owns *how* a write lands:
 `supersession.decide()`, the domain floors, span attestation, the projections.
 
+**The note screen is not a surface this plan changes.** A note conversation is the
+ordinary agent conversation — the same loop, memory and chat surface as Full Brain —
+with the note as turn 0. The writes and the clarification asks are tool components
+inside it. There is no Record tab, no as-captured toggle, and no bespoke clarification
+treatment; the GUI work is two components and an inbox that redirects.
+
 The model supplies meaning; the engine supplies mechanics. What ratification changed is
 the *posture*: the agent does not hold facts back for approval. It commits its reading
 and makes the write legible, and disagreement is a reply, not a queue.
@@ -25,10 +31,10 @@ and makes the write legible, and disagreement is a reply, not a queue.
 | --- | --- |
 | D1 | **One agent, one conversation type.** A note conversation is the same agent, loop and memory as chat — but **its own closed tool allowlist**, never the curator wildcard (D16). |
 | D2 | **Clear facts commit; the agent asks only when it cannot proceed.** No confidence threshold, server-side or model-side. `ask_owner` is for genuine ambiguity, not caution. |
-| D3 | **Every tool call is visible as an "entity modified" chip**, expandable to what changed. Correction is conversational. |
-| D4 | **The inbox becomes two tabs** (revised): a **notes** tab listing threads waiting on you, and a **wiki** tab for findings that never start from a note. No ingest review cards on either. |
-| D5 | **Questions live in their note's thread** — and are *findable* from the notes tab (revised: the original "no queue at all" left no discoverability answer). Still no push and no nagging badge. |
-| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. Re-analysis reads the whole thing. |
+| D3 | **Every tool call is visible as a custom tool component inside the conversation**, expandable to what changed — not a note-screen surface. It must render `written · replaced · held · from a photo · failed · truncated · writing…`, with each write's domain named **in words, never colour alone**. Correction is conversational. |
+| D4 | **The inbox becomes two tabs, and it only redirects.** A **notes** tab lists ingestion questions *and pending approvals* waiting on you; tapping opens the conversation. **Nothing is answerable from the inbox** — the conversation is the only place ingestion is decided, or the inbox becomes a second surface where that happens. A **wiki** tab holds findings that never start from a note. |
+| D5 | **Questions live in their note's conversation** — findable from the notes tab, which is the discoverability answer the original "no queue at all" lacked. Still no push and no nagging badge. |
+| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. This is a **storage** decision with no bespoke rendering: the existing note view renders appended text as text, and the note screen does not change. |
 | D7 | **Re-derivability stays binding.** Clarification blocks are chunks of the same note, so the graph re-derives from notes alone and citations have a real chunk. |
 | D8 | **Unattended, the first pass gets graph tools only.** Nothing outward-facing runs while you are asleep. The full surface unlocks when you reply. |
 | D9 | **EMR import goes through the agent conversation, like a note.** Large imports chunk across several turns. |
@@ -56,7 +62,9 @@ tools, no separate Settings editor.
   **delta ops** (`memory_edit`'s add/replace/remove on numbered rules), not a full
   rewrite.
 - **New rules apply forward only.** When one lands, the agent reports how many existing
-  notes it would change and offers to re-run them — the W1 rebuild sweep, scoped.
+  notes it would change and offers to re-run them. The W1 rebuild sweep is **corpus-wide
+  only**; its run row and cursor accommodate a scope predicate cleanly, but the scoped
+  per-rule re-run is **W3 work**, not W1.
 
 ## What ratification removed
 
@@ -75,7 +83,17 @@ tools, no separate Settings editor.
 Corrected against the code by the cold reviews; the pre-review versions of 1, 2, 3 and 5
 were wrong.
 
-1. **Citations.** `wiki_citations.chunk_id` is `NOT NULL` (`0046:159`) behind a trigger
+1. **Citations.** A re-ingest deletes a note's chunks and `facts.chunk_id` is
+   `ON DELETE SET NULL` (`0006:187`), so every in-place update path must **re-anchor**,
+   and only for a fact **this note owns** — `_existing_facts` carries no `note_id`
+   predicate, so a refresh can land on another note's fact by corroboration and
+   re-anchoring it would make `wiki/builder.py` cite the wrong note. Four paths owe it:
+   the refresh branch, `decide()`'s in-place **close** branch (reachable on this note's
+   own open row), `_insert_held_fact`'s idempotent held-row refresh, and the **derived
+   shadow** written by `_materialize_inverse` — whose `chunk_id` the same cascade nulls
+   and which the settle sweep deliberately never re-inserts, leaving the reciprocal edge
+   silently absent from the *object* entity's article.
+   `wiki_citations.chunk_id` is `NOT NULL` (`0046:159`) behind a trigger
    requiring `citation.domain = chunk.domain = fact.domain` (`0046:187-217`), and
    `wiki/builder.py:527` INNER JOINs chunks. The mechanism for a fact that ratchets above
    its note's domain **already exists**: `_citation_chunk` (`pipeline.py:1645-1687`)
@@ -97,7 +115,17 @@ were wrong.
    plus `entity_aliases` and `entity_mentions` from `0006:260-261`. Note that in this
    repo `SECURITY DEFINER` is the idiom for *bypassing* RLS (`0045:203`, `0046:183-188`),
    so any such delete function must re-assert the domain predicate internally and be
-   unreachable from any model-facing tool.
+   unreachable from any model-facing tool. **This does not extend to the merge path** —
+   W1 took the opposite route there deliberately (see constraint 12).
+12. **An entity fold is a full-owner-only write.** `merge_entity_pair`'s four `UPDATE`s
+    are silently narrowed by RLS, so a cross-domain merge half-completes: some facts
+    repoint, others strand on the tombstone. W1 makes the fold fail closed by asking
+    Postgres `app.is_full_owner()` before any statement runs, backed by a trigger on
+    `app.entities`. Two consequences the plan must carry: a narrowed note conversation
+    can therefore only **stage** a fold, never enact one — the owner's enact is already a
+    full-owner session — and the trigger is a **partial** backstop, because when the
+    loser row is out of scope RLS filters it from the scan and no row trigger fires at
+    all. The Python guard is what covers that shape.
 4. **`review_items` and `pending_review` survive.** `decide()` returns
    `insert_status="pending_review"` at twelve sites, and `_lab_status_transition`
    (`supersession.py:410,484`) is how a **FHIR preliminary lab reading** is represented —
@@ -113,10 +141,20 @@ were wrong.
    truncated turn**: `loop.py:131-133` sets `max_steps=20` and
    `max_consecutive_tool_errors=3`, and a turn ending partway has asserted only a prefix.
    Sweep only on a turn that ended cleanly and not `awaiting_owner`.
-7. **`_rebuild_mentions` must become an incremental upsert.** It is
-   `DELETE … WHERE note_id` then re-insert (`pipeline.py:1278`); called per tool call it
-   wipes what the previous call wrote. The mentions write stays un-gated by confidence —
-   it is the co-mention spine `repo.py:667-684` builds and `neighborhood()` traverses.
+7. **`_rebuild_mentions` becomes an upsert plus a reconcile, split across the seam.**
+   It was `DELETE … WHERE note_id` then re-insert (`pipeline.py:1278`); called per tool
+   call that wipes what the previous call wrote. The key is
+   `(chunk_id, char_start, char_end, entity_id)` **matched with multiplicity** — one
+   existing candidate popped per asserted mention — because even that is not unique:
+   `_locate` returns the *first* occurrence of a surface and falls back to a zero-width
+   span on `chunks[0]`, so two entries can share a span with different entities *and* two
+   entries can produce the identical row the old wipe-and-reinsert preserved. A plain
+   `ON CONFLICT` upsert would silently merge rows and would need a unique index the data
+   cannot satisfy. **The reconcile half must run in `settle_note`** over the union of
+   every pass's asserted ids — a per-pass reconcile deletes the previous pass's mentions,
+   which is the same failure this constraint exists to prevent. The mentions write stays
+   un-gated by confidence: it is the co-mention spine `repo.py:667-684` builds and
+   `neighborhood()` traverses.
 8. **No JSON-Schema `enum` in a `.tool` sidecar.** The segfault is scoped to gpt-oss's
    harmony path and the enum × full-optional-field interaction
    (`STRIX_HALO_SETUP.md:592-601`) — sound as an authoring rule, not a blanket claim.
@@ -177,8 +215,10 @@ description.
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no
 domain-floor backstop and `address`/`geo` are deliberately outside the floor, so it is
-the only guard keeping a home address out of `health`. Its card now lands on the wiki tab
-(D4). The rebuild sweep is already in hand from W1, so it can serve as cutover instrument
+the only guard keeping a home address out of `health`. Note that the card W1 now files
+**never existed before**: the guard and the handler that discarded its catches landed the
+same day (`490c54987`, `166e24691`, 2026-07-03), so the control fired silently for its
+entire life. Its card lands on the wiki tab (D4). The rebuild sweep is already in hand from W1, so it can serve as cutover instrument
 and rollback lever.
 
 **W5 — Teardown, decomposed.** W5a: the old chain (`pipeline.py:305-478` + `arbiter.py`,
