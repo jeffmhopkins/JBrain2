@@ -101,6 +101,9 @@
       .rrow-line { display: flex; align-items: center; gap: 8px; }
       .rrow-when { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: none; }
       .rrow-sum { font-size: var(--fs-note); color: var(--text); line-height: 1.4; }
+      /* A notes row is a redirect: the note it came from, then what is being asked. */
+      .rrow-quote { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .rrow-ask { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
       .rrow-meta { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); flex-wrap: wrap; }
       .rchev { flex: none; display: grid; place-items: center; width: 44px; color: var(--text-3); }
       .rchev svg { width: 16px; height: 16px; }
@@ -112,6 +115,7 @@
       .chip { font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
       .chip-ok { background: var(--green-tint); color: var(--text); }
       .chip-work { background: var(--steel-tint); color: var(--text); }
+      .chip-ask { background: var(--amber-tint); color: var(--text); }
 
       /* ---- a waiting thread, answerable in the row (A's primary form) ---- */
       .tcell { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
@@ -124,6 +128,8 @@
       .answers { display: flex; gap: 8px; flex-wrap: wrap; }
       .answers button { min-height: 44px; padding: 10px 16px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-secondary); }
       .answers button.pick { background: var(--accent-tint); border-color: transparent; font-weight: 500; }
+      /* The conversation's own composer, sketched — this gate does not specify it. */
+      .cbox-mini { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); min-height: 44px; display: flex; align-items: center; padding: 0 13px; color: var(--text-3); font-size: var(--fs-secondary); margin-top: auto; }
       .tfoot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
       .tfoot .go { margin-left: auto; color: var(--text-2); }
 
@@ -185,8 +191,8 @@
   <body>
     <div class="demo-bar">
       <div class="demo-title">
-        <b>Variant A — “the inbox holds”</b> · the Review tile survives; its lanes become
-        <b>Notes · Wiki</b>, and a question is answered in the row
+        <b>Variant A — “the inbox holds” · CHOSEN</b> · the Review tile survives; its lanes become
+        <b>Notes · Wiki</b>, and the notes tab is a <b>redirect, not a decision surface</b>
       </div>
       <div class="seg" role="group" aria-label="theme">
         <button type="button" data-theme-btn="dark" aria-pressed="true">Dark</button>
@@ -195,20 +201,30 @@
     </div>
 
     <div class="caption">
-      <span class="tag">A</span><br />
-      The smallest move that still fixes the problem. <b>Review</b> stays a destination on the
-      launcher and keeps its tile badge; the shipped <code>.review-segs</code> pill track is
-      relabelled from <code>pending · decided</code> to <b>Notes · Wiki</b>, same markup, same
-      count pills. The <b>Notes</b> tab lists threads with an open <code>ask_owner</code> question
-      and — the change that matters — <b>puts the answer buttons in the row</b>, so the nine-day-old
-      question drains in one tap without opening anything. The <b>Wiki</b> tab is the review inbox
-      that survives, on the shipped list → detail with prev/next and the typed block registry. The
-      only signal anywhere is the launcher tile badge, which already exists and already polls only
-      while the launcher is open.
+      <span class="tag">A · chosen</span><br />
+      <b>Review</b> stays a destination on the launcher and keeps its tile badge; the shipped
+      <code>.review-segs</code> pill track is relabelled from <code>pending · decided</code> to
+      <b>Notes · Wiki</b>, same markup, same count pills.
+      <br /><br />
+      The <b>Notes</b> tab lists <b>questions and approvals waiting</b>, and it is a <b>redirect —
+      nothing is decided here</b>. A row says which note it came from, what is being asked, how long
+      it has waited, and how much the agent already committed; tapping it opens the conversation,
+      which is the <em>only</em> place note ingestion is ever decided. An earlier draft of this mock
+      put answer buttons in the row; they are removed. Answering in two places would re-create the
+      second decision surface this whole design exists to delete.
+      <br /><br />
+      Two kinds sit in that list: an <code>ask_owner</code> <b>question</b> from a note
+      conversation, and a staged <b>approval</b> — <code>prefs_write</code> stages a Proposal before
+      it writes (plan D17), so a pending standing-instruction change waits here too. Both redirect
+      the same way, to the conversation that raised them.
+      <br /><br />
+      The <b>Wiki</b> tab is unaffected: those cards are not note ingestion, have no thread to
+      redirect to, and keep the two verbs their producers actually file, on the shipped list →
+      detail with prev/next and the typed block registry. The only signal anywhere is the launcher
+      tile badge, which already exists and already polls only while the launcher is open.
       <br /><br />
       Everything inside a phone below is real app copy at the app's real text size
-      (<code>--font-scale: 0.75</code>). Commentary lives outside the frames. Card actions are the
-      two verbs the producers actually file — nothing here invents a resolution verb.
+      (<code>--font-scale: 0.75</code>). Commentary lives outside the frames.
     </div>
 
     <div class="row">
@@ -229,7 +245,7 @@
               <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
               <button class="tile" type="button" data-goto="inbox">
                 <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review
-                <span class="tile-badge">8</span>
+                <span class="tile-badge">9</span>
               </button>
               <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
             </div>
@@ -261,57 +277,57 @@
           </div>
           <div class="review-segs" role="tablist">
             <button type="button" role="tab" class="review-seg seg-active" data-tab="notes" aria-selected="true">
-              notes <span class="seg-count" data-count="notes">3</span>
+              notes <span class="seg-count" data-count="notes">4</span>
             </button>
             <button type="button" role="tab" class="review-seg" data-tab="wiki" aria-selected="false">
               wiki <span class="seg-count" data-count="wiki">5</span>
             </button>
           </div>
 
-          <!-- NOTES TAB -->
+          <!-- NOTES TAB — every row is a redirect. Nothing is decided here. -->
           <div class="scroll" data-panel="notes">
-            <div class="rlist" id="threads">
-              <div class="tcell" data-thread>
-                <div class="head"><span class="dot d-general"></span>note · 30 Aug<span class="when">asked 9 days ago</span></div>
-                <div class="quote">“Dad’s shop is closing at the end of the quarter.”</div>
-                <p class="ask">Is “the shop” Hopkins Hardware, or the Redwood City lot you also call
-                  the shop? They’re separate entities and I don’t want to close the wrong one.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>Hopkins Hardware</button>
-                  <button type="button" class="pick" data-answer>Redwood City lot</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
-                </div>
-                <div class="tfoot"><span class="chip chip-ok">1 committed</span><span class="go">open the thread ›</span></div>
+            <div class="rlist">
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-goto="thread">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">note · 30 Aug</span><span class="rrow-when">asked 9 days ago</span></div>
+                  <div class="rrow-quote">“Dad’s shop is closing at the end of the quarter.”</div>
+                  <div class="rrow-ask">Is “the shop” Hopkins Hardware, or the Redwood City lot you
+                    also call the shop? They’re separate entities.</div>
+                  <div class="rrow-meta"><span class="chip chip-ask">question</span><span class="chip chip-ok">1 committed</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
               </div>
-              <div class="tcell" data-thread>
-                <div class="head"><span class="dot d-general"></span>note · 6 Sep<span class="when">asked 2 days ago</span></div>
-                <div class="quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
-                <p class="ask">Was that March this year or last? I closed
-                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
-                  start date is unsure.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>March 2026</button>
-                  <button type="button" class="pick" data-answer>March 2025</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
-                </div>
-                <div class="tfoot"><span class="chip chip-ok">4 committed</span><span class="go">open the thread ›</span></div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-goto="prefs">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">preferences · 5 Sep</span><span class="rrow-when">staged 3 days ago</span></div>
+                  <div class="rrow-quote">“Stop splitting recipe ingredients into separate facts.”</div>
+                  <div class="rrow-ask">A new standing instruction is staged, waiting for your
+                    approval before it is written.</div>
+                  <div class="rrow-meta"><span class="chip chip-ask">approval</span><span class="chip">owner_prefs</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
               </div>
-              <div class="tcell" data-thread>
-                <div class="head"><span class="dot d-health"></span>note · 8 Sep<span class="when">asked 6 hours ago</span></div>
-                <div class="quote">“Started 10mg of the new one Tuesday, no side effects so far.”</div>
-                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
-                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>Lisinopril</button>
-                  <button type="button" class="pick" data-answer>Atorvastatin</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
-                </div>
-                <div class="tfoot"><span class="chip chip-ok">2 committed</span><span class="go">open the thread ›</span></div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-goto="thread">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">note · 6 Sep</span><span class="rrow-when">asked 2 days ago</span></div>
+                  <div class="rrow-quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
+                  <div class="rrow-ask">Was that March this year or last? Marina is open either way
+                    — only the start date is unsure.</div>
+                  <div class="rrow-meta"><span class="chip chip-ask">question</span><span class="chip chip-ok">4 committed</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-goto="thread">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">note · 8 Sep</span><span class="rrow-when">asked 6 hours ago</span></div>
+                  <div class="rrow-quote">“Started 10mg of the new one Tuesday, no side effects so far.”</div>
+                  <div class="rrow-ask">Which is “the new one” — the lisinopril from 4 Mar, or the
+                    atorvastatin Dr. Okafor mentioned?</div>
+                  <div class="rrow-meta"><span class="chip chip-ask">question</span><span class="chip chip-ok">2 committed</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
               </div>
             </div>
-            <p class="quiet" id="notes-empty" hidden>
-              Nothing is waiting on you.<br />The agent has been committing as it reads.
-            </p>
             <div class="rlist">
               <div class="tcell">
                 <div class="head"><span class="dot d-health"></span>note · 12 Aug import<span class="when">4 min</span></div>
@@ -368,19 +384,20 @@
             </div>
           </div>
 
-          <!-- THREAD (a notes row can still open the conversation) -->
+          <!-- WHERE A NOTES ROW LANDS — the conversation. Sketched, not specified:
+               the conversation surface is the sibling gate's business, not this one. -->
           <div class="det" data-det="thread" hidden>
             <div class="bar">
               <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
-              <span class="ttl">Note · 6 Sep</span>
+              <span class="ttl">Priya moved to the Marina…</span>
             </div>
             <div class="scroll">
               <div class="blk" style="border-left: 3px solid var(--green)">
-                <h3 class="section-header">the note — turn 0</h3>
+                <h3 class="section-header">turn 0 — the note</h3>
                 <p class="sum">Priya moved to the Marina place in March — finally out of the Sunset.</p>
               </div>
               <div class="blk">
-                <h3 class="section-header">what I committed</h3>
+                <h3 class="section-header">entities modified</h3>
                 <div class="side">
                   <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
                   <div class="edge"><b>lives_in</b> → Sunset District — closed, ended Mar</div>
@@ -388,7 +405,6 @@
                 </div>
               </div>
               <div class="blk">
-                <h3 class="section-header">what I’m stuck on</h3>
                 <p class="sum">Was that March this year or last? Marina is open either way — only the
                   start date is unsure.</p>
                 <div class="answers">
@@ -396,6 +412,36 @@
                   <button type="button" class="pick">March 2025</button>
                 </div>
               </div>
+              <div class="cbox-mini">Reply…</div>
+            </div>
+          </div>
+
+          <!-- WHERE A STAGED APPROVAL LANDS — the same conversation, same rule. -->
+          <div class="det" data-det="prefs" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl">Stop splitting recipe ingr…</span>
+            </div>
+            <div class="scroll">
+              <div class="blk" style="border-left: 3px solid var(--green)">
+                <h3 class="section-header">you asked</h3>
+                <p class="sum">Stop splitting recipe ingredients into separate facts.</p>
+              </div>
+              <div class="blk">
+                <h3 class="section-header">staged — waiting for your approval</h3>
+                <p class="sum">I’d add this to your standing instructions:</p>
+                <div class="side">
+                  <div class="edge"><b>+ 3.</b> Recipe notes: keep the ingredient list as one fact,
+                    don’t split it per item.</div>
+                </div>
+                <p class="stmt">New rules apply forward only. 14 existing notes would change — I can
+                  re-run them if you want.</p>
+                <div class="answers">
+                  <button type="button" class="pick">Approve</button>
+                  <button type="button">Decline</button>
+                </div>
+              </div>
+              <div class="cbox-mini">Reply…</div>
             </div>
           </div>
 
@@ -417,11 +463,17 @@
           </div>
         </div>
         <p class="frame-note">
-          Tap any answer chip — the thread resolves in place and the <b>notes</b> count pill drops;
-          drain all three and the tab says so. Every wiki row opens, and prev/next walks all five.
-          The proposals are the shipped <span class="mono">.rprop</span> — plain surface, hairline
-          border, label in <span class="mono">--text</span> — so nothing renders an accent on its own
-          tint.
+          Every row in both tabs opens. A <b>notes</b> row lands in the conversation — a question
+          and a staged approval both — and that destination is drawn thin on purpose: the
+          conversation surface belongs to the sibling gate
+          (<span class="mono">docs/mocks/agent-ingest/</span>), not this one. All this gate settles
+          is that the row redirects there and decides nothing itself. In the <b>wiki</b> tab,
+          prev/next walks all five, and the proposals are the shipped
+          <span class="mono">.rprop</span> — plain surface, hairline border, label in
+          <span class="mono">--text</span> — so nothing renders an accent on its own tint.
+          <br /><br />
+          Ordering is <b>oldest first</b>, so the list drains from the top: 9 days, 3 days, 2 days,
+          6 hours. The last row is uncounted — a first pass still running is not waiting on you.
           <br /><br />
           <b class="gap">Walk to items 3–5</b> and the “choose among proposals” header sits over
           nothing, with <b>correct it</b> as the only way out. That is not a mock omission: the three
@@ -474,11 +526,15 @@
 
     <p class="note-foot">
       <b>What A commits to.</b> Review stays a place you go, and the count lives only on the launcher
-      tile, so nothing counts at you on home or in the top bar. Two things that behave differently —
-      a thread you reply to and a card you decide — share one screen and one word. In exchange, the
-      inline answer chips make the tab worth opening: the nine-day question is one tap from gone.
-      Build cost is the smallest of the three: relabel the shipped segmented filter, add a
-      threads-waiting endpoint plus a row-level answer control, and leave the block registry alone.
+      tile, so nothing counts at you on home or in the top bar. The two tabs are deliberately
+      asymmetric: <b>notes redirects, wiki decides</b>. That asymmetry is the whole ruling — the
+      conversation is the single place note ingestion is settled, and the inbox is only an easy way
+      in. Its cost is that the nine-day-old question now takes two taps rather than one, and the tab
+      has to stay informative enough to be worth the second.
+      <br /><br />
+      Build cost is small: relabel the shipped segmented filter, add an endpoint listing waiting
+      questions and staged approvals, route a row tap into the conversation, and leave the block
+      registry alone.
       <br /><br />
       <b>What the mock does not pretend.</b> The wiki cards offer only the two verbs their producers
       actually file, and the three EMR cards are drawn with the empty proposal list they really have
@@ -687,11 +743,12 @@
       inbox.querySelector("[data-next]").addEventListener("click", () => {
         if (cursor < ITEMS.length - 1) renderItem(++cursor);
       });
-      inbox
-        .querySelectorAll("[data-open-thread]")
-        .forEach((b) =>
-          b.addEventListener("click", () => (inbox.querySelector('[data-det="thread"]').hidden = false)),
-        );
+      // A notes row is a redirect and nothing else: it opens the conversation.
+      inbox.querySelectorAll("[data-goto]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          inbox.querySelector('[data-det="' + btn.dataset.goto + '"]').hidden = false;
+        });
+      });
       inbox
         .querySelectorAll("[data-back]")
         .forEach((b) => b.addEventListener("click", () => (b.closest(".det").hidden = true)));
@@ -706,28 +763,6 @@
           inbox
             .querySelectorAll("[data-panel]")
             .forEach((p) => (p.hidden = p.dataset.panel !== btn.dataset.tab));
-        });
-      });
-
-      // Answering in the row: the whole point of A's primary form.
-      inbox.querySelectorAll("[data-answer]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const cell = btn.closest("[data-thread]");
-          cell.querySelector(".ask").innerHTML =
-            "<b>" + esc(btn.textContent.trim()) +
-            "</b> — thanks. Filed as a clarification on the note; the thread is closed.";
-          cell.querySelector(".answers").remove();
-          cell.querySelector(".tfoot").innerHTML =
-            '<span class="chip chip-ok">answered · committed</span><span class="go">open the thread ›</span>';
-          cell.removeAttribute("data-thread");
-          const pill = inbox.querySelector('[data-count="notes"]');
-          const left = inbox.querySelectorAll("[data-thread]").length;
-          pill.textContent = String(left);
-          if (left === 0) {
-            pill.hidden = true;
-            document.getElementById("threads").hidden = true;
-            document.getElementById("notes-empty").hidden = false;
-          }
         });
       });
 
