@@ -491,6 +491,45 @@ describe("ToolView registry", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("does NOT rebuild the map when the card re-renders", () => {
+    // The reported bug, and the reason it was maddening rather than cosmetic: the card
+    // rebuilds track/cone/you with `.flatMap` on every render, so the memo guarding the
+    // map effect saw new identities every time and tore Leaflet down and back up. The
+    // surface re-renders about once a second, which reset the owner's zoom and pan on
+    // that cadence — a map you cannot pan for a whole second.
+    const view = payload({ view: "hurricane_card", data: huUsData });
+    const { container, rerender } = render(<ToolView payload={view} />);
+    const [, trackBtn] = container.querySelectorAll(".tv-hu-tabs button");
+    fireEvent.click(trackBtn as Element);
+    expect(huMapSpy).toHaveBeenCalledTimes(1);
+
+    // A fresh payload object carrying identical data, which is what every poll tick
+    // hands this card.
+    rerender(<ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />);
+    rerender(<ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />);
+
+    expect(huMapSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds it when the storm actually moves", () => {
+    // The other half: the guard must not be so sticky that a real forecast update
+    // leaves a stale picture on screen.
+    const { container, rerender } = render(
+      <ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />,
+    );
+    const [, trackBtn] = container.querySelectorAll(".tv-hu-tabs button");
+    fireEvent.click(trackBtn as Element);
+    expect(huMapSpy).toHaveBeenCalledTimes(1);
+
+    const moved = {
+      ...huUsData,
+      track: [{ lat: 26.5, lon: -86.0, cat: "3", label: "now", past: false }],
+    };
+    rerender(<ToolView payload={payload({ view: "hurricane_card", data: moved })} />);
+
+    expect(huMapSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("switches hurricane_card tabs to the Track map and Impact grid", () => {
     const { container } = render(
       <ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />,
