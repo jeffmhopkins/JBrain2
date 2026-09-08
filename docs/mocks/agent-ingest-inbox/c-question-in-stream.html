@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review inbox · C · the question comes to the note</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --location: #6fb6b1; --location-tint: rgba(111, 182, 177, 0.13);
+        --accent: var(--steel); --accent-tint: var(--steel-tint);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-composer: calc(17px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-seg: 14px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --surface-composer: #ffffff;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --surface-composer: #141518;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; color: inherit; }
+      [hidden] { display: none !important; }
+
+      .demo-bar { width: 100%; max-width: 1240px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 12px 18px; min-height: 44px; }
+      .seg button[aria-pressed="true"] { background: var(--accent-tint); color: var(--text); font-weight: 500; }
+      .caption { width: 100%; max-width: 1240px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.6; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--green-tint); color: var(--text); margin-bottom: 8px; }
+
+      .row { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; align-items: flex-start; width: 100%; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .frame-note { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.65; padding: 2px 4px 0; }
+      .frame-note b { color: var(--text-2); font-weight: 500; }
+      .frame-note .gap { color: var(--amber); }
+
+      .phone {
+        --font-scale: 0.75; /* the app's shipped default text size */
+        width: 100%; height: 792px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .back { background: none; border: none; color: var(--text-2); display: grid; place-items: center; width: 44px; height: 44px; margin-left: -10px; }
+      .bar .back svg { width: 20px; height: 20px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .mark { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+      .bar .mark i { color: var(--steel); font-style: normal; }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px; }
+      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .d-general { background: var(--steel); } .d-health { background: var(--rose); }
+      .d-location { background: var(--location); }
+      .kind { font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); }
+      .chip { font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
+      .chip-ok { background: var(--green-tint); color: var(--text); }
+      .chip-work { background: var(--steel-tint); color: var(--text); }
+
+      /* ---- home stream (Stream.tsx) ---- */
+      .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; }
+      .day-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .note { padding: 13px 15px; display: flex; flex-direction: column; gap: 5px; }
+      .note + .note, .ask-block + .note, .answered + .note { border-top: 1px solid var(--border); }
+      .note-head { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .note-body { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 14px 16px; display: flex; flex-direction: column; gap: 7px; }
+      .cbox { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); min-height: 48px; display: flex; align-items: center; padding: 0 13px; color: var(--text-3); font-size: var(--fs-composer); }
+      .cfoot { font-size: var(--fs-micro); color: var(--text-3); text-align: center; }
+      .modeseg { display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; align-self: center; }
+      .modeseg span { font-size: var(--fs-micro); padding: 8px 16px; color: var(--text-3); }
+      .modeseg span[data-on] { background: var(--green-tint); color: var(--text); }
+
+      /* The question, inline under its note, INSIDE the day card. Content, not chrome:
+         it scrolls with the note and disappears when answered. */
+      .ask-block { padding: 11px 15px 13px; background: var(--surface-2); border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 9px; }
+      .ask-block .who { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .ask-block .who svg { width: 13px; height: 13px; color: var(--amber); }
+      .ask-block .ask { font-size: var(--fs-secondary); color: var(--text); line-height: 1.5; }
+      .ask-block .ask code { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-2); }
+      .answers { display: flex; gap: 8px; flex-wrap: wrap; }
+      .answers button { min-height: 44px; padding: 10px 16px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-secondary); }
+      .answers button.pick { background: var(--accent-tint); border-color: transparent; font-weight: 500; }
+      .answered { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 8px; padding: 10px 15px; border-top: 1px dashed var(--border); }
+
+      /* ---- the Review screen (shipped .review-segs) ---- */
+      .review-segs { display: flex; gap: 3px; padding: 3px; margin: 12px 14px 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-seg); flex: none; }
+      .review-seg { flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; background: transparent; border: none; border-radius: calc(var(--r-seg) - 3px); font-size: var(--fs-note); color: var(--text-2); }
+      .review-seg.seg-active { background: var(--accent-tint); color: var(--text); font-weight: 500; }
+      .seg-count { font-size: var(--fs-micro); color: var(--text-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); min-width: 18px; padding: 0 5px; line-height: 16px; }
+
+      .rlist { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .rrow { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+      .rrow:last-child { border-bottom: none; }
+      .rrow-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; min-height: 44px; text-align: left; background: transparent; border: none; }
+      .rrow:active { background: var(--surface-2); }
+      .rrow-line { display: flex; align-items: center; gap: 8px; }
+      .rrow-when { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: none; }
+      .rrow-sum { font-size: var(--fs-note); color: var(--text); line-height: 1.4; }
+      .rrow-meta { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); flex-wrap: wrap; }
+      .rchev { flex: none; display: grid; place-items: center; width: 44px; color: var(--text-3); }
+      .rchev svg { width: 16px; height: 16px; }
+      .tcell { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+      .tcell .head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
+      .tcell .head .when { margin-left: auto; }
+      .tcell .quote { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .tcell .ask { font-size: var(--fs-note); color: var(--text); line-height: 1.5; }
+      .lede-app { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.55; padding: 0 2px; }
+
+      .det { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; }
+      .det-nav { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; height: 48px; flex: none; border-bottom: 1px solid var(--border); font-size: var(--fs-micro); color: var(--text-3); }
+      .det-nav .pos { margin-left: auto; }
+      .det-nav .pn { display: flex; gap: 2px; }
+      .det-nav .pn button { background: transparent; border: none; width: 44px; height: 44px; display: grid; place-items: center; color: var(--text-2); }
+      .det-nav .pn button:disabled { color: var(--text-3); opacity: 0.4; }
+      .det-nav .pn svg { width: 16px; height: 16px; }
+      .blk { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 13px 15px; display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-card); }
+      .section-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); font-weight: 400; }
+      .blk .sum { font-size: var(--fs-note); line-height: 1.5; }
+      .side { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+      .side .nm { font-size: var(--fs-secondary); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+      .side .nm em { font-style: normal; font-size: var(--fs-micro); color: var(--text-3); font-weight: 400; }
+      .edge { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
+      .edge b { color: var(--text); font-weight: 500; }
+      .stmt { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .src { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; border-left: 2px solid var(--border); padding-left: 10px; }
+      .kv { display: flex; gap: 10px; font-size: var(--fs-secondary); }
+      .kv dt { color: var(--text-3); font-family: var(--font-mono); min-width: 92px; flex: none; }
+      .kv dd { color: var(--text); font-family: var(--font-mono); word-break: break-all; }
+      .rproposals { display: flex; flex-direction: column; gap: 8px; }
+      .rprop { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 52px; padding: 11px 14px; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
+      .rprop-label { font-size: var(--fs-secondary); color: var(--text); }
+      .rprop-detail { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.4; }
+      .rdetail-foot { display: flex; padding-top: 2px; }
+      .rfoot-correct { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); display: flex; align-items: center; justify-content: center; }
+
+      /* ---- launcher ---- */
+      .lsec { font-size: var(--fs-micro); letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-3); margin: 14px 2px 2px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      .tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); min-height: 88px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-2); font-size: var(--fs-micro); box-shadow: var(--shadow-card); }
+      .tile svg { width: 22px; height: 22px; }
+      .tile-badge { position: absolute; top: 8px; right: 9px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--text); font-size: var(--fs-micro); display: grid; place-items: center; font-weight: 600; }
+      .handle { height: 26px; flex: none; display: grid; place-items: center; }
+      .handle span { width: 40px; height: 4px; border-radius: var(--r-pill); background: var(--border); }
+
+      .note-foot { width: 100%; max-width: 1240px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.7; border-top: 1px solid var(--border); padding-top: 14px; }
+      .note-foot b { color: var(--text-2); font-weight: 500; }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title">
+        <b>Variant C — “the question comes to the note” · SUPERSEDED</b> · the owner chose
+        <b>A</b> (<span class="mono">a-inbox-holds.html</span>). Kept as the record of the round; not
+        maintained.
+      </div>
+      <div class="seg" role="group" aria-label="theme">
+        <button type="button" data-theme-btn="dark" aria-pressed="true">Dark</button>
+        <button type="button" data-theme-btn="light" aria-pressed="false">Light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">C · superseded</span><br />
+      <b>Not chosen</b>, and its premise is now gone. C answered a question <em>outside</em> the
+      conversation; the owner ruled that the conversation is the only place note ingestion is
+      decided. Its stream-geometry cost stood on its own too — a question renders below its note, so
+      one on the newest note lands between that note and the composer. The rest of the page is left
+      exactly as it was reviewed.
+      <br /><br />
+      A and B both make you go somewhere to find a question. C asks whether you should have to: a
+      question belongs to <em>one note</em>, and that note is already on your home stream. So the
+      question renders <b>inline beneath its note, inside the day card</b>, with the answer buttons
+      right there. It is <b>content, not chrome</b> — it scrolls with the note, it lives inside the
+      stream’s two-day window (<code>STREAM_DAYS = 2</code>), and answering removes it.
+      <br /><br />
+      The inbox is still two tabs, but the <b>Notes tab becomes the catch-all for questions that
+      have aged out of the stream</b> — the exact gap the tab exists to close. The <b>Wiki</b> tab is
+      unchanged. The launcher badge therefore counts only what you <em>cannot</em> already see: 5
+      findings + 1 aged-out question = <b>6</b>, not 8.
+      <br /><br />
+      Nothing is added to the top bar. The vitals cluster is untouched — the owner ruled that
+      cluster non-tappable and its 8px dot deleted (<code>DESIGN.md:221-223</code>,
+      <code>TopBarVitals.tsx:9-13</code>), and this variant does not reopen that.
+    </div>
+
+    <div class="row">
+      <!-- ============ FRAME 1 — home, questions inline ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · Home — <b>answer it where it happened</b></div>
+        <div class="phone" id="home">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+          </div>
+          <!-- Oldest first, newest pinned at the bottom: the stream is a chat log
+               (useNotes.ts:287 sorts ascending; Stream.tsx:229-234 scrolls to
+               scrollHeight on every append). -->
+          <div class="scroll">
+            <div class="day-header">Yesterday</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>18:03</div>
+                <div class="note-body">Priya moved to the Marina place in March — finally out of the Sunset.</div>
+              </div>
+              <div class="ask-block" data-ask>
+                <div class="who">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                  asked 2 days ago · 4 committed
+                </div>
+                <p class="ask">Was that March this year or last? I closed
+                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
+                  start date is unsure.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer>March 2026</button>
+                  <button type="button" class="pick" data-answer>March 2025</button>
+                  <button type="button" data-answer>Say it another way…</button>
+                </div>
+              </div>
+            </div>
+            <div class="day-header">Today</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>07:12</div>
+                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
+              </div>
+              <div class="note">
+                <div class="note-head"><span class="dot d-health"></span>08:41</div>
+                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
+              </div>
+              <div class="ask-block" data-ask>
+                <div class="who">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                  asked 6 hours ago · 2 committed
+                </div>
+                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
+                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer>Lisinopril</button>
+                  <button type="button" class="pick" data-answer>Atorvastatin</button>
+                  <button type="button" data-answer>Say it another way…</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="modeseg"><span data-on>Entry</span><span>Research</span><span>Full Brain</span></div>
+            <div class="cbox">What happened?</div>
+            <div class="cfoot">Saved to your wiki · no AI.</div>
+          </div>
+        </div>
+        <p class="frame-note">
+          The stream is a <b>chat log, not a feed</b>: notes sort ascending
+          (<span class="mono">useNotes.ts:287</span>) and the scroller pins the bottom on every
+          append (<span class="mono">Stream.tsx:229-234</span>), so the newest capture sits at the
+          foot of the list, just above the composer. Tap an answer — the block collapses to a
+          one-line “answered” trace. Nothing was navigated to and nothing was approved.
+          <br /><br />
+          <b class="gap">The cost, plainly:</b> a question renders <em>below</em> the note it
+          belongs to, so a question on the <b>newest</b> note lands between that note and the
+          composer — an agent turn sitting in the thumb zone directly above “What happened?”
+          whenever one is open. Capture is what gets crowded, not visibility; what scrolls off the
+          top is older history. It also re-opens the lifecycle chip’s “analyzed → no chip, the quiet
+          end-state” doctrine (<span class="mono">notes/lifecycle.ts:8</span>). C is the loudest
+          variant on the surface the owner looks at most — the defence is that it is
+          <em>content</em> that answers itself away, not a mark that persists until you visit a
+          screen.
+          <br /><br />
+          <b class="gap">And a seam:</b> placement keys on the <b>note’s</b> age, not the
+          question’s. Inference is local-only and a first pass can take minutes, so a note near the
+          two-day edge — and <em>every</em> backdated import, like the 12 Aug records note in frame
+          2 — has already left the window by the time its question exists, and never appears on home
+          at all. The stream is the fast path; the inbox is the guaranteed one.
+        </p>
+      </div>
+
+      <!-- ============ FRAME 2 — the inbox, aged out only ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · Review — <b>only what you can’t already see</b></div>
+        <div class="phone" id="inbox">
+          <div class="bar">
+            <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+            <span class="ttl">Review</span>
+            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+          </div>
+          <div class="review-segs" role="tablist">
+            <button type="button" role="tab" class="review-seg seg-active" data-tab="notes" aria-selected="true">
+              notes <span class="seg-count">1</span>
+            </button>
+            <button type="button" role="tab" class="review-seg" data-tab="wiki" aria-selected="false">
+              wiki <span class="seg-count">5</span>
+            </button>
+          </div>
+
+          <div class="scroll" data-panel="notes">
+            <p class="lede-app">Questions on notes older than your stream. Newer ones are answered on
+              home, where the note still is.</p>
+            <div class="rlist">
+              <div class="tcell" data-thread>
+                <div class="head"><span class="dot d-general"></span>note · 30 Aug<span class="when">asked 9 days ago</span></div>
+                <div class="quote">“Dad’s shop is closing at the end of the quarter.”</div>
+                <p class="ask">Is “the shop” Hopkins Hardware, or the Redwood City lot you also call
+                  the shop? They’re separate entities and I don’t want to close the wrong one.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer2>Hopkins Hardware</button>
+                  <button type="button" class="pick" data-answer2>Redwood City lot</button>
+                  <button type="button" data-answer2>Say it another way…</button>
+                </div>
+              </div>
+            </div>
+            <div class="rlist">
+              <div class="tcell">
+                <div class="head"><span class="dot d-health"></span>note · 12 Aug import<span class="when">4 min</span></div>
+                <div class="quote">Medical records — 14-page attachment</div>
+                <div class="head"><span class="chip chip-work">still reading · nothing written yet</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="scroll" data-panel="wiki" hidden>
+            <div class="rlist">
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="0">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">wiki contradiction</span><span class="rrow-when">5 Sep</span></div>
+                  <div class="rrow-sum">Priya Raghavan’s article says she left Meridian Health in March 2024; Meridian Health’s article still lists her as current staff.</div>
+                  <div class="rrow-meta">2 entities · 2 sources</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="1">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">wiki stale claim</span><span class="rrow-when">5 Sep</span></div>
+                  <div class="rrow-sum">Hopkins Hardware’s article frames “the shop is currently hiring” as current, but the fact behind that sentence has been superseded.</div>
+                  <div class="rrow-meta">1 fact · 1 entity</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="2">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low confidence</span><span class="rrow-when">12 Aug</span></div>
+                  <div class="rrow-sum">An <span class="mono">address</span> fact on an
+                    <span class="mono">Organization</span> was held out of the health domain.</div>
+                  <div class="rrow-meta">firewall_address · page 2 · never committed</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="3">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low confidence</span><span class="rrow-when">12 Aug</span></div>
+                  <div class="rrow-sum">An attachment on the 12 Aug records note matched no parser fingerprint.</div>
+                  <div class="rrow-meta">emr_unrecognized_source · nothing extracted</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="4">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low confidence</span><span class="rrow-when">3 Sep</span></div>
+                  <div class="rrow-sum">The 3 Sep import archive would not open.</div>
+                  <div class="rrow-meta">emr_intake_failed · no partial write</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="det" data-det="wiki" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl" data-d-title>wiki contradiction</span>
+            </div>
+            <div class="det-nav">
+              <span class="dot" data-d-dot></span><span data-d-domain>general</span>
+              <span class="pos" data-d-pos>1 of 5</span>
+              <span class="pn">
+                <button type="button" data-prev aria-label="previous item"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+                <button type="button" data-next aria-label="next item"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></button>
+              </span>
+            </div>
+            <div class="scroll" data-d-body></div>
+          </div>
+        </div>
+        <p class="frame-note">
+          The Notes tab holds one row, not three — the other two were answerable on home and are
+          gone. That is the claim to test: does an inbox that only shows the aged-out remainder feel
+          like a place worth opening, or like a screen that is almost always nearly empty?
+          <br /><br />
+          <b class="gap">Walk to wiki items 3–5</b> and the “choose among proposals” header sits over
+          nothing, with <b>correct it</b> as the only way out. That is not a mock omission: the three
+          EMR producers file no <span class="mono">choices</span>, no
+          <span class="mono">accept</span> and no <span class="mono">reject</span>, so
+          <span class="mono">proposalsFor</span> returns an empty list and the block renders exactly
+          this. They need at least a dismiss — README item 3.
+        </p>
+      </div>
+
+      <!-- ============ FRAME 3 — launcher ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · Launcher — <b>the badge counts 6, not 8</b></div>
+        <div class="phone">
+          <div class="handle"><span></span></div>
+          <div class="scroll" style="gap: 0">
+            <div class="lsec" style="margin-top: 0">Knowledge</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>Search</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h7v15H4zM13 5h7v15h-7z" /></svg>Wiki</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3" /><path d="M5 20a7 7 0 0114 0" /></svg>Entities</div>
+            </div>
+            <div class="lsec">Authoring</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review
+                <span class="tile-badge">6</span></div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+            </div>
+            <div class="lsec">System</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8" /></svg>Ops</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>Settings</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H9l-5 4z" /></svg>Chats</div>
+            </div>
+          </div>
+        </div>
+        <p class="frame-note">
+          5 wiki findings + 1 aged-out question. A question on a note still in the stream is
+          deliberately <em>not</em> counted, because it is already in front of you — counting it too
+          would be the double-nag the constraint rules out. The top bar is untouched.
+        </p>
+      </div>
+    </div>
+
+    <p class="note-foot">
+      <b>What C commits to.</b> The common case stops being a destination at all: you see the
+      question while scrolling past the note that caused it, and one tap ends it. The inbox shrinks
+      to a genuine remainder — findings, and the questions that outlived the stream — which is a
+      smaller, more honest job than either A or B gives it. The price is that the home stream is no
+      longer only your own words: it carries the agent’s, it gets taller, and the lifecycle chip’s
+      quiet end-state has to be re-argued. If the owner reads home as a capture surface that must
+      stay pristine, C is the wrong answer and A is the right one.
+    </p>
+
+    <script>
+      document.querySelectorAll("[data-theme-btn]").forEach((b) => {
+        b.addEventListener("click", () => {
+          document.documentElement.dataset.theme = b.dataset.themeBtn;
+          document.querySelectorAll("[data-theme-btn]").forEach((o) =>
+            o.setAttribute("aria-pressed", String(o === b)),
+          );
+        });
+      });
+
+      const esc = (s) =>
+        String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+      // Answering in the stream: the block collapses to a one-line trace.
+      document.querySelectorAll("[data-answer]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const block = btn.closest("[data-ask]");
+          const label = btn.textContent.trim();
+          const line = document.createElement("div");
+          line.className = "answered";
+          line.innerHTML =
+            '<span class="chip chip-ok">answered</span><span>' +
+            (label.startsWith("Say") ? "opened the thread" : esc(label) + " — filed as a clarification") +
+            "</span>";
+          block.replaceWith(line);
+        });
+      });
+
+      const inbox = document.getElementById("inbox");
+
+      const DISMISS = {
+        label: "Dismiss",
+        detail: "closes the card. The linter re-checks this pair on its next nightly run.",
+      };
+      const CORRECT = {
+        label: "File correction note",
+        detail:
+          "opens a composer. The note re-enters ingestion and re-dirties the entity for the next build.",
+      };
+      const ITEMS = [
+        {
+          title: "wiki contradiction",
+          domain: "general",
+          dotClass: "d-general",
+          blocks: [
+            {
+              h: "the source both were read from",
+              src: [
+                "Ran into Priya at the market. She’s been out of Meridian since March, doing locum work while she decides what’s next.",
+                "Meridian’s staff page still has Priya under radiology — probably just stale.",
+              ],
+            },
+            {
+              h: "what clashes",
+              sides: [
+                { name: "Priya Raghavan", kind: "Person", dot: "d-general", edge: "worksFor", stmt: "Worked at Meridian Health as a radiologist until March 2024." },
+                { name: "Meridian Health", kind: "Organization", dot: "d-general", edge: "employs", stmt: "Priya Raghavan is a staff radiologist." },
+              ],
+            },
+          ],
+          proposals: [DISMISS, CORRECT],
+        },
+        {
+          title: "wiki stale claim",
+          domain: "general",
+          dotClass: "d-general",
+          blocks: [
+            {
+              h: "what the linter found",
+              sum: "Hopkins Hardware’s article frames “the shop is currently hiring” as current, but the fact behind that sentence has been superseded.",
+            },
+          ],
+          proposals: [DISMISS, CORRECT],
+        },
+        {
+          title: "held out of health",
+          domain: "health",
+          dotClass: "d-health",
+          blocks: [
+            {
+              h: "what the guard caught",
+              sum: "A location-locked fact on a health EMR entity was held at integration time and never committed.",
+              kv: [
+                ["subkind", "firewall_address"],
+                ["predicate", "address"],
+                ["entity_kind", "Organization"],
+                ["anchor", "page 2"],
+              ],
+            },
+          ],
+          proposals: [],
+        },
+        {
+          title: "unrecognised source",
+          domain: "health",
+          dotClass: "d-health",
+          blocks: [
+            {
+              h: "what happened",
+              sum: "An attachment on the 12 Aug records note matched no parser fingerprint (Epic, OneContent, athena, ARIA), so it was routed here rather than free-extracted. Nothing was minted from it; the PDF is still attached and searchable.",
+              kv: [
+                ["subkind", "emr_unrecognized_source"],
+                ["attachment_id", "9f2c41e8-…-b7a0"],
+              ],
+            },
+          ],
+          proposals: [],
+        },
+        {
+          title: "import failed",
+          domain: "health",
+          dotClass: "d-health",
+          blocks: [
+            {
+              h: "what happened",
+              sum: "The 3 Sep records archive could not be opened, so nothing was attached and nothing was written. The encrypted zip is still on the note.",
+              reason:
+                "no candidate password decrypted the archive (Bad password for file 'MyChart_Export.zip')",
+              kv: [["subkind", "emr_intake_failed"]],
+            },
+          ],
+          proposals: [],
+        },
+      ];
+
+      function renderItem(i) {
+        const it = ITEMS[i];
+        inbox.querySelector("[data-d-title]").textContent = it.title;
+        inbox.querySelector("[data-d-domain]").textContent = it.domain;
+        inbox.querySelector("[data-d-dot]").className = "dot " + it.dotClass;
+        inbox.querySelector("[data-d-pos]").textContent = i + 1 + " of " + ITEMS.length;
+        inbox.querySelector("[data-prev]").disabled = i === 0;
+        inbox.querySelector("[data-next]").disabled = i === ITEMS.length - 1;
+        let html = "";
+        for (const b of it.blocks) {
+          html += '<div class="blk"><h3 class="section-header">' + esc(b.h) + "</h3>";
+          if (b.sum) html += '<p class="sum">' + esc(b.sum) + "</p>";
+          if (b.reason) html += '<p class="src mono">' + esc(b.reason) + "</p>";
+          for (const s of b.src || []) html += '<p class="src">' + esc(s) + "</p>";
+          for (const s of b.sides || [])
+            html +=
+              '<div class="side"><div class="nm"><span class="dot ' + s.dot + '"></span>' +
+              esc(s.name) + " <em>" + esc(s.kind) + '</em></div><div class="edge"><b>' +
+              esc(s.edge) + '</b></div><p class="stmt">' + esc(s.stmt) + "</p></div>";
+          if (b.kv) {
+            html += "<dl>";
+            for (const [k, v] of b.kv)
+              html += '<div class="kv"><dt>' + esc(k) + "</dt><dd>" + esc(v) + "</dd></div>";
+            html += "</dl>";
+          }
+          html += "</div>";
+        }
+        // A kind that files no `choices` renders this header over nothing — which is
+        // exactly what ships. The explanation belongs in the frame note, not the device.
+        html += '<div class="blk"><h3 class="section-header">choose among proposals</h3>';
+        if (it.proposals.length > 0) {
+          html += '<div class="rproposals">';
+          for (const p of it.proposals)
+            html +=
+              '<button type="button" class="rprop"><span class="rprop-label">' + esc(p.label) +
+              '</span><span class="rprop-detail">' + esc(p.detail) + "</span></button>";
+          html += "</div>";
+        }
+        html +=
+          '<div class="rdetail-foot"><button type="button" class="rfoot-correct">correct it</button></div></div>';
+        inbox.querySelector("[data-d-body]").innerHTML = html;
+      }
+
+      let cursor = 0;
+      inbox.querySelectorAll("[data-open]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          cursor = Number(btn.dataset.open);
+          renderItem(cursor);
+          inbox.querySelector('[data-det="wiki"]').hidden = false;
+        });
+      });
+      inbox.querySelector("[data-prev]").addEventListener("click", () => {
+        if (cursor > 0) renderItem(--cursor);
+      });
+      inbox.querySelector("[data-next]").addEventListener("click", () => {
+        if (cursor < ITEMS.length - 1) renderItem(++cursor);
+      });
+      inbox
+        .querySelectorAll("[data-back]")
+        .forEach((b) => b.addEventListener("click", () => (b.closest(".det").hidden = true)));
+      inbox.querySelectorAll("[data-tab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          inbox.querySelectorAll("[data-tab]").forEach((o) => {
+            o.setAttribute("aria-selected", String(o === btn));
+            o.classList.toggle("seg-active", o === btn);
+          });
+          inbox
+            .querySelectorAll("[data-panel]")
+            .forEach((p) => (p.hidden = p.dataset.panel !== btn.dataset.tab));
+        });
+      });
+      inbox.querySelectorAll("[data-answer2]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cell = btn.closest("[data-thread]");
+          const label = btn.textContent.trim();
+          cell.querySelector(".ask").innerHTML =
+            "<b>" + esc(label) + "</b> — thanks. Filed as a clarification on the note; the thread is closed.";
+          cell.querySelector(".answers").remove();
+          const pill = inbox.querySelector('[data-tab="notes"] .seg-count');
+          pill.hidden = true;
+        });
+      });
+    </script>
+  </body>
+</html>
