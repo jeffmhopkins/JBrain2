@@ -43,8 +43,11 @@ export function TopBar({ title, onBack, syncStatus, session, onOpenVitals, radio
       <div className="top-bar-right">
         {/* Beside the vitals rather than in the composer's icon row, where it sat next
             to Attach. Attach is a control you reach for; this is a READOUT of what the
-            box is doing, which is what the rest of this cluster already is. Left of the
-            chart so the vitals stay flush right, where the eye looks for them. */}
+            box is doing, which is what the rest of this cluster already is.
+            Outermost, because it comes and goes: a slot that appears and disappears
+            between the wordmark and the chart would shove the chart sideways every time
+            a lease starts or ends. On the edge it only ever grows the row. */}
+        <TopBarVitals syncStatus={syncStatus} onOpen={onOpenVitals} />
         {radio && (
           <button
             type="button"
@@ -53,10 +56,8 @@ export function TopBar({ title, onBack, syncStatus, session, onOpenVitals, radio
             onClick={radio.onOpen}
           >
             <RadioIcon size={22} />
-            <span className="sdr-live" aria-hidden="true" />
           </button>
         )}
-        <TopBarVitals syncStatus={syncStatus} onOpen={onOpenVitals} />
       </div>
     </header>
   );

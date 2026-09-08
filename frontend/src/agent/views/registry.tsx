@@ -1831,9 +1831,21 @@ function HuTrackMap({
 }: { track: HuTrackPointGeo[]; cone: HuGeoPoint[]; you: HuGeoPoint | null }): ReactNode {
   const hasPast = track.some((p) => p.past);
   const mapRef = useRef<HTMLDivElement>(null);
-  // The payload is immutable for the card's life; memoize so the effect redraws only
-  // when the actual geometry identity changes, not on every parent render.
-  const mapData = useMemo<HuMapData>(() => ({ track, cone, you }), [track, cone, you]);
+  // Memoize on the geometry's VALUE, not on the identity of the arrays carrying it.
+  //
+  // This said "the payload is immutable for the card's life" and depended on
+  // [track, cone, you], which is true of the CONTENT and false of the identity: the
+  // card rebuilds all three with `.flatMap` on every render, so they are new objects
+  // each time. The memo therefore invalidated on every render, the effect below tore
+  // the Leaflet map down and built a fresh one, and the owner's zoom and pan went with
+  // it — about once a second, which is the surface's render cadence. A map you cannot
+  // pan for a whole second is not a map.
+  // Stringifying every render is far cheaper than rebuilding a Leaflet map, and the
+  // memo then parses the signature back rather than closing over the arrays — so the
+  // hook's only dependency really is the value, with nothing for a linter to disagree
+  // with about what it depends on.
+  const signature = JSON.stringify({ track, cone, you });
+  const mapData = useMemo<HuMapData>(() => JSON.parse(signature) as HuMapData, [signature]);
   useEffect(() => {
     if (!mapRef.current) return;
     const handle = renderHurricaneMap(mapRef.current, mapData);
