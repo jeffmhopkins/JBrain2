@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review inbox · A · the inbox holds</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --location: #6fb6b1; --location-tint: rgba(111, 182, 177, 0.13);
+        --slate: #9aa0a8;
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; color: inherit; }
+      /* `hidden` must beat the flex display the panels carry by class. */
+      [hidden] { display: none !important; }
+
+      /* ---- demo chrome (not part of the app) ---- */
+      .demo-bar { width: 100%; max-width: 1240px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 8px 15px; min-height: 36px; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1240px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.6; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption code { font-family: var(--font-mono); font-size: 0.92em; color: var(--text); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); margin-bottom: 8px; }
+
+      .row { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; align-items: flex-start; width: 100%; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 792px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      /* ---- top bar (components/TopBar.tsx) ---- */
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; padding: 8px; margin-left: -8px; min-width: 40px; }
+      .bar .back svg { width: 20px; height: 20px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 22px; display: flex; flex-direction: column; gap: 12px; }
+
+      /* ---- the segmented filter (ReviewScreen, .rlist-tools) ---- */
+      .tabs { display: flex; margin: 12px 14px 0; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; flex: none; }
+      .tabs button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); padding: 10px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+      .tabs button + button { border-left: 1px solid var(--border); }
+      .tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 500; }
+      .tabs .cnt { font-size: 10.5px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-3); }
+      .tabs button[aria-selected="true"] .cnt { background: var(--steel-tint); color: var(--steel); }
+
+      .lede { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.55; padding: 0 2px; }
+
+      /* ---- list rows (ReviewScreen .rlist2 / .rrow2) ---- */
+      .rlist { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .rrow { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+      .rrow:last-child { border-bottom: none; }
+      .rrow-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; text-align: left; background: transparent; border: none; }
+      .rrow:active { background: var(--surface-2); }
+      .rrow-line { display: flex; align-items: center; gap: 8px; }
+      .rrow-when { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: none; }
+      .rrow-sum { font-size: var(--fs-note); color: var(--text); line-height: 1.4; }
+      .rrow-quote { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .rrow-meta { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); flex-wrap: wrap; }
+      .rchev { flex: none; display: grid; place-items: center; width: 34px; color: var(--text-3); }
+      .rchev svg { width: 16px; height: 16px; }
+
+      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .d-general { background: var(--steel); } .d-health { background: var(--rose); }
+      .d-finance { background: var(--violet); } .d-location { background: var(--location); }
+      .kind { font-size: 11px; letter-spacing: 0.02em; color: var(--text-3); font-family: var(--font-mono); }
+      .chip { font-size: var(--fs-micro); padding: 3px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
+      .chip-open { background: var(--amber-tint); color: var(--amber); }
+      .chip-ok { background: var(--green-tint); color: var(--green); }
+      .chip-work { background: var(--steel-tint); color: var(--steel); }
+      .chip-held { background: var(--location-tint); color: var(--location); }
+
+      /* the question a thread is waiting on — the row's reason for existing */
+      .q { display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px; background: var(--surface-2); border-radius: 10px; border-left: 2px solid var(--amber); }
+      .q svg { width: 14px; height: 14px; color: var(--amber); flex: none; margin-top: 2px; }
+      .q p { font-size: var(--fs-secondary); color: var(--text); line-height: 1.45; }
+      .q code { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-2); }
+
+      /* ---- detail (pushed in-frame) ---- */
+      .det { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; }
+      .det[hidden] { display: none; }
+      .det-nav { display: flex; align-items: center; gap: 8px; padding: 0 14px; height: 44px; flex: none; border-bottom: 1px solid var(--border); font-size: var(--fs-micro); color: var(--text-3); }
+      .det-nav .pos { margin-left: auto; }
+      .det-nav .pn { display: flex; gap: 3px; }
+      .det-nav .pn button { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; width: 30px; height: 30px; display: grid; place-items: center; color: var(--text-2); }
+      .det-nav .pn svg { width: 15px; height: 15px; }
+      .blk { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 13px 15px; display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-card); }
+      .blk h3 { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); font-weight: 500; }
+      .blk .sum { font-size: var(--fs-note); line-height: 1.5; }
+      .side { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+      .side .nm { font-size: var(--fs-secondary); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+      .side .nm em { font-style: normal; font-size: var(--fs-micro); color: var(--text-3); font-weight: 400; }
+      .edge { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
+      .edge b { color: var(--text); font-weight: 500; }
+      .stmt { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .src { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; border-left: 2px solid var(--border); padding-left: 10px; }
+      .mono { font-family: var(--font-mono); }
+      .acts { display: flex; flex-direction: column; gap: 8px; }
+      .acts button { min-height: 46px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); padding: 9px 14px; text-align: left; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+      .acts button.primary { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 500; }
+      .acts button small { color: var(--text-3); font-size: 11px; line-height: 1.35; }
+      .acts button.primary small { color: var(--steel); opacity: 0.85; }
+      .foot2 { display: flex; gap: 8px; }
+      .foot2 button { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); align-items: center; justify-content: center; display: flex; }
+
+      /* ---- launcher (components/Launcher.tsx) ---- */
+      .lsec { font-size: var(--fs-micro); letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-3); margin: 14px 2px 2px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      .tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); min-height: 88px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-2); font-size: var(--fs-micro); box-shadow: var(--shadow-card); }
+      .tile svg { width: 22px; height: 22px; }
+      .tile-badge { position: absolute; top: 8px; right: 9px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); font-size: 11px; display: grid; place-items: center; font-weight: 600; }
+      .handle { height: 26px; flex: none; display: grid; place-items: center; }
+      .handle span { width: 40px; height: 4px; border-radius: var(--r-pill); background: var(--border); }
+
+      .calm { margin: auto 0; text-align: center; color: var(--text-2); font-size: var(--fs-secondary); line-height: 1.6; padding: 0 26px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+      .calm svg { width: 26px; height: 26px; color: var(--text-3); }
+
+      .note-foot { width: 100%; max-width: 1240px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.7; border-top: 1px solid var(--border); padding-top: 14px; }
+      .note-foot b { color: var(--text-2); font-weight: 500; }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title">
+        <b>Variant A — “the inbox holds”</b> · the Review tile survives; its lanes become
+        <b>Notes · Wiki</b>
+      </div>
+      <div class="seg" role="group" aria-label="theme">
+        <button type="button" data-theme-btn="dark" aria-pressed="true">Dark</button>
+        <button type="button" data-theme-btn="light" aria-pressed="false">Light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">A</span><br />
+      The smallest possible move. <b>Review</b> stays a destination on the launcher, keeps its tile
+      badge, and the segmented filter that reads <code>pending · decided</code> today reads
+      <b>Notes · Wiki</b> instead. The <b>Notes</b> tab lists note conversations with an open
+      <code>ask_owner</code> question — a row is a thread, not a card, and tapping it opens the
+      thread where the answer belongs. The <b>Wiki</b> tab is the review inbox that survives:
+      nightly-linter findings, EMR import failures, and the location firewall’s catch, on the shipped
+      list → detail with prev/next and the typed block registry. The only signal anywhere is the
+      <b>launcher tile badge</b>, which already exists and already polls only while the launcher is
+      on screen.
+    </div>
+
+    <div class="row">
+      <!-- ============ FRAME 1 — launcher ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · Launcher — <b>the badge is the whole signal</b></div>
+        <div class="phone">
+          <div class="handle"><span></span></div>
+          <div class="scroll" style="gap: 0">
+            <div class="lsec" style="margin-top: 0">Knowledge</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>Search</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h7v15H4zM13 5h7v15h-7z" /></svg>Wiki</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3" /><path d="M5 20a7 7 0 0114 0" /></svg>Entities</div>
+            </div>
+            <div class="lsec">Authoring</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
+              <button class="tile" type="button" data-goto="inbox" style="border-color: var(--steel); color: var(--text)">
+                <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review
+                <span class="tile-badge">8</span>
+              </button>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+            </div>
+            <div class="lsec">System</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8" /></svg>Ops</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>Settings</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H9l-5 4z" /></svg>Chats</div>
+            </div>
+            <p class="lede" style="margin-top: 18px">
+              8 = 3 threads waiting + 5 wiki findings. It is the count the tile already renders
+              (<span class="mono">Launcher.tsx:370</span>) — polled only while the launcher is on
+              screen, and shown nowhere else in the app.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ FRAME 2 — the inbox, live ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · The inbox — <b>tap the tabs; tap a wiki row</b></div>
+        <div class="phone" id="inbox">
+          <div class="bar">
+            <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+            <span class="ttl">Review</span>
+            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+          </div>
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" data-tab="notes" aria-selected="true">Notes <span class="cnt">3</span></button>
+            <button type="button" role="tab" data-tab="wiki" aria-selected="false">Wiki <span class="cnt">5</span></button>
+          </div>
+
+          <!-- NOTES TAB -->
+          <div class="scroll" data-panel="notes">
+            <p class="lede">Threads waiting on you. Nothing here is a decision — the agent already
+              committed what it was sure of, and is stuck on one thing. You answer in the thread.</p>
+            <div class="rlist">
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="t1">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">note · 6 Sep</span><span class="rrow-when">asked 2 days ago</span></div>
+                  <div class="rrow-quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
+                  <div class="q"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                    <p>Was that March this year or last? I closed <code>lives_in → Sunset District</code>
+                      and opened Marina either way — only the start date is unsure.</p></div>
+                  <div class="rrow-meta"><span class="chip chip-ok">4 committed</span><span class="chip chip-open">1 open</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">note · 8 Sep</span><span class="rrow-when">asked 6h ago</span></div>
+                  <div class="rrow-quote">“Started 10mg of the new one Tuesday, no side effects so far.”</div>
+                  <div class="q"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                    <p>Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
+                      Dr. Okafor mentioned? I’ve left the dose off both until you say.</p></div>
+                  <div class="rrow-meta"><span class="chip chip-ok">2 committed</span><span class="chip chip-open">1 open</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">note · 30 Aug</span><span class="rrow-when">asked 9 days ago</span></div>
+                  <div class="rrow-quote">“Dad’s shop is closing at the end of the quarter.”</div>
+                  <div class="q"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                    <p>Is “the shop” Hopkins Hardware, or the Redwood City lot you also call the shop?
+                      They’re separate entities and I don’t want to close the wrong one.</p></div>
+                  <div class="rrow-meta"><span class="chip chip-ok">1 committed</span><span class="chip">no rush</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+            </div>
+            <p class="lede">Ordered oldest question first, so the list drains itself.</p>
+            <div class="rlist" style="opacity: 0.72">
+              <div class="rrow">
+                <button class="rrow-open" type="button">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">note · 12 Aug import</span><span class="rrow-when">4 min</span></div>
+                  <div class="rrow-quote">Medical records — 14-page attachment</div>
+                  <div class="rrow-meta"><span class="chip chip-work">still reading · nothing written yet</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+            </div>
+            <p class="lede">A conversation that hasn’t finished its first pass is listed but not
+              counted — it isn’t waiting on <em>you</em>.</p>
+          </div>
+
+          <!-- WIKI TAB -->
+          <div class="scroll" data-panel="wiki" hidden>
+            <p class="lede">Findings with no note to be turn 0 of: the nightly wiki linter, and the
+              EMR importer’s failures and guards. These <em>are</em> review cards — they carry a
+              decision, and they resolve here.</p>
+            <div class="rlist">
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="w1">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">wiki_contradiction</span><span class="rrow-when">5 Sep</span></div>
+                  <div class="rrow-sum">Priya Raghavan’s article says she left Meridian Health in March 2024; Meridian Health’s article still lists her as current staff.</div>
+                  <div class="rrow-meta">2 entities · 2 sources</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button">
+                  <div class="rrow-line"><span class="dot d-general"></span><span class="kind">wiki_stale_claim</span><span class="rrow-when">5 Sep</span></div>
+                  <div class="rrow-sum">Hopkins Hardware’s article says the shop “is currently hiring”. That came from a note captured 14 Mar 2025 and nothing has renewed it.</div>
+                  <div class="rrow-meta">1 fact · framed as current</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="w3">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low_confidence · firewall_address</span><span class="rrow-when">12 Aug</span></div>
+                  <div class="rrow-sum">A postal address on <b>Meridian Imaging Center</b> was held out of the health domain.</div>
+                  <div class="rrow-meta"><span class="chip chip-held">held — never committed</span></div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low_confidence · emr_unrecognized_source</span><span class="rrow-when">12 Aug</span></div>
+                  <div class="rrow-sum"><span class="mono" style="font-size: 0.9em">radiology_report_2026-08-09.pdf</span> matched no parser fingerprint.</div>
+                  <div class="rrow-meta">nothing extracted · PDF still attached</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+              <div class="rrow">
+                <button class="rrow-open" type="button" data-open="w5">
+                  <div class="rrow-line"><span class="dot d-health"></span><span class="kind">low_confidence · emr_intake_failed</span><span class="rrow-when">3 Sep</span></div>
+                  <div class="rrow-sum">The 3 Sep import archive would not open.</div>
+                  <div class="rrow-meta">no partial write · zip still on the note</div>
+                </button>
+                <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></div>
+              </div>
+            </div>
+            <p class="lede">A <b>Decided ›</b> log hangs off this tab only — the Notes tab has no
+              decided lane, because answering a question is a reply, not a resolution.</p>
+          </div>
+
+          <!-- THREAD (a notes row opens the conversation, not a card) -->
+          <div class="det" data-det="t1" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl">Note · 6 Sep</span>
+            </div>
+            <div class="scroll">
+              <div class="blk" style="border-left: 3px solid var(--green)">
+                <h3>the note — turn 0, the source of truth</h3>
+                <p class="sum">Priya moved to the Marina place in March — finally out of the Sunset.</p>
+              </div>
+              <div class="blk">
+                <h3>what I committed</h3>
+                <div class="side">
+                  <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
+                  <div class="edge"><b>lives_in</b> → Sunset District <span style="color: var(--text-3)">— closed, ended Mar</span></div>
+                  <div class="edge"><b>lives_in</b> → Marina District <span style="color: var(--text-3)">— open</span></div>
+                </div>
+                <div class="rrow-meta"><span class="chip chip-ok">4 committed</span><span class="chip">tap an edge for its citation</span></div>
+              </div>
+              <div class="blk" style="border-left: 3px solid var(--amber)">
+                <h3>what I’m stuck on</h3>
+                <p class="sum">Was that March this year or last? Marina is open either way — only
+                  the start date is unsure.</p>
+                <div class="acts">
+                  <button type="button" class="primary">March 2026</button>
+                  <button type="button">March 2025</button>
+                  <button type="button">Say it another way…</button>
+                </div>
+              </div>
+              <p class="lede">There is no approve here, and no reject. The answer is a reply, and
+                it is appended to the note as a timestamped clarification block (D6) so the graph
+                still re-derives from notes alone.</p>
+            </div>
+          </div>
+
+          <!-- DETAIL: contradiction -->
+          <div class="det" data-det="w1" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl">wiki contradiction</span>
+            </div>
+            <div class="det-nav">
+              <span class="dot d-general"></span> general
+              <span class="pos">1 of 5</span>
+              <span class="pn"><button type="button" aria-label="previous"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button><button type="button" aria-label="next"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></button></span>
+            </div>
+            <div class="scroll">
+              <div class="blk">
+                <h3>the source both were read from</h3>
+                <p class="src">“Ran into Priya at the market. She’s been out of Meridian since March,
+                  doing locum work while she decides what’s next.”
+                  <span style="color: var(--text-3)">— note, 2 Apr 2024</span></p>
+                <p class="src">“Meridian’s staff page still has Priya under radiology — probably just
+                  stale.” <span style="color: var(--text-3)">— note, 17 Jan 2026</span></p>
+              </div>
+              <div class="blk">
+                <h3>what clashes</h3>
+                <div class="side">
+                  <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
+                  <div class="edge"><b>worksFor</b> → Meridian Health <span style="color: var(--text-3)">(until Mar 2024)</span></div>
+                  <p class="stmt">“Worked at Meridian Health as a radiologist until March 2024.”</p>
+                </div>
+                <div class="side">
+                  <div class="nm"><span class="dot d-general"></span>Meridian Health <em>Organization</em></div>
+                  <div class="edge"><b>employs</b> → Priya Raghavan <span style="color: var(--text-3)">(current)</span></div>
+                  <p class="stmt">“Priya Raghavan is a staff radiologist.”</p>
+                </div>
+              </div>
+              <div class="blk">
+                <h3>what to do</h3>
+                <div class="acts">
+                  <button type="button" class="primary">Priya’s side is right
+                    <small>closes <span class="mono">employs</span> on Meridian at Mar 2024 and rebuilds both articles</small></button>
+                  <button type="button">Meridian’s side is right
+                    <small>reopens Priya’s <span class="mono">worksFor</span> interval</small></button>
+                  <button type="button">Not a contradiction
+                    <small>dismisses the card; the linter won’t re-file this pair</small></button>
+                </div>
+                <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- DETAIL: firewall -->
+          <div class="det" data-det="w3" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl">held out of health</span>
+            </div>
+            <div class="det-nav">
+              <span class="dot d-health"></span> health
+              <span class="pos">3 of 5</span>
+              <span class="pn"><button type="button" aria-label="previous"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button><button type="button" aria-label="next"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></button></span>
+            </div>
+            <div class="scroll">
+              <div class="blk">
+                <h3>what the guard caught</h3>
+                <p class="sum">The 12 Aug import carried a postal address on <b>Meridian Imaging
+                  Center</b>. Location facts never land in the health domain, so it was held at
+                  integration time and <b>nothing was written</b>.</p>
+                <div class="side">
+                  <div class="nm"><span class="dot d-location"></span>Meridian Imaging Center <em>Organization</em></div>
+                  <div class="edge"><b>address</b> → <span style="color: var(--text-3)">held — not shown in health</span></div>
+                  <p class="stmt">page 2 · <span class="mono">firewall_address</span> · Layer 2, after
+                    the parsers had already stripped the address once</p>
+                </div>
+              </div>
+              <div class="blk">
+                <h3>what to do</h3>
+                <div class="acts">
+                  <button type="button" class="primary">Keep it out
+                    <small>the recommended default — the fact stays unwritten and the card closes</small></button>
+                  <button type="button">File it under Location
+                    <small>writes the address on the <span class="mono">location</span> domain, where an address belongs</small></button>
+                </div>
+                <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- DETAIL: intake failed -->
+          <div class="det" data-det="w5" hidden>
+            <div class="bar">
+              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+              <span class="ttl">import failed</span>
+            </div>
+            <div class="det-nav">
+              <span class="dot d-health"></span> health
+              <span class="pos">5 of 5</span>
+              <span class="pn"><button type="button" aria-label="previous"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button><button type="button" aria-label="next"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></button></span>
+            </div>
+            <div class="scroll">
+              <div class="blk">
+                <h3>what happened</h3>
+                <p class="sum">The 3 Sep records archive could not be opened, so nothing was attached
+                  and nothing was written. The encrypted zip is still on the note.</p>
+                <p class="src mono" style="font-size: var(--fs-micro)">
+                  no candidate password decrypted the archive (Bad password for file
+                  'MyChart_Export.zip')</p>
+              </div>
+              <div class="blk">
+                <h3>what to do</h3>
+                <div class="acts">
+                  <button type="button" class="primary">Add the password to the note
+                    <small>opens the note; the importer re-runs and this card retires itself</small></button>
+                  <button type="button">Give up on this archive
+                    <small>dismisses the card; the zip stays attached and untouched</small></button>
+                </div>
+                <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ FRAME 3 — nothing waiting ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · Nothing waiting — <b>the honest calm state</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+            <span class="ttl">Review</span>
+            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+          </div>
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" aria-selected="true">Notes</button>
+            <button type="button" role="tab" aria-selected="false">Wiki</button>
+          </div>
+          <div class="scroll">
+            <div class="calm">
+              <svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" /></svg>
+              <p>Nothing is waiting on you.<br />The agent has been committing as it reads.</p>
+              <p style="font-size: var(--fs-micro); color: var(--text-3)">
+                Last note analysed 11 minutes ago · the wiki linter last ran at 03:14</p>
+            </div>
+          </div>
+          <div style="padding: 0 14px 20px">
+            <p class="lede">And on the launcher, the Review tile simply has no badge. There is no
+              zero to clear, no dot, no colour — the absence <em>is</em> the state.</p>
+            <div class="grid" style="margin-top: 12px">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note-foot">
+      <b>What A commits to.</b> Review stays a place you go. The count lives only on the launcher
+      tile, exactly as it does today, so nothing counts at you on home or in the top bar. Two things
+      that behave differently — a thread you answer and a card you decide — share one screen and one
+      word. The build is the smallest of the three: relabel the segmented filter, add a
+      threads-waiting list endpoint, and leave the block registry untouched for the Wiki tab.
+    </p>
+
+    <script>
+      // Theme toggle (demo chrome only).
+      document.querySelectorAll("[data-theme-btn]").forEach((b) => {
+        b.addEventListener("click", () => {
+          document.documentElement.dataset.theme = b.dataset.themeBtn;
+          document.querySelectorAll("[data-theme-btn]").forEach((o) =>
+            o.setAttribute("aria-pressed", String(o === b)),
+          );
+        });
+      });
+
+      const inbox = document.getElementById("inbox");
+      // Tabs actually switch.
+      inbox.querySelectorAll("[data-tab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          inbox.querySelectorAll("[data-tab]").forEach((o) =>
+            o.setAttribute("aria-selected", String(o === btn)),
+          );
+          inbox.querySelectorAll("[data-panel]").forEach((p) => {
+            p.hidden = p.dataset.panel !== btn.dataset.tab;
+          });
+        });
+      });
+      // Row -> detail, detail -> back.
+      inbox.querySelectorAll("[data-open]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const d = inbox.querySelector('[data-det="' + btn.dataset.open + '"]');
+          if (d) d.hidden = false;
+        });
+      });
+      inbox.querySelectorAll("[data-back]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          btn.closest(".det").hidden = true;
+        });
+      });
+      // The launcher tile scrolls to the inbox frame, so badge -> screen is a real path.
+      document.querySelector('[data-goto="inbox"]').addEventListener("click", () => {
+        inbox.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Review inbox · C · waiting on you, one dot</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --location: #6fb6b1; --location-tint: rgba(111, 182, 177, 0.13);
+        --accent: var(--steel);
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --fs-composer: calc(17px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --surface-composer: #ffffff;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+        --scrim: rgba(0, 0, 0, 0.28);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --surface-composer: #141518;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+        --scrim: rgba(0, 0, 0, 0.5);
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; color: inherit; }
+      /* `hidden` must beat the flex display the panels carry by class. */
+      [hidden] { display: none !important; }
+
+      .demo-bar { width: 100%; max-width: 1240px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 8px 15px; min-height: 36px; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1240px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.6; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption code { font-family: var(--font-mono); font-size: 0.92em; color: var(--text); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--green-tint); color: var(--green); margin-bottom: 8px; }
+
+      .row { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; align-items: flex-start; width: 100%; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 792px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      /* ---- top bar, with the waiting dot in the status cluster ---- */
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); position: relative; z-index: 2; }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; padding: 8px; margin-left: -8px; min-width: 40px; }
+      .bar .back svg { width: 20px; height: 20px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .mark { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+      .bar .mark i { color: var(--steel); font-style: normal; }
+      .bar .cluster { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+      .bar .vit { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+      /* The whole signal: one 8px steel dot, 44px target, no number, absent when empty. */
+      .waitdot { width: 44px; height: 44px; display: grid; place-items: center; background: none; border: none; margin-right: -10px; }
+      .waitdot i { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--steel); display: block; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px; }
+      .lede { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.55; padding: 0 2px; }
+      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .d-general { background: var(--steel); } .d-health { background: var(--rose); }
+      .d-finance { background: var(--violet); } .d-location { background: var(--location); }
+      .mono { font-family: var(--font-mono); }
+      .chip { font-size: var(--fs-micro); padding: 3px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
+      .chip-open { background: var(--amber-tint); color: var(--amber); }
+      .chip-ok { background: var(--green-tint); color: var(--green); }
+      .chip-work { background: var(--steel-tint); color: var(--steel); }
+      .chip-held { background: var(--location-tint); color: var(--location); }
+
+      /* ---- home stream + wiki reader backdrops ---- */
+      .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; }
+      .day-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .note { padding: 13px 15px; display: flex; flex-direction: column; gap: 5px; }
+      .note + .note { border-top: 1px solid var(--border); }
+      .note-head { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .note-body { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 14px 16px; display: flex; flex-direction: column; gap: 7px; }
+      .cbox { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); min-height: 48px; display: flex; align-items: center; padding: 0 13px; color: var(--text-3); font-size: var(--fs-composer); }
+      .cfoot { font-size: var(--fs-micro); color: var(--text-3); text-align: center; }
+      .modeseg { display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; align-self: center; }
+      .modeseg span { font-size: var(--fs-micro); padding: 6px 15px; color: var(--text-3); }
+      .modeseg span[data-on] { background: var(--green-tint); color: var(--green); }
+      .art h1 { font-size: var(--fs-title); font-weight: 600; }
+      .art p { font-size: var(--fs-note); line-height: 1.6; color: var(--text-2); }
+      .art p b { color: var(--text); font-weight: 500; }
+
+      /* ---- the sheet (DESIGN.md modal system: bottom sheet, grabber, visible exit) ---- */
+      .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 3; }
+      .sheet {
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; height: 74%;
+        background: var(--bg); border-top: 1px solid var(--border);
+        border-radius: 20px 20px 0 0; display: flex; flex-direction: column; overflow: hidden;
+      }
+      .grab { height: 24px; flex: none; display: grid; place-items: center; }
+      .grab span { width: 38px; height: 4px; border-radius: var(--r-pill); background: var(--border); }
+      .shead { display: flex; align-items: center; gap: 10px; padding: 2px 14px 10px; flex: none; }
+      .shead h2 { font-size: var(--fs-body); font-weight: 500; }
+      .shead .x { margin-left: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); width: 34px; height: 34px; display: grid; place-items: center; color: var(--text-2); }
+      .shead .x svg { width: 16px; height: 16px; }
+
+      .stabs { display: flex; margin: 0 14px; border-bottom: 1px solid var(--border); flex: none; }
+      .stabs button { flex: 1; appearance: none; border: none; background: none; color: var(--text-3); font-size: var(--fs-secondary); min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+      .stabs button[aria-selected="true"] { color: var(--text); font-weight: 500; border-bottom-color: var(--steel); }
+      .stabs .n { font-size: 11px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-3); }
+      .stabs button[aria-selected="true"] .n { background: var(--steel-tint); color: var(--steel); }
+
+      /* ---- thread rows inside the sheet: answerable without leaving ---- */
+      .tcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-card); }
+      .tcard .head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
+      .tcard .head .when { margin-left: auto; }
+      .tcard .quote { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .tcard .ask { font-size: var(--fs-note); color: var(--text); line-height: 1.5; }
+      .tcard .ask code { font-family: var(--font-mono); font-size: 0.88em; color: var(--text-2); }
+      .answers { display: flex; gap: 7px; flex-wrap: wrap; }
+      .answers button { min-height: 40px; padding: 8px 14px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); }
+      .answers button.open { color: var(--text-2); }
+      .tfoot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
+      .tfoot .go { margin-left: auto; color: var(--steel); }
+
+      /* ---- wiki rows: expand in place, no push ---- */
+      .wcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .wrow { display: flex; width: 100%; background: none; border: none; border-bottom: 1px solid var(--border); text-align: left; }
+      .wcard > *:last-child { border-bottom: none; }
+      .wrow .body { flex: 1; min-width: 0; padding: 11px 13px; display: flex; flex-direction: column; gap: 5px; }
+      .wrow .line { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-3); font-family: var(--font-mono); }
+      .wrow .line .when { margin-left: auto; font-family: inherit; }
+      .wrow .sum { font-size: var(--fs-secondary); color: var(--text); line-height: 1.4; }
+      .wrow .meta { font-size: var(--fs-micro); color: var(--text-3); }
+      .wchev { flex: none; width: 30px; display: grid; place-items: center; color: var(--text-3); }
+      .wchev svg { width: 15px; height: 15px; transition: transform 150ms ease-out; }
+      .wrow[aria-expanded="true"] .wchev svg { transform: rotate(90deg); }
+      .wbody { border-bottom: 1px solid var(--border); background: var(--surface-2); padding: 12px 13px; display: flex; flex-direction: column; gap: 10px; }
+      .side { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+      .side .nm { font-size: var(--fs-secondary); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+      .side .nm em { font-style: normal; font-size: var(--fs-micro); color: var(--text-3); font-weight: 400; }
+      .edge { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
+      .edge b { color: var(--text); font-weight: 500; }
+      .stmt { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
+      .src { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; border-left: 2px solid var(--border); padding-left: 10px; }
+      .h3 { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+      .acts { display: flex; flex-direction: column; gap: 8px; }
+      .acts button { min-height: 46px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-secondary); padding: 9px 14px; text-align: left; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+      .acts button.primary { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 500; }
+      .acts button small { color: var(--text-3); font-size: 11px; line-height: 1.35; }
+      .acts button.primary small { color: var(--steel); opacity: 0.85; }
+      .foot2 { display: flex; gap: 8px; }
+      .foot2 button { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: var(--fs-secondary); align-items: center; justify-content: center; display: flex; }
+
+      .calm { margin: auto 0; text-align: center; color: var(--text-2); font-size: var(--fs-secondary); line-height: 1.6; padding: 0 26px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+      .calm svg { width: 26px; height: 26px; color: var(--text-3); }
+
+      .tilebar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 0 14px 18px; }
+      .tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); min-height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-2); font-size: var(--fs-micro); box-shadow: var(--shadow-card); }
+      .tile svg { width: 22px; height: 22px; }
+      .tile-badge { position: absolute; top: 8px; right: 9px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); font-size: 11px; display: grid; place-items: center; font-weight: 600; }
+
+      .note-foot { width: 100%; max-width: 1240px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.7; border-top: 1px solid var(--border); padding-top: 14px; }
+      .note-foot b { color: var(--text-2); font-weight: 500; }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title">
+        <b>Variant C — “waiting on you”, one dot</b> · the two tabs are a sheet you can reach from
+        anywhere
+      </div>
+      <div class="seg" role="group" aria-label="theme">
+        <button type="button" data-theme-btn="dark" aria-pressed="true">Dark</button>
+        <button type="button" data-theme-btn="light" aria-pressed="false">Light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">C</span><br />
+      C reads Principle 5 — <b>honest status, always visible</b> — as covering this too: if something
+      is waiting on you, the app should not make you go and check. The signal is a single <b>steel
+      dot in the top bar’s status cluster</b>, on every screen, <b>never a number</b>, and simply
+      absent when nothing waits. Tapping it raises a <b>“Waiting on you”</b> sheet carrying the two
+      tabs — <b>Notes</b>, where the question is answerable inline without leaving the screen you
+      were on, and <b>Wiki</b>, where a finding expands in place. The Review tile stays on the
+      launcher as the second door, because a sheet must never be the only way in.
+    </div>
+
+    <div class="row">
+      <!-- ============ FRAME 1 — home, tap the dot ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · Home — <b>tap the steel dot</b></div>
+        <div class="phone" id="p1">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <div class="cluster">
+              <button class="waitdot" type="button" data-open-sheet="s1" aria-label="3 threads and 5 findings waiting on you"><i></i></button>
+              <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+            </div>
+          </div>
+          <div class="scroll">
+            <div class="day-header">Today</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-health"></span>08:41</div>
+                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
+              </div>
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>07:12</div>
+                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
+              </div>
+            </div>
+            <div class="day-header">Yesterday</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>18:03</div>
+                <div class="note-body">Priya moved to the Marina place in March — finally out of the Sunset.</div>
+              </div>
+            </div>
+            <p class="lede">The stream rows are untouched. The only new pixel in the app is the dot
+              up there — 8px, <span class="mono">--steel</span>, no count, 44px target. It is the same
+              accent the Tasks pattern uses for unviewed recognition
+              (<span class="mono">DESIGN.md</span> “Tasks — the result band”), just without the pill.</p>
+          </div>
+          <div class="composer">
+            <div class="modeseg"><span data-on>Entry</span><span>Research</span><span>Full Brain</span></div>
+            <div class="cbox">What happened?</div>
+            <div class="cfoot">Saved to your wiki · no AI.</div>
+          </div>
+
+          <!-- SHEET -->
+          <div class="scrim" data-sheet="s1" hidden></div>
+          <div class="sheet" data-sheet="s1" hidden>
+            <div class="grab"><span></span></div>
+            <div class="shead">
+              <h2>Waiting on you</h2>
+              <button class="x" type="button" data-close-sheet aria-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+            </div>
+            <div class="stabs" role="tablist">
+              <button type="button" role="tab" data-tab="notes" aria-selected="true">Notes <span class="n">3</span></button>
+              <button type="button" role="tab" data-tab="wiki" aria-selected="false">Wiki <span class="n">5</span></button>
+            </div>
+
+            <div class="scroll" data-panel="notes">
+              <div class="tcard">
+                <div class="head"><span class="dot d-general"></span>note · 30 Aug<span class="when">asked 9 days ago</span></div>
+                <div class="quote">“Dad’s shop is closing at the end of the quarter.”</div>
+                <p class="ask">Is “the shop” <b>Hopkins Hardware</b>, or the <b>Redwood City lot</b>
+                  you also call the shop? They’re separate entities and I don’t want to close the
+                  wrong one.</p>
+                <div class="answers">
+                  <button type="button">Hopkins Hardware</button>
+                  <button type="button">Redwood City lot</button>
+                  <button type="button" class="open">Say it another way…</button>
+                </div>
+                <div class="tfoot"><span class="chip chip-ok">1 committed</span><span class="go">open the thread ›</span></div>
+              </div>
+              <div class="tcard">
+                <div class="head"><span class="dot d-general"></span>note · 6 Sep<span class="when">asked 2 days ago</span></div>
+                <div class="quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
+                <p class="ask">Was that March this year or last? I closed
+                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
+                  start date is unsure.</p>
+                <div class="answers">
+                  <button type="button">March 2026</button>
+                  <button type="button">March 2025</button>
+                  <button type="button" class="open">Say it another way…</button>
+                </div>
+                <div class="tfoot"><span class="chip chip-ok">4 committed</span><span class="go">open the thread ›</span></div>
+              </div>
+              <div class="tcard">
+                <div class="head"><span class="dot d-health"></span>note · 8 Sep<span class="when">asked 6h ago</span></div>
+                <div class="quote">“Started 10mg of the new one Tuesday, no side effects so far.”</div>
+                <p class="ask">Which is “the new one” — the <b>lisinopril</b> from 4 Mar, or the
+                  <b>atorvastatin</b> Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
+                <div class="answers">
+                  <button type="button">Lisinopril</button>
+                  <button type="button">Atorvastatin</button>
+                  <button type="button" class="open">Say it another way…</button>
+                </div>
+                <div class="tfoot"><span class="chip chip-ok">2 committed</span><span class="go">open the thread ›</span></div>
+              </div>
+              <p class="lede">Answering here posts the reply into the thread and closes the card — the
+                sheet drops away and you are back where you were. “Say it another way…” opens the
+                full thread instead.</p>
+              <div class="tcard" style="opacity: 0.72">
+                <div class="head"><span class="dot d-health"></span>note · 12 Aug import<span class="when">4 min</span></div>
+                <div class="quote">Medical records — 14-page attachment</div>
+                <div class="tfoot"><span class="chip chip-work">still reading · nothing written yet</span></div>
+              </div>
+            </div>
+
+            <div class="scroll" data-panel="wiki" hidden>
+              <div class="wcard">
+                <button class="wrow" type="button" data-acc="c1" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-general"></span>wiki_contradiction<span class="when">5 Sep</span></span>
+                    <span class="sum">Priya Raghavan’s article says she left Meridian Health in March 2024; Meridian Health’s article still lists her as current staff.</span>
+                    <span class="meta">2 entities · 2 sources</span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="c1" hidden>
+                  <div class="h3">the source both were read from</div>
+                  <p class="src">“Ran into Priya at the market. She’s been out of Meridian since
+                    March, doing locum work while she decides what’s next.”
+                    <span style="color: var(--text-3)">— note, 2 Apr 2024</span></p>
+                  <p class="src">“Meridian’s staff page still has Priya under radiology — probably
+                    just stale.” <span style="color: var(--text-3)">— note, 17 Jan 2026</span></p>
+                  <div class="h3">what clashes</div>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
+                    <div class="edge"><b>worksFor</b> → Meridian Health <span style="color: var(--text-3)">(until Mar 2024)</span></div>
+                    <p class="stmt">“Worked at Meridian Health as a radiologist until March 2024.”</p>
+                  </div>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-general"></span>Meridian Health <em>Organization</em></div>
+                    <div class="edge"><b>employs</b> → Priya Raghavan <span style="color: var(--text-3)">(current)</span></div>
+                    <p class="stmt">“Priya Raghavan is a staff radiologist.”</p>
+                  </div>
+                  <div class="acts">
+                    <button type="button" class="primary">Priya’s side is right
+                      <small>closes <span class="mono">employs</span> on Meridian at Mar 2024 and rebuilds both articles</small></button>
+                    <button type="button">Meridian’s side is right
+                      <small>reopens Priya’s <span class="mono">worksFor</span> interval</small></button>
+                    <button type="button">Not a contradiction
+                      <small>dismisses the card; the linter won’t re-file this pair</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+
+                <button class="wrow" type="button" data-acc="c2" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-general"></span>wiki_stale_claim<span class="when">5 Sep</span></span>
+                    <span class="sum">Hopkins Hardware’s article says the shop “is currently hiring”. That came from a note captured 14 Mar 2025 and nothing has renewed it.</span>
+                    <span class="meta">1 fact · framed as current</span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="c2" hidden>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-general"></span>Hopkins Hardware <em>Organization</em></div>
+                    <div class="edge"><b>hiringStatus</b> → currently hiring <span style="color: var(--text-3)">(since 14 Mar 2025)</span></div>
+                    <p class="stmt">“The shop is currently hiring for the spring season.”</p>
+                  </div>
+                  <p class="src">“Dad put a card in the window — they’re hiring for the spring.”
+                    <span style="color: var(--text-3)">— note, 14 Mar 2025</span></p>
+                  <div class="acts">
+                    <button type="button" class="primary">Stop calling it current
+                      <small>closes the fact’s interval at 14 Mar 2025 and rewrites the sentence in past tense</small></button>
+                    <button type="button">It is still true
+                      <small>re-stamps the claim as current; the linter waits another 12 months</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+
+                <button class="wrow" type="button" data-acc="c3" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-health"></span>low_confidence · firewall_address<span class="when">12 Aug</span></span>
+                    <span class="sum">A postal address on <b>Meridian Imaging Center</b> was held out of the health domain.</span>
+                    <span class="meta"><span class="chip chip-held">held — never committed</span></span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="c3" hidden>
+                  <p class="stmt">The 12 Aug import carried a postal address on Meridian Imaging
+                    Center. Location facts never land in the health domain, so it was held at
+                    integration time and <b style="color: var(--text)">nothing was written</b>.</p>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-location"></span>Meridian Imaging Center <em>Organization</em></div>
+                    <div class="edge"><b>address</b> → <span style="color: var(--text-3)">held — not shown in health</span></div>
+                    <p class="stmt">page 2 · <span class="mono">firewall_address</span> · Layer 2,
+                      after the parsers had already stripped the address once</p>
+                  </div>
+                  <div class="acts">
+                    <button type="button" class="primary">Keep it out
+                      <small>the recommended default — the fact stays unwritten and the card closes</small></button>
+                    <button type="button">File it under Location
+                      <small>writes the address on the <span class="mono">location</span> domain, where an address belongs</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+
+                <button class="wrow" type="button" data-acc="c4" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-health"></span>low_confidence · emr_unrecognized_source<span class="when">12 Aug</span></span>
+                    <span class="sum"><span class="mono" style="font-size: 0.92em">radiology_report_2026-08-09.pdf</span> matched no parser fingerprint.</span>
+                    <span class="meta">nothing extracted · PDF still attached</span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="c4" hidden>
+                  <p class="stmt">None of the four known layouts (Epic, OneContent, athena, ARIA)
+                    matched this file, so it was routed here rather than free-extracted. The PDF is
+                    still attached to the 12 Aug note and is searchable; no facts were minted from it.</p>
+                  <div class="acts">
+                    <button type="button" class="primary">Leave it as an attachment
+                      <small>closes the card; the file stays readable but ungraphed</small></button>
+                    <button type="button">Read it as a conversation
+                      <small>hands the PDF to the agent as turn 0, like a note — it commits what it can and asks about the rest</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+
+                <button class="wrow" type="button" data-acc="c5" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-health"></span>low_confidence · emr_intake_failed<span class="when">3 Sep</span></span>
+                    <span class="sum">The 3 Sep import archive would not open.</span>
+                    <span class="meta">no partial write · zip still on the note</span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="c5" hidden>
+                  <p class="src mono" style="font-size: var(--fs-micro)">no candidate password
+                    decrypted the archive (Bad password for file 'MyChart_Export.zip')</p>
+                  <p class="stmt">Nothing was attached and nothing was written — the importer fails
+                    closed, and the encrypted zip is still on the note with its password unscrubbed.</p>
+                  <div class="acts">
+                    <button type="button" class="primary">Add the password to the note
+                      <small>opens the note; the importer re-runs and this card retires itself</small></button>
+                    <button type="button">Give up on this archive
+                      <small>dismisses the card; the zip stays attached and untouched</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+              </div>
+              <p class="lede">A finding expands in place rather than pushing a detail: the sheet is a
+                shallow surface and should stay one level deep. Anything that genuinely needs
+                prev/next still opens the full Review screen from the launcher.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ FRAME 2 — the same dot, from a different screen ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · Anywhere else — <b>same dot, same sheet</b></div>
+        <div class="phone" id="p2">
+          <div class="bar">
+            <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+            <span class="ttl">Priya Raghavan</span>
+            <div class="cluster">
+              <button class="waitdot" type="button" data-open-sheet="s2" aria-label="waiting on you"><i></i></button>
+              <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+            </div>
+          </div>
+          <div class="scroll art">
+            <h1>Priya Raghavan</h1>
+            <p><b>Priya Raghavan</b> is a radiologist and a friend of the owner. She worked at
+              <b>Meridian Health</b> until March 2024 and has since been taking locum posts while she
+              decides what’s next.</p>
+            <p>She lived in the <b>Sunset District</b> until March, when she moved to the
+              <b>Marina District</b>.</p>
+            <p class="lede">Reading the wiki is exactly when you are most likely to care that the
+              linter found a contradiction on this page — which is the argument for a signal that
+              travels with you rather than one that sits on a tile.</p>
+          </div>
+
+          <div class="scrim" data-sheet="s2" hidden></div>
+          <div class="sheet" data-sheet="s2" hidden>
+            <div class="grab"><span></span></div>
+            <div class="shead">
+              <h2>Waiting on you</h2>
+              <button class="x" type="button" data-close-sheet aria-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+            </div>
+            <div class="stabs" role="tablist">
+              <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes <span class="n">3</span></button>
+              <button type="button" role="tab" data-tab="wiki" aria-selected="true">Wiki <span class="n">5</span></button>
+            </div>
+            <div class="scroll" data-panel="notes" hidden>
+              <div class="tcard">
+                <div class="head"><span class="dot d-general"></span>note · 6 Sep<span class="when">asked 2 days ago</span></div>
+                <div class="quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
+                <p class="ask">Was that March this year or last? I closed
+                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
+                  start date is unsure.</p>
+                <div class="answers">
+                  <button type="button">March 2026</button>
+                  <button type="button">March 2025</button>
+                  <button type="button" class="open">Say it another way…</button>
+                </div>
+                <div class="tfoot"><span class="chip chip-ok">4 committed</span><span class="go">open the thread ›</span></div>
+              </div>
+              <p class="lede">Two more threads below.</p>
+            </div>
+            <div class="scroll" data-panel="wiki">
+              <div class="wcard">
+                <button class="wrow" type="button" data-acc="d1" aria-expanded="true">
+                  <span class="body">
+                    <span class="line"><span class="dot d-general"></span>wiki_contradiction<span class="when">5 Sep</span></span>
+                    <span class="sum">Priya Raghavan’s article says she left Meridian Health in March 2024; Meridian Health’s article still lists her as current staff.</span>
+                    <span class="meta">2 entities · 2 sources</span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="d1">
+                  <div class="h3">the source both were read from</div>
+                  <p class="src">“Ran into Priya at the market. She’s been out of Meridian since
+                    March, doing locum work while she decides what’s next.”
+                    <span style="color: var(--text-3)">— note, 2 Apr 2024</span></p>
+                  <p class="src">“Meridian’s staff page still has Priya under radiology — probably
+                    just stale.” <span style="color: var(--text-3)">— note, 17 Jan 2026</span></p>
+                  <div class="h3">what clashes</div>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
+                    <div class="edge"><b>worksFor</b> → Meridian Health <span style="color: var(--text-3)">(until Mar 2024)</span></div>
+                    <p class="stmt">“Worked at Meridian Health as a radiologist until March 2024.”</p>
+                  </div>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-general"></span>Meridian Health <em>Organization</em></div>
+                    <div class="edge"><b>employs</b> → Priya Raghavan <span style="color: var(--text-3)">(current)</span></div>
+                    <p class="stmt">“Priya Raghavan is a staff radiologist.”</p>
+                  </div>
+                  <div class="acts">
+                    <button type="button" class="primary">Priya’s side is right
+                      <small>closes <span class="mono">employs</span> on Meridian at Mar 2024 and rebuilds both articles</small></button>
+                    <button type="button">Meridian’s side is right
+                      <small>reopens Priya’s <span class="mono">worksFor</span> interval</small></button>
+                    <button type="button">Not a contradiction
+                      <small>dismisses the card; the linter won’t re-file this pair</small></button>
+                  </div>
+                  <div class="foot2"><button type="button">defer</button><button type="button">talk it over</button></div>
+                </div>
+                <button class="wrow" type="button" data-acc="d2" aria-expanded="false">
+                  <span class="body">
+                    <span class="line"><span class="dot d-health"></span>low_confidence · firewall_address<span class="when">12 Aug</span></span>
+                    <span class="sum">A postal address on <b>Meridian Imaging Center</b> was held out of the health domain.</span>
+                    <span class="meta"><span class="chip chip-held">held — never committed</span></span>
+                  </span>
+                  <span class="wchev"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg></span>
+                </button>
+                <div class="wbody" data-accbody="d2" hidden>
+                  <div class="side">
+                    <div class="nm"><span class="dot d-location"></span>Meridian Imaging Center <em>Organization</em></div>
+                    <div class="edge"><b>address</b> → <span style="color: var(--text-3)">held — not shown in health</span></div>
+                    <p class="stmt">page 2 · <span class="mono">firewall_address</span></p>
+                  </div>
+                  <div class="acts">
+                    <button type="button" class="primary">Keep it out
+                      <small>the recommended default — the fact stays unwritten and the card closes</small></button>
+                    <button type="button">File it under Location
+                      <small>writes the address on the <span class="mono">location</span> domain</small></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ FRAME 3 — nothing waiting ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · Nothing waiting — <b>the dot is simply gone</b></div>
+        <div class="phone">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <div class="cluster">
+              <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+            </div>
+          </div>
+          <div class="scroll">
+            <p class="lede">No dot, no grey placeholder, no “0”. The status cluster is back to the
+              vitals chart alone, which is what it looks like today. The absence is the state — the
+              same rule the Review tile badge already follows.</p>
+            <div class="calm" style="margin: 30px 0">
+              <svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" /></svg>
+              <p>Nothing is waiting on you.</p>
+              <p style="font-size: var(--fs-micro); color: var(--text-3)">
+                Last note analysed 11 minutes ago · the wiki linter last ran at 03:14</p>
+            </div>
+            <p class="lede">And the sheet, opened deliberately from the launcher tile when there is
+              nothing in it, says the same thing in one calm sentence rather than showing two empty
+              tabs.</p>
+          </div>
+          <p class="lede" style="padding: 0 16px 10px">The second door — the Review tile stays, so
+            the sheet is never the only way in (DESIGN.md: every overlay needs a visible exit, and no
+            surface should be gesture-only).</p>
+          <div class="tilebar">
+            <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
+            <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review</div>
+            <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note-foot">
+      <b>What C commits to.</b> A signal that travels with you: you find out something is waiting
+      while you are already doing something else, which is the only way a question on a nine-day-old
+      note ever gets seen. It costs the most in principle — a persistent mark in global chrome is the
+      closest of the three to the line the owner drew, even without a number — and it costs
+      something in structure too: a sheet is one level deep, so a wiki finding expands in place
+      instead of getting the shipped list → detail with prev/next, and the full Review screen has to
+      keep existing behind the launcher tile for the cases that need it.
+    </p>
+
+    <script>
+      document.querySelectorAll("[data-theme-btn]").forEach((b) => {
+        b.addEventListener("click", () => {
+          document.documentElement.dataset.theme = b.dataset.themeBtn;
+          document.querySelectorAll("[data-theme-btn]").forEach((o) =>
+            o.setAttribute("aria-pressed", String(o === b)),
+          );
+        });
+      });
+
+      // Open / close the sheet (and its scrim).
+      document.querySelectorAll("[data-open-sheet]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document
+            .querySelectorAll('[data-sheet="' + btn.dataset.openSheet + '"]')
+            .forEach((el) => (el.hidden = false));
+        });
+      });
+      const closeSheet = (el) => {
+        const sheet = el.closest("[data-sheet]");
+        if (!sheet) return;
+        document
+          .querySelectorAll('[data-sheet="' + sheet.dataset.sheet + '"]')
+          .forEach((n) => (n.hidden = true));
+      };
+      document
+        .querySelectorAll("[data-close-sheet]")
+        .forEach((btn) => btn.addEventListener("click", () => closeSheet(btn)));
+      document.querySelectorAll(".scrim").forEach((s) =>
+        s.addEventListener("click", () => {
+          document
+            .querySelectorAll('[data-sheet="' + s.dataset.sheet + '"]')
+            .forEach((n) => (n.hidden = true));
+        }),
+      );
+
+      // The two tabs, scoped to their own sheet.
+      document.querySelectorAll(".sheet").forEach((sheet) => {
+        sheet.querySelectorAll("[data-tab]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            sheet.querySelectorAll("[data-tab]").forEach((o) =>
+              o.setAttribute("aria-selected", String(o === btn)),
+            );
+            sheet.querySelectorAll("[data-panel]").forEach((p) => {
+              p.hidden = p.dataset.panel !== btn.dataset.tab;
+            });
+          });
+        });
+      });
+
+      // Answering inline is C's whole claim, so it actually works: the card resolves in
+      // place, the Notes count drops, and when the last one goes the dot disappears.
+      document.querySelectorAll(".answers button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const card = btn.closest(".tcard");
+          const sheet = btn.closest(".sheet");
+          if (!card || !sheet) return;
+          if (btn.classList.contains("open")) return; // "say it another way" opens the thread
+          card.querySelector(".ask").innerHTML =
+            '<b>' + btn.textContent.trim() + "</b> — thanks. Filed as a clarification on the note; " +
+            "the start date is committed and the thread is closed.";
+          card.querySelector(".answers").remove();
+          const foot = card.querySelector(".tfoot");
+          foot.innerHTML = '<span class="chip chip-ok">answered · committed</span>' +
+            '<span class="go">open the thread ›</span>';
+          const notes = sheet.querySelector('[data-tab="notes"] .n');
+          const wiki = sheet.querySelector('[data-tab="wiki"] .n');
+          notes.textContent = String(Math.max(0, Number(notes.textContent) - 1));
+          // The dot is derived from both tabs, never sticky — it goes only when both are 0.
+          if (Number(notes.textContent) + Number(wiki.textContent) === 0) {
+            const dot = sheet.closest(".phone").querySelector(".waitdot");
+            if (dot) dot.hidden = true;
+          }
+        });
+      });
+
+      // Wiki findings expand in place.
+      document.querySelectorAll("[data-acc]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const body = document.querySelector('[data-accbody="' + btn.dataset.acc + '"]');
+          const open = btn.getAttribute("aria-expanded") === "true";
+          btn.setAttribute("aria-expanded", String(!open));
+          if (body) body.hidden = open;
+        });
+      });
+    </script>
+  </body>
+</html>
