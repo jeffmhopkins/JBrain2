@@ -2,196 +2,234 @@
 
 > **Status:** Scheduled · **Last verified:** 2026-09-08 · **Waves:** W1◻️ W2◻️ W3◻️ W4◻️ W5◻️
 
-Owner-ratified 2026-09-08. Research behind it: the eighteen dossiers in
-`docs/research/agent-ingest/`, consolidated in `SYNTHESIS.md`. No code written yet.
+Owner-ratified 2026-09-08, then revised the same day against six independent cold
+reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
+eighteen dossiers in `docs/research/agent-ingest/`, consolidated in `SYNTHESIS.md`. The
+proposed tool list is `docs/research/agent-ingest/TOOL_SURFACE.md`. No code written yet.
 
 ## Thesis
 
 A note is turn 0 of a conversation, and that conversation is **the ordinary agent
-conversation** — not a second, hidden ingest path. The agent reads the note, writes
-what it means through tools, and shows you what it did. You correct it by talking to
-it. Deterministic code still owns *how* a write lands: `supersession.decide()`, the
-domain floors, span attestation, the projections.
+conversation** — same loop, same memory, no second hidden ingest path. The agent reads
+the note, writes what it means through tools, and shows you what it did. You correct it
+by talking to it. Deterministic code still owns *how* a write lands:
+`supersession.decide()`, the domain floors, span attestation, the projections.
 
-The model supplies meaning; the engine supplies mechanics. Eighteen dossiers reached
-that split from unrelated starting points. What changed at ratification is the
-*posture*: the agent does not hold facts back for approval. It commits its reading and
-makes the write legible, and disagreement is a reply, not a queue.
+The model supplies meaning; the engine supplies mechanics. What ratification changed is
+the *posture*: the agent does not hold facts back for approval. It commits its reading
+and makes the write legible, and disagreement is a reply, not a queue.
 
 ## Decisions ratified
 
 | # | Decision |
 | --- | --- |
-| D1 | **One agent, one conversation type.** A note conversation is the same agent, loop, memory and session as chat. No separate ingest agent, no hidden path. |
-| D2 | **Clear facts commit; the agent asks only when it cannot proceed.** No confidence threshold, server-side or model-side. `ask_owner` is for genuine ambiguity (two equally-good Daves), not for caution. |
-| D3 | **Every tool call is visible as an "entity modified" chip**, expandable to what was added or changed. Correction is conversational: you disagree in the thread and the agent fixes it. |
-| D4 | **No review inbox.** Conversations are the only surface. The inbox redirects to the relevant thread in W2 and is deleted in W5. |
-| D5 | **Questions live in the note's thread only** — no queue, no launcher tile, no badge, no expiry ladder. An unanswered question just sits in its thread. |
+| D1 | **One agent, one conversation type.** A note conversation is the same agent, loop and memory as chat — but **its own closed tool allowlist**, never the curator wildcard (D16). |
+| D2 | **Clear facts commit; the agent asks only when it cannot proceed.** No confidence threshold, server-side or model-side. `ask_owner` is for genuine ambiguity, not caution. |
+| D3 | **Every tool call is visible as an "entity modified" chip**, expandable to what changed. Correction is conversational. |
+| D4 | **The inbox becomes two tabs** (revised): a **notes** tab listing threads waiting on you, and a **wiki** tab for findings that never start from a note. No ingest review cards on either. |
+| D5 | **Questions live in their note's thread** — and are *findable* from the notes tab (revised: the original "no queue at all" left no discoverability answer). Still no push and no nagging badge. |
 | D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. Re-analysis reads the whole thing. |
-| D7 | **Re-derivability stays binding.** The clarification blocks are chunks of the same note, so the graph re-derives from notes alone and `wiki_citations` has a real chunk to cite. |
-| D8 | **Unattended, the first pass gets graph tools only.** No outward-facing tool runs while you are asleep. The full tool surface unlocks the moment you reply in the thread. |
-| D9 | **EMR import goes through the agent conversation, like a note** — reversing this plan's earlier "no model between a lab result and the record". Large imports chunk across several turns. |
-| D10 | **Intake commits like a note, unrestricted.** `ASSISTANT.md` #10 is retired, not amended. Risk accepted below. |
-| D11 | **Correction notes are retired.** The conversation replaces them; `correction=True` survives as what the conversational-correction tool sets, so force-supersede + pin keep their semantics. |
-| D12 | **Attachment-sourced facts commit**, marked as attachment-sourced on the chip. No hold. |
-| D13 | **No gate spike.** Build straight through. W1 and W2 land before anything is deleted, so stopping at W2 remains the retreat. |
-| D14 | **Throughput accepted as-is** — a note costs a multi-turn conversation instead of two calls, on a serial single GPU. No fast path, no quiet-hours mode. |
-| D15 | **`owner_prefs`** — see below. |
+| D7 | **Re-derivability stays binding.** Clarification blocks are chunks of the same note, so the graph re-derives from notes alone and citations have a real chunk. |
+| D8 | **Unattended, the first pass gets graph tools only.** Nothing outward-facing runs while you are asleep. The full surface unlocks when you reply. |
+| D9 | **EMR import goes through the agent conversation, like a note.** Large imports chunk across several turns. |
+| D10 | **Intake commits like a note, unrestricted** in *what* it may write. `ASSISTANT.md` #10 is amended, not retired (D16 changed what that costs). |
+| D11 | **Correction notes are retired.** `correction=True` survives as what `correct_fact` sets, so force-supersede + pin keep their semantics. |
+| D12 | **Attachment-sourced facts commit**, marked as attachment-sourced on the chip. |
+| D13 | **No gate spike.** Build straight through; W1 and W2 land before anything is deleted. |
+| D14 | **Throughput accepted as-is.** No fast path, no quiet-hours mode. |
+| D15 | **`owner_prefs`** — a standing-instructions document; see below. |
+| D16 | **The note conversation has a closed tool allowlist**, an explicit `AgentProfile` with `tools=frozenset({...})`, never `allow=None`. `file_correction`, `add_source_exclusion`, `make_intake_link` and `remember` are provably outside it. |
+| D17 | **`prefs_write` stages a Proposal you approve**, the `remember.tool` pattern — enforced by code, not by the model behaving. |
+| D18 | **The agent chooses the domain for predicates the registry has never seen.** For the ~45 registered sensitive predicates the floor still wins regardless (`pipeline.py:1945-1949`); the agent's choice is load-bearing only on novel ones. This reverses `arbiter.py:163`'s "never a model per-fact domain" rule, deliberately and in a bounded way. |
 
 ### `owner_prefs`
 
-A single capped Markdown document of your standing instructions ("how to handle recipe
-notes", "stop splitting ingredients", "never infer a mood"), modelled directly on the
-archivist's cross-session memory (`agent/archivisttools.py`, `models/archivist.py`): an
-owner-only table, a read tool and a write tool, no separate Settings editor — you see
-changes as tool-call chips like any other write.
+A single capped Markdown document of standing instructions ("how to handle recipe
+notes", "stop splitting ingredients"), on the archivist's cross-session-memory shape
+(`models/archivist.py`, `agent/archivisttools.py`): an owner-only table, read and write
+tools, no separate Settings editor.
 
 - **Injected into every note conversation's prompt**, ahead of the note.
-- **`prefs_write` fires only when you ask for it** ("remember that", "stop doing that").
-  It is never a tool the agent reaches for on its own initiative, and it never proposes
-  a rule unprompted. This is the one gated write in the design, because it is the thing
-  that steers every other one.
+- **`prefs_write` fires only on your explicit request, and stages a Proposal** (D17). The
+  archivist's bare full-replace upsert is *not* the model to copy for the write half —
+  it is safe only because it is `permission: web` and reads no untrusted text. Use
+  **delta ops** (`memory_edit`'s add/replace/remove on numbered rules), not a full
+  rewrite.
 - **New rules apply forward only.** When one lands, the agent reports how many existing
-  notes it would change and offers to re-run them — the W4 rebuild machinery, scoped.
+  notes it would change and offers to re-run them — the W1 rebuild sweep, scoped.
 
 ## What ratification removed
 
-Recorded so the research trail stays readable against the dossiers:
-
-- **Wave 0, the gate spike, and its pre-registered kill numbers** (was D5/D6). The
-  design no longer rests on the agent's commit-vs-hold judgment, so three of the four
-  thresholds measured something nothing depends on. llama.cpp tool-calling reliability
-  is now discovered in W3; the serving-stack question (llama.cpp's grammar-XOR-tools
-  constraint vs. vLLM/SGLang + XGrammar) is decided there, on observed behaviour.
-- **The question expiry ladder** (was D2) — 7d/30d/60d decay to a marked assumption.
-  Nothing blocks on an answer any more, so there is nothing to expire.
-- **The I5 sensitive hold.** An inferred fact on a deterministically floored sensitive
-  predicate used to wait for review (`arbiter.py:155-170`). It now commits and shows.
-  The floor itself stays: the fact is still written into `health`, still firewalled.
-- **The OCR auto-commit carve-out** — replaced by the attachment-sourced marking (D12).
-- **The launcher-tile queue** from D8's GUI decision. Variant C's note threads stand;
-  its queue placement does not.
+- **Wave 0, the gate spike and its kill numbers.** The design no longer rests on the
+  agent's commit-vs-hold judgment. llama.cpp tool reliability and the serving-stack
+  question are learned in W3.
+- **The question expiry ladder.** Nothing blocks on an answer, so nothing expires.
+- **The I5 sensitive hold** (`arbiter.py:159-171`). The floor itself stays.
+- **The OCR auto-commit carve-out**, replaced by the attachment-sourced marking (D12).
+- **Ingest review cards** — the arbiter-derived kinds (`low_confidence_inference`,
+  `ambiguous_mention`, `new_predicate`). **Not** the `review_items` table itself: see
+  constraint 4.
 
 ## Binding constraints
 
-Baked in from the start, not discovered in wave 3:
+Corrected against the code by the cold reviews; the pre-review versions of 1, 2, 3 and 5
+were wrong.
 
-1. `wiki_citations.chunk_id` is `NOT NULL` (`0046:159`) behind a trigger requiring
-   `citation.domain_code = chunk.domain_code = fact.domain_code` (`0046:196-211`), and
-   `wiki/builder.py:520-530` INNER JOINs chunks. A clarification block must therefore be
-   chunked **in the domain of the fact it clarifies**, not the note's captured domain.
-2. **Session scope.** `integrate_note` is unstamped today, so it runs `SYSTEM_CTX`,
-   all-domains (`worker.py:113-122`) — safe while the writer is code, not once a tool
-   loop holds it. But narrowing to a single domain breaks resolution: entity lookup
-   already ratchets in SQL to `domain_code IN (:dom, 'general')`
-   (`analysis/entities.py:157,224,291,419,456`), and `has_domain_scope` under
-   `owner_scoped` (`0015`) would hide the `general` half. **The conversation therefore
-   runs owner-scoped to `(note_domain, 'general')`** — matching the existing ratchet —
-   and a floored write into a domain the session does not hold happens **inside
-   `commit_facts`**, deterministic code, in its own scoped session. Never a model-facing
-   escalation.
-3. No destructive verb in the model's vocabulary. `jbrain_app` holds `DELETE` on
-   **five** tables — `facts, temporal_tokens, review_items, note_analysis, entities`
-   (`0009:34-39`) — and the *ingest* path uses it, not only purge
-   (`pipeline.py:947`, `_sweep_stale_ambiguous`). Retiring the inbox (D4) removes most of
-   those call sites; what remains moves to `SECURITY DEFINER` and the grants are revoked.
-4. `supersession.decide()` stays the implementation of the write tool, never a
-   model-facing verb. This is what keeps the 75 scenario files' assertions alive.
-5. **`_apply` is a whole-note declarative writer.** It retracts every fact of the note
-   the re-run no longer asserts (`pipeline.py:904-916`) — that is what makes editing a
-   note drop the facts it removed. Tool calls write as they are made (D1: a normal agent
-   loop), so **the sweep becomes an explicit end-of-turn step**. Lose it and re-analysis
-   stops being self-correcting.
-6. The `entity_mentions` write is un-gated — it is the co-mention spine `neighborhood()`
-   traverses and would degrade silently over months.
-7. `entity_mentions.chunk_id` NOT NULL (`0006:89-104`) must accept a clarification-block
-   anchor.
-8. **No JSON-Schema `enum` anywhere** — it segfaults llama.cpp's harmony grammar
-   (`STRIX_HALO_SETUP.md:592-601`). Values go in descriptions, validated in handlers.
-9. **The unattended tool surface is enforced by the registry, not the prompt.** D8 is a
-   property of which handlers are bound, not an instruction the model can be talked out of.
-10. Note delete is a **soft** delete (`notes/repo.py:174-194`) — FK cascades do not fire;
-    conversation purge is explicit in `analysis/purge.py`.
+1. **Citations.** `wiki_citations.chunk_id` is `NOT NULL` (`0046:159`) behind a trigger
+   requiring `citation.domain = chunk.domain = fact.domain` (`0046:187-217`), and
+   `wiki/builder.py:527` INNER JOINs chunks. The mechanism for a fact that ratchets above
+   its note's domain **already exists**: `_citation_chunk` (`pipeline.py:1645-1687`)
+   get-or-creates a `source_kind='derived'` same-domain copy. So a clarification block is
+   **chunked normally, in the note's captured domain** — chunking it in the fact's domain
+   would make it unsearchable (derived chunks carry no embedding and `search/repo.py:27`
+   excludes them). The derived-chunk INSERT needs the same escalation a floored fact
+   write gets (constraint 2).
+2. **Session scope.** `integrate_note` *is* stamped on the main path; `SYSTEM_CTX` comes
+   from `pipeline.py:311`, where the handler opens its own session. Narrowing is **not**
+   free: `_exact_matches` (`entities.py:563-580`) carries **no domain predicate** and is
+   layer 1 of `resolve_entity`, so narrowing silently mints duplicates, under-counts
+   `AmbiguousEntity` and `same_name_entity_ids`, and weakens the alias collision guard.
+   The conversation therefore runs owner-scoped to `(note_domain, 'general')` **and**
+   entity *reads* keep an explicit cross-domain path through a `SECURITY DEFINER`
+   resolver that re-asserts the ratchet internally. Floored fact writes and derived-chunk
+   writes escalate **inside `commit_facts`**, never as a model-facing verb.
+3. **Destructive verbs.** `jbrain_app` holds `DELETE` on **seven** tables — `0009:34-39`
+   plus `entity_aliases` and `entity_mentions` from `0006:260-261`. Note that in this
+   repo `SECURITY DEFINER` is the idiom for *bypassing* RLS (`0045:203`, `0046:183-188`),
+   so any such delete function must re-assert the domain predicate internally and be
+   unreachable from any model-facing tool.
+4. **`review_items` and `pending_review` survive.** `decide()` returns
+   `insert_status="pending_review"` at twelve sites, and `_lab_status_transition`
+   (`supersession.py:410,484`) is how a **FHIR preliminary lab reading** is represented —
+   `emr_projection.py:117,132,141-150` reads it back. Only the *screen's* ingest tab and
+   the arbiter-derived kinds go. Deleting the status would make a preliminary reading a
+   citable current value; deleting the table would strand held rows with no resolver.
+5. **`supersession.decide()` stays the implementation of the write tool**, never a
+   model-facing verb.
+6. **The settle sweep is whole-note and whole-conversation.** `_apply` retracts every
+   non-pinned, non-derived fact of the note not in `touched` (`pipeline.py:904-917`).
+   `touched` must **accumulate across the whole conversation as durable state** — a
+   per-turn sweep retracts the previous turn's commits. And it must **not run on a
+   truncated turn**: `loop.py:131-133` sets `max_steps=20` and
+   `max_consecutive_tool_errors=3`, and a turn ending partway has asserted only a prefix.
+   Sweep only on a turn that ended cleanly and not `awaiting_owner`.
+7. **`_rebuild_mentions` must become an incremental upsert.** It is
+   `DELETE … WHERE note_id` then re-insert (`pipeline.py:1278`); called per tool call it
+   wipes what the previous call wrote. The mentions write stays un-gated by confidence —
+   it is the co-mention spine `repo.py:667-684` builds and `neighborhood()` traverses.
+8. **No JSON-Schema `enum` in a `.tool` sidecar.** The segfault is scoped to gpt-oss's
+   harmony path and the enum × full-optional-field interaction
+   (`STRIX_HALO_SETUP.md:592-601`) — sound as an authoring rule, not a blanket claim.
+   Note `neighborhood.tool` already carries that exact shape, so it cannot be offered in
+   this persona's tool union.
+9. **The tool surface is enforced by the registry, not the prompt.** D8 and D16 are
+   properties of which handlers are bound. Every write tool must also be added to
+   `NEVER_DEFAULT` (`toolregistry.py:34-41`), or the `allow=None` wildcard hands it to the
+   curator on every ordinary chat turn.
+10. **Every new table needs an RLS isolation test** (CLAUDE.md #3). W2 and W3 add four.
+11. Note delete is a **soft** delete (`notes/repo.py:174-194`), but the same transaction
+    hard-deletes the note's chunks, so `chunk_id` cascades do fire. Conversation purge is
+    explicit.
 
 ## Waves
 
-**W1 — `commit_facts` + the end-of-turn sweep.** Extract the deterministic commit core
-from `_apply` so old callers and new tools share one writer. **Must include the four
-typed projections and provisional→confirmed promotion** (`pipeline.py:951-954,981-987`):
-unhooked, appointments/labs/geofences freeze silently and the nightly hygiene sweep
-hard-deletes never-promoted provisional entities. Plus the sweep as a callable step
-(constraint 5). Reusable under every outcome; unblocks D9/D10.
+**W1 — Commit core, rebuild sweep, and the citation bug.** Extract `commit_facts` from
+`_apply` (one call site, `pipeline.py:533`; ~1,300–1,500 LOC of movement) — **including
+the three projections, the device binding, `_reproject_entities`,
+`_register_declared_aliases`, `repair_chains`, `_sweep_stale_ambiguous`,
+`_sync_truncation_review`, `_upsert_tokens`, `_materialize_inverse` and
+`_propagate_supersession_to_shadows`**. Durable `touched`/`projected` ledger (constraint
+6). Incremental mentions upsert (constraint 7).
 
-**W2 — The conversation surface.** `note_conversations` and turn/tool-call tables on the
-existing agent loop with a restricted registry (D8); the frozen-body + clarification-block
-note model (D6); the "entity modified" chip (D3); the inbox redirect (D4). Ships value
-with or without the write tools, which is the retreat.
+Also here, because they are cheap and independent: **the rebuild sweep** — it composes
+`purge_note_artifacts` + `backfill_pending_integration`, both shipped and already
+resumable, and it is the only corpus-scale proof this refactor preserved behaviour. It
+must preserve pinned facts (`purge.py:96` has no such filter today) and resolved review
+history (no status filter today), and **chain into a wiki rebuild**, since
+`wiki_citations.fact_id` is `ON DELETE SET NULL` and `wiki_articles.entity_ref` is a soft
+ref with no FK. Plus the settle-clause fix (`queue.py:635`), the `merge_entity_pair`
+scoping fix, and **the refresh-path citation bug**: `pipeline.py:2048-2058` never
+re-links `chunk_id` after a re-ingest nulls it, so refreshed facts silently vanish from
+their articles. D6 makes that fire on every answered question.
 
-**W3 — Write tools and `owner_prefs`.** `resolve_entity`, `assert_fact`, `note_mentions`,
-`merge_entities`, `correct_fact`, `ask_owner`; `prefs_read` / `prefs_write` (D15).
-**Includes re-authoring the input half of all 75 harness scenarios**: each step scripts an
-`integrate.note` *intent* today (`tests/harness/runner.py:1-20` — "we are BOTH models"),
-which under tools becomes a scripted tool-call sequence. The `expect` half is untouched.
-This is where the local model's tool reliability is actually learned (D13).
+Verified by `test_apply_intent_pg.py` (20 tests), `test_reanalysis_pg.py` (4), the 75
+scenarios unchanged, and a corpus rebuild diff.
 
-**W4 — Cutover, port, and the rebuild sweep.** Port EMR (D9) and intake (D10) onto the
-conversation. There is currently **no way to rebuild the graph while keeping the notes** —
-the only no-terminal full re-derive destroys them. That sweep is the acceptance
-instrument, the cutover tool, the rollback lever, and what `owner_prefs` re-runs against
-(D15). Must be PWA-operable and resumable.
+**W2 — Conversation shell only.** `note_conversations` + turn/tool-call tables on the
+existing loop; the closed `AgentProfile` (D16) as a mechanism with an empty graph-tool
+set; the frozen-body + clarification-block note model. **No chip, no redirect** — 116
+`.tool` files contain no graph-write verb, so there is nothing to render yet. Honest
+retreat point: the agent reads a note in a visible thread.
 
-**W5 — Teardown.** Delete the old chain, the review-inbox screen and its card-filing code,
-and the correction-note path — only once the new one is proven. Never split deletion from
-replacement (coverage gate).
+**W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
+"entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and
+`toolSummary.ts`; **keep `ClaimDiff.tsx`**, it is the only diff renderer); the two-tab
+inbox (D4); `owner_prefs` + `prefs_write`'s Proposal staging (D17). Re-point
+`runner._compile_intent` to emit tool calls — **one function, not 75 files**; only
+`rel_conjoined_past_employers.json` authors an intent. Then fix the `expect` halves: 9
+scenarios assert a card that will no longer be filed, 8 assert `pending_review` statuses,
+and **47 assert `count: 0` and become vacuously true** — delete those rather than leave
+them green. The eval corpora (`evals/integrate_runner.py` and its cases) are superseded
+too. Author a **new** adversarial scenario running a real model against a hostile body:
+the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
+description.
 
-## Live defects folded in
+**W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
+firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no
+domain-floor backstop and `address`/`geo` are deliberately outside the floor, so it is
+the only guard keeping a home address out of `health`. Its card now lands on the wiki tab
+(D4). The rebuild sweep is already in hand from W1, so it can serve as cutover instrument
+and rollback lever.
 
-Wave 0b's list, re-homed now that W0 is gone. All three are real today, independent of
-this redesign, and each lands in the wave whose work it would otherwise break:
+**W5 — Teardown, decomposed.** W5a: the old chain (`pipeline.py:305-478` + `arbiter.py`,
+~940 LOC), gated on W3's runner re-point. W5b: the arbiter card kinds and the inbox's
+ingest tab, with an explicit surviving-kinds list. W5c: correction-note retirement plus
+the `SECURITY DEFINER` move and grant revoke — a security-path change needing its own RLS
+isolation test, which cannot ride a 3,000-line deletion. **Port `file_correction`
+first**: `PHASE6_WIKI_PLAN.md:255-261` names `plan_intent(correction=True)` as the wiki
+correction loop's shipped exit criterion, and `wiki/lint.py:790` offers it as a card
+action.
 
-- **W1 — the capture-race settle clause compares against `notes.created_at`**, the
-  *client's* capture time. An offline-flushed note with a promised attachment is
-  eligible for body-only integration immediately, defeating the gate in exactly the
-  case it exists for. It must compare against a server-side receipt time.
-- **W3 — `merge_entity_pair` repoints facts with unfiltered `UPDATE`s**, so a
-  cross-domain merge half-completes under a narrowed session. This blocks the
-  `merge_entities` tool directly: constraint 2 puts the conversation on a narrowed
-  scope, which is precisely the condition that breaks it. Fix by scoping the `UPDATE`s
-  and failing loudly on rows left behind, never by widening the session.
-- **Any wave — the live vision route is an abliterated checkpoint** whose GGUF template
-  hard-codes a "never refuse, no pushback" system prompt **above** ours, with no API
-  switch (`llm/local_catalog.py:869-878`). It structurally inverts the
-  data/instruction boundary, which matters more once attachments feed a tool loop (D12).
+The stated per-PR rule is *no PR removes a producer before its replacement is merged and
+green* — the wave-level split of deletion from replacement is deliberate (D13).
 
 ## Risks accepted at ratification
 
-Stated because each is a property the system has today and will not have after:
-
 1. **Intake is third-party text and the agent holds write tools.**
-   `adv_prompt_injection_body_inert.json` passes today because the pipeline only
-   *extracts* — a note body cannot instruct anything. That is not true of a tool loop.
-   The owner declined both a domain restriction and a read-only intake surface. `ASSISTANT.md`
-   #10 is retired outright rather than amended.
-2. **No spike.** llama.cpp may not drive the write tools well enough. Discovered in W3;
-   the retreat is stopping at W2 with the pipeline still writing.
-3. **Inferred sensitive values commit.** An inferred mental-health value lands visibly
-   instead of waiting. Defensible on a single-owner box; no longer a floor.
-4. **5–10× inference per note** (D14), on a serial single GPU. A capture burst or a
-   rebuild will make chat sluggish while it works through.
+   `adv_prompt_injection_body_inert.json` passes today only because the pipeline extracts
+   rather than acts, and its own description says the harness deliberately does not
+   comply — so it proves nothing about a tool loop. D16 removes the sharpest edge (the
+   curator wildcard reaching `file_correction`, whose docstring names the very gate D1
+   removes); what remains is that stranger text drives an owner-identity session, since
+   `owner_scoped` restricts domain data and never identity (`0015:13-15`). Also:
+   `read_note` returns bodies **unframed** (`readtools.py:799-811`), safe today only
+   because bodies are owner-authored — `intake/turn.py`'s `_RECIPIENT_FRAME` is the
+   pattern to adopt.
+2. **No spike.** llama.cpp may not drive the write tools well enough; discovered in W3.
+   The retreat is stopping at W2 — which, honestly stated, leaves a thread that does not
+   explain the graph while the old pipeline writes out of band.
+3. **Inferred sensitive values commit**, and under D18 a novel-predicate clinical fact
+   lands wherever the agent says.
+4. **Cost.** 5–10× inference per note, plus — per answered question — a full re-chunk,
+   re-embed, re-integration and one LLM article rebuild per mentioned entity, on a serial
+   GPU, while you wait in the thread.
+5. **The abliterated checkpoint is *selectable* for the vision route and for
+   `agent.turn`**, not the live default (`router.py:58-59,181` default to
+   `xai:grok-4.3`). Selecting it under this design inverts the data/instruction boundary
+   in a persona holding write tools.
 
 ## Docs to reconcile at merge
 
-Larger than the pre-ratification list, because retiring the inbox and #10 changes what
-several Living docs assert:
+`ASSISTANT.md` (#10 amended; #3/#5/#6 vs. `owner_prefs`; the memory-model section),
+`ANALYSIS.md` (largest — review gates, arbiter holds, the I5 net, `_apply`'s
+decomposition), `DESIGN.md` (the inbox becomes two tabs; the note-body treatment and the
+chip need mock variants under rule 2; the Analysis tab's fate),
+`PHASE6_WIKI_PLAN.md` (the correction-note exit criterion), `EMR_IMPORT_PLAN.md` (§3.6
+firewall, §6.3/§6.6 cards), `SERVICES.md:218`, `ENTITY_GRAPH_INGEST_V2_PLAN.md` §16 and
+§6, `PREDICATE_CANONICALIZATION.md`, `ENTITY_GRAPH_REFOCUS_PLAN.md`, `entity.md`,
+`ARCHITECTURE.md`, `ROADMAP.md`, `backend/evals/README.md`, `docs/mocks/agent-ingest/`
+and `docs/mocks/silent-queue/`.
 
-- `ASSISTANT.md` — #10 retired (D10); the memory-model section gains `owner_prefs`.
-- `ANALYSIS.md` (largest) — the review-gate, arbiter-hold and I5-net sections; the
-  correction-note path; `_apply`'s decomposition.
-- `DESIGN.md` — the three-lane inbox is not a doc-drift fix any more; the inbox goes.
-- `PREDICATE_CANONICALIZATION.md`, `ENTITY_GRAPH_REFOCUS_PLAN.md`, `entity.md`,
-  `ARCHITECTURE.md`.
-- `ROADMAP.md` — Phase 6 status appears to understate what shipped; add this plan.
-- `ENTITY_GRAPH_INGEST_V2_PLAN.md` §16 (the rejection this plan reopens) and §6
-  (re-derivability, preserved by D7).
-- `backend/evals/README.md` — documents a table migration 0092 dropped.
-- `docs/mocks/agent-ingest/` — variant C stands, its queue tile does not (D5).
+Migrations to un-seed or amend, not docs: `0040` (the seeded `resolution.changed`
+trigger, whose consolidate pipeline is the only driver of retroactive predicate
+consolidation), `0009` (DELETE grants), `0024`, `0118`, `0120`.
