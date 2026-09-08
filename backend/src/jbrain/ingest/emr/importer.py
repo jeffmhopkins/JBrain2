@@ -436,10 +436,10 @@ def lower_parse_result(
     (including a facility transfer's segments) and orphan portal observations share
     the intent, so `partOfEncounter`/`hasObservation` refs resolve intra-intent.
 
-    One intent per note — not per grouping unit — because the shipped `_apply`
-    reconciles the whole note (it retracts facts a re-apply doesn't re-assert,
-    pipeline.py's touched-set sweep), so a second per-unit apply on the same note
-    would retract the first unit's facts. The plan's §6.6 per-unit transaction
+    One intent per note — not per grouping unit — because the shipped write path
+    settles the whole note (`settle_note` retracts facts a re-apply doesn't
+    re-assert, pipeline.py's touched-set sweep), so a second per-unit apply on the
+    same note would retract the first unit's facts. The plan's §6.6 per-unit transaction
     isolation (crash-resumability at 216-page scale) is a follow-on that needs
     `apply_intent` to support incremental note commits; for correctness one intent
     per note is right.

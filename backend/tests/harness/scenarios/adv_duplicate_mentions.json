@@ -1,6 +1,6 @@
 {
   "name": "the same name mentioned twice in one note yields one entity",
-  "description": "Adversarial duplicate-mention probe. One extraction lists the SAME mention name ('Cleo') three times (identical name+kind, varying surface_text) plus one fact. resolve_entity is called once per DISTINCT name (pipeline._resolve_entities dedupes into `names`), so exactly one provisional Cleo is minted — not three. _rebuild_mentions wipes-and-reinserts this note's mentions, anchoring each surface; the fact attaches to the single entity. Pins clean dedupe: one Cleo entity, one active fact, no duplicate entities from repeated mentions.",
+  "description": "Adversarial duplicate-mention probe. One extraction lists the SAME mention name ('Cleo') three times (identical name+kind, varying surface_text) plus one fact. resolve_entity is called once per DISTINCT name (pipeline._resolve_entities dedupes into `names`), so exactly one provisional Cleo is minted — not three. _upsert_mentions writes one row per anchored surface (keyed on chunk+span+entity) and _reconcile_mentions drops what this run no longer asserts; the fact attaches to the single entity. Pins clean dedupe: one Cleo entity, one active fact, no duplicate entities from repeated mentions.",
   "steps": [
     {
       "domain": "general",

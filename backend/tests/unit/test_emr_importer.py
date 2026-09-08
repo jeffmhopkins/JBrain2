@@ -29,7 +29,7 @@ def _facts(pred=lambda f: True):
 
 
 def test_one_intent_per_note_all_encounters_together() -> None:
-    # One intent per note (the shipped _apply reconciles the whole note), so all
+    # One intent per note (the shipped write path settles the whole note), so all
     # four encounters — incl. the MICU + A3 transfer — share it and their
     # partOfEncounter/hasObservation refs resolve intra-intent.
     assert len(_INTENTS) == 1

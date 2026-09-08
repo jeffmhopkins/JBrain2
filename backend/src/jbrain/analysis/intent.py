@@ -4,7 +4,7 @@ deterministic arbiter (docs/archive/INTEGRATOR_PLAN.md §3).
 The agent reads a note's stored `Extraction` plus the live graph and emits an
 `IntegrationIntent`: its *judgment* about who is who, what is true, and what
 supersedes what — as a proposal, never a write. The arbiter (the hardened
-`_apply`) validates this object and performs every structural mutation itself.
+commit path) validates this object and performs every structural mutation itself.
 
 Bounding the agent's non-determinism at this one value object is what keeps the
 system testable and safe: the agent decides *semantics*; the deterministic core
