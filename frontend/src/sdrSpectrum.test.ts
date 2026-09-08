@@ -305,6 +305,38 @@ describe("the stream", () => {
     expect(sdrSpectrum().on).toBe(false);
   });
 
+  it("keeps the socket open while another holder still wants it", () => {
+    // There is ONE socket for the whole app and the listen controls are mounted twice
+    // at once — the omnibox sheet, and the Radios tab that stays mounted behind it.
+    // Closing the sheet used to shut the socket for both, and the survivor never
+    // noticed: its effect's deps had not changed, so it never reopened and its tuning
+    // strip sat frozen on its last row under audio that was still playing.
+    vi.stubGlobal("EventSource", FakeSource);
+    startSdrSpectrum("all", "sheet");
+    startSdrSpectrum("all", "tab");
+    const stream = FakeSource.last;
+    if (!stream) throw new Error("no stream opened");
+
+    stopSdrSpectrum("sheet");
+
+    expect(stream.closed).toBe(false);
+    expect(sdrSpectrum().on).toBe(true);
+  });
+
+  it("closes it when the LAST holder goes", () => {
+    vi.stubGlobal("EventSource", FakeSource);
+    startSdrSpectrum("all", "sheet");
+    startSdrSpectrum("all", "tab");
+    const stream = FakeSource.last;
+    if (!stream) throw new Error("no stream opened");
+
+    stopSdrSpectrum("sheet");
+    stopSdrSpectrum("tab");
+
+    expect(stream.closed).toBe(true);
+    expect(sdrSpectrum().on).toBe(false);
+  });
+
   it("opens one socket however many times it is asked", () => {
     const stream = openStream();
     startSdrSpectrum();

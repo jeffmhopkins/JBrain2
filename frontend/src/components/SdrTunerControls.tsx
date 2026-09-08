@@ -9,7 +9,7 @@
 // Release is a first-class action because it is what hands this session's radio back — and
 // what makes the omnibox icon disappear, since the icon IS the lease.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api } from "../api/client";
 import { mhz } from "../mhz";
 import {
@@ -176,6 +176,11 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       live = false;
     };
   }, []);
+  // Per-INSTANCE, because the controls are mounted twice at once — the omnibox sheet
+  // and the Radios tab behind it — and the shared stream counts its holders. A constant
+  // string would let both mounts register as one, so the first to close would take the
+  // socket with it and the survivor would freeze; that is the bug this counts against.
+  const holderId = useId();
   const plan = planAt(sections, listening.frequency_hz);
   const here = plan ? channelIndex(plan, listening.frequency_hz) : -1;
   // A callback ref rather than an effect: the row exists only while the list is open,
@@ -220,13 +225,12 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     // same session can now produce would cost ~11% of a core with nothing rendering it.
     // NAMED, because the sidecar prefers a spectrum session when nobody says: with the
     // other dongle sweeping, this asked for the channel strip and was handed the sweep.
-    startSdrSpectrum({
-      view: "channel",
-      serial: listening.serial ?? null,
-      backfill: BACKFILL_ROWS,
-    });
-    return () => stopSdrSpectrum();
-  }, [drawing, listening.serial]);
+    startSdrSpectrum(
+      { view: "channel", serial: listening.serial ?? null, backfill: BACKFILL_ROWS },
+      holderId,
+    );
+    return () => stopSdrSpectrum(holderId);
+  }, [drawing, listening.serial, holderId]);
 
   // Captions hold a whisper model resident on the box's GPU next to the chat model,
   // so they are opt-in and stop with the sheet rather than running unattended.

@@ -37,8 +37,10 @@ export function isForeground(): boolean {
 }
 
 /** Wire `onChange` to every signal that can move the foreground state; returns the
- *  teardown. Shared by both hooks so neither can drift back to visibility-only. */
-function onForegroundSignals(onChange: () => void): () => void {
+ *  teardown. Shared by both hooks so neither can drift back to visibility-only, and
+ *  exported for the module-level stores that have no component to hang a hook on —
+ *  `sdrAudio` re-takes its analyser tap from here. */
+export function onForegroundSignals(onChange: () => void): () => void {
   document.addEventListener("visibilitychange", onChange);
   for (const event of RESUME_EVENTS) window.addEventListener(event, onChange);
   return () => {

@@ -16,7 +16,8 @@
 // question on a channel whose traffic arrives in bursts.
 
 import { useEffect, useRef } from "react";
-import { TAPE_WINDOW_S, sdrLevels } from "../sdrAudio";
+import { TAPE_WINDOW_S, ensureSdrAudioLive, sdrLevels } from "../sdrAudio";
+import { isForeground, onForegroundSignals } from "../visibility";
 
 export function SdrTape() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -78,8 +79,28 @@ export function SdrTape() {
     };
     frame = requestAnimationFrame(draw);
 
+    // The loop keeps itself alive by re-arming inside `draw`, which is true only while
+    // frames are being served. A hidden page is served none, and a page restored from
+    // the back/forward cache — an iOS standalone PWA is restored that way every time —
+    // can have its one queued callback DROPPED rather than deferred. Nothing then
+    // re-arms it, and the canvas holds its last pre-hide frame for ever while the
+    // buffer behind it fills perfectly well.
+    //
+    // Re-arming is safe to do at any time: cancel first, so a loop that did survive
+    // does not end up running twice.
+    const restart = () => {
+      if (!isForeground()) return;
+      // The supply, then the drawing — a re-armed loop over a dead tap draws a flat
+      // line just as convincingly as no loop at all.
+      ensureSdrAudioLive();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(draw);
+    };
+    const offForeground = onForegroundSignals(restart);
+
     return () => {
       cancelAnimationFrame(frame);
+      offForeground();
       window.removeEventListener("resize", resize);
     };
   }, []);
