@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Silent queue · B · the minute deck — top-5, one thumb, then it ends</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;
+       align-items:flex-start;gap:18px;padding:22px 14px 60px;min-height:100vh;}
+  [data-theme="light"] body{background:#dcdcd8;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .col{width:392px;max-width:94vw;display:flex;flex-direction:column;gap:12px;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;
+                margin-bottom:6px;background:var(--amber-tint);color:var(--amber);}
+  .themer{position:fixed;top:12px;right:12px;z-index:9;background:var(--surface-2);
+          color:var(--text-2);border:1px solid var(--border);border-radius:999px;
+          padding:8px 15px;font-size:12px;cursor:pointer;}
+
+  .phone{height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;
+         overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#cdcdc9;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;
+       border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);display:flex;} .bar svg{width:18px;height:18px;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .prog{margin-left:auto;font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+
+  /* progress hairline — finite, and you can see the end */
+  .rail{height:2px;background:var(--border);flex:none;}
+  .rail i{display:block;height:100%;background:var(--amber);transition:width .28s ease;}
+  @media (prefers-reduced-motion:reduce){.rail i{transition:none;}}
+
+  .stage{flex:1;display:flex;flex-direction:column;padding:18px 16px 0;overflow-y:auto;}
+  .subj{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+  .disc{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .disc svg{width:18px;height:18px;}
+  .d-person{background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel);}
+  .d-drug{background:color-mix(in srgb,#c98ab4 16%,transparent);color:#c98ab4;}
+  .d-product{background:color-mix(in srgb,#8f9fd0 16%,transparent);color:#8f9fd0;}
+  .subj .nm{font-size:14px;font-weight:500;}
+  .subj .kd{font-size:11px;color:var(--text-3);margin-top:2px;}
+  .subj .dom{margin-left:auto;font-size:10.5px;padding:2px 8px;border-radius:999px;
+             background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);}
+  .subj .dom.health{background:var(--rose-tint);border-color:transparent;color:var(--rose);}
+
+  .q{font-size:21px;line-height:1.38;font-weight:500;}
+  .q b{color:var(--amber);font-weight:600;}
+  .why{margin-top:14px;font-size:13.5px;color:var(--text-2);line-height:1.55;}
+  .why em{font-style:normal;color:var(--text-3);}
+  .src{margin-top:13px;font-size:12.5px;color:var(--text-3);border-left:2px solid var(--border);
+       padding-left:11px;line-height:1.55;}
+  .src mark{background:var(--amber-tint);color:var(--amber);padding:0 2px;border-radius:3px;}
+  .clock{margin-top:16px;display:flex;gap:8px;align-items:flex-start;font-size:12px;
+         color:var(--text-3);line-height:1.5;}
+  .clock svg{width:14px;height:14px;color:var(--amber);flex:none;margin-top:1px;}
+  .clock b{color:var(--text-2);font-weight:500;}
+
+  /* the answer bar — bottom half, thumb country, ≥48px */
+  .foot{flex:none;padding:12px 14px calc(16px + env(safe-area-inset-bottom));
+        border-top:1px solid var(--border);background:var(--surface);
+        display:flex;flex-direction:column;gap:9px;}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .btn{min-height:52px;border:1px solid var(--border);border-radius:14px;background:var(--surface-2);
+       color:var(--text);font-size:15.5px;font-weight:500;cursor:pointer;font-family:inherit;
+       display:flex;align-items:center;justify-content:center;gap:8px;padding:0 12px;}
+  .btn svg{width:17px;height:17px;}
+  .btn.yes{background:var(--green-tint);border-color:transparent;color:var(--green);}
+  .btn.no{background:var(--rose-tint);border-color:transparent;color:var(--rose);}
+  .btn:active{filter:brightness(1.25);}
+  .minor{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .btn.ghost{min-height:44px;background:transparent;color:var(--text-3);font-size:13.5px;font-weight:400;}
+  /* pick-one variant: stacked options, same renderer as the shipped review Proposals block */
+  .opts{display:flex;flex-direction:column;gap:8px;}
+  .opt{min-height:52px;border:1px solid var(--border);border-radius:14px;background:var(--surface-2);
+       color:var(--text);font-size:15px;cursor:pointer;font-family:inherit;text-align:left;
+       padding:9px 14px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
+  .opt b{font-weight:500;} .opt .sub{font-size:11.5px;color:var(--text-3);}
+  .opt.best{border-color:var(--steel);}
+  .opt.best .tagb{font-size:10px;color:var(--steel);margin-left:7px;font-weight:500;}
+
+  /* the end card — the point of the deck: it ENDS */
+  .end{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+       gap:14px;padding:30px;text-align:center;}
+  .end .ring{width:66px;height:66px;border-radius:999px;background:var(--green-tint);
+             color:var(--green);display:flex;align-items:center;justify-content:center;}
+  .end .ring svg{width:30px;height:30px;stroke-width:2;}
+  .end h2{font-size:19px;font-weight:600;}
+  .end p{font-size:13.5px;color:var(--text-2);line-height:1.6;max-width:280px;}
+  .end .rest{font-size:12px;color:var(--text-3);line-height:1.6;max-width:290px;
+             border-top:1px solid var(--border);padding-top:14px;margin-top:4px;}
+</style>
+</head>
+<body>
+<button class="themer" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">theme</button>
+
+<div class="col">
+  <p class="caption"><span class="tag">B · the minute deck</span><br>
+  <b>One question at a time, five of them, then it is over.</b> Reached only by the home line
+  ("3 things I'd rather not guess at") — never a badge you must clear. The deck holds the
+  <b>top band only</b>: questions whose default the agent would rather not take. Big targets in
+  the bottom third; the hairline shows the end coming. <b>Tap the two answers below to walk the
+  deck.</b></p>
+  <section class="phone" id="phone"></section>
+</div>
+
+<div class="col">
+  <p class="caption"><b>Why a deck and not a list.</b> A list of N invites the arithmetic of
+  debt ("14 left"); a five-card deck that ends in a green ring invites completion. The counter
+  reads <span style="font-family:var(--font-mono);font-size:11px">2 of 5</span>, not
+  <span style="font-family:var(--font-mono);font-size:11px">2 of 137</span>, because the other
+  132 are not owed anything — each already carries a default and a date, and each is reachable
+  in place (mock A). The end card says so out loud, which is what stops the deck from feeling
+  like a lie.</p>
+  <p class="caption"><b>Answer costs.</b> <b>yes/no</b> and <b>pick-one</b> are single
+  <span style="font-family:var(--font-mono);font-size:11px">POST /review/{id}/resolve</span>
+  calls (already shipped). <b>drop it</b> is
+  <span style="font-family:var(--font-mono);font-size:11px">dismiss</span>, also shipped, and
+  teaches: three drops of one shape and the agent stops asking it. <b>Say more</b> is the only
+  expensive path — it opens the correction composer, which mints an
+  <span style="font-family:var(--font-mono);font-size:11px">owner_correction</span> note and
+  re-runs ingestion; that is why it is a ghost button one level down, not a primary.</p>
+</div>
+
+<script>
+const CARDS = [
+  { subj:"Celine Dubois", kind:"person · 14 facts", disc:"d-person",
+    icon:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0114 0v1"/>', dom:"general", domCls:"",
+    q:'Is Celine still at <b>Ozone Labs</b>?',
+    why:'Tuesday\'s note says "her new place is going well" and names no company. <em>I\'d keep Ozone Labs.</em>',
+    src:'"…dinner with Celine, <mark>her new place is going well</mark>, three months in now…"',
+    clock:'Keeping <b>Ozone Labs</b> and marking it assumed on <b>7 Oct</b> if you never answer.',
+    type:"yesno", yes:"Still there", no:"She moved" },
+
+  { subj:"Hydrochlorothiazide", kind:"drug · your medication", disc:"d-drug",
+    icon:'<path d="M8 4h8v5l-4 11-4-11z"/>', dom:"health", domCls:"health",
+    q:'Did the dose change to <b>25 mg</b>?',
+    why:'The refill note says "the 25s are back in stock" — that reads like a strength, not a dose change. <em>I\'d leave your dose at 12.5 mg.</em>',
+    src:'"Refilled the HCTZ. Pharmacy said <mark>the 25s are back in stock</mark>."',
+    clock:'Health facts never self-answer — I hold this one open until you say.',
+    type:"yesno", yes:"Yes, 25 mg now", no:"No, still 12.5" },
+
+  { subj:"the Civic", kind:"product · 2 candidates", disc:"d-product",
+    icon:'<path d="M4 15l1.5-5h13L20 15"/><path d="M4 15h16v3H4z"/><circle cx="7.5" cy="18" r="1.5"/><circle cx="16.5" cy="18" r="1.5"/>',
+    dom:"general", domCls:"",
+    q:'Which <b>Civic</b> went in for service?',
+    why:'You own a 2016; your dad owns a 2009. <em>I\'d file it under yours.</em>',
+    src:'"Booked <mark>the car</mark> in for Thursday 9am."',
+    clock:'Filing under <b>your 2016 Civic</b> on <b>15 Sep</b> unless you say.',
+    type:"pickone",
+    opts:[ {label:"My 2016 Civic", sub:"9 facts · serviced here before", best:true},
+           {label:"Dad's 2009 Civic", sub:"3 facts · last mentioned in March", best:false},
+           {label:"Neither — a third car", sub:"I'll ask which next time it comes up", best:false} ] },
+
+  { subj:"Ozone Labs", kind:"organization", disc:"d-product",
+    icon:'<path d="M4 20V8l8-4 8 4v12"/><path d="M9 20v-6h6v6"/>', dom:"general", domCls:"",
+    q:'Is <b>Ozone Labs</b> the same as "Ozone Laboratories Inc"?',
+    why:'Two entities, same address, one note calls it each way. <em>I will NOT merge on a guess — merging is hard to undo.</em>',
+    src:'"…invoice from <mark>Ozone Laboratories Inc</mark>, same Chapman St address…"',
+    clock:'No answer means <b>no merge</b> — they stay separate and I stop asking.',
+    type:"yesno", yes:"Same company", no:"Keep separate" },
+
+  { subj:"Thursday 9am", kind:"appointment", disc:"d-product",
+    icon:'<rect x="4" y="5" width="16" height="16" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+    dom:"general", domCls:"",
+    q:'Put the Civic service on your <b>calendar</b>?',
+    why:'You usually want car appointments on the calendar; the last three went on. <em>I\'d add it.</em>',
+    src:'"Booked the car in for <mark>Thursday 9am</mark>."',
+    clock:'Adding it on <b>11 Sep</b> (the morning of) unless you say no.',
+    type:"yesno", yes:"Add it", no:"Don't" },
+];
+
+let i = 0;
+const phone = document.getElementById('phone');
+
+function render(){
+  if (i >= CARDS.length) return renderEnd();
+  const c = CARDS[i];
+  const pct = Math.round((i / CARDS.length) * 100);
+  const answers = c.type === "yesno"
+    ? '<div class="pair">'
+      + '<button class="btn no" onclick="next()"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>' + c.no + '</button>'
+      + '<button class="btn yes" onclick="next()"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>' + c.yes + '</button>'
+      + '</div>'
+    : '<div class="opts">' + c.opts.map(o =>
+        '<button class="opt' + (o.best ? ' best' : '') + '" onclick="next()"><b>' + o.label
+        + (o.best ? '<span class="tagb">my guess</span>' : '') + '</b><span class="sub">' + o.sub + '</span></button>'
+      ).join('') + '</div>';
+
+  phone.innerHTML =
+    '<div class="bar"><span class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>'
+    + '<span class="ttl">A minute</span><span class="prog">' + (i+1) + ' of ' + CARDS.length + '</span></div>'
+    + '<div class="rail"><i style="width:' + pct + '%"></i></div>'
+    + '<div class="stage">'
+    +   '<div class="subj"><span class="disc ' + c.disc + '"><svg viewBox="0 0 24 24">' + c.icon + '</svg></span>'
+    +     '<span><span class="nm">' + c.subj + '</span><br><span class="kd">' + c.kind + '</span></span>'
+    +     '<span class="dom ' + c.domCls + '">' + c.dom + '</span></div>'
+    +   '<p class="q">' + c.q + '</p>'
+    +   '<p class="why">' + c.why + '</p>'
+    +   '<p class="src">' + c.src + '</p>'
+    +   '<p class="clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>' + c.clock + '</span></p>'
+    + '</div>'
+    + '<div class="foot">' + answers
+    +   '<div class="minor">'
+    +     '<button class="btn ghost" onclick="next()">Not important — drop it</button>'
+    +     '<button class="btn ghost" onclick="next()">Say more…</button>'
+    +   '</div>'
+    + '</div>';
+}
+
+function renderEnd(){
+  phone.innerHTML =
+    '<div class="bar"><span class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>'
+    + '<span class="ttl">A minute</span><span class="prog">done</span></div>'
+    + '<div class="rail"><i style="width:100%;background:var(--green)"></i></div>'
+    + '<div class="end">'
+    +   '<span class="ring"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span>'
+    +   '<h2>That was all of them.</h2>'
+    +   '<p>Five answered. I\'ll fold them in and follow up in the chat that raised them — quietly, no ping.</p>'
+    +   '<p class="rest">There are 132 smaller things I was unsure about. None of them are waiting '
+    +     'on you: each has a guess and a date, and each sits on the page it belongs to if you '
+    +     'ever want to overrule it.</p>'
+    + '</div>'
+    + '<div class="foot"><button class="btn" onclick="i=0;render()">Run it again (demo)</button></div>';
+}
+
+function next(){ i++; render(); }
+render();
+</script>
+</body>
+</html>
