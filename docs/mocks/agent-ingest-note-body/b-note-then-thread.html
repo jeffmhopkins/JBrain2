@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Note body · B · the note is turn 0 of a thread</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --teal: #6fb6b1; --slate: #9aa0a8;
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; }
+
+      .demo-bar { width: 100%; max-width: 1180px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg-theme { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg-theme button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 7px 14px; }
+      .seg-theme button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1180px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.55; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption .k { color: var(--amber); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--violet-tint); color: var(--violet); margin-bottom: 7px; }
+
+      .row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 812px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; padding: 6px; margin-left: -6px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .sub { font-size: var(--fs-micro); color: var(--text-3); }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      /* the sticky one-line body ribbon — B's answer to "the note sinks" */
+      .ribbon { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 12px; margin: -12px -14px 2px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text-2); }
+      .ribbon .dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--rose); flex: none; }
+      .ribbon .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ribbon .jump { background: none; border: none; color: var(--steel); font-size: 11.5px; min-height: 30px; padding: 0 2px; flex: none; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 11px; }
+
+      .nhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .dpill { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-micro); padding: 3px 10px; border-radius: var(--r-pill); background: var(--rose-tint); color: var(--rose); }
+      .dpill .dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--rose); }
+      .ndate { font-size: var(--fs-secondary); color: var(--text-2); }
+      .nmore { margin-left: auto; min-width: 44px; min-height: 44px; margin-right: -10px; display: flex; align-items: center; justify-content: flex-end; background: none; border: none; color: var(--text-3); }
+
+      .tabs { display: flex; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; }
+      .tabs button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: 13px; padding: 9px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 5px; }
+      .tabs button + button { border-left: 1px solid var(--border); }
+      .tabs button[aria-selected="true"] { background: var(--rose-tint); color: var(--rose); font-weight: 500; }
+      .tabs .cnt { font-size: 10.5px; padding: 1px 6px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-3); }
+      .tabs button[aria-selected="true"] .cnt { background: var(--bg); color: var(--rose); }
+
+      /* ---- the frozen body, as turn 0 ---- */
+      .body-card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--rose); border-radius: var(--r-card); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-card); }
+      .body-card .seal { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: 0.05em; color: var(--text-3); }
+      .body-card .seal svg { width: 11px; height: 11px; }
+      .body-card .ttl2 { font-size: var(--fs-title); font-weight: 500; line-height: 1.35; }
+      .body-card .txt { font-size: var(--fs-body); line-height: 1.55; }
+      .body-card .txt p + p { margin-top: 9px; }
+      .body-card .thumbs { display: flex; gap: 8px; }
+      .thumb { width: 58px; height: 58px; border-radius: 10px; border: 1px solid var(--border); background: linear-gradient(150deg, var(--surface-2), var(--surface)); display: grid; place-items: center; color: var(--text-3); flex: none; position: relative; }
+      .thumb svg { width: 20px; height: 20px; }
+      .thumb .cap { position: absolute; left: 0; right: 0; bottom: 0; font-size: 9px; padding: 2px 4px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text-2); text-align: center; }
+      .body-card .clamped { position: relative; max-height: 66px; overflow: hidden; }
+      .body-card .clamped::after { content: ""; position: absolute; inset: auto 0 0 0; height: 26px; background: linear-gradient(to bottom, transparent, var(--surface)); }
+      .expand { align-self: flex-start; background: none; border: none; color: var(--steel); font-size: 12px; min-height: 36px; padding: 0; }
+
+      .since { display: flex; align-items: center; gap: 8px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); margin: 2px 0; }
+      .since::before, .since::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+      /* ---- thread ---- */
+      .ai { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 15px 15px 15px 5px; padding: 11px 13px; font-size: var(--fs-note); line-height: 1.5; display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-card); }
+      .ai b { font-weight: 600; }
+      .me { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+      .me .bub { background: var(--steel-tint); border: 1px solid color-mix(in srgb, var(--steel) 26%, transparent); border-radius: 15px 15px 5px 15px; padding: 10px 13px; font-size: var(--fs-note); line-height: 1.45; }
+      /* the seal that says this reply is now note text (D6/D7) */
+      .kept { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--green); background: var(--green-tint); border-radius: var(--r-pill); padding: 2px 9px; }
+      .kept svg { width: 10px; height: 10px; }
+      .when { font-size: 11px; color: var(--text-3); }
+
+      /* ---- the "entity modified" chip (D3) ---- */
+      .wchip { border: 1px solid var(--border); border-radius: 11px; background: var(--bg); overflow: hidden; }
+      .wchip-row { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 40px; padding: 7px 10px; background: none; border: none; color: inherit; text-align: left; }
+      .wchip-row .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .wchip-lab { font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+      .wchip-arg { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wchip-cnt { font-size: 10.5px; color: var(--text-2); background: var(--surface-2); border-radius: var(--r-pill); padding: 1px 7px; flex: none; }
+      .wchip-cnt.sup { color: var(--amber); background: var(--amber-tint); }
+      .wchip-cnt.att { color: var(--steel); background: var(--steel-tint); }
+      .wchip-caret { width: 14px; height: 14px; color: var(--text-3); flex: none; transition: transform 0.14s ease-out; }
+      .wchip[data-open="true"] .wchip-caret { transform: rotate(90deg); }
+      .wchip + .wchip { margin-top: 6px; }
+      .wchip-det { display: none; border-top: 1px solid var(--border); padding: 9px 10px; flex-direction: column; gap: 10px; }
+      .wchip[data-open="true"] .wchip-det { display: flex; }
+
+      .wrow { display: flex; flex-direction: column; gap: 5px; }
+      .wrow + .wrow { border-top: 1px solid var(--border); padding-top: 9px; }
+      .edge-line { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; line-height: 1.5; }
+      .edge-line .subj { color: var(--text); }
+      .edge-line .arr { color: var(--text-3); }
+      .edge-line .val { color: var(--text); background: var(--surface-2); border-radius: 6px; padding: 1px 6px; }
+      .wmeta { font-size: 10.5px; color: var(--text-3); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .wmeta .new { color: var(--green); }
+      .wmeta .sup { color: var(--amber); }
+      .quote { background: var(--surface-2); border-left: 2px solid var(--steel); border-radius: 0 8px 8px 0; padding: 6px 9px; font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+      .quote mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      .rdiff { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+      .rdiff-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; }
+      .rdiff-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); width: 42px; flex: none; }
+      .rdiff-val { font-size: 12.5px; }
+      .rdiff-before .rdiff-val s { color: var(--text-3); }
+      .rdiff-after .rdiff-val ins { text-decoration: none; color: var(--text); }
+      .rdiff-arrow { font-size: 10px; color: var(--amber); background: var(--amber-tint); padding: 3px 9px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
+      .att { display: flex; gap: 9px; align-items: flex-start; }
+      .att .side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+      .att .thumb { width: 46px; height: 46px; }
+      .attbadge { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 8px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); align-self: flex-start; }
+      .attbadge svg { width: 10px; height: 10px; }
+      .ocr { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.55; color: var(--text-2); background: var(--surface-2); border-radius: 8px; padding: 6px 8px; }
+      .ocr mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      /* ---- the open question ---- */
+      .qcard { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 11px; background: var(--bg); padding: 10px 11px; display: flex; flex-direction: column; gap: 9px; }
+      .qcard .qtop { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--amber); }
+      .qcard .qtop svg { width: 12px; height: 12px; }
+      .qcard .qtxt { font-size: var(--fs-secondary); line-height: 1.5; color: var(--text); }
+      .answers { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ans { font-size: 13px; padding: 8px 13px; min-height: 44px; display: inline-flex; align-items: center; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+      .ans.other { color: var(--text-2); border-style: dashed; }
+      .qcard.done { border-left-color: var(--green); }
+      .qcard.done .answers, .qcard.done .qhint { display: none; }
+      .qhint { font-size: 10.5px; color: var(--text-3); }
+      .qcard .settled { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: var(--green); }
+      .qcard.done .settled { display: flex; }
+      .qcard .settled svg { width: 13px; height: 13px; }
+      .qcard.done .qtop { color: var(--text-3); }
+
+      .fresh { animation: land 0.42s ease-out; }
+      @keyframes land { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+      .footnote { font-size: 11px; color: var(--text-3); line-height: 1.55; border-top: 1px solid var(--border); padding-top: 10px; }
+      .footnote b { color: var(--text-2); font-weight: 500; }
+
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+      .composer .box { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px; font-size: var(--fs-note); color: var(--text-3); min-height: 44px; }
+      .composer .foot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-2); }
+      .composer .foot .dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--amber); }
+      .composer .icons { margin-left: auto; display: flex; gap: 12px; color: var(--text-3); }
+      .composer .icons svg { width: 19px; height: 19px; }
+
+      .toast { position: absolute; left: 50%; bottom: 118px; transform: translate(-50%, 6px); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: var(--fs-micro); padding: 9px 15px; border-radius: var(--r-pill); opacity: 0; pointer-events: none; transition: opacity 0.16s, transform 0.16s; z-index: 5; max-width: 86%; text-align: center; }
+      .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .fresh { animation: none; }
+        .wchip-caret, .toast { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Note body + write chips.</b> B · the note is turn 0 of a thread</div>
+      <div class="seg-theme" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">B · one scroll — the body, then everything that happened to it</span><br />
+      The Note tab <b>becomes the conversation</b>. Your captured body is the first card, sealed
+      <b>captured 07:14 · frozen</b>, and under a <b>since you captured it</b> rule the whole thread runs on down the same scroll:
+      the agent's turns, its <b class="k">entity modified</b> chips <b>where they happened</b>, the open question, your replies.
+      A reply that answered something carries a green <b>kept in the note</b> seal — that seal <i>is</i> the clarification block,
+      shown where you said it rather than filed somewhere else. Nothing is behind a tab and there is no second surface to learn:
+      one scroll, chronological, composer at the foot. Answer the question in frame 1. Frame 2 is the same note three weeks and
+      four clarifications later — the honest picture of what this costs.
+    </div>
+
+    <div class="row">
+      <!-- ============ 1 · BODY + THREAD ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · the note tab <b>— body first, then everything since</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Cardiology follow-up</span> <span class="sub">· medical</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:7px"></span><span style="height:11px"></span><span style="height:6px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span></span>
+          </div>
+
+          <div class="scroll" id="scrollB">
+            <div class="nhead">
+              <span class="dpill"><span class="dot"></span> medical</span>
+              <span class="ndate">Sep 8 · 07:14</span>
+              <button class="nmore" type="button" aria-label="note actions"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg></button>
+            </div>
+
+            <div class="tabs" role="tablist">
+              <button type="button" role="tab" aria-selected="true">Note</button>
+              <button type="button" role="tab" aria-selected="false" data-toast="the settled manifest — unchanged by this design">Attachments <span class="cnt">1</span></button>
+              <button type="button" role="tab" aria-selected="false" data-toast="entity pages and current values — unchanged">Analysis</button>
+            </div>
+
+            <div class="body-card" id="bodyB">
+              <div class="seal"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg> captured 07:14 · frozen</div>
+              <div class="ttl2">Cardiology follow-up — Okonjo</div>
+              <div class="txt">
+                <p>Cardiology follow-up with Dr. Okonjo. BP was 128/82 sitting, better than March.</p>
+                <p>She's taking me off the amlodipine and starting losartan 50 mg in the mornings — the ankle swelling should settle in a couple of weeks.</p>
+                <p>Bloods again before the next visit. Photo of the new script.</p>
+              </div>
+              <div class="thumbs">
+                <div class="thumb"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg><span class="cap">IMG_2274</span></div>
+              </div>
+            </div>
+
+            <div class="since">since you captured it</div>
+
+            <div class="ai">
+              <span>Read the note and the script photo. Four values were clear, so I've <b>written them</b>.</span>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="wchip-lab">Me</span>
+                  <span class="wchip-arg">blood pressure</span>
+                  <span class="wchip-cnt">1 written</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">me</span><span>.blood_pressure</span><span class="arr">→</span><span class="val">128/82 mmHg</span></span>
+                    <span class="wmeta"><span class="new">new value</span> · sitting · measured Sep 8</span>
+                    <div class="quote">…BP was <mark>128/82 sitting</mark>, better than March…</div>
+                  </div>
+                </div>
+              </div>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="wchip-lab">Me</span>
+                  <span class="wchip-arg">medication</span>
+                  <span class="wchip-cnt sup">1 replaced</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">me</span><span>.medication</span><span class="arr">→</span><span class="val">losartan 50 mg</span></span>
+                    <div class="rdiff" aria-label="before and after">
+                      <div class="rdiff-row rdiff-before"><span class="rdiff-lbl">was</span><span class="rdiff-val"><s>amlodipine 10 mg</s></span></div>
+                      <div class="rdiff-arrow">↓ replaced today</div>
+                      <div class="rdiff-row rdiff-after"><span class="rdiff-lbl">now</span><span class="rdiff-val"><ins>losartan 50 mg</ins></span></div>
+                    </div>
+                    <span class="wmeta"><span class="sup">superseded</span> · the amlodipine keeps its interval on Me's history rail — nothing was deleted</span>
+                    <div class="quote">…taking me off the <mark>amlodipine</mark> and starting <mark>losartan 50 mg</mark>…</div>
+                  </div>
+                </div>
+              </div>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="wchip-lab">Losartan</span>
+                  <span class="wchip-arg">from the script photo</span>
+                  <span class="wchip-cnt att">2 · photo</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="att">
+                    <span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                    <div class="side">
+                      <span class="attbadge"><svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg> read from an attachment · IMG_2274 · ocr</span>
+                      <div class="ocr">LOSARTAN POTASSIUM 50 MG<br />TAKE 1 TABLET BY MOUTH <mark>EVERY MORNING</mark><br />QTY <mark>90</mark> · <mark>3 REFILLS</mark> · A. OKONJO MD</div>
+                    </div>
+                  </div>
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">losartan</span><span>.quantity</span><span class="arr">→</span><span class="val">90 tablets</span></span>
+                    <span class="wmeta"><span class="new">new value</span> · not in your note — only on the label</span>
+                  </div>
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">losartan</span><span>.refills</span><span class="arr">→</span><span class="val">3</span></span>
+                    <span class="wmeta"><span class="new">new value</span> · not in your note — only on the label</span>
+                  </div>
+                </div>
+              </div>
+              <span class="when">07:16 · on-box · gpt-oss-120b</span>
+            </div>
+
+            <div class="ai">
+              <div class="qcard">
+                <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asked 07:16 · answered</div>
+                <div class="qtxt">The ankle swelling — which side, and since when? I don't want to guess a symptom.</div>
+                <div class="settled" style="display: flex"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span>you answered · 08:05</span></div>
+              </div>
+            </div>
+
+            <div class="me">
+              <div class="bub">both ankles, worse on the right — started about three weeks after the amlodipine went up to 10 mg</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · 08:05</span>
+            </div>
+
+            <div class="ai">
+              <span>Written. Your words are now part of the note, so the next re-read sees them.</span>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="wchip-lab">Me</span>
+                  <span class="wchip-arg">symptom</span>
+                  <span class="wchip-cnt">2 written</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">me</span><span>.symptom</span><span class="arr">→</span><span class="val">ankle oedema, bilateral</span></span>
+                    <span class="wmeta"><span class="new">new value</span> · from your reply — filed as your correction, so it outranks anything inferred</span>
+                  </div>
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">amlodipine</span><span>.dose</span><span class="arr">→</span><span class="val">10 mg</span></span>
+                    <span class="wmeta"><span class="new">new value</span> · valid until today</span>
+                  </div>
+                </div>
+              </div>
+              <span class="when">08:05 · 2 written</span>
+            </div>
+
+            <div class="me"><div class="bub">is losartan the one that gave mum a cough?</div></div>
+            <div class="ai">
+              <span>No — that's the ACE inhibitors (lisinopril, ramipril). Losartan is an ARB, often exactly what people are moved to <i>because</i> of that cough.</span>
+              <span class="when">08:07 · read 2 notes · nothing written · <b style="color: var(--text-3); font-weight: 400">not kept in the note — you asked, you didn't tell</b></span>
+            </div>
+
+            <div class="ai" id="lastAI">
+              <div class="qcard" id="q1">
+                <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> still asking · since 07:16</div>
+                <div class="qtxt">“Bloods again before the next visit” — <b>which panel?</b> March was a lipid panel and a CMP; I'd rather not guess this one.</div>
+                <div class="answers">
+                  <button class="ans" type="button" data-answer="both">lipid panel + CMP</button>
+                  <button class="ans" type="button" data-answer="cmp">just a CMP</button>
+                  <button class="ans other" type="button" data-answer="type">type…</button>
+                </div>
+                <div class="qhint">whatever you say here is kept in the note. no reminder will come.</div>
+                <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span id="q1settled">answered</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="box">Reply, or ask about this note…</div>
+            <div class="foot">
+              <span class="dot"></span> 1 open question · answers are kept in the note.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg style="color: var(--rose)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+          <output class="toast" id="toastB"></output>
+        </div>
+      </div>
+
+      <!-- ============ 2 · THREE WEEKS LATER ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · the same note, three weeks on <b>— what one scroll costs</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Cardiology follow-up</span> <span class="sub">· medical</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:9px"></span><span style="height:6px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:14px"></span><span style="height:7px"></span><span style="height:10px"></span><span style="height:6px"></span></span>
+          </div>
+          <div class="scroll">
+            <div class="ribbon">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="txt">Cardiology follow-up with Dr. Okonjo. BP was 128/82…</span>
+              <button class="jump" type="button" data-toast="jumps back to the frozen body">the note ↑</button>
+            </div>
+
+            <div class="body-card">
+              <div class="seal"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg> captured Sep 8 · frozen · 4 clarifications since</div>
+              <div class="txt clamped" id="clampB">
+                <p>Cardiology follow-up with Dr. Okonjo. BP was 128/82 sitting, better than March.</p>
+                <p>She's taking me off the amlodipine and starting losartan 50 mg in the mornings — the ankle swelling should settle in a couple of weeks.</p>
+                <p>Bloods again before the next visit. Photo of the new script.</p>
+              </div>
+              <button class="expand" type="button" id="expandB">show the whole note</button>
+            </div>
+
+            <div class="since">since you captured it · 4 answers, 11 writes</div>
+
+            <div class="me">
+              <div class="bub">both ankles, worse on the right — started about three weeks after the amlodipine went up to 10 mg</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · Sep 8</span>
+            </div>
+            <div class="ai"><span>Written — 2 values.</span><span class="when">Sep 8</span></div>
+            <div class="me">
+              <div class="bub">lipid panel + CMP</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · Sep 8</span>
+            </div>
+            <div class="ai"><span>Written — the November follow-up now carries both orders.</span><span class="when">Sep 8</span></div>
+            <div class="me">
+              <div class="bub">swelling basically gone by the second week. no cough.</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · Sep 21</span>
+            </div>
+            <div class="ai">
+              <span>Closed the oedema interval at Sep 21 rather than retracting it — it was true, and now it isn't.</span>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="wchip-lab">Me</span>
+                  <span class="wchip-arg">symptom</span>
+                  <span class="wchip-cnt sup">1 closed</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">me</span><span>.symptom</span><span class="arr">→</span><span class="val" style="text-decoration: line-through; color: var(--text-3)">ankle oedema, bilateral</span></span>
+                    <span class="wmeta"><span class="sup">interval closed</span> · Sep 8 → Sep 21 · former, not deleted — it stays on the entity page's validity track</span>
+                  </div>
+                </div>
+              </div>
+              <span class="when">Sep 21 · 1 write</span>
+            </div>
+            <div class="me">
+              <div class="bub">potassium came back 4.9, she said fine</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · Sep 29</span>
+            </div>
+            <div class="ai"><span>Written — 1 value on the November follow-up.</span><span class="when">Sep 29</span></div>
+
+            <p class="footnote">
+              The honest cost of one scroll: <b>the note is now the smallest thing on its own screen</b>. The sticky ribbon and the
+              3-line clamp keep it reachable, but re-reading what you actually wrote is a deliberate act, and a stranger scrolling
+              this cannot tell at a glance which words are yours from September and which are the agent's. B answers that with
+              <b>shape</b> — your bubbles right, the agent's left, a green seal on the ones that became note text — and asks you to
+              accept that the note and its conversation are the same object from here on.
+            </p>
+          </div>
+          <div class="composer">
+            <div class="box">Reply, or ask about this note…</div>
+            <div class="foot">
+              <span class="dot" style="background: var(--green)"></span> nothing open · 11 values written from this note.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg style="color: var(--rose)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 3 · WHAT THE SEAL MEANS ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · the seal <b>— which replies become note text, and which don't</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Cardiology follow-up</span> <span class="sub">· medical</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:11px"></span><span style="height:7px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:6px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:10px"></span></span>
+          </div>
+          <div class="scroll">
+            <p style="font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.55">
+              Every reply you make is one of two things, and the bubble says which. Only the first kind is re-chunked,
+              re-embedded and re-read with the note — so only the first kind can change what the graph derives later.
+            </p>
+
+            <div class="me">
+              <div class="bub">both ankles, worse on the right</div>
+              <span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> kept in the note · 08:05</span>
+            </div>
+            <p style="font-size: 11.5px; color: var(--text-3); line-height: 1.55; margin-top: -4px">
+              <b style="color: var(--green); font-weight: 500">a clarification.</b> It answered a question the agent asked about the
+              note, so it is appended to the note as a dated block, chunked in the note's own domain, and it will be read again on
+              every re-analysis. Tapping the seal jumps to it inside the body.
+            </p>
+
+            <div class="me"><div class="bub">is losartan the one that gave mum a cough?</div></div>
+            <p style="font-size: 11.5px; color: var(--text-3); line-height: 1.55; margin-top: -4px">
+              <b style="color: var(--text-2); font-weight: 500">a question.</b> No seal — it changed nothing about the note, so
+              nothing was appended and nothing was written. It stays in the thread as conversation.
+            </p>
+
+            <div class="since">the rule</div>
+            <div class="ai">
+              <span>
+                <b>What you tell me becomes note text; what you ask me doesn't.</b> The agent decides which by whether the reply
+                answers an open question — and it says so on the bubble, immediately, rather than leaving you to find out later
+                that a correction you typed went nowhere.
+              </span>
+            </div>
+
+            <p class="footnote">
+              The failure this design has to avoid: typing an important correction as a passing remark and having it silently not
+              count. The seal makes the outcome visible <b>on the message you just sent</b>. If a reply should have been kept and
+              wasn't, tapping the un-sealed bubble offers <b>keep this in the note</b> — one tap, and it becomes a clarification
+              block dated now.
+            </p>
+            <button class="ans" type="button" style="align-self: flex-start" data-toast="appends that reply as a dated clarification block">keep this in the note</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const dark = document.getElementById("t-dark");
+      const light = document.getElementById("t-light");
+      function setTheme(t) {
+        document.documentElement.setAttribute("data-theme", t);
+        dark.setAttribute("aria-pressed", String(t === "dark"));
+        light.setAttribute("aria-pressed", String(t === "light"));
+      }
+      dark.onclick = () => setTheme("dark");
+      light.onclick = () => setTheme("light");
+      setTheme(window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+
+      function wireChip(row) {
+        row.onclick = () => {
+          const chip = row.closest(".wchip");
+          const open = chip.dataset.open !== "true";
+          chip.dataset.open = String(open);
+          row.setAttribute("aria-expanded", String(open));
+        };
+      }
+      for (const row of document.querySelectorAll(".wchip-row")) wireChip(row);
+
+      const toastEl = document.getElementById("toastB");
+      let tt = null;
+      function toast(msg) {
+        toastEl.textContent = msg;
+        toastEl.classList.add("on");
+        if (tt) clearTimeout(tt);
+        tt = setTimeout(() => toastEl.classList.remove("on"), 2600);
+      }
+      for (const b of document.querySelectorAll("[data-toast]")) b.onclick = () => toast(b.dataset.toast);
+
+      const clamp = document.getElementById("clampB");
+      const expand = document.getElementById("expandB");
+      expand.onclick = () => {
+        const on = clamp.classList.toggle("clamped");
+        expand.textContent = on ? "show the whole note" : "clamp it again";
+      };
+
+      const ANSWERS = {
+        both: {
+          said: "lipid panel + CMP",
+          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP"]],
+        },
+        cmp: {
+          said: "just a CMP — she only wants the potassium watched",
+          edges: [
+            ["appt:okonjo-nov", ".lab_orders", "CMP"],
+            ["losartan", ".monitored_by", "serum potassium"],
+          ],
+        },
+      };
+
+      const scroll = document.getElementById("scrollB");
+      for (const btn of document.querySelectorAll("#q1 .ans")) {
+        btn.onclick = () => {
+          const key = btn.dataset.answer;
+          if (key === "type") {
+            toast("the composer is the same box — a typed answer gets the same seal");
+            return;
+          }
+          const a = ANSWERS[key];
+          const card = document.getElementById("q1");
+          card.classList.add("done");
+          card.querySelector(".qtop").lastChild.textContent = " answered just now";
+          document.getElementById("q1settled").textContent = "you answered · " + a.said;
+
+          const mine = document.createElement("div");
+          mine.className = "me fresh";
+          mine.innerHTML =
+            '<div class="bub">' + a.said + "</div>" +
+            '<span class="kept"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg> kept in the note · just now</span>';
+          scroll.appendChild(mine);
+
+          const rows = a.edges
+            .map(
+              (e) =>
+                '<div class="wrow"><span class="edge-line"><span class="subj">' + e[0] + "</span><span>" + e[1] +
+                '</span><span class="arr">→</span><span class="val">' + e[2] +
+                '</span></span><span class="wmeta"><span class="new">new value</span> · from your reply — filed as your correction</span></div>',
+            )
+            .join("");
+
+          const reply = document.createElement("div");
+          reply.className = "ai fresh";
+          reply.innerHTML =
+            "<span>Written, and your words are <b>appended to the note</b> as a dated block — the whole note gets re-read from here on.</span>" +
+            '<div class="wchip" data-open="true"><button class="wchip-row" type="button" aria-expanded="true">' +
+            '<span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Nov follow-up</span>' +
+            '<span class="wchip-arg">lab orders</span><span class="wchip-cnt">' + a.edges.length + " written</span>" +
+            '<svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>' +
+            '<div class="wchip-det">' + rows + "</div></div>" +
+            '<span class="when">just now · re-chunked · re-read</span>';
+          scroll.appendChild(reply);
+          wireChip(reply.querySelector(".wchip-row"));
+          reply.scrollIntoView({ behavior: "smooth", block: "end" });
+
+          const foot = document.querySelector(".composer .foot");
+          foot.querySelector(".dot").style.background = "var(--green)";
+          foot.childNodes[2].textContent = " nothing open · 7 values written from this note.";
+        };
+      }
+    </script>
+  </body>
+</html>
