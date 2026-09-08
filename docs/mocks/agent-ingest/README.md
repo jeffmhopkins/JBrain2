@@ -1,7 +1,16 @@
 # Note conversations — where a note's agent thread lives
 
-> **Status:** GUI gate open — three variants for the owner to choose from. Companion
-> dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Nothing is built.
+> **Status:** GUI gate **settled** — the owner chose **C**, `c-unified-conversations.html`,
+> and the choice is ratified in `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1**
+> ("one agent, one conversation type"): a note thread and a Full Brain chat are the same
+> `AgentSession`, and that conversation lives on the **conversations surface**, not on the
+> note screen. A and B are retained as the record. **One part of C is superseded**: its
+> `Asking` bucket is replaced by the **two-tab inbox** (**D4**) with questions findable
+> from the notes tab (**D5**) — the mock's segmented `Today · Older · Asking` picker is no
+> longer the queue answer. Companion dossier:
+> `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Follow-on round (what the *note screen*
+> becomes under this model): `docs/mocks/agent-ingest-note-body/`. Nothing is built.
+> **Last verified:** 2026-09-08.
 
 ## The change these mocks are for
 
