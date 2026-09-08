@@ -365,14 +365,26 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   re-ingest deletes every chunk of the note and `facts.chunk_id` is
   `ON DELETE SET NULL`, so a refresh that left it alone would strand the fact
   with no citation — and the wiki builder INNER JOINs chunks, so the article
-  would rebuild without it, silently. Only a fact THIS note owns is
-  re-anchored; a refresh landing on another note's fact leaves that note's
-  citation to its own re-integration.
+  would rebuild without it, silently. **Every** in-place path re-anchors — the
+  refresh, the interval close, the held-row refresh, and a relationship's
+  derived shadow, which nothing else would ever re-link because the retraction
+  sweep deliberately skips derived rows. Only a fact THIS note owns is
+  re-anchored; an in-place update landing on another note's fact leaves that
+  note's citation to its own re-integration.
 - The note's **mentions** are upserted incrementally, keyed on (chunk, span,
-  entity), and a reconcile drops only what the run no longer asserts — a row
-  the run re-asserts keeps its id, so re-analysis no longer churns the
-  co-mention spine (and, with nothing changed, no longer dirties every
-  mentioned entity's article).
+  entity) — not (chunk, span), which is not unique: `_locate` anchors every
+  surface it cannot find at the same zero-width span, and two mentions may share
+  one surface. The reconcile that drops what is no longer asserted runs in
+  `settle_note`, over the union of every pass's ids, for the same reason the
+  fact sweep does. A re-asserted row keeps its id, so re-analysis no longer
+  churns the co-mention spine, an un-merge can still replay stored
+  `mention_ids` across an intervening re-analysis, and `created_at` is now
+  first-link time rather than last-re-analysis time (which changes the
+  entity page's mention ordering to a stable one). A re-run that re-asserts
+  the same mentions writes nothing at all, so it no longer re-dirties every
+  mentioned entity's article — `confidence` is compared with a tolerance to
+  make that true, since the column is `real` and a resolver's float64 never
+  round-trips exactly.
 - **Re-run = the same incremental pass [decided]**, on demand via
   `POST /api/notes/{id}/analyze` (202 + job id, a plain `integrate_note` job;
   409 while an analysis is already queued/running, or while ingest/OCR will

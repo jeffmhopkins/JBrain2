@@ -206,6 +206,22 @@ class CommitOutcome:
     held_ids: dict[int, uuid.UUID]
 
 
+# `entity_mentions.confidence` is Postgres `real` (float4) and the resolver's
+# value is a Python float64, so a stored 0.9 reads back as 0.8999999761581421 —
+# only 1.0 round-trips exactly. An exact `!=` would therefore call every
+# embedding- and relationship-linked mention "changed" on every re-run, UPDATE
+# it, and re-dirty its article through migration 0046's trigger. float4 carries
+# ~7 significant digits, so this tolerance is wider than the round-trip error
+# and far narrower than any real confidence change.
+_CONFIDENCE_EPSILON = 1e-6
+
+
+def _confidence_changed(stored: float | None, resolved: float | None) -> bool:
+    if stored is None or resolved is None:
+        return stored is not resolved
+    return abs(stored - resolved) > _CONFIDENCE_EPSILON
+
+
 def _cite(anchor: _Span | None, chunks: list[_ChunkRef]) -> str | None:
     """The frozen citation a review card shows: the anchoring chunk's snippet
     with the surface span <mark>ed; unmarked head text when nothing anchors."""
@@ -575,6 +591,7 @@ class AnalysisPipeline:
             resolved=outcome.resolved,
             touched=outcome.touched,
             projected=outcome.projected,
+            mention_ids=outcome.mention_ids,
         )
         # Recompute the deterministic signals (pure, cheap) so each held card can
         # carry the same ceiling arithmetic the arbiter used — apply_intent is also
@@ -888,7 +905,6 @@ class AnalysisPipeline:
         anchor_for, mention_ids = await self._upsert_mentions(
             session, extraction, resolved, note_id, note_domain, chunks
         )
-        await self._reconcile_mentions(session, note_id, mention_ids)
         token_ids = await self._upsert_tokens(
             session, extraction, note_id, note_domain, captured_at, chunks
         )
@@ -954,15 +970,23 @@ class AnalysisPipeline:
         resolved: dict[str, ResolvedEntity | None],
         touched: set[uuid.UUID],
         projected: set[uuid.UUID],
+        mention_ids: set[uuid.UUID],
     ) -> None:
-        """Close a note out once everything it asserts has been committed: retract
-        what it no longer says, repair the chains that breaks, retire its stale
-        cards, refresh the projections and stamp the analysis row.
+        """Close a note out once everything it asserts has been committed: drop the
+        mentions and retract the facts it no longer says, repair the chains that
+        breaks, retire its stale cards, refresh the projections and stamp the
+        analysis row.
 
-        `touched` and `projected` are inputs rather than locals precisely because
-        this step is whole-note: a caller that commits over several passes unions
-        them across all of them and settles once. Settling on one pass's share
-        would retract every fact the earlier passes committed."""
+        `touched`, `projected` and `mention_ids` are inputs rather than locals
+        precisely because this step is whole-note: a caller that commits over
+        several passes unions them across all of them and settles once. Settling on
+        one pass's share would retract every fact — and delete every mention — the
+        earlier passes committed.
+
+        The mention reconcile leads, because `_promote_corroborated` below counts
+        corroborating notes through `entity_mentions` (`canonical.py`) and must not
+        see a row this run stopped asserting."""
+        await self._reconcile_mentions(session, note_id, mention_ids)
         await self._register_declared_aliases(
             session, extraction, resolved, note_id, note_domain, chunks
         )
@@ -1358,10 +1382,15 @@ class AnalysisPipeline:
         only where they differ — and only a genuinely new anchor inserts.
 
         Returns name -> anchoring span (for fact provenance and the <mark>ed
-        citations review items carry) and the ids this pass asserts, which
-        `_reconcile_mentions` keeps. A wipe-and-reinsert would be correct for one
-        whole-note pass and destructive for anything that commits in several: the
-        second pass would delete what the first wrote."""
+        citations review items carry) and the ids this pass asserts. Deleting what
+        is no longer asserted is NOT done here — it is `_reconcile_mentions`, which
+        `settle_note` runs once over the union of every pass's ids. A wipe (or a
+        per-pass reconcile) would be correct for one whole-note pass and
+        destructive for anything that commits in several: the second pass would
+        delete what the first wrote.
+
+        Re-asserted rows keep their ids, which is what lets `repo.py`'s stored
+        `mention_ids` replay an un-merge across an intervening re-analysis."""
         by_key: dict[_MentionKey, list[EntityMention]] = defaultdict(list)
         for row in (
             (
@@ -1418,7 +1447,7 @@ class AnalysisPipeline:
                     row.surface_text = mention.surface_text
                 if row.link_method != link_method:
                     row.link_method = link_method
-                if row.confidence != entity.confidence:
+                if _confidence_changed(row.confidence, entity.confidence):
                     row.confidence = entity.confidence
                 if row.domain_code != note_domain:
                     row.domain_code = note_domain
@@ -1807,6 +1836,41 @@ class AnalysisPipeline:
         )
         return new_id
 
+    async def _anchor_chunk(
+        self,
+        session: AsyncSession,
+        *,
+        entity_ref: str,
+        anchor_for: dict[str, _Span],
+        chunks: list[_ChunkRef],
+        fact_domain: str,
+        note_domain: str,
+        note_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """The citation chunk this run anchors a fact of `entity_ref` to — the
+        insert paths' anchor lookup and `_citation_chunk`, factored out so every
+        IN-PLACE update path re-links exactly the way an insert would."""
+        anchor = anchor_for.get(entity_ref)
+        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        return await self._citation_chunk(
+            session,
+            source_chunk_id=base_chunk,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
+
+    @staticmethod
+    async def _owns_fact(session: AsyncSession, fact_id: uuid.UUID, note_id: uuid.UUID) -> bool:
+        """Whether this run's note is the one the row hangs off. An in-place update
+        may land on ANOTHER note's fact (the identity-key lookups are cross-note),
+        and that row's citation belongs to its own note — re-anchoring it here would
+        point `chunk_id` at a chunk of a note the fact does not come from."""
+        owner = (
+            await session.execute(select(Fact.note_id).where(Fact.id == fact_id))
+        ).scalar_one_or_none()
+        return owner == note_id
+
     async def _insert_held_fact(
         self,
         session: AsyncSession,
@@ -1914,6 +1978,15 @@ class AnalysisPipeline:
             .scalars()
             .first()
         )
+        chunk_id = await self._anchor_chunk(
+            session,
+            entity_ref=fact.entity_ref,
+            anchor_for=anchor_for,
+            chunks=chunks,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
         if existing_id is not None:
             await session.execute(
                 update(Fact)
@@ -1929,19 +2002,13 @@ class AnalysisPipeline:
                     confidence=fact.confidence,
                     extractor=extractor,
                     prompt_version=PROMPT_VERSION,
+                    # Unconditional: the lookup above is already note-scoped, so
+                    # this row is ours. A re-ingest nulls its chunk like any other.
+                    chunk_id=chunk_id,
                 )
             )
             return existing_id
 
-        anchor = anchor_for.get(fact.entity_ref)
-        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
-        chunk_id = await self._citation_chunk(
-            session,
-            source_chunk_id=base_chunk,
-            fact_domain=fact_domain,
-            note_domain=note_domain,
-            note_id=note_id,
-        )
         held = Fact(
             id=uuid.uuid4(),
             subject_id=entity.subject_id,
@@ -2146,22 +2213,37 @@ class AnalysisPipeline:
             # rendering ("...until March") carries the end-marker the open
             # row's payload lacks, and the scenario-facing value must show it.
             fact_id = uuid.UUID(decision.close_id)
-            await session.execute(
-                update(Fact)
-                .where(Fact.id == fact_id)
-                .values(
-                    statement=fact.statement,
-                    value_json=fact.value_json,
-                    valid_to=decision.close_valid_to,
-                    extractor=extractor,
-                    prompt_version=PROMPT_VERSION,
-                    confidence=fact.confidence,
+            close_values: dict[str, Any] = {
+                "statement": fact.statement,
+                "value_json": fact.value_json,
+                "valid_to": decision.close_valid_to,
+                "extractor": extractor,
+                "prompt_version": PROMPT_VERSION,
+                "confidence": fact.confidence,
+            }
+            # `_close_open_interval` can close THIS note's own open row ("worked at
+            # X from 2020", edited to "…until March"), and the edit's re-ingest has
+            # already nulled its chunk — so an in-place close re-anchors too.
+            closed_chunk: uuid.UUID | None = None
+            if await self._owns_fact(session, fact_id, note_id):
+                closed_chunk = await self._anchor_chunk(
+                    session,
+                    entity_ref=fact.entity_ref,
+                    anchor_for=anchor_for,
+                    chunks=chunks,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
                 )
-            )
+                close_values["chunk_id"] = closed_chunk
+            await session.execute(update(Fact).where(Fact.id == fact_id).values(close_values))
             # A derived shadow's lifecycle mirrors its source's: copy the
             # interval close (and re-render) so the reciprocal closes too.
             await self._update_shadows_in_place(
-                session, source_id=fact_id, valid_to=decision.close_valid_to
+                session,
+                source_id=fact_id,
+                valid_to=decision.close_valid_to,
+                chunk_id=closed_chunk,
             )
             return fact_id
 
@@ -2182,19 +2264,18 @@ class AnalysisPipeline:
             # article — `wiki/builder.py` INNER JOINs chunks. Only for a row THIS
             # note owns: a refresh may land on another note's fact, whose citation
             # belongs to that note and is re-anchored by its own re-integration.
-            owner_note_id = (
-                await session.execute(select(Fact.note_id).where(Fact.id == fact_id))
-            ).scalar_one_or_none()
-            if owner_note_id == note_id:
-                anchor = anchor_for.get(fact.entity_ref)
-                base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
-                values["chunk_id"] = await self._citation_chunk(
+            refreshed_chunk: uuid.UUID | None = None
+            if await self._owns_fact(session, fact_id, note_id):
+                refreshed_chunk = await self._anchor_chunk(
                     session,
-                    source_chunk_id=base_chunk,
+                    entity_ref=fact.entity_ref,
+                    anchor_for=anchor_for,
+                    chunks=chunks,
                     fact_domain=fact_domain,
                     note_domain=note_domain,
                     note_id=note_id,
                 )
+                values["chunk_id"] = refreshed_chunk
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             # Re-analysis healing: a row still held purely by WEIGHT (it carries an
             # open low_confidence_inference card) that the arbiter now rates active is
@@ -2242,7 +2323,13 @@ class AnalysisPipeline:
                     note_id=note_id,
                 )
             await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
-            await self._update_shadows_in_place(session, source_id=fact_id)
+            # The shadow carries its own chunk_id, was written by THIS note beside
+            # its source, and the settle sweep deliberately skips derived rows — so
+            # nothing else would ever re-link it. Without this the reciprocal edge
+            # keeps a null chunk forever and vanishes from the OBJECT's article.
+            await self._update_shadows_in_place(
+                session, source_id=fact_id, chunk_id=refreshed_chunk
+            )
             if promoted:
                 # The row's open review card is now unservable (the fact committed);
                 # resolved/dismissed history survives. Then give an open relationship
@@ -2592,6 +2679,11 @@ class AnalysisPipeline:
             }
             if decision.close_id is not None:
                 values["valid_to"] = decision.close_valid_to
+            # Same re-anchor as every other in-place path, and the same ownership
+            # rule: this row may be another note's reciprocal, whose citation is
+            # that note's to re-link.
+            if await self._owns_fact(session, existing_id, note_id):
+                values["chunk_id"] = chunk_id
             await session.execute(update(Fact).where(Fact.id == existing_id).values(values))
             return existing_id
 
@@ -2711,13 +2803,20 @@ class AnalysisPipeline:
         *,
         source_id: uuid.UUID,
         valid_to: datetime | None = None,
+        chunk_id: uuid.UUID | None = None,
     ) -> None:
-        """Mirror a source's in-place refresh/close onto its derived shadow:
-        copy the valid_to (close) so the reciprocal interval ends with its
-        source's. The shadow's statement is display-only and already renders
-        the relationship, so only the temporal bound needs copying."""
-        if valid_to is None:
+        """Mirror a source's in-place refresh/close onto its derived shadow: copy
+        the valid_to (close) so the reciprocal interval ends with its source's, and
+        the re-anchored chunk so its citation survives a re-ingest. The shadow's
+        statement is display-only and already renders the relationship, so nothing
+        else needs copying. Either field absent means "leave it alone"."""
+        values: dict[str, Any] = {}
+        if valid_to is not None:
+            values["valid_to"] = valid_to
+        if chunk_id is not None:
+            values["chunk_id"] = chunk_id
+        if not values:
             return
         await session.execute(
-            update(Fact).where(Fact.derived_from_fact_id == source_id).values(valid_to=valid_to)
+            update(Fact).where(Fact.derived_from_fact_id == source_id).values(values)
         )

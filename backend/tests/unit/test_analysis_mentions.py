@@ -1,14 +1,16 @@
 """Unit tests for the incremental mention seam (analysis/pipeline.py).
 
-`_upsert_mentions` + `_reconcile_mentions` replace a wipe-and-reinsert that was
-only ever correct for a single whole-note pass: called twice, the second pass's
-DELETE removed everything the first wrote. The matching rule is the whole point,
-so it is tested away from Postgres — the pass keeps a row whose (chunk, span,
-entity) it re-asserts, inserts only genuinely new anchors, and reconcile removes
-exactly what the pass no longer asserts. Whole-note end state (identical rows,
-one pass) is pinned by the integration suite.
+`_upsert_mentions` (in `commit_facts`) + `_reconcile_mentions` (in `settle_note`,
+over the union of every pass's ids) replace a wipe-and-reinsert that was only ever
+correct for a single whole-note pass: called twice, the second pass's DELETE
+removed everything the first wrote. The matching rule is the whole point, so it is
+tested away from Postgres — the pass keeps a row whose (chunk, span, entity) it
+re-asserts, inserts only genuinely new anchors, and reconcile removes exactly what
+was not asserted. Whole-note end state, the shared-span multiset and id stability
+across a re-analysis are pinned in `test_apply_intent_pg.py`.
 """
 
+import struct
 import uuid
 from typing import Any, cast
 
@@ -178,6 +180,40 @@ async def test_changed_link_method_refreshes_the_kept_row() -> None:
     )
 
     assert (existing.link_method, existing.confidence) == ("llm", 0.7)
+
+
+@pytest.mark.asyncio
+async def test_float4_round_tripped_confidence_is_not_a_change() -> None:
+    """`entity_mentions.confidence` is Postgres `real`, so a resolver's 0.9 reads
+    back as 0.8999999761581421 — only 1.0 round-trips exactly. Compared exactly,
+    every embedding- and relationship-linked mention would count as "changed" on
+    every re-run, UPDATE, and re-dirty its article through 0046's trigger."""
+    stored = struct.unpack("f", struct.pack("f", 0.9))[0]
+    assert stored != 0.9  # the round trip really is lossy
+    existing = _row(confidence=stored)
+    session = _StubSession([existing])
+
+    await _upsert(
+        session,
+        _extraction(("Cleo", "Cleo")),
+        {"Cleo": ResolvedEntity(id=_ENTITY, subject_id=None, method="llm", confidence=0.9)},
+    )
+
+    assert existing.confidence == stored  # untouched — no UPDATE, no re-dirty
+
+
+@pytest.mark.asyncio
+async def test_a_real_confidence_change_still_writes() -> None:
+    existing = _row(confidence=0.9)
+    session = _StubSession([existing])
+
+    await _upsert(
+        session,
+        _extraction(("Cleo", "Cleo")),
+        {"Cleo": ResolvedEntity(id=_ENTITY, subject_id=None, confidence=0.55)},
+    )
+
+    assert existing.confidence == 0.55
 
 
 @pytest.mark.asyncio
