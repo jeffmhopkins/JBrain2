@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Silent queue · A · ambient — the question lives where its subject lives</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --slate:#9aa0a8;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;
+       align-items:flex-start;gap:18px;padding:22px 14px 60px;min-height:100vh;}
+  [data-theme="light"] body{background:#dcdcd8;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .col{width:392px;max-width:94vw;display:flex;flex-direction:column;gap:12px;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;
+                margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+  .themer{position:fixed;top:12px;right:12px;z-index:9;background:var(--surface-2);
+          color:var(--text-2);border:1px solid var(--border);border-radius:999px;
+          padding:8px 15px;font-size:12px;cursor:pointer;}
+
+  .phone{height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;
+         overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#cdcdc9;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;
+       border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);display:flex;} .bar svg{width:18px;height:18px;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;color:var(--text-3);font-size:12px;}
+  .body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px;}
+  .sec{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);}
+
+  /* entity head */
+  .ehead{display:flex;align-items:center;gap:12px;}
+  .disc{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;
+        justify-content:center;flex:none;background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel);}
+  .disc svg{width:24px;height:24px;}
+  .ename{font-size:20px;font-weight:600;}
+  .emeta{font-size:12px;color:var(--text-3);margin-top:3px;}
+
+  /* a settled predicate row (the ordinary case) */
+  .prow{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 13px;}
+  .pk{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);}
+  .pv{margin-top:5px;font-size:15px;display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
+  .arrow{color:var(--text-3);} .val{font-weight:500;}
+  .chip{font-size:10.5px;padding:2px 8px;border-radius:999px;background:var(--surface-2);
+        border:1px solid var(--border);color:var(--text-2);}
+  .chip.assumed{background:var(--amber-tint);border-color:transparent;color:var(--amber);}
+
+  /* THE ASK — an unresolved predicate row, in place */
+  .ask{background:var(--surface);border:1px solid var(--amber);border-radius:14px;overflow:hidden;}
+  .ask.settled{border-color:var(--green);}
+  .ask-top{padding:12px 13px 10px;}
+  .ask-q{font-size:15px;line-height:1.45;}
+  .ask-q b{font-weight:600;color:var(--amber);}
+  .ask.settled .ask-q b{color:var(--green);}
+  .ask-why{margin-top:7px;font-size:12px;color:var(--text-2);line-height:1.5;}
+  .ask-why em{color:var(--text-3);font-style:normal;}
+  .ask-src{margin-top:8px;font-size:12px;color:var(--text-3);border-left:2px solid var(--border);
+           padding-left:9px;line-height:1.5;}
+  .ask-src mark{background:var(--amber-tint);color:var(--amber);padding:0 2px;border-radius:3px;}
+  /* the clock — the honest part: this answers itself */
+  .clock{display:flex;align-items:center;gap:7px;padding:8px 13px;font-size:11.5px;
+         color:var(--text-3);background:var(--surface-2);border-top:1px solid var(--border);}
+  .clock svg{width:13px;height:13px;color:var(--amber);}
+  .clock b{color:var(--text-2);font-weight:500;}
+  .acts{display:grid;grid-template-columns:1fr 1fr auto;gap:1px;background:var(--border);
+        border-top:1px solid var(--border);}
+  .acts button{min-height:48px;border:0;background:var(--surface);color:var(--text);
+               font-size:14.5px;font-weight:500;display:flex;align-items:center;
+               justify-content:center;gap:7px;cursor:pointer;font-family:inherit;}
+  .acts button:active{background:var(--surface-2);}
+  .acts .yes{color:var(--green);} .acts .no{color:var(--rose);} .acts .more{color:var(--text-3);width:56px;font-size:19px;}
+  .done{padding:13px;display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--green);}
+  .done svg{width:15px;height:15px;}
+  .done .sub{display:block;color:var(--text-3);font-size:11.5px;margin-top:3px;}
+
+  /* home stream foot line */
+  .stream{display:flex;flex-direction:column;gap:9px;}
+  .note{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 13px;
+        font-size:14px;line-height:1.45;color:var(--text-2);}
+  .note .dot{display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--green);margin-right:7px;}
+  .minute{margin-top:2px;display:flex;align-items:center;gap:9px;padding:11px 13px;
+          background:transparent;border:1px dashed var(--border);border-radius:14px;
+          color:var(--text-2);font-size:13px;cursor:pointer;width:100%;font-family:inherit;text-align:left;}
+  .minute svg{width:15px;height:15px;color:var(--amber);flex:none;}
+  .minute b{color:var(--text);font-weight:500;}
+  .minute .x{margin-left:auto;color:var(--text-3);font-size:16px;padding:0 4px;}
+
+  .omni{flex:none;border-top:1px solid var(--border);padding:12px 14px 16px;background:var(--surface);}
+  .omni .box{background:var(--surface-2);border:1px solid var(--border);border-radius:16px;
+             padding:12px 13px;color:var(--text-3);font-size:15px;}
+  .seg{margin-top:9px;display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);
+       border-radius:12px;overflow:hidden;font-size:13px;}
+  .seg span{padding:9px 0;text-align:center;color:var(--text-3);border-right:1px solid var(--border);}
+  .seg span:last-child{border-right:0;}
+  .seg span.on{background:var(--green-tint);color:var(--green);font-weight:500;}
+</style>
+</head>
+<body>
+<button class="themer" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">theme</button>
+
+<!-- ========== 1. THE ENTITY PAGE ========== -->
+<div class="col">
+  <p class="caption"><span class="tag">A · ambient</span><br>
+  <b>The question lives on the entity page.</b> No inbox, no badge to clear. The owner opened
+  Celine's page for their own reasons; the one open question about her is an unresolved
+  predicate row sitting exactly where her other predicates are. Answering costs one tap on a
+  screen they chose to open — and the entities they open are, by definition, the ones they
+  care about, so <b>attention becomes the ranking signal</b> with no ranking model.</p>
+
+  <section class="phone">
+    <div class="bar"><span class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>
+      <span class="ttl">Celine Dubois</span><span class="right">person</span></div>
+    <div class="body">
+      <div class="ehead">
+        <span class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0114 0v1"/></svg></span>
+        <span><span class="ename">Celine Dubois</span><span class="emeta">person · 14 facts · 9 notes</span></span>
+      </div>
+
+      <p class="sec">Current</p>
+
+      <div class="prow"><span class="pk">homeLocation</span>
+        <span class="pv"><span class="arrow">→</span><span class="val">Montreal</span></span></div>
+
+      <!-- the ask, in place, between ordinary rows -->
+      <div class="ask" id="ask1">
+        <div class="ask-top">
+          <p class="ask-q">Is Celine's employer still <b>Ozone Labs</b>?</p>
+          <p class="ask-why">Tuesday's note says "Celine's new place is going well" and names no
+            company. <em>I'd keep Ozone Labs unless you say otherwise.</em></p>
+          <p class="ask-src">"…dinner with Celine, <mark>her new place is going well</mark>, she's
+            three months in now…"</p>
+        </div>
+        <div class="clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span>If you never answer, I'll <b>keep Ozone Labs</b> and mark it assumed on <b>7 Oct</b>.</span></div>
+        <div class="acts">
+          <button class="yes" onclick="settle('ask1','still Ozone Labs','kept — Celine.worksFor → Ozone Labs, confirmed by you')">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M4 12l5 5L20 6"/></svg> Still there</button>
+          <button class="no" onclick="settle('ask1','she moved','I&rsquo;ll ask what the new one is next time it comes up')">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M6 6l12 12M18 6L6 18"/></svg> She moved</button>
+          <button class="more" onclick="settle('ask1','dropped','dropped — I&rsquo;ll stop asking about employers unless a note names one')">···</button>
+        </div>
+      </div>
+
+      <div class="prow"><span class="pk">friend</span>
+        <span class="pv"><span class="arrow">→</span><span class="val">Me</span></span></div>
+
+      <!-- a previously-assumed value: honest, reversible, one tap to challenge -->
+      <div class="prow"><span class="pk">birthDate</span>
+        <span class="pv"><span class="arrow">→</span><span class="val">1988</span>
+          <span class="chip assumed">assumed 12 Aug</span></span>
+        <p class="ask-why" style="margin-top:8px">I guessed from "she turned 37 last spring" and you
+          never said. <em>Tap the chip to challenge it.</em></p></div>
+
+      <p class="sec">Linked from</p>
+      <div class="prow"><span class="pk">Ozone Labs</span>
+        <span class="pv"><span class="arrow">←</span><span class="val">employs</span></span></div>
+    </div>
+  </section>
+</div>
+
+<!-- ========== 2. HOME — the quiet offer ========== -->
+<div class="col">
+  <p class="caption"><b>Home: the only proactive surface, and it is one line.</b> A dashed,
+  dismissible row at the foot of the stream — shown at most once a day, only when the top band
+  is non-empty. It counts <b>questions whose guess I'm not comfortable with</b>, never the whole
+  backlog, so the number is small and reaching zero is real. No push, no dot, no top-bar count.
+  Tone borrowed from the settled research-expiry "quiet footer" (<span style="font-family:var(--font-mono);font-size:11px">docs/mocks/research-expiry/README.md</span>).</p>
+
+  <section class="phone">
+    <div class="bar"><span class="ttl" style="font-size:17px">JBrain<span style="color:var(--steel)">.</span></span>
+      <span class="right">Mon 8 Sep</span></div>
+    <div class="body stream">
+      <p class="sec">Today</p>
+      <div class="note"><span class="dot"></span>Dinner with Celine — her new place is going well, three months in now.</div>
+      <div class="note"><span class="dot"></span>Refilled the HCTZ. Pharmacy said the 25s are back in stock.</div>
+      <div class="note"><span class="dot" style="background:var(--amber)"></span>Booked the car in for Thursday 9am.</div>
+
+      <button class="minute" id="minute" onclick="dismissMinute()">
+        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18z"/><path d="M12 8v4l3 2"/></svg>
+        <span><b>3 things I'd rather not guess at</b><br>
+          <span style="color:var(--text-3);font-size:12px">about a minute · Celine, the Civic, one medication</span></span>
+        <span class="x" onclick="event.stopPropagation();dismissMinute(true)">✕</span>
+      </button>
+    </div>
+    <div class="omni">
+      <div class="box">Write a note…</div>
+      <div class="seg"><span class="on">Entry</span><span>Research</span><span>Full Brain</span></div>
+    </div>
+  </section>
+</div>
+
+<!-- ========== 3. THE NOTE'S OWN ANALYSIS TAB ========== -->
+<div class="col">
+  <p class="caption"><b>And on the note that raised it.</b> The note view already opens on
+  <b>Analysis</b> by default (<span style="font-family:var(--font-mono);font-size:11px">NoteScreen.tsx:297</span>),
+  so a note's questions sit above the facts it committed — the owner sees, in one place, what the
+  agent took and what it is unsure of. The commits are not gated on the questions: the graph
+  already moved.</p>
+
+  <section class="phone">
+    <div class="bar"><span class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>
+      <span class="ttl">Note · 8 Sep</span><span class="right">general</span></div>
+    <div class="body">
+      <div class="seg" style="margin:0"><span>Note</span><span>Files</span><span class="on" style="background:var(--steel-tint);color:var(--steel)">Analysis</span></div>
+
+      <p class="sec">I wasn't sure about</p>
+      <div class="ask" id="ask2">
+        <div class="ask-top">
+          <p class="ask-q">Does "the Civic" mean <b>your 2016 Civic</b>, or Dad's?</p>
+          <p class="ask-why">You own one and Dad owns one. <em>I'd file the service under yours.</em></p>
+        </div>
+        <div class="clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span>Filing under <b>yours</b> on <b>15 Sep</b> unless you say.</span></div>
+        <div class="acts">
+          <button class="yes" onclick="settle('ask2','mine','filed under your 2016 Civic')">Mine</button>
+          <button class="no" onclick="settle('ask2','Dad&rsquo;s','moved to Dad&rsquo;s Civic — 2 facts re-pointed')">Dad's</button>
+          <button class="more" onclick="settle('ask2','dropped','dropped')">···</button>
+        </div>
+      </div>
+
+      <p class="sec">Committed from this note</p>
+      <div class="prow"><span class="pk">Civic · lastServiced</span>
+        <span class="pv"><span class="arrow">→</span><span class="val">Thu 11 Sep, 9:00</span>
+        <span class="chip">appointment</span></span></div>
+      <div class="prow"><span class="pk">Me · owns</span>
+        <span class="pv"><span class="arrow">→</span><span class="val">2016 Civic</span></span></div>
+    </div>
+  </section>
+</div>
+
+<script>
+  function settle(id, verdict, detail){
+    const el = document.getElementById(id);
+    el.classList.add('settled');
+    el.innerHTML = '<div class="done"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>'
+      + '<span>' + verdict + '<span class="sub">' + detail + '</span></span></div>';
+  }
+  function dismissMinute(hard){
+    const el = document.getElementById('minute');
+    if (hard) { el.remove(); return; }
+    el.outerHTML = '<div class="note" style="border-style:dashed;color:var(--text-3)">'
+      + '(the deck would open here — see mock B)</div>';
+  }
+</script>
+</body>
+</html>

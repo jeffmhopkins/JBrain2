@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Note conversations · B · the home stream is the conversation</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --teal: #6fb6b1; --slate: #9aa0a8;
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --surface-composer: #ffffff;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --surface-composer: #141518;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; }
+
+      .demo-bar { width: 100%; max-width: 1180px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 7px 14px; }
+      .seg button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1180px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.55; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption .k { color: var(--amber); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--green-tint); color: var(--green); margin-bottom: 7px; }
+
+      .row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 800px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .mark { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+      .bar .mark i { color: var(--steel); font-style: normal; }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; padding: 6px; margin-left: -6px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px; position: relative; }
+      .older-pill { align-self: center; font-size: var(--fs-micro); padding: 5px 14px; border: none; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); }
+      .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; display: flex; align-items: center; gap: 8px; }
+
+      /* jump-back rule: the only chrome the queue gets, and it lives inside the list */
+      .jump { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; background: none; border: none; color: var(--text-3); font-size: 11px; letter-spacing: 0; text-transform: none; padding: 6px 2px; }
+      .jump svg { width: 12px; height: 12px; }
+
+      .day-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .unit + .unit { border-top: 1px solid var(--border); }
+
+      /* the note row — unchanged from components/Stream.tsx, rail and all */
+      .note { padding: 13px 15px; display: flex; flex-direction: column; gap: 5px; text-align: left; width: 100%; background: none; border: none; color: inherit; }
+      .note-head { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .note-body { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
+      .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+      .chip { font-size: var(--fs-micro); padding: 3px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; }
+      .chip svg { width: 12px; height: 12px; }
+      .chip-ok { background: var(--green-tint); color: var(--green); }
+      .chip-work { background: var(--steel-tint); color: var(--steel); }
+      .thumb { width: 62px; height: 62px; border-radius: 10px; border: 1px solid var(--border); position: relative; background: linear-gradient(150deg, var(--surface-2), var(--surface)); display: flex; align-items: flex-end; overflow: hidden; margin-top: 4px; }
+      .thumb .glyph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); }
+      .thumb .glyph svg { width: 20px; height: 20px; }
+      .thumb .cap { position: relative; width: 100%; font-size: 9.5px; padding: 3px 5px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text-2); }
+
+      /* the agent's turns, hung off the note on a spine */
+      .spine { padding: 0 15px 12px 15px; }
+      .spine-in { border-left: 2px solid var(--border); padding-left: 12px; display: flex; flex-direction: column; gap: 9px; }
+      .aturn { display: flex; flex-direction: column; gap: 7px; }
+      .aline { font-size: var(--fs-secondary); line-height: 1.5; color: var(--text-2); }
+      .aline b { color: var(--text); font-weight: 500; }
+      .awhen { font-size: 11px; color: var(--text-3); }
+
+      .edges { border: 1px solid var(--border); border-radius: 11px; background: var(--bg); overflow: hidden; }
+      .edges-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--green); background: var(--green-tint); }
+      .edges-head svg { width: 12px; height: 12px; }
+      .edge { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; width: 100%; background: none; border: none; text-align: left; color: inherit; }
+      .edge + .edge { border-top: 1px solid var(--border); }
+      .edge-line { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+      .edge-line .subj { color: var(--text); }
+      .edge-line .arr { color: var(--text-3); }
+      .edge-line .val { color: var(--text); background: var(--surface-2); border-radius: 6px; padding: 1px 6px; }
+      .edge-meta { font-size: 10.5px; color: var(--text-3); display: flex; gap: 7px; flex-wrap: wrap; }
+      .edge-meta .why { color: var(--steel); }
+      .edge.former .edge-line .val { text-decoration: line-through; color: var(--text-3); }
+      .cite { display: none; padding: 0 10px 9px; }
+      .edge.open + .cite { display: block; }
+      .cite-in { background: var(--surface-2); border-left: 2px solid var(--steel); border-radius: 0 8px 8px 0; padding: 7px 9px; font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+      .cite-in mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      .qcard { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 11px; background: var(--bg); padding: 10px 11px; display: flex; flex-direction: column; gap: 9px; }
+      .qcard .qtop { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--amber); }
+      .qcard .qtop svg { width: 12px; height: 12px; }
+      .qcard .qtxt { font-size: var(--fs-secondary); line-height: 1.5; color: var(--text); }
+      .answers { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ans { font-size: 13px; padding: 8px 12px; min-height: 44px; display: inline-flex; align-items: center; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+      .ans.other { color: var(--text-2); border-style: dashed; }
+      .qcard.answered .answers { display: none; }
+      .qcard.answered { border-left-color: var(--green); }
+      .qcard .settled { display: none; align-items: center; gap: 7px; font-size: 11.5px; color: var(--green); }
+      .qcard.answered .settled { display: flex; }
+      .qcard .settled svg { width: 13px; height: 13px; }
+      .qcard.answered .qtop { color: var(--text-3); }
+
+      .me { align-self: flex-end; max-width: 88%; background: var(--steel-tint); border: 1px solid color-mix(in srgb, var(--steel) 26%, transparent); border-radius: 14px 14px 4px 14px; padding: 8px 12px; font-size: var(--fs-secondary); line-height: 1.45; }
+
+      .working { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+      .working .pulse { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--steel); flex: none; animation: breathe 1.7s ease-in-out infinite; }
+      .working .sub { display: block; font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+      @keyframes breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+      /* composer — Entry mode, whose FOOTER carries the whole silent queue */
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+      .modes { display: flex; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; }
+      .modes button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: 13px; padding: 9px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+      .modes button + button { border-left: 1px solid var(--border); }
+      .modes button[aria-pressed="true"] { background: var(--green-tint); color: var(--green); font-weight: 500; }
+      .reply-to { display: none; align-items: center; gap: 8px; background: var(--amber-tint); border-radius: 10px; padding: 8px 11px; font-size: 11.5px; color: var(--amber); }
+      .reply-to.on { display: flex; }
+      .reply-to b { color: var(--text); font-weight: 500; }
+      .reply-to .x { margin-left: auto; background: none; border: none; color: var(--amber); padding: 6px; display: flex; }
+      .reply-to .x svg { width: 14px; height: 14px; }
+      .composer .box { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px; font-size: var(--fs-note); color: var(--text-3); min-height: 44px; }
+      .composer .foot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-2); }
+      .queue-lab { background: none; border: none; color: var(--text-2); font-size: var(--fs-micro); padding: 8px 0; display: inline-flex; align-items: center; gap: 7px; text-align: left; }
+      .queue-lab .n { color: var(--amber); }
+      .composer .icons { margin-left: auto; display: flex; gap: 12px; color: var(--text-3); }
+      .composer .icons svg { width: 19px; height: 19px; }
+      .composer .send { color: var(--green); }
+
+      .filter-note { display: flex; align-items: center; gap: 8px; background: var(--amber-tint); color: var(--amber); border-radius: 10px; padding: 9px 12px; font-size: var(--fs-micro); }
+      .filter-note button { margin-left: auto; background: none; border: none; color: var(--amber); font-size: var(--fs-micro); padding: 6px; }
+      .stale { font-size: 11px; color: var(--text-3); padding-left: 2px; }
+
+      .toast { position: absolute; left: 50%; bottom: 150px; transform: translate(-50%, 6px); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: var(--fs-micro); padding: 9px 15px; border-radius: var(--r-pill); opacity: 0; pointer-events: none; transition: opacity 0.16s, transform 0.16s; z-index: 5; }
+      .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .working .pulse { animation: none; opacity: 0.8; }
+        .toast { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Note conversations.</b> B · the home stream <i>is</i> the conversation</div>
+      <div class="seg" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">B · capture and conversation, one motion</span><br />
+      The day-grouped stream stays exactly what it is — the note row keeps its 3-line clamp, its domain dot
+      and its swipe rail — and the agent's turns <b>hang off each note on a hairline spine</b>, so you never
+      lose which note is being discussed. Answering is <b>the composer you already have</b>: while a question
+      is open, the Entry box reads <b class="k">replying to</b> and a send goes into that note's thread; drop
+      the pill with ✕ and the very same box captures a brand-new note again. The silent queue is the Entry
+      footer's own microcopy line — <i>"saved to your wiki · <b class="k">2 still asking</b>"</i> — which
+      <b>filters the stream in place</b>. No push, no badge on any chrome. Try: answer <i>Anouk</i>, then tap
+      the footer count.
+    </div>
+
+    <div class="row">
+      <!-- ============ 1 · THE STREAM AS THE CONVERSATION ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · home <b>— notes and agent turns interleaved</b></div>
+        <div class="phone">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <span class="vit" aria-hidden="true"><span style="height:6px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:7px"></span><span style="height:14px"></span><span style="height:6px"></span></span>
+          </div>
+          <div class="scroll" id="streamB">
+            <button class="older-pill" type="button">older notes live in Search ↑</button>
+
+            <h2 class="day-header">
+              Today
+              <button class="jump" type="button" id="jumpB">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg> 1 older, unanswered
+              </button>
+            </h2>
+
+            <div class="day-card">
+              <!-- unit 1: note + its thread -->
+              <div class="unit">
+                <div class="note">
+                  <span class="note-head"><span class="dot" style="background: var(--steel)"></span>08:41</span>
+                  <span class="note-body">Ran into Priya at the Ferry Building — she's moved to Oakland and started at Vela Robotics as head of firmware. Her kid Anouk was with her. Coffee at hers next Sat.</span>
+                </div>
+                <div class="spine">
+                  <div class="spine-in" id="spine1">
+                    <div class="aturn">
+                      <div class="aline">Three of these were clear, so I've <b>written them</b>. Oakland closes the San Francisco interval rather than overwriting it.</div>
+                      <div class="edges">
+                        <div class="edges-head"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> committed · 3</div>
+                        <button class="edge" type="button" data-cite>
+                          <span class="edge-line"><span class="subj">Priya Raman</span><span>.employer</span><span class="arr">→</span><span class="val">Vela Robotics</span></span>
+                          <span class="edge-meta"><span>0.93</span><span class="why">why</span></span>
+                        </button>
+                        <div class="cite"><div class="cite-in">…she's moved to Oakland and <mark>started at Vela Robotics as head of firmware</mark>…</div></div>
+                        <button class="edge" type="button" data-cite>
+                          <span class="edge-line"><span class="subj">Priya Raman</span><span>.job_title</span><span class="arr">→</span><span class="val">head of firmware</span></span>
+                          <span class="edge-meta"><span>0.91</span><span class="why">why</span></span>
+                        </button>
+                        <div class="cite"><div class="cite-in">…started at Vela Robotics as <mark>head of firmware</mark>…</div></div>
+                        <button class="edge" type="button" data-cite>
+                          <span class="edge-line"><span class="subj">Priya Raman</span><span>.lives_in</span><span class="arr">→</span><span class="val">Oakland</span></span>
+                          <span class="edge-meta"><span>0.88</span><span class="why">why</span></span>
+                        </button>
+                        <div class="cite"><div class="cite-in">…<mark>she's moved to Oakland</mark> and started at…</div></div>
+                        <button class="edge former" type="button" data-cite>
+                          <span class="edge-line"><span class="subj">Priya Raman</span><span>.lives_in</span><span class="arr">→</span><span class="val">San Francisco</span></span>
+                          <span class="edge-meta"><span>closed today</span><span class="why">why</span></span>
+                        </button>
+                        <div class="cite"><div class="cite-in">Superseded — the old value stays on her entity page's history rail.</div></div>
+                      </div>
+                      <div class="awhen">08:43 · on-box</div>
+                    </div>
+
+                    <div class="aturn">
+                      <div class="qcard" id="q1">
+                        <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asking</div>
+                        <div class="qtxt"><b>Anouk</b> — is that Priya's child? I'd rather not guess a family edge.</div>
+                        <div class="answers">
+                          <button class="ans" type="button" data-answer="daughter">her daughter</button>
+                          <button class="ans" type="button" data-answer="son">her son</button>
+                          <button class="ans" type="button" data-answer="not-hers">not her kid</button>
+                          <button class="ans other" type="button" data-answer="type">type…</button>
+                        </div>
+                        <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span id="q1settled">answered</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- unit 2: the photo note, still thinking -->
+              <div class="unit">
+                <div class="note">
+                  <span class="note-head"><span class="dot" style="background: var(--rose)"></span>09:02 · Medical → notes/medical/</span>
+                  <span class="note-body">new bp med — photo of the bottle</span>
+                  <span class="thumb">
+                    <span class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                    <span class="cap">IMG_2213</span>
+                  </span>
+                  <span class="note-chips"><span class="chip chip-ok">ocr ✓</span><span class="chip chip-work">description…</span></span>
+                </div>
+                <div class="spine">
+                  <div class="spine-in">
+                    <div class="aturn">
+                      <div class="aline">Label reads <span style="font-family: var(--font-mono); font-size: 12px">AMLODIPINE BESYLATE 5 MG · 1 TABLET DAILY</span>. Working out what it replaces before I write anything.</div>
+                      <div class="awhen">09:03 · from the photo's OCR</div>
+                    </div>
+                    <div class="working">
+                      <span class="pulse" aria-hidden="true"></span>
+                      <span>still working through it<span class="sub">on-box · 4 min in · nothing written yet</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="modes">
+              <button type="button" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg> Entry</button>
+              <button type="button" aria-pressed="false">Research</button>
+              <button type="button" aria-pressed="false">Full Brain</button>
+            </div>
+            <div class="reply-to" id="replyTo">
+              <svg width="14" height="14" viewBox="0 0 24 24"><path d="M9 17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9l5 5v5a2 2 0 0 1-2 2h-1" /></svg>
+              replying to <b>“Anouk — is that Priya's child?”</b>
+              <button class="x" type="button" id="dropReply" aria-label="drop the reply target"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+            </div>
+            <div class="box" id="boxB">Write an entry…</div>
+            <div class="foot">
+              <button class="queue-lab" type="button" id="queueB">
+                <span class="dot" style="background: var(--green)"></span>
+                Saved to your wiki · <span class="n" id="queueN">2 still asking</span>
+              </button>
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg class="send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+          <output class="toast" id="toastB"></output>
+        </div>
+      </div>
+
+      <!-- ============ 2 · THE SILENT QUEUE = THE SAME STREAM, FILTERED ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · the silent queue <b>— the same stream, filtered</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span class="ttl">still asking</span>
+            <span class="vit" aria-hidden="true"><span style="height:6px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:7px"></span><span style="height:14px"></span><span style="height:6px"></span></span>
+          </div>
+          <div class="scroll">
+            <div class="filter-note">
+              <svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg>
+              showing only notes with an open question
+              <button type="button">clear</button>
+            </div>
+
+            <h2 class="day-header">Last week</h2>
+            <div class="day-card">
+              <div class="unit">
+                <div class="note">
+                  <span class="note-head"><span class="dot" style="background: var(--violet)"></span>Tue 16:12 · Financial</span>
+                  <span class="note-body">Renewed the car insurance — Wexler Mutual, $142/mo, 12-month term.</span>
+                  <span class="note-chips"><span class="chip chip-ok">4 committed</span></span>
+                </div>
+                <div class="spine">
+                  <div class="spine-in">
+                    <div class="stale">asked 6 days ago · no rush</div>
+                    <div class="qcard">
+                      <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asking</div>
+                      <div class="qtxt">Which car — the Subaru or the truck? I've got a policy but nothing to hang it on.</div>
+                      <div class="answers">
+                        <button class="ans" type="button" data-toast="commits vehicle → Subaru Outback">the Subaru</button>
+                        <button class="ans" type="button" data-toast="commits vehicle → Ford Ranger">the truck</button>
+                        <button class="ans" type="button" data-toast="records that the policy covers both">both</button>
+                        <button class="ans other" type="button" data-toast="the composer takes a free-text reply">type…</button>
+                      </div>
+                      <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span>answered</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <h2 class="day-header">Today</h2>
+            <div class="day-card">
+              <div class="unit">
+                <div class="note">
+                  <span class="note-head"><span class="dot" style="background: var(--steel)"></span>08:41</span>
+                  <span class="note-body">Ran into Priya at the Ferry Building — she's moved to Oakland…</span>
+                </div>
+                <div class="spine">
+                  <div class="spine-in">
+                    <div class="qcard">
+                      <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asking</div>
+                      <div class="qtxt">"Coffee at hers next Sat" — calendar, or just a note?</div>
+                      <div class="answers">
+                        <button class="ans" type="button" data-toast="stages an appointment for Sat 14th — you still approve it">put it on Sat 14th</button>
+                        <button class="ans" type="button" data-toast="nothing staged; the line stays prose">just a note</button>
+                      </div>
+                      <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span>answered</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p style="font-size: 11.5px; color: var(--text-3); line-height: 1.55; padding: 4px 2px">
+              Oldest first, so the thing that has been waiting longest is what you meet. Nothing here ever
+              pushed, buzzed or counted at you — you arrived because you tapped the footer, or because you
+              scrolled past a spine on the way somewhere else.
+            </p>
+          </div>
+          <div class="composer">
+            <div class="reply-to on">
+              <svg width="14" height="14" viewBox="0 0 24 24"><path d="M9 17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9l5 5v5a2 2 0 0 1-2 2h-1" /></svg>
+              replying to <b>“Which car — the Subaru or the truck?”</b>
+              <span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg></span>
+            </div>
+            <div class="box">it's the Subaru — the truck is on the farm policy</div>
+            <div class="foot">
+              <span class="dot" style="background: var(--amber)"></span> goes into that note's thread.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg class="send" style="color: var(--amber)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById("t-dark").onclick = () => setTheme("dark");
+      document.getElementById("t-light").onclick = () => setTheme("light");
+      function setTheme(t) {
+        document.documentElement.setAttribute("data-theme", t);
+        document.getElementById("t-dark").setAttribute("aria-pressed", String(t === "dark"));
+        document.getElementById("t-light").setAttribute("aria-pressed", String(t === "light"));
+      }
+
+      for (const edge of document.querySelectorAll(".edge[data-cite]")) {
+        edge.onclick = () => edge.classList.toggle("open");
+      }
+
+      const toastEl = document.getElementById("toastB");
+      let tt = null;
+      function toast(msg) {
+        toastEl.textContent = msg;
+        toastEl.classList.add("on");
+        if (tt) clearTimeout(tt);
+        tt = setTimeout(() => toastEl.classList.remove("on"), 2600);
+      }
+      for (const b of document.querySelectorAll("[data-toast]")) b.onclick = () => toast(b.dataset.toast);
+
+      const REPLY = {
+        daughter: ["her daughter", [["Anouk Raman", ".parent", "Priya Raman", "new entity · Person"], ["Priya Raman", ".child", "Anouk Raman", "inverse"]]],
+        son: ["her son", [["Anouk Raman", ".parent", "Priya Raman", "new entity · Person"], ["Priya Raman", ".child", "Anouk Raman", "inverse"]]],
+        "not-hers": ["not her kid — a neighbour's", [["Anouk", ".distinct_from", "Priya Raman's family", "recorded so I stop proposing it"]]],
+      };
+
+      const spine1 = document.getElementById("spine1");
+      const queueN = document.getElementById("queueN");
+      const replyTo = document.getElementById("replyTo");
+      const boxB = document.getElementById("boxB");
+
+      function el(html) {
+        const d = document.createElement("div");
+        d.innerHTML = html.trim();
+        return d.firstElementChild;
+      }
+
+      for (const btn of document.querySelectorAll("#q1 .ans")) {
+        btn.onclick = () => {
+          const key = btn.dataset.answer;
+          if (key === "type") {
+            replyTo.classList.add("on");
+            boxB.textContent = "she's his…";
+            toast("the Entry box becomes the reply — ✕ drops back to capture");
+            return;
+          }
+          const [said, edges] = REPLY[key];
+          const card = document.getElementById("q1");
+          card.classList.add("answered");
+          document.getElementById("q1settled").textContent = "you answered · " + said;
+
+          const rows = edges
+            .map(
+              (e) =>
+                '<div class="edge"><span class="edge-line"><span class="subj">' + e[0] + "</span><span>" + e[1] +
+                '</span><span class="arr">→</span><span class="val">' + e[2] + '</span></span><span class="edge-meta"><span>' + e[3] + "</span></span></div>",
+            )
+            .join("");
+          spine1.appendChild(el('<div class="me">' + said + "</div>"));
+          spine1.appendChild(
+            el(
+              '<div class="aturn"><div class="aline">Written — filed as <b>your correction</b>, so it outranks anything I later infer.</div>' +
+                '<div class="edges"><div class="edges-head"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg> committed · ' +
+                edges.length + "</div>" + rows + '</div><div class="awhen">just now · from your reply</div></div>',
+            ),
+          );
+          queueN.textContent = "1 still asking";
+          replyTo.classList.remove("on");
+          boxB.textContent = "Write an entry…";
+          spine1.lastElementChild.scrollIntoView({ behavior: "smooth", block: "center" });
+        };
+      }
+
+      document.getElementById("dropReply").onclick = () => {
+        replyTo.classList.remove("on");
+        boxB.textContent = "Write an entry…";
+        toast("back to plain capture — same box, no navigation");
+      };
+
+      document.getElementById("queueB").onclick = () =>
+        toast("filters the stream in place → the phone on the right");
+      document.getElementById("jumpB").onclick = () =>
+        toast("scrolls to the oldest unanswered — a rule in the list, not a badge on the chrome");
+    </script>
+  </body>
+</html>
