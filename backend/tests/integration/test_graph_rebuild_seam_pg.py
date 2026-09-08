@@ -22,7 +22,10 @@ rather than landing as fresh rows beside the decision.
 Fails without the complete spare set: `low_confidence_inference`'s reject retracts its
 fact without pinning it (so a `fact_a`/`fact_b`-only spare set deletes it), and a
 `deferred` card is not purged while a resolved/dismissed-only spare set leaves both its
-facts to be deleted under it.
+facts to be deleted under it. And it fails without the retracted-twin branch's SECOND
+discriminator: that same reject pins nothing, so a pinned-head-only guard lets the
+rejected `headquarters` value be re-minted as a fresh active row beside the row the
+owner rejected, with no card filed to say so.
 """
 
 import json
@@ -266,12 +269,14 @@ async def test_a_settled_card_of_every_fact_naming_kind_survives_a_rebuild_uncha
 
     # Every twin was refreshed in place: the identity key still holds exactly the rows
     # the decision left it holding, with their original ids and statuses. `headquarters`
-    # is the documented exception — its row is retracted with no pinned head beside it,
-    # which `decide()` (rightly) reads as a value to resurrect, not a settled verdict —
-    # so it gains a fresh active row while the card's own row survives to be reopened.
+    # is the case with no pinned head at all — the reject retracted the row and pinned
+    # nothing — so it is the one the resolution's recorded `retracted` effect has to
+    # carry: the rejected value must stay rejected and gain no fresh active twin beside
+    # itself.
     for predicate, expected in (
         ("industry", {(ids["industry"], "active"), (industry_b, "retracted")}),
         ("sector", {(ids["sector"], "pending_review"), (sector_c, "pending_review")}),
+        ("headquarters", {(ids["headquarters"], "retracted")}),
         ("founded", {(ids["founded"], "active")}),
         ("motto", {(ids["motto"], "active")}),
         ("ticker", {(ids["ticker"], "active")}),
@@ -283,8 +288,3 @@ async def test_a_settled_card_of_every_fact_naming_kind_survives_a_rebuild_uncha
             p=predicate,
         )
         assert {(str(r.id), r.status) for r in rows} == expected, predicate
-    held = await _fetch(
-        maker,
-        "SELECT id::text AS id, status FROM app.facts WHERE predicate = 'headquarters'",
-    )
-    assert (ids["headquarters"], "retracted") in {(str(r.id), r.status) for r in held}

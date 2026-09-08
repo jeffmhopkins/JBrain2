@@ -138,9 +138,69 @@ _REBUILD_PURGED_STATUSES = ("open",)
 #                     files.
 _FACT_PAYLOAD_KEYS = ("fact_id", "fact_a", "fact_b", "source_fact_id")
 
+# The keys by which a settled review item's RECORDED EFFECTS name rows BY ID, in
+# `resolution->'effects'` rather than in `payload` — a different shape, so a different
+# arm rather than another entry above: these are id ARRAYS, and the rows they name are
+# not facts the card points AT but rows its resolution MOVED. `merge_entity_pair`
+# (analysis/entities.py) records exactly what the fold repointed and `_reverse_effects`
+# (analysis/repo.py) moves those ids back one UPDATE at a time, so an un-merge is only
+# as complete as the ids it can still find. Re-mint them and reopening a settled
+# merge card restores the entity row (from `prior_status`/`prior_merged_into`, which
+# are values, not ids) while moving ZERO mentions and ZERO facts — a half un-merge,
+# silent, and worse than a clean no-op. `predicate_remapped` replays `fact_ids` the
+# same way.
+#
+# Scalar `fact_id` effect keys (`retracted`, `pinned`, `domain_changed`) are NOT
+# listed: every one of them names a row the card's own payload already names through
+# `_FACT_PAYLOAD_KEYS`, or a derived shadow of one, which the spare set's
+# `derived_from_fact_id` arm carries with its source.
+_EFFECT_MENTION_KEYS = ("mention_ids",)
+_EFFECT_FACT_KEYS = ("fact_ids", "object_fact_ids")
+
+
+def _effect_named_ids_sql(keys: tuple[str, ...]) -> str:
+    """A SELECT of every id `keys` name inside a SURVIVING review item's recorded
+    effects. One arm per key, generated from the constants above so the spare set and
+    the wipe can never read a different list. `jsonb_typeof` guards each hop: a NULL
+    `resolution`, a non-array `effects`, or an effect missing the key yields no rows
+    rather than erroring, so a card shape this function has never seen is inert."""
+    return " UNION ".join(
+        "SELECT arr.id AS id FROM app.review_items ri"
+        " CROSS JOIN LATERAL jsonb_array_elements("
+        "     CASE WHEN jsonb_typeof(ri.resolution->'effects') = 'array'"
+        "          THEN ri.resolution->'effects' ELSE '[]'::jsonb END) AS eff(effect)"
+        " CROSS JOIN LATERAL jsonb_array_elements_text("
+        f"     CASE WHEN jsonb_typeof(eff.effect->'{key}') = 'array'"
+        f"          THEN eff.effect->'{key}' ELSE '[]'::jsonb END) AS arr(id)"
+        " WHERE ri.status NOT IN :purged"
+        for key in keys
+    )
+
+
+async def rebuild_spare_mention_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
+    """This note's entity mentions that a REBUILD must spare: the ones a surviving
+    review item's effects will replay BY ID (`_EFFECT_MENTION_KEYS`).
+
+    The fact spare set's twin, and for the identical reason — `_reverse_effects`
+    repoints `app.entity_mentions` by id, so an id the purge re-mints is an un-merge
+    that silently moves nothing. Empty for a privacy delete, which owes no replay: the
+    note is gone and its card went with it.
+
+    This is the *purge's* half of that promise. Whether a later re-analysis of the note
+    preserves the ids it re-asserts is the mention writer's own contract; the purge must
+    not be the thing that breaks it."""
+    rows = await session.execute(
+        text(
+            "SELECT m.id FROM app.entity_mentions m WHERE m.note_id = :note"
+            f" AND m.id::text IN (SELECT id FROM ({_effect_named_ids_sql(_EFFECT_MENTION_KEYS)}) e)"
+        ).bindparams(bindparam("purged", expanding=True)),
+        {"note": str(note_id), "purged": list(_REBUILD_PURGED_STATUSES)},
+    )
+    return {uuid.UUID(str(row[0])) for row in rows}
+
 
 async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
-    """This note's facts that a REBUILD must spare, gathered from two independent roots.
+    """This note's facts that a REBUILD must spare, gathered from three independent roots.
 
     A pinned fact is a human decision (an owner correction's force-supersede, or the
     side the owner picked resolving a review card), so it survives re-derivation. But
@@ -170,6 +230,14 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
        `_FACT_PAYLOAD_KEYS` is the single list of the keys a card names a fact by, read
        by `delete_review_items` too.
 
+    3. **Every fact a surviving item's RECORDED EFFECTS will replay by id**
+       (`_EFFECT_FACT_KEYS`), which the payload never names. A merge resolution's
+       payload holds two ENTITY ids; the row ids the fold repointed live in
+       `resolution->'effects'`, and that is what a reopen moves back. Purge them and the
+       un-merge restores the entity row while moving zero facts — the same harm as (2),
+       one level further out, and reached by a different shape (id arrays under
+       `resolution`, not scalar keys under `payload`).
+
     Derived shadows of a spared fact are spared with it: a resolution cascades onto them
     and records their prior status in its effects (repo.py), so a shadow outliving its
     source's verdict is another dangling replay target.
@@ -188,6 +256,7 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
     # One `f.id::text IN (...)` arm per fact-naming payload key, generated from the
     # constant so the mapping above is the only place the key list lives.
     named_facts = ", ".join(f"ri.payload->>'{key}'" for key in _FACT_PAYLOAD_KEYS)
+    effect_facts = _effect_named_ids_sql(_EFFECT_FACT_KEYS)
     rows = await session.execute(
         text(
             f"""
@@ -209,7 +278,17 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
                 JOIN app.facts f ON f.id::text IN ({named_facts})
                 WHERE ri.status NOT IN :purged AND f.note_id = :note
             ),
-            roots AS (SELECT id FROM pinned_roots UNION SELECT id FROM settled)
+            unwound AS (
+                SELECT f.id
+                FROM app.facts f
+                WHERE f.note_id = :note
+                  AND f.id::text IN (SELECT id FROM ({effect_facts}) e)
+            ),
+            roots AS (
+                SELECT id FROM pinned_roots
+                UNION SELECT id FROM settled
+                UNION SELECT id FROM unwound
+            )
             SELECT id FROM roots
             UNION
             SELECT f.id FROM app.facts f JOIN roots r ON f.derived_from_fact_id = r.id
@@ -246,6 +325,47 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
     return keep
 
 
+async def decision_retracted_fact_ids(session: AsyncSession, fact_ids: list[str]) -> set[str]:
+    """Which of `fact_ids` a SETTLED review decision retracted — the evidence that a
+    retracted row must never resurrect.
+
+    `decide()` (analysis/supersession.py) has to tell two retractions apart. A row the
+    machine retracted because re-extraction dropped its key MUST come back live when the
+    key comes back; a row a human rejected must NOT. The retracted-twin branch used to
+    discriminate on a PINNED head beside the row, because "no row records WHY a fact was
+    retracted" — but a resolution does. `resolve_review` records
+    `{"action": "retracted", "fact_id": ...}` on every path that retracts by decision
+    (the losing side of a fact_conflict/attribute_collision, and the
+    `low_confidence_inference` reject that pins nothing and so has no pinned head at
+    all), and `_reverse_effects` reads those same effects to undo it. Reading the
+    recorded effect is therefore reading the decision itself, not inferring it from a
+    neighbouring row.
+
+    Settled, not merely present: reopening a card leaves its effects on the row and
+    flips the status back to `open` (repo.py), and the same
+    `_REBUILD_PURGED_STATUSES` complement that decides which cards outlive a rebuild
+    decides which decisions still hold — so a reopened decision stops holding on the
+    same instant its card returns to the queue.
+
+    Ids come back as text, matched against `FactView.id`; the caller passes only the
+    retracted rows on one identity key, so the common case queries nothing at all.
+    """
+    if not fact_ids:
+        return set()
+    rows = await session.execute(
+        text(
+            "SELECT DISTINCT eff.effect->>'fact_id' AS id FROM app.review_items ri"
+            " CROSS JOIN LATERAL jsonb_array_elements("
+            "     CASE WHEN jsonb_typeof(ri.resolution->'effects') = 'array'"
+            "          THEN ri.resolution->'effects' ELSE '[]'::jsonb END) AS eff(effect)"
+            " WHERE ri.status NOT IN :purged AND eff.effect->>'action' = 'retracted'"
+            " AND eff.effect->>'fact_id' IN :ids"
+        ).bindparams(bindparam("purged", expanding=True), bindparam("ids", expanding=True)),
+        {"purged": list(_REBUILD_PURGED_STATUSES), "ids": fact_ids},
+    )
+    return {str(row[0]) for row in rows}
+
+
 async def purge_note_artifacts(
     session: AsyncSession, note_id: uuid.UUID, *, keep_pinned: bool = False
 ) -> PurgeCounts:
@@ -261,7 +381,10 @@ async def purge_note_artifacts(
 
     1. Facts a human verdict rests on survive (`rebuild_spare_fact_ids`): the pinned
        row, the chain it superseded, and — reachable by no chain walk — every fact named
-       by a review item that outlives the purge.
+       by a review item that outlives the purge, or named by ITS recorded effects.
+       The entity MENTIONS those effects will replay survive with them
+       (`rebuild_spare_mention_ids`): a reopen moves rows by id, so the wipe and the
+       spare set must read the same source or an un-merge silently moves nothing.
     2. Only `_REBUILD_PURGED_STATUSES` review items go, the discipline the re-extraction
        sweep already uses (analysis/pipeline.py): resolved, dismissed and deferred items
        are HUMAN history or a parked decision. The `note_id` sweep is skipped for the
@@ -271,6 +394,7 @@ async def purge_note_artifacts(
        silent data loss, not a rebuild.
     """
     keep_ids = await rebuild_spare_fact_ids(session, note_id) if keep_pinned else set()
+    keep_mentions = await rebuild_spare_mention_ids(session, note_id) if keep_pinned else set()
     all_facts = (
         await session.execute(
             select(
@@ -331,7 +455,10 @@ async def purge_note_artifacts(
         update(Fact).where(Fact.temporal_token_id.in_(doomed_tokens)).values(temporal_token_id=None)
     )
     await session.execute(delete(TemporalToken).where(TemporalToken.id.in_(doomed_tokens)))
-    await session.execute(delete(EntityMention).where(EntityMention.note_id == note_id))
+    mention_delete = delete(EntityMention).where(EntityMention.note_id == note_id)
+    if keep_mentions:
+        mention_delete = mention_delete.where(EntityMention.id.not_in(keep_mentions))
+    await session.execute(mention_delete)
     await session.execute(delete(NoteAnalysis).where(NoteAnalysis.note_id == note_id))
     await _delete_orphaned_entities(session, candidates)
     # An orphaned appointment entity cascaded out with its row; a SURVIVING one
