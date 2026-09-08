@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-09-08 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Waves
 W0–W3 are complete (W0 gates + fixtures; W1 storage bedrock — schema defs, the
@@ -465,7 +465,14 @@ stripping is never a single point of failure:
   **when its subject entity kind is a health EMR entity** (`Observation`/`encounter`/`Person`/
   `Organization`/`MedicalCondition`). Because such a fact should never exist on this path, the guard
   routes it to a `low_confidence` review card (`subkind=firewall_address`) anchored to the chunk and
-  **never commits it**. Building the set as that explicit union closes the earlier draft's gap (a
+  **never commits it**. That card is filed by `integrate.file_firewall_cards` from the catches the
+  importer returns, deduped per (attachment, page anchor, entity kind, predicate) **across all
+  statuses** so a dismissed card never nags again. It names *what* was held and *where* (attachment,
+  page anchor, page chunk) and deliberately **not the caught value** — the card sits in the very
+  health domain the value was kept out of, so parking the value in its payload would re-plant the
+  leak — and it advertises **no accept**: `dismiss` is its only verb, since the sanctioned way to
+  record a facility address is the deliberate `Place` sidecar below. Building the set as that
+  explicit union closes the earlier draft's gap (a
   stray `geo` fact, whose predicate is *not* in the floor dict, would otherwise have slipped the
   guard). A single parser miss thus cannot silently plant location-domain whereabouts in the health
   domain — the guard catches it, and (should a facility address ever legitimately be needed) it is

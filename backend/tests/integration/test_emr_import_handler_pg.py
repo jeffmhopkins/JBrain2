@@ -2,9 +2,12 @@
 against real Postgres. A decrypted athena PDF is attached to a health note and
 ingested (so each page becomes a cited chunk); the `emr_parse` handler then
 extracts → dispatches → parses → integrates, minting graph facts + the
-`lab_results` projection, with every fact citing a REAL attachment page chunk.
+`lab_results` projection, with every fact citing a REAL attachment page chunk —
+and, with Layer-1 stripping disabled, holding a whereabouts fact out of the graph
+AND telling the owner it did (§3.6).
 """
 
+import json
 import uuid
 from pathlib import Path
 
@@ -14,9 +17,13 @@ from sqlalchemy import func, select, text
 
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
+from jbrain.ingest.emr import importer
+from jbrain.ingest.emr.firewall import FIREWALL_REVIEW_KIND, FIREWALL_REVIEW_SUBKIND
 from jbrain.ingest.emr.import_handler import EmrImportPipeline
+from jbrain.ingest.emr.importer import FirewallCatch
+from jbrain.ingest.emr.integrate import file_firewall_cards
 from jbrain.llm import FakeLlmClient, LlmRouter
-from jbrain.models.analysis import Entity, Fact
+from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.notes import Attachment, Chunk
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
@@ -164,3 +171,164 @@ async def test_emr_parse_job_is_idempotent(maker, tmp_path):  # noqa: F811
             )
         ).scalar_one()
         assert encs == 1
+
+
+# Synthetic — the whereabouts a parser regression would hand the importer.
+_LEAKED_ADDRESS = "1200 Elm Street, Springfield IL 62701"
+
+
+@pytest.fixture
+def stripping_disabled(monkeypatch):
+    """Layer 1 off: every parsed encounter also carries the facility's postal
+    address, exactly as a parser regression would emit it (§9). Layer 2 alone must
+    then hold it out AND card it."""
+    original = importer._add_encounter
+
+    def leaky(b, enc, enc_ref_by_key):
+        original(b, enc, enc_ref_by_key)
+        b.fact(
+            entity_ref=enc_ref_by_key[enc.key],
+            entity_kind=importer.KIND_ENCOUNTER,
+            predicate="address",
+            qualifier="",
+            kind="attribute",
+            statement=_LEAKED_ADDRESS,
+            anchor=enc.source_anchor,
+            value_json={"value": _LEAKED_ADDRESS},
+        )
+
+    monkeypatch.setattr(importer, "_add_encounter", leaky)
+
+
+async def _firewall_cards(s, note_id: str) -> list[ReviewItem]:
+    """This note's firewall cards, whatever their status — the dedup contract is
+    across ALL statuses, so an open-only read would hide the bug it guards against
+    (the store is shared across the module's tests, hence the note scoping)."""
+    rows = (
+        (await s.execute(select(ReviewItem).where(ReviewItem.kind == FIREWALL_REVIEW_KIND)))
+        .scalars()
+        .all()
+    )
+    return [
+        r
+        for r in rows
+        if r.payload.get("subkind") == FIREWALL_REVIEW_SUBKIND
+        and r.payload.get("note_id") == note_id
+    ]
+
+
+async def test_firewall_catch_is_held_out_of_the_graph_and_carded(
+    maker,  # noqa: F811
+    tmp_path,
+    stripping_disabled,
+):
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported athena labs.")
+    att_id = await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    await ingest(maker, note_id, tmp_path)
+
+    handler = EmrImportPipeline(maker, blobs, _pipeline(maker))
+    await handler.parse({"note_id": note_id})
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        # (a) The fact is still never committed — no address edge, and the value
+        # appears nowhere in the graph the guard is protecting.
+        assert (
+            await s.execute(text("SELECT count(*) FROM app.facts WHERE predicate = 'address'"))
+        ).scalar_one() == 0
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.facts WHERE statement LIKE :a"),
+                {"a": "%Elm Street%"},
+            )
+        ).scalar_one() == 0
+
+        # (b) ...and the owner is now told: one card, health domain, right subkind.
+        cards = await _firewall_cards(s, note_id)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card.domain_code == "health"
+        assert card.status == "open"
+        assert card.payload["subkind"] == FIREWALL_REVIEW_SUBKIND
+        assert card.payload["predicate"] == "address"
+        assert card.payload["entity_kind"] == importer.KIND_ENCOUNTER
+        assert card.payload["note_id"] == note_id
+        assert card.payload["attachment_id"] == str(att_id)
+        assert card.payload["anchor"] == "page 1"
+        # The card cites the page chunk (the durable row), never the page text.
+        chunk_id = card.payload["chunk_id"]
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.chunks WHERE id = :c AND attachment_id = :a"),
+                {"c": chunk_id, "a": str(att_id)},
+            )
+        ).scalar_one() == 1
+        # The held value never rides the card — the payload lives in the very domain
+        # the value was kept out of.
+        assert "Elm" not in json.dumps(card.payload)
+        # Evidence that a control fired, not an affordance that undoes it: no accept,
+        # no choices — `dismiss` is all it offers.
+        assert "choices" not in card.payload
+        assert "outcomes" not in card.payload
+
+
+async def test_firewall_card_does_not_re_file_or_come_back_once_dismissed(
+    maker,  # noqa: F811
+    tmp_path,
+    stripping_disabled,
+):
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported athena labs.")
+    await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    await ingest(maker, note_id, tmp_path)
+    handler = EmrImportPipeline(maker, blobs, _pipeline(maker))
+
+    await handler.parse({"note_id": note_id})
+    await handler.parse({"note_id": note_id})  # re-import of the same source
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert len(await _firewall_cards(s, note_id)) == 1
+
+        # Dismissed is a decision, not a snooze: the dedup spans ALL statuses, so the
+        # next import must not resurrect the card (the wiki-lint open-only bug).
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'dismissed'"
+                " WHERE kind = :k AND payload->>'subkind' = :sk"
+                " AND payload->>'note_id' = :n"
+            ),
+            {"k": FIREWALL_REVIEW_KIND, "sk": FIREWALL_REVIEW_SUBKIND, "n": note_id},
+        )
+
+    await handler.parse({"note_id": note_id})
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        cards = await _firewall_cards(s, note_id)
+        assert len(cards) == 1
+        assert cards[0].status == "dismissed"
+
+
+async def test_repeated_catches_in_one_import_collapse_but_distinct_ones_do_not(
+    maker,  # noqa: F811
+):
+    """The in-flight half of the dedup: two identical catches in a SINGLE call must
+    not double-file, which the not-yet-flushed existence probe cannot see on its own.
+    A different locked predicate on the same page is a different catch and still
+    gets its own card."""
+    note_id = await make_note(maker, domain="health", body="Imported athena labs.")
+    address = FirewallCatch(
+        entity_kind="Encounter", predicate="address", anchor="page 1", chunk_id=""
+    )
+    geo = FirewallCatch(entity_kind="Encounter", predicate="geo", anchor="page 1", chunk_id="")
+    filed = await file_firewall_cards(
+        maker,
+        SYSTEM_CTX,
+        note_id=uuid.UUID(note_id),
+        note_domain="health",
+        catches=[("att-1", address), ("att-1", address), ("att-1", geo)],
+    )
+    assert filed == 2
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        cards = await _firewall_cards(s, note_id)
+        assert {c.payload["predicate"] for c in cards} == {"address", "geo"}
+        # No page chunk resolved (an attachment with no chunks) -> an explicit null,
+        # never a fabricated citation.
+        assert all(c.payload["chunk_id"] is None for c in cards)

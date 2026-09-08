@@ -17,6 +17,7 @@ lifecycle transition inside `decide`, so `is_supersede` stays False.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import text
@@ -27,6 +28,7 @@ from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.candidates import ParseResult
+from jbrain.ingest.emr.firewall import FIREWALL_REVIEW_KIND
 from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch, lower_parse_result
 from jbrain.ingest.emr.pathology import extract_pathology_diagnoses
 from jbrain.ingest.emr.reconcile import REVIEW_KIND, ParkedRead
@@ -87,6 +89,87 @@ async def file_parked_cards(
     return filed
 
 
+async def file_firewall_cards(
+    maker: async_sessionmaker,
+    ctx: SessionContext,
+    *,
+    note_id: uuid.UUID,
+    note_domain: str,
+    catches: Sequence[tuple[str, FirewallCatch]],
+) -> int:
+    """File a `low_confidence` (`subkind=firewall_address`) card per Layer-2 firewall
+    catch (§3.6) — the owner's only evidence that the guard fired and held a
+    whereabouts fact out of the health graph. Each catch is paired with the id of the
+    attachment it was caught in; returns the number filed.
+
+    The card carries WHAT was held and WHERE (attachment, page anchor, page chunk) and
+    never the caught value: the value was kept out of the health domain on purpose, and
+    this card sits in that same domain, so parking the value in its payload would
+    re-plant the leak. It advertises no accept either — a facility address that is
+    genuinely wanted is added deliberately as a location-domain `Place` sidecar (§3.6),
+    never from here — so `dismiss` is the only verb it offers.
+
+    Deduped on (attachment, anchor, entity kind, predicate) across ALL statuses, so a
+    dismissed card never nags again on a re-import. The attachment id keys it rather
+    than the chunk id because a re-ingest re-mints chunk rows; the payload still cites
+    the chunk for provenance.
+    """
+    if not catches:
+        return 0
+    filed = 0
+    seen: set[str] = set()
+    async with scoped_session(maker, ctx) as session:
+        for attachment_id, catch in catches:
+            key = f"{attachment_id}|{catch.anchor}|{catch.entity_kind}|{catch.predicate}"
+            if key in seen:  # two catches of the same shape on one page are one card
+                continue
+            seen.add(key)
+            exists = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM app.review_items WHERE kind = :k"
+                        " AND payload->>'subkind' = :sk AND payload->>'note_id' = :nid"
+                        " AND payload->>'key' = :key LIMIT 1"
+                    ),
+                    {
+                        "k": FIREWALL_REVIEW_KIND,
+                        "sk": catch.subkind,
+                        "nid": str(note_id),
+                        "key": key,
+                    },
+                )
+            ).first()
+            if exists is not None:
+                continue
+            session.add(
+                ReviewItem(
+                    kind=FIREWALL_REVIEW_KIND,
+                    payload={
+                        "note_id": str(note_id),
+                        "subkind": catch.subkind,
+                        "key": key,
+                        "attachment_id": attachment_id,
+                        "anchor": catch.anchor,
+                        "chunk_id": catch.chunk_id or None,
+                        "predicate": catch.predicate,
+                        "entity_kind": catch.entity_kind,
+                        "summary": (
+                            f"location firewall: a {catch.predicate} fact on a health"
+                            f" {catch.entity_kind} was held out of the graph"
+                        ),
+                        "rationale": (
+                            f"caught at {catch.anchor}; the value is deliberately not"
+                            " recorded here. A facility address that is genuinely needed"
+                            " is added as a location-domain Place, never as a health fact."
+                        ),
+                    },
+                    domain_code=note_domain,
+                )
+            )
+            filed += 1
+    return filed
+
+
 async def integrate_parse_result(
     pipeline: AnalysisPipeline,
     maker: async_sessionmaker,
@@ -102,8 +185,9 @@ async def integrate_parse_result(
     tags: list[str] | None = None,
 ) -> list[FirewallCatch]:
     """Commit a parse result's facts. Each per-episode intent runs in its own
-    RLS-scoped transaction (§6.6). Returns the Layer-2 firewall catches (facts
-    held out of the graph). Provider resolution runs under `ctx` — pass a
+    RLS-scoped transaction (§6.6). Returns the Layer-2 firewall catches (facts held
+    out of the graph) — the caller MUST card them with `file_firewall_cards`, or a
+    security control fires silently. Provider resolution runs under `ctx` — pass a
     health-only scope so a general-domain namesake is invisible and a health
     `Person` is minted, not re-matched (§3.6)."""
     # The one LLM touch on the structured path (§6.5): the pathology Final Diagnosis.

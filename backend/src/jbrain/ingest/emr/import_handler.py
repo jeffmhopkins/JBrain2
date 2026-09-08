@@ -8,8 +8,8 @@ structured path:
   load PDF attachments → extract text, or vision-OCR a scanned (text-less) PDF
   page by page (§6.2, the one LLM adapter touch here) → dispatch each to its parser
   → reconcile the OCR reprints against the precise draws (§6.4) → integrate each
-  precise parse through the shipped arbiter → file a review card for every parked
-  OCR read and unrecognized file.
+  precise parse through the shipped arbiter → file a review card for every Layer-2
+  firewall catch (§3.6), parked OCR read, and unrecognized file.
 
 Provenance: each precise source is integrated against ITS OWN attachment chunks,
 so a fact's citation lands on the source document (the arbiter anchors an EMR fact
@@ -38,8 +38,12 @@ from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.dispatch import Attachment as SourceInput
 from jbrain.ingest.emr.dispatch import Source, parse_corpus, select_source
-from jbrain.ingest.emr.importer import ChunkResolver
-from jbrain.ingest.emr.integrate import file_parked_cards, integrate_parse_result
+from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch
+from jbrain.ingest.emr.integrate import (
+    file_firewall_cards,
+    file_parked_cards,
+    integrate_parse_result,
+)
 from jbrain.ingest.emr.onecontent import pdf_word_pages
 from jbrain.ingest.emr.reconcile import REVIEW_KIND
 from jbrain.ingest.emr.scan_ocr import VISION_OCR_TASK, ocr_scanned_pdf
@@ -117,6 +121,10 @@ class EmrImportPipeline:
         sources = await self._build_sources(attachments)
         corpus = parse_corpus(sources)
 
+        # Layer-2 firewall catches, paired with the attachment they came from. The
+        # guard holding a whereabouts fact out of the graph is only half the control:
+        # a silent hold tells the owner nothing, so every catch is carded below (§3.6).
+        caught: list[tuple[str, FirewallCatch]] = []
         for parsed in corpus.precise:
             # Cite THIS attachment's chunks so a fact's provenance lands on the source
             # document's page, not the note body (the arbiter anchors an EMR fact to the
@@ -126,7 +134,7 @@ class EmrImportPipeline:
             if not att_refs:
                 att_refs = note_refs
             resolver = self._resolver(anchors, att_refs)
-            await integrate_parse_result(
+            catches = await integrate_parse_result(
                 self._pipeline,
                 self._maker,
                 ctx,
@@ -137,6 +145,14 @@ class EmrImportPipeline:
                 result=parsed.result,
                 chunk_for_anchor=resolver,
             )
+            caught += [(parsed.ref, c) for c in catches]
+        await file_firewall_cards(
+            self._maker,
+            ctx,
+            note_id=uuid.UUID(note_id),
+            note_domain=domain,
+            catches=caught,
+        )
         await file_parked_cards(
             self._maker,
             ctx,
