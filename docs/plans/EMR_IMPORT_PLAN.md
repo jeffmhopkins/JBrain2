@@ -1710,7 +1710,8 @@ import:
   OCR read **adopts the precise draw's timestamp + specimen** (identical minted qualifier → idempotent,
   dual-cited) and the higher-`fidelity` precise draw is authoritative. A read matching **nothing** —
   including a readable-but-WRONG timestamp — **parks** in `pending_review` behind a `low_confidence`/
-  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent), never a spurious
+  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent **across all
+  statuses**, so a dismissal is a decision and not a snooze), never a spurious
   point. The four red-team scenarios are unit-tested (divergent-rendering dedup, readable-but-wrong
   parks, two-specimen-less draws both persist, matching by canonical LOINC not label) + a real-Postgres
   e2e proves the ARIA reprint corroborates the 2021 OneContent draws (one graph draw, not two) while

@@ -49,8 +49,10 @@ async def file_parked_cards(
     """File a `low_confidence` card for each OCR read the reconciler parked (§6.4) —
     a readable-but-unmatched reprint is held for review, never minted as a fact. One
     card per (analyte, day) parked read; returns the number filed. Idempotent: a
-    re-run re-derives the same (subkind, analyte, collected) key and does not
-    duplicate an open card."""
+    re-run re-derives the same (subkind, analyte, collected) key and files nothing.
+    The probe spans ALL statuses, like the firewall card's below — an open-only probe
+    treats a dismissal as a snooze and re-files the card on every `emr_parse` run,
+    forever (the `wiki/lint._file_card` bug)."""
     if not parked:
         return 0
     filed = 0
@@ -61,7 +63,7 @@ async def file_parked_cards(
             exists = (
                 await session.execute(
                     text(
-                        "SELECT 1 FROM app.review_items WHERE kind = :k AND status = 'open'"
+                        "SELECT 1 FROM app.review_items WHERE kind = :k"
                         " AND payload->>'subkind' = :sk AND payload->>'note_id' = :nid"
                         " AND payload->>'key' = :key LIMIT 1"
                     ),
