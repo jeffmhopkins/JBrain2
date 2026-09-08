@@ -580,6 +580,41 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
             hold_ids=[e.id for e in heads if e.status == "pending_review"],
         )
 
+    # Re-deriving the LOSING side of a settled review card must not re-litigate it.
+    # Resolving a card pins the winner and retracts the loser, so the loser is not
+    # live and the identity-refresh loop above cannot see it; re-extracting the same
+    # unchanged note text would insert it as a fresh ACTIVE twin beside the pinned
+    # winner, which re-flags ("Re-flag, never flip", below). One rebuild would file one
+    # collision card per settled decision, corpus-wide (analysis/rebuild.py, and
+    # `rebuild_spare_fact_ids` in analysis/purge.py, which keeps the loser reachable).
+    # Refresh the retracted row in place instead: nothing goes live, nothing is filed.
+    #
+    # Guarded on a PINNED head, which is what makes this a settled human verdict rather
+    # than the machine's own `retracted_by_reextraction`. A value retracted because a
+    # re-extraction dropped its key must still RESURRECT as a live fact when the key
+    # comes back (`test_retracted_rows_are_ignored`) — no row records WHY a fact was
+    # retracted, so the pinned head beside it is the only honest discriminator, and it
+    # is exactly the shape that produces the flood.
+    #
+    # Same validity ONLY: re-asserting a retracted value with NEW validity is a genuine
+    # transition (moving back to a former address) and falls through. Runs AFTER the
+    # correction branch, so an owner correction re-asserting a retracted value still
+    # out-argues the graph. The EMR lab path matched its own retracted rows earlier and
+    # is unaffected.
+    if any(e.pinned for e in live if e.status in ("active", "pending_review")):
+        twin = next(
+            (
+                e
+                for e in existing
+                if e.status == "retracted"
+                and e.valid_from == candidate.valid_from
+                and values_equal(candidate, e)
+            ),
+            None,
+        )
+        if twin is not None:
+            return Decision(refresh_id=twin.id)
+
     if candidate.kind in ("event", "measurement"):
         clash = next(
             (

@@ -891,3 +891,51 @@ def test_correction_supersedes_all_active_heads() -> None:
     )
     assert d.insert and d.insert_pinned is True
     assert set(d.supersede_ids) == {"h1", "h2"}
+
+
+# --- settled review decisions survive a rebuild ---------------------------
+# The rebuild sweep (analysis/rebuild.py) spares the facts a settled review card names,
+# INCLUDING the retracted loser, which no supersession walk can reach (resolving a card
+# writes no chain edge — analysis/repo.py). Sparing keeps the card servable; these tests
+# pin the other half: re-deriving the loser's value from the unchanged note text must
+# refresh that retracted row, NOT insert a fresh active twin beside the pinned winner
+# and re-flag it. Without this, one rebuild files one collision card per settled
+# decision, corpus-wide — the flood the exemption exists to prevent.
+
+
+def test_rederived_value_of_a_retracted_loser_refreshes_it_not_reflags_the_pin() -> None:
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1980-01-01", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.refresh_id == "loser"
+    assert d.review_kind is None
+    assert not d.insert
+
+
+def test_retracted_twin_match_requires_the_same_validity() -> None:
+    """A retracted value re-asserted with NEW validity is a genuine transition (the
+    owner moved back), not a re-extraction of the same reading — it must NOT be
+    swallowed as a refresh of the retracted row."""
+    winner = view(id="winner", kind="state", statement="lives at 99 Pine Ave", pinned=True)
+    loser = view(id="loser", kind="state", statement="lives at 12 Oak St", status="retracted")
+    d = decide(
+        cand(kind="state", statement="lives at 12 Oak St", valid_from=T2, reported_at=T2),
+        [winner, loser],
+    )
+    assert d.refresh_id is None
+
+
+def test_a_retracted_row_still_never_satisfies_a_live_read() -> None:
+    """The guard must not resurrect retracted rows into the live set: a candidate with a
+    DIFFERENT value still collides with the pinned head exactly as before."""
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1999-09-09", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.review_kind == "attribute_collision"
+    assert d.conflicting_id == "winner"

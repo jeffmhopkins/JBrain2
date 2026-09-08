@@ -106,6 +106,7 @@ async def seed_fact(
     object_entity_id: str | None = None,
     temporal_token_id: str | None = None,
     derived_from_fact_id: str | None = None,
+    pinned: bool = False,
 ) -> str:
     fid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as s:
@@ -113,10 +114,11 @@ async def seed_fact(
             text(
                 "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, assertion,"
                 " valid_from, valid_to, reported_at, status, superseded_by, note_id,"
-                " object_entity_id, temporal_token_id, derived_from_fact_id, extractor,"
+                " object_entity_id, temporal_token_id, derived_from_fact_id, pinned, extractor,"
                 " prompt_version, domain_code)"
                 " VALUES (:id, :eid, :pred, 'state', 'seed statement', 'asserted', :vf, :vt,"
-                " now(), :status, :sup, :nid, :oid, :tok, :derived, 'fake-model', 'v1', 'general')"
+                " now(), :status, :sup, :nid, :oid, :tok, :derived, :pinned, 'fake-model', 'v1',"
+                " 'general')"
             ),
             {
                 "id": fid,
@@ -130,6 +132,7 @@ async def seed_fact(
                 "oid": object_entity_id,
                 "tok": temporal_token_id,
                 "derived": derived_from_fact_id,
+                "pinned": pinned,
             },
         )
     return fid
