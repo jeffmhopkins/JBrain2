@@ -38,16 +38,28 @@ WHAT "/slots" ACTUALLY REPORTS (verified against llama.cpp server source, 2026-0
 by the adversarial review of this module's first draft): an idle slot's `n_prompt_tokens`
 is the slot's whole CACHE — prompt plus every generated token — so after a real turn it
 reads prompt+output-1, never the prompt size a caller recorded; and a slot that was
-restored into but never used reports no `n_prompt_tokens` at all. An exact-integer
-"prefix present" test is therefore structurally wrong on the restore side (it stays right
-on the SAVE side only because the keeper's prime generates exactly one token, whose stop
-token the server does not append — see `save_after_prime`). The restore gate below is a
-conservative threshold instead: any slot holding at least a prefix-sized cache is left
-alone, whatever it holds — mistaking a large foreign prompt for the prefix costs one
-un-accelerated prefill (the pre-feature behaviour), while the inverse mistake would wipe
-a live conversation to re-plant a prefix it already extends. A restore that has not yet
-been used reports nothing, so `_restored_unused` remembers it and stops the keeper's tick
-from streaming the same 2 GiB once a minute until the owner's first message.
+restored into but never used reports no `n_prompt_tokens` at all.
+
+The restore gate is therefore a SIZE gate, but not a bare threshold — that was the shape it
+started as and it cost the owner a full prefill on every turn for as long as one big
+background prompt sat in the slot (`triage.classify` reaches 37,899 tokens here, against a
+30,324-token prefix). "At least prefix-sized" cannot mean "leave alone": a foreign prompt
+shares NO prefix with the turn about to run, so declining costs the whole prefill while
+restoring recovers the whole head. What the gate compares against instead is the exact count
+our own traffic leaves behind — `input + output - 1` after a real turn (`note_agent_turn`),
+or the prime's own count after a prime — the same integer discipline the SAVE side uses.
+Anything else at that size is foreign and fair to restore over. It stays conservative on a
+BUSY slot, whose count is still growing and so cannot be matched: wiping a live conversation
+to re-plant a prefix it already extends is the one harm this store must never cause.
+
+A restore that has not yet been used reports nothing, so `_restored_unused` remembers it and
+stops the keeper's tick from streaming the same 2 GiB once a minute until the owner's first
+message. That memo is VERIFIED, never trusted — it records the slot, and a size where there
+should be none means a background task took the prefix before any turn could use it, so the
+restore is redone. Trusting it was a silent miss: no wait, no retry, not even a log line,
+and a guaranteed ~70 s prefill. It also goes stale on an eviction — a reloaded model's fresh
+slot reports nothing too — so `WarmKeeper.note_prefix_lost` clears it on residency's
+eviction hand-off, or the cold reload this store is best at would decline its own restore.
 
 ACCEPTED LIMITATION: the fingerprint covers the launch line, persona and tools — not the
 GGUF bytes. Re-downloaded weights under an unchanged filename would restore KV computed
@@ -234,11 +246,23 @@ class KvPrefixStore:
         # The prime's exact token count per served model — the integer that identifies
         # the primed slot among /slots entries, and the expected restore size.
         self._prime_tokens: dict[str, int] = {}
-        # Served models restored-but-not-yet-used: such a slot reports NO n_prompt_tokens
-        # (see module docstring), so without this memo every keeper tick would re-restore
-        # the same file until the first message. Cleared when a turn uses it or a fresh
-        # prime supersedes it.
-        self._restored_unused: set[str] = set()
+        # Served model -> the SLOT a restore went into that no turn has used yet. Such a slot
+        # reports NO n_prompt_tokens (see module docstring), so without this memo every keeper
+        # tick would re-restore the same file until the first message.
+        #
+        # It records the slot ID rather than just the name because the memo must be VERIFIED,
+        # not trusted. Trusting it was a silent miss on a single-slot box: a restore landed,
+        # background traffic took the slot before the owner's turn could use it, and the next
+        # turn's restore returned False here — no wait, no retry, no log — guaranteeing the
+        # ~70 s prefill the store exists to prevent. Now `_restore_still_pending` re-reads the
+        # slot: still reporting nothing means the prefix is genuinely there; a size means
+        # something ran over it and the memo is stale.
+        self._restored_unused: dict[str, int] = {}
+        # Served model -> the cache size the slot should report if it still holds OUR last
+        # agent turn, i.e. `input + output - 1` (the /slots semantics in the module docstring).
+        # This is what tells a conversation apart from a big foreign prompt at the same size —
+        # see the "prefix-sized" gate in `restore_if_lost`.
+        self._conversation_tokens: dict[str, int] = {}
         # One restore at a time: a keeper tick and an inbound turn discovering the same
         # loss must not both stream the file into different slots.
         self._lock = asyncio.Lock()
@@ -294,11 +318,47 @@ class KvPrefixStore:
             _identity_components(line, system, tools, reasoning_effort),
         )
 
-    def note_agent_turn(self, served_model: str, input_tokens: int) -> None:
+    def note_agent_turn(self, served_model: str, input_tokens: int, output_tokens: int) -> None:
         """A real jerv turn completed — whatever was restored has now been used, and the
-        slot it grew reports a prefix-sized cache on its own from here on."""
+        slot it grew reports a prefix-sized cache on its own from here on.
+
+        It also records what that slot will now READ: `input + output - 1`, per the /slots
+        semantics in the module docstring. That number is the only thing that tells our own
+        conversation apart from a foreign prompt of similar size, and without it the
+        prefix-sized gate had to refuse both — so a `triage.classify` call (measured at
+        37,899 tokens on the owner's box, against a 30,324-token prefix) parked itself in the
+        slot and silently blocked every later restore."""
         if input_tokens > 0:
-            self._restored_unused.discard(served_model)
+            self._restored_unused.pop(served_model, None)
+            self._conversation_tokens[served_model] = input_tokens + max(output_tokens, 1) - 1
+
+    def note_prefix_lost(self, served_model: str) -> None:
+        """The model was evicted or reloaded — every memo about its slots is now fiction.
+
+        Without this a stale `_restored_unused` survives the reload and makes the next
+        `restore_if_lost` decline: a fresh slot reports no `n_prompt_tokens`, which is
+        indistinguishable from a restored-but-unused one, so the memo would read as 'the
+        prefix is already there'. That is the cold-reload path — the case this store is
+        best at — losing to its own bookkeeping."""
+        self._restored_unused.pop(served_model, None)
+        self._conversation_tokens.pop(served_model, None)
+
+    async def _restore_still_pending(self, served_model: str, slot_id: int) -> bool:
+        """Is the restore recorded in `_restored_unused` still sitting in its slot, unused?
+
+        A restored-but-unused slot reports NO `n_prompt_tokens` at all; anything that has run
+        since leaves a size behind. So the absence of the key IS the answer. Unreadable slots
+        or a vanished slot id both answer False — the memo stops being trusted, and the caller
+        falls through to the normal gates, which are conservative on their own."""
+        try:
+            slots = await self._gateway.slots(served_model)
+        except LocalGatewayError as exc:
+            log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
+            return False
+        for slot in slots:
+            if isinstance(slot, dict) and _slot_int(slot, "id") == slot_id:
+                return "n_prompt_tokens" not in slot
+        return False
 
     # ---- save -----------------------------------------------------------------------
 
@@ -319,7 +379,7 @@ class KvPrefixStore:
             return False
         self._prime_tokens[served_model] = prime_tokens
         # A fresh prime supersedes any restored-but-unused state.
-        self._restored_unused.discard(served_model)
+        self._restored_unused.pop(served_model, None)
         resolved = await asyncio.to_thread(
             self._resolve, served_model, system, tools, reasoning_effort
         )
@@ -475,6 +535,34 @@ class KvPrefixStore:
 
     # ---- restore --------------------------------------------------------------------
 
+    def _may_be_ours(self, served_model: str, big: list[dict[str, object]]) -> bool:
+        """Could any of these prefix-sized slots be OUR conversation (or our own prime)?
+
+        `True` means hands off. The test is an exact integer, the same discipline the save
+        side uses: a slot holding our last agent turn reads `input + output - 1`, and a slot
+        holding a fresh prime reads the prime's own count. Anything else at that size is a
+        foreign prompt, and refusing to restore over it — which is what a bare threshold did
+        — costs the full prefill on every turn until something else finally evicts it.
+
+        DELIBERATELY CONSERVATIVE ON A BUSY SLOT. A slot mid-request cannot be judged: its
+        count is still growing, so a second, concurrent agent turn would not match the number
+        recorded for the first and would read as foreign — and wiping a live conversation is
+        the one harm this store must never cause. A big background call therefore still blocks
+        a restore WHILE it runs; it stops blocking once it goes idle, which is the state that
+        was silently costing every subsequent turn a full prefill.
+
+        With no recorded turn (a fresh process beside a long-running server) nothing can be
+        ruled out, so everything prefix-sized is left alone — the pre-existing behaviour."""
+        expected = self._conversation_tokens.get(served_model)
+        prime = self._prime_tokens.get(served_model)
+        for slot in big:
+            if slot.get("is_processing"):
+                return True
+            size = _slot_int(slot, "n_prompt_tokens")
+            if expected is None or size == expected or (prime is not None and size == prime):
+                return True
+        return False
+
     async def restore_if_lost(
         self,
         served_model: str,
@@ -497,8 +585,15 @@ class KvPrefixStore:
         turn or a fresh prime supersedes it."""
         if self._eligible(served_model) is None:
             return False
-        if served_model in self._restored_unused:
-            return False  # already restored; the slot reports nothing until a turn uses it
+        pending_slot = self._restored_unused.get(served_model)
+        if pending_slot is not None:
+            if await self._restore_still_pending(served_model, pending_slot):
+                return False  # our restore is still sitting there, waiting for a turn
+            # Something ran on that slot since. The memo is stale — most likely a background
+            # task took the prefix we had just put back — so fall through and restore again
+            # rather than declining on a memory of a prefix that is gone.
+            del self._restored_unused[served_model]
+            log.info("kv_prefix.restored_prefix_taken", model=served_model, slot=pending_slot)
         resolved = await asyncio.to_thread(
             self._resolve, served_model, system, tools, reasoning_effort
         )
@@ -537,14 +632,27 @@ class KvPrefixStore:
             prime = self._prime_tokens.get(served_model)
             threshold = prime if prime is not None else MIN_PREFIX_TOKENS
             occupied = [s for s in slots if isinstance(s, dict)]
-            if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
-                # Something prefix-sized is cached — never restore over it. This branch is
-                # ALSO the only one a healthy hot config ever reaches (the keeper's settled
-                # tick lands here every minute), so it must refresh the LRU clock: without
-                # this touch the hottest config's file keeps its boot-time mtime and is the
-                # FIRST out of the budget (adversarial review, 2026-08-23).
+            big = [s for s in occupied if _slot_int(s, "n_prompt_tokens") >= threshold]
+            if big and self._may_be_ours(served_model, big):
+                # Something prefix-sized is cached and we cannot rule out that it is ours —
+                # never restore over that. This branch is ALSO the only one a healthy hot
+                # config ever reaches (the keeper's settled tick lands here every minute), so
+                # it must refresh the LRU clock: without this touch the hottest config's file
+                # keeps its boot-time mtime and is the FIRST out of the budget (adversarial
+                # review, 2026-08-23).
                 await asyncio.to_thread(self._touch, path)
                 return False
+            if big:
+                # Prefix-sized, idle, and NOT a size any turn of ours left behind: a big
+                # background prompt parked in the slot. Restoring over it is right — it shares
+                # no prefix with the turn about to run, so leaving it costs the FULL prefill
+                # while replacing it recovers the whole ~30k head.
+                log.info(
+                    "kv_prefix.restoring_over_foreign_prompt",
+                    model=served_model,
+                    slots=[_slot_int(s, "n_prompt_tokens") for s in big],
+                    ours=self._conversation_tokens.get(served_model),
+                )
             idle = [s for s in occupied if not s.get("is_processing")]
             if not idle:
                 # Every slot busy. Don't give up silently — the observed miss (2026-08-24)
@@ -630,9 +738,11 @@ class KvPrefixStore:
             # A restore IS a use: refresh the file's mtime so the budget prune keeps the
             # caches that earn their disk and ages out the ones nothing restores.
             await asyncio.to_thread(self._touch, path)
-            # The slot will report NO size until a request uses it — remember the restore,
-            # or every keeper tick re-streams the same 2 GiB until the first message.
-            self._restored_unused.add(served_model)
+            # The slot will report NO size until a request uses it — remember the restore AND
+            # which slot took it, or every keeper tick re-streams the same 2 GiB until the
+            # first message. The slot id is what lets the memo be re-checked rather than
+            # trusted (see `_restore_still_pending`).
+            self._restored_unused[served_model] = slot_id
             await box_events.record(
                 box_events.KV_PREFIX_RESTORED,
                 served_model,

@@ -236,6 +236,45 @@ both resides and warms it.
 > `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms, and a
 > restore that could NOT happen lands as `kv_prefix_skipped_busy` — see the next box.
 >
+> **WHAT THE STORE HOLDS, AND THE THREE WAYS ITS RESTORE USED TO DECLINE.** It holds ONE
+> file per prompt shape, containing only the INSTRUCTION BASE — persona + tool schemas +
+> effort — so it is rewritten only when the fingerprint moves, i.e. about once per deploy.
+> Never conversation KV. Measured on gpt-oss-120b: 30,324 tokens, restored in 89 ms against
+> a ~70 s prefill. Caching the other tasks' bases would add nothing — their prompt floors
+> are 68-684 tokens (`triage.classify` 114, `note.extract` 77, `wiki.lint` 684), about a
+> second of prefill each, against jerv's 30,324.
+>
+> So a slow turn is never a missing file. It is one of these, and all three are fixed:
+>
+> 1. **The slot must be idle** — a restore overwrites the whole sequence, so llama-server
+>    cannot take one mid-request. The wait for an idle slot was 2 s against background calls
+>    that hold it 2-26 s; it is now 20 s (`RESTORE_BUSY_POLLS`), polling every 0.25 s to
+>    catch the sub-second gaps *between* back-to-back calls.
+> 2. **`_restored_unused` latched.** A restored-but-unused slot reports no `n_prompt_tokens`,
+>    so the store memoised the restore rather than re-streaming 2 GiB every keeper tick. But
+>    the memo was cleared only by a completed AGENT turn — so when background traffic took
+>    the prefix first, the next turn's restore returned False instantly, with no wait, no
+>    retry and no log line. The memo now records the SLOT and is re-checked against it: a
+>    size where there should be none means the restore was taken, so it is redone. The same
+>    staleness broke the cold-reload path (a fresh slot also reports nothing), so residency's
+>    eviction hand-off now reaches the store via `WarmKeeper.note_prefix_lost`.
+> 3. **The "prefix-sized" gate was a size guess.** It refused to restore over any slot holding
+>    at least the prime's token count, on the theory that it might be the live conversation —
+>    but `triage.classify` has hit **37,899 tokens** here, so a big background prompt parked
+>    in the slot silently blocked every later restore, costing the FULL prefill each time (a
+>    foreign prompt shares no prefix at all). The gate is now an exact integer, the same
+>    discipline the save side uses: a slot holding our last turn reads `input + output - 1`
+>    (`note_agent_turn` records it) and a fresh prime reads the prime's own count; anything
+>    else at that size is foreign and fair to restore over. It stays deliberately
+>    conservative on a BUSY slot, whose count is still growing — a second concurrent agent
+>    turn would not match the first's number, and wiping a live conversation is the one harm
+>    this store must never cause.
+>
+> What none of this fixes is a LONG conversation: with the 30,324-token base restored, a
+> 31,830-token turn prefills ~1,500 tokens (~3 s), but a 125,753-token one still prefills
+> ~95k (~3.5 min). Only conversation-level KV would close that, and it is deliberately out
+> of scope — 527 of 29,703 turns.
+>
 > **THE DISK CACHE CANNOT HELP A MODEL WHOSE SLOT IS BEING FOUGHT OVER — check this first
 > when the owner reports long prefills between replies.** MEASURED 2026-09-08 on the live
 > box, against exactly that report. `app.llm_usage` showed **fourteen of twenty-one tasks
@@ -252,21 +291,22 @@ both resides and warms it.
 > All three layers were working as designed and none could help:
 >
 > - the **WarmKeeper** re-primes only on its 60 s settled tick, long after the eviction;
-> - the **disk store** tried before every turn and logged `restore_skipped_busy`, because
->   its wait was 2 s while a single background call holds the slot 2-26 s (a burst, a
->   minute). That budget is now 20 s (`RESTORE_BUSY_POLLS`), which outlasts one call and
->   catches the sub-second gaps *between* calls — a mitigation, not the fix;
+> - the **disk store** tried before every turn and declined three different ways, all now
+>   fixed (see the box below);
 > - `-cram 0` (below) means there is no host-RAM conversation cache to fall back on either,
 >   by design.
 >
-> **The fix is to stop the contention, and both halves are PWA settings — no terminal.**
-> Give gpt-oss-120b a **second parallel slot** (Settings → LLM → the model's slot count;
-> `-c` becomes `window x slots` automatically, so budget the KV), which is what the
-> "dedicated interactive slot" in this runbook has always meant; and **route the small,
-> frequent background tasks off the interactive model** — `triage.classify`,
-> `session.title`, `research.title`, `pet.*` average 2,885 input tokens and do not need a
-> 120B. Note the gap: the debug console can set a model's context window and extra-args but
-> **not its slot count**, so a session helping remotely cannot do the first half itself.
+> **A second slot is NOT available here, and the arithmetic says why.** `-c` is
+> `window x slots`, so two slots at the full window costs +10 GB and puts the
+> gpt-oss-120b + qwen3.8-27b-q4 pair at 108.6 GB against ~118 GB usable — back in the ~9 GB
+> band `-cram 0` exists to escape. Two slots at HALF the window is free (both are 131,072
+> total cells, 98.6 GB paired) but caps a jerv turn at 64k, and `agent.turn` has reached
+> **125,753 tokens** with 527 turns over 60k since June. And the slots cannot be made
+> asymmetric: llama-server splits `-c` evenly across `-np`. So this box stays single-slot,
+> and the disk store has to work under contention rather than around it.
+>
+> Note a surface gap either way: the debug console can set a model's context window and
+> extra-args but **not** its slot count, so a session helping remotely cannot change it.
 >
 > **The harmony `Current date` is moved to the prompt tail (chat-template override).**
 > gpt-oss's stock harmony template renders a live `Current date: <today>` into the prompt's

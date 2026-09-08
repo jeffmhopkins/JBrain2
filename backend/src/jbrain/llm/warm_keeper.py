@@ -112,9 +112,17 @@ class WarmKeeper:
         The memo alone is not enough: it is only invalidated when a tick OBSERVES the model
         missing from the gateway, so an evict+restore that both complete between ticks leaves
         it stale and the next jerv turn pays a cold prefill in the foreground. This is the
-        edge-triggered half of that invalidation."""
+        edge-triggered half of that invalidation.
+
+        The disk store keeps its own slot bookkeeping and it goes stale on exactly the same
+        edge, in a way that is worse than useless: a reloaded model's fresh slot reports no
+        `n_prompt_tokens`, which is indistinguishable from a restored-but-unused one, so its
+        memo would read as 'the prefix is already there' and decline the restore that makes a
+        cold reload fast. So this hand-off tells the store too."""
         if self._primed is not None and self._primed[0] == served_model:
             self._primed = None
+        if self._kv_prefix is not None:
+            self._kv_prefix.note_prefix_lost(served_model)
 
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when

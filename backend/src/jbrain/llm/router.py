@@ -437,16 +437,23 @@ class LlmRouter:
         except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
             log.warning("llm.kv_restore_failed", model=model, exc_info=True)
 
-    def _note_agent_turn(self, task: str, provider: str, model: str, input_tokens: int) -> None:
-        """Tell the store a real jerv turn's prompt size, so the slot that conversation
-        grew keeps reading as 'prefix present' (restoring over it would wipe cached
-        history to re-plant a prefix the conversation already extends)."""
+    def _note_agent_turn(
+        self, task: str, provider: str, model: str, input_tokens: int, output_tokens: int
+    ) -> None:
+        """Tell the store a real jerv turn's shape, so the slot that conversation grew keeps
+        reading as 'prefix present' (restoring over it would wipe cached history to re-plant
+        a prefix the conversation already extends).
+
+        BOTH counts, because the store needs the size the slot will actually report —
+        `input + output - 1` — not the prompt size. With only the input it could not tell our
+        own conversation from a background prompt of similar size, and had to refuse to
+        restore over either."""
         if (
             self._kv_prefix is not None
             and task == kv_prefix_mod.AGENT_TURN_TASK
             and provider == local_catalog.LOCAL_PROVIDER
         ):
-            self._kv_prefix.note_agent_turn(model, input_tokens)
+            self._kv_prefix.note_agent_turn(model, input_tokens, output_tokens)
 
     async def _admit_local(self, provider: str, model: str) -> None:
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
@@ -807,7 +814,9 @@ class LlmRouter:
             sampling=resolved_sampling,
         )
         elapsed = time.perf_counter() - start
-        self._note_agent_turn(task, provider, model, turn.usage.input_tokens)
+        self._note_agent_turn(
+            task, provider, model, turn.usage.input_tokens, turn.usage.output_tokens
+        )
         await self._record(task, provider, model, turn.usage)
         log.info(
             "llm.converse",
@@ -945,7 +954,9 @@ class LlmRouter:
             # calibration this box offers, and it arrives on every turn.
             if probe is not None:
                 prefill.calibrate(model, prompt_chars, final.usage.input_tokens)
-            self._note_agent_turn(task, provider, model, final.usage.input_tokens)
+            self._note_agent_turn(
+                task, provider, model, final.usage.input_tokens, final.usage.output_tokens
+            )
             await self._record(task, provider, model, final.usage)
             log.info(
                 "llm.converse_stream",

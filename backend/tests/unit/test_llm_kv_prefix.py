@@ -500,11 +500,92 @@ async def test_a_restored_slot_reports_nothing_so_the_memo_stops_the_loop(root: 
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, "memo must hold"
     assert len(gw.restored) == 1
     # a real turn uses the restored slot; from here the slot reports its own size
-    store.note_agent_turn(SERVED, PRIME + 300)
+    store.note_agent_turn(SERVED, PRIME + 300, 40)
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True, (
         "after use, a genuine later loss must be restorable again"
     )
+
+
+async def test_a_restore_taken_before_it_was_used_is_redone_not_declined(root: Path) -> None:
+    """The silent miss on the owner's single-slot box (2026-09-08). A restore lands, a
+    background task takes the slot before the owner's turn can use it, and the memo — which
+    only a completed AGENT turn cleared — made the next restore return False instantly: no
+    wait, no retry, no log, and a guaranteed ~70 s prefill. The memo must be re-checked
+    against the slot, not trusted."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.restore_response = {"n_restored": PRIME}
+    gw.slot_state = [{"id": 0, "is_processing": False}]  # fresh slot, no size
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    # A background task ran on that very slot: the restored prefix is gone and the slot now
+    # reports ITS prompt. No agent turn happened, so the memo is still set.
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True, (
+        "a stolen restore must be redone, not declined on a memory of a prefix that is gone"
+    )
+    assert len(gw.restored) == 2
+
+
+async def test_a_reload_clears_the_memo_so_the_cold_restore_still_happens(root: Path) -> None:
+    """A reloaded model's fresh slot reports no `n_prompt_tokens` — indistinguishable from a
+    restored-but-unused one — so a surviving memo reads as 'the prefix is already there' and
+    declines the restore that makes a cold reload fast. That is the store's best case losing
+    to its own bookkeeping, so residency's eviction hand-off must reach it."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.restore_response = {"n_restored": PRIME}
+    gw.slot_state = [{"id": 0, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, "memo holds"
+    store.note_prefix_lost(SERVED)  # evicted and reloaded: the slot below is a NEW one
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert len(gw.restored) == 2
+
+
+async def test_a_big_idle_background_prompt_no_longer_blocks_the_restore(root: Path) -> None:
+    """`triage.classify` has reached 37,899 tokens on the owner's box against a 30,324-token
+    prefix. A bare size threshold read that as 'something prefix-sized is cached, leave it
+    alone' and declined every restore while it sat there — costing the FULL prefill each
+    turn, since a foreign prompt shares no prefix at all. The exact size our own turn leaves
+    behind is what tells the two apart."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.restore_response = {"n_restored": PRIME}
+    store.note_agent_turn(SERVED, 20_000, 50)  # our conversation reads 20,049
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME + 9_000, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert [r[1] for r in gw.restored] == [0]
+
+
+async def test_our_own_conversation_at_that_size_still_blocks_the_restore(root: Path) -> None:
+    """The other half of the same test, and the harm the store must never cause: a slot
+    holding the conversation our last turn grew reads `input + output - 1`, and restoring
+    over it would wipe cached history to re-plant a prefix that history already extends."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    store.note_agent_turn(SERVED, PRIME + 900, 40)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME + 939, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
+
+
+async def test_a_big_prompt_still_being_processed_is_left_alone(root: Path) -> None:
+    """Deliberate conservatism: a slot mid-request has a still-growing count, so a SECOND
+    concurrent agent turn would not match the number recorded for the first and would read as
+    foreign. Restoring there would wipe a live conversation, so a busy prefix-sized slot
+    blocks whatever it holds — it stops blocking the moment it goes idle."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    store.note_agent_turn(SERVED, 20_000, 50)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME + 9_000, "is_processing": True}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
 
 
 async def test_save_then_restore_compose_through_the_public_api(root: Path) -> None:
