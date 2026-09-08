@@ -23,6 +23,10 @@ should not need decoding.
 Retention is deliberately NOT enforced here: a busy channel is a lot of rows, and
 what to keep is an owner decision the plan holds open (§7). An index on `heard_at`
 makes both the log view and a future prune cheap.
+
+That decision was made on 2026-09-08 — fourteen days, with the owner's own traffic
+exempt — and lives in `sdr/aprslog.py` (`RETENTION`, `prune`) rather than here, because
+it is a policy the owner may change and a migration is not.
 """
 
 from alembic import op

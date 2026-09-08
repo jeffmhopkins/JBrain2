@@ -91,9 +91,9 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.lists.service import ListsRepo
 from jbrain.locations import SqlLocationRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
-from jbrain.sdr.aprslog import RECENT_DEFAULT, AprsReader
+from jbrain.sdr.aprslog import RECENT_DEFAULT, SEARCH_PATTERN_MAX, AprsReader
 from jbrain.sdr.classify import classify
-from jbrain.sdr.explain import explain, kind_label
+from jbrain.sdr.explain import WEATHER_FIELDS, explain, kind_label
 from jbrain.search.service import (
     SearchResponse,
     SearchResult,
@@ -422,11 +422,41 @@ _APRS_EMPTY = "Nothing heard in that window — APRS logging may not have been r
 # rather than a silent zero-row answer from a `kind` that matches nothing.
 _APRS_KINDS = ("Position", "Message", "Weather", "Object", "Other")
 
-# Labelled fields per line. Enough for a position or a weather report to be
-# answerable; few enough that a telemetry frame cannot fill the window.
+# Labelled fields per line. Few enough that a telemetry frame cannot fill the window:
+# a station with thirteen published channels would otherwise crowd out every other
+# packet in the answer.
 _APRS_FIELDS = 5
+# ...except a weather report, which is BOUNDED. `explain._WX` knows eleven tags and the
+# APRS spec defines no more, so there is no chatty case to guard against here — while
+# the cap actively lost readings the owner asked for: five fields drops pressure and
+# rain behind "+3 more", where nothing downstream can tell which three went.
+#
+# That is the difference the cap was always about. Telemetry is open-ended, weather is
+# a fixed set, and one number could not express both.
+_APRS_WEATHER_FIELDS = WEATHER_FIELDS
 
 _APRS_DURATION = re.compile(r"^\s*(\d{1,5})\s*([mhd])\s*$", re.IGNORECASE)
+
+
+def _aprs_pattern_refusal(pattern: str) -> str:
+    """Why this regex will not be run, or "" to run it.
+
+    Checked HERE as well as bounded in Postgres, because the two catch different things:
+    the database timeout stops a pattern that runs away, and this stops one that never
+    compiles — which would otherwise reach the owner as a raw driver error naming a
+    Postgres function, rather than as a sentence about their search."""
+    if len(pattern) > SEARCH_PATTERN_MAX:
+        return (
+            f"That search pattern is {len(pattern)} characters, and aprs_recent accepts "
+            f"at most {SEARCH_PATTERN_MAX}. Use `contains` for a plain word."
+        )
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        # Python's regex flavour is not Postgres's, so this catches the malformed rather
+        # than proving the valid — which is the half worth catching early.
+        return f"aprs_recent could not read {pattern!r} as a pattern: {exc}."
+    return ""
 
 
 def _aprs_moment(raw: Any) -> datetime | None | str:
@@ -518,7 +548,7 @@ def _aprs_packet_line(row: dict[str, Any]) -> str:
     origin = heard.origin or row.get("origin_call") or row.get("source") or "?"
     relay = row.get("source")
     via = f" (relayed by {relay})" if relay and relay != origin else ""
-    detail = _aprs_detail(said, origin)
+    detail = _aprs_detail(said, origin, kind_label(heard))
     reading = said.summary or heard.text
     return (
         f"{row['heard_at']:%H:%M} {origin}{via} — {kind_label(heard)}: "
@@ -526,12 +556,14 @@ def _aprs_packet_line(row: dict[str, Any]) -> str:
     )
 
 
-def _aprs_detail(said: Any, origin: str) -> str:
+def _aprs_detail(said: Any, origin: str, kind: str = "") -> str:
     """The labelled fields the summary does not already carry.
 
     Without this the tool answers "where is KD4WLE" with "Car": a position's summary is
     its symbol and its motion, while the COORDINATES live in the fields. Bounded to a
-    handful so one chatty telemetry frame cannot crowd out the rest of the window."""
+    handful so one chatty telemetry frame cannot crowd out the rest of the window —
+    except on a weather report, where the set is fixed and the whole point of the ask
+    is the readings."""
     summary = said.summary or ""
     skip = {"Symbol", "Reported at"}  # the summary and the timestamp already say these
     parts = [
@@ -541,7 +573,8 @@ def _aprs_detail(said: Any, origin: str) -> str:
     ]
     if not parts:
         return ""
-    shown = parts[:_APRS_FIELDS]
+    cap = _APRS_WEATHER_FIELDS if kind == "Weather" else _APRS_FIELDS
+    shown = parts[:cap]
     more = f", +{len(parts) - len(shown)} more" if len(parts) > len(shown) else ""
     return f" ({'; '.join(shown)}{more})"
 
@@ -714,6 +747,12 @@ def build_read_handlers(
         kind = _aprs_kind(arguments.get("kind"))
         if isinstance(kind, str) and kind.startswith("aprs_recent"):
             return ToolOutput(kind)
+        contains = str(arguments.get("contains") or "").strip() or None
+        matches = str(arguments.get("matches") or "").strip() or None
+        if matches is not None:
+            refusal = _aprs_pattern_refusal(matches)
+            if refusal:
+                return ToolOutput(refusal)
 
         if arguments.get("summarize"):
             stations = await aprs.digest(
@@ -735,6 +774,8 @@ def build_read_handlers(
                 kind=kind,
                 since=since,
                 until=until,
+                contains=contains,
+                matches=matches,
             )
             if not rows:
                 return ToolOutput(_APRS_EMPTY)

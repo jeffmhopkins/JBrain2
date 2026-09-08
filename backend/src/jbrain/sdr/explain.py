@@ -244,6 +244,12 @@ _WX = (
 )
 _WX_BY_TAG = {tag: (name, unit, width) for tag, name, unit, width in _WX}
 
+#: How many readings a weather report can carry, which the APRS spec fixes rather than
+#: leaving open. Public because the agent tool needs it to know that a weather line has
+#: a CEILING — telemetry does not, and that is the whole reason the tool caps fields at
+#: all (`readtools._APRS_WEATHER_FIELDS`).
+WEATHER_FIELDS = len(_WX)
+
 
 def _weather_value(unit: str, raw: str) -> str | None:
     try:
