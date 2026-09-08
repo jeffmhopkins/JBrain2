@@ -26,13 +26,28 @@ describe("the top bar's radio icon", () => {
     expect(onOpen).toHaveBeenCalled();
   });
 
-  it("sits in the right cluster, beside the vitals", () => {
-    // Position is the whole point of the move, so it is worth an assertion: the eye
-    // looks for the box's state in one place, and this belongs with it.
+  it("sits in the right cluster, AFTER the vitals", () => {
+    // Outermost, and that is the point rather than a preference: a slot that comes and
+    // goes between the wordmark and the chart would shove the chart sideways every time
+    // a lease starts or ends. On the edge it only ever grows the row.
     const { container } = render(<TopBar syncStatus="synced" radio={{ onOpen: vi.fn() }} />);
 
     const right = container.querySelector(".top-bar-right");
-    expect(right?.querySelector(".sdr-btn")).not.toBeNull();
+    const kids = [...(right?.children ?? [])];
+    const vitals = kids.findIndex((el) => el.querySelector(".vitals-gpu") ?? el.matches("button"));
+    const radio = kids.findIndex((el) => el.classList.contains("sdr-btn"));
+    expect(radio).toBeGreaterThan(-1);
+    expect(radio).toBe(kids.length - 1);
+    expect(vitals).toBeLessThan(radio);
+  });
+
+  it("carries no live dot", () => {
+    // The icon's PRESENCE already says a radio is held — it exists only while the lease
+    // does. A pulsing dot beside it was a second mark for the same fact, animated, in a
+    // row whose whole job is to be glanceable.
+    const { container } = render(<TopBar syncStatus="synced" radio={{ onOpen: vi.fn() }} />);
+
+    expect(container.querySelector(".sdr-live")).toBeNull();
   });
 
   it("is not in the composer's icon row any more", () => {

@@ -24666,32 +24666,11 @@ button.task-band:active {
    Binding spec: docs/mocks/sdr-tuner/a-tuner-sheet.html. The icon carries the
    mode accent rather than --text-2 because, unlike attach, it reports live
    state; the pulse marks live audio. */
+/* No live dot any more. It pulsed to say "a radio is held" — which is the same thing
+   the icon's PRESENCE says, since the icon exists only while the lease does. Two marks
+   for one fact, one of them animated, in a row whose whole job is to be glanceable. */
 .sdr-btn {
   color: var(--steel);
-  position: relative;
-}
-.sdr-live {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--r-pill);
-  background: var(--green);
-  /* The ring is the BACKGROUND it sits on, so the dot reads as separated from the
-     glyph rather than stuck to it. --bg since this moved to the top bar; it was
-     --surface-composer while the button lived in the composer's icon row. */
-  box-shadow: 0 0 0 2px var(--bg);
-  animation: sdr-pulse 2s ease-in-out infinite;
-}
-@keyframes sdr-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
 }
 
 .sdr-note {
@@ -25116,12 +25095,6 @@ button.task-band:active {
   opacity: 0.5;
   cursor: default;
 }
-@media (prefers-reduced-motion: reduce) {
-  .sdr-live {
-    animation: none;
-  }
-}
-
 /* --- Radio launcher (APRS_CONTROL_PLAN.md P3) ------------------------------------ */
 /* The health line is deliberately NOT a meter: last decode and rate only. A signal bar
    here would repeat the mistake the tuner's deleted `peak` meter made — reading high on
