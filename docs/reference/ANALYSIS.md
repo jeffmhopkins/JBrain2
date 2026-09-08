@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-09 — LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-09-08 — the entity fold is now a full-owner-only write: `merge_entity_pair` and the un-merge in `_reverse_effects` refuse a domain-narrowed session before their first statement, which is the guarantee; the `app.entities` trigger (INSERT and UPDATE) is a partial backstop that goes blind when the loser row is itself out of scope, because a row trigger never fires for a row RLS filtered out of the scan. A narrowed fold used to tombstone an entity and silently repoint only the facts that session could see. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -183,6 +183,28 @@ reschedules. Past-tense references convert `expected` → `occurred`.
 - Every link is span-anchored via `entity_mentions` (surface text + chunk +
   offsets), so merges are reversible: merge = tombstone
   (`merged_into_id`) + repoint, un-merge = re-resolve mentions.
+- **A fold needs a full-owner session, and fails closed without one.** Facts
+  carry their own `domain_code`, so a `general` entity routinely owns `health`
+  and `finance` facts; on a domain-narrowed session (`owner_scoped`) RLS filters
+  the repoint UPDATEs to the visible rows, tombstoning an entity while half its
+  facts stay bolted to it. Nothing inside that session can notice —
+  `RETURNING` also returns only visible rows, so counting the leftovers needs
+  exactly the cross-domain read the narrowing forbids, and the tombstone UPDATE
+  runs first, so it can match zero rows while the repoints partly succeed. There
+  is no in-scope evidence a fold is safe, so `merge_entity_pair` (and the
+  un-merge in `_reverse_effects`) refuses a narrowed session *before* its first
+  statement, and the escalation becomes the caller's visible choice. That session
+  guard is the guarantee.
+- **The `app.entities` trigger is defence in depth, not the guarantee.** It refuses
+  the merge tombstone (on INSERT as well as UPDATE) from a narrowed session, and is
+  deliberately not `SECURITY DEFINER` — it reads nothing and bypasses no policy, so
+  it adds no RLS-bypassing primitive a model-facing tool could reach. But a `BEFORE
+  ... FOR EACH ROW` trigger only fires for rows the statement matched, and RLS
+  filters the scan first: fold a `health` entity from a `general`-narrowed session
+  and the tombstone matches zero rows, raises nothing, and the repoints still move
+  every fact that session can see. The table cannot police the shape where the
+  *loser row itself* is out of scope — only the session guard can, because it asks
+  about the session rather than about a row.
 - Auto-merge only on exact alias + same kind; everything else is a
   review-inbox proposal. Bare first names never auto-merge without
   co-mention signals. New entities are `provisional` until implicitly
@@ -664,4 +686,7 @@ effects in the same transaction that re-queues it and stamps a
 exception: permanent `distinct_from` edges survive reopen by doctrine — a
 reopened merge-rejection re-queues the item but the edge stays, and the
 reopen response says so. Dismissals record no effects; their reopen is a
-bare re-queue.
+bare re-queue. Reversing a *merge* effect carries the fold's scope rule: the
+un-merge refuses a domain-narrowed session before reversing any effect at
+all, so a refused reopen leaves the whole resolution intact rather than half
+of it.

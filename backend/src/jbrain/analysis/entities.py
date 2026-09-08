@@ -825,6 +825,51 @@ async def plan_merge(session: AsyncSession, a: uuid.UUID, b: uuid.UUID) -> Merge
     return MergePlan(keep.id, keep.canonical_name, gone.id, gone.canonical_name)
 
 
+class MergeScopeError(RuntimeError):
+    """A fold (or un-fold) was attempted on a domain-narrowed session.
+
+    Raised before the fold writes anything, so it leaves no partial effect. See
+    `require_unnarrowed_session` for why this can only ever fail closed."""
+
+
+async def require_unnarrowed_session(session: AsyncSession, *, operation: str) -> None:
+    """Refuse `operation` unless this session sees every domain.
+
+    A fold spans domains by construction: `app.facts` carries its own `domain_code`,
+    so a `general` entity routinely owns `health` and `finance` facts. Under a
+    narrowed session (`owner_scoped='true'`) RLS filters the repoint UPDATEs to the
+    rows the session can SEE — the out-of-scope facts stay bolted to a tombstoned
+    entity, and nothing in the statement says so. `RETURNING` cannot detect it
+    either: it also returns only visible rows, so "count what was left behind" needs
+    exactly the cross-domain read the narrowing exists to forbid. Worse, the
+    tombstone UPDATE runs first and can itself match zero rows, so a narrowed fold
+    can repoint facts onto an entity it never marked merged.
+
+    There is therefore no in-scope evidence that a fold is safe, and the only honest
+    answer is to fail closed and loudly, pushing the escalation to the caller where
+    it is a visible choice. Asked of Postgres (`app.is_full_owner()`), not of the
+    Python `SessionContext`, so a mis-built context cannot lie about its own scope.
+
+    THIS is the guard that covers every shape. The trigger on `app.entities`
+    (migration 0187) is only a partial backstop: a `BEFORE` row trigger fires only
+    for rows the statement actually matched, and RLS filters the scan first, so a
+    fold whose loser row is ITSELF out of scope tombstones nothing, fires nothing,
+    and still repoints the facts it can see. The table cannot see that shape; this
+    probe can, because it asks about the session rather than about a row.
+
+    `no_autoflush` keeps the probe from being the thing that flushes a caller's
+    pending ORM state — the refusal must not be the first write it prevents.
+    """
+    with session.no_autoflush:
+        full_owner = (await session.execute(text("SELECT app.is_full_owner()"))).scalar()
+    if not full_owner:
+        raise MergeScopeError(
+            f"{operation} requires a full-owner session: a domain-narrowed session"
+            " would silently repoint only the rows it can see, leaving a live entity"
+            " with half its facts moved"
+        )
+
+
 async def merge_entity_pair(
     session: AsyncSession, *, keep: uuid.UUID | str, gone: uuid.UUID | str
 ) -> dict[str, list[str]]:
@@ -832,7 +877,13 @@ async def merge_entity_pair(
     (as subject and as object) onto the survivor. The one fold-and-repoint both the
     review-inbox merge and the owner-approved agent merge proposal run, so the two
     paths can never diverge. Returns the repointed row ids (mention_ids, fact_ids,
-    object_fact_ids) so an un-merge can move exactly those rows back."""
+    object_fact_ids) so an un-merge can move exactly those rows back.
+
+    Raises MergeScopeError on a domain-narrowed session, before writing anything.
+    That refusal — not the `app.entities` trigger — is what covers a fold whose
+    loser row is out of scope; see `require_unnarrowed_session`.
+    """
+    await require_unnarrowed_session(session, operation="merging two entities")
     await session.execute(
         text(
             "UPDATE app.entities SET status = 'merged', merged_into_id = :keep,"
