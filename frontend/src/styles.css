@@ -24678,7 +24678,10 @@ button.task-band:active {
   height: 7px;
   border-radius: var(--r-pill);
   background: var(--green);
-  box-shadow: 0 0 0 2px var(--surface-composer);
+  /* The ring is the BACKGROUND it sits on, so the dot reads as separated from the
+     glyph rather than stuck to it. --bg since this moved to the top bar; it was
+     --surface-composer while the button lived in the composer's icon row. */
+  box-shadow: 0 0 0 2px var(--bg);
   animation: sdr-pulse 2s ease-in-out infinite;
 }
 @keyframes sdr-pulse {
