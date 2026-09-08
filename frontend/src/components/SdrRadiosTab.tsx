@@ -327,23 +327,30 @@ export function RadioJob({
         </p>
       )}
 
-      <fieldset className="jobs">
-        <legend className="lbl">Doing</legend>
-        {JOBS.map(({ id, label }) => {
-          const why = jobAllowed(radios, sdr, radio, id);
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={job === id}
-              disabled={busy || (why !== null && job !== id)}
-              title={why ?? undefined}
-              onClick={() => choose(id)}
-            >
-              {confirm === id ? "Again?" : label}
-            </button>
-          );
-        })}
+      {/* The same segmented control the Mode row uses, and for the reason two rows of
+          buttons a thumb apart should look alike: these were a row of separate pills
+          while Mode was one joined pill, so the sheet read as two unrelated widgets
+          rather than one dial with two settings. */}
+      <fieldset className="seg-set" aria-label="Doing">
+        <legend className="sdr-label">Doing</legend>
+        <div className="seg-row sdr-jobs">
+          {JOBS.map(({ id, label }) => {
+            const why = jobAllowed(radios, sdr, radio, id);
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`seg${job === id ? " seg-on" : ""}`}
+                aria-pressed={job === id}
+                disabled={busy || (why !== null && job !== id)}
+                title={why ?? undefined}
+                onClick={() => choose(id)}
+              >
+                {confirm === id ? "Again?" : label}
+              </button>
+            );
+          })}
+        </div>
       </fieldset>
       {confirm && session && (
         // Names the job being STOPPED, not the state line: reading that line back

@@ -9,7 +9,7 @@
 // Release is a first-class action because it is what hands this session's radio back — and
 // what makes the omnibox icon disappear, since the icon IS the lease.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api } from "../api/client";
 import { mhz } from "../mhz";
 import {
@@ -34,22 +34,50 @@ import { SdrTape } from "./SdrTape";
 import { SdrTuningView } from "./SdrTuningView";
 import { PauseIcon, PlayIcon } from "./icons";
 
-const MODES = ["wbfm", "fm", "am", "usb"] as const;
+// Every demodulator the back end has, in the order a dial usually offers them —
+// widest first, then the two sidebands. `nfm` is NOT a sixth button: the sidecar maps
+// it onto `fm` and gives it the same IF rate, deviation, filter and passband
+// (`deploy/sdr/demod.py`, `listen.py` MODES), so a button for it would be a second way
+// to ask for the mode already on the row.
+//
+// LSB was missing here while the back end has always had it, and a band that selects
+// it — the 40 m and 80 m ham sections do — put the radio in a mode with no button to
+// leave it by, showing `LSB` under the readout above a row of four it was not one of.
+const MODES = ["wbfm", "fm", "am", "usb", "lsb"] as const;
 
 // The tuning step is the owner's to pick, because no single value fits the bands this
 // radio covers: broadcast FM channels are 200 kHz apart, so stepping a fixed 25 kHz
 // meant eight taps per station, while the VHF/UHF voice bands need 12.5 or 25 to land
 // on a channel at all. The values are the real channel spacings in use — 9 kHz is
 // AM/MW outside the Americas, 10 kHz inside them, 200 kHz the US FM raster.
-const STEPS_HZ = [1_000, 5_000, 9_000, 10_000, 12_500, 25_000, 50_000, 100_000, 200_000];
+//
+// The bottom three are not channel spacings but SSB tuning, and the reason they exist
+// is that 1 kHz — the old floor — is far too coarse on the HF voice bands. SSB has no
+// carrier to land on: the dial IS the audio pitch, so being 1 kHz off does not put you
+// beside the signal, it moves the voice a whole kilohertz and makes it unintelligible.
+// A 3 kHz passband holds a hundred distinct 10 Hz positions, and zero-beating one is
+// what the fine steps are for.
+const STEPS_HZ = [
+  10, 100, 500, 1_000, 5_000, 9_000, 10_000, 12_500, 25_000, 50_000, 100_000, 200_000,
+];
 // Opening on a step that suits the mode makes the common case need no choice at all,
 // the same reasoning that puts an 88-108 MHz request on wbfm without being asked.
+// SSB opens on 100 Hz: fine enough to zero-beat a voice, coarse enough that crossing a
+// 3 kHz channel is a handful of taps rather than three hundred.
 // An explicit pick always wins over this.
-const DEFAULT_STEP_HZ: Record<string, number> = { wbfm: 100_000, am: 10_000 };
+const DEFAULT_STEP_HZ: Record<string, number> = {
+  wbfm: 100_000,
+  am: 10_000,
+  usb: 100,
+  lsb: 100,
+};
 const FALLBACK_STEP_HZ = 25_000;
 
 function stepLabel(hz: number): string {
-  return hz >= 1_000_000 ? `${hz / 1_000_000} MHz` : `${hz / 1000} kHz`;
+  if (hz >= 1_000_000) return `${hz / 1_000_000} MHz`;
+  // Sub-kilohertz steps stay in Hz: "0.1 kHz" is a step size nobody says out loud, and
+  // the leading zero is exactly the digit that gets misread on a dial.
+  return hz >= 1_000 ? `${hz / 1000} kHz` : `${hz} Hz`;
 }
 
 // What the RADIO reaches, mirrored from the api and the sidecar so a typo is caught
@@ -148,12 +176,26 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       live = false;
     };
   }, []);
+  // Per-INSTANCE, because the controls are mounted twice at once — the omnibox sheet
+  // and the Radios tab behind it — and the shared stream counts its holders. A constant
+  // string would let both mounts register as one, so the first to close would take the
+  // socket with it and the survivor would freeze; that is the bug this counts against.
+  const holderId = useId();
   const plan = planAt(sections, listening.frequency_hz);
   const here = plan ? channelIndex(plan, listening.frequency_hz) : -1;
   // A callback ref rather than an effect: the row exists only while the list is open,
-  // and this fires exactly when it is mounted. `block: "center"` because the point is
-  // to see the channels either side of the one the radio is on.
-  const scrollHere = (el: HTMLButtonElement | null) => el?.scrollIntoView({ block: "center" });
+  // and this fires when it mounts. `block: "center"` because the point is to see the
+  // channels either side of the one the radio is on.
+  //
+  // useCallback is what makes that true, and it is not a micro-optimisation. React
+  // re-invokes a callback ref whenever its IDENTITY changes — detaching with null and
+  // re-attaching — so an inline arrow re-ran this on every render. The tuner re-renders
+  // about once a second off the live poll, which yanked the FM dial back to the tuned
+  // channel every second while the owner was trying to scroll the other 99.
+  const scrollHere = useCallback(
+    (el: HTMLButtonElement | null) => el?.scrollIntoView({ block: "center" }),
+    [],
+  );
   // The owner's explicit pick always wins: asking for a step size on a channelised band
   // is asking to tune between the channels, which is a real thing to want on CB.
   const counting = plan !== null && pickedStep === null;
@@ -183,13 +225,12 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     // same session can now produce would cost ~11% of a core with nothing rendering it.
     // NAMED, because the sidecar prefers a spectrum session when nobody says: with the
     // other dongle sweeping, this asked for the channel strip and was handed the sweep.
-    startSdrSpectrum({
-      view: "channel",
-      serial: listening.serial ?? null,
-      backfill: BACKFILL_ROWS,
-    });
-    return () => stopSdrSpectrum();
-  }, [drawing, listening.serial]);
+    startSdrSpectrum(
+      { view: "channel", serial: listening.serial ?? null, backfill: BACKFILL_ROWS },
+      holderId,
+    );
+    return () => stopSdrSpectrum(holderId);
+  }, [drawing, listening.serial, holderId]);
 
   // Captions hold a whisper model resident on the box's GPU next to the chat model,
   // so they are opt-in and stop with the sheet rather than running unattended.
@@ -436,25 +477,29 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
         )}
       </div>
 
-      <p className="sdr-label">Mode</p>
-      <div className="seg-row sdr-modes" aria-label="Demodulation mode">
-        {MODES.map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            className={`seg${mode === listening.mode ? " seg-on" : ""}`}
-            aria-pressed={mode === listening.mode}
-            disabled={busy}
-            onClick={() =>
-              void act(() =>
-                api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
-              )
-            }
-          >
-            {mode.toUpperCase()}
-          </button>
-        ))}
-      </div>
+      {/* A fieldset with its legend, not a div wearing role="group": the grouping is
+          real, so the element that means it is the one to use. */}
+      <fieldset className="seg-set" aria-label="Demodulation mode">
+        <legend className="sdr-label">Mode</legend>
+        <div className="seg-row sdr-modes">
+          {MODES.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`seg${mode === listening.mode ? " seg-on" : ""}`}
+              aria-pressed={mode === listening.mode}
+              disabled={busy}
+              onClick={() =>
+                void act(() =>
+                  api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
+                )
+              }
+            >
+              {mode.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       {listening.engine !== undefined && listening.engine !== "iq" && (
         // Said rather than left blank, because the owner has no terminal (CLAUDE.md

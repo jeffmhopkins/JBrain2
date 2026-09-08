@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SDR_AUDIO_SRC,
+  ensureSdrAudioLive,
   isSdrPlaying,
   playSdrAudio,
   resetSdrAudio,
@@ -35,6 +36,61 @@ function element(): HTMLAudioElement | null {
 function pretendPlaying(el: HTMLAudioElement | null): void {
   if (!el) return;
   Object.defineProperty(el, "paused", { value: false, configurable: true, writable: true });
+}
+
+/** A context that counts taps and can be told what state to report. */
+function ctxClass(state = "running") {
+  const taps = { count: 0 };
+  class Ctx {
+    state = state;
+    destination = {};
+    resume() {
+      this.state = "running";
+      return Promise.resolve();
+    }
+    createMediaElementSource() {
+      taps.count += 1;
+      return { connect: vi.fn(), disconnect: vi.fn() };
+    }
+    createAnalyser() {
+      return {
+        fftSize: 2048,
+        smoothingTimeConstant: 0,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        getByteTimeDomainData: vi.fn(),
+      };
+    }
+  }
+  return { Ctx, taps };
+}
+
+/** A stubbed AudioContext whose state the test can move afterwards — the real sequence
+ *  is a tap taken while running, then an OS suspend. Returns a handle on the instance
+ *  the module built, so the test can flip `state` the way an interruption does. */
+function stubContext(resume: () => Promise<void>): { current: { state: string } | null } {
+  const made: { current: { state: string } | null } = { current: null };
+  class FakeContext {
+    state = "running";
+    destination = {};
+    resume = resume;
+    constructor() {
+      made.current = this;
+    }
+    createMediaElementSource() {
+      return { connect: vi.fn(), disconnect: vi.fn() };
+    }
+    createAnalyser() {
+      return {
+        fftSize: 2048,
+        smoothingTimeConstant: 0,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      };
+    }
+  }
+  vi.stubGlobal("AudioContext", FakeContext);
+  return made;
 }
 
 describe("the radio's audio element", () => {
@@ -197,6 +253,151 @@ describe("the analyser tap", () => {
     expect(sdrAnalyser()).toBe(sdrAnalyser());
     expect(taps).toBe(1);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a tap that must not outlive its element", () => {
+  it("takes the tap AGAIN for the element of the next lease", () => {
+    // The waveform's oldest and worst failure, and it lasted a whole page rather than a
+    // moment. `createMediaElementSource` may be called once per element, so the "already
+    // tapped" latch is right — but it latched for the MODULE while meaning something
+    // about ONE element. Release and listen again and the element is new, while the
+    // analyser still pointed at the discarded one: it reports 128s, which is silence, so
+    // the tape drew a flat line through audio the owner could hear perfectly.
+    const { Ctx, taps } = ctxClass();
+    vi.stubGlobal("AudioContext", Ctx);
+
+    playSdrAudio();
+    expect(sdrAnalyser()).not.toBeNull();
+    expect(taps.count).toBe(1);
+
+    stopSdrAudio();
+    playSdrAudio();
+
+    // A NEW element, so a new tap — not the cached node over a dead one.
+    expect(sdrAnalyser()).not.toBeNull();
+    expect(taps.count).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("still refuses to tap the same element twice", () => {
+    // The guard the fix must not trade away.
+    const { Ctx, taps } = ctxClass();
+    vi.stubGlobal("AudioContext", Ctx);
+
+    playSdrAudio();
+    sdrAnalyser();
+    sdrAnalyser();
+
+    expect(taps.count).toBe(1);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("putting the supply back after the app was away", () => {
+  it("resumes a context the OS suspended AFTER the tap was taken", () => {
+    // The real sequence, and the one the sampler cannot cover: the tap is taken while
+    // the context runs, then the phone locks or a call arrives and the OS suspends it.
+    // A backgrounded app's timers are throttled to a crawl and frozen outright on iOS,
+    // so the 20 Hz sampler — the one thing that would notice and recover — is asleep at
+    // exactly the moment the context dies. Something has to run on the way back.
+    const resume = vi.fn(() => Promise.resolve());
+    const ctx = stubContext(resume);
+    playSdrAudio();
+    // The tap succeeds, so the analyser is cached and the re-tap branch is NOT the one
+    // under test — this pins the resume itself.
+    expect(sdrAnalyser()).not.toBeNull();
+    resume.mockClear();
+    if (ctx.current) ctx.current.state = "suspended";
+
+    ensureSdrAudioLive();
+
+    expect(resume).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("resumes an iOS context that says `interrupted` rather than `suspended`", () => {
+    // A call, or another app taking the audio. This state used to fall straight through
+    // the "suspended" test and was never resumed at all — and it is the state a phone
+    // is most often in when the owner comes back to the app.
+    const resume = vi.fn(() => Promise.resolve());
+    const ctx = stubContext(resume);
+    playSdrAudio();
+    sdrAnalyser();
+    resume.mockClear();
+    if (ctx.current) ctx.current.state = "interrupted";
+
+    ensureSdrAudioLive();
+
+    expect(resume).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("leaves a CLOSED context alone", () => {
+    // Closed is terminal: resuming it throws, and the recovery would become the fault.
+    const resume = vi.fn(() => Promise.resolve());
+    const ctx = stubContext(resume);
+    playSdrAudio();
+    sdrAnalyser();
+    resume.mockClear();
+    if (ctx.current) ctx.current.state = "closed";
+
+    ensureSdrAudioLive();
+
+    expect(resume).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("is safe to call when there is nothing wrong", () => {
+    // It runs on pageshow, focus AND online, several of which fire for one resume, so
+    // it has to be idempotent or it is a stampede.
+    const { Ctx, taps } = ctxClass();
+    vi.stubGlobal("AudioContext", Ctx);
+    playSdrAudio();
+    sdrAnalyser();
+
+    ensureSdrAudioLive();
+    ensureSdrAudioLive();
+    ensureSdrAudioLive();
+
+    expect(taps.count).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("tries again after a resume that never comes back", () => {
+    // The latch that used to be a boolean. `sample()` writes NOTHING while a resume is
+    // pending — recording a suspended analyser would put a measurement in the tape that
+    // was never taken — so a promise that never settles froze the tape for the life of
+    // the page. iOS leaves `resume()` pending indefinitely when the page is still
+    // interrupted, which is exactly when this matters.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const resume = vi.fn(() => new Promise<void>(() => {})); // never settles
+    const ctx = stubContext(resume);
+    playSdrAudio();
+    sdrAnalyser();
+    resume.mockClear();
+    if (ctx.current) ctx.current.state = "suspended";
+
+    ensureSdrAudioLive();
+    expect(resume).toHaveBeenCalledTimes(1);
+
+    // Straight away, the in-flight attempt still stands: one per tick would be a
+    // stampede, which is what the latch is for.
+    ensureSdrAudioLive();
+    expect(resume).toHaveBeenCalledTimes(1);
+
+    // Long enough that the attempt is not coming back. Trying again is the only way out.
+    vi.setSystemTime(new Date("2026-01-01T00:00:05Z"));
+    ensureSdrAudioLive();
+    expect(resume).toHaveBeenCalledTimes(2);
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("does nothing when no radio is playing", () => {
+    expect(() => ensureSdrAudioLive()).not.toThrow();
   });
 });
 

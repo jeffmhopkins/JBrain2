@@ -10,7 +10,7 @@
 // tuner sheet — so coming back is instant, and releasing is a thing the owner does on
 // purpose.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { khz, mhz } from "../mhz";
 import {
@@ -87,13 +87,16 @@ export function SdrSpectrumJob({
   // omnibox radio sheet: two radios, two tabs, one stream — and the sidecar's own
   // preference for a spectrum session then handed the TUNER's tab this picture.
   const live = session !== null;
+  // Per-instance: the shared stream counts holders, and two mounts registering under
+  // one name would let the first to close shut the socket on the second.
+  const holderId = useId();
   useEffect(() => {
     if (!live) return;
     // The RADIO this surface is showing, and as many rows as the waterfall can draw:
     // switching tabs and back used to restart the picture from nothing.
-    startSdrSpectrum({ view: "band", serial, backfill: BACKFILL_ROWS });
-    return () => stopSdrSpectrum();
-  }, [live, serial]);
+    startSdrSpectrum({ view: "band", serial, backfill: BACKFILL_ROWS }, holderId);
+    return () => stopSdrSpectrum(holderId);
+  }, [live, serial, holderId]);
 
   const point = useCallback(
     async (range: SpectrumRange) => {

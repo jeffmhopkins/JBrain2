@@ -21,6 +21,8 @@
 
 // The proxied live stream. Same-origin and owner-session-authed; the sidecar itself
 // sits on an internal network the browser has no route to.
+import { isForeground, onForegroundSignals } from "./visibility";
+
 export const SDR_AUDIO_SRC = "/api/sdr/audio";
 
 type Listener = (playing: boolean) => void;
@@ -33,10 +35,22 @@ const listeners = new Set<Listener>();
 // and this module owns the only element there is.
 let audioCtx: AudioContext | null = null;
 let analyserNode: AnalyserNode | null = null;
-/** A `resume()` already in flight, so the sampler cannot stack one per tick. */
-let resuming = false;
+/** The tap itself, kept so the graph can be let go when its ELEMENT is destroyed. */
+let sourceNode: MediaElementAudioSourceNode | null = null;
+/** When a `resume()` went in flight, so the sampler cannot stack one per tick.
+ *
+ *  A timestamp rather than a boolean, and that is the whole point: a promise that never
+ *  settles used to leave the latch true for the life of the page, and `sample()` writes
+ *  NOTHING while a resume is pending — so one un-settled resume froze the tape for ever.
+ *  iOS can leave `resume()` pending indefinitely when the page is still interrupted. */
+let resumeStartedAt = 0;
 let tapped = false;
 let armed = false;
+/** Teardown for the foreground listeners, non-null exactly while sampling. */
+let foregroundOff: (() => void) | null = null;
+
+/** A resume in flight longer than this is treated as never coming back. */
+const RESUME_STUCK_MS = 3_000;
 
 // The tape's history, kept HERE rather than in the component that draws it, because
 // the owner wants to open the tuner and see what already happened — not start a
@@ -203,15 +217,20 @@ function sample(): void {
   // the frames stream and never touched this context.
   const ctx = audioCtx;
   if (ctx && ctx.state !== "running") {
-    if (ctx.state === "suspended" && !resuming) {
+    // Any state that is not `running` and not `closed`, rather than the literal
+    // "suspended" this used to test. iOS has an `interrupted` state — a call, another
+    // app taking audio — which fell straight through to the `return` below and was
+    // never resumed at all, which is the state a phone is most often in when the owner
+    // comes back to the app.
+    if (ctx.state !== "closed" && resumeIsFree()) {
       // Guarded, because this runs at `SAMPLE_HZ` and a rejected resume would otherwise
       // stack a promise per tick. Allowed without a fresh gesture because the element is
       // already playing — the gesture that started it is what this is recovering.
-      resuming = true;
+      resumeStartedAt = Date.now();
       void Promise.resolve(ctx.resume())
         .catch(() => {})
         .finally(() => {
-          resuming = false;
+          resumeStartedAt = 0;
         });
     }
     // NOTHING IS WRITTEN. A suspended analyser reports silence, and recording that would
@@ -232,7 +251,90 @@ function sample(): void {
   levelAt = (levelAt + 1) % TAPE_LEN;
 }
 
+/** Whether another `ctx.resume()` may be started — no attempt in flight, or the one in
+ *  flight has been pending long enough to be treated as lost. */
+function resumeIsFree(): boolean {
+  return resumeStartedAt === 0 || Date.now() - resumeStartedAt > RESUME_STUCK_MS;
+}
+
+/** Let go of the analyser graph, because the ELEMENT it taps is being destroyed.
+ *
+ *  This is the bug the tape display kept dying of, and it survived a page rather than a
+ *  moment. `createMediaElementSource` may be called only once per element, so `tapped`
+ *  latches — but it latched for the MODULE while meaning something about ONE element.
+ *  Release the lease and listen again and the element is new, `armAnalyser` returns at
+ *  once on the stale latch, `sdrAnalyser` hands back the cached node, and the sampler
+ *  then reads a graph whose source is a discarded, src-less element: 128s for ever,
+ *  which is silence. The tape drew a flat line through audio the owner could hear, and
+ *  the context was `running` the whole time, so the suspended-context recovery below
+ *  never fired either. Reported as "the waveform is not tracking but the spectrum is
+ *  good" — the spectrum comes down SSE and never touches this graph.
+ *
+ *  The CONTEXT is deliberately kept: it is expensive, browsers cap how many a page may
+ *  have, and a running one needs no fresh gesture to tap the next element with. */
+function releaseTap(): void {
+  try {
+    sourceNode?.disconnect();
+    analyserNode?.disconnect();
+  } catch {
+    // best effort; the graph is being abandoned either way
+  }
+  sourceNode = null;
+  analyserNode = null;
+  tapped = false;
+  armed = false;
+}
+
+/**
+ * Put the tape's supply back, whatever went wrong with it. Safe to call at any time and
+ * as often as you like — this is the resume-side counterpart the SDR modules did not
+ * have, and it is modelled on `hostVitals.ensureLive()`.
+ *
+ * A backgrounded app's timers are throttled to a crawl and frozen outright on iOS, so
+ * the 20 Hz sampler — the one mechanism that would notice a suspended context and
+ * recover it — is asleep at exactly the moment the context dies. Something has to run
+ * ON the way back, and nothing did: no SDR module listened for a foreground signal.
+ */
+export function ensureSdrAudioLive(): void {
+  const ctx = audioCtx;
+  if (ctx && ctx.state !== "running" && ctx.state !== "closed" && resumeIsFree()) {
+    resumeStartedAt = Date.now();
+    void Promise.resolve(ctx.resume())
+      .catch(() => {})
+      .finally(() => {
+        resumeStartedAt = 0;
+      });
+  }
+  // A live element with no tap: either the tap was never taken (the context would not
+  // start without a gesture) or it was let go with the last element. Both are fixed by
+  // asking again, and `armAnalyser` re-arms the gesture path when this cannot.
+  if (element && !analyserNode) {
+    sdrAnalyser();
+    armAnalyser();
+  }
+  // Idempotent, and the drift watchdog rides on it as well as the tape.
+  if (element) startSampling();
+}
+
+/** Fire `ensureSdrAudioLive` on every signal that means the app came back. Installed
+ *  while sampling rather than for the life of the module, so a page with no radio on it
+ *  carries no listeners. */
+function watchForeground(): void {
+  if (foregroundOff !== null || typeof document === "undefined") return;
+  foregroundOff = onForegroundSignals(() => {
+    if (isForeground()) ensureSdrAudioLive();
+  });
+}
+
+function unwatchForeground(): void {
+  foregroundOff?.();
+  foregroundOff = null;
+}
+
 function startSampling(): void {
+  // The watch goes up even if the timer is already running: a second caller must not
+  // leave the resume path uninstalled.
+  watchForeground();
   if (sampler !== null || typeof setInterval === "undefined") return;
   sampler = setInterval(sample, 1000 / SAMPLE_HZ);
 }
@@ -241,6 +343,7 @@ function stopSampling(): void {
   // Clearing is NOT conditional on a timer having run. Returning early when there was
   // no sampler left the previous station's audio in the buffer, so the next session
   // opened its tuner showing history that belonged to a different frequency.
+  unwatchForeground();
   if (sampler !== null) {
     clearInterval(sampler);
     sampler = null;
@@ -358,6 +461,9 @@ export function stopSdrAudio(): void {
   element.remove();
   element = null;
   boxClock = null;
+  // WITH the element, never separately: the graph taps this element and nothing else,
+  // so an analyser that outlives it reads silence for ever (see `releaseTap`).
+  releaseTap();
   stopSampling();
   announce();
 }
@@ -427,7 +533,8 @@ export function sdrAnalyser(): AnalyserNode | null {
     // Still not running — do NOT take the element. Try again on the next tap.
     if (audioCtx.state !== "running") return null;
     const source = audioCtx.createMediaElementSource(el);
-    tapped = true; // whatever happens next, this element can never be tapped again
+    sourceNode = source;
+    tapped = true; // whatever happens next, THIS element can never be tapped again
     const node = audioCtx.createAnalyser();
     node.fftSize = 2048;
     node.smoothingTimeConstant = 0.72;
@@ -477,9 +584,11 @@ export function resetSdrAudio(): void {
   }
   audioCtx = null;
   analyserNode = null;
+  sourceNode = null;
   tapped = false;
   armed = false;
-  resuming = false;
+  resumeStartedAt = 0;
+  unwatchForeground();
   anchor = null;
   boxClock = null;
   floorLag = null;

@@ -237,6 +237,35 @@ describe("giving a radio a job", () => {
     expect(await screen.findByRole("button", { name: "Release" })).toBeInTheDocument();
   });
 
+  it("draws Doing as the same segmented control the mode row uses", async () => {
+    // Two rows of buttons a thumb apart, and they were different widgets: Doing was
+    // separate pills while Mode was one joined pill. The shared classes ARE the
+    // contract — .seg-row/.seg is what carries the shape.
+    box([radio(WHIP, { name: "Desk whip" })]);
+
+    show();
+    await open("Desk whip");
+
+    const group = screen.getByRole("group", { name: "Doing" });
+    const row = group.querySelector(".seg-row");
+    expect(row).not.toBeNull();
+    for (const button of group.querySelectorAll("button")) {
+      expect(button).toHaveClass("seg");
+    }
+  });
+
+  it("marks the running job as the selected segment", async () => {
+    box([radio(WHIP, { name: "Desk whip" })]);
+
+    show();
+    await open("Desk whip");
+
+    // Idle until a job is taken: the segment that is on has to be the one the radio
+    // is actually doing, or the row is decoration.
+    expect(screen.getByRole("button", { name: "Idle" })).toHaveClass("seg-on");
+    expect(screen.getByRole("button", { name: "Listen" })).not.toHaveClass("seg-on");
+  });
+
   it("takes a band before listening, because a frequency is not a thing to invent", async () => {
     box([radio(WHIP, { name: "Desk whip" })]);
     const listen = vi.spyOn(api, "sdrListen").mockResolvedValue(session() as never);

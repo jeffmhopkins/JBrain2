@@ -163,6 +163,10 @@ let source: EventSource | null = null;
 /** What the open stream was opened FOR, so a surface asking for something else reopens
  *  it instead of silently inheriting someone else's picture. */
 let openKey: string | null = null;
+/** Who still wants the stream. One socket serves the whole app, and the listen controls
+ *  are mounted in two places at once, so "stop" has to mean "I am done", not "close". */
+const holders = new Set<string>();
+const DEFAULT_HOLDER = "default";
 const listeners = new Set<Listener>();
 
 /** A row waiting for the ear, with the wall-clock moment it arrived — see `release`. */
@@ -380,7 +384,11 @@ export function sameBand(a: SpectrumRow | null, b: SpectrumRow | null): boolean 
  *  listening session transforms the whole 2.4 MHz band only while someone is
  *  subscribed to it (~11% of one core), so asking for a picture nothing draws is work
  *  the radio does for nobody. `all` is for a surface showing both at once. */
-export function startSdrSpectrum(want: SpectrumWanted | SpectrumView | "all" = "all"): void {
+export function startSdrSpectrum(
+  want: SpectrumWanted | SpectrumView | "all" = "all",
+  holder = DEFAULT_HOLDER,
+): void {
+  holders.add(holder);
   const asked: SpectrumWanted = typeof want === "string" ? { view: want } : want;
   const key = `${asked.view ?? "all"}|${asked.serial ?? ""}|${asked.backfill ?? 1}`;
   if (typeof EventSource === "undefined") return;
@@ -428,7 +436,22 @@ export function startSdrSpectrum(want: SpectrumWanted | SpectrumView | "all" = "
 
 /** Close the stream. Does NOT release the radio — the session outlives the view, the
  *  same way audio outlives the tuner sheet, so re-opening the picture is instant. */
-export function stopSdrSpectrum(): void {
+/**
+ * Give up one holder's interest in the stream, and close it only when the LAST one goes.
+ *
+ * The count is why this takes a name. There is one socket for the whole app, and the
+ * controls are mounted in two places at once — the omnibox radio sheet and the Radios
+ * tab, which stays mounted behind it (`App.tsx` hides the home screen rather than
+ * unmounting it). Closing the sheet ran this cleanup and shut the socket for BOTH, and
+ * the survivor never noticed: its effect's deps had not changed, so it never re-opened
+ * and its tuning strip sat frozen on its last row under audio that was still playing.
+ *
+ * A `stop` that is really "I am done with it" cannot be spelled as "close the socket"
+ * when there is one socket and several askers.
+ */
+export function stopSdrSpectrum(holder = DEFAULT_HOLDER): void {
+  holders.delete(holder);
+  if (holders.size > 0) return;
   source?.close();
   source = null;
   openKey = null;
@@ -464,5 +487,6 @@ export function resetSdrSpectrum(): void {
   openKey = null;
   stopReleasing();
   listeners.clear();
+  holders.clear();
   state = IDLE;
 }
