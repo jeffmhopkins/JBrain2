@@ -93,7 +93,7 @@ does not (slow path: batch the questions). It must never assume either.
 > The live routing of vision to an **abliterated** checkpoint is itself worth a flag. The catalog
 > says of it: "NEVER recommended, and nothing routes here by default. This is a PROBE, not a
 > worker … Putting it on a real task would put the embedded prompt below in front of every JBrain
-> system prompt" (`local_catalog.py:824-828`). Yet §E of the inventory records all three vision
+> system prompt" (`local_catalog.py:824-827`). Yet §E of the inventory records all three vision
 > tasks resolving to it. Whatever the ingest agent's vision path is, it inherits that.
 
 ### 1.2 The capture-race migration is 0156, not 0154
@@ -290,7 +290,7 @@ Measured figures from the tree:
 | gpt-oss is KV-slot-restore eligible | yes (plain attention, non-speculative) | `llm/kv_prefix.py:229-250`, `local_catalog.py:610-612` | verified |
 | llama-swap graceful stop | 10 s, then SIGKILL | `llm/local_gateway.py:485`, `:992` | verified |
 | wait for a stop to actually settle | bounded at 60 s | `llm/local_gateway.py:60-71` (`STOP_SETTLE_TIMEOUT_S = 60.0`) | verified |
-| abliterated 27B weights on disk | 16.5 GiB (15.66 + 0.86 F16 projector) | `local_catalog.py:872-874` | verified |
+| abliterated 27B weights on disk | 16.5 GiB (15.66 + 0.86 F16 projector) | `local_catalog.py:866-868` | verified |
 | abliterated 27B resident at its served `-c 262144` | 36.92 GB | `local_catalog.py:1276-1277` | measured |
 | a full-res image encode on a resident VL | +0.11 GiB, one-off | `local_catalog.py:215-217` | measured |
 | one image's context cost on the local VL | 2048 (floor) – 4096 (ceiling) image tokens | `local_catalog.py:189-198`, `:864` (`image_min_tokens=2048`) | verified |
@@ -706,7 +706,7 @@ the claim that PP-OCR degrades on handwriting (model-family knowledge, not teste
    free?
 3. **Why is the live vision route the abliterated checkpoint?** The catalog says it is a red-team
    probe that should never serve a real task, and that its embedded prompt lands in front of every
-   JBrain system prompt (`local_catalog.py:824-828`). Ingest reading your notes and attachments
+   JBrain system prompt (`local_catalog.py:824-827`). Ingest reading your notes and attachments
    through it is a different exposure than a sandbox probe.
 4. **How many look-agains is a note worth?** At the swap price that is minutes of box time per
    question. Is the ceiling 1, 2, 3 — or a budget the owner grants per note when asked?

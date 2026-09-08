@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Note conversations · C · one conversations surface</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --teal: #6fb6b1; --slate: #9aa0a8; --location: #6fb6b1;
+        --font-scale: 1;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --surface-composer: #ffffff;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --surface-composer: #141518;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; }
+
+      .demo-bar { width: 100%; max-width: 1180px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg-theme { margin-left: auto; display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg-theme button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: var(--fs-micro); padding: 7px 14px; }
+      .seg-theme button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1180px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.55; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption .k { color: var(--amber); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--violet-tint); color: var(--violet); margin-bottom: 7px; }
+
+      .row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 800px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .mark { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+      .bar .mark i { color: var(--steel); font-style: normal; }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; padding: 6px; margin-left: -6px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .sub { font-size: var(--fs-micro); color: var(--text-3); }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      /* ---- the settled chats-picker paradigm: segmented buckets + micro rows ---- */
+      .picker-head { flex: none; padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--border); }
+      .seg-row { display: flex; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; }
+      .seg-row button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: 13px; padding: 9px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+      .seg-row button + button { border-left: 1px solid var(--border); }
+      .seg-row button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 500; }
+      .seg-row .pill { font-size: 10.5px; padding: 1px 6px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-3); }
+      .seg-row button[aria-pressed="true"] .pill { background: var(--bg); color: var(--steel); }
+      .seg-row button.asking[aria-pressed="true"] { background: var(--amber-tint); color: var(--amber); }
+      .seg-row button.asking[aria-pressed="true"] .pill { color: var(--amber); }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px; }
+      .list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .crow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 9px 13px; background: none; border: none; color: inherit; text-align: left; }
+      .crow + .crow { border-top: 1px solid var(--border); }
+      .crow .dot { width: 8px; height: 8px; border-radius: var(--r-pill); flex: none; }
+      .crow .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      .crow .t { font-size: var(--fs-secondary); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .crow .m { font-size: 11px; color: var(--text-3); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .crow .m .open { color: var(--amber); }
+      .crow .m .kindtag { font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--text-2); }
+      .crow .m .kindtag.note { background: var(--green-tint); color: var(--green); }
+      .crow .m .kindtag.chat { background: var(--steel-tint); color: var(--steel); }
+      .crow .chev { color: var(--text-3); display: flex; flex: none; }
+      .crow .chev svg { width: 16px; height: 16px; }
+      .crow[aria-current="true"] { background: var(--surface-2); }
+
+      /* the live-turn activity glyph (docs/mocks/session-active-turn-glyph.html) */
+      .glyph3 { display: inline-flex; gap: 3px; align-items: flex-end; flex: none; width: 8px; }
+      .glyph3 i { width: 3px; height: 3px; border-radius: var(--r-pill); background: var(--steel); animation: bob 1.1s ease-in-out infinite; }
+      .glyph3 i:nth-child(2) { animation-delay: 0.16s; }
+      .glyph3 i:nth-child(3) { animation-delay: 0.32s; }
+      @keyframes bob { 0%, 100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-3px); opacity: 1; } }
+      .crow .m .live { color: var(--steel); }
+
+      .bucket-note { font-size: 11.5px; color: var(--text-3); line-height: 1.55; padding: 2px 2px 0; }
+      .bucket-note b { color: var(--text-2); font-weight: 500; }
+      .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; }
+
+      /* ---- the conversation itself (agent/FullBrainSurface .fb-chat) ---- */
+      .chat { flex: 1; overflow-y: auto; padding: 12px 14px 18px; display: flex; flex-direction: column; gap: 11px; }
+      .turn0 { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: var(--r-card); padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; box-shadow: var(--shadow-card); }
+      .turn0 .meta { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+      .turn0 .meta .dot { width: 7px; height: 7px; border-radius: var(--r-pill); }
+      .turn0 .txt { font-size: var(--fs-note); line-height: 1.5; }
+      .thumbs { display: flex; gap: 8px; margin-top: 3px; }
+      .thumb { width: 64px; height: 64px; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; position: relative; flex: none; background: linear-gradient(150deg, var(--surface-2), var(--surface)); display: flex; align-items: flex-end; }
+      .thumb .glyph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); }
+      .thumb .glyph svg { width: 21px; height: 21px; }
+      .thumb .cap { position: relative; width: 100%; font-size: 9.5px; padding: 3px 5px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text-2); }
+
+      .ai { align-self: flex-start; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 15px 15px 15px 5px; padding: 11px 13px; font-size: var(--fs-note); line-height: 1.5; display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-card); }
+      .ai b { font-weight: 600; }
+      .me { align-self: flex-end; max-width: 86%; background: var(--steel-tint); border: 1px solid color-mix(in srgb, var(--steel) 26%, transparent); border-radius: 15px 15px 5px 15px; padding: 10px 13px; font-size: var(--fs-note); line-height: 1.45; }
+      .when { font-size: 11px; color: var(--text-3); }
+
+      .edges { border: 1px solid var(--border); border-radius: 11px; background: var(--bg); overflow: hidden; }
+      .edges-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--green); background: var(--green-tint); }
+      .edges-head svg { width: 12px; height: 12px; }
+      .edge { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; width: 100%; background: none; border: none; text-align: left; color: inherit; }
+      .edge + .edge { border-top: 1px solid var(--border); }
+      .edge-line { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+      .edge-line .subj { color: var(--text); }
+      .edge-line .arr { color: var(--text-3); }
+      .edge-line .val { color: var(--text); background: var(--surface-2); border-radius: 6px; padding: 1px 6px; }
+      .edge-meta { font-size: 10.5px; color: var(--text-3); display: flex; gap: 7px; flex-wrap: wrap; }
+      .edge-meta .why { color: var(--steel); }
+      .edge.former .edge-line .val { text-decoration: line-through; color: var(--text-3); }
+      .cite { display: none; padding: 0 10px 9px; }
+      .edge.open + .cite { display: block; }
+      .cite-in { background: var(--surface-2); border-left: 2px solid var(--steel); border-radius: 0 8px 8px 0; padding: 7px 9px; font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+      .cite-in mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      .qcard { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 11px; background: var(--bg); padding: 10px 11px; display: flex; flex-direction: column; gap: 9px; }
+      .qcard .qtop { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--amber); }
+      .qcard .qtop svg { width: 12px; height: 12px; }
+      .qcard .qtxt { font-size: var(--fs-secondary); line-height: 1.5; color: var(--text); }
+      .answers { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ans { font-size: 13px; padding: 8px 12px; min-height: 44px; display: inline-flex; align-items: center; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+      .ans.other { color: var(--text-2); border-style: dashed; }
+      .qcard.answered .answers { display: none; }
+      .qcard.answered { border-left-color: var(--green); }
+      .qcard .settled { display: none; align-items: center; gap: 7px; font-size: 11.5px; color: var(--green); }
+      .qcard.answered .settled { display: flex; }
+      .qcard .settled svg { width: 13px; height: 13px; }
+      .qcard.answered .qtop { color: var(--text-3); }
+
+      .epill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 10px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); border: none; }
+      .epill .disc { width: 15px; height: 15px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--steel) 22%, transparent); display: grid; place-items: center; }
+      .epill .disc svg { width: 9px; height: 9px; }
+
+      .working { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 12px; }
+      .working .pulse { width: 9px; height: 9px; border-radius: var(--r-pill); background: var(--steel); flex: none; animation: breathe 1.7s ease-in-out infinite; }
+      .working .sub { display: block; font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+      @keyframes breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+      .modes { display: flex; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; }
+      .modes button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: 13px; padding: 9px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+      .modes button + button { border-left: 1px solid var(--border); }
+      .modes button[aria-pressed="true"] { background: var(--green-tint); color: var(--green); font-weight: 500; }
+      .composer .box { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); padding: 11px 13px; font-size: var(--fs-note); color: var(--text-3); min-height: 44px; }
+      .composer .foot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-2); }
+      .composer .foot .dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--green); }
+      .composer .icons { margin-left: auto; display: flex; gap: 12px; color: var(--text-3); }
+      .composer .icons svg { width: 19px; height: 19px; }
+
+      .stale { font-size: 11px; color: var(--text-3); }
+      .toast { position: absolute; left: 50%; bottom: 130px; transform: translate(-50%, 6px); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: var(--fs-micro); padding: 9px 15px; border-radius: var(--r-pill); opacity: 0; pointer-events: none; transition: opacity 0.16s, transform 0.16s; z-index: 5; }
+      .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .working .pulse, .glyph3 i { animation: none; opacity: 0.8; }
+        .toast { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Note conversations.</b> C · one conversations surface</div>
+      <div class="seg-theme" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">C · note threads and Full Brain are the same object</span><br />
+      A note conversation and a Full Brain chat stop being two things: both are an <b>AgentSession</b>, so home
+      becomes the <b>conversations list</b> — the already-settled chats picker (segmented buckets, count pills,
+      ~46px micro rows, the 4-action swipe rail, the live-turn activity glyph) with one bucket added:
+      <b class="k">Asking</b>. That bucket <i>is</i> the silent queue: a count that exists only inside the picker,
+      on a segment you have to choose. Because the object is the same, a note thread doesn't dead-end — you can
+      keep talking, and the agent answers with full retrieval in the same thread. Try the segments on the left,
+      answer <i>Anouk</i> in the middle, and open a row in the <b>Asking</b> bucket.
+    </div>
+
+    <div class="row">
+      <!-- ============ 1 · HOME = CONVERSATIONS ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · home <b>— a list of conversations</b></div>
+        <div class="phone">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <span class="vit" aria-hidden="true"><span style="height:6px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:7px"></span><span style="height:14px"></span><span style="height:6px"></span></span>
+          </div>
+          <div class="picker-head">
+            <div class="seg-row" role="group" aria-label="bucket">
+              <button type="button" data-bucket="today" aria-pressed="true">Today <span class="pill">4</span></button>
+              <button type="button" data-bucket="older" aria-pressed="false">Older <span class="pill">61</span></button>
+              <button type="button" class="asking" data-bucket="asking" aria-pressed="false">Asking <span class="pill">3</span></button>
+            </div>
+          </div>
+
+          <div class="scroll">
+            <!-- TODAY -->
+            <div data-panel="today">
+              <div class="list">
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--steel)"></span>
+                  <span class="main">
+                    <span class="t">Priya — Oakland, Vela Robotics</span>
+                    <span class="m"><span class="kindtag note">note</span> 08:41 · 3 committed · <span class="open">1 open</span></span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button">
+                  <span class="glyph3" aria-hidden="true"><i></i><i></i><i></i></span>
+                  <span class="main">
+                    <span class="t">new bp med — photo of the bottle</span>
+                    <span class="m"><span class="kindtag note">note</span> 09:02 · medical · <span class="live">thinking…</span></span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--steel)"></span>
+                  <span class="main">
+                    <span class="t">What did the cardiologist actually change?</span>
+                    <span class="m"><span class="kindtag chat">chat</span> 09:20 · 8 turns · 1 staged</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--location)"></span>
+                  <span class="main">
+                    <span class="t">Trail loop at Wildcat — 7.2 mi</span>
+                    <span class="m"><span class="kindtag note">note</span> 07:05 · 6 committed</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+              </div>
+              <p class="bucket-note" style="margin-top: 10px">
+                Notes and chats sit in one list because they are one thing. The <b>kind tag</b> says which
+                started it — a capture, or a question you asked. Nothing on this screen counts at you: the
+                open-question total lives on the <b>Asking</b> segment, one tap away.
+              </p>
+            </div>
+
+            <!-- OLDER -->
+            <div data-panel="older" hidden>
+              <h2 class="day-header">Yesterday</h2>
+              <div class="list">
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--violet)"></span>
+                  <span class="main">
+                    <span class="t">Renewed the car insurance — Wexler Mutual</span>
+                    <span class="m"><span class="kindtag note">note</span> 16:12 · 4 committed · <span class="open">1 open</span></span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--rose)"></span>
+                  <span class="main">
+                    <span class="t">Lab results — lipid panel</span>
+                    <span class="m"><span class="kindtag note">note</span> 11:30 · 9 committed</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+              </div>
+              <h2 class="day-header" style="margin-top: 12px">Last week</h2>
+              <div class="list">
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--steel)"></span>
+                  <span class="main">
+                    <span class="t">Everything I know about Vela Robotics</span>
+                    <span class="m"><span class="kindtag chat">chat</span> Tue · 22 turns</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button">
+                  <span class="dot" style="background: var(--amber)"></span>
+                  <span class="main">
+                    <span class="t">Roof quote — Delgado &amp; Sons</span>
+                    <span class="m"><span class="kindtag note">note</span> Mon · 5 committed · <span class="open">1 open</span></span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+              </div>
+              <p class="bucket-note" style="margin-top: 10px">
+                <b>Older</b> folds yesterday and everything before it, exactly as the settled chats picker does.
+                Swipe a row for <b>rename · scope · archive · delete</b>.
+              </p>
+            </div>
+
+            <!-- ASKING -->
+            <div data-panel="asking" hidden>
+              <div class="list">
+                <button class="crow" type="button" data-toast="opens that thread at its open question">
+                  <span class="dot" style="background: var(--amber)"></span>
+                  <span class="main">
+                    <span class="t">Roof quote — Delgado &amp; Sons</span>
+                    <span class="m"><span class="kindtag note">note</span> asked 6d ago · “is this the shingle or the tile price?”</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button" data-toast="opens that thread at its open question">
+                  <span class="dot" style="background: var(--violet)"></span>
+                  <span class="main">
+                    <span class="t">Renewed the car insurance</span>
+                    <span class="m"><span class="kindtag note">note</span> asked yesterday · “the Subaru or the truck?”</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+                <button class="crow" type="button" aria-current="true" data-toast="the thread in the middle phone">
+                  <span class="dot" style="background: var(--steel)"></span>
+                  <span class="main">
+                    <span class="t">Priya — Oakland, Vela Robotics</span>
+                    <span class="m"><span class="kindtag note">note</span> asked 08:43 · “coffee Sat — calendar or not?”</span>
+                  </span>
+                  <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+                </button>
+              </div>
+              <p class="bucket-note" style="margin-top: 10px">
+                Oldest first. This bucket is the whole silent queue: <b>no push, no home badge, no launcher
+                dot</b> — a count that only exists on a segment you chose to look at. An unanswered question
+                never expires and never nags; it just waits here.
+              </p>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="modes">
+              <button type="button" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg> Entry</button>
+              <button type="button" aria-pressed="false">Research</button>
+              <button type="button" aria-pressed="false">Full Brain</button>
+            </div>
+            <div class="box">Write an entry…</div>
+            <div class="foot">
+              <span class="dot"></span> a send starts a new conversation.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg style="color: var(--green)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+          <output class="toast" id="toastC"></output>
+        </div>
+      </div>
+
+      <!-- ============ 2 · A NOTE CONVERSATION ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · a note conversation <b>— the Full Brain surface, turn 0 is the note</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Priya — Oakland, Vela</span> <span class="sub">· note</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:7px"></span><span style="height:11px"></span><span style="height:6px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span></span>
+          </div>
+          <div class="chat" id="chatC">
+            <div class="turn0">
+              <div class="meta"><span class="dot" style="background: var(--steel)"></span>turn 0 · your note · 08:41</div>
+              <div class="txt">Ran into Priya at the Ferry Building — she's moved to Oakland and started at Vela Robotics as head of firmware. Her kid Anouk was with her. Coffee at hers next Sat.</div>
+              <div class="thumbs">
+                <div class="thumb">
+                  <span class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                  <span class="cap">IMG_1998</span>
+                </div>
+              </div>
+              <div class="meta"><span style="color: var(--green)">ocr ✓</span> · a photo of her new badge — read, and mined</div>
+            </div>
+
+            <div class="ai">
+              <span>Three of these were clear, so I've <b>written them</b>. Oakland closes the San Francisco interval rather than overwriting it.</span>
+              <div class="edges">
+                <div class="edges-head"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg> committed to the graph · 3</div>
+                <button class="edge" type="button" data-cite>
+                  <span class="edge-line"><span class="subj">Priya Raman</span><span>.employer</span><span class="arr">→</span><span class="val">Vela Robotics</span></span>
+                  <span class="edge-meta"><span>0.93</span><span class="why">why</span></span>
+                </button>
+                <div class="cite"><div class="cite-in">note: …<mark>started at Vela Robotics as head of firmware</mark>… · badge photo ocr: <mark>VELA ROBOTICS</mark></div></div>
+                <button class="edge" type="button" data-cite>
+                  <span class="edge-line"><span class="subj">Priya Raman</span><span>.job_title</span><span class="arr">→</span><span class="val">head of firmware</span></span>
+                  <span class="edge-meta"><span>0.91</span><span class="why">why</span></span>
+                </button>
+                <div class="cite"><div class="cite-in">…started at Vela Robotics as <mark>head of firmware</mark>…</div></div>
+                <button class="edge" type="button" data-cite>
+                  <span class="edge-line"><span class="subj">Priya Raman</span><span>.lives_in</span><span class="arr">→</span><span class="val">Oakland</span></span>
+                  <span class="edge-meta"><span>0.88</span><span class="why">why</span></span>
+                </button>
+                <div class="cite"><div class="cite-in">…<mark>she's moved to Oakland</mark>…</div></div>
+                <button class="edge former" type="button" data-cite>
+                  <span class="edge-line"><span class="subj">Priya Raman</span><span>.lives_in</span><span class="arr">→</span><span class="val">San Francisco</span></span>
+                  <span class="edge-meta"><span>closed today</span><span class="why">why</span></span>
+                </button>
+                <div class="cite"><div class="cite-in">Superseded — kept on her entity page's history rail.</div></div>
+              </div>
+              <span class="when">08:43 · on-box · gpt-oss-120b</span>
+            </div>
+
+            <div class="ai">
+              <div class="qcard" id="q1">
+                <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asking · 1 of 2</div>
+                <div class="qtxt"><b>Anouk</b> — is that Priya's child? I'd rather not guess a family edge.</div>
+                <div class="answers">
+                  <button class="ans" type="button" data-answer="daughter">her daughter</button>
+                  <button class="ans" type="button" data-answer="son">her son</button>
+                  <button class="ans" type="button" data-answer="not-hers">not her kid</button>
+                  <button class="ans other" type="button" data-answer="type">type…</button>
+                </div>
+                <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span id="q1settled">answered</span></div>
+              </div>
+            </div>
+
+            <div id="anchorC"></div>
+
+            <!-- the second question stays open — it is the Asking-bucket row on the left -->
+            <div class="ai">
+              <div class="qcard">
+                <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> asking · 2 of 2</div>
+                <div class="qtxt">"Coffee at hers next Sat" — calendar, or just a note?</div>
+                <div class="answers">
+                  <button class="ans" type="button" data-toast="leave it open — this is the Asking-bucket row">put it on Sat 14th</button>
+                  <button class="ans" type="button" data-toast="leave it open — this is the Asking-bucket row">just a note</button>
+                </div>
+                <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span>answered</span></div>
+              </div>
+              <span class="stale">still open · asked 08:43 · no reminder will come</span>
+            </div>
+
+            <!-- the thing only C can do: keep talking, in the same thread -->
+            <div class="me">while you're here — what else do I have on her?</div>
+            <div class="ai">
+              <span>Eleven facts across four notes. She's <b>Anouk's mother</b>, was at Corva until March, and you've eaten at hers twice — the last time you noted a shellfish allergy in the house.</span>
+              <span><button class="epill" type="button" data-toast="opens the entity page"><span class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" /><path d="M5 20a7 7 0 0 1 14 0" /></svg></span> Priya Raman</button></span>
+              <span class="when">09:11 · read 4 notes · nothing written — you asked, you didn't tell</span>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="box">Reply, or just keep asking…</div>
+            <div class="foot">
+              <span class="dot" style="background: var(--steel)"></span> same thread · reads your brain, writes what you confirm.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg style="color: var(--steel)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 3 · A CONVERSATION STILL THINKING ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · the photo note <b>— first pass still running</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">new bp med</span> <span class="sub">· note · medical</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:14px"></span><span style="height:16px"></span><span style="height:13px"></span><span style="height:17px"></span><span style="height:15px"></span><span style="height:18px"></span><span style="height:14px"></span><span style="height:16px"></span></span>
+          </div>
+          <div class="chat">
+            <div class="turn0" style="border-left-color: var(--rose)">
+              <div class="meta"><span class="dot" style="background: var(--rose)"></span>turn 0 · your note · 09:02 · medical → notes/medical/</div>
+              <div class="txt">new bp med — photo of the bottle</div>
+              <div class="thumbs">
+                <div class="thumb">
+                  <span class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                  <span class="cap">IMG_2213</span>
+                </div>
+              </div>
+              <div class="meta"><span style="color: var(--green)">ocr ✓</span> · <span style="color: var(--steel)">description…</span></div>
+            </div>
+
+            <div class="ai">
+              <span>Label reads <span style="font-family: var(--font-mono); font-size: 12.5px">AMLODIPINE BESYLATE 5 MG · TAKE 1 TABLET BY MOUTH DAILY</span>. Working out what it replaces before I write anything.</span>
+              <span class="when">09:03 · from the photo's OCR</span>
+            </div>
+
+            <div class="working">
+              <span class="pulse" aria-hidden="true"></span>
+              <span>still working through it<span class="sub">on-box · 4 min in · nothing written yet</span></span>
+            </div>
+
+            <p class="bucket-note">
+              The list row on the left carries the same state as the <b>thinking…</b> word plus the
+              three-dot activity glyph — the settled live-turn treatment, reused verbatim. A first pass may
+              take minutes on the box; the conversation is simply not ready yet, and says so.
+              Come back tomorrow and it is <b>exactly here</b>, resumable, with whatever it decided.
+            </p>
+          </div>
+          <div class="composer">
+            <div class="box">Add to this note, or ask…</div>
+            <div class="foot">
+              <span class="dot" style="background: var(--amber)"></span> first pass running — you can still write.
+              <span class="icons">
+                <svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg>
+                <svg style="color: var(--rose)" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById("t-dark").onclick = () => setTheme("dark");
+      document.getElementById("t-light").onclick = () => setTheme("light");
+      function setTheme(t) {
+        document.documentElement.setAttribute("data-theme", t);
+        document.getElementById("t-dark").setAttribute("aria-pressed", String(t === "dark"));
+        document.getElementById("t-light").setAttribute("aria-pressed", String(t === "light"));
+      }
+
+      // bucket segments — one bucket at a time (the settled chats-picker rule)
+      for (const b of document.querySelectorAll("[data-bucket]")) {
+        b.onclick = () => {
+          for (const o of document.querySelectorAll("[data-bucket]")) o.setAttribute("aria-pressed", String(o === b));
+          for (const p of document.querySelectorAll("[data-panel]")) p.hidden = p.dataset.panel !== b.dataset.bucket;
+        };
+      }
+
+      for (const edge of document.querySelectorAll(".edge[data-cite]")) {
+        edge.onclick = () => edge.classList.toggle("open");
+      }
+
+      const toastEl = document.getElementById("toastC");
+      let tt = null;
+      function toast(msg) {
+        toastEl.textContent = msg;
+        toastEl.classList.add("on");
+        if (tt) clearTimeout(tt);
+        tt = setTimeout(() => toastEl.classList.remove("on"), 2600);
+      }
+      for (const b of document.querySelectorAll("[data-toast]")) b.onclick = () => toast(b.dataset.toast);
+
+      const REPLY = {
+        daughter: ["her daughter", [["Anouk Raman", ".parent", "Priya Raman", "new entity · Person"], ["Priya Raman", ".child", "Anouk Raman", "inverse"]]],
+        son: ["her son", [["Anouk Raman", ".parent", "Priya Raman", "new entity · Person"], ["Priya Raman", ".child", "Anouk Raman", "inverse"]]],
+        "not-hers": ["not her kid — a neighbour's", [["Anouk", ".distinct_from", "Priya Raman's family", "recorded so I stop proposing it"]]],
+      };
+
+      const chat = document.getElementById("chatC");
+      const anchor = document.getElementById("anchorC");
+
+      function el(html) {
+        const d = document.createElement("div");
+        d.innerHTML = html.trim();
+        return d.firstElementChild;
+      }
+
+      for (const btn of document.querySelectorAll("#q1 .ans")) {
+        btn.onclick = () => {
+          const key = btn.dataset.answer;
+          if (key === "type") {
+            toast("the composer takes free text — same thread, same object");
+            return;
+          }
+          const [said, edges] = REPLY[key];
+          const card = document.getElementById("q1");
+          card.classList.add("answered");
+          document.getElementById("q1settled").textContent = "you answered · " + said;
+
+          const rows = edges
+            .map(
+              (e) =>
+                '<div class="edge"><span class="edge-line"><span class="subj">' + e[0] + "</span><span>" + e[1] +
+                '</span><span class="arr">→</span><span class="val">' + e[2] + '</span></span><span class="edge-meta"><span>' + e[3] + "</span></span></div>",
+            )
+            .join("");
+          chat.insertBefore(el('<div class="me">' + said + "</div>"), anchor);
+          chat.insertBefore(
+            el(
+              '<div class="ai"><span>Written — filed as <b>your correction</b>, so it outranks anything I later infer.</span>' +
+                '<div class="edges"><div class="edges-head"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg> committed to the graph · ' +
+                edges.length + "</div>" + rows + '</div><span class="when">just now · from your reply</span></div>',
+            ),
+            anchor,
+          );
+          anchor.previousElementSibling.scrollIntoView({ behavior: "smooth", block: "center" });
+        };
+      }
+    </script>
+  </body>
+</html>
