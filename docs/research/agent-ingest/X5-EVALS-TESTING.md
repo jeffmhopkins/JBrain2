@@ -703,7 +703,7 @@ Concretely, for the wave that lands this:
 - **R2/R3** — every new doc opens with `> **Status:** … · **Last verified:** …` in the
   first 6 lines (warn-level, but the standard is binding).
 - **Homes** — `check_index` runs for `proposed/`, `archive/`, `reference/`, `runbooks/`,
-  `plans/` (not `research/`). A new `docs/reference/INGEST_EVALS.md` must be named in
+  `plans/` (not `research/`). A new `reference/INGEST_EVALS.md` (not yet written) must be named in
   `docs/reference/README.md`; an archived plan must be named in `docs/archive/README.md`.
 - **R4** — a plan whose header Waves are all ✅ but whose Status is not Shipped is an
   **ERROR**. Flip and archive in the landing PR.

@@ -353,7 +353,7 @@ turn 0. There is no `fb.send` to call.
 **(i) The graph effect is synchronous.** An answer resolves through the shipped path
 (`analysis/repo.py:1216-1275` → `_apply_resolution:1431`, which already emits its
 `resolution.changed` event *after* commit in its own best-effort session so a failed emit can
-never abort the resolution, `:1265-1271`). The owner sees the fact change now. **No agent turn
+never abort the resolution, `:1270-1275`). The owner sees the fact change now. **No agent turn
 is required for the common case**, and this matters enormously: the majority of answers are
 "yes, commit what you guessed", which is a DB write, not a conversation. Spinning a turn for
 each would be both slow and a source of pings.
