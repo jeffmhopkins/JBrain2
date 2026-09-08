@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
-from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
+from jbrain.analysis.entities import (
+    MergeScopeError,
+    are_distinct,
+    merge_entity_pair,
+    plan_merge,
+    require_unnarrowed_session,
+)
 from jbrain.analysis.neighborhood import (
     DEFAULT_DEPTH,
     DEFAULT_HUB_CAP,
@@ -1322,7 +1328,13 @@ class SqlAnalysisRepo:
                     new_status, effects = await self._apply_resolution(
                         session, row.kind, row.payload, action, payload
                     )
-                except UnknownAction as exc:
+                except (UnknownAction, MergeScopeError) as exc:
+                    # MergeScopeError belongs here rather than on the floor: the guard
+                    # raises before writing anything — its one statement is a SELECT that
+                    # succeeded — so unlike a DB error it has not poisoned the
+                    # transaction, and the batch's advertised contract is
+                    # that a bad item is an error while the good ones still commit.
+                    # Aborting 200 cards over one merge card would be the outage.
                     errors.append({"id": item_id, "detail": str(exc)})
                     continue
                 to_emit.append((str(iid), row.domain_code, effects))
@@ -1828,7 +1840,16 @@ class SqlAnalysisRepo:
         self, session: AsyncSession, effects: list[dict[str, Any]]
     ) -> list[str]:
         """Undo recorded effects newest-first; returns notes for the ones
-        that are permanent by doctrine and deliberately survive."""
+        that are permanent by doctrine and deliberately survive.
+
+        An un-merge is the fold run backwards and is scoped exactly like it: the
+        check runs before ANY effect is reversed, so a narrowed reopen leaves the
+        whole resolution untouched rather than half of it. It is asked ONLY when a
+        merge is among the effects — reversing a pin, a retraction or a domain move
+        is an in-scope single-row write, and a narrowed reopen must keep it.
+        """
+        if any(e.get("action") == "merged" for e in effects):
+            await require_unnarrowed_session(session, operation="un-merging two entities")
         notes: list[str] = []
         for effect in reversed(effects):
             action = effect.get("action")

@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from jbrain.analysis.entities import MergeScopeError
 from jbrain.analysis.repo import (
     REVIEW_STATUSES,
     AlreadyOpen,
@@ -181,6 +182,11 @@ async def resolve_review(
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except AlreadyResolved:
         raise HTTPException(status_code=409, detail="review item is not open") from None
+    except MergeScopeError as exc:
+        # Unreachable over HTTP today (ctx_for is a full owner), but the guard exists
+        # for a future narrowed surface and a 500 would read as a server fault rather
+        # than the refusal it is.
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item
@@ -272,6 +278,8 @@ async def reopen_review(item_id: str, request: Request, principal: PrincipalDep)
         item = await repo.reopen_review(ctx_for(principal), item_id)
     except AlreadyOpen:
         raise HTTPException(status_code=409, detail="review item is already open") from None
+    except MergeScopeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item
