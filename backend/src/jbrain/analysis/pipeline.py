@@ -1621,6 +1621,13 @@ class AnalysisPipeline:
                 else Fact.object_entity_id.is_(None)
             )
         rows = (await session.execute(stmt)).scalars().all()
+        # Which retracted rows a settled decision retracted — the discriminator
+        # `decide()`'s retracted-twin branch needs when the reject pinned nothing
+        # (analysis/purge.py). Only retracted rows can carry it, and most identity keys
+        # hold none, so the common case is no query at all.
+        decided = await purge.decision_retracted_fact_ids(
+            session, [str(f.id) for f in rows if f.status == "retracted"]
+        )
         return [
             FactView(
                 id=str(f.id),
@@ -1638,6 +1645,7 @@ class AnalysisPipeline:
                 # candidate must not displace a row of unknown confidence.
                 confidence=f.confidence if f.confidence is not None else 1.0,
                 derived=f.derived_from_fact_id is not None,
+                decision_retracted=str(f.id) in decided,
             )
             for f in rows
         ]

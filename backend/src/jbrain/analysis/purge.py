@@ -325,6 +325,47 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
     return keep
 
 
+async def decision_retracted_fact_ids(session: AsyncSession, fact_ids: list[str]) -> set[str]:
+    """Which of `fact_ids` a SETTLED review decision retracted — the evidence that a
+    retracted row must never resurrect.
+
+    `decide()` (analysis/supersession.py) has to tell two retractions apart. A row the
+    machine retracted because re-extraction dropped its key MUST come back live when the
+    key comes back; a row a human rejected must NOT. The retracted-twin branch used to
+    discriminate on a PINNED head beside the row, because "no row records WHY a fact was
+    retracted" — but a resolution does. `resolve_review` records
+    `{"action": "retracted", "fact_id": ...}` on every path that retracts by decision
+    (the losing side of a fact_conflict/attribute_collision, and the
+    `low_confidence_inference` reject that pins nothing and so has no pinned head at
+    all), and `_reverse_effects` reads those same effects to undo it. Reading the
+    recorded effect is therefore reading the decision itself, not inferring it from a
+    neighbouring row.
+
+    Settled, not merely present: reopening a card leaves its effects on the row and
+    flips the status back to `open` (repo.py), and the same
+    `_REBUILD_PURGED_STATUSES` complement that decides which cards outlive a rebuild
+    decides which decisions still hold — so a reopened decision stops holding on the
+    same instant its card returns to the queue.
+
+    Ids come back as text, matched against `FactView.id`; the caller passes only the
+    retracted rows on one identity key, so the common case queries nothing at all.
+    """
+    if not fact_ids:
+        return set()
+    rows = await session.execute(
+        text(
+            "SELECT DISTINCT eff.effect->>'fact_id' AS id FROM app.review_items ri"
+            " CROSS JOIN LATERAL jsonb_array_elements("
+            "     CASE WHEN jsonb_typeof(ri.resolution->'effects') = 'array'"
+            "          THEN ri.resolution->'effects' ELSE '[]'::jsonb END) AS eff(effect)"
+            " WHERE ri.status NOT IN :purged AND eff.effect->>'action' = 'retracted'"
+            " AND eff.effect->>'fact_id' IN :ids"
+        ).bindparams(bindparam("purged", expanding=True), bindparam("ids", expanding=True)),
+        {"purged": list(_REBUILD_PURGED_STATUSES), "ids": fact_ids},
+    )
+    return {str(row[0]) for row in rows}
+
+
 async def purge_note_artifacts(
     session: AsyncSession, note_id: uuid.UUID, *, keep_pinned: bool = False
 ) -> PurgeCounts:
