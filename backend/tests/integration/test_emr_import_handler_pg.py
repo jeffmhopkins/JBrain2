@@ -255,20 +255,42 @@ async def test_firewall_catch_is_held_out_of_the_graph_and_carded(
         assert card.payload["note_id"] == note_id
         assert card.payload["attachment_id"] == str(att_id)
         assert card.payload["anchor"] == "page 1"
-        # The card cites the page chunk (the durable row), never the page text.
-        chunk_id = card.payload["chunk_id"]
-        assert (
-            await s.execute(
-                text("SELECT count(*) FROM app.chunks WHERE id = :c AND attachment_id = :a"),
-                {"c": chunk_id, "a": str(att_id)},
-            )
-        ).scalar_one() == 1
-        # The held value never rides the card — the payload lives in the very domain
-        # the value was kept out of.
+        assert card.payload["count"] == 1
+        # The key SET is pinned rather than the payload searched for the leaked string:
+        # the realistic regression is a future `snippet=mark_snippet(chunk.text)`, real
+        # page text that carries the real address in production while this fixture's is
+        # monkeypatched in and absent from the PDF — a substring probe passes green
+        # while the leak ships. Adding a key here must therefore be a deliberate
+        # decision; `snippet`/`statement`/`value_json` never are, because this card sits
+        # in the very domain the value was held out of.
+        assert set(card.payload) == {
+            "note_id",
+            "subkind",
+            "key",
+            "attachment_id",
+            "anchor",
+            "predicate",
+            "entity_kind",
+            "count",
+            "summary",
+            "rationale",
+            "choices",
+            "correctable",
+        }
         assert "Elm" not in json.dumps(card.payload)
-        # Evidence that a control fired, not an affordance that undoes it: no accept,
-        # no choices — `dismiss` is all it offers.
-        assert "choices" not in card.payload
+        # Evidence that a control fired, plus an exit that does not undo it. A card
+        # carrying no `choices` renders with NO buttons at all (frontend proposalsFor),
+        # leaving the footer's "correct it" — which files an owner_correction note in
+        # THIS card's health domain, force-superseded and pinned — as the only way out.
+        # So `dismiss` is advertised explicitly and the correction footer is suppressed.
+        assert card.payload["choices"] == [
+            {
+                "action": "dismiss",
+                "label": "Dismiss",
+                "detail": "the held fact stays out of the health graph",
+            }
+        ]
+        assert card.payload["correctable"] is False
         assert "outcomes" not in card.payload
 
 
@@ -306,29 +328,32 @@ async def test_firewall_card_does_not_re_file_or_come_back_once_dismissed(
         assert cards[0].status == "dismissed"
 
 
-async def test_repeated_catches_in_one_import_collapse_but_distinct_ones_do_not(
+async def test_repeated_catches_collapse_into_a_counted_card_but_distinct_ones_do_not(
     maker,  # noqa: F811
 ):
-    """The in-flight half of the dedup: two identical catches in a SINGLE call must
-    not double-file, which the not-yet-flushed existence probe cannot see on its own.
-    A different locked predicate on the same page is a different catch and still
-    gets its own card."""
+    """The in-flight half of the dedup: identical catches in a SINGLE call must not
+    double-file, which the not-yet-flushed existence probe cannot see on its own. A
+    different locked predicate on the same page is a different catch and still gets
+    its own card — and the collapsed one reports HOW MANY it stands for, because the
+    anchor is page-granular and a page carries several encounters: a control that
+    says "1 fact was held" when it held three under-reports how often it fired."""
     note_id = await make_note(maker, domain="health", body="Imported athena labs.")
-    address = FirewallCatch(
-        entity_kind="Encounter", predicate="address", anchor="page 1", chunk_id=""
-    )
-    geo = FirewallCatch(entity_kind="Encounter", predicate="geo", anchor="page 1", chunk_id="")
+    address = FirewallCatch(entity_kind="Encounter", predicate="address", anchor="page 1")
+    geo = FirewallCatch(entity_kind="Encounter", predicate="geo", anchor="page 1")
     filed = await file_firewall_cards(
         maker,
         SYSTEM_CTX,
         note_id=uuid.UUID(note_id),
         note_domain="health",
-        catches=[("att-1", address), ("att-1", address), ("att-1", geo)],
+        catches=[("att-1", address), ("att-1", address), ("att-1", address), ("att-1", geo)],
     )
     assert filed == 2
     async with scoped_session(maker, SYSTEM_CTX) as s:
-        cards = await _firewall_cards(s, note_id)
-        assert {c.payload["predicate"] for c in cards} == {"address", "geo"}
-        # No page chunk resolved (an attachment with no chunks) -> an explicit null,
-        # never a fabricated citation.
-        assert all(c.payload["chunk_id"] is None for c in cards)
+        by_predicate = {c.payload["predicate"]: c for c in await _firewall_cards(s, note_id)}
+        assert set(by_predicate) == {"address", "geo"}
+        assert by_predicate["address"].payload["count"] == 3
+        assert by_predicate["geo"].payload["count"] == 1
+        # ...and the hero line the owner reads says three, in the predicate that was
+        # actually caught (not a hard-coded "a address").
+        assert "3 address facts" in by_predicate["address"].payload["summary"]
+        assert "1 geo fact " in by_predicate["geo"].payload["summary"]

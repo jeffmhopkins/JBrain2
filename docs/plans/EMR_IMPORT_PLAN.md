@@ -464,14 +464,24 @@ stripping is never a single point of failure:
   `{address, geo}` and the floor dict `{geocoordinates, latitude, longitude, gpscoordinates}`** —
   **when its subject entity kind is a health EMR entity** (`Observation`/`encounter`/`Person`/
   `Organization`/`MedicalCondition`). Because such a fact should never exist on this path, the guard
-  routes it to a `low_confidence` review card (`subkind=firewall_address`) anchored to the chunk and
-  **never commits it**. That card is filed by `integrate.file_firewall_cards` from the catches the
+  routes it to a `low_confidence` review card (`subkind=firewall_address`) and **never commits it**.
+  That card is filed by `integrate.file_firewall_cards` from the catches the
   importer returns, deduped per (attachment, page anchor, entity kind, predicate) **across all
-  statuses** so a dismissed card never nags again. It names *what* was held and *where* (attachment,
-  page anchor, page chunk) and deliberately **not the caught value** — the card sits in the very
+  statuses** so a dismissed card never nags again. It names *what* was held, *where* (attachment +
+  page anchor — durable across a re-ingest, which re-mints chunk rows) and *how many* times (the
+  anchor is page-granular and a page carries several encounters, so identical catches collapse into
+  one card carrying its `count` rather than under-reporting the guard as having fired once), and
+  deliberately **not the caught value** — the card sits in the very
   health domain the value was kept out of, so parking the value in its payload would re-plant the
-  leak — and it advertises **no accept**: `dismiss` is its only verb, since the sanctioned way to
-  record a facility address is the deliberate `Place` sidecar below. Building the set as that
+  leak (no `snippet`/`statement`/`value_json`; a §9 test pins the payload's whole key set, since a
+  substring probe would pass on real page text that happened to omit the fixture's address). Its
+  one verb is **`dismiss`**, since the sanctioned way to
+  record a facility address is the deliberate `Place` sidecar below — advertised as an explicit
+  `choices` entry, because a card carrying none renders in the inbox with *no buttons at all*, and
+  paired with `correctable: false`, which suppresses the detail footer's *correct it* composer: that
+  composer files an `owner_correction` note in the card's own domain, force-superseding and pinned
+  at full weight, so on this card it would prompt the owner to type the held address straight back
+  into health. Building the set as that
   explicit union closes the earlier draft's gap (a
   stray `geo` fact, whose predicate is *not* in the floor dict, would otherwise have slipped the
   guard). A single parser miss thus cannot silently plant location-domain whereabouts in the health

@@ -1226,4 +1226,51 @@ describe("ReviewScreen (split inbox)", () => {
       ),
     );
   });
+
+  it("an uncorrectable card dismisses and offers no correction composer", async () => {
+    // The EMR location firewall's card (backend integrate.file_firewall_cards): it
+    // exists because an address was deliberately held OUT of the health domain, and
+    // "correct it" would file an owner_correction note back INTO that domain, pinned
+    // at full weight — the exact leak the guard prevented, offered as the only exit.
+    // So the payload says correctable: false and carries its own verb.
+    const firewall: ReviewItem = {
+      id: "fw1",
+      kind: "low_confidence",
+      domain: "health",
+      created_at: "2026-07-03T10:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        subkind: "firewall_address",
+        summary:
+          "location firewall: 1 address fact on a health Encounter held out of the graph at page 1",
+        rationale: "the value is deliberately not recorded here.",
+        choices: [
+          {
+            action: "dismiss",
+            label: "Dismiss",
+            detail: "the held fact stays out of the health graph",
+          },
+        ],
+        correctable: false,
+      },
+    };
+    serve([firewall], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/location firewall/);
+    fireEvent.click(screen.getByRole("button", { name: /location firewall/ }));
+
+    expect(screen.queryByRole("button", { name: "correct it" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/fw1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"dismiss"'),
+        }),
+      ),
+    );
+  });
 });

@@ -102,28 +102,37 @@ async def file_firewall_cards(
     whereabouts fact out of the health graph. Each catch is paired with the id of the
     attachment it was caught in; returns the number filed.
 
-    The card carries WHAT was held and WHERE (attachment, page anchor, page chunk) and
-    never the caught value: the value was kept out of the health domain on purpose, and
-    this card sits in that same domain, so parking the value in its payload would
-    re-plant the leak. It advertises no accept either — a facility address that is
-    genuinely wanted is added deliberately as a location-domain `Place` sidecar (§3.6),
-    never from here — so `dismiss` is the only verb it offers.
+    The card carries WHAT was held, WHERE (attachment + page anchor — durable across a
+    re-ingest, which re-mints chunk rows) and HOW MANY times, and never the caught
+    value: the value was kept out of the health domain on purpose, and this card sits
+    in that same domain, so parking the value in its payload would re-plant the leak.
+
+    Its one verb is `dismiss` — a facility address that is genuinely wanted is added
+    deliberately as a location-domain `Place` sidecar (§3.6), never from here. It says
+    so with an explicit `choices` entry, because a card advertising none renders with
+    NO buttons at all (frontend `payload.proposalsFor`), and it suppresses the footer's
+    "correct it" (`correctable: false`): that composer files an `owner_correction` note
+    in the card's own domain, so on THIS card it would prompt the owner to type the
+    held address back into health, pinned at full weight.
 
     Deduped on (attachment, anchor, entity kind, predicate) across ALL statuses, so a
-    dismissed card never nags again on a re-import. The attachment id keys it rather
-    than the chunk id because a re-ingest re-mints chunk rows; the payload still cites
-    the chunk for provenance.
+    dismissed card never nags again on a re-import. The anchor is page-granular and a
+    page holds several encounters, so identical catches collapse into one card that
+    reports its `count` rather than under-reporting the guard as having fired once.
     """
     if not catches:
         return 0
     filed = 0
-    seen: set[str] = set()
+    # One card per key, carrying how many catches collapsed into it: a control that
+    # says "a fact was held" when it held four under-reports how often it fired.
+    counts: dict[str, int] = {}
+    first: dict[str, tuple[str, FirewallCatch]] = {}
+    for attachment_id, catch in catches:
+        key = f"{attachment_id}|{catch.anchor}|{catch.entity_kind}|{catch.predicate}"
+        counts[key] = counts.get(key, 0) + 1
+        first.setdefault(key, (attachment_id, catch))
     async with scoped_session(maker, ctx) as session:
-        for attachment_id, catch in catches:
-            key = f"{attachment_id}|{catch.anchor}|{catch.entity_kind}|{catch.predicate}"
-            if key in seen:  # two catches of the same shape on one page are one card
-                continue
-            seen.add(key)
+        for key, (attachment_id, catch) in first.items():
             exists = (
                 await session.execute(
                     text(
@@ -141,6 +150,11 @@ async def file_firewall_cards(
             ).first()
             if exists is not None:
                 continue
+            held = counts[key]
+            # No `snippet` (and no `statement`/`value_json`): `snippet` is what the
+            # frontend's Evidence block renders as the card's cited source text, and
+            # the source here is the page the address was read off — quoting it would
+            # put the whereabouts back into the health domain the guard held it out of.
             session.add(
                 ReviewItem(
                     kind=FIREWALL_REVIEW_KIND,
@@ -150,18 +164,27 @@ async def file_firewall_cards(
                         "key": key,
                         "attachment_id": attachment_id,
                         "anchor": catch.anchor,
-                        "chunk_id": catch.chunk_id or None,
                         "predicate": catch.predicate,
                         "entity_kind": catch.entity_kind,
+                        "count": held,
                         "summary": (
-                            f"location firewall: a {catch.predicate} fact on a health"
-                            f" {catch.entity_kind} was held out of the graph"
+                            f"location firewall: {held} {catch.predicate} fact"
+                            f"{'' if held == 1 else 's'} on a health {catch.entity_kind}"
+                            f" held out of the graph at {catch.anchor}"
                         ),
                         "rationale": (
-                            f"caught at {catch.anchor}; the value is deliberately not"
-                            " recorded here. A facility address that is genuinely needed"
-                            " is added as a location-domain Place, never as a health fact."
+                            "the value is deliberately not recorded here. Whereabouts"
+                            " that are genuinely needed are recorded as a location-domain"
+                            " Place, never as a health fact."
                         ),
+                        "choices": [
+                            {
+                                "action": "dismiss",
+                                "label": "Dismiss",
+                                "detail": "the held fact stays out of the health graph",
+                            }
+                        ],
+                        "correctable": False,
                     },
                     domain_code=note_domain,
                 )

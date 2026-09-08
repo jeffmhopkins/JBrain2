@@ -51,18 +51,17 @@ ChunkResolver = Callable[[str], str]  # "page N" -> chunk_id
 class FirewallCatch:
     """A fact held out of the graph by the Layer-2 guard (§3.6) — never committed.
 
-    Records WHAT was caught and WHERE (the page anchor plus that page's chunk id, the
-    durable row the §6.6 payload rule wants a card anchored to). It deliberately does
-    NOT retain the fact's `statement` or `value_json`: the caught value is whereabouts
-    the guard exists to keep out of the health domain, and the review card filed from
-    this catch lives in that same domain — carrying the value there would re-plant
-    exactly what was held out.
+    Records WHAT was caught and WHERE (the page anchor; the card pairs it with the
+    attachment id, and those two locate the page durably across a re-ingest, which
+    re-mints chunk rows). It deliberately does NOT retain the fact's `statement` or
+    `value_json`: the caught value is whereabouts the guard exists to keep out of the
+    health domain, and the review card filed from this catch lives in that same
+    domain — carrying the value there would re-plant exactly what was held out.
     """
 
     entity_kind: str
     predicate: str
     anchor: str
-    chunk_id: str
     subkind: str = FIREWALL_REVIEW_SUBKIND
 
 
@@ -103,12 +102,7 @@ class _IntentBuilder:
         # belt-and-suspenders that makes stripping not a single point of failure.
         if is_location_locked(predicate, entity_kind):
             self.catches.append(
-                FirewallCatch(
-                    entity_kind=entity_kind,
-                    predicate=predicate,
-                    anchor=anchor,
-                    chunk_id=self.chunk_for(anchor),
-                )
+                FirewallCatch(entity_kind=entity_kind, predicate=predicate, anchor=anchor)
             )
             return
         self.facts.append(

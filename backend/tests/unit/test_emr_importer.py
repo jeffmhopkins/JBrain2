@@ -108,7 +108,7 @@ _SYNTHETIC_ADDRESS = "1200 Elm Street, Springfield IL 62701"
 
 
 @pytest.mark.parametrize("predicate", ["address", "geo"])
-def test_a_location_locked_fact_is_caught_with_its_page_chunk_and_never_its_value(
+def test_a_location_locked_fact_is_caught_with_its_anchor_and_never_its_value(
     predicate: str,
 ) -> None:
     # Layer 1 disabled: a parser regression hands the builder a whereabouts fact.
@@ -129,11 +129,6 @@ def test_a_location_locked_fact_is_caught_with_its_page_chunk_and_never_its_valu
     )
     assert b.facts == []
     assert b.catches == [
-        FirewallCatch(
-            entity_kind=KIND_ENCOUNTER,
-            predicate=predicate,
-            anchor="page 3",
-            chunk_id=_chunk_for("page 3"),
-        )
+        FirewallCatch(entity_kind=KIND_ENCOUNTER, predicate=predicate, anchor="page 3")
     ]
     assert "Elm" not in repr(b.catches)
