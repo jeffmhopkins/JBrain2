@@ -20,8 +20,8 @@ recorded effects, the purge re-derives chain repairs from what survives.
 `purge_note_artifacts(keep_pinned=True)` is the SECOND caller of this destructive
 half: the corpus rebuild sweep (analysis/rebuild.py), which re-derives from notes
 that still exist. Its three exemptions are on that keyword's docstring — a rebuild
-is not a deletion promise, so pinned decisions, resolved review history and agent
-episodes all survive it.
+is not a deletion promise, so pinned decisions, every review item that is not still
+open (and the facts it names), and agent episodes all survive it.
 """
 
 import uuid
@@ -87,9 +87,46 @@ class PurgeCounts:
 # truncating silently.
 _CHAIN_DEPTH_CAP = 32
 
-# Review-item statuses that record a HUMAN verdict. Open items are re-derivable noise;
-# these two are decisions, and the facts they name must outlive a rebuild.
-_SETTLED_STATUSES = ("resolved", "dismissed")
+# The review-item statuses a REBUILD retires. Open cards are re-derivable noise, so the
+# sweep drops them and lets the re-run re-file whatever still applies. Every OTHER status
+# — `resolved`, `dismissed`, `deferred` (migration 0024) — names a row that SURVIVES the
+# purge, and the spare set below is derived from exactly that complement rather than from
+# its own list of "settled" statuses. Deriving is the point: a card that outlives the
+# rebuild must outlive it holding live facts, whatever status parked it there, and
+# `deferred` is the case that proves it — un-parking returns the card to `open`, and a
+# card re-queued against two deleted rows is unservable.
+_REBUILD_PURGED_STATUSES = ("open",)
+
+# Every payload key by which ANY review-item kind names a FACT, derived kind by kind from
+# the ~15 the `review_items_kind_check` allowlist admits (migration 0120) — not from the
+# subset that happened to appear in a bug report. Both the spare set and
+# `delete_review_items` read this, so the two can never disagree about what a card points
+# at, and a new kind that reuses one of these keys is covered on the day it is added:
+#
+#   fact_a + fact_b : fact_conflict, attribute_collision, low_confidence,
+#                     inverse_proposal. All four are filed from `decide()`'s `review_kind`
+#                     through the two `ReviewItem(kind=decision.review_kind)` sites in
+#                     analysis/pipeline.py (the primary edge and its derived inverse),
+#                     which share one payload shape.
+#   fact_id         : low_confidence_inference (pipeline.py — the held pending_review
+#                     row; REJECT retracts it and does NOT pin, so it reaches neither the
+#                     pin walk nor a fact_a/fact_b lookup, and a two-key spare set
+#                     silently deleted it), domain_promotion (pipeline.py — accept pins
+#                     the fact and reject writes nothing, so the pin walk alone already
+#                     covers it; spared here anyway because sharing the key costs nothing
+#                     and stops correctness depending on repo.py's current verbs),
+#                     wiki_stale_claim (wiki/lint.py — the superseded fact an article
+#                     still frames as current).
+#   no fact key     : merge_proposal (entity_a/entity_b), confirm_entity (entity_id),
+#                     ambiguous_mention (name + candidate entity_ids), wiki_contradiction
+#                     (entity_ids), extraction_truncated (note_id only), the EMR-ingest
+#                     arm of low_confidence (note_id + subkind + attachment/analyte key —
+#                     the kind is shared with decide()'s, the payload is not),
+#                     new_predicate (a predicate spelling + fact_kind; no live filer since
+#                     the two-tier cutover retired it), and shape_mismatch /
+#                     split_proposal, which the CHECK admits but nothing in the backend
+#                     files.
+_FACT_PAYLOAD_KEYS = ("fact_id", "fact_a", "fact_b")
 
 
 async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> set[uuid.UUID]:
@@ -106,28 +143,44 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
        re-derived twin match a surviving row by VALUE, so `decide()` takes its
        idempotent refresh branch instead.
 
-    2. **The retracted loser of a settled card, which NO chain walk can reach.**
+    2. **Every fact a SURVIVING review item names, which no chain walk can reach.**
        Resolving a card writes no supersession edge at all: `repo.py` pins the winner
        (`superseded_by = NULL`) and marks the loser `status='retracted'`, leaving its
-       `superseded_by` untouched. The loser is therefore not on the winner's chain, and
-       a `superseded_by`-only walk misses it. Deleting it strands the settled card on a
-       dangling `payload.fact_a/fact_b` (jsonb, no FK, so nothing errors) and makes
-       reopen/undo a permanent silent no-op — `_reverse_effects` replays
+       `superseded_by` untouched — and the `low_confidence_inference` reject path does
+       not even pin, it only retracts. Such a row is on no chain and carries no pin, so a
+       `superseded_by`-only walk misses it. Deleting it strands the card on a dangling
+       `payload` pointer (jsonb, no FK, so nothing errors) and makes reopen/undo a
+       permanent silent no-op — `_reverse_effects` replays
        `UPDATE app.facts ... WHERE id = :id` against a row that is gone. So the facts a
-       settled item NAMES are spared directly, by id.
+       surviving item NAMES are spared directly, by id.
+
+       Both halves of "surviving item" are derived, never enumerated by hand:
+       `_REBUILD_PURGED_STATUSES` is the single list of what the purge deletes (the spare
+       set is its complement, so `deferred` cannot be forgotten), and
+       `_FACT_PAYLOAD_KEYS` is the single list of the keys a card names a fact by, read
+       by `delete_review_items` too.
 
     Derived shadows of a spared fact are spared with it: a resolution cascades onto them
     and records their prior status in its effects (repo.py), so a shadow outliving its
     source's verdict is another dangling replay target.
 
     Sparing the loser is only half of the flood fix. `decide()` filters retracted rows
-    out of `live` before matching, so a spared loser is invisible to it; `_retracted_twin`
-    (analysis/supersession.py) is the half that consults this history. This function is
-    the half that keeps it.
+    out of `live` before matching, so a spared loser is invisible to it; the retracted-twin
+    branch (analysis/supersession.py) is the half that consults this history. This
+    function is the half that keeps it.
+
+    **Honest limit.** That twin branch matches on EXACT `same_validity`, so a spared
+    superseded/retracted row only absorbs the re-derived twin when re-extraction lands
+    the same `valid_from`. Validity drift on re-extraction still drops through to the
+    pinned re-flag and files a card. That is inherent to matching on value plus instant,
+    not something this spare set can close.
     """
+    # One `f.id::text IN (...)` arm per fact-naming payload key, generated from the
+    # constant so the mapping above is the only place the key list lives.
+    named_facts = ", ".join(f"ri.payload->>'{key}'" for key in _FACT_PAYLOAD_KEYS)
     rows = await session.execute(
         text(
-            """
+            f"""
             WITH RECURSIVE walk(root, cur, depth) AS (
                 SELECT f.id, f.id, 0 FROM app.facts f WHERE f.note_id = :note
                 UNION ALL
@@ -143,9 +196,8 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
             settled AS (
                 SELECT f.id
                 FROM app.review_items ri
-                JOIN app.facts f
-                  ON f.id::text IN (ri.payload->>'fact_a', ri.payload->>'fact_b')
-                WHERE ri.status IN :statuses AND f.note_id = :note
+                JOIN app.facts f ON f.id::text IN ({named_facts})
+                WHERE ri.status NOT IN :purged AND f.note_id = :note
             ),
             roots AS (SELECT id FROM pinned_roots UNION SELECT id FROM settled)
             SELECT id FROM roots
@@ -153,8 +205,12 @@ async def rebuild_spare_fact_ids(session: AsyncSession, note_id: uuid.UUID) -> s
             SELECT f.id FROM app.facts f JOIN roots r ON f.derived_from_fact_id = r.id
             WHERE f.note_id = :note
             """
-        ).bindparams(bindparam("statuses", expanding=True)),
-        {"note": str(note_id), "cap": _CHAIN_DEPTH_CAP, "statuses": list(_SETTLED_STATUSES)},
+        ).bindparams(bindparam("purged", expanding=True)),
+        {
+            "note": str(note_id),
+            "cap": _CHAIN_DEPTH_CAP,
+            "purged": list(_REBUILD_PURGED_STATUSES),
+        },
     )
     keep = {uuid.UUID(str(row[0])) for row in rows}
     truncated = (
@@ -194,12 +250,13 @@ async def purge_note_artifacts(
     from notes that still exist rather than honoring a deletion promise:
 
     1. Facts a human verdict rests on survive (`rebuild_spare_fact_ids`): the pinned
-       row, the chain it superseded, and — reachable by no chain walk — the retracted
-       loser a settled review item names.
-    2. Only OPEN review items go, the discipline the re-extraction sweep already uses
-       (analysis/pipeline.py): resolved/dismissed items are HUMAN history. The
-       `note_id` sweep is skipped for the same reason — it is status-blind by
-       construction and exists to erase a deleted note's frozen snippets.
+       row, the chain it superseded, and — reachable by no chain walk — every fact named
+       by a review item that outlives the purge.
+    2. Only `_REBUILD_PURGED_STATUSES` review items go, the discipline the re-extraction
+       sweep already uses (analysis/pipeline.py): resolved, dismissed and deferred items
+       are HUMAN history or a parked decision. The `note_id` sweep is skipped for the
+       same reason — it is status-blind by construction and exists to erase a deleted
+       note's frozen snippets.
     3. Agent episodes stay. Nothing re-derives them, so purging them here would be
        silent data loss, not a rebuild.
     """
@@ -235,7 +292,7 @@ async def purge_note_artifacts(
         session,
         set(doomed_links),
         note_id=None if keep_pinned else note_id,
-        statuses=("open",) if keep_pinned else None,
+        statuses=_REBUILD_PURGED_STATUSES if keep_pinned else None,
     )
 
     fact_delete = delete(Fact).where(Fact.note_id == note_id)
@@ -351,8 +408,8 @@ async def delete_review_items(
     note_id: uuid.UUID | None = None,
     statuses: tuple[str, ...] | None = None,
 ) -> None:
-    """Delete review items referencing doomed facts (payload fact_id /
-    fact_a / fact_b), plus — when `note_id` is given — everything filed for
+    """Delete review items referencing doomed facts (every key in
+    `_FACT_PAYLOAD_KEYS`), plus — when `note_id` is given — everything filed for
     the note itself.
 
     The privacy purge passes note_id and no status filter: resolved history is
@@ -377,17 +434,15 @@ async def delete_review_items(
     if not doomed_ids:
         return
     ids = [str(d) for d in doomed_ids]
-    stmt = text(
-        "DELETE FROM app.review_items"
-        " WHERE (payload->>'fact_id' IN :doomed_id"
-        " OR payload->>'fact_a' IN :doomed_a"
-        " OR payload->>'fact_b' IN :doomed_b)" + status_clause
-    ).bindparams(
-        bindparam("doomed_id", expanding=True),
-        bindparam("doomed_a", expanding=True),
-        bindparam("doomed_b", expanding=True),
+    # One arm per fact-naming key, generated from the same constant the rebuild spare set
+    # reads — so a card can never be deleted by a key the spare set does not consult.
+    keys = " OR ".join(
+        f"payload->>'{key}' IN :doomed_{i}" for i, key in enumerate(_FACT_PAYLOAD_KEYS)
     )
-    params = {"doomed_id": ids, "doomed_a": ids, "doomed_b": ids}
+    stmt = text(f"DELETE FROM app.review_items WHERE ({keys}){status_clause}").bindparams(
+        *(bindparam(f"doomed_{i}", expanding=True) for i in range(len(_FACT_PAYLOAD_KEYS)))
+    )
+    params = {f"doomed_{i}": ids for i in range(len(_FACT_PAYLOAD_KEYS))}
     if statuses is not None:
         stmt = stmt.bindparams(bindparam("statuses", expanding=True))
         params["statuses"] = list(statuses)

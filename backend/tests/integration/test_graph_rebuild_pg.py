@@ -257,6 +257,58 @@ async def test_the_retracted_loser_of_a_settled_card_survives_a_rebuild(
     assert progress.purged == 1
 
 
+async def test_a_deferred_cards_facts_survive_a_rebuild(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`deferred` is a real persisted status (migration 0024) and the purge does not
+    retire it — only OPEN cards go. So a parked card outlives the rebuild, and a spare
+    set keyed on "resolved or dismissed" leaves both the facts it cites to be deleted
+    under it. Un-parking then returns it to the open queue citing two rows that are
+    gone. The spare set is the complement of what the purge deletes for exactly this
+    reason; neither side of a parked decision is pinned, so nothing else reaches them."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Parked Subject", status="confirmed")
+    side_a = await seed_fact(maker, note, entity, status="pending_review")
+    side_b = await seed_fact(maker, note, entity, status="pending_review", predicate="worksFor")
+    card = await seed_item(
+        maker, "fact_conflict", {"fact_a": side_a, "fact_b": side_b}, status="deferred"
+    )
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, ITEM_BY_ID, id=card) == 1
+    for kept in (side_a, side_b):
+        assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=kept) == 1
+
+
+async def test_a_rejected_inference_card_keeps_the_fact_it_names_by_fact_id(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A `low_confidence_inference` card names its fact as `payload.fact_id`, not
+    `fact_a`/`fact_b`, and its REJECT retracts the row without pinning it (repo.py). So
+    the row sits in neither the pin walk nor a two-key payload lookup: a spare set built
+    from the collision card's shape alone hard-deletes it while the card survives, and
+    the reopen that would restore its prior status replays
+    `UPDATE app.facts ... WHERE id = :id` against nothing, forever. Sparing is keyed on
+    every payload key ANY kind names a fact by, so `fact_id` kinds are covered too."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    entity = await seed_entity(maker, "Inference Subject", status="confirmed")
+    rejected = await seed_fact(maker, note, entity, status="retracted")
+    unrelated = await seed_fact(maker, note, entity, predicate="worksFor")
+    card = await seed_item(
+        maker, "low_confidence_inference", {"fact_id": rejected}, status="resolved"
+    )
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+
+    assert await count(maker, ITEM_BY_ID, id=card) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=rejected) == 1
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=unrelated) == 0
+    assert (progress.kept, progress.purged) == (1, 1)
+
+
 async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:
     """The privacy purge deletes an episode WHOLE (invariant #11). Nothing re-derives
     one, so doing that in a rebuild would be silent data loss, not a rebuild."""
