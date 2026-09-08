@@ -1,9 +1,12 @@
 # The note screen under the conversation model — frozen body, clarifications, write chips
 
-> **Status:** GUI gate **OPEN** — three variants for the owner to choose from. Nothing is
-> built. **Last verified:** 2026-09-08. Plan: `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`
-> (D1, D3, D6, D7, D12; constraints 1, 4 and 6). Tool semantics:
-> `docs/research/agent-ingest/TOOL_SURFACE.md`.
+> **Status: SUPERSEDED — this round was scrapped before the gate.** It was never presented
+> to the owner and will not be merged. **The note screen does not change**: a note
+> conversation is an ordinary agent conversation with the note as turn 0 (plan **D1**), and
+> the agent's graph writes and questions render as **tool components inside that
+> conversation**. Read **`SUPERSEDED.md`** first — it records why, and the two findings that
+> carry forward. Everything below is the round as it stood, kept as the record.
+> **Last verified:** 2026-09-08.
 
 ## What is already settled, and therefore not on offer here
 

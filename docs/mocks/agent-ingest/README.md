@@ -12,8 +12,10 @@
 > **One part of C is superseded**: its `Asking` bucket is replaced by the **two-tab
 > inbox** (**D4**), with questions findable from the notes tab (**D5**) — so the mock's
 > segmented `Today · Older · Asking` picker is no longer the queue answer.
-> Companion dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Follow-on round (what the *note screen*
-> becomes under this model): `docs/mocks/agent-ingest-note-body/`. Nothing is built.
+> Companion dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. A follow-on round asked
+> what the *note screen* becomes under this model; it was **scrapped before its gate** —
+> the note screen does not change, and the writes render inside the conversation
+> (`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Nothing is built.
 > **Last verified:** 2026-09-08.
 
 ## The change these mocks are for
