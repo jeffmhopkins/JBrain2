@@ -438,6 +438,12 @@ function eventLabel(event: BoxEvent): string {
     // elapsed ms; the label says why the owner's turn was NOT slow.
     return `restored ${event.subject}'s prompt cache from disk`;
   }
+  if (event.kind === "kv_prefix_skipped_busy") {
+    // The twin of the row above, and the more useful of the two: it is the reason the NEXT
+    // turn is slow. Worded as contention rather than failure, because that is the fix —
+    // background tasks sharing the interactive model's slot.
+    return `could not restore ${event.subject}'s prompt cache — every slot busy`;
+  }
   if (event.kind === "job_refused_no_room") {
     // A background job the box gave up on because the model it needs cannot fit. The subject
     // is the job kind, not a model: this row is the only trace the owner has of the job.

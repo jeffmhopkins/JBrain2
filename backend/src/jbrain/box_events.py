@@ -92,6 +92,12 @@ JOB_REFUSED_NO_ROOM = "job_refused_no_room"
 # both owner-visible because the wait they explain lands on the owner's own turn.
 KV_PREFIX_SAVED = "kv_prefix_saved"
 KV_PREFIX_RESTORED = "kv_prefix_restored"
+# The restore that did NOT happen, because every slot stayed busy for the whole wait. It is
+# owner-visible for the same reason the restore is: it is the explanation for the ~70 s
+# prefill the very next turn pays, and without a row the owner sees only the slow turn. The
+# cause is always slot contention (background tasks sharing the interactive model), so the
+# detail names the sizes that were holding the slots.
+KV_PREFIX_SKIPPED_BUSY = "kv_prefix_skipped_busy"
 
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.

@@ -546,8 +546,11 @@ async def test_a_boot_restore_adopts_the_restored_count_as_the_prime_size(root: 
 
 
 async def test_restore_waits_for_an_idle_slot_rather_than_fighting_a_live_request(
-    root: Path,
+    root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The budget is real seconds in production; this test only cares that a permanently
+    # busy slot is never restored over, so it spends none of them.
+    monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     _plant_file(root, store, "persona")
     store._prime_tokens[SERVED] = PRIME
@@ -693,7 +696,7 @@ def _next_state(states):  # type: ignore[no-untyped-def]
 
 
 async def test_a_slot_still_busy_after_the_wait_is_left_alone(
-    root: Path, monkeypatch: pytest.MonkeyPatch
+    root: Path, monkeypatch: pytest.MonkeyPatch, events: list
 ) -> None:
     import jbrain.llm.kv_prefix as mod
 
@@ -704,6 +707,46 @@ async def test_a_slot_still_busy_after_the_wait_is_left_alone(
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
+    # The give-up is owner-visible: it is the reason the next turn pays a full prefill, and
+    # the sizes name the cause (a 5,200-token background prompt holding the only slot).
+    assert events and events[0][0] == box_events.KV_PREFIX_SKIPPED_BUSY
+    assert events[0][1] == SERVED
+    assert "5200" in (events[0][2] or "")
+
+
+async def test_the_wait_outlasts_a_burst_of_short_background_calls(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-09-08 case the budget was raised for: on a single-slot config the
+    interactive model is also serving background tasks, which arrive in bursts of a dozen
+    back-to-back calls. The old 2 s (8 polls) expired inside the FIRST one and six turns in
+    a row paid 70-89 s re-prefills. The slot does free — briefly, between calls — so what
+    the restore needs is enough polls to still be looking when it does."""
+    import jbrain.llm.kv_prefix as mod
+
+    monkeypatch.setattr(mod, "RESTORE_BUSY_INTERVAL_S", 0.0)
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    store._prime_tokens[SERVED] = PRIME
+    gw.restore_response = {"n_restored": PRIME}
+    busy = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
+    freed = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": False}]
+    # Busy for well past the old 8-poll budget, then a gap between two background calls.
+    states = iter([busy] * 40 + [freed] * 4)
+    gw.slots = lambda served: _next_state(states)  # type: ignore[method-assign]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert len(gw.restored) == 1
+
+
+def test_the_busy_budget_is_worth_more_than_the_prefill_it_replaces() -> None:
+    """The budget is a trade, so pin the arithmetic rather than the number: waiting must
+    stay a minority of the ~70 s prefill a successful restore replaces, and must comfortably
+    outlast one background call (2-26 s measured on the box) or it buys nothing."""
+    budget = kv_prefix.RESTORE_BUSY_POLLS * kv_prefix.RESTORE_BUSY_INTERVAL_S
+    assert 15.0 <= budget <= 30.0
+    # Sub-second gaps between back-to-back background calls are the thing being caught, so
+    # the poll must stay fine-grained; a longer interval spends the budget on fewer looks.
+    assert kv_prefix.RESTORE_BUSY_INTERVAL_S <= 0.25
 
 
 async def test_a_missing_file_names_the_identity_component_that_drifted(

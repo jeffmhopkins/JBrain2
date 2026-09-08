@@ -183,10 +183,32 @@ def _identity_components(
 
 # Bounded wait for a busy slot before giving up on a restore. The observed miss
 # (2026-08-24): the hook fired while a ~22 s vision side-call was 0.5 s from releasing
-# the only slot, gave up silently, and the turn paid a 204 s full re-prefill. Waiting a
-# couple of seconds is cheap against that; a slot still busy afterwards (a long
-# generation) falls back to the old behaviour.
-RESTORE_BUSY_POLLS = 8
+# the only slot, gave up silently, and the turn paid a 204 s full re-prefill.
+#
+# The budget is 20 s, not the 2 s (8 x 0.25) it started as, because 2 s was shorter than
+# the thing it had to outlast. MEASURED on the box 2026-09-08, over a window where the
+# owner reported "crazy long prompt prefill between replies": every `agent.turn` was
+# followed within 2-4 s by a burst of 5-15 `triage.classify` calls sharing the same model
+# and — with `-np 1` — the same slot. Individual background calls held it 2-26 s and the
+# bursts ran for a minute; the 2 s wait expired inside the FIRST one every time. The
+# window logged six `restore_skipped_busy` against one restore, and the six turns that
+# followed paid 70-89 s full re-prefills apiece (`box_events` kind `prefill`, details
+# "your prompt" / "what aprs_recent returned" / "what name_session returned").
+#
+# 20 s is the arithmetic of what is being traded, not a round number: the restore it
+# protects replaces a ~70 s prefill (30,324 tokens at the ~443 tok/s this box prefills a
+# full 31k prompt at) and itself costs ~90 ms, so a wait that ENDS in a restore saves
+# ~68 s and one that ends in a skip costs the wait. Break-even is a hit rate near 23%,
+# and the polls are aimed at clearing that easily: the interval stays 0.25 s because the
+# idle gap between two back-to-back background calls is sub-second (they arrive ~2 s
+# apart), so the win comes from having ~80 chances at a short window rather than 8, not
+# from sitting through one long call.
+#
+# The ceiling still matters — past it the turn is better off prefilling — so a slot busy
+# for the whole budget falls back to the old behaviour, now with a box_event
+# (KV_PREFIX_SKIPPED_BUSY) so the slow turn that follows is explained on the owner's own
+# screen instead of only in the api log.
+RESTORE_BUSY_POLLS = 80
 RESTORE_BUSY_INTERVAL_S = 0.25
 
 
@@ -546,10 +568,25 @@ class KvPrefixStore:
                         log.info("kv_prefix.restore_waited_for_slot", model=served_model)
                         break
                 else:
+                    held = [_slot_int(s, "n_prompt_tokens") for s in occupied]
                     log.info(
                         "kv_prefix.restore_skipped_busy",
                         model=served_model,
-                        slots=[_slot_int(s, "n_prompt_tokens") for s in occupied],
+                        slots=held,
+                    )
+                    # The turn that follows this is about to pay the full prefill, so say why
+                    # where the owner reads it. The sizes are the diagnosis: small prompts
+                    # holding the slot mean background tasks are sharing the interactive
+                    # model, which is a routing/slot-count setting, not a fault here.
+                    await box_events.record(
+                        box_events.KV_PREFIX_SKIPPED_BUSY,
+                        served_model,
+                        detail=(
+                            "every slot busy for "
+                            f"{RESTORE_BUSY_POLLS * RESTORE_BUSY_INTERVAL_S:.0f} s "
+                            f"(holding {', '.join(str(n) for n in held) or 'no'} tokens) — "
+                            "the prompt cache stayed on disk and this turn re-prefills"
+                        ),
                     )
                     return False
             # Prefer an empty slot; else the one holding the smallest foreign prompt.

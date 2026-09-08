@@ -628,6 +628,28 @@ describe("what the box was doing", () => {
     ).toBeInTheDocument();
   });
 
+  it("says when the prompt cache could NOT be restored because every slot was busy", async () => {
+    // The more useful half of the pair: this row is the reason the NEXT turn is slow, and
+    // without it the owner sees an unexplained ~70 s wait. The detail's token counts are the
+    // diagnosis — small prompts holding the slot mean background tasks share the model.
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "kv_prefix_skipped_busy",
+        subject: "gpt-oss-120b",
+        detail:
+          "every slot busy for 20 s (holding 5200 tokens) — " +
+          "the prompt cache stayed on disk and this turn re-prefills",
+        status: "ok",
+        ended_ms: Date.now() - 5_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(
+      await screen.findByText("could not restore gpt-oss-120b's prompt cache — every slot busy"),
+    ).toBeInTheDocument();
+  });
+
   it("says when a background job was given up on because its model cannot fit", async () => {
     // The subject is the JOB KIND: a directly-enqueued job has no run step, so this row is
     // the only trace of the failure the owner has, and the detail is its payload.

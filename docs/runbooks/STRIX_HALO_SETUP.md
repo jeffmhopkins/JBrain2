@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-09-08
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -233,7 +233,40 @@ both resides and warms it.
 > until 2026-08-23 it omitted the effort, primed a "Reasoning: medium" variant no turn
 > ever used, and burned a full ~62 s prefill on every load while clobbering the freshly
 > restored cache on a 1-slot server. Saves and restores land in Vitals as
-> `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms.
+> `kv_prefix_saved` / `kv_prefix_restored` rows with token counts and elapsed ms, and a
+> restore that could NOT happen lands as `kv_prefix_skipped_busy` — see the next box.
+>
+> **THE DISK CACHE CANNOT HELP A MODEL WHOSE SLOT IS BEING FOUGHT OVER — check this first
+> when the owner reports long prefills between replies.** MEASURED 2026-09-08 on the live
+> box, against exactly that report. `app.llm_usage` showed **fourteen of twenty-one tasks
+> pinned to `local:gpt-oss-120b`**, the model serving `agent.turn`, while
+> `llm_local_parallel_slots` gave a second slot to `qwen3.8-27b-mtp` and
+> `nemotron-3.5-lightning-30b` and **not to gpt-oss-120b** — so jerv and every background
+> pipeline shared `-np 1`. Every `agent.turn` in a 24 h window was followed within 2-4 s by
+> a burst of 5-15 `triage.classify` calls of 1k-32k tokens; llama-server then logged
+> `selected slot by LRU` (no common prefix left) and the next turn re-read its whole ~31k
+> prompt at ~443 tok/s. `box_events` for the window: six **70-89 s** `prefill` rows —
+> details *"your prompt"*, *"what aprs_recent returned"*, *"what name_session returned"* —
+> against a single 89 ms restore.
+>
+> All three layers were working as designed and none could help:
+>
+> - the **WarmKeeper** re-primes only on its 60 s settled tick, long after the eviction;
+> - the **disk store** tried before every turn and logged `restore_skipped_busy`, because
+>   its wait was 2 s while a single background call holds the slot 2-26 s (a burst, a
+>   minute). That budget is now 20 s (`RESTORE_BUSY_POLLS`), which outlasts one call and
+>   catches the sub-second gaps *between* calls — a mitigation, not the fix;
+> - `-cram 0` (below) means there is no host-RAM conversation cache to fall back on either,
+>   by design.
+>
+> **The fix is to stop the contention, and both halves are PWA settings — no terminal.**
+> Give gpt-oss-120b a **second parallel slot** (Settings → LLM → the model's slot count;
+> `-c` becomes `window x slots` automatically, so budget the KV), which is what the
+> "dedicated interactive slot" in this runbook has always meant; and **route the small,
+> frequent background tasks off the interactive model** — `triage.classify`,
+> `session.title`, `research.title`, `pet.*` average 2,885 input tokens and do not need a
+> 120B. Note the gap: the debug console can set a model's context window and extra-args but
+> **not its slot count**, so a session helping remotely cannot do the first half itself.
 >
 > **The harmony `Current date` is moved to the prompt tail (chat-template override).**
 > gpt-oss's stock harmony template renders a live `Current date: <today>` into the prompt's
