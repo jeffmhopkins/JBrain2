@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Review inbox · A · the inbox holds</title>
+    <title>Review inbox · C · the question comes to the note</title>
     <style>
       /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md). */
       :root {
@@ -14,25 +14,27 @@
         --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
         --location: #6fb6b1; --location-tint: rgba(111, 182, 177, 0.13);
         --accent: var(--steel); --accent-tint: var(--steel-tint);
-        /* Demo chrome renders at 100%; the phones below run the app default. */
         --font-scale: 1;
         --fs-micro: calc(12px * var(--font-scale));
         --fs-secondary: calc(14px * var(--font-scale));
         --fs-note: calc(15px * var(--font-scale));
         --fs-body: calc(16px * var(--font-scale));
         --fs-title: calc(18px * var(--font-scale));
+        --fs-composer: calc(17px * var(--font-scale));
         --r-input: 12px; --r-card: 16px; --r-seg: 14px; --r-pill: 999px;
         --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
       }
       [data-theme="light"] {
         color-scheme: light;
         --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --surface-composer: #ffffff;
         --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
         --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
       }
       [data-theme="dark"] {
         color-scheme: dark;
         --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --surface-composer: #141518;
         --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
         --shadow-card: none;
       }
@@ -47,7 +49,6 @@
       button { font: inherit; cursor: pointer; color: inherit; }
       [hidden] { display: none !important; }
 
-      /* ---- demo chrome (outside the phones; never app copy) ---- */
       .demo-bar { width: 100%; max-width: 1240px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .demo-title { font-size: var(--fs-secondary); color: var(--text-2); }
       .demo-title b { color: var(--text); }
@@ -57,7 +58,7 @@
       .caption { width: 100%; max-width: 1240px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.6; }
       .caption b { color: var(--text); font-weight: 600; }
       .caption code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
-      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--text); margin-bottom: 8px; }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--green-tint); color: var(--text); margin-bottom: 8px; }
 
       .row { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; align-items: flex-start; width: 100%; }
       .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
@@ -68,31 +69,62 @@
       .frame-note .gap { color: var(--amber); }
 
       .phone {
-        /* The app's shipped default text size (DESIGN.md "Theming"): 75% of the
-           drawn px values. Everything inside a phone is at the owner's real scale. */
-        --font-scale: 0.75;
+        --font-scale: 0.75; /* the app's shipped default text size */
         width: 100%; height: 792px; background: var(--bg); border: 1px solid var(--border);
         border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
         box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
       }
 
-      /* ---- top bar (components/TopBar.tsx) ---- */
       .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
       .bar .back { background: none; border: none; color: var(--text-2); display: grid; place-items: center; width: 44px; height: 44px; margin-left: -10px; }
       .bar .back svg { width: 20px; height: 20px; }
       .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .mark { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+      .bar .mark i { color: var(--steel); font-style: normal; }
       .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
       .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
 
-      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 22px; display: flex; flex-direction: column; gap: 12px; }
+      .scroll { flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px; }
+      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .d-general { background: var(--steel); } .d-health { background: var(--rose); }
+      .d-location { background: var(--location); }
+      .kind { font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); }
+      .chip { font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
+      .chip-ok { background: var(--green-tint); color: var(--text); }
+      .chip-work { background: var(--steel-tint); color: var(--text); }
 
-      /* ---- the shipped segmented filter, relabelled (styles.css .review-segs) ---- */
+      /* ---- home stream (Stream.tsx) ---- */
+      .day-header { font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 4px 2px -4px; }
+      .day-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
+      .note { padding: 13px 15px; display: flex; flex-direction: column; gap: 5px; }
+      .note + .note, .ask-block + .note { border-top: 1px solid var(--border); }
+      .note-head { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .note-body { font-size: var(--fs-note); color: var(--text); line-height: 1.45; }
+      .composer { flex: none; border-top: 1px solid var(--border); background: var(--surface-composer); padding: 10px 14px 16px; display: flex; flex-direction: column; gap: 7px; }
+      .cbox { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); min-height: 48px; display: flex; align-items: center; padding: 0 13px; color: var(--text-3); font-size: var(--fs-composer); }
+      .cfoot { font-size: var(--fs-micro); color: var(--text-3); text-align: center; }
+      .modeseg { display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; align-self: center; }
+      .modeseg span { font-size: var(--fs-micro); padding: 8px 16px; color: var(--text-3); }
+      .modeseg span[data-on] { background: var(--green-tint); color: var(--text); }
+
+      /* The question, inline under its note, INSIDE the day card. Content, not chrome:
+         it scrolls with the note and disappears when answered. */
+      .ask-block { padding: 11px 15px 13px; background: var(--surface-2); border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 9px; }
+      .ask-block .who { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+      .ask-block .who svg { width: 13px; height: 13px; color: var(--amber); }
+      .ask-block .ask { font-size: var(--fs-secondary); color: var(--text); line-height: 1.5; }
+      .ask-block .ask code { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-2); }
+      .answers { display: flex; gap: 8px; flex-wrap: wrap; }
+      .answers button { min-height: 44px; padding: 10px 16px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-secondary); }
+      .answers button.pick { background: var(--accent-tint); border-color: transparent; font-weight: 500; }
+      .answered { font-size: var(--fs-micro); color: var(--text-3); display: flex; align-items: center; gap: 8px; padding: 10px 15px; border-top: 1px dashed var(--border); }
+
+      /* ---- the Review screen (shipped .review-segs) ---- */
       .review-segs { display: flex; gap: 3px; padding: 3px; margin: 12px 14px 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-seg); flex: none; }
       .review-seg { flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; background: transparent; border: none; border-radius: calc(var(--r-seg) - 3px); font-size: var(--fs-note); color: var(--text-2); }
       .review-seg.seg-active { background: var(--accent-tint); color: var(--text); font-weight: 500; }
       .seg-count { font-size: var(--fs-micro); color: var(--text-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); min-width: 18px; padding: 0 5px; line-height: 16px; }
 
-      /* ---- list rows (ReviewScreen .rlist2 / .rrow2) ---- */
       .rlist { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow-card); }
       .rrow { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
       .rrow:last-child { border-bottom: none; }
@@ -104,30 +136,13 @@
       .rrow-meta { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); flex-wrap: wrap; }
       .rchev { flex: none; display: grid; place-items: center; width: 44px; color: var(--text-3); }
       .rchev svg { width: 16px; height: 16px; }
-
-      .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
-      .d-general { background: var(--steel); } .d-health { background: var(--rose); }
-      .d-location { background: var(--location); }
-      .kind { font-size: var(--fs-micro); color: var(--text-3); font-family: var(--font-mono); }
-      .chip { font-size: var(--fs-micro); padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; width: fit-content; }
-      .chip-ok { background: var(--green-tint); color: var(--text); }
-      .chip-work { background: var(--steel-tint); color: var(--text); }
-
-      /* ---- a waiting thread, answerable in the row (A's primary form) ---- */
-      .tcell { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-      .tcell:last-child { border-bottom: none; }
+      .tcell { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
       .tcell .head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
       .tcell .head .when { margin-left: auto; }
       .tcell .quote { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.45; }
       .tcell .ask { font-size: var(--fs-note); color: var(--text); line-height: 1.5; }
-      .tcell .ask code { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-2); }
-      .answers { display: flex; gap: 8px; flex-wrap: wrap; }
-      .answers button { min-height: 44px; padding: 10px 16px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-secondary); }
-      .answers button.pick { background: var(--accent-tint); border-color: transparent; font-weight: 500; }
-      .tfoot { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); color: var(--text-3); }
-      .tfoot .go { margin-left: auto; color: var(--text-2); }
+      .lede-app { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.55; padding: 0 2px; }
 
-      /* ---- detail (pushed in-frame) ---- */
       .det { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; }
       .det-nav { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; height: 48px; flex: none; border-bottom: 1px solid var(--border); font-size: var(--fs-micro); color: var(--text-3); }
       .det-nav .pos { margin-left: auto; }
@@ -148,9 +163,6 @@
       .kv { display: flex; gap: 10px; font-size: var(--fs-secondary); }
       .kv dt { color: var(--text-3); font-family: var(--font-mono); min-width: 92px; flex: none; }
       .kv dd { color: var(--text); font-family: var(--font-mono); word-break: break-all; }
-
-      /* Proposals — the shipped .rprop: plain surface, hairline border, no accent
-         (so no accent-on-tint contrast anywhere). */
       .rproposals { display: flex; flex-direction: column; gap: 8px; }
       .rprop { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 52px; padding: 11px 14px; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
       .rprop-label { font-size: var(--fs-secondary); color: var(--text); }
@@ -158,14 +170,8 @@
       .rprop-none { font-size: var(--fs-secondary); color: var(--text-3); padding: 6px 2px; line-height: 1.5; }
       .rdetail-foot { display: flex; padding-top: 2px; }
       .rfoot-correct { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); display: flex; align-items: center; justify-content: center; }
-      .rcompose { display: flex; flex-direction: column; gap: 8px; }
-      .rcompose-box { width: 100%; min-height: 92px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-secondary); padding: 10px 12px; resize: none; }
-      .rcompose-hint { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.45; }
-      .rcompose-actions { display: flex; gap: 8px; }
-      .rcompose-actions button { flex: 1; min-height: 44px; border-radius: var(--r-input); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); }
-      .rcompose-actions .rcompose-file { background: var(--accent-tint); border-color: transparent; color: var(--text); font-weight: 500; }
 
-      /* ---- launcher (components/Launcher.tsx) ---- */
+      /* ---- launcher ---- */
       .lsec { font-size: var(--fs-micro); letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-3); margin: 14px 2px 2px; }
       .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
       .tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); min-height: 88px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-2); font-size: var(--fs-micro); box-shadow: var(--shadow-card); }
@@ -173,10 +179,6 @@
       .tile-badge { position: absolute; top: 8px; right: 9px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--text); font-size: var(--fs-micro); display: grid; place-items: center; font-weight: 600; }
       .handle { height: 26px; flex: none; display: grid; place-items: center; }
       .handle span { width: 40px; height: 4px; border-radius: var(--r-pill); background: var(--border); }
-
-      .calm { margin: auto 0; text-align: center; color: var(--text-2); font-size: var(--fs-secondary); line-height: 1.6; padding: 0 26px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-      .calm svg { width: 26px; height: 26px; color: var(--text-3); }
-      .quiet { font-size: var(--fs-secondary); color: var(--text-3); text-align: center; padding: 22px 10px; line-height: 1.6; }
 
       .note-foot { width: 100%; max-width: 1240px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.7; border-top: 1px solid var(--border); padding-top: 14px; }
       .note-foot b { color: var(--text-2); font-weight: 500; }
@@ -186,8 +188,8 @@
   <body>
     <div class="demo-bar">
       <div class="demo-title">
-        <b>Variant A — “the inbox holds”</b> · the Review tile survives; its lanes become
-        <b>Notes · Wiki</b>, and a question is answered in the row
+        <b>Variant C — “the question comes to the note”</b> · the notes half is answered
+        <b>in the stream</b>; the inbox holds only what has aged out
       </div>
       <div class="seg" role="group" aria-label="theme">
         <button type="button" data-theme-btn="dark" aria-pressed="true">Dark</button>
@@ -196,64 +198,102 @@
     </div>
 
     <div class="caption">
-      <span class="tag">A</span><br />
-      The smallest move that still fixes the problem. <b>Review</b> stays a destination on the
-      launcher and keeps its tile badge; the shipped <code>.review-segs</code> pill track is
-      relabelled from <code>pending · decided</code> to <b>Notes · Wiki</b>, same markup, same
-      count pills. The <b>Notes</b> tab lists threads with an open <code>ask_owner</code> question
-      and — the change that matters — <b>puts the answer buttons in the row</b>, so the nine-day-old
-      question drains in one tap without opening anything. The <b>Wiki</b> tab is the review inbox
-      that survives, on the shipped list → detail with prev/next and the typed block registry. The
-      only signal anywhere is the launcher tile badge, which already exists and already polls only
-      while the launcher is open.
+      <span class="tag">C</span><br />
+      A and B both make you go somewhere to find a question. C asks whether you should have to: a
+      question belongs to <em>one note</em>, and that note is already on your home stream. So the
+      question renders <b>inline beneath its note, inside the day card</b>, with the answer buttons
+      right there. It is <b>content, not chrome</b> — it scrolls with the note, it lives inside the
+      stream’s two-day window (<code>STREAM_DAYS = 2</code>), and answering removes it.
       <br /><br />
-      Everything inside a phone below is real app copy at the app's real text size
-      (<code>--font-scale: 0.75</code>). Commentary lives outside the frames. Card actions are the
-      two verbs the producers actually file — nothing here invents a resolution verb.
+      The inbox is still two tabs, but the <b>Notes tab becomes the catch-all for questions that
+      have aged out of the stream</b> — the exact gap the tab exists to close. The <b>Wiki</b> tab is
+      unchanged. The launcher badge therefore counts only what you <em>cannot</em> already see: 5
+      findings + 1 aged-out question = <b>6</b>, not 8.
+      <br /><br />
+      Nothing is added to the top bar. The vitals cluster is untouched — the owner ruled that
+      cluster non-tappable and its 8px dot deleted (<code>DESIGN.md:221-223</code>,
+      <code>TopBarVitals.tsx:9-13</code>), and this variant does not reopen that.
     </div>
 
     <div class="row">
-      <!-- ============ FRAME 1 — launcher ============ -->
+      <!-- ============ FRAME 1 — home, questions inline ============ -->
       <div class="frame">
-        <div class="frame-lab">1 · Launcher — <b>the badge is the whole signal</b></div>
-        <div class="phone">
-          <div class="handle"><span></span></div>
-          <div class="scroll" style="gap: 0">
-            <div class="lsec" style="margin-top: 0">Knowledge</div>
-            <div class="grid">
-              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>Search</div>
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h7v15H4zM13 5h7v15h-7z" /></svg>Wiki</div>
-              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3" /><path d="M5 20a7 7 0 0114 0" /></svg>Entities</div>
+        <div class="frame-lab">1 · Home — <b>answer it where it happened</b></div>
+        <div class="phone" id="home">
+          <div class="bar">
+            <span class="mark">JBrain<i>.</i></span>
+            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
+          </div>
+          <div class="scroll">
+            <div class="day-header">Today</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-health"></span>08:41</div>
+                <div class="note-body">Started 10mg of the new one Tuesday, no side effects so far.</div>
+              </div>
+              <div class="ask-block" data-ask>
+                <div class="who">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                  asked 6 hours ago · 2 committed
+                </div>
+                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
+                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer>Lisinopril</button>
+                  <button type="button" class="pick" data-answer>Atorvastatin</button>
+                  <button type="button" data-answer>Say it another way…</button>
+                </div>
+              </div>
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>07:12</div>
+                <div class="note-body">Reminder: the Marina lease renewal window opens in October.</div>
+              </div>
             </div>
-            <div class="lsec">Authoring</div>
-            <div class="grid">
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
-              <button class="tile" type="button" data-goto="inbox">
-                <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review
-                <span class="tile-badge">8</span>
-              </button>
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+            <div class="day-header">Yesterday</div>
+            <div class="day-card">
+              <div class="note">
+                <div class="note-head"><span class="dot d-general"></span>18:03</div>
+                <div class="note-body">Priya moved to the Marina place in March — finally out of the Sunset.</div>
+              </div>
+              <div class="ask-block" data-ask>
+                <div class="who">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 113 2.4V14" /><path d="M12 17.2v.1" /></svg>
+                  asked 2 days ago · 4 committed
+                </div>
+                <p class="ask">Was that March this year or last? I closed
+                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
+                  start date is unsure.</p>
+                <div class="answers">
+                  <button type="button" class="pick" data-answer>March 2026</button>
+                  <button type="button" class="pick" data-answer>March 2025</button>
+                  <button type="button" data-answer>Say it another way…</button>
+                </div>
+              </div>
             </div>
-            <div class="lsec">System</div>
-            <div class="grid">
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8" /></svg>Ops</div>
-              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>Settings</div>
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H9l-5 4z" /></svg>Chats</div>
-            </div>
+          </div>
+          <div class="composer">
+            <div class="modeseg"><span data-on>Entry</span><span>Research</span><span>Full Brain</span></div>
+            <div class="cbox">What happened?</div>
+            <div class="cfoot">Saved to your wiki · no AI.</div>
           </div>
         </div>
         <p class="frame-note">
-          8 = 3 threads waiting + 5 wiki findings. It is the badge the tile already renders
-          (<span class="mono">Launcher.tsx:370-372</span>), polled only while the launcher is on
-          screen (<span class="mono">:190,194-196</span>) and shown nowhere else in the app. Because
-          there is no bottom nav, the launcher <em>is</em> the navigation spine — the badge is passed
-          many times a day without ever being pushed.
+          Tap an answer — the block collapses to a one-line “answered” trace and the day card goes
+          back to plain note rows. Nothing was navigated to and nothing was approved.
+          <br /><br />
+          <b class="gap">The cost, plainly:</b> this puts agent turns into the stream. Two open
+          questions already push the newest capture toward the fold, which is the rule
+          <span class="mono">Stream.tsx:230-233</span> exists to protect, and it re-opens the
+          lifecycle chip’s “analyzed → no chip, the quiet end-state” doctrine
+          (<span class="mono">notes/lifecycle.ts:8</span>). C is the loudest variant on the surface
+          the owner looks at most — the defence is that it is <em>content</em> that answers itself
+          away, not a mark that persists until you visit a screen.
         </p>
       </div>
 
-      <!-- ============ FRAME 2 — the inbox, live ============ -->
+      <!-- ============ FRAME 2 — the inbox, aged out only ============ -->
       <div class="frame">
-        <div class="frame-lab">2 · The inbox — <b>answer a thread; open a finding</b></div>
+        <div class="frame-lab">2 · Review — <b>only what you can’t already see</b></div>
         <div class="phone" id="inbox">
           <div class="bar">
             <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
@@ -262,67 +302,38 @@
           </div>
           <div class="review-segs" role="tablist">
             <button type="button" role="tab" class="review-seg seg-active" data-tab="notes" aria-selected="true">
-              notes <span class="seg-count" data-count="notes">3</span>
+              notes <span class="seg-count">1</span>
             </button>
             <button type="button" role="tab" class="review-seg" data-tab="wiki" aria-selected="false">
-              wiki <span class="seg-count" data-count="wiki">5</span>
+              wiki <span class="seg-count">5</span>
             </button>
           </div>
 
-          <!-- NOTES TAB -->
           <div class="scroll" data-panel="notes">
-            <div class="rlist" id="threads">
+            <p class="lede-app">Questions on notes older than your stream. Newer ones are answered on
+              home, where the note still is.</p>
+            <div class="rlist">
               <div class="tcell" data-thread>
                 <div class="head"><span class="dot d-general"></span>note · 30 Aug<span class="when">asked 9 days ago</span></div>
                 <div class="quote">“Dad’s shop is closing at the end of the quarter.”</div>
                 <p class="ask">Is “the shop” Hopkins Hardware, or the Redwood City lot you also call
                   the shop? They’re separate entities and I don’t want to close the wrong one.</p>
                 <div class="answers">
-                  <button type="button" class="pick" data-answer>Hopkins Hardware</button>
-                  <button type="button" class="pick" data-answer>Redwood City lot</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
+                  <button type="button" class="pick" data-answer2>Hopkins Hardware</button>
+                  <button type="button" class="pick" data-answer2>Redwood City lot</button>
+                  <button type="button" data-answer2>Say it another way…</button>
                 </div>
-                <div class="tfoot"><span class="chip chip-ok">1 committed</span><span class="go">open the thread ›</span></div>
-              </div>
-              <div class="tcell" data-thread>
-                <div class="head"><span class="dot d-general"></span>note · 6 Sep<span class="when">asked 2 days ago</span></div>
-                <div class="quote">“Priya moved to the Marina place in March — finally out of the Sunset.”</div>
-                <p class="ask">Was that March this year or last? I closed
-                  <code>lives_in → Sunset District</code> and opened Marina either way — only the
-                  start date is unsure.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>March 2026</button>
-                  <button type="button" class="pick" data-answer>March 2025</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
-                </div>
-                <div class="tfoot"><span class="chip chip-ok">4 committed</span><span class="go">open the thread ›</span></div>
-              </div>
-              <div class="tcell" data-thread>
-                <div class="head"><span class="dot d-health"></span>note · 8 Sep<span class="when">asked 6 hours ago</span></div>
-                <div class="quote">“Started 10mg of the new one Tuesday, no side effects so far.”</div>
-                <p class="ask">Which is “the new one” — the lisinopril from 4 Mar, or the atorvastatin
-                  Dr. Okafor mentioned? I’ve left the dose off both until you say.</p>
-                <div class="answers">
-                  <button type="button" class="pick" data-answer>Lisinopril</button>
-                  <button type="button" class="pick" data-answer>Atorvastatin</button>
-                  <button type="button" data-open-thread>Say it another way…</button>
-                </div>
-                <div class="tfoot"><span class="chip chip-ok">2 committed</span><span class="go">open the thread ›</span></div>
               </div>
             </div>
-            <p class="quiet" id="notes-empty" hidden>
-              Nothing is waiting on you.<br />The agent has been committing as it reads.
-            </p>
             <div class="rlist">
               <div class="tcell">
                 <div class="head"><span class="dot d-health"></span>note · 12 Aug import<span class="when">4 min</span></div>
                 <div class="quote">Medical records — 14-page attachment</div>
-                <div class="tfoot"><span class="chip chip-work">still reading · nothing written yet</span></div>
+                <div class="head"><span class="chip chip-work">still reading · nothing written yet</span></div>
               </div>
             </div>
           </div>
 
-          <!-- WIKI TAB -->
           <div class="scroll" data-panel="wiki" hidden>
             <div class="rlist">
               <div class="rrow">
@@ -369,38 +380,6 @@
             </div>
           </div>
 
-          <!-- THREAD (a notes row can still open the conversation) -->
-          <div class="det" data-det="thread" hidden>
-            <div class="bar">
-              <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
-              <span class="ttl">Note · 6 Sep</span>
-            </div>
-            <div class="scroll">
-              <div class="blk" style="border-left: 3px solid var(--green)">
-                <h3 class="section-header">the note — turn 0</h3>
-                <p class="sum">Priya moved to the Marina place in March — finally out of the Sunset.</p>
-              </div>
-              <div class="blk">
-                <h3 class="section-header">what I committed</h3>
-                <div class="side">
-                  <div class="nm"><span class="dot d-general"></span>Priya Raghavan <em>Person</em></div>
-                  <div class="edge"><b>lives_in</b> → Sunset District — closed, ended Mar</div>
-                  <div class="edge"><b>lives_in</b> → Marina District — open</div>
-                </div>
-              </div>
-              <div class="blk">
-                <h3 class="section-header">what I’m stuck on</h3>
-                <p class="sum">Was that March this year or last? Marina is open either way — only the
-                  start date is unsure.</p>
-                <div class="answers">
-                  <button type="button" class="pick">March 2026</button>
-                  <button type="button" class="pick">March 2025</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- WIKI DETAIL: one shell, prev/next walks the five -->
           <div class="det" data-det="wiki" hidden>
             <div class="bar">
               <button class="back" type="button" data-back aria-label="back to inbox"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
@@ -418,60 +397,55 @@
           </div>
         </div>
         <p class="frame-note">
-          Tap any answer chip — the thread resolves in place and the <b>notes</b> count pill drops;
-          drain all three and the tab says so. Every wiki row opens, and prev/next walks all five.
-          The proposals are the shipped <span class="mono">.rprop</span> — plain surface, hairline
-          border, label in <span class="mono">--text</span> — so nothing renders an accent on its own
-          tint.
+          The Notes tab holds one row, not three — the other two were answerable on home and are
+          gone. That is the claim to test: does an inbox that only shows the aged-out remainder feel
+          like a place worth opening, or like a screen that is almost always nearly empty?
         </p>
       </div>
 
-      <!-- ============ FRAME 3 — nothing waiting ============ -->
+      <!-- ============ FRAME 3 — launcher ============ -->
       <div class="frame">
-        <div class="frame-lab">3 · Nothing waiting — <b>the honest calm state</b></div>
+        <div class="frame-lab">3 · Launcher — <b>the badge counts 6, not 8</b></div>
         <div class="phone">
-          <div class="bar">
-            <button class="back" type="button" aria-label="home"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
-            <span class="ttl">Review</span>
-            <div class="vit"><span style="height: 7px"></span><span style="height: 12px"></span><span style="height: 9px"></span><span style="height: 15px"></span></div>
-          </div>
-          <div class="review-segs" role="tablist">
-            <button type="button" role="tab" class="review-seg seg-active" aria-selected="true">notes</button>
-            <button type="button" role="tab" class="review-seg" aria-selected="false">wiki</button>
-          </div>
-          <div class="scroll">
-            <div class="calm">
-              <svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" /></svg>
-              <p>Nothing is waiting on you.<br />The agent has been committing as it reads.</p>
+          <div class="handle"><span></span></div>
+          <div class="scroll" style="gap: 0">
+            <div class="lsec" style="margin-top: 0">Knowledge</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>Search</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h7v15H4zM13 5h7v15h-7z" /></svg>Wiki</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3" /><path d="M5 20a7 7 0 0114 0" /></svg>Entities</div>
             </div>
-          </div>
-          <div style="padding: 0 14px 20px">
+            <div class="lsec">Authoring</div>
             <div class="grid">
               <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h4" /></svg>Notes</div>
-              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z" /><path d="M8 11l3 3 5-6" /></svg>Review
+                <span class="tile-badge">6</span></div>
               <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /></svg>Tasks</div>
+            </div>
+            <div class="lsec">System</div>
+            <div class="grid">
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8" /></svg>Ops</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>Settings</div>
+              <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H9l-5 4z" /></svg>Chats</div>
             </div>
           </div>
         </div>
         <p class="frame-note">
-          Empty segments carry no count pill and the tile carries no badge. There is no zero to
-          clear, no dot, no colour — the absence is the state, which is the rule the Review badge
-          already follows.
+          5 wiki findings + 1 aged-out question. A question on a note still in the stream is
+          deliberately <em>not</em> counted, because it is already in front of you — counting it too
+          would be the double-nag the constraint rules out. The top bar is untouched.
         </p>
       </div>
     </div>
 
     <p class="note-foot">
-      <b>What A commits to.</b> Review stays a place you go, and the count lives only on the launcher
-      tile, so nothing counts at you on home or in the top bar. Two things that behave differently —
-      a thread you reply to and a card you decide — share one screen and one word. In exchange, the
-      inline answer chips make the tab worth opening: the nine-day question is one tap from gone.
-      Build cost is the smallest of the three: relabel the shipped segmented filter, add a
-      threads-waiting endpoint plus a row-level answer control, and leave the block registry alone.
-      <br /><br />
-      <b>What the mock does not pretend.</b> The wiki cards offer only the two verbs their producers
-      actually file, and the three EMR cards are drawn with the empty proposal list they really have
-      today. The gaps those expose are named in the README, not papered over here.
+      <b>What C commits to.</b> The common case stops being a destination at all: you see the
+      question while scrolling past the note that caused it, and one tap ends it. The inbox shrinks
+      to a genuine remainder — findings, and the questions that outlived the stream — which is a
+      smaller, more honest job than either A or B gives it. The price is that the home stream is no
+      longer only your own words: it carries the agent’s, it gets taller, and the lifecycle chip’s
+      quiet end-state has to be re-argued. If the owner reads home as a capture surface that must
+      stay pristine, C is the wrong answer and A is the right one.
     </p>
 
     <script>
@@ -484,9 +458,26 @@
         });
       });
 
+      const esc = (s) =>
+        String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+      // Answering in the stream: the block collapses to a one-line trace.
+      document.querySelectorAll("[data-answer]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const block = btn.closest("[data-ask]");
+          const label = btn.textContent.trim();
+          const line = document.createElement("div");
+          line.className = "answered";
+          line.innerHTML =
+            '<span class="chip chip-ok">answered</span><span>' +
+            (label.startsWith("Say") ? "opened the thread" : esc(label) + " — filed as a clarification") +
+            "</span>";
+          block.replaceWith(line);
+        });
+      });
+
       const inbox = document.getElementById("inbox");
 
-      // ---- the five wiki findings, rendered from data so prev/next is real ----
       const DISMISS = {
         label: "Dismiss",
         detail: "closes the card. The linter re-checks this pair on its next nightly run.",
@@ -512,20 +503,8 @@
             {
               h: "what clashes",
               sides: [
-                {
-                  name: "Priya Raghavan",
-                  kind: "Person",
-                  dot: "d-general",
-                  edge: "worksFor",
-                  stmt: "Worked at Meridian Health as a radiologist until March 2024.",
-                },
-                {
-                  name: "Meridian Health",
-                  kind: "Organization",
-                  dot: "d-general",
-                  edge: "employs",
-                  stmt: "Priya Raghavan is a staff radiologist.",
-                },
+                { name: "Priya Raghavan", kind: "Person", dot: "d-general", edge: "worksFor", stmt: "Worked at Meridian Health as a radiologist until March 2024." },
+                { name: "Meridian Health", kind: "Organization", dot: "d-general", edge: "employs", stmt: "Priya Raghavan is a staff radiologist." },
               ],
             },
           ],
@@ -594,9 +573,6 @@
         },
       ];
 
-      const esc = (s) =>
-        String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
-
       function renderItem(i) {
         const it = ITEMS[i];
         inbox.querySelector("[data-d-title]").textContent = it.title;
@@ -605,19 +581,17 @@
         inbox.querySelector("[data-d-pos]").textContent = i + 1 + " of " + ITEMS.length;
         inbox.querySelector("[data-prev]").disabled = i === 0;
         inbox.querySelector("[data-next]").disabled = i === ITEMS.length - 1;
-
         let html = "";
         for (const b of it.blocks) {
           html += '<div class="blk"><h3 class="section-header">' + esc(b.h) + "</h3>";
           if (b.sum) html += '<p class="sum">' + esc(b.sum) + "</p>";
           if (b.reason) html += '<p class="src mono">' + esc(b.reason) + "</p>";
           for (const s of b.src || []) html += '<p class="src">' + esc(s) + "</p>";
-          for (const s of b.sides || []) {
+          for (const s of b.sides || [])
             html +=
               '<div class="side"><div class="nm"><span class="dot ' + s.dot + '"></span>' +
               esc(s.name) + " <em>" + esc(s.kind) + '</em></div><div class="edge"><b>' +
               esc(s.edge) + '</b></div><p class="stmt">' + esc(s.stmt) + "</p></div>";
-          }
           if (b.kv) {
             html += "<dl>";
             for (const [k, v] of b.kv)
@@ -635,33 +609,13 @@
           html += '<div class="rproposals">';
           for (const p of it.proposals)
             html +=
-              '<button type="button" class="rprop"><span class="rprop-label">' +
-              esc(p.label) + '</span><span class="rprop-detail">' + esc(p.detail) +
-              "</span></button>";
+              '<button type="button" class="rprop"><span class="rprop-label">' + esc(p.label) +
+              '</span><span class="rprop-detail">' + esc(p.detail) + "</span></button>";
           html += "</div>";
         }
         html +=
-          '<div class="rdetail-foot"><button type="button" class="rfoot-correct" data-compose>correct it</button></div></div>';
+          '<div class="rdetail-foot"><button type="button" class="rfoot-correct">correct it</button></div></div>';
         inbox.querySelector("[data-d-body]").innerHTML = html;
-
-        inbox.querySelector("[data-compose]").addEventListener("click", () => {
-          const host = inbox.querySelector("[data-d-body] .blk:last-child");
-          if (host.querySelector(".rcompose")) return;
-          const box = document.createElement("div");
-          box.className = "rcompose";
-          box.innerHTML =
-            '<h3 class="section-header">file a correction note</h3>' +
-            '<textarea class="rcompose-box" aria-label="correction note">Correction — ' +
-            esc(it.blocks[0].sum || it.title) +
-            '</textarea><p class="rcompose-hint">filed as a note in your ' + esc(it.domain) +
-            " domain — the pipeline applies it, so the wiki stays machine-written.</p>" +
-            '<div class="rcompose-actions"><button type="button">cancel</button>' +
-            '<button type="button" class="rcompose-file">file correction</button></div>';
-          host.prepend(box);
-          box
-            .querySelectorAll(".rcompose-actions button")
-            .forEach((b) => b.addEventListener("click", () => box.remove()));
-        });
       }
 
       let cursor = 0;
@@ -679,15 +633,8 @@
         if (cursor < ITEMS.length - 1) renderItem(++cursor);
       });
       inbox
-        .querySelectorAll("[data-open-thread]")
-        .forEach((b) =>
-          b.addEventListener("click", () => (inbox.querySelector('[data-det="thread"]').hidden = false)),
-        );
-      inbox
         .querySelectorAll("[data-back]")
         .forEach((b) => b.addEventListener("click", () => (b.closest(".det").hidden = true)));
-
-      // Tabs.
       inbox.querySelectorAll("[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
           inbox.querySelectorAll("[data-tab]").forEach((o) => {
@@ -699,34 +646,17 @@
             .forEach((p) => (p.hidden = p.dataset.panel !== btn.dataset.tab));
         });
       });
-
-      // Answering in the row: the whole point of A's primary form.
-      inbox.querySelectorAll("[data-answer]").forEach((btn) => {
+      inbox.querySelectorAll("[data-answer2]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const cell = btn.closest("[data-thread]");
+          const label = btn.textContent.trim();
           cell.querySelector(".ask").innerHTML =
-            "<b>" + esc(btn.textContent.trim()) +
-            "</b> — thanks. Filed as a clarification on the note; the thread is closed.";
+            "<b>" + esc(label) + "</b> — thanks. Filed as a clarification on the note; the thread is closed.";
           cell.querySelector(".answers").remove();
-          cell.querySelector(".tfoot").innerHTML =
-            '<span class="chip chip-ok">answered · committed</span><span class="go">open the thread ›</span>';
-          cell.removeAttribute("data-thread");
-          const pill = inbox.querySelector('[data-count="notes"]');
-          const left = inbox.querySelectorAll("[data-thread]").length;
-          pill.textContent = String(left);
-          if (left === 0) {
-            pill.hidden = true;
-            document.getElementById("threads").hidden = true;
-            document.getElementById("notes-empty").hidden = false;
-          }
+          const pill = inbox.querySelector('[data-tab="notes"] .seg-count');
+          pill.hidden = true;
         });
       });
-
-      document
-        .querySelector('[data-goto="inbox"]')
-        .addEventListener("click", () =>
-          inbox.scrollIntoView({ behavior: "smooth", block: "center" }),
-        );
     </script>
   </body>
 </html>
