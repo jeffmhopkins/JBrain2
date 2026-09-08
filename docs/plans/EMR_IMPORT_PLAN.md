@@ -1732,7 +1732,10 @@ import:
 - **`import_handler.py` (`EmrImportPipeline.parse`)** — the DB **job handler** (`emr_parse`) that ties
   it together on a note's decrypted PDF attachments: extract each PDF's page text (+ word geometry for
   OneContent) off the event loop → `parse_corpus` → integrate each precise parse through the shipped
-  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file. Each
+  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file (one per
+  (note, attachment), deduped **across all statuses** like its two sibling cards — `emr_parse` re-runs
+  on every re-ingest, so an unprobed insert multiplies rows and an open-only probe would re-file a
+  card the owner dismissed). Each
   precise source integrates against **its own attachment chunks** so a fact's citation lands on the
   source document (the arbiter anchors an EMR fact to the head of its chunk set; per-page honoring of
   the intent's attested span is a follow-on). Writes run on a **health-scoped owner session** (§3.6).

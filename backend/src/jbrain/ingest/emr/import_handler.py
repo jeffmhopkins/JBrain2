@@ -299,11 +299,28 @@ class EmrImportPipeline:
         self, ctx: SessionContext, note_id: str, domain: str, refs: list[str]
     ) -> None:
         """A file that matched no parser fingerprint is routed to review (§6.3), never
-        free-extracted. One open card per (note, attachment)."""
+        free-extracted. One card per (note, attachment), deduped across ALL statuses
+        like the parked-OCR and firewall cards: `emr_parse` re-runs on every re-ingest,
+        so with no probe at all this minted a fresh row per unrecognized file per run,
+        and an open-only probe would read a dismissal as a snooze."""
         if not refs:
             return
         async with scoped_session(self._maker, ctx) as s:
             for ref in refs:
+                exists = (
+                    await s.execute(
+                        select(ReviewItem.id)
+                        .where(
+                            ReviewItem.kind == REVIEW_KIND,
+                            ReviewItem.payload["subkind"].astext == UNRECOGNIZED_SUBKIND,
+                            ReviewItem.payload["note_id"].astext == note_id,
+                            ReviewItem.payload["attachment_id"].astext == ref,
+                        )
+                        .limit(1)
+                    )
+                ).first()
+                if exists is not None:
+                    continue
                 s.add(
                     ReviewItem(
                         kind=REVIEW_KIND,

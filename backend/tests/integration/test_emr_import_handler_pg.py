@@ -19,9 +19,10 @@ from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
 from jbrain.ingest.emr import importer
 from jbrain.ingest.emr.firewall import FIREWALL_REVIEW_KIND, FIREWALL_REVIEW_SUBKIND
-from jbrain.ingest.emr.import_handler import EmrImportPipeline
+from jbrain.ingest.emr.import_handler import UNRECOGNIZED_SUBKIND, EmrImportPipeline
 from jbrain.ingest.emr.importer import FirewallCatch
 from jbrain.ingest.emr.integrate import file_firewall_cards
+from jbrain.ingest.emr.reconcile import REVIEW_KIND
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.notes import Attachment, Chunk
@@ -357,3 +358,60 @@ async def test_repeated_catches_collapse_into_a_counted_card_but_distinct_ones_d
         # actually caught (not a hard-coded "a address").
         assert "3 address facts" in by_predicate["address"].payload["summary"]
         assert "1 geo fact " in by_predicate["geo"].payload["summary"]
+
+
+async def _unrecognized_cards(s, note_id: str) -> list[ReviewItem]:
+    """This note's unrecognized-source cards, whatever their status (the store is
+    shared across the module's tests, hence the note scoping)."""
+    rows = (
+        (await s.execute(select(ReviewItem).where(ReviewItem.kind == REVIEW_KIND))).scalars().all()
+    )
+    return [
+        r
+        for r in rows
+        if r.payload.get("subkind") == UNRECOGNIZED_SUBKIND and r.payload.get("note_id") == note_id
+    ]
+
+
+async def test_unrecognized_source_cards_once_and_stays_dismissed(
+    maker,  # noqa: F811
+    tmp_path,
+):
+    """A file matching no parser fingerprint routes to review — ONCE. `emr_parse`
+    re-runs on every re-ingest, so with no existence probe the handler minted a fresh
+    row per unrecognized file per run, while its docstring claimed one card per
+    attachment; an open-only probe would then read the owner's dismissal as a snooze.
+    The athena fixture yields no unrecognized source, which is why the idempotency test
+    above is blind to this — hence a note whose PDF matches no fingerprint."""
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="A leaflet, not a lab report.")
+    att_id = await _attach_pdf(
+        maker,
+        blobs,
+        note_id,
+        _pdf_from_lines("Dental hygiene leaflet\nBrush twice daily.\nFloss once daily."),
+    )
+    await ingest(maker, note_id, tmp_path)
+    handler = EmrImportPipeline(maker, blobs, _pipeline(maker))
+
+    await handler.parse({"note_id": note_id})
+    await handler.parse({"note_id": note_id})  # a re-ingest re-runs the job
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        cards = await _unrecognized_cards(s, note_id)
+        assert len(cards) == 1
+        assert cards[0].payload["attachment_id"] == str(att_id)
+        assert cards[0].domain_code == "health"
+
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'dismissed'"
+                " WHERE kind = :k AND payload->>'subkind' = :sk AND payload->>'note_id' = :n"
+            ),
+            {"k": REVIEW_KIND, "sk": UNRECOGNIZED_SUBKIND, "n": note_id},
+        )
+
+    await handler.parse({"note_id": note_id})
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        cards = await _unrecognized_cards(s, note_id)
+        assert len(cards) == 1
+        assert cards[0].status == "dismissed"
