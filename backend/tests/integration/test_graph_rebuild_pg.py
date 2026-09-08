@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain.analysis import rebuild
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_note_purge_pg import (
@@ -93,6 +94,14 @@ async def indexed_note(maker: async_sessionmaker[AsyncSession]) -> str:
             {"id": note},
         )
     return note
+
+
+async def entity_of(maker: async_sessionmaker[AsyncSession], table: str, row_id: str) -> str:
+    """The `entity_id` a mention or fact currently points at — what an un-merge moves."""
+    (row,) = await fetch(
+        maker, f"SELECT entity_id::text AS eid FROM {table} WHERE id = :id", id=row_id
+    )
+    return str(row.eid)
 
 
 async def run_row(maker: async_sessionmaker[AsyncSession]) -> Any:
@@ -335,6 +344,60 @@ async def test_an_inverse_proposal_keeps_the_fact_it_names_by_source_fact_id(
     assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=source) == 1
     assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=unrelated) == 0
     assert (progress.kept, progress.purged) == (1, 1)
+
+
+async def test_a_settled_merge_still_un_merges_after_a_rebuild(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A resolved `merge_proposal` names two ENTITIES in its payload and nothing else —
+    the row ids the fold actually moved live in `resolution->'effects'`
+    (`mention_ids`/`fact_ids`/`object_fact_ids`, recorded by `merge_entity_pair`), and a
+    reopen moves exactly those ids back one UPDATE at a time (`_reverse_effects`).
+
+    So a payload-only spare set spares nothing here: the card survives the rebuild, the
+    entity tombstone survives, and the reopen restores the entity row from
+    `prior_status`/`prior_merged_into` — which are values, not ids — while moving ZERO
+    mentions and ZERO facts. A half un-merge, silent, and worse than a clean no-op.
+
+    The reopen is exercised in the window the sweep actually leaves open: the notes are
+    purged and queued for re-integration, and the drain can run for hours, so an owner
+    reopening a card mid-sweep is the ordinary case, not a contrived one.
+    """
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    keep = await seed_entity(maker, "Merge Survivor", status="confirmed")
+    gone = await seed_entity(maker, "Merge Tombstone", status="confirmed")
+    mention, _token = await seed_graph_extras(maker, note, gone)
+    subject_fact = await seed_fact(maker, note, gone)
+    object_fact = await seed_fact(maker, note, keep, predicate="knows", object_entity_id=gone)
+    card = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": gone})
+
+    repo = SqlAnalysisRepo(maker)
+    await repo.resolve_review(OWNER, card, "accept", {})
+    assert await entity_of(maker, "app.entity_mentions", mention) == keep
+    assert await entity_of(maker, "app.facts", subject_fact) == keep
+
+    await rebuild.rebuild_batch(maker, start=True)
+
+    # The rows the recorded effects will replay are still there to be replayed.
+    assert await count(maker, "SELECT count(*) FROM app.entity_mentions WHERE id = :id", id=mention)
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=subject_fact)
+    assert await count(maker, "SELECT count(*) FROM app.facts WHERE id = :id", id=object_fact)
+
+    await repo.reopen_review(OWNER, card)
+
+    assert await entity_of(maker, "app.entity_mentions", mention) == gone
+    assert await entity_of(maker, "app.facts", subject_fact) == gone
+    (row,) = await fetch(
+        maker,
+        "SELECT object_entity_id::text AS oid FROM app.facts WHERE id = :id",
+        id=object_fact,
+    )
+    assert row.oid == gone
+    (tombstone,) = await fetch(
+        maker, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=gone
+    )
+    assert (tombstone.status, tombstone.merged_into_id) == ("confirmed", None)
 
 
 async def test_agent_episodes_survive_a_rebuild(maker: async_sessionmaker[AsyncSession]) -> None:
