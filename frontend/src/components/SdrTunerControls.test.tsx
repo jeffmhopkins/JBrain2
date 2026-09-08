@@ -415,6 +415,73 @@ describe("what the transport calls live", () => {
   });
 });
 
+describe("the mode row", () => {
+  it("offers every demodulator the back end has, LSB included", () => {
+    // LSB was missing while the sidecar has always had it, and the 40 m and 80 m
+    // sections SELECT it — so the radio arrived in a mode whose button did not exist,
+    // reading "LSB" under the readout above a row of four it was not one of.
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    const row = screen.getByRole("group", { name: "Demodulation mode" });
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "WBFM",
+      "FM",
+      "AM",
+      "USB",
+      "LSB",
+    ]);
+  });
+
+  it("puts the radio on the sideband that was missing", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "LSB" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(99.3, "lsb", "abc123"));
+  });
+
+  it("shows the mode the radio is in as the selected one", () => {
+    render(<SdrTunerControls listening={{ ...LISTENING, mode: "lsb" }} onReleased={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "LSB" })).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("tuning finer than a kilohertz", () => {
+  it("opens SSB on 100 Hz rather than the 25 kHz fallback", () => {
+    // Measured on air at 7.305 LSB: the pill read 25 KHZ, which on a mode with no
+    // carrier does not move you beside the signal — it moves the voice 25 kHz.
+    render(<SdrTunerControls listening={{ ...LISTENING, mode: "lsb" }} onReleased={() => {}} />);
+
+    expect(screen.getByRole("button", { name: /Tuning step, 100 Hz/ })).toBeInTheDocument();
+  });
+
+  it("tunes by a sub-kilohertz step", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    const onAir: SdrListening = { ...LISTENING, frequency_hz: 7_305_000, mode: "lsb" };
+    render(<SdrTunerControls listening={onAir} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tuning step/ }));
+    fireEvent.click(screen.getByRole("button", { name: "10 Hz", pressed: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    // Six decimal places of MHz is 1 Hz, so a 10 Hz step survives the round trip.
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(7.30501, undefined, "abc123"));
+  });
+
+  it("labels sub-kilohertz steps in hertz, not as a fraction of a kilohertz", () => {
+    render(<SdrTunerControls listening={{ ...LISTENING, mode: "lsb" }} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Tuning step/ }));
+
+    // "0.1 kHz" is a step size nobody says out loud, and the leading zero is the digit
+    // that gets misread on a dial.
+    expect(screen.getByRole("button", { name: "100 Hz" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "0.1 kHz" })).not.toBeInTheDocument();
+  });
+});
+
 describe("counting in channels", () => {
   // CB, cut down to the awkward part: 23 sits ABOVE 24 and 25, so channel order and
   // frequency order genuinely differ and a step size cannot reproduce the dial.
@@ -510,6 +577,44 @@ describe("counting in channels", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
 
     expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("does NOT re-scroll the list while the owner is scrolling it", async () => {
+    // The regression this pins: the ref was an inline arrow, so React detached and
+    // re-attached it on EVERY render — and the tuner re-renders about once a second off
+    // the live poll. On the 100-channel FM dial the list snapped back to the tuned
+    // channel every second, which is exactly when a long list is least usable.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    bands([CB]);
+    const { rerender } = render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // A poll tick: same radio, same channel, one more second on the clock.
+    rerender(<SdrTunerControls listening={{ ...ON_22, elapsed_s: 73 }} onReleased={() => {}} />);
+    rerender(<SdrTunerControls listening={{ ...ON_22, elapsed_s: 74 }} onReleased={() => {}} />);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-centres when the RADIO moves to another channel", async () => {
+    // The other half of the same rule: a poll must not scroll, but retuning must — the
+    // list is showing where the radio is, so it follows the radio.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    bands([CB]);
+    const { rerender } = render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SdrTunerControls listening={{ ...ON_22, frequency_hz: 27_255_000 }} onReleased={() => {}} />,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
   it("says Off channel between channels, and snaps on the next tap", async () => {
