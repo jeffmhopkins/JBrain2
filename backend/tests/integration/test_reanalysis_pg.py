@@ -23,6 +23,7 @@ from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
+from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -30,6 +31,13 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
+
+
+class _NoEmbed:
+    """The builder's claim query never embeds; satisfy the constructor."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 384 for _ in texts]
 
 
 @pytest.fixture
@@ -45,12 +53,22 @@ def fresh_person() -> str:
     return f"Sarah {uuid.uuid4().hex[:8]}"
 
 
-def home_fact(person: str, city: str, *, confidence: float) -> dict[str, Any]:
+def home_fact(
+    person: str,
+    city: str,
+    *,
+    confidence: float,
+    end: str | None = None,
+    statement: str | None = None,
+) -> dict[str, Any]:
+    """`end` (with the rendering `statement` that carries it) restates the SAME
+    open state and merely supplies the valid_to it lacks — the retrospective
+    backfill decide() takes as an in-place interval close."""
     return {
         "predicate": "homeLocation",
         "qualifier": "",
         "kind": "state",
-        "statement": f"{person} moved to {city}.",
+        "statement": statement or f"{person} moved to {city}.",
         "value_json": {"city": city},
         "assertion": "asserted",
         "entity_ref": person,
@@ -58,7 +76,7 @@ def home_fact(person: str, city: str, *, confidence: float) -> dict[str, Any]:
         "temporal": {
             "phrase": "",
             "resolved_start": "2026-06-10T00:00:00-06:00",
-            "resolved_end": None,
+            "resolved_end": end,
             "precision": "day",
         },
         "domain": "general",
@@ -91,14 +109,20 @@ async def analyzed_note(
 
 
 async def analyze(
-    maker: async_sessionmaker[AsyncSession], note_id: str, extraction_json: str
+    maker: async_sessionmaker[AsyncSession],
+    note_id: str,
+    extraction_json: str,
+    intent_json: str | None = None,
 ) -> None:
     # Drive integrate_note through the shared driver: it parses this scripted
     # extraction and commits via a name-match default intent, so re-running with
     # a different extraction exercises the genuine retraction/supersession sweep.
+    # `intent_json` is served to integrate.note ahead of that default (which the
+    # driver still appends, unread) for a test that needs the arbiter to HOLD a fact.
     from tests.integration.test_extraction_pg import analyzer
 
-    await analyzer(maker, [extraction_json]).analyze_note({"note_id": note_id})
+    responses = [extraction_json] + ([intent_json] if intent_json is not None else [])
+    await analyzer(maker, responses).analyze_note({"note_id": note_id})
 
 
 async def fact_rows(maker: async_sessionmaker[AsyncSession], *note_ids: str) -> list[dict]:
@@ -277,3 +301,231 @@ async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
         ("dismissed", "Alex", note_id),
         ("open", "Alex", other_note),
     }
+
+
+async def _fact_chunk(maker: async_sessionmaker[AsyncSession], note_id: str) -> str | None:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text("SELECT chunk_id::text FROM app.facts WHERE note_id = :n"), {"n": note_id}
+            )
+        ).scalar_one()
+
+
+async def test_refresh_after_reingest_re_anchors_the_citation(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """A re-ingest (an edit, an OCR re-describe, an appended clarification) deletes
+    every chunk of the note, and `facts.chunk_id` is ON DELETE SET NULL — so the
+    note's facts lose their citation. Re-integration then lands on decide()'s
+    refresh path, which must re-anchor: `wiki/builder.py` INNER JOINs chunks, so a
+    fact left with a null chunk silently drops out of its article while the
+    article rebuilds without it."""
+    person = fresh_person()
+    facts = [home_fact(person, "Golden", confidence=0.9)]
+    note_id = await analyzed_note(
+        maker, tmp_path, "Sarah moved to Golden.", extraction(person, facts)
+    )
+    assert await _fact_chunk(maker, note_id) is not None
+
+    # Re-ingest the unchanged body: same note, brand-new chunk ids.
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
+
+    await analyze(maker, note_id, extraction(person, facts))
+
+    chunk_id = await _fact_chunk(maker, note_id)
+    assert chunk_id is not None
+    async with scoped_session(maker, OWNER) as s:
+        # The re-anchored citation points at a LIVE chunk of this note (a dangling
+        # id the FK would have refused, a null one the wiki silently drops).
+        assert (
+            await s.execute(
+                text("SELECT note_id::text FROM app.chunks WHERE id = :c"), {"c": chunk_id}
+            )
+        ).scalar_one() == note_id
+        entity_id = (
+            await s.execute(
+                text("SELECT entity_id FROM app.facts WHERE note_id = :n"), {"n": note_id}
+            )
+        ).scalar_one()
+
+    # And the fact is still a citable claim: this is the builder's own join.
+    builder = WikiBuilder(
+        maker, embed=_NoEmbed(), rewriter=StubRewriter(), embedding_model="fake-embed"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        sourced = await builder._source(s, entity_id)
+    assert sourced is not None
+    assert [c.statement for c in sourced.claims] == [f"{person} moved to Golden."]
+
+
+async def _fact_row(maker: async_sessionmaker[AsyncSession], note_id: str) -> Any:
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT id::text AS id, status, valid_to, chunk_id::text AS chunk_id,"
+                    " entity_id FROM app.facts WHERE note_id = :n"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+
+
+async def _chunk_owner(maker: async_sessionmaker[AsyncSession], chunk_id: str) -> str:
+    """The note a chunk belongs to — a re-anchored citation must name THIS note's
+    own live chunk (a dangling id the FK would have refused, a null one the wiki
+    silently drops)."""
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text("SELECT note_id::text FROM app.chunks WHERE id = :c"), {"c": chunk_id}
+            )
+        ).scalar_one()
+
+
+async def test_interval_close_after_reingest_re_anchors_the_citation(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """The in-place interval close is the second path a re-ingest strands. The note
+    says "Sarah moved to Golden" (open); the owner edits it to supply the end date,
+    the edit's re-ingest deletes every chunk (`facts.chunk_id` is ON DELETE SET NULL),
+    and re-integration lands on decide()'s close branch — which closes THIS note's own
+    open row. Without a re-anchor there the closed fact keeps a null chunk and drops
+    out of its article: `wiki/builder.py` INNER JOINs chunks."""
+    person = fresh_person()
+    note_id = await analyzed_note(
+        maker,
+        tmp_path,
+        "Sarah moved to Golden in June.",
+        extraction(person, [home_fact(person, "Golden", confidence=0.9)]),
+    )
+    before = await _fact_row(maker, note_id)
+    assert before.chunk_id is not None and before.valid_to is None
+
+    # Re-ingest: same note, brand-new chunk ids. (The body is immaterial — it is the
+    # re-chunking, not the edit's wording, that nulls the citation.)
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
+
+    closing = home_fact(
+        person,
+        "Golden",
+        confidence=0.9,
+        end="2026-08-01T00:00:00-06:00",
+        statement=f"{person} lived in Golden until August.",
+    )
+    await analyze(maker, note_id, extraction(person, [closing]))
+
+    after = await _fact_row(maker, note_id)
+    # One row, closed in place: the close branch, not a refresh (which never writes
+    # valid_to) and not an insert (which would mint a second id).
+    assert after.id == before.id and after.valid_to is not None
+    assert after.chunk_id is not None
+    assert await _chunk_owner(maker, after.chunk_id) == note_id
+
+    # And the closed fact is still a citable claim: this is the builder's own join.
+    builder = WikiBuilder(
+        maker, embed=_NoEmbed(), rewriter=StubRewriter(), embedding_model="fake-embed"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        sourced = await builder._source(s, after.entity_id)
+    assert sourced is not None
+    assert [c.statement for c in sourced.claims] == [closing["statement"]]
+
+
+async def _seed_person(maker: async_sessionmaker[AsyncSession], name: str) -> str:
+    """A confirmed entity the held intent below resolves to BY ID: mode="new" mints a
+    fresh entity every run, which would move the identity key the held row's
+    idempotent refresh is looked up by (and so never exercise that refresh)."""
+    async with scoped_session(maker, OWNER) as s:
+        return str(
+            (
+                await s.execute(
+                    text(
+                        "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                        " VALUES (gen_random_uuid(), 'Person', :n, 'confirmed', 'general')"
+                        " RETURNING id"
+                    ),
+                    {"n": name},
+                )
+            ).scalar_one()
+        )
+
+
+def held_intent(person: str, entity_id: str, fact: dict[str, Any]) -> str:
+    """The integrate.note JSON for one CROSS-SUBJECT fact. A cross-subject link is
+    force-staged by the arbiter (N3: never silently committed), so the fact bypasses
+    decide() entirely and is written by `_insert_held_fact` as a pending_review row."""
+    return json.dumps(
+        {
+            "resolutions": [
+                {
+                    "mention_ref": person,
+                    "mode": "existing",
+                    "entity_id": entity_id,
+                    "surface": "Sarah",
+                    "cross_subject": True,
+                }
+            ],
+            "facts": [
+                {
+                    "entity_ref": person,
+                    "predicate": fact["predicate"],
+                    "qualifier": fact["qualifier"],
+                    "kind": fact["kind"],
+                    "statement": fact["statement"],
+                    "value_json": fact["value_json"],
+                    "assertion": fact["assertion"],
+                    "object_entity_ref": None,
+                    "self_confidence": fact["confidence"],
+                    "inferred": False,
+                    "surface": "Sarah",
+                    "temporal": fact["temporal"],
+                }
+            ],
+        }
+    )
+
+
+async def test_held_fact_refresh_after_reingest_re_anchors_the_citation(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """The third path a re-ingest strands: an arbiter-HELD fact. `_insert_held_fact`
+    refreshes this note's existing pending_review row in place (so the open card's
+    fact_id link survives) instead of churning a fresh id — and that in-place update
+    must re-anchor the citation the re-ingest nulled. A held fact is not published
+    while it is held, but accepting its card pins it ACTIVE, and it would then join
+    the article with no chunk to cite — silently dropped by the builder's join."""
+    person = fresh_person()
+    entity_id = await _seed_person(maker, person)
+    fact = home_fact(person, "Golden", confidence=0.9)
+    intent = held_intent(person, entity_id, fact)
+
+    # Ingested then integrated under the held intent only: `analyzed_note`'s default
+    # intent would commit the fact ACTIVE, and the held row would then be a second
+    # row beside it rather than the note's one fact.
+    note, _ = await SqlNotesRepo(maker).create_note(
+        OWNER,
+        client_id=f"held-{uuid.uuid4()}",
+        domain="general",
+        destination=None,
+        body="Sarah moved to Golden in June.",
+    )
+    note_id = note.id
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    await analyze(maker, note_id, extraction(person, [fact]), intent)
+    before = await _fact_row(maker, note_id)
+    assert before.status == "pending_review" and before.chunk_id is not None
+
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
+
+    await analyze(maker, note_id, extraction(person, [fact]), intent)
+
+    after = await _fact_row(maker, note_id)
+    # The same held row, refreshed in place (a churned id would orphan its card).
+    assert after.id == before.id and after.status == "pending_review"
+    assert after.chunk_id is not None
+    assert await _chunk_owner(maker, after.chunk_id) == note_id

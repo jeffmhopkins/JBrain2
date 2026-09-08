@@ -862,8 +862,11 @@ class SqlAnalysisRepo:
                         # INNER JOIN notes (never LEFT): the join is the RLS
                         # backstop — an out-of-scope note must drop the whole
                         # mention, not leak a bare note_id. Live notes only;
-                        # n.created_at is the date shown next to the source note
-                        # (m.created_at is re-analysis-time, not capture time).
+                        # n.created_at is the date shown next to the source note.
+                        # m.created_at is now first-link time, not re-analysis
+                        # time: mentions are upserted in place, so a re-asserted
+                        # row keeps its original timestamp and this ordering is
+                        # stable across re-analysis instead of churning.
                         """
                         SELECT m.note_id::text, m.surface_text,
                                m.char_start, m.char_end,

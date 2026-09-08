@@ -721,7 +721,7 @@ def plan_to_extraction(
     dropped_facts: int = 0,
 ) -> Extraction:
     """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
-    `_apply` consumes (plan §9, Option 1). Mentions and fact refs are keyed by
+    `commit_facts` consumes (plan §9, Option 1). Mentions and fact refs are keyed by
     `mention_ref`; each fact's `confidence` is its deterministic plan weight, not
     the model's self-report. title/tags come from the upstream extract step (the
     intent doesn't carry them). A1b-ii threads the agent's resolutions in as a
@@ -729,7 +729,7 @@ def plan_to_extraction(
 
     `commit_only` writes only active-eligible facts (`plan.to_commit`) — the
     A1b-ii-1 safety: a review-held fact (cross-subject, low weight) has no
-    `_apply` path that respects its pending_review disposition yet, and some
+    commit path that respects its pending_review disposition yet, and some
     carry high weight `decide()` would otherwise commit, so they are excluded
     until A1b-ii-2 writes them as pending_review + a low_confidence_inference
     card. Mentions still cover every resolution (an entity may be mentioned
