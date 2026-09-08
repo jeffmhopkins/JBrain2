@@ -481,7 +481,9 @@ stripping is never a single point of failure:
   paired with `correctable: false`, which suppresses the detail footer's *correct it* composer: that
   composer files an `owner_correction` note in the card's own domain, force-superseding and pinned
   at full weight, so on this card it would prompt the owner to type the held address straight back
-  into health. Building the set as that
+  into health. That flag is enforced on **both** sides — `POST /api/review/{id}/correction` reads
+  the target card and 409s an explicit `correctable: false` — since a client-only guard leaves the
+  endpoint offering to re-plant the leak to any caller that is not the shipped UI. Building the set as that
   explicit union closes the earlier draft's gap (a
   stray `geo` fact, whose predicate is *not* in the floor dict, would otherwise have slipped the
   guard). A single parser miss thus cannot silently plant location-domain whereabouts in the health

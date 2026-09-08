@@ -978,7 +978,11 @@ note lands *pinned, in the card's own domain*, a card may declare itself
 **uncorrectable** (`correctable: false` on its payload) and drop the footer
 affordance: the EMR location firewall's `firewall_address` card exists precisely
 because a value was held OUT of the domain the card sits in, so *correct it*
-there would offer re-planting the leak as the way out. Such a card MUST advertise
+there would offer re-planting the leak as the way out. The flag is a gate, not only
+a render hint: the endpoint loads the target card on the caller's own scoped session
+and **409s** a payload that says `correctable: false`, because it is reachable by
+anything that is not the shipped UI. Absence keeps meaning *correctable* (server and
+client both read it as `correctable !== false`). Such a card MUST advertise
 its own verb in `choices` (the firewall's is `dismiss`) — a card with neither
 renders with no controls at all. The planned third mode, **talk it over
 with the assistant**, is the conversational version of the same — the

@@ -1213,6 +1213,28 @@ class SqlAnalysisRepo:
             )
         return [{"name": n, "score": s} for n, s in suggestions]
 
+    async def review_correctable(self, ctx: SessionContext, item_id: str) -> bool:
+        """Whether the card at `item_id` may be corrected via the owner-correction flow.
+
+        Mirrors the frontend's `payload.correctable !== false` EXACTLY: only a payload
+        that says `correctable: false` refuses, so the flag's absence — true of every
+        card but the EMR location-firewall one — keeps meaning "correctable". An id
+        naming no card is correctable too; this is the leak gate, not an existence
+        check, and the create path already tolerates an unknown id.
+        """
+        iid = _as_uuid(item_id)
+        if iid is None:
+            return True
+        async with scoped_session(self._maker, ctx) as session:
+            payload = (
+                await session.execute(
+                    text("SELECT payload FROM app.review_items WHERE id = :id"), {"id": str(iid)}
+                )
+            ).scalar()
+        # An id that names no card reads as correctable for the same reason: the gate is
+        # about the leak, not about existence.
+        return not isinstance(payload, dict) or payload.get("correctable") is not False
+
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]
     ) -> dict[str, Any] | None:
