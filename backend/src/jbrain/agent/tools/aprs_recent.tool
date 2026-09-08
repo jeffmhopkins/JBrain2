@@ -1,6 +1,6 @@
 ---
 name: aprs_recent
-version: 2
+version: 3
 permission: read
 params:
   type: object
@@ -34,6 +34,18 @@ params:
         Return one line per station — how many packets, when last heard, how it reached
         us — instead of one line per packet. Use this for "who is around": a busy
         channel puts hundreds of frames from a handful of stations in an hour.
+    contains:
+      type: string
+      description: >
+        Only packets whose payload contains this text, case-insensitively — "CQ",
+        "EOC", a place name. Plain text, not a pattern: % and _ match themselves.
+        Prefer this over matches; it is what "find packets mentioning X" needs.
+    matches:
+      type: string
+      description: >
+        Only packets whose payload matches this POSIX regular expression, e.g.
+        "^(WX|SKYWARN)" or "[0-9]{4}Z". Use only when a plain word will not do —
+        it is slower, and a pattern over 200 characters is refused.
     limit:
       type: integer
       description: How many of the most recent packets to return. Defaults to 20, capped at 100.
@@ -54,6 +66,14 @@ different question than the owner usually means.
 Signal strength appears as [strong], [ok] or [weak], and is ABSENT when it was never
 measured — that means unknown, not weak. Do not describe a station's signal unless the
 line carries one.
+
+A weather report carries every reading the station sent — temperature, wind, gust,
+humidity, pressure, rain. Other kinds show the first few labelled fields and then
+"+N more", because one telemetry station with thirteen channels would otherwise fill
+the answer. So a weather line is complete; a telemetry line may not be.
+
+`contains` and `matches` both search the packet PAYLOAD, not the callsigns. To find a
+station use `station`; to find something that was said, use `contains`.
 
 Returns nothing when APRS logging has not been running; that is not an error, it means
 the radio was doing something else or was idle. Say so plainly rather than guessing.

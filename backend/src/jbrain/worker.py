@@ -63,6 +63,7 @@ from jbrain.llm.residency import (
 )
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
+from jbrain.sdr import aprslog
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import WhisperCppClient
@@ -397,6 +398,25 @@ async def _maintain_metrics_safely(maker: async_sessionmaker[AsyncSession], *, b
         log.warning("worker.metrics_maintain_error", error=repr(exc))
 
 
+async def _prune_aprs_safely(
+    maker: async_sessionmaker[AsyncSession], settings: SqlSettingsStore | None
+) -> None:
+    """Age out heard APRS packets, keeping the owner's own traffic.
+
+    The callsign is read here rather than inside the prune so the decision is visible in
+    the log: with none set NOTHING is exempt, and an owner who later sets one would
+    otherwise wonder where their own packets went. Best-effort like every other pass on
+    this loop — a table that keeps a fortnight and a day is not worth killing the worker
+    over."""
+    try:
+        call = await settings.owner_callsign(queue.SYSTEM_CTX) if settings else None
+        removed = await aprslog.prune(maker, queue.SYSTEM_CTX, owner_call=call)
+        if removed:
+            log.info("worker.aprs_pruned", removed=removed, kept_callsign=call or "")
+    except Exception as exc:  # noqa: BLE001 - retention is best-effort maintenance
+        log.warning("worker.aprs_prune_error", error=repr(exc))
+
+
 async def _sweep_reservations_safely(ledger: ReservationLedger | None) -> None:
     """Collect memory reservations abandoned by a process that died mid-transition.
 
@@ -483,10 +503,15 @@ async def run_loop(
         if supervisor_client is not None and now - last_sample >= METRICS_SAMPLE_SECONDS:
             await _sample_metrics_safely(maker, supervisor_client, supervisor_token, rate_tracker)
             last_sample = now
-        if supervisor_client is not None and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS:
-            await _maintain_metrics_safely(maker, boot=not metrics_booted)
-            await _sweep_reservations_safely(reservations)
-            metrics_booted = True
+        if now - last_maintenance >= METRICS_MAINTENANCE_SECONDS:
+            if supervisor_client is not None:
+                await _maintain_metrics_safely(maker, boot=not metrics_booted)
+                await _sweep_reservations_safely(reservations)
+                metrics_booted = True
+            # NOT behind the supervisor gate: the heard-packet log is a database
+            # concern, and a box whose supervisor client is unset would otherwise never
+            # prune it — the table growing without bound while everything looked fine.
+            await _prune_aprs_safely(maker, settings)
             last_maintenance = now
         try:
             if not backfilled:

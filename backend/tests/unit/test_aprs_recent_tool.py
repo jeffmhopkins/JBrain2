@@ -16,7 +16,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jbrain.agent.briefs import FEED_TAG
-from jbrain.agent.readtools import build_read_handlers
+from jbrain.agent.readtools import _aprs_detail, build_read_handlers
+from jbrain.sdr.explain import Explained, Field
 
 
 class _Aprs:
@@ -291,3 +292,101 @@ class TestV2Reading:
         out = await _tool([])({"since": "1h"}, _Ctx())  # type: ignore[arg-type]
 
         assert "Nothing heard" in out
+
+
+# --- Searching the payload -------------------------------------------------------
+
+
+async def test_contains_is_passed_through_as_a_search() -> None:
+    log = _log([_row("CQ CQ de KE8XYZ")])
+    tool = _tool_for(log)
+
+    await tool({"contains": "CQ"}, _Ctx())  # type: ignore[arg-type]
+
+    assert log.asked["contains"] == "CQ"
+    # Not smuggled into a callsign filter: `contains` searches what was SAID, and
+    # sending it as `station` would answer a different question with a straight face.
+    assert log.asked["station"] is None
+    assert log.asked["source"] is None
+
+
+async def test_a_regex_reaches_the_log_when_it_compiles() -> None:
+    log = _log([_row("WX report")])
+    tool = _tool_for(log)
+
+    await tool({"matches": "^(WX|SKYWARN)"}, _Ctx())  # type: ignore[arg-type]
+
+    assert log.asked["matches"] == "^(WX|SKYWARN)"
+
+
+async def test_a_broken_regex_is_refused_in_words() -> None:
+    # Without this the driver's own error reaches the owner naming a Postgres function,
+    # which tells them nothing about the search they asked for.
+    log = _log([_row("anything")])
+    tool = _tool_for(log)
+
+    out = await tool({"matches": "[unclosed"}, _Ctx())  # type: ignore[arg-type]
+
+    assert "could not read" in out
+    # And the query never ran: a pattern that cannot compile must not reach the database.
+    assert log.asked == {}
+
+
+async def test_an_enormous_pattern_is_refused_before_the_database_sees_it() -> None:
+    log = _log([_row("anything")])
+    tool = _tool_for(log)
+
+    out = await tool({"matches": "a" * 500}, _Ctx())  # type: ignore[arg-type]
+
+    assert "at most" in out
+    assert log.asked == {}
+
+
+async def test_no_search_terms_means_no_search() -> None:
+    # Empty strings are what a model sends when it means "no filter", and passing them
+    # on would turn "everything" into "packets containing an empty string" — which is
+    # the same set today and would not stay that way.
+    log = _log([_row("hello")])
+    tool = _tool_for(log)
+
+    await tool({"contains": "  ", "matches": ""}, _Ctx())  # type: ignore[arg-type]
+
+    assert log.asked["contains"] is None
+    assert log.asked["matches"] is None
+
+
+# --- How much of a weather report survives ---------------------------------------
+
+
+async def test_a_weather_report_keeps_every_reading() -> None:
+    """The owner's actual ask: "the current weather information".
+
+    Five labelled fields dropped pressure and rain behind "+N more", where nothing
+    downstream could say which three went missing — so the model answered a weather
+    question with part of the weather and no way to know it."""
+    wx = "@031030z2837.27N/08132.11W_045/003g007t078r000p000P000h55b10132"
+    out = await _tool([_row(wx, kind="Weather")])({}, _Ctx())  # type: ignore[arg-type]
+
+    assert "78 °F" in out
+    assert "55 %" in out or "55%" in out
+    # The two that used to fall off the end.
+    assert "1013" in out
+    assert "more" not in out
+
+
+def test_only_weather_is_uncapped() -> None:
+    """The same eight fields, capped or not purely by kind.
+
+    Tested on the helper rather than through a frame, and that is deliberate: the cap
+    keys off what the CLASSIFIER decides a packet is, not the stored `kind` column, so
+    no fixture can be a weather frame and a non-weather frame at once. Eight synthetic
+    fields under two labels isolates the one rule this change added.
+
+    (The first version of this test went through the tool with a telemetry frame and
+    passed against a cap that had been removed entirely — that frame only ever produced
+    four fields, so it could not have failed.)"""
+    fields = [Field(name=f"Reading {n}", value=str(n)) for n in range(8)]
+    said = Explained(summary="", fields=fields)
+
+    assert "+3 more" in _aprs_detail(said, "K1ABC", "Other")
+    assert "more" not in _aprs_detail(said, "K1ABC", "Weather")

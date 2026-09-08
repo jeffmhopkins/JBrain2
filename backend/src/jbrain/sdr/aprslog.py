@@ -24,8 +24,8 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -368,6 +368,84 @@ async def run_aprs_backfill_loop(
 # channel produces a lot of rows and a turn does not need most of them.
 RECENT_DEFAULT = 20
 RECENT_MAX = 100
+
+#: How long a regex search may run before Postgres aborts it.
+#:
+#: `matches` takes a POSIX pattern from a MODEL, not from a person who will notice their
+#: laptop fan. A backtracking pattern over a table with months of packets in it does not
+#: fail — it succeeds, slowly, holding a core on the owner's box while every other query
+#: queues behind it. Two seconds is far longer than an indexed scan of this table needs
+#: and far shorter than anyone would wait for an answer about the radio.
+SEARCH_TIMEOUT_MS = 2_000
+
+#: The longest regex `matches` will accept.
+#:
+#: Not a safety mechanism on its own — a short pattern nests just fine — but the
+#: catastrophic ones tend to be long, and a bound the caller can see beats one it
+#: discovers by timing out.
+SEARCH_PATTERN_MAX = 200
+
+
+#: How long a heard packet is kept.
+#:
+#: A busy channel is thousands of rows a day and none of them are the owner's — this
+#: table is a log of what strangers transmitted near the antenna. Two weeks is long
+#: enough to answer "was that station around last weekend" and short enough that the
+#: table does not become the largest thing on the box.
+#:
+#: Migration 0180 deliberately left retention unenforced, calling it an owner decision.
+#: This is that decision, made.
+RETENTION = timedelta(days=14)
+
+
+async def prune(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    owner_call: str | None,
+    now: datetime | None = None,
+) -> int:
+    """Delete heard packets past RETENTION, keeping the owner's own. Returns how many.
+
+    **The owner's traffic is exempt, in both directions.** What this box sent, and what
+    was addressed to it, are the two things in here that are the owner's rather than
+    the channel's — a received message is mail, and mail should not evaporate because a
+    fortnight passed. Everything else is ambient traffic from strangers.
+
+    `owner_call` is passed IN rather than read here, because a settings read is not this
+    module's job and because the caller must be able to see what it decided: with no
+    callsign set, nothing is exempt, and that is a fact worth logging at the call site
+    rather than burying in a query.
+
+    Requires an OWNER-scoped context. `app.aprs_packets` is `app.is_owner()`-gated with
+    FORCE ROW LEVEL SECURITY, so a prune running as anything else deletes nothing and
+    reports success — a retention job that looks healthy and is not. The integration
+    test asserts rows actually disappeared for exactly this reason."""
+    moment = now or datetime.now(tz=UTC)
+    params: dict[str, Any] = {"cut": moment - RETENTION}
+    keep = ""
+    if owner_call:
+        # COALESCE for the same reason `recent` uses it: an unclassified row has a NULL
+        # `origin_call`, and on a direct frame the sender IS `source`. Without the
+        # fallback the owner's own packets would be pruned while the backfill sweep is
+        # still catching up.
+        keep = " AND COALESCE(origin_call, source) <> :call AND addressee IS DISTINCT FROM :call"
+        params["call"] = owner_call
+    async with scoped_session(maker, ctx) as session:
+        result = await session.execute(
+            text(f"DELETE FROM app.aprs_packets WHERE heard_at < :cut{keep}"), params
+        )
+    return cast("Any", result).rowcount or 0
+
+
+def _like_literal(text_value: str) -> str:
+    """Escape a caller's text so LIKE reads it as characters, not as a pattern.
+
+    Without this a search for `100%` matches every packet: the wildcards belong to the
+    query this module writes, never to the string handed in."""
+    return text_value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # Stations in a digest. A busy channel has tens, not hundreds, and a turn that needs
 # more than this wants the frames rather than the summary.
 DIGEST_MAX = 40
@@ -394,6 +472,8 @@ class AprsReader:
         kind: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        contains: str | None = None,
+        matches: str | None = None,
     ) -> list[dict[str, Any]]:
         """The most recently heard packets, newest first.
 
@@ -403,6 +483,14 @@ class AprsReader:
         `origin_call`, the true sender, so "has KD4WLE been heard" finally answers about
         KD4WLE. `source` is kept because "what has this RELAY put on the air" is a real
         question too, just a different one.
+
+        `contains` and `matches` both search the INFO field — the payload, not the
+        header — because "find the packet that mentioned X" is a question about what was
+        said. `contains` is a plain case-insensitive substring; `matches` is a POSIX
+        regex, and it is the one that needs a guard: the pattern comes from a model
+        improvising, not from a person, and a catastrophic one against a large table is
+        a CPU core burned on the owner's box. `SEARCH_TIMEOUT_MS` bounds it in Postgres
+        rather than in Python, because the runaway is in the database.
 
         Selects `raw` and `path` as well, because the caller renders the frame into
         something readable rather than pasting the info field at a model."""
@@ -428,8 +516,21 @@ class AprsReader:
         if until is not None:
             clauses.append("heard_at <= :until")
             params["until"] = until
+        if contains:
+            # LIKE with the wildcards supplied here, so the caller's text is data: a
+            # `%` typed into the search box matches a literal percent sign, and cannot
+            # widen the query to everything.
+            clauses.append("info ILIKE :contains")
+            params["contains"] = f"%{_like_literal(contains)}%"
+        if matches:
+            clauses.append("info ~* :matches")
+            params["matches"] = matches
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with scoped_session(self._maker, ctx) as session:
+            if matches:
+                # LOCAL, so it reverts with this transaction rather than leaking a short
+                # timeout onto every later statement on a pooled connection.
+                await session.execute(text(f"SET LOCAL statement_timeout = {SEARCH_TIMEOUT_MS}"))
             rows = (
                 await session.execute(
                     text(

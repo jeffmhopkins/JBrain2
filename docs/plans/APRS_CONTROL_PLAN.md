@@ -1,6 +1,6 @@
 # APRS — a heard log, position as a location transport, and authenticated station control
 
-> **Status:** In progress · **Last verified:** 2026-09-04 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b✅(**both halves** — naming, roles and `-d <serial>`; then one session per device, so APRS and the tuner run at once) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`), and `c-single-dongle`'s switch placement was **superseded 2026-09-04** by the launcher's own round (`../mocks/sdr-launcher/`): the switch is now a job on a radio. One state, never two switches, unchanged.
+> **Status:** In progress · **Last verified:** 2026-09-08 · **Waves:** P0✅ P1✅(**on air** — the box decoded live traffic on 144.390 and has been logging since: 184 frames in the first 90 minutes) P1a✅ P3✅ P4🟡(built, independent review folded in; on-box run pending) P0b✅(**both halves** — naming, roles and `-d <serial>`; then one session per device, so APRS and the tuner run at once) P2◻️(deferred — geo is not in the first build). Both GUI gates are **closed** — shape A throughout (`../mocks/aprs/a-launcher-shape.html`, `b-trigger-editor.html`, `c-single-dongle.html`), and `c-single-dongle`'s switch placement was **superseded 2026-09-04** by the launcher's own round (`../mocks/sdr-launcher/`): the switch is now a job on a radio. One state, never two switches, unchanged.
 
 A second RTL-SDR dongle, permanently parked on a packet frequency, decoding APRS.
 What it produces is three things that get progressively more dangerous, so they ship
@@ -634,5 +634,11 @@ the truck decoding into a fired task.
 - **First command.** Recommended: something harmless — a push, or a logged note — so P4
   ships with the auth path exercised and nothing consequential wired up.
 - **Key storage and rotation** on both ends.
-- **Retention** for `app.aprs_packets`: a busy channel is a lot of rows, and heard
-  traffic is other people's data.
+- ~~**Retention** for `app.aprs_packets`~~ — **decided 2026-09-08: fourteen days, and
+  the owner's own traffic is exempt in both directions.** A busy channel is thousands
+  of rows a day and almost none of them are the owner's, so the log ages out; but what
+  this box sent, and what was addressed to it, are the owner's rather than the
+  channel's — a received message is mail. Enforced by `aprslog.prune` on the worker's
+  existing maintenance pass, deliberately NOT behind the supervisor gate that guards
+  the metrics rollup: a box with no supervisor client would otherwise never prune.
+  With no callsign set nothing is exempt, which the worker logs rather than assumes.
