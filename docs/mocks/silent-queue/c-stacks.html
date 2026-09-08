@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Silent queue · C · stacks — one gesture answers twelve</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-wrap:wrap;justify-content:center;
+       align-items:flex-start;gap:18px;padding:22px 14px 60px;min-height:100vh;}
+  [data-theme="light"] body{background:#dcdcd8;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .col{width:392px;max-width:94vw;display:flex;flex-direction:column;gap:12px;}
+  .caption{padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;
+                margin-bottom:6px;background:var(--violet-tint,rgba(164,147,201,.16));color:var(--violet);}
+  .themer{position:fixed;top:12px;right:12px;z-index:9;background:var(--surface-2);
+          color:var(--text-2);border:1px solid var(--border);border-radius:999px;
+          padding:8px 15px;font-size:12px;cursor:pointer;}
+
+  .phone{height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;
+         overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#cdcdc9;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;
+       border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);display:flex;} .bar svg{width:18px;height:18px;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;font-size:12px;color:var(--text-3);}
+  .body{flex:1;overflow-y:auto;padding:12px 14px 20px;display:flex;flex-direction:column;gap:12px;}
+
+  /* grouping toggle — the shipped rgroup-toggle, plus a third mode */
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);
+         border-radius:12px;overflow:hidden;font-size:13px;flex:none;}
+  .modes button{padding:9px 0;background:transparent;border:0;border-right:1px solid var(--border);
+                color:var(--text-3);font-family:inherit;font-size:13px;cursor:pointer;}
+  .modes button:last-child{border-right:0;}
+  .modes button.on{background:var(--steel-tint);color:var(--steel);font-weight:500;}
+
+  .sec{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-top:2px;}
+
+  /* a STACK: one question, many subjects */
+  .stack{background:var(--surface);border:1px solid var(--border);border-radius:15px;overflow:hidden;}
+  .st-head{padding:13px 14px 11px;}
+  .st-kind{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);}
+  .st-q{margin-top:6px;font-size:16px;line-height:1.42;font-weight:500;}
+  .st-q b{color:var(--amber);font-weight:600;}
+  .st-why{margin-top:7px;font-size:12.5px;color:var(--text-2);line-height:1.5;}
+  .st-why em{font-style:normal;color:var(--text-3);}
+
+  /* the subjects as flickable chips — tap one OUT of the batch */
+  .chips{display:flex;flex-wrap:wrap;gap:7px;padding:2px 14px 13px;}
+  .chip{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 11px;
+        border-radius:999px;background:var(--surface-2);border:1px solid var(--border);
+        color:var(--text);font-size:13px;cursor:pointer;font-family:inherit;}
+  .chip .d{width:7px;height:7px;border-radius:999px;background:var(--steel);flex:none;}
+  .chip .d.place{background:var(--green);} .chip .d.thing{background:#9aa0a8;}
+  .chip .d.org{background:var(--violet);}
+  .chip.out{background:transparent;color:var(--text-3);text-decoration:line-through;
+            border-style:dashed;}
+  .chip.out .d{background:var(--text-3);}
+  .chip .x{color:var(--text-3);font-size:13px;margin-left:1px;}
+
+  .st-foot{display:flex;align-items:center;gap:10px;padding:11px 14px;
+           border-top:1px solid var(--border);background:var(--surface-2);}
+  .st-foot .n{font-size:12px;color:var(--text-3);flex:1;line-height:1.45;}
+  .st-foot .n b{color:var(--text-2);font-weight:500;}
+  .act{min-height:44px;padding:0 15px;border-radius:12px;border:1px solid transparent;
+       font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;}
+  .act.go{background:var(--green-tint);color:var(--green);}
+  .act.go.armed{background:var(--green);color:#0e0f11;}
+  .act.drop{background:transparent;color:var(--text-3);border-color:var(--border);font-weight:400;}
+
+  /* entity-grouped rows — the shipped egroup pattern */
+  .eg{background:var(--surface);border:1px solid var(--border);border-radius:15px;overflow:hidden;}
+  .eg-head{display:flex;align-items:center;gap:10px;padding:11px 13px;width:100%;
+           background:transparent;border:0;color:var(--text);font-family:inherit;cursor:pointer;text-align:left;}
+  .eg-disc{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;
+           justify-content:center;flex:none;background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel);}
+  .eg-disc svg{width:17px;height:17px;}
+  .eg-disc.drug{background:color-mix(in srgb,#c98ab4 16%,transparent);color:#c98ab4;}
+  .eg-nm{flex:1;font-size:14.5px;font-weight:500;}
+  .eg-n{font-size:11px;color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);
+        border-radius:999px;padding:2px 8px;}
+  .eg-rows{border-top:1px solid var(--border);}
+  .row{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border-bottom:1px solid var(--border);}
+  .row:last-child{border-bottom:0;}
+  .row .txt{flex:1;font-size:13.5px;line-height:1.45;}
+  .row .txt .clk{display:block;margin-top:4px;font-size:11px;color:var(--text-3);}
+  .row .txt .clk b{color:var(--amber);font-weight:500;}
+  .mini{display:flex;gap:6px;flex:none;}
+  .mini button{width:40px;height:40px;border-radius:11px;border:1px solid var(--border);
+               background:var(--surface-2);color:var(--text-2);cursor:pointer;display:flex;
+               align-items:center;justify-content:center;}
+  .mini button svg{width:16px;height:16px;}
+  .mini .y{color:var(--green);background:var(--green-tint);border-color:transparent;}
+  .mini .n{color:var(--rose);background:var(--rose-tint);border-color:transparent;}
+
+  .quiet{font-size:12.5px;color:var(--text-3);line-height:1.6;padding:4px 4px 0;}
+  .snack{position:absolute;left:14px;right:14px;bottom:16px;display:flex;align-items:center;gap:12px;
+         background:var(--surface-2);border:1px solid var(--border);border-radius:14px;
+         padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.4);}
+  .snack .u{margin-left:auto;color:var(--steel);font-weight:500;cursor:pointer;}
+</style>
+</head>
+<body>
+<button class="themer" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">theme</button>
+
+<div class="col">
+  <p class="caption"><span class="tag">C · stacks</span><br>
+  <b>The completionist surface — and the batching one.</b> Reached from the launcher tile only.
+  Three groupings: by <b>entity</b> (the shipped default,
+  <span style="font-family:var(--font-mono);font-size:11px">grouping.ts:57</span>), by
+  <b>time</b>, and — new — by <b>shape</b>, which is where twelve identical questions collapse
+  into <b>one card asked once</b>. Tap a chip to flick that subject out of the batch; the
+  armed <b>Answer 11</b> resolves the rest in one
+  <span style="font-family:var(--font-mono);font-size:11px">POST /review/resolve-batch</span>
+  with one undo. <b>Try it.</b></p>
+
+  <section class="phone">
+    <div class="bar"><span class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>
+      <span class="ttl">Open questions</span><span class="right" id="tot">17</span></div>
+    <div class="body">
+      <div class="modes">
+        <button onclick="setMode(this,'entity')">entity</button>
+        <button class="on" onclick="setMode(this,'shape')">shape</button>
+        <button onclick="setMode(this,'time')">time</button>
+      </div>
+
+      <p class="sec">One question, twelve subjects</p>
+      <div class="stack" id="stack">
+        <div class="st-head">
+          <p class="st-kind">relation · same shape ×12</p>
+          <p class="st-q">These notes each name a place I've never seen. Are they
+            <b>places you go</b>, or just mentioned?</p>
+          <p class="st-why">A place you go becomes a node I can navigate from; a mention stays
+            text in the note. <em>I'd file all twelve as mentions.</em></p>
+        </div>
+        <div class="chips" id="chips"></div>
+        <div class="st-foot">
+          <span class="n" id="stn"></span>
+          <button class="act drop" onclick="dropAll()">Drop all</button>
+          <button class="act go" id="go" onclick="arm()">Answer 12</button>
+        </div>
+      </div>
+
+      <p class="sec">Everything else</p>
+
+      <div class="eg">
+        <button class="eg-head"><span class="eg-disc drug"><svg viewBox="0 0 24 24"><path d="M8 4h8v5l-4 11-4-11z"/></svg></span>
+          <span class="eg-nm">Hydrochlorothiazide</span><span class="eg-n">1</span></button>
+        <div class="eg-rows"><div class="row">
+          <span class="txt">Did the dose change to <b>25 mg</b>?
+            <span class="clk">health · <b>never self-answers</b> — held until you say</span></span>
+          <span class="mini"><button class="n"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            <button class="y"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></button></span>
+        </div></div>
+      </div>
+
+      <div class="eg">
+        <button class="eg-head"><span class="eg-disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0114 0v1"/></svg></span>
+          <span class="eg-nm">Celine Dubois</span><span class="eg-n">2</span></button>
+        <div class="eg-rows">
+          <div class="row"><span class="txt">Still at <b>Ozone Labs</b>?
+            <span class="clk">keeping Ozone Labs · assumed <b>7 Oct</b></span></span>
+            <span class="mini"><button class="n"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              <button class="y"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></button></span></div>
+          <div class="row"><span class="txt">Is "Cee" the same person?
+            <span class="clk">no merge without you · dropping <b>1 Nov</b></span></span>
+            <span class="mini"><button class="n"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              <button class="y"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></button></span></div>
+        </div>
+      </div>
+
+      <p class="quiet">That is all seventeen. The cap is forty — past that I stop asking and
+        start taking my own guesses, so this list can never become a backlog.</p>
+    </div>
+    <div class="snack" id="snack" style="display:none">
+      <span id="snackmsg"></span><span class="u" onclick="undo()">undo</span>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="caption"><b>What "shape" means.</b> Questions are stackable when they share
+  <span style="font-family:var(--font-mono);font-size:11px">(kind, predicate, default_action)</span>
+  — the same question asked about different subjects. That is exactly the volume shape that
+  killed the old <span style="font-family:var(--font-mono);font-size:11px">new_predicate</span>
+  card (one open card per distinct raw spelling — "review noise, forever",
+  <span style="font-family:var(--font-mono);font-size:11px">docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md:31-38</span>),
+  which had to be mass-retired by a sweep
+  (<span style="font-family:var(--font-mono);font-size:11px">analysis/predicates.py:225-265</span>).
+  Stacking is the affordance that makes that volume answerable instead of retirable.</p>
+  <p class="caption"><b>Selection mode dies.</b> The shipped inbox batches with a
+  <b>select</b> toggle, checkboxes and a bulk bar
+  (<span style="font-family:var(--font-mono);font-size:11px">ReviewScreen.tsx:432-447</span>) —
+  a two-handed gesture that also requires the owner to <i>read twelve rows and agree they are
+  the same</i>. The stack does that grouping for them and defaults every chip IN, so the
+  gesture is "flick out the exceptions, then one tap" — the same inversion the inline-approval
+  tree uses (every leaf starts approved,
+  <span style="font-family:var(--font-mono);font-size:11px">InlineProposal.tsx:78-84</span>).
+  The batch <i>endpoint</i> survives verbatim.</p>
+</div>
+
+<script>
+const PLACES = [
+  ["Chapman St","place"],["Le Gros Jambon","place"],["Ozone Labs","org"],["Parc Laurier","place"],
+  ["Dr Aubin's office","place"],["Rue Bernard","place"],["the Verdun place","place"],
+  ["Tim's on Mont-Royal","place"],["Atwater Market","place"],["the storage unit","thing"],
+  ["Marché Jean-Talon","place"],["the garage on St-Denis","place"]
+];
+let out = new Set();
+let armed = false;
+
+function drawChips(){
+  document.getElementById('chips').innerHTML = PLACES.map((p,idx) =>
+    '<button class="chip' + (out.has(idx) ? ' out' : '') + '" onclick="flick(' + idx + ')">'
+    + '<span class="d ' + p[1] + '"></span>' + p[0]
+    + (out.has(idx) ? '' : '<span class="x">✕</span>') + '</button>').join('');
+  const n = PLACES.length - out.size;
+  document.getElementById('stn').innerHTML = out.size === 0
+    ? 'All twelve → <b>mentions</b>. Flick out any that are really places you go.'
+    : out.size + ' flicked out — they stay open, one at a time.';
+  const go = document.getElementById('go');
+  go.textContent = armed ? ('Tap to answer ' + n) : ('Answer ' + n);
+  go.classList.toggle('armed', armed);
+  go.disabled = n === 0;
+}
+function flick(idx){ armed = false; out.has(idx) ? out.delete(idx) : out.add(idx); drawChips(); }
+function arm(){
+  if (!armed) { armed = true; drawChips(); setTimeout(()=>{ armed=false; drawChips(); }, 3000); return; }
+  const n = PLACES.length - out.size;
+  document.getElementById('stack').style.display = 'none';
+  document.getElementById('tot').textContent = 17 - n;
+  snack(n + ' filed as mentions');
+}
+function dropAll(){
+  document.getElementById('stack').style.display = 'none';
+  document.getElementById('tot').textContent = 5;
+  snack('12 dropped — I’ll stop asking this one');
+}
+function snack(msg){
+  document.getElementById('snackmsg').textContent = msg;
+  document.getElementById('snack').style.display = 'flex';
+}
+function undo(){
+  armed = false; out = new Set();
+  document.getElementById('stack').style.display = '';
+  document.getElementById('tot').textContent = 17;
+  document.getElementById('snack').style.display = 'none';
+  drawChips();
+}
+function setMode(btn, m){
+  for (const b of btn.parentElement.children) b.classList.toggle('on', b === btn);
+}
+drawChips();
+</script>
+</body>
+</html>

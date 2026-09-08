@@ -58,7 +58,7 @@ Legend: **[V]** verified in this repo or a cited source · **[A]** assumed / nee
 6. **Reject self-consistency as a per-note default (option `c`); keep it as a calibration
    instrument.** Cost is minutes per note on this box (§3c) and — decisively — the repo's own
    121-case on-box battery measured the model as *near-deterministic* (1 flip in 5 cases rerun
-   ×3, `ENTITY_GRAPH_INGEST_V2_PLAN.md:537`). Agreement that high carries almost no
+   ×3, `ENTITY_GRAPH_INGEST_V2_PLAN.md:541`). Agreement that high carries almost no
    information about correctness; it is confidently repeating the same answer.
 
 7. **Second-pass verifier (option `d`): narrow yes, one class only — flag-stripping.** Not as
@@ -80,7 +80,7 @@ Legend: **[V]** verified in this repo or a cited source · **[A]** assumed / nee
 model-specific, not from the literature: on the 121-case battery gpt-oss-120b set
 `inferred:true` + `domain:health` correctly on **7/7** sensitive facts and then still proposed
 `commit` — "a disposition-*selection* miss, not a perception miss"
-(`ENTITY_GRAPH_INGEST_V2_PLAN.md:538-543`). A model that perceives risk accurately and
+(`ENTITY_GRAPH_INGEST_V2_PLAN.md:542-545`). A model that perceives risk accurately and
 consistently chooses to write anyway is exactly the model for which "the server decides, the
 model may only lower" is correct.
 
@@ -173,7 +173,7 @@ regress every one of these cases.
 | Pinned-override immutability | `supersession.py:610` etc. | re-flag, never flip: a human decision survives reprocessing |
 | Same-name identity gate | `pipeline.py:581-590`, `entities.py:584` | 2+ live entities share the surface ⇒ the *engine* decides, the agent's own `existing` resolution is overridden |
 | Value shape | `schema/models.py:199,225`; `pipeline.py` shape check | `validate_value`/`coerce_value`, declares-guarded |
-| Untrusted-content doctrine | `ASSISTANT.md:952-955`, `:1109-1112` | "Importance from *content* is untrusted and capped; only owner-confirmed signals raise priority" |
+| Untrusted-content doctrine | `ASSISTANT.md:953-955`, `:1109-1112` | "Importance from *content* is untrusted and capped; only owner-confirmed signals raise priority" |
 
 The whole set is I1–I9, tabulated at `ENTITY_GRAPH_INGEST_V2_PLAN.md:223-239`. **Every one is a
 risk input for the new gate.** None of them needs the arbiter object to survive.
@@ -274,7 +274,7 @@ codebase is Whisper's `avg_logprob → exp() → [0,1]` confidence
 
 **Costs/caveats [A]:** (1) attribution — you get a token stream, so locating the *value span*
 inside the JSON arguments requires reconstructing offsets; doable, not free. (2) gpt-oss-120b
-is MXFP4-quantized (`local_catalog.py:583`) and served with reasoning traces; the distribution
+is MXFP4-quantized (`local_catalog.py:581-583`) and served with reasoning traces; the distribution
 over reasoning tokens is noise for this purpose. (3) whether logprobs survive llama-swap's proxy
 and this box's specific llama.cpp build is unverified — a 10-minute debug-console probe settles
 it. (4) the literature is split on whether logprobs beat verbalized confidence
@@ -292,15 +292,15 @@ production dependency on the model's number.
 
 **Cost on this box [V inputs, A arithmetic]:** gpt-oss-120b runs ~31 t/s
 (`local_catalog.py:585`); a v2 integrate call produced ~950 output tokens per probe
-(`ENTITY_GRAPH_INGEST_V2_PLAN.md:493`), before reasoning tokens at production-high effort. A
+(`ENTITY_GRAPH_INGEST_V2_PLAN.md:494`), before reasoning tokens at production-high effort. A
 cold 12k-token prompt "spends tens of seconds in prompt evaluation" (`prefill.py:3-5`).
 Repeated samples over an identical prefix reuse the KV cache (`--cache-reuse`,
 `openai_compat.py:52-54`), so N samples ≈ 1× prefill + N× generation ⇒ **N=3 ≈ 2–5 min/note,
 N=5 ≈ 4–8 min/note**. Sampling defaults are the vendor's temp 1.0 / top_p 1.0
-(`local_catalog.py:573`), so the samples genuinely differ.
+(`local_catalog.py:571-574`), so the samples genuinely differ.
 
 **The killing argument is not cost, it is information.** The battery measured 1 flip in 5
-cases rerun ×3 (`ENTITY_GRAPH_INGEST_V2_PLAN.md:537`). A near-deterministic model produces
+cases rerun ×3 (`ENTITY_GRAPH_INGEST_V2_PLAN.md:541`). A near-deterministic model produces
 near-unanimous agreement on both its right and its wrong answers, so agreement rate has almost
 no discriminative power — while self-consistency's known cost is exactly this repeated sampling
 ([self-consistency / semantic-entropy survey, arXiv 2510.20460](https://arxiv.org/pdf/2510.20460)).
@@ -326,7 +326,7 @@ It is *not* weak where the second pass produces a **server-checkable artifact**.
 server then runs the existing `_norm` + `_token_present` check (`arbiter.py:232-250`). The
 model cannot self-prefer its way past a string comparison. This is also precisely the fix the
 battery's A/B validated — an improved prompt fixed 8/10 genuine errors and **both**
-flag-strips (`ENTITY_GRAPH_INGEST_V2_PLAN.md:545-550`).
+flag-strips (`ENTITY_GRAPH_INGEST_V2_PLAN.md:553-556`).
 
 **Verdict:** run it only on writes the ceiling placed at `ask`, and only as an
 attestation re-elicitation. Its sole possible effect is `ask → commit`, so a compromised or
