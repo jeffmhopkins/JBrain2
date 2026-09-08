@@ -19,12 +19,14 @@ import {
   subscribeSdrAudio,
   toggleSdrAudio,
 } from "../sdrAudio";
+import { type BandSection, loadBands } from "../sdrBands";
 import {
   sdrCaptions,
   startSdrCaptions,
   stopSdrCaptions,
   subscribeSdrCaptions,
 } from "../sdrCaptions";
+import { channelIndex, channelLabel, namedByFrequency, planAt, stepChannel } from "../sdrChannels";
 import type { SdrListening } from "../sdrSession";
 import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
 import { confidenceColor } from "./AudioTranscript";
@@ -132,6 +134,29 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [pickedStep, setPickedStep] = useState<number | null>(null);
   const [stepOpen, setStepOpen] = useState(false);
   const stepHz = pickedStep ?? DEFAULT_STEP_HZ[listening.mode] ?? FALLBACK_STEP_HZ;
+
+  // The band table, for the one question this control asks of it: does a complete
+  // channel plan cover where the radio is? Best-effort — a table that fails to load
+  // leaves the dial exactly as it was, counting kilohertz, rather than disabling it.
+  const [sections, setSections] = useState<BandSection[]>([]);
+  useEffect(() => {
+    let live = true;
+    loadBands()
+      .then((bands) => live && setSections(bands.sections))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const plan = planAt(sections, listening.frequency_hz);
+  const here = plan ? channelIndex(plan, listening.frequency_hz) : -1;
+  // A callback ref rather than an effect: the row exists only while the list is open,
+  // and this fires exactly when it is mounted. `block: "center"` because the point is
+  // to see the channels either side of the one the radio is on.
+  const scrollHere = (el: HTMLButtonElement | null) => el?.scrollIntoView({ block: "center" });
+  // The owner's explicit pick always wins: asking for a step size on a channelised band
+  // is asking to tune between the channels, which is a real thing to want on CB.
+  const counting = plan !== null && pickedStep === null;
   // Stepping is for hunting around a known spot; typing is for going somewhere else
   // entirely. Null means the readout is showing, a string means it is being edited —
   // held as text so a half-typed "99." is a legal intermediate state.
@@ -196,17 +221,32 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     }
   };
 
-  const step = (direction: number) => {
-    const target = (listening.frequency_hz + direction * stepHz) / 1_000_000;
+  const tune = (mhzValue: number) => {
     // Checked here too, not only in the typed field: a 100 kHz step held down from
     // 14.35 MHz walks into the aliasing zone one tap at a time, and the owner would
     // have no reason to suspect the frequency stopped meaning what it says.
-    const refusal = whyNotTunable(target);
+    const refusal = whyNotTunable(mhzValue);
     if (refusal !== null) {
       setError(refusal);
       return;
     }
-    return act(() => api.sdrTune(target, undefined, listening.session_id));
+    return act(() => api.sdrTune(mhzValue, undefined, listening.session_id));
+  };
+
+  /** ± by CHANNEL where a plan covers the radio, by step size everywhere else.
+   *
+   *  The end of a plan is a real stop rather than a fallback into kilohertz: leaning on
+   *  + at CB 40 must not walk out of the band it says it is in. */
+  const step = (direction: number) => {
+    if (counting && plan) {
+      const next = stepChannel(plan, listening.frequency_hz, direction);
+      if (!next) {
+        setError(`That is the ${direction > 0 ? "top" : "bottom"} of ${plan.name}.`);
+        return;
+      }
+      return tune(next.hz / 1_000_000);
+    }
+    return tune((listening.frequency_hz + direction * stepHz) / 1_000_000);
   };
 
   const commitDraft = () => {
@@ -303,12 +343,16 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           </button>
           <button
             type="button"
-            className="sdr-stepsize"
-            aria-label={`Tuning step, ${stepLabel(stepHz)}. Tap to change.`}
+            className={`sdr-stepsize${counting ? " sdr-stepsize-ch" : ""}`}
+            aria-label={
+              counting && plan
+                ? `${channelLabel(plan, listening.frequency_hz)} of ${plan.name}. Tap for the channel list.`
+                : `Tuning step, ${stepLabel(stepHz)}. Tap to change.`
+            }
             aria-expanded={stepOpen}
             onClick={() => setStepOpen((open) => !open)}
           >
-            {stepLabel(stepHz)}
+            {counting && plan ? channelLabel(plan, listening.frequency_hz) : stepLabel(stepHz)}
           </button>
           <button
             type="button"
@@ -320,7 +364,45 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
             +
           </button>
         </div>
-        {stepOpen && (
+        {stepOpen && counting && plan && (
+          <div className="sdr-chans" aria-label={`${plan.name} channels`}>
+            {plan.channels.map((channel, at) => (
+              <button
+                key={channel.hz}
+                type="button"
+                // The AM dial is 118 channels, so without this an owner listening on
+                // 1010 kHz opens a list that starts at 530 and has to find their own
+                // channel in it.
+                ref={at === here ? scrollHere : null}
+                aria-pressed={at === here}
+                aria-label={`${channel.name}, ${mhz(channel.hz)} MHz${channel.note ? `, ${channel.note}` : ""}`}
+                className={`sdr-chan${at === here ? " sdr-chan-on" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  setStepOpen(false);
+                  void tune(channel.hz / 1_000_000);
+                }}
+              >
+                <b>{channel.name}</b>
+                {!namedByFrequency(channel) && <em>{mhz(channel.hz)}</em>}
+              </button>
+            ))}
+            {/* The way out of counting, and it has to be inside the list that started
+                it: on CB the interesting thing is sometimes BETWEEN two channels. */}
+            <button
+              type="button"
+              className="sdr-chan sdr-chan-free"
+              onClick={() => {
+                setPickedStep(stepHz);
+                setStepOpen(true);
+              }}
+            >
+              <b>kHz</b>
+              <em>step</em>
+            </button>
+          </div>
+        )}
+        {stepOpen && !counting && (
           <div className="sdr-steps" aria-label="Tuning step">
             {STEPS_HZ.map((hz) => (
               <button
@@ -336,6 +418,20 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
                 {stepLabel(hz)}
               </button>
             ))}
+            {plan && (
+              // Back to counting. Only offered where a plan covers the radio, so it is
+              // never a control that does nothing.
+              <button
+                type="button"
+                className="sdr-stepopt"
+                onClick={() => {
+                  setPickedStep(null);
+                  setStepOpen(false);
+                }}
+              >
+                Channels
+              </button>
+            )}
           </div>
         )}
       </div>

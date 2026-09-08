@@ -61,6 +61,14 @@ export interface BandSection {
   image_start_hz: number;
   image_stop_hz: number;
   channels: BandChannel[];
+  /** Whether `channels` is the whole legal set here rather than a few landmarks.
+   *
+   *  It is what lets the tuner's ± count in CHANNELS. CB has exactly forty places a
+   *  signal may be — with five gaps and channel 23 above 24 — so counting is both
+   *  correct and better than any step size; airband's channels are allocated per
+   *  facility, so a ± that walked only between the listed ones would refuse most of
+   *  the band. Sent by the server, never guessed from the length of the list. */
+  channel_plan: boolean;
 }
 
 export interface SdrBands {

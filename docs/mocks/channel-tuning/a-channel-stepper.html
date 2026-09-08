@@ -1,0 +1,211 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A — The dial counts in channels</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --green-tint: rgba(143,188,154,.13);
+  --amber-tint: rgba(201,163,106,.13); --violet-tint: rgba(164,147,201,.13);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.note {
+  padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+.note b { color: var(--text); font-weight: 600; }
+.sheet {
+  background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0; overflow: hidden;
+}
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.sub { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); }
+.band { padding: 0 16px 10px; font-size: 13px; color: var(--text-2); }
+.wf { margin: 0 16px; height: 118px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; }
+  /* The tuning strip exactly as it is today: raw bins, the tuned channel marked, and
+     NOTHING drawn from the channel plan. Shape A adds a step size, not a picture. */
+  .wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .5; }
+  .wf .here { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--accent);
+    border-right: 1px solid var(--accent); background: rgba(127,167,201,.09); }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0;
+        font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .readout { padding: 4px 16px 0; font-family: var(--font-mono, ui-monospace, monospace); font-size: 34px;
+    font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+  .rmode { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
+  .steprow { display: flex; align-items: center; gap: 10px; padding: 0 16px 8px; }
+  .steprow button { min-width: 52px; min-height: 44px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface-2); color: var(--text); font: inherit; font-size: 20px; }
+  .chpill { flex: 1; min-height: 44px; border: 1px solid var(--accent); border-radius: 12px;
+    background: var(--steel-tint); color: var(--text); font: inherit; font-size: 14px; display: flex;
+    align-items: center; justify-content: center; gap: 8px; }
+  .chpill b { font-weight: 600; }
+  .chpill span { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .grid { display: none; flex-wrap: wrap; gap: 6px; padding: 4px 16px 12px; max-height: 210px; overflow-y: auto; }
+  .grid.open { display: flex; }
+  .grid button { width: 56px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+    background: transparent; color: var(--text-2); font: inherit; font-size: 13px; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; gap: 1px; position: relative; }
+  .grid button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+  .grid button em { font-style: normal; font-size: 9px; color: var(--text-3); }
+  .grid button i { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; }
+  .hint { padding: 0 16px 14px; font-size: 12px; color: var(--text-3); }
+
+  .seg { display: flex; gap: 6px; padding: 0 16px 12px; }
+  .seg button { flex: 1; min-height: 36px; padding: 7px 4px; border: 1px solid var(--border);
+    border-radius: 9px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+  .seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+</style>
+<div class="phone">
+  <div class="note"><b>A &mdash; The dial counts in channels.</b> Nothing new on screen: the <b>&minus; step +</b> row the tuner already has starts counting in CHANNELS when the band has them. Tap the middle pill for the list. Typing a frequency still works &mdash; this is a step size, never a mode that locks you in.<br><br><b>The picture is untouched.</b> The strip above the readout is the tuning view exactly as it is today &mdash; raw bins, nothing drawn from the channel plan. Stepping moves the marker; it does not replace what the marker sits on. Try the steppers, and switch bands to see CB’s irregular raster (23 sits above 24) handled by counting rather than by arithmetic.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Listen</div>
+    <div class="seg" id="bands"></div>
+    <div class="wf" id="wf"></div>
+    <div class="axis"><span id="lo"></span><span id="hi"></span></div>
+    <div class="readout" id="hz"></div>
+    <div class="rmode" id="mode"></div>
+    <div class="steprow">
+      <button type="button" id="down" aria-label="Previous channel">&minus;</button>
+      <button type="button" class="chpill" id="pill" aria-expanded="false"></button>
+      <button type="button" id="up" aria-label="Next channel">+</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <p class="hint" id="hint"></p>
+  </div>
+</div>
+<script>
+// US channel plans, from 47 CFR. Real data: a mock that carries placeholder channels
+// cannot show what the shape does with CB's irregular raster or FM's odd tenths.
+const CB = [
+  [1,26.965],[2,26.975],[3,26.985],[4,27.005],[5,27.015],[6,27.025],[7,27.035],[8,27.055],
+  [9,27.065],[10,27.075],[11,27.085],[12,27.105],[13,27.115],[14,27.125],[15,27.135],
+  [16,27.155],[17,27.165],[18,27.175],[19,27.185],[20,27.205],[21,27.215],[22,27.225],
+  [23,27.255],[24,27.235],[25,27.245],[26,27.265],[27,27.275],[28,27.285],[29,27.295],
+  [30,27.305],[31,27.315],[32,27.325],[33,27.335],[34,27.345],[35,27.355],[36,27.365],
+  [37,27.375],[38,27.385],[39,27.395],[40,27.405],
+].map(([n, mhz]) => ({
+  n: String(n), mhz, bw: 8,
+  // 36-40 are the SSB segment by convention, and 38 LSB is the calling channel. The
+  // MODE is part of the channel's identity: 27.385 demodulated AM is unintelligible.
+  mode: n >= 36 ? "LSB" : "AM",
+  note: n === 9 ? "emergency" : n === 19 ? "highway" : n === 38 ? "SSB calling" : "",
+}));
+
+// 47 CFR 73.201: 87.9 + 0.2n. Every legal carrier is an ODD tenth — snapping to the
+// nearest 100 kHz invents "89.0 FM", which cannot exist.
+const FM = Array.from({ length: 26 }, (_, i) => ({
+  n: String(201 + i), mhz: +(88.1 + 0.2 * i).toFixed(1), bw: 200, mode: "WBFM", note: "",
+}));
+
+// 47 CFR 95.563 / 95.1763. 1-7 are 462 interstitial, 8-14 are 467 interstitial at half
+// a watt and 12.5 kHz, 15-22 are the 462 main channels that carry the repeater outputs.
+const FRS = [
+  462.5625,462.5875,462.6125,462.6375,462.6625,462.6875,462.7125,
+  467.5625,467.5875,467.6125,467.6375,467.6625,467.6875,467.7125,
+  462.5500,462.5750,462.6000,462.6250,462.6500,462.6750,462.7000,462.7250,
+].map((mhz, i) => ({
+  n: String(i + 1), mhz, bw: i >= 7 && i <= 13 ? 12.5 : 20, mode: "FM",
+  note: i >= 7 && i <= 13 ? "0.5 W handheld" : i >= 14 ? "repeater output" : "",
+}));
+
+const BANDS = {
+  cb: { label: "CB · Citizens band", chans: CB, unit: 3, lo: 26.955, hi: 27.415, watched: null },
+  fm: { label: "FM broadcast · The dial", chans: FM, unit: 1, lo: 88.0, hi: 93.2,
+        // Eight hops, so any one channel is watched about a tenth of the time — the
+        // part of the band the radio is NOT on right now cannot be reported quiet.
+        watched: [88.0, 90.4] },
+  frs: { label: "GMRS and FRS · Repeater outputs", chans: FRS, unit: 3, lo: 462.5, hi: 467.8, watched: null },
+};
+
+// Simulated activity, keyed by channel number. `now` = on air in this row; `ago` =
+// seconds since last seen; absent = never seen while watching.
+const SEEN = {
+  cb: { "19": { now: true, db: 18 }, "9": { ago: 140, db: 9 }, "6": { now: true, db: 24 },
+        "38": { ago: 40, db: 12 }, "17": { ago: 600, db: 6 }, "21": { now: true, db: 7 } },
+  fm: { "201": { now: true, db: 31 }, "205": { now: true, db: 26 }, "208": { ago: 20, db: 14 },
+        "211": { now: true, db: 22 } },
+  frs: { "1": { now: true, db: 11 }, "19": { ago: 95, db: 17 }, "15": { ago: 420, db: 5 } },
+};
+
+const ago = (s) => (s < 60 ? s + "s ago" : Math.round(s / 60) + "m ago");
+const fmt = (b, c) => c.mhz.toFixed(b.unit);
+/** Whether the receiver was even LOOKING here. A hopped band watches each channel a
+ *  fraction of the time, and a channel it never visited is not a quiet channel. */
+const watched = (b, c) => !b.watched || (c.mhz >= b.watched[0] && c.mhz <= b.watched[1]);
+const stateOf = (bandKey, b, c) => {
+  const hit = SEEN[bandKey][c.n];
+  if (!watched(b, c)) return "unwatched";
+  if (!hit) return "quiet";
+  return hit.now ? "now" : "recent";
+};
+
+</script>
+<script>
+let bandKey = "cb", at = 18;
+const $ = (id) => document.getElementById(id);
+
+function band() { return BANDS[bandKey]; }
+function chan() { return band().chans[at]; }
+
+function draw() {
+  const b = band(), c = chan();
+  $("bands").innerHTML = Object.entries(BANDS).map(([k, v]) =>
+    `<button type="button" data-b="${k}" aria-pressed="${k === bandKey}">${v.label.split(" · ")[0]}</button>`).join("");
+  $("lo").textContent = b.lo.toFixed(b.unit); $("hi").textContent = b.hi.toFixed(b.unit);
+  const span = b.hi - b.lo;
+  // Raw bins with a little noise — the point being that this is the same picture as
+  // before, with no lanes and no channel numbers on it.
+  let bins = "";
+  for (let x = 0; x < 100; x++) {
+    const f = b.lo + span * (x + .5) / 100;
+    const near = b.chans.find((k) => Math.abs(k.mhz - f) < span / 200 && SEEN[bandKey][k.n]);
+    const hit = near ? SEEN[bandKey][near.n] : null;
+    const h = (hit ? 18 + hit.db * 2.2 : 0) + 4 + ((x * 37) % 11);
+    bins += `<span class="bin" style="left:${x}%;height:${Math.min(94, h)}%"></span>`;
+  }
+  $("wf").innerHTML = bins +
+    `<span class="here" style="left:${(c.mhz - c.bw / 2000 - b.lo) / span * 100}%;
+      width:${Math.max(1.2, (c.bw / 1000) / span * 100)}%"></span>`;
+  $("hz").innerHTML = `${fmt(b, c)}<small>MHz</small>`;
+  $("mode").textContent = c.mode;
+  $("pill").innerHTML = `<b>Ch ${c.n}</b><span>${fmt(b, c)} MHz${c.note ? " · " + c.note : ""}</span>`;
+  $("grid").innerHTML = b.chans.map((x, i) => {
+    const s = stateOf(bandKey, b, x);
+    const dot = s === "now" ? "var(--green)" : s === "recent" ? "var(--amber)" : "transparent";
+    return `<button type="button" data-i="${i}" aria-pressed="${i === at}">
+      <i style="background:${dot}"></i>${x.n}<em>${fmt(b, x)}</em></button>`;
+  }).join("");
+  // The frequency is ALWAYS on screen beside the number: a preset that hides what it
+  // is really tuned to cannot be checked, and cannot be typed anywhere else.
+  $("hint").textContent = b.chans.length + " channels · the steppers count channels, the readout still takes a typed frequency";
+  document.querySelectorAll("#bands button").forEach((el) => el.onclick = () => {
+    bandKey = el.dataset.b; at = 0; draw();
+  });
+  document.querySelectorAll("#grid button").forEach((el) => el.onclick = () => {
+    at = +el.dataset.i; $("grid").classList.remove("open"); $("pill").setAttribute("aria-expanded", "false"); draw();
+  });
+}
+$("up").onclick = () => { at = Math.min(band().chans.length - 1, at + 1); draw(); };
+$("down").onclick = () => { at = Math.max(0, at - 1); draw(); };
+$("pill").onclick = () => {
+  const open = $("grid").classList.toggle("open");
+  $("pill").setAttribute("aria-expanded", String(open));
+};
+draw();
+</script>

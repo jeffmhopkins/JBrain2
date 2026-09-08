@@ -63,6 +63,7 @@ const BANDS = {
       image_start_hz: 0,
       image_stop_hz: 0,
       channels: [],
+      channel_plan: false,
     },
   ],
 };
@@ -248,6 +249,37 @@ describe("giving a radio a job", () => {
     // The section's own centre and mode — the settings someone chose while reading a
     // band plan, not a default this screen made up.
     await waitFor(() => expect(listen).toHaveBeenCalledWith(98, "wbfm", WHIP));
+  });
+
+  it("opens a channelised band ON a channel rather than at its centre", async () => {
+    // The FM dial's centre is 98.000, and 47 CFR 73.201 allows odd tenths only — so the
+    // arithmetic centre is a frequency no station may legally occupy, and the tuner
+    // would say `Off channel` the instant the dial was opened.
+    const withPlan = {
+      ...BANDS,
+      sections: [
+        {
+          ...BANDS.sections[0],
+          channel_plan: true,
+          channels: [
+            { hz: 97_900_000, name: "97.9", note: "" },
+            { hz: 98_100_000, name: "98.1", note: "" },
+          ],
+        },
+      ],
+    };
+    vi.spyOn(api, "getSdrBands").mockResolvedValue(withPlan as never);
+    box([radio(WHIP, { name: "Desk whip" })]);
+    const listen = vi.spyOn(api, "sdrListen").mockResolvedValue(session() as never);
+
+    show();
+    await open("Desk whip");
+    fireEvent.click(screen.getByRole("button", { name: "Listen" }));
+    fireEvent.click(await screen.findByText(/FM broadcast · The dial/));
+
+    // 98.0 sits exactly between two carriers, which is the real case on this band.
+    // The tie goes to the lower, because the sort is stable over the plan's own order.
+    await waitFor(() => expect(listen).toHaveBeenCalledWith(97.9, "wbfm", WHIP));
   });
 
   it("asks twice before stopping something that is running", async () => {

@@ -24822,6 +24822,63 @@ button.task-band:active {
   color: var(--accent);
   background: var(--accent-tint);
 }
+/* Counting in channels rather than kilohertz. The pill reads as a NAME rather than a
+   setting — "Ch 19", not "10 KHZ" — so the case is dropped and the tracking with it. */
+.sdr-stepsize-ch {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+/* Scrolls, because the AM dial is 118 channels and the FM dial 100. Capped short enough
+   that the readout and the picture above it stay on screen while the list is open —
+   the list is for finding a channel, not for replacing the thing it tunes. */
+.sdr-chans {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 208px;
+  overflow-y: auto;
+}
+.sdr-chan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 60px;
+  min-height: 44px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sdr-chan b {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--text);
+}
+.sdr-chan em {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.sdr-chan-on {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.sdr-chan-on b {
+  color: var(--accent);
+}
+.sdr-chan-free {
+  border-style: dashed;
+}
 /* The audio element itself is hidden in <body> (sdrAudio.ts); this is the transport
    the sheet draws for it. Live radio is on or off, so there is no scrubber. */
 .sdr-transport {

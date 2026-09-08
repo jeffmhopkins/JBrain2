@@ -7,8 +7,9 @@
 // are rendered bare here — what the sheet around them does is SdrRadiosSheet's test.
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
+import { resetBands } from "../sdrBands";
 import { resetSdrCaptions } from "../sdrCaptions";
 import type { SdrListening } from "../sdrSession";
 import { SdrTunerControls, liveTag } from "./SdrTunerControls";
@@ -46,7 +47,29 @@ const LISTENING: SdrListening = {
   listeners: 1,
 };
 
+/** The band table the controls ask for, stubbed at the api seam.
+ *
+ *  Empty by default and reset between cases: whether a channel plan covers the radio
+ *  decides what ± does, so a table left over from another test would change the
+ *  meaning of every step below it. */
+function bands(sections: unknown[] = []) {
+  vi.spyOn(api, "getSdrBands").mockResolvedValue({
+    region: "us",
+    tuner_min_hz: 100_000,
+    tuner_max_hz: 1_766_000_000,
+    direct_max_hz: 24_000_000,
+    sections,
+  } as never);
+}
+
+beforeEach(() => {
+  bands();
+  // jsdom has no layout engine, so scrollIntoView is undefined on Element.
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
 afterEach(() => {
+  resetBands();
   vi.restoreAllMocks();
   resetSdrCaptions();
 });
@@ -389,5 +412,160 @@ describe("what the transport calls live", () => {
     // No element, or one with no buffered range yet: an unknown delay is not a claim
     // that the radio is late.
     expect(liveTag(null)).toBe("LIVE");
+  });
+});
+
+describe("counting in channels", () => {
+  // CB, cut down to the awkward part: 23 sits ABOVE 24 and 25, so channel order and
+  // frequency order genuinely differ and a step size cannot reproduce the dial.
+  const CB = {
+    id: "cb",
+    band: "CB",
+    name: "Citizens band",
+    start_hz: 26_965_000,
+    stop_hz: 27_405_000,
+    mode: "am",
+    step_hz: 10_000,
+    channel_hz: 10_000,
+    note: "",
+    live: "fast",
+    continuous: false,
+    sweep_seconds: 120,
+    span_hz: 440_000,
+    centre_hz: 27_185_000,
+    hops: 1,
+    duty: 1,
+    surveyable: true,
+    direct_sampling: false,
+    sample_rate_hz: 1_024_000,
+    fft_bins: 4_096,
+    bin_hz: 250,
+    image_start_hz: 0,
+    image_stop_hz: 0,
+    channel_plan: true,
+    channels: [
+      { hz: 27_215_000, name: "Ch 21", note: "" },
+      { hz: 27_225_000, name: "Ch 22", note: "" },
+      { hz: 27_255_000, name: "Ch 23", note: "" },
+      { hz: 27_235_000, name: "Ch 24", note: "" },
+    ],
+  };
+  const ON_22: SdrListening = { ...LISTENING, frequency_hz: 27_225_000, mode: "am" };
+
+  it("names the channel on the pill instead of a step size", async () => {
+    bands([CB]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    expect(
+      await screen.findByRole("button", { name: /Ch 22 of Citizens band/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("steps to the NEXT CHANNEL, not the next 10 kHz", async () => {
+    // The case the whole feature exists for: 22 → 23 is +30 kHz, over the top of 24.
+    // A 10 kHz step lands on 27.235, which every other CB radio in earshot calls 24.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(ON_22);
+    bands([CB]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    await screen.findByRole("button", { name: /Ch 22 of/ });
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.255, undefined, "abc123"));
+  });
+
+  it("says so at the end of the plan rather than walking out of the band", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(ON_22);
+    bands([CB]);
+    render(
+      <SdrTunerControls listening={{ ...ON_22, frequency_hz: 27_235_000 }} onReleased={() => {}} />,
+    );
+
+    await screen.findByRole("button", { name: /Ch 24 of/ });
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    expect(await screen.findByText(/top of Citizens band/)).toBeInTheDocument();
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("opens the channel list and tunes straight to one", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(ON_22);
+    bands([CB]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Ch 23, 27\.255 MHz/ }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.255, undefined, "abc123"));
+  });
+
+  it("scrolls the tuned channel into view when the list opens", async () => {
+    // The AM dial is 118 channels and would open at 530 kHz. A list the owner has to
+    // search for their own channel in is a list that costs more than the ± it replaced.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    bands([CB]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
+
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("says Off channel between channels, and snaps on the next tap", async () => {
+    // A typed frequency. Naming the nearest channel would claim the radio is somewhere
+    // it is not, on the one control whose job is saying where it is.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(ON_22);
+    bands([CB]);
+    render(
+      <SdrTunerControls listening={{ ...ON_22, frequency_hz: 27_230_000 }} onReleased={() => {}} />,
+    );
+
+    expect(await screen.findByRole("button", { name: /Off channel of/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
+  });
+
+  it("hands the kilohertz step back when the owner asks for it", async () => {
+    // Free tuning is never taken away: on CB the interesting thing is sometimes
+    // between two channels, and a plan that could not be left would be a cage.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(ON_22);
+    bands([CB]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Ch 22 of/ }));
+    fireEvent.click(screen.getByRole("button", { name: /kHz step/ }));
+    fireEvent.click(screen.getByRole("button", { name: "10 kHz" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
+  });
+
+  it("leaves the dial counting kilohertz where no plan covers the radio", async () => {
+    // Airband is allocated per facility, so its named channels are landmarks. The
+    // table arriving must not change what ± does on a band it says nothing about.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    bands([{ ...CB, id: "air", name: "Tower", channel_plan: false }]);
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Tuning step/ })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
+  });
+
+  it("still counts kilohertz when the band table cannot be read", async () => {
+    // Best-effort: a table that fails to load leaves the dial exactly as it was,
+    // rather than a ± that does nothing on a radio that is plainly tuned.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(LISTENING);
+    vi.spyOn(api, "getSdrBands").mockRejectedValue(new Error("nope"));
+    render(<SdrTunerControls listening={ON_22} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
+
+    await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
   });
 });
