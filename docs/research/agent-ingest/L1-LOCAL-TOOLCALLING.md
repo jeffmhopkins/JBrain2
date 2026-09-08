@@ -56,7 +56,7 @@ Five reasons, each a measured number below:
    today's ~1.5–3 minutes for the whole two-call pipeline, on a box where that model is also the
    owner's chat model and there is one KV slot.
 5. **No graph-write tool exists today, and building one moves the safety spine inside the
-   model.** Every one of the 118 `.tool` sidecars (`backend/src/jbrain/agent/tools/`) that
+   model.** Every one of the 117 `.tool` sidecars (`backend/src/jbrain/agent/tools/`) that
    touches owner truth *stages* rather than writes: `remember.tool` (*"This NEVER writes on its
    own"*), `propose_correction`, `propose_merge`, `file_correction` (writes a **note**, not a
    fact). Facts reach the DB only through `apply_intent` behind the deterministic arbiter. Shape
@@ -497,7 +497,7 @@ Re-run S1's Arm A at **N = 100 notes × 3** including the owner's real-corpus sn
 **re-run determinism**: run each note twice and diff the resulting intents. §6 of
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` requires re-run determinism by recomputation; a model-chosen
 read order breaks it. **If the two runs disagree on >10% of facts, the design is incompatible
-with re-extraction on prompt/model upgrade** — which is not a tuning problem, it is a
+with re-extraction on prompt/model upgrade** — which is not a tuning problem, it is an
 architectural one.
 
 ---
