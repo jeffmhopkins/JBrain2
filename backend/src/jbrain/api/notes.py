@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.api.deps import PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
-from jbrain.notes.service import NoteInfo, NotesRepo, NoteUpdate, UnknownDomain
+from jbrain.notes.service import (
+    ClarificationsAltered,
+    NoteInfo,
+    NotesRepo,
+    NoteUpdate,
+    UnknownDomain,
+)
 from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
 from jbrain.workflow import events as wf_events
@@ -237,6 +243,15 @@ async def update_note(
         note = await repo.update_note(ctx, note_id, changes)
     except UnknownDomain:
         raise HTTPException(status_code=400, detail="unknown domain") from None
+    except ClarificationsAltered:
+        # The editor is served the composed text (body + D6 clarification blocks) and
+        # PATCHes it whole, so an intact save always ends in exactly those blocks. This
+        # one did not, and there is no safe reading: storing the string doubles the
+        # blocks, cutting at the marker would delete body text that merely looks like
+        # one. Refuse loudly rather than guess — nothing is written.
+        raise HTTPException(
+            status_code=409, detail="clarification blocks are not editable"
+        ) from None
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
     # Re-chunk under the (possibly new) domain — chunks always derive domain

@@ -113,11 +113,14 @@ class NoteClarification(Base):
     The note's `body` column stays exactly as its author wrote it — a clarification
     never rewrites it, and an owner body edit never destroys clarifications, because
     they are different rows. `jbrain.notes.compose.compose_body` joins them at read
-    time, appending AFTER the body so the original text's character offsets (which
-    facts cite as `char_start`/`char_end`) cannot shift.
+    time, appending AFTER the body so the offsets into the note's text cannot shift —
+    `app.chunks.char_start`/`char_end`, and the chunk-relative spans on
+    `app.entity_mentions` built from them. `app.facts` has no span columns at all; it
+    cites a chunk by id, which is `ingest.carryover`'s job to preserve.
 
     Immutable after insert: 0193 grants only `UPDATE (domain_code)`, for the domain
-    carry when a note moves domain.
+    carry when a note moves domain — and a trigger makes that carry mandatory, since
+    the block's domain must equal its note's.
     """
 
     __tablename__ = "note_clarifications"

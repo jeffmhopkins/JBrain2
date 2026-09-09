@@ -303,6 +303,23 @@ async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
     }
 
 
+async def rewritten_reingest(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path, note_id: str, body: str
+) -> None:
+    """Re-ingest the note over a REWRITTEN body, which is what nulls `facts.chunk_id`.
+
+    An unchanged re-ingest no longer does: `ingest.carryover` keeps a rebuilt chunk's
+    row when it comes back byte-identical, precisely so a re-ingest stops destroying the
+    note's mentions and its published wiki citations. The in-place re-anchor these tests
+    cover is still load-bearing for the cases carry-over declines, and a rewrite is one.
+    """
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = :n"), {"b": body, "n": note_id}
+        )
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+
+
 async def _fact_chunk(maker: async_sessionmaker[AsyncSession], note_id: str) -> str | None:
     async with scoped_session(maker, OWNER) as s:
         return (
@@ -328,8 +345,9 @@ async def test_refresh_after_reingest_re_anchors_the_citation(
     )
     assert await _fact_chunk(maker, note_id) is not None
 
-    # Re-ingest the unchanged body: same note, brand-new chunk ids.
-    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    # A rewritten body: no chunk of the old generation survives, so the citation is
+    # nulled. (An unchanged re-ingest now carries its chunks over instead.)
+    await rewritten_reingest(maker, tmp_path, note_id, "Sarah has moved house again.")
     assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
 
     await analyze(maker, note_id, extraction(person, facts))
@@ -404,9 +422,9 @@ async def test_interval_close_after_reingest_re_anchors_the_citation(
     before = await _fact_row(maker, note_id)
     assert before.chunk_id is not None and before.valid_to is None
 
-    # Re-ingest: same note, brand-new chunk ids. (The body is immaterial — it is the
-    # re-chunking, not the edit's wording, that nulls the citation.)
-    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    # The owner's edit, as a rewrite: no chunk of the old generation survives, so the
+    # citation is nulled and re-integration has to re-anchor it.
+    await rewritten_reingest(maker, tmp_path, note_id, "Sarah lived in Golden until August.")
     assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
 
     closing = home_fact(
@@ -519,7 +537,7 @@ async def test_held_fact_refresh_after_reingest_re_anchors_the_citation(
     before = await _fact_row(maker, note_id)
     assert before.status == "pending_review" and before.chunk_id is not None
 
-    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    await rewritten_reingest(maker, tmp_path, note_id, "Sarah has moved house again.")
     assert await _fact_chunk(maker, note_id) is None  # the bug's precondition
 
     await analyze(maker, note_id, extraction(person, [fact]), intent)

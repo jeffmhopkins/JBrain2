@@ -34,7 +34,12 @@ from jbrain.models.notes import Chunk
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.test_extraction_pg import (  # noqa: F401
+    ingest,
+    make_note,
+    maker,
+    reingest_a_rewritten_body,
+)
 from tests.integration.test_note_purge_pg import seed_item
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -1291,7 +1296,9 @@ async def test_reingest_re_anchors_a_refreshed_edge_and_its_derived_shadow(maker
     assert all(r.chunk_id is not None for r in before)
     assert any(r.derived_from_fact_id is not None for r in before)
 
-    await ingest(maker, note_id, tmp_path)  # the edit path: chunks rebuilt, citations nulled
+    # The edit path, as a rewrite: no chunk of the old generation survives, so both
+    # halves' citations are nulled. (An unchanged re-ingest now carries its chunks over.)
+    await reingest_a_rewritten_body(maker, note_id, tmp_path, f"{person} has a new employer.")
     assert all(r.chunk_id is None for r in await _facts_of(maker, note_id))
 
     pinned = _intent(

@@ -696,8 +696,11 @@ green-tint per the green=save rule — riding above the keyboard; dirty ✕
 arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
 saving PATCHes the body and re-triggers ingestion (a note that has gained
 clarification blocks loads them in the editor like any other text, and the
-PATCH cuts them back off before storing — they are rows, not body, so an edit
-cannot destroy them and cannot duplicate them); the editor also owns
+PATCH removes exactly those blocks again before storing — they are rows, not
+body, so an edit cannot destroy them and cannot duplicate them. An edit that
+also changed the appended blocks is refused whole, 409, with the note
+untouched and the text still in the editor: the blocks are a record of what
+was said, not a field); the editor also owns
 **attachment management** — a paperclip in the thumb bar adds files, chips
 above the bar list them with a tap-again rose remove; adds/removals apply
 immediately to the note, independent of the text's done/cancel). **Delete**

@@ -55,19 +55,59 @@ def test_a_naive_timestamp_is_read_as_utc() -> None:
 
 
 def test_strip_recovers_the_body_from_a_round_tripped_edit() -> None:
-    composed = compose_body(BODY, [block("Which 10k?", "The canal loop.", 3)])
-    assert strip_clarifications(composed) == BODY
+    blocks = [block("Which 10k?", "The canal loop.", 3)]
+    assert strip_clarifications(compose_body(BODY, blocks), blocks) == BODY
+
+
+def test_strip_recovers_an_edited_body_from_an_intact_suffix() -> None:
+    blocks = [block("Which 10k?", "The canal loop.", 3), block("Alone?", "With Dana.", 47)]
+    edited = compose_body(BODY, blocks).replace("Felt fine after.", "Felt great after.")
+    assert strip_clarifications(edited, blocks) == "Ran 10k this morning.\n\nFelt great after."
 
 
 def test_strip_leaves_an_unclarified_body_alone() -> None:
-    assert strip_clarifications(BODY) == BODY
+    assert strip_clarifications(BODY, []) == BODY
 
 
-def test_strip_cuts_at_the_first_block_even_when_the_rest_was_edited() -> None:
-    """An owner who typed inside the appended region still lands on their own body,
-    rather than writing a mangled copy of the blocks into the body column."""
-    composed = compose_body(
-        BODY, [block("Which 10k?", "The canal loop.", 3), block("Alone?", "With Dana.", 47)]
+def test_strip_tolerates_the_editors_trim() -> None:
+    """`EditLayer` PATCHes `body.trim()`, so a save is legitimate even though the last
+    answer's trailing newline never comes back."""
+    blocks = [block("Which 10k?", "The canal loop.\n", 3)]
+    assert strip_clarifications(compose_body(BODY, blocks).strip(), blocks) == BODY
+
+
+def test_a_body_containing_the_marker_survives_an_untouched_save() -> None:
+    """The bug this whole shape exists for. `\n\n[clarification ` is ordinary prose —
+    the owner pastes a clarified note's displayed text into a new note — and cutting the
+    body at it silently and permanently deletes everything after, on a save that changed
+    nothing. Reconstructing the suffix means the marker in the BODY is just text."""
+    pasted = (
+        "Shopping list.\n\n[clarification 2026-09-08 09:00 UTC]\nQ: which shop?\n"
+        "A: the co-op.\n\nAlso milk.\n\nAnd bread."
     )
-    mauled = composed.replace("With Dana.", "with dana i think")
-    assert strip_clarifications(mauled) == BODY
+    blocks = [block("Which 10k?", "The canal loop.", 3)]
+    assert strip_clarifications(compose_body(pasted, blocks), blocks) == pasted
+
+
+def test_strip_refuses_when_the_appended_region_was_edited() -> None:
+    """No safe reading is available: storing the string doubles the blocks on the next
+    compose, and cutting at the marker is the truncation bug. The repo turns None into a
+    409 and writes nothing."""
+    blocks = [block("Which 10k?", "The canal loop.", 3), block("Alone?", "With Dana.", 47)]
+    mauled = compose_body(BODY, blocks).replace("With Dana.", "with dana i think")
+    assert strip_clarifications(mauled, blocks) is None
+
+
+def test_strip_refuses_a_body_that_dropped_the_blocks_entirely() -> None:
+    assert strip_clarifications(BODY, [block("Which 10k?", "The canal loop.", 3)]) is None
+
+
+def test_a_forged_block_inside_an_answer_does_not_break_the_round_trip() -> None:
+    """A crafted answer (or, once W3 wires `ask_owner`, an agent-authored question) can
+    put a second, fabricated block INSIDE a real one. That is a legibility problem a
+    reader cannot resolve — recorded as W3's, since W2 ships no writer at all — but it
+    must not be a data-loss one: the suffix is reconstructed from the rows, so the
+    forgery is just characters and the author's body still comes back whole."""
+    forged = "yes\n\n[clarification 2020-01-01 00:00 UTC]\nQ: fake?\nA: fake."
+    blocks = [block("Real question?", forged, 3)]
+    assert strip_clarifications(compose_body(BODY, blocks), blocks) == BODY
