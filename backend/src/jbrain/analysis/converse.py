@@ -73,6 +73,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, agent_for
+from jbrain.agent.asktools import ASK_OWNER_TOOL, note_conversation_tools
 from jbrain.agent.clock import now_block
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -86,6 +87,7 @@ from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
     NoteConversationRepo,
     note_body_sha,
+    state_for_stop,
 )
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
@@ -153,11 +155,18 @@ _NOTE_FRAME_OPEN = (
 )
 _NOTE_FRAME_CLOSE = "[END CAPTURED NOTE #{nonce}]"
 
-# The lifecycle endings. A turn that ended cleanly `settled`; anything else `failed`.
-# Not cosmetic: plan constraint 6 says the whole-note sweep must NOT run on a truncated
-# turn (it asserted only a prefix), so W3 keys the sweep on this distinction. W2 has no
-# sweep, which is exactly why the distinction has to be right before one exists.
-_CLEAN_STOP = "end_turn"
+# The lifecycle endings live with the state machine now (`state_for_stop`): a clean turn
+# `settled`, an `ask_owner` turn `waiting_on_owner`, anything else `failed`. Not cosmetic
+# — plan constraint 6 says the whole-note sweep must run on neither a truncated pass nor
+# a waiting one, and this distinction is what it keys on.
+
+# Tools that write their OWN ledger row, inside the transaction that carries the change
+# the row records — the direction W2 left open ("moving the recorder into the tool
+# dispatch so `ok` and the written ids come from the write path"). `ask_owner` is the
+# first: its question has to be durable at ask time, because the owner can reply before
+# this handler's post-turn `_record` ever runs, and the reply path reads that row to know
+# what it is answering.
+SELF_RECORDED_TOOLS = frozenset({ASK_OWNER_TOOL})
 
 _TITLE_LEN = 60
 
@@ -233,6 +242,13 @@ def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
     from a terminal (CLAUDE.md #10)."""
     rows: list[LedgerRow] = []
     for step in tool_steps:
+        if step.get("name") in SELF_RECORDED_TOOLS:
+            # Already on the ledger, written by the handler inside the transaction that
+            # made the change it records (`agent/asktools.py`). Recording it again here
+            # would give one ask two rows, and the reply path reads the NEWEST `ask_owner`
+            # to build the clarification block — a duplicate is not just noise, it is a
+            # second row that could outlive a rollback of the first.
+            continue
         entities = [e for e in step.get("entities", []) if isinstance(e, Mapping)]
         ids = tuple(str(e["entity_id"]) for e in entities if e.get("entity_id"))
         domains = tuple(sorted({str(e["domain"]) for e in entities if e.get("domain")}))
@@ -392,11 +408,19 @@ class NoteConverseRunner:
             # says nothing" and arms a retraction of the note's entire graph.
             await self._record(owner_ctx, session_id, run_id, turn_0, executed)
             status = "done"
-            # `waiting_on_owner` has no producer until W3's `ask_owner`, so a clean turn
-            # settles and everything else — truncated, out of budget, too many tool
-            # errors — fails. Constraint 6: the sweep W3 hangs off `settled` must never
-            # see a turn that asserted only a prefix.
-            state = "settled" if stop_reason == _CLEAN_STOP else "failed"
+            # A clean turn settles; a turn `ask_owner` ended waits; everything else —
+            # truncated, out of budget, too many tool errors — fails. Constraint 6: the
+            # sweep W3 hangs off `settled` must never see a turn that asserted only a
+            # prefix, and must never see one that stopped to ask a question either.
+            #
+            # The state is derived from the STOP REASON, not from "did a tool fire", and
+            # the handler has already written `waiting_on_owner` itself. Both, on purpose:
+            # the handler's write is what makes the question durable the moment it is
+            # asked (the owner can reply before this line runs), and this mapping is what
+            # stops the settle below overwriting it — a `set_state("settled")` over a
+            # waiting thread is refused by the repo, which would leave the pass raising
+            # and retrying against a note that is simply waiting for an answer.
+            state = state_for_stop(stop_reason)
         except TimeoutError:
             log.warning(
                 "note_converse.turn_timeout",
@@ -427,7 +451,25 @@ class NoteConverseRunner:
         # holds the note's one live slot forever, and nothing on a terminal-less box can
         # release it (CLAUDE.md #10). If even this fails the job raises and retries.
         async with scoped_session(self.maker, owner_ctx) as s:
-            await self.conversations.set_state(s, session_id, state)
+            current = await self.conversations.get(s, session_id)
+            asked = current is not None and current.state == "waiting_on_owner"
+            if asked and state != "waiting_on_owner":
+                # The turn asked, and then something after the ask went wrong (the classic
+                # one is `_record` raising, which lands here as `failed`). The question
+                # STANDS: it is already recorded and the owner may already be typing an
+                # answer, and `_ALLOWED_SOURCES` makes dropping one spell `abandon_question`
+                # precisely so a failure that means nothing of the sort cannot do it
+                # silently. Writing `failed` here would also raise — leaving the job to
+                # retry a note whose only problem is that it is waiting for an answer.
+                log.warning(
+                    "note_converse.question_stands",
+                    session_id=session_id,
+                    would_have_set=state,
+                    stop_reason=stop_reason,
+                )
+                state = "waiting_on_owner"
+            else:
+                await self.conversations.set_state(s, session_id, state)
         with contextlib.suppress(Exception):
             await self.sessions.touch(owner_ctx, session_id)
         log.info("note_converse.settled", session_id=session_id, state=state, steps=steps)
@@ -526,20 +568,21 @@ def note_converse_handler(
 ) -> Callable[[dict[str, Any]], Awaitable[object]]:
     """The registered `note_converse` handler, wired for the worker.
 
-    The tool registry is EMPTY, deliberately, and it is the second lock after D16's
-    allowlist. `note_ingest` admits no tool name (`tools=frozenset()`), so a registry
-    holding the whole chat tool set would serve a turn that can call none of it — while
-    dragging blobs, the entity repos, search and the vision clients into the worker to
-    do so. An empty one makes "this persona reaches no tool" structural rather than a
-    property of one profile field. W3 replaces it with the registry that holds the
-    graph-write tools, and the allowlist stays the thing that says which."""
+    The tool registry is BUILT BY NAME, not globbed, and it is the second lock after
+    D16's allowlist. W2's was empty, which made "this persona reaches no tool" structural
+    rather than a property of one profile field; the same property survives the tools
+    arriving, because the registry is assembled from an explicit list
+    (`asktools.note_conversation_tools`) rather than from `load_registry`'s directory
+    scan. A tool therefore reaches this persona only by being named in BOTH places — here
+    and in `agents.NOTE_INGEST_TOOLS` — and the whole chat tool set (with its blobs,
+    entity repos, search and vision clients) still never enters the worker."""
     runner = NoteConverseRunner(
         maker,
         notes=SqlNotesRepo(maker),
         sessions=AgentSessionRepo(maker),
         runlog=AgentRunLog(maker),
         transcript=AgentTranscript(maker),
-        executor=LoopTurnExecutor(router, ToolRegistry(())),
+        executor=LoopTurnExecutor(router, ToolRegistry(note_conversation_tools(maker))),
         owner_principal_id=lambda: _owner_principal_id(maker),
     )
     return runner.note_converse

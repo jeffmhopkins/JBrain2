@@ -831,6 +831,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # The note conversation's `ask_owner` — always wired (the note_conversations
+        # table always exists), reachable only by the `note_ingest` allowlist and kept
+        # out of curator's wildcard by NEVER_DEFAULT.
+        "ask_owner",
         # jmolt's scratchpad tools are `web`-classed (jmolt-only), always wired (the
         # jmolt_scratch table always exists), like archivist memory above.
         "scratch_list",
@@ -1561,6 +1565,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "name_session",
             1,
             "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
+        ),
+        "ask_owner.tool": (
+            "ask_owner",
+            1,
+            "ebefd192de30fba4950989ce221bb6b6634c176ab8f86fdef55ceb3cd1c5ca79",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

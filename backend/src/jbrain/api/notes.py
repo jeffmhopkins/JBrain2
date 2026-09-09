@@ -65,6 +65,17 @@ class AttachmentOut(BaseModel):
     has_description: bool = False
 
 
+class ClarificationOut(BaseModel):
+    """One appended D6 block, named so it can be erased. The text is returned as it is
+    already composed into the note's body — this adds no exposure, it adds an id."""
+
+    id: str
+    seq: int
+    question: str
+    answer: str
+    created_at: datetime
+
+
 class NoteOut(BaseModel):
     id: str
     client_id: str
@@ -264,6 +275,45 @@ async def update_note(
 async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
     if not await repo.delete_note(ctx_for(principal), note_id):
         raise HTTPException(status_code=404, detail="note not found")
+
+
+# The D6 clarification blocks, listed and erasable one at a time. An answer is free text
+# the owner typed into a thread, so it can carry a password, a diagnosis or a name they
+# meant to keep out — and once appended it IS the note's text: chunked, embedded,
+# searchable, citable. Without these two routes the only removal is deleting the whole
+# note, losing the body and the graph with it, on a box with no terminal (CLAUDE.md #10).
+# The listing exists because the note view renders blocks as text (D6 changes no screen),
+# so their ids are otherwise unreachable — an id you cannot name is a block you cannot
+# redact.
+@router.get("/notes/{note_id}/clarifications")
+async def list_clarifications(
+    note_id: str, principal: PrincipalDep, repo: NotesRepoDep
+) -> list[ClarificationOut]:
+    blocks = await repo.list_clarifications(ctx_for(principal), note_id)
+    if blocks is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    return [
+        ClarificationOut(
+            id=b.id,
+            seq=b.seq,
+            question=b.question,
+            answer=b.answer,
+            created_at=b.created_at,
+        )
+        for b in blocks
+    ]
+
+
+@router.delete("/notes/{note_id}/clarifications/{clarification_id}")
+async def delete_clarification(
+    note_id: str, clarification_id: str, principal: PrincipalDep, repo: NotesRepoDep
+) -> NoteOut:
+    """Erase one block. Returns the note as it now reads, so a caller sees the redaction
+    landed rather than having to re-fetch and compare."""
+    note = await repo.delete_clarification(ctx_for(principal), note_id, clarification_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="clarification not found")
+    return note_out(note, include_location=principal.kind == "owner")
 
 
 # Hide/unhide only flip home-stream visibility — no re-ingest, so unlike a

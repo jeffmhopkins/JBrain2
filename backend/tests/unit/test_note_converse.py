@@ -248,6 +248,51 @@ def test_a_turn_with_no_tool_calls_records_nothing() -> None:
     assert ledger_rows(_steps(TextDelta(text="hi"), DoneEvent(stop_reason="end_turn"))) == []
 
 
+def test_the_post_turn_recorder_skips_what_the_handler_already_ledgered() -> None:
+    """`ask_owner` writes its own ledger row, in the transaction that also moves the
+    conversation to `waiting_on_owner` — its question has to be durable the instant it is
+    asked, because the owner can answer before this handler's post-turn record runs. So
+    the post-turn mapper must NOT record it a second time: the reply path reads the
+    NEWEST `ask_owner` row to know what the owner's message is answering, and a duplicate
+    is a row that can outlive a rollback of the one that mattered."""
+    steps = _steps(
+        ToolCallEvent(id="c1", name="assert_fact", arguments={"subject": "Kaiya"}),
+        ToolResultEvent(tool_call_id="c1", ok=True, summary="wrote 1 fact"),
+        ToolCallEvent(id="c2", name="ask_owner", arguments={"question": "Which Sarah?"}),
+        ToolResultEvent(tool_call_id="c2", ok=True, summary="recorded"),
+        DoneEvent(stop_reason="awaiting_owner"),
+    )
+
+    assert [row.name for row in ledger_rows(steps)] == ["assert_fact"]
+
+
+# --- how a pass ends decides what the sweep may do ----------------------------
+
+
+def test_only_a_clean_turn_settles_and_an_ask_waits() -> None:
+    """Constraint 6, as the one function that decides it. `settled` is what the whole-note
+    settle sweep fires on, and it vouches that everything the pass meant to write is
+    written — so a truncated pass (which asserted only a prefix) and a pass that stopped
+    to ask a question must both land somewhere else."""
+    from jbrain.models.note_conversation import AWAITING_OWNER, state_for_stop
+
+    assert state_for_stop("end_turn") == "settled"
+    assert state_for_stop(AWAITING_OWNER) == "waiting_on_owner"
+    for cut_off in ("max_steps", "too_many_errors", "budget", "turn_timeout", "record_failed"):
+        assert state_for_stop(cut_off) == "failed"
+
+
+def test_the_ask_stop_reason_is_the_only_producer_of_the_waiting_state() -> None:
+    """`waiting_on_owner` shipped in W2 with no producer. This is it — and it is reached
+    by the LOOP's stop reason, not by "a tool fired", so a turn that called `ask_owner`
+    and then ran on (which the halt makes impossible) could not claim it either."""
+    from jbrain.models.note_conversation import AWAITING_OWNER, state_for_stop
+
+    reasons = ("end_turn", "max_steps", "too_many_errors", "budget", "deferred", "error")
+    assert all(state_for_stop(r) != "waiting_on_owner" for r in reasons)
+    assert state_for_stop(AWAITING_OWNER) == "waiting_on_owner"
+
+
 # --- the action's metadata ----------------------------------------------------
 
 
@@ -271,14 +316,20 @@ def test_the_dispatcher_carries_a_note_keyed_dedup_arm_for_it() -> None:
     assert "integrate_note" in _NOTE_DEDUP_KINDS
 
 
-def test_the_persona_is_the_closed_one_and_reaches_no_tool() -> None:
+def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:
     from jbrain.agent.agents import agent_for
+    from jbrain.agent.toolregistry import NEVER_DEFAULT
 
     profile = agent_for(NOTE_CONVERSE_AGENT)
     assert profile.name == NOTE_CONVERSE_AGENT
-    # Never the curator wildcard (D16); an empty frozenset, not None.
-    assert profile.tools == frozenset()
+    # Never the curator wildcard (D16): an explicit frozenset, never None, even now it
+    # is no longer empty. W3/T2b puts the first name in it.
+    assert profile.tools == frozenset({"ask_owner"})
     assert profile.extra_tools == frozenset()
+    # Constraint 9: a write tool outside NEVER_DEFAULT is handed to the CURATOR on every
+    # ordinary chat turn by the `allow=None` wildcard.
+    assert profile.tools is not None
+    assert profile.tools <= NEVER_DEFAULT
 
 
 # --- the lifecycle bounds -----------------------------------------------------

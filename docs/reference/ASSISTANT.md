@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-09 — added the **`note_ingest`** persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
+> **Status:** Living · **Last verified:** 2026-09-09 — the `note_ingest` persona gained its first verb: **`ask_owner`** ("record one open question on this thread and stop"), the only producer of the `waiting_on_owner` state, ending its turn through the loop rather than by prose. With it, the **owner-reply path**: a reply into a waiting note thread is paired with the recorded question and appended to the note as a D6 clarification block, which re-ingests the note (D7) and resumes the conversation — and a single block can now be listed and erased (`GET`/`DELETE /notes/{id}/clarifications`), since an answer is free text that becomes the note's own searchable text. Prior: added the persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed tool allowlist.
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -419,16 +419,33 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   (`useFullBrain.MODE_AGENTS`), so an ingested note's conversation is openable from the
   chat list. Listed, not landed on — the tab still opens the curator, because a note
   thread is always the newest Full Brain session and would otherwise take the surface
-  every time the owner captures anything. Its allowlist is an explicit **empty**
-  `frozenset()`,
-  never the curator wildcard (D16), and in this wave the executor's tool registry is
-  empty too, so the persona provably reaches nothing; the graph-write tools hang off it
-  later. Turn 0 is the note **fenced as DATA** the way the `intake` persona fences a
-  stranger's reply — a note body may carry an email, a forwarded message or text read off
-  a photo, so nothing inside it is an instruction. The conversation's lifecycle and its
-  per-tool-call ledger live in `app.note_conversations` (see `ANALYSIS.md`); at most one
-  live conversation exists per note. While it holds no tools it writes nothing: the
-  shipped extraction pipeline still writes the graph, and this runs beside it.
+  every time the owner captures anything. Its allowlist is an explicit **closed**
+  `frozenset`, never the curator wildcard (D16), and the executor's tool registry is
+  assembled by NAME rather than globbed from the sidecar directory, so a tool reaches
+  this persona only by being written into both. Its first member is **`ask_owner`** — the
+  graph-write tools hang off the same allowlist later. Turn 0 is the note **fenced as
+  DATA** the way the `intake` persona fences a stranger's reply — a note body may carry
+  an email, a forwarded message or text read off a photo, so nothing inside it is an
+  instruction. The conversation's lifecycle and its per-tool-call ledger live in
+  `app.note_conversations` (see `ANALYSIS.md`); at most one live conversation exists per
+  note. It still writes no GRAPH: the shipped extraction pipeline does that, and this
+  runs beside it.
+  - **`ask_owner`** is "record one open question on this thread and stop". It writes its
+    own ledger row and moves the conversation to `waiting_on_owner` in one transaction —
+    the question has to be durable the moment it is asked, because the owner can answer
+    before the runner's post-turn record runs — and it ends the turn through the LOOP
+    (`ToolOutput(halt=…)` → `stop_reason="awaiting_owner"`), never by asking the model to
+    stop, which is not a thing a prose obligation can make true. `waiting_on_owner` is
+    the one state the settle sweep never fires on (plan constraint 6), it holds the
+    note's one live slot so no second pass starts, and it is never reaped.
+  - **The owner's reply is the answer, and the engine files it** — not a tool
+    (`analysis/clarify.py`, called from `/chat`). A reply into a waiting thread is paired
+    with the recorded question and appended to the note as a timestamped **clarification
+    block** (D6), which re-ingests the note so the block becomes chunks of it (D7); the
+    thread returns to `running` and the reply turn proceeds, then closes by the same rule
+    the unattended pass ends by. The conversation's `note_body_sha` is read here — the
+    only reader — to tell "the note moved under this thread" from "this thread's own
+    answer changed it", and is re-stamped only in the second case.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
   (`web_search`, `news_search`, `science_search`, `web_fetch`), the dataless `current_time`, and
   the owner-approved `current_location`, and **no knowledge-base tools** — it runs with empty read

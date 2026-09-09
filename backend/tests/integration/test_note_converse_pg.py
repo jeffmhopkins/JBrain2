@@ -273,8 +273,8 @@ async def test_turn_zero_is_framed_as_data_not_handed_over_bare(
     # labelled as material to describe.
     assert note_message.index("DATA") < note_message.index("SYSTEM:")
 
-    # And the persona it ran under is the closed one, holding nothing.
-    assert executor.profiles[0].tools == frozenset()
+    # And the persona it ran under is the closed one, holding only what it names.
+    assert executor.profiles[0].tools == frozenset({"ask_owner"})
 
     rows = await _conversation(maker, owner, note_id)
     turns = await _turns(maker, owner, rows[0].sid)

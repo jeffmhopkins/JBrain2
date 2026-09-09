@@ -446,14 +446,17 @@ def _every_shipped_tool() -> ToolRegistry:
     )
 
 
-def test_note_ingest_holds_an_explicit_empty_allowlist_not_the_wildcard() -> None:
+def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> None:
     """`tools` is a frozenset, never None. `None` is the curator wildcard — the single
     thing D16 forbids for the persona that will hold graph writes — and the difference is
     invisible at the call site (`allow is not None` is the whole gate)."""
     note = AGENTS["note_ingest"]
     assert note.tools is not None
     assert isinstance(note.tools, frozenset)
-    assert note.tools == NOTE_INGEST_TOOLS == frozenset()
+    # W3/T2b puts the first name in it: `ask_owner`, the one verb that does not write the
+    # graph. Every name here is enumerated, so a tool arrives by being named and not by
+    # inheriting anything.
+    assert note.tools == NOTE_INGEST_TOOLS == frozenset({"ask_owner"})
     # `extra_tools` is admitted AHEAD of the web / NEVER_DEFAULT gates, so it is the one way
     # to hand this persona a tool without touching its allowlist. It stays empty in W3 too.
     assert note.extra_tools == frozenset()
@@ -466,19 +469,25 @@ def test_note_ingest_holds_an_explicit_empty_allowlist_not_the_wildcard() -> Non
     assert note.budget_multiplier == 2
 
 
-def test_note_ingest_admits_no_tool_through_the_real_registry() -> None:
+def test_note_ingest_admits_only_what_it_names_through_the_real_registry() -> None:
     """The closure, proven at the dispatch gate rather than on the dataclass: at every
-    scope, over every shipped sidecar, the admitted set is empty. Rule 2 of `_admits`
-    (`allow is not None and name not in allow`) is what closes it, and it fires BEFORE the
-    web and NEVER_DEFAULT gates — so the emptiness does not depend on a tool's permission
-    class, its domains, or its NEVER_DEFAULT membership."""
+    scope, over every shipped sidecar, the admitted set is EXACTLY the allowlist. Rule 2
+    of `_admits` (`allow is not None and name not in allow`) is what closes it, and it
+    fires BEFORE the web and NEVER_DEFAULT gates — so the closure does not depend on a
+    tool's permission class, its domains, or its NEVER_DEFAULT membership.
+
+    `ask_owner` declares no domains, which is why it survives the empty-scope case: a
+    question about a note is not a domain read, and the conversation is opened for
+    whatever note arrived."""
     registry = _every_shipped_tool()
     note = AGENTS["note_ingest"]
     assert len(registry) > 100  # the real sidecar set, not a two-tool stub
 
     for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
-        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == frozenset()
-        assert registry.schemas_for(scopes, note.tools, note.extra_tools) == []
+        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == note.tools
+        assert [t.name for t in registry.schemas_for(scopes, note.tools, note.extra_tools)] == [
+            "ask_owner"
+        ]
 
 
 def test_note_ingest_cannot_reach_the_four_verbs_d16_names() -> None:
@@ -507,7 +516,7 @@ def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None
     profile = agent_for("note_ingest")
     assert profile is AGENTS["note_ingest"]
     assert profile.name == "note_ingest"
-    assert profile.tools == frozenset()  # not curator's None
+    assert profile.tools == frozenset({"ask_owner"})  # a closed set, not curator's None
     assert is_agent("note_ingest")
 
 
@@ -629,8 +638,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v1",
-            "dbaf96c696d253309ac2d3b1c1a93106e201f65d581f3e32a6e44c6db60c6b39",
+            "agent-note-ingest-v2",
+            "598f41a1b00a4b5895ac0aaecc32759ffbb485098a5e05ac0bd74605aaffca27",
         ),
     }
     assert set(pins) == AGENT_NAMES

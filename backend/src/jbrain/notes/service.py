@@ -85,6 +85,22 @@ class NoteInfo:
 
 
 @dataclass(frozen=True)
+class ClarificationInfo:
+    """One appended clarification block (D6), as the owner needs to see it to redact it.
+
+    The note view renders the blocks as TEXT — that is the whole of D6's storage-only
+    treatment — so the block ids exist nowhere the owner can reach without this. Listing
+    them is what makes the eraser usable at all: a secret typed into an answer has to be
+    identifiable before it can be removed."""
+
+    id: str
+    seq: int
+    question: str
+    answer: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class NoteUpdate:
     """PATCH semantics: None means leave unchanged; destination needs the
     explicit clear flag because null is also its 'unset' value."""
@@ -154,7 +170,36 @@ class NotesRepo(Protocol):
 
         Returns the note with the new block already composed in; None when the note
         doesn't exist, is deleted, or is outside ctx's domain scopes. There is no HTTP
-        route for this: W3's `ask_owner` tool is the caller.
+        route for this: the caller is the engine's owner-reply path
+        (`jbrain.analysis.clarify`), which pairs the answer with the question
+        `ask_owner` recorded.
+        """
+        ...
+
+    async def list_clarifications(
+        self, ctx: SessionContext, note_id: str
+    ) -> list[ClarificationInfo] | None:
+        """This note's clarification blocks in `seq` order; None when the note is gone
+        or out of scope. The read half of the eraser — see `delete_clarification`."""
+        ...
+
+    async def delete_clarification(
+        self, ctx: SessionContext, note_id: str, clarification_id: str
+    ) -> NoteInfo | None:
+        """Remove one clarification block and re-drive ingestion. None when the note or
+        the block is gone or out of scope.
+
+        The eraser the writer owes (AGENT_INGEST_CONVERSATION_PLAN, W2's recorded
+        limits). An answer is free text the owner typed, so it can contain a password, a
+        diagnosis they thought better of, or a name they meant to keep out — and once
+        appended it becomes the note's TEXT, chunked, embedded, searchable and cited.
+        Without this the only removal is deleting the whole note, losing the body and the
+        graph with it, on a box with no terminal (CLAUDE.md #10).
+
+        Re-ingest is enqueued in the same transaction for the same reason the append
+        enqueues its own: the note's text changed, so its chunks, embeddings and the
+        facts derived from them are stale — a redaction that left the old chunk in the
+        search index would not be a redaction.
         """
         ...
 

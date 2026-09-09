@@ -33,8 +33,19 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
+# `ask_owner` is here for the second reason rather than the first: it is the
+# note-conversation persona's own verb (AGENT_INGEST_CONVERSATION_PLAN constraint 9), and
+# outside a note thread there is no conversation for it to write to — the wildcard would
+# hand the curator a tool whose best outcome is a refusal it wasted a step on.
 NEVER_DEFAULT: frozenset[str] = frozenset(
-    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research", "deep_produce"}
+    {
+        "spawn_subagent",
+        "deep_research",
+        "decompose_research",
+        "deepest_research",
+        "deep_produce",
+        "ask_owner",
+    }
 )
 
 

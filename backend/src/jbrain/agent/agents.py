@@ -473,7 +473,11 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # turn assembly, never a flag on one set, because the allowlist is the only enforcement
 # (constraint 9). Every write tool added must also join `toolregistry.NEVER_DEFAULT`, or
 # curator's wildcard absorbs it on every ordinary chat turn.
-NOTE_INGEST_TOOLS: frozenset[str] = frozenset()
+# W3/T2b adds the first name: `ask_owner`. It is a WRITE tool (it records the question
+# and moves the conversation to `waiting_on_owner`), so it joins
+# `toolregistry.NEVER_DEFAULT` too — otherwise curator's `allow=None` wildcard absorbs it
+# on every ordinary chat turn, where it has no note to be about.
+NOTE_INGEST_TOOLS: frozenset[str] = frozenset({"ask_owner"})
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this

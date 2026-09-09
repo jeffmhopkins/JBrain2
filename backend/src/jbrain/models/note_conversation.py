@@ -89,6 +89,31 @@ _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "failed": frozenset({"running", "failed"}),
 }
 
+# The loop stop reason `ask_owner` ends a turn with (`agent/asktools.py`), and the ONLY
+# producer of `waiting_on_owner` — the state W2 shipped with no producer at all. It lives
+# here, beside the edges, because "which endings mean which state" is the same lifecycle
+# question `_ALLOWED_SOURCES` answers, and because a stop reason defined in the tool
+# module and a state machine defined here would drift apart the first time either moved.
+AWAITING_OWNER = "awaiting_owner"
+
+# A turn that reached its own end, as opposed to one `max_steps`, the cost budget or
+# consecutive tool errors cut off partway.
+CLEAN_STOP = "end_turn"
+
+
+def state_for_stop(stop_reason: str) -> str:
+    """The state a pass that ended for `stop_reason` lands in.
+
+    Three outcomes and one rule behind them (constraint 6): `settled` is a claim that the
+    pass finished and everything it meant to write is written, because the whole-note
+    settle sweep retracts whatever `settled` does not vouch for. A turn cut off partway
+    asserted only a prefix, and a turn that stopped to ask a question has not finished
+    reading — neither may claim it, so both land somewhere the sweep does not run."""
+    if stop_reason == AWAITING_OWNER:
+        return "waiting_on_owner"
+    return "settled" if stop_reason == CLEAN_STOP else "failed"
+
+
 # Caps on a recorded call's `args`. The blob is stored, never executed — but a note body
 # may be third-party text (risk 1) and the model copies note text into `quote` /
 # `statement`, so an unbounded ledger is a disk-exhaustion lever a hostile body can pull
@@ -442,6 +467,32 @@ class NoteConversationRepo:
         raise InvalidStateTransition(
             f"{current.state!r} -> {state!r} is not a note-conversation transition"
         )
+
+    async def set_body_sha(
+        self, session: AsyncSession, session_id: str, body_sha: str
+    ) -> NoteConversation | None:
+        """Re-stamp the body this conversation stands on. Returns None when it is gone.
+
+        The one legitimate caller is the owner-reply path (`analysis/clarify.py`), and
+        only in the case where the stored sha still MATCHED before the append: the answer
+        the reply appends is text the thread itself holds — the question was asked in it
+        and the answer was typed into it — so a conversation that had read the note as it
+        stood has read the note as it now stands, and leaving the old sha would report
+        "the note moved under me" about this thread's own answer. When the sha did NOT
+        match, nothing here is called and the stale value stands, which is exactly the
+        true statement: something the thread never saw changed the note.
+
+        Deliberately not folded into `set_state`: a state change is a lifecycle fact and
+        a body sha is a claim about what was read, and the only caller that has grounds
+        to make the second is not the many callers that make the first."""
+        stmt = (
+            update(NoteConversation)
+            .where(NoteConversation.session_id == uuid.UUID(session_id))
+            .values(note_body_sha=body_sha)
+            .returning(NoteConversation)
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     # --- the tool-call ledger --------------------------------------------------
 

@@ -1,6 +1,9 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
+>
+> W3 in flight. Landed so far: **T2b** — `ask_owner` (the question, and the turn ending on
+> it) plus the owner-reply path that turns an answer into a D6 clarification block.
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -377,7 +380,7 @@ Five consequences worth carrying:
   candidate predicate so the intake-link teardown's soft deletes are swept too.
 
 The append path is `SqlNotesRepo.append_clarification` plus its `NotesRepo` Protocol entry —
-no route and no tool in W2; W3's `ask_owner` is the caller. It enqueues its own `ingest_note`
+no route and no tool in W2; W3/T2b's owner-reply path (`analysis/clarify.py`) is the caller, pairing the answer with the question `ask_owner` recorded. It enqueues its own `ingest_note`
 inside its transaction rather than relying on a caller to remember. That enqueue makes the
 method **owner-only**: `app.jobs` is `is_owner()` RLS, so it works under the narrowed owner
 session constraint 2 describes (tested) and a capability-token caller gets a raw
@@ -401,7 +404,11 @@ than a refusal, so W3 must not offer this behind a token-authenticated surface.
   removed only by deleting the whole note, losing the body and the graph with it.
   `ingest/emr/intake_handler.py` scrubs `notes.body` for exactly this reason. **The wave that
   ships the writer ships the eraser**: on a box with no terminal (CLAUDE.md #10) an
-  unredactable field is not a limit the owner can work around.
+  unredactable field is not a limit the owner can work around. *Closed in W3/T2b, with the
+  writer: `list_clarifications` + `delete_clarification` behind `GET`/`DELETE
+  /notes/{id}/clarifications[/{id}]`, the delete re-driving ingestion in its own
+  transaction. The listing is half the fix — the note screen renders blocks as text, so
+  without ids there is nothing to name.*
 
 *The block's line structure renders where it is read, and only there.* `Stream.tsx` renders the
 body as a text child inside a 3-line clamp with no `white-space`, so the bubble preview shows a
@@ -424,6 +431,53 @@ them green. The eval corpora (`evals/integrate_runner.py` and its cases) are sup
 too. Author a **new** adversarial scenario running a real model against a hostile body:
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
+
+*Landed (T2b): `ask_owner`, and the owner-reply path W2 built the storage for.* The
+question and the `waiting_on_owner` state land in ONE transaction, written by the
+HANDLER — the first piece of the recorder move W2 left open, and not an optimisation: the
+owner can reply before the runner's post-turn `_record` runs, and the reply path reads
+that ledger row to know what the answer answers, so a question recorded later is a
+question nothing can pair. `converse.ledger_rows` skips what the handler already wrote.
+**"And stop" is the LOOP's**, not the prompt's: the handler returns `ToolOutput(halt=…)`
+and `AgentLoop` finishes the turn on `stop_reason="awaiting_owner"` without another model
+call — the bare twin of the `deferred` contract, honoured on both `run_stream` and `run`
+so it is a property of the loop rather than of which entry point a caller picked. That
+stop reason is the only producer of `waiting_on_owner` (`models.note_conversation.
+state_for_stop`, which now owns the whole ending→state mapping), so constraint 6 holds by
+construction: `settled` is reachable only from a clean `end_turn`, and a pass that stopped
+to ask cannot claim it. A second ask while one is open is refused rather than recorded —
+two open questions would leave the reply path guessing which one the owner's message
+answers, and that answer becomes source text on the note.
+
+The owner's reply is filed by the ENGINE, in `analysis/clarify.py` off `/chat` (D6's
+block is deliberately not a tool): paired with the recorded question, appended as a
+timestamped clarification block, which enqueues its own re-ingest, and the thread returns
+to `running` — then closes in the turn's `finally` by the same `state_for_stop`, because
+`running` holds the note's one live slot. The state moves BEFORE the append, so the
+failure mode is a lost block (recoverable: the answer is still in the thread) rather than
+a note that collects the same answer twice as source text.
+
+**`note_body_sha` has its reader**, and it is this path. Compared before the append, it
+answers "has anything OTHER than this conversation changed the note?", and it is
+re-stamped only when it matched — the thread has seen every character of the new composed
+text, since it asked the question and read the answer. On a mismatch the block is still
+appended (the owner answered what was asked) and the stale sha is left standing, which is
+the true statement: this thread has not read the note as it now stands.
+
+**The eraser ships with the writer**, as W2's recorded limit demands: `GET` and `DELETE
+/notes/{id}/clarifications[/{id}]` over two new repo methods. An answer is free text the
+owner typed — a password, a diagnosis, a name — and appending makes it the note's own
+chunked, embedded, searchable text; the listing exists because the note screen renders
+blocks as text, so a block's id was otherwise unreachable. The delete re-drives ingestion
+in its own transaction, like the append: a redaction whose old chunk stayed in the index
+is not one.
+
+*Recorded limit, not fixed here.* Whether the answer's re-ingest opens a SECOND thread is
+a race: its `note.ingested` is suppressed while the reply turn holds the note `running`
+and opens a fresh pass if it arrives after the turn closed. Both outcomes are safe today
+(the shipped `integrate_note` re-derives the graph either way, and the sweep is not wired
+yet), and both were already in W2's cost model, but the wave that hangs `settle_note` off
+`settled` has to make it deliberate rather than timing-dependent.
 
 *Two things W2's reviews left specifically for W3, both about flipping
 `reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens

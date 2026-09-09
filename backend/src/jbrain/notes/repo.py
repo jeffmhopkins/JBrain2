@@ -14,6 +14,7 @@ from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note, Note
 from jbrain.notes.compose import compose_body, strip_clarifications
 from jbrain.notes.service import (
     AttachmentInfo,
+    ClarificationInfo,
     ClarificationsAltered,
     ExtractInfo,
     NoteInfo,
@@ -235,6 +236,64 @@ class SqlNotesRepo:
             # the enqueue off (W3's `ask_owner` tool is the caller), so the choice was
             # "in the transaction" or "nowhere reliable". In the transaction also means
             # a rolled-back append queues no work, and a committed one cannot fail to.
+            await enqueue_on(session, "ingest_note", {"note_id": str(note.id)})
+            await session.flush()
+            await session.refresh(note)
+            return _note_info(note)
+
+    async def list_clarifications(
+        self, ctx: SessionContext, note_id: str
+    ) -> list[ClarificationInfo] | None:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            return [
+                ClarificationInfo(
+                    id=str(c.id),
+                    seq=c.seq,
+                    question=c.question,
+                    answer=c.answer,
+                    created_at=c.created_at,
+                )
+                for c in note.clarifications
+            ]
+
+    async def delete_clarification(
+        self, ctx: SessionContext, note_id: str, clarification_id: str
+    ) -> NoteInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            removed = (
+                await session.execute(
+                    delete(NoteClarification)
+                    .where(
+                        NoteClarification.id == clarification_id,
+                        # The note predicate as well as the id: an id from ANOTHER note
+                        # must not be deletable through this note's route, and RLS only
+                        # narrows by domain.
+                        NoteClarification.note_id == note.id,
+                    )
+                    .returning(NoteClarification.id)
+                )
+            ).scalar_one_or_none()
+            if removed is None:
+                return None
+            # The note's text shrank, so its chunks, embeddings and the graph derived
+            # from them are stale — the same reset and the same in-transaction enqueue
+            # the append does. A redaction whose old chunk stayed in the search index
+            # would not be one.
+            note.ingest_state = "pending"
             await enqueue_on(session, "ingest_note", {"note_id": str(note.id)})
             await session.flush()
             await session.refresh(note)

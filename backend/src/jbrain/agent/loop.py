@@ -357,8 +357,9 @@ class ToolOutput(str):
     note sources (source cards), web sources (favicon citation chips), a staged
     proposal (a "Review proposal" chip), resolved entities, a rich `view` (a
     registered component the PWA renders, e.g. a checklist), a `job` it deferred to
-    the queue, and/or a turn-ending `deferred` handle (a background job whose
-    `task_status` card takes over — the turn ends). It *is* the model-facing text (a
+    the queue, a turn-ending `deferred` handle (a background job whose
+    `task_status` card takes over — the turn ends), and/or a bare `halt` reason (the
+    turn ends here, with no job and no card). It *is* the model-facing text (a
     str subclass), so handlers keep their `-> str` contract and existing call sites
     are untouched; `_dispatch` pulls the extras off when present."""
 
@@ -369,6 +370,7 @@ class ToolOutput(str):
     view: ViewPayload | None
     job: JobRef | None
     deferred: DeferredRef | None
+    halt: str | None
 
     def __new__(
         cls,
@@ -380,6 +382,7 @@ class ToolOutput(str):
         job: JobRef | None = None,
         web_sources: tuple[WebSource, ...] = (),
         deferred: DeferredRef | None = None,
+        halt: str | None = None,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -389,6 +392,7 @@ class ToolOutput(str):
         out.view = view
         out.job = job
         out.deferred = deferred
+        out.halt = halt
         return out
 
 
@@ -481,6 +485,13 @@ class _Dispatched:
     job: JobRef | None
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
+    # A tool that ENDS THE TURN on its own, with no background job behind it and no card
+    # to stream: the string is the stop_reason the loop finishes on. `deferred` is the
+    # same contract with a job attached; this is the bare one, for a tool whose whole
+    # point is that nothing should follow it in the same turn (`ask_owner` — plan
+    # constraint 6, and TOOL_SURFACE.md's "gpt-oss does not honour protocol obligations
+    # stated in prose", which is why this is the loop's job and not the prompt's).
+    halt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -871,9 +882,12 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 web_sources.extend(dispatched.web_sources)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
@@ -900,6 +914,16 @@ class AgentLoop:
                     on_tool(call.name, call.arguments, not dispatched.result.is_error)
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A turn-ending tool (`ask_owner`). Honoured on BOTH loop entry points,
+                # even though the note conversation drives the streaming one: "the turn
+                # stops here" is the property the tool exists for, and leaving it true of
+                # only one of two loops makes it a property of the caller instead. No
+                # forced-final synthesis — a halted turn has already said what it had to
+                # say, and asking the model for a closing paragraph is the extra step the
+                # halt exists to prevent.
+                return _result(turn.text, halt_seen, step + 1)
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
@@ -1196,6 +1220,7 @@ class AgentLoop:
             results: list[ToolResult] = []
             any_error = False
             deferred_seen: DeferredRef | None = None
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
                 # Run the tool while draining any progress it reports into
@@ -1268,11 +1293,33 @@ class AgentLoop:
                     )
                 if dispatched.deferred is not None:
                     deferred_seen = dispatched.deferred
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A tool ENDED the turn (`ask_owner`: the note now waits on the owner).
+                # End here, without calling the model again — the round's results are
+                # already appended, so what the model wrote before the halt stands and
+                # nothing after it runs. This is the enforcement half of a rule prose
+                # cannot hold (TOOL_SURFACE.md: gpt-oss does not honour protocol
+                # obligations stated in prose), and it is what makes the caller's
+                # "a turn that asked did not carry on writing" true by construction
+                # rather than by the model's cooperation.
+                async for ev in self._finish(
+                    halt_seen,
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
+                ):
+                    yield ev
+                return
 
             if deferred_seen is not None:
                 # A tool kicked a background job and streamed its task_status card, which
@@ -1702,6 +1749,7 @@ class AgentLoop:
             out.job if out else None,
             out.web_sources if out else (),
             out.deferred if out else None,
+            out.halt if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:
