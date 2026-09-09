@@ -1,6 +1,6 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** Scheduled · **Last verified:** 2026-09-08 · **Waves:** W1◻️ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2◻️ W3◻️ W4◻️ W5◻️
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -117,15 +117,6 @@ were wrong.
    so any such delete function must re-assert the domain predicate internally and be
    unreachable from any model-facing tool. **This does not extend to the merge path** —
    W1 took the opposite route there deliberately (see constraint 12).
-12. **An entity fold is a full-owner-only write.** `merge_entity_pair`'s four `UPDATE`s
-    are silently narrowed by RLS, so a cross-domain merge half-completes: some facts
-    repoint, others strand on the tombstone. W1 makes the fold fail closed by asking
-    Postgres `app.is_full_owner()` before any statement runs, backed by a trigger on
-    `app.entities`. Two consequences the plan must carry: a narrowed note conversation
-    can therefore only **stage** a fold, never enact one — the owner's enact is already a
-    full-owner session — and the trigger is a **partial** backstop, because when the
-    loser row is out of scope RLS filters it from the scan and no row trigger fires at
-    all. The Python guard is what covers that shape.
 4. **`review_items` and `pending_review` survive.** `decide()` returns
    `insert_status="pending_review"` at twelve sites, and `_lab_status_transition`
    (`supersession.py:410,484`) is how a **FHIR preliminary lab reading** is represented —
@@ -168,6 +159,15 @@ were wrong.
 11. Note delete is a **soft** delete (`notes/repo.py:174-194`), but the same transaction
     hard-deletes the note's chunks, so `chunk_id` cascades do fire. Conversation purge is
     explicit.
+12. **An entity fold is a full-owner-only write.** `merge_entity_pair`'s four `UPDATE`s
+    are silently narrowed by RLS, so a cross-domain merge half-completes: some facts
+    repoint, others strand on the tombstone. W1 makes the fold fail closed by asking
+    Postgres `app.is_full_owner()` before any statement runs, backed by a trigger on
+    `app.entities`. Two consequences the plan must carry: a narrowed note conversation
+    can therefore only **stage** a fold, never enact one — the owner's enact is already a
+    full-owner session — and the trigger is a **partial** backstop, because when the
+    loser row is out of scope RLS filters it from the scan and no row trigger fires at
+    all. The Python guard is what covers that shape.
 
 ## Waves
 
@@ -195,6 +195,14 @@ their articles. D6 makes that fire on every answered question.
 
 Verified by `test_apply_intent_pg.py` (20 tests), `test_reanalysis_pg.py` (4), the 75
 scenarios unchanged, and a corpus rebuild diff.
+
+**Known, pre-existing, and not W1's to fix:** `_resolve_from_intent`
+(`pipeline.py:644-646`) loads the Integrator's `existing` entity by id with no
+`status != 'merged'` filter, unlike `_exact_matches`. A re-analysis can therefore resolve
+a surface back onto a merge tombstone, minting live facts and a live mention on a merged
+row while the survivor's are swept — reproduced on `main` with no rebuild involved. It
+silently un-does an entity merge on any re-analysis, and it is what stops the rebuild
+sweep's spared `mention_ids` delivering end-to-end un-merge replay. Needs its own fix.
 
 **W2 — Conversation shell only.** `note_conversations` + turn/tool-call tables on the
 existing loop; the closed `AgentProfile` (D16) as a mechanism with an empty graph-tool
