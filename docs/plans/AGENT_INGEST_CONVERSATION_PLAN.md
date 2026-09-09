@@ -196,13 +196,18 @@ their articles. D6 makes that fire on every answered question.
 Verified by `test_apply_intent_pg.py` (20 tests), `test_reanalysis_pg.py` (4), the 75
 scenarios unchanged, and a corpus rebuild diff.
 
-**Known, pre-existing, and not W1's to fix:** `_resolve_from_intent`
-(`pipeline.py:644-646`) loads the Integrator's `existing` entity by id with no
-`status != 'merged'` filter, unlike `_exact_matches`. A re-analysis can therefore resolve
-a surface back onto a merge tombstone, minting live facts and a live mention on a merged
-row while the survivor's are swept — reproduced on `main` with no rebuild involved. It
-silently un-does an entity merge on any re-analysis, and it is what stops the rebuild
-sweep's spared `mention_ids` delivering end-to-end un-merge replay. Needs its own fix.
+**Filed by W1, fixed since (2026-09-09):** `_resolve_from_intent` loaded the
+Integrator's `existing` entity by id with no `status != 'merged'` filter, unlike
+`_exact_matches`, so a re-analysis that echoed the loser's id back resolved a surface
+onto a merge tombstone — minting live facts and a live mention on a merged row while the
+survivor's were swept, silently un-doing the merge, needing no rebuild to fire. (Every
+context builder does filter merged, so on the live box the id has to arrive by a race —
+a fold landing mid-analysis — or by a future replay of a stored decision; the code path
+itself was unconditional.) The id now resolves through the
+fold (`entities.live_entity_by_id`): a tombstone redirects to the survivor it recorded
+in `merged_into_id`, a chain is chased to its end, and a tombstone with no survivor
+withholds the resolution as before. That also closes the caveat on the sweep's spared
+`mention_ids`: un-merge replay now survives an intervening re-analysis end to end.
 
 **W2 — Conversation shell only.** `note_conversations` + turn/tool-call tables on the
 existing loop; the closed `AgentProfile` (D16) as a mechanism with an empty graph-tool

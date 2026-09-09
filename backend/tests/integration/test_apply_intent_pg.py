@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select, text
 
 from jbrain.analysis.arbiter import plan_intent
-from jbrain.analysis.entities import ResolvedEntity
+from jbrain.analysis.entities import ResolvedEntity, merge_entity_pair
 from jbrain.analysis.extraction import ExtractedMention, Extraction
 from jbrain.analysis.intent import (
     AttestedSpan,
@@ -24,6 +24,7 @@ from jbrain.analysis.intent import (
 )
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.analysis.predicates import raw_descriptor
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
@@ -34,7 +35,8 @@ from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_note_purge_pg import seed_item
+from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -1315,3 +1317,139 @@ async def test_reingest_re_anchors_a_refreshed_edge_and_its_derived_shadow(maker
     after = await _facts_of(maker, note_id)
     assert [r.id for r in after] == [r.id for r in before]  # refreshed in place, no churn
     assert all(r.chunk_id is not None for r in after)
+
+
+async def test_existing_resolution_onto_a_merge_tombstone_lands_on_the_survivor(maker, tmp_path):  # noqa: F811
+    """A re-analysis must not un-do a merge. The Integrator reads graph context that
+    can predate a fold (or names the loser from its own earlier run), so an
+    `existing` resolution can carry the LOSER's id. Loading it by id with no status
+    filter minted live facts and a live mention on a `status='merged'` row —
+    silently resurrecting the duplicate the owner merged away. The tombstone records
+    its survivor (`merged_into_id`), so the fix follows it."""
+    tag = uuid.uuid4().hex[:8]
+    keep, gone = f"Keep {tag}", f"Gone {tag}"
+    keep_id = await _seed_entity(maker, keep)
+    gone_id = await _seed_entity(maker, gone)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await merge_entity_pair(session, keep=keep_id, gone=gone_id)
+
+    note_id = await make_note(maker, domain="general", body=f"{gone} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=gone, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(gone, statement=f"{gone} is in tech", attested_span=AttestedSpan("c", gone))],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        facts = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    mentions = await _mentions(maker, note_id)
+    assert [str(f.entity_id) for f in facts] == [keep_id]
+    assert [str(m.entity_id) for m in mentions] == [keep_id]
+
+
+async def test_a_chain_of_merges_resolves_to_the_last_survivor(maker, tmp_path):  # noqa: F811
+    """A fold leaves the tombstones already aimed at its loser pointing at a row that
+    is now itself merged, so `a -> b -> c` is an ordinary shape, not a corruption. The
+    stale id has to be chased to the end of the chain, not one hop."""
+    tag = uuid.uuid4().hex[:8]
+    a_id = await _seed_entity(maker, f"First {tag}")
+    b_id = await _seed_entity(maker, f"Second {tag}")
+    c_id = await _seed_entity(maker, f"Third {tag}")
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await merge_entity_pair(session, keep=b_id, gone=a_id)
+        await merge_entity_pair(session, keep=c_id, gone=b_id)
+
+    ref = f"First {tag}"
+    note_id = await make_note(maker, domain="general", body=f"{ref} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=ref, mode="existing", proposed_entity_id=a_id)],
+        [_fact(ref, statement=f"{ref} is in tech", attested_span=AttestedSpan("c", ref))],
+    )
+    await _run(
+        maker, note_id, intent, plan_intent(intent, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    assert [str(m.entity_id) for m in await _mentions(maker, note_id)] == [c_id]
+
+
+async def test_a_tombstone_with_no_survivor_skips_the_fact(maker, tmp_path):  # noqa: F811
+    """The fail-closed end of the chain: a merged row with no `merged_into_id` names
+    nothing live, so the resolution is withheld and the fact skips — the same answer a
+    missing or out-of-scope id already gets. Never a fresh row on the tombstone."""
+    tag = uuid.uuid4().hex[:8]
+    gone_id = await _seed_entity(maker, f"Orphan {tag}")
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await session.execute(
+            text("UPDATE app.entities SET status = 'merged' WHERE id = :id"), {"id": gone_id}
+        )
+
+    ref = f"Orphan {tag}"
+    note_id = await make_note(maker, domain="general", body=f"{ref} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=ref, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(ref, statement=f"{ref} is in tech", attested_span=AttestedSpan("c", ref))],
+    )
+    await _run(
+        maker, note_id, intent, plan_intent(intent, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    assert await _facts_of(maker, note_id) == []
+    assert await _mentions(maker, note_id) == []
+
+
+async def test_a_merge_survives_a_re_analysis_and_still_un_merges(maker, tmp_path):  # noqa: F811
+    """The end-to-end claim W1 could only state as limited: the rebuild sweep spares the
+    `mention_ids` a settled merge card will replay, but the replay is only as good as
+    the re-analysis that runs in between. Re-resolving the surface onto the tombstone
+    minted a second mention on the loser and let the reconcile drop the spared row, so
+    the reopen moved nothing. Following the fold instead re-asserts the SAME mention on
+    the survivor, and the un-merge still puts it back."""
+    tag = uuid.uuid4().hex[:8]
+    keep, gone = f"Survivor {tag}", f"Folded {tag}"
+    keep_id = await _seed_entity(maker, keep)
+    gone_id = await _seed_entity(maker, gone)
+    note_id = await make_note(maker, domain="general", body=f"{gone} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=gone, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(gone, statement=f"{gone} is in tech", attested_span=AttestedSpan("c", gone))],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+    (before,) = await _mentions(maker, note_id)
+    (fact_before,) = await _facts_of(maker, note_id)
+    assert str(before.entity_id) == gone_id
+
+    card = await seed_item(maker, "merge_proposal", {"entity_a": keep_id, "entity_b": gone_id})
+    repo = SqlAnalysisRepo(maker)
+    await repo.resolve_review(OWNER, card, "accept", {})
+    assert [str(m.entity_id) for m in await _mentions(maker, note_id)] == [keep_id]
+
+    # The re-analysis: the Integrator still names the id it saw before the fold.
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+    assert [(m.id, str(m.entity_id)) for m in await _mentions(maker, note_id)] == [
+        (before.id, keep_id)
+    ]
+    assert [r.id for r in await _facts_of(maker, note_id)] == [fact_before.id]
+
+    await repo.reopen_review(OWNER, card)
+    assert [(m.id, str(m.entity_id)) for m in await _mentions(maker, note_id)] == [
+        (before.id, gone_id)
+    ]
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        owners = (
+            await session.execute(select(Fact.entity_id).where(Fact.note_id == uuid.UUID(note_id)))
+        ).scalars()
+    assert [str(e) for e in owners] == [gone_id]

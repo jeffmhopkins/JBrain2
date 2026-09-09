@@ -72,6 +72,7 @@ from jbrain.analysis.entities import (
     create_provisional,
     declared_alias,
     get_or_create_me,
+    live_entity_by_id,
     near_duplicate_entity,
     normalize_alias,
     parse_disambiguation,
@@ -617,10 +618,11 @@ class AnalysisPipeline:
         note_domain: str,
     ) -> dict[str, ResolvedEntity | None]:
         """Validate the agent's coreference into a name(=mention_ref)→entity
-        override (plan §9). An existing-mode ref is honored only if its entity is
-        fetchable under the session's scope; missing/out-of-scope/malformed-id →
-        None (the fact then skips — never a guess, and a synthetic ref can't be
-        re-resolved). new-mode mints a provisional; ambiguous → None."""
+        override (plan §9). An existing-mode ref is honored only if its id reaches a
+        LIVE entity under the session's scope, following a merge tombstone to its
+        survivor (`live_entity_by_id`); missing/out-of-scope/malformed-id → None (the
+        fact then skips — never a guess, and a synthetic ref can't be re-resolved).
+        new-mode mints a provisional; ambiguous → None."""
         override: dict[str, ResolvedEntity | None] = {}
         for r in resolutions:
             if r.mode == "existing" and r.proposed_entity_id:
@@ -641,9 +643,10 @@ class AnalysisPipeline:
                     and len(await same_name_entity_ids(session, r.mention_ref)) >= 2
                 ):
                     continue
-                entity = (
-                    await session.execute(select(Entity).where(Entity.id == eid))
-                ).scalar_one_or_none()
+                # Through the fold, not around it: an id the owner has since merged
+                # away resolves to its survivor, so a re-analysis can never mint live
+                # rows on a tombstone and silently un-do the merge.
+                entity = await live_entity_by_id(session, eid)
                 override[r.mention_ref] = (
                     ResolvedEntity(
                         id=entity.id, subject_id=entity.subject_id, created=False, method="llm"
