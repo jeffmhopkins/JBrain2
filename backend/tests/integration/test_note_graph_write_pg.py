@@ -229,6 +229,20 @@ async def _resolved(maker, tmp_path, **kw) -> tuple[str, NoteGraphWriter]:  # no
     return note_id, writer
 
 
+async def _own_person(maker, tmp_path, surface: str) -> tuple[str, NoteGraphWriter]:  # noqa: F811
+    """A note and a writer whose one entity is `surface`, unique to the calling test.
+
+    The fixture database is shared across this whole file and resolution is BY NAME, so a
+    test that seeds a head on "Dana Whitfield" is really seeding it on every other test's
+    Dana too. Anything asserting what happened to one specific head has to own its
+    person."""
+    body = f"Coffee with {surface} at Ritual this morning."
+    note_id = await _note(maker, tmp_path, body=body)
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": surface, "kind": "person"}]}, _ctx())
+    return note_id, writer
+
+
 @pytest.mark.asyncio
 async def test_a_fact_lands_through_commit_facts_and_reports_its_row(maker, tmp_path) -> None:  # noqa: F811
     note_id, writer = await _resolved(maker, tmp_path)
@@ -295,6 +309,46 @@ async def test_the_same_fact_twice_is_already_recorded_not_a_duplicate(maker, tm
 
 
 @pytest.mark.asyncio
+async def test_an_entity_id_as_the_object_is_refused_never_stored_as_a_value(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:  # noqa: F811
+    """An id-shaped `object` that no handle answers to is not a value, and storing it as
+    one is the worst outcome available: the row lands with `object_entity_id = NULL` and
+    a bare uuid as its literal, so `read_entity` and the wiki render "Jeff works for
+    f458b192-…" — and reached through `correct_fact` it is PINNED, so nothing can
+    auto-correct it. It arrived that way because the object was looked up in a handle
+    table holding only the SUBJECT, where an id can never match."""
+    note_id, writer = await _own_person(maker, tmp_path, "Dana Objectid")
+    stranger = str(uuid.uuid4())
+    out = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "worksFor",
+                    "object": stranger,
+                    "statement": "Dana Objectid works for someone.",
+                    "when": "",
+                    "quote": "Coffee with Dana Objectid",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    body = str(out)
+    assert "is an id this conversation has not resolved" in body
+    assert out.facts == ()
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        rows = (
+            (await s.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_an_unknown_handle_is_a_result_line_and_the_batch_survives_it(
     maker,  # noqa: F811
     tmp_path,
@@ -356,30 +410,165 @@ async def test_a_quote_the_note_does_not_contain_commits_but_cannot_overwrite(
 ) -> None:  # noqa: F811
     """D2 / Lever A: the fact still commits — the confidence gates are gone. What an
     unattested quote costs it is the weight the supersession low-confidence guard reads,
-    so it can never silently rewrite a value the note actually stated."""
-    _, writer = await _resolved(maker, tmp_path)
-    out = await writer.assert_fact(
+    so it can never silently rewrite a value the note actually stated.
+
+    A PRIOR HEAD is seeded, because that is the only shape in which the property means
+    anything and the version of this test that seeded none passed for a wave while the
+    guarantee was false end to end: `graphwritetools` capped `confidence` and wrote a
+    bare 1.0 into `self_confidence`, which is the field `supersession.decide()` actually
+    reads. A model paraphrasing a quote — the most likely failure there is — silently
+    superseded an attested fact while the result line told it the write could not
+    overwrite anything.
+
+    `self_confidence` is NOT a stored column (`models.analysis.Fact` has `confidence`
+    only) — it lives on the in-flight `ExtractedFact` and reaches `decide()` through
+    `pipeline`'s candidate. So the fix is asserted where it is observable: on what
+    happened to the prior head, and on the line the model is handed.
+
+    The prior head deliberately belongs to ANOTHER note: `_facts_at_key` carries no
+    `note_id` predicate, so the head at risk is any note's, and under D13 a note is not
+    re-derivable from the one that destroyed it."""
+    note_id, writer = await _own_person(maker, tmp_path, "Dana Quotecheck")
+    attested = await writer.assert_fact(
         {
             "facts": [
                 {
                     "subject": "e1",
-                    "predicate": "jobTitle",
-                    "object": "CTO",
-                    "statement": "Dana Whitfield is the CTO.",
+                    "predicate": "homeLocation",
+                    "object": "118 Pine Ave",
+                    "statement": "Dana Quotecheck lives at 118 Pine Ave.",
                     "when": "",
-                    "quote": "she was promoted to CTO last year",
+                    "quote": "Coffee with Dana Quotecheck at Ritual",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    prior = uuid.UUID(attested.facts[0].fact_id)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        head = (await s.execute(select(Fact).where(Fact.id == prior))).scalar_one()
+    assert head.status == "active"
+    assert head.confidence == pytest.approx(1.0)
+
+    # A SECOND note's conversation, paraphrasing rather than quoting.
+    other = await _note(maker, tmp_path, body="Dana Quotecheck moved, apparently.")
+    second = await _writer(maker, other)
+    resolved = await second.resolve_entity(
+        {"entities": [{"surface": "Dana Quotecheck", "kind": "person"}]}, _ctx()
+    )
+    assert "e1" in _handles(str(resolved))
+    out = await second.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "homeLocation",
+                    "object": "412 Oak St",
+                    "statement": "Dana Quotecheck lives at 412 Oak St.",
+                    "when": "",
+                    "quote": "she moved to 412 Oak St last year",
                 }
             ]
         },
         _ctx(),
     )
     assert "quote is not in the note" in str(out)
+
     async with scoped_session(maker, SYSTEM_CTX) as s:
         row = (
             await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
         ).scalar_one()
-    assert row.status in ("active", "pending_review")
+        head = (await s.execute(select(Fact).where(Fact.id == prior))).scalar_one()
+    # It COMMITS (D2) — a row exists, and it is not retracted.
+    assert row.status == "pending_review"
     assert row.confidence == pytest.approx(0.4)
+    # And the attested prior — on a different note — is untouched and still live.
+    assert head.status == "active"
+    assert str(head.note_id) == note_id
+    # The model is TOLD it was held, and against what. The result line is its only window
+    # into `decide()`, so a line that said "recorded" here would be the same lie one layer
+    # up from the one this test exists for.
+    assert "held" in str(out)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind_predicate", "value_a", "value_b"),
+    [
+        ("jobTitle", "staff engineer", "CTO"),  # attribute
+        ("homeLocation", "118 Pine Ave", "412 Oak St"),  # state
+        ("favoriteColour", "green", "blue"),  # long-tail / preference-ish
+    ],
+)
+async def test_no_kind_of_unattested_fact_supersedes_an_attested_head(
+    maker,  # noqa: F811
+    tmp_path,
+    kind_predicate: str,
+    value_a: str,
+    value_b: str,
+) -> None:
+    """The same property across the kinds `decide()` routes differently.
+
+    The direct `decide()` probe behind this found `state`, `preference` and
+    `relationship` all superseding an attested prior on an unattested write, with only
+    `attribute` protected — and that by `attribute_collision`, not by weight. One field
+    is what makes the guard reachable for all of them.
+
+    The assertion is deliberately "the prior did not LOSE", not "the prior is still
+    active", because the two kinds are protected by different branches and they end
+    differently. `state` reaches the low-confidence guard, which parks the candidate and
+    leaves the head live. `attribute` never gets that far: its own branch fires first and
+    holds BOTH sides behind an `attribute_collision` ("two birthdays is a bug, not news").
+    Either way the attested value is still there for a human; `superseded` is the one
+    outcome that means it was overwritten by a quote the note does not contain."""
+    who = f"Dana {kind_predicate}"
+    note_id, writer = await _own_person(maker, tmp_path, who)
+    first = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": kind_predicate,
+                    "object": value_a,
+                    "statement": f"{who}: {kind_predicate} is {value_a}.",
+                    # Attested: this passage really is in the note `_own_person` wrote.
+                    "when": "",
+                    "quote": f"Coffee with {who} at Ritual this morning",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    prior = uuid.UUID(first.facts[0].fact_id)
+
+    other = await _note(maker, tmp_path, body=f"Something about {who} and {value_b}.")
+    second = await _writer(maker, other)
+    await second.resolve_entity({"entities": [{"surface": who, "kind": "person"}]}, _ctx())
+    unattested = await second.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": kind_predicate,
+                    "object": value_b,
+                    "statement": f"{who}: {kind_predicate} is {value_b}.",
+                    "when": "",
+                    "quote": "a passage this note does not contain at all",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        head = (await s.execute(select(Fact).where(Fact.id == prior))).scalar_one()
+        landed = (
+            await s.execute(select(Fact).where(Fact.id == uuid.UUID(unattested.facts[0].fact_id)))
+        ).scalar_one()
+    assert head.status != "superseded", f"{kind_predicate}: the attested head was overwritten"
+    assert str(head.note_id) == note_id
+    # And the unattested value did not quietly become the live one instead.
+    assert landed.status == "pending_review", kind_predicate
+    assert landed.confidence == pytest.approx(0.4)
 
 
 @pytest.mark.asyncio

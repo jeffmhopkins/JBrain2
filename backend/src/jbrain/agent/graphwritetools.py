@@ -38,12 +38,18 @@ Five properties that are load-bearing rather than incidental:
   generic "hit an internal error" the model learns nothing from, so every refusal here
   is a result line naming what to do instead.
 
-**Handles are per-conversation.** `resolve_entity` hands back `e1`, `e2`, … and
-`assert_fact` addresses entities by those (or by the exact surface that earned one).
-They live in this writer, which is built once per conversation, because minting is
-`resolve_entity`'s alone: accepting an unknown name in `assert_fact` would make it a
-second, silent minting path. An unknown handle is a result line telling the model to
-resolve first — the error TOOL_SURFACE specifies.
+**Handles are per-RUN, and the run is where the writer is.** `resolve_entity` hands back
+`e1`, `e2`, … and `assert_fact` addresses entities by those (or by the exact surface that
+earned one). They live in this writer, because minting is `resolve_entity`'s alone:
+accepting an unknown name in `assert_fact` would make it a second, silent minting path.
+An unknown handle is a result line telling the model to resolve first — the error
+TOOL_SURFACE specifies.
+
+One writer serves a whole run, and `replytools` keeps one per conversation so every call
+on the owner's reply thread shares a table and a budget. It cannot be more than that: the
+unattended pass runs in the WORKER and the reply turn arrives at the API, two processes
+that share no memory, so the reply turn starts its handle table empty and re-resolves.
+This module used to claim the table survived from one to the other; it never could.
 
 **The write session is the owner's FULL scope, not the conversation's read scope**
 (plan constraint 2). `_exact_matches` carries no domain predicate and is layer 1 of
@@ -249,6 +255,11 @@ _WS = re.compile(r"\s+")
 # refuses to let overwrite a confident prior. That is the whole enforcement: the fact
 # still COMMITS (D2, Lever A), it just cannot silently rewrite history on a quote the
 # note does not contain.
+#
+# The ceiling is carried on BOTH `confidence` and `self_confidence` (see `_assert_one`).
+# `decide()`'s guard keys on `self_confidence` alone, so a cap written to `confidence`
+# only is a cap nothing reads — which is what "cannot overwrite" meant for as long as
+# this module wrote a bare 1.0 into the field the guard consults.
 _ATTESTED = ConfidenceSignals(surface_attested=True, is_supersede=False)
 _UNATTESTED = ConfidenceSignals(surface_attested=False, is_supersede=True)
 
@@ -261,6 +272,18 @@ _OUTCOME_WORDS: dict[str, str] = {
     HISTORICAL: "recorded as history — a newer value is already on file",
     PROMOTED: "recorded (it had been held; now live)",
 }
+
+
+def _looks_like_id(token: str) -> bool:
+    """Whether a token is an entity id rather than a value. A uuid is never something a
+    note says, so this discriminates without guessing: `correct_fact` offers an id as a
+    legitimate `object` and resolves it before the write, and anything that reaches the
+    write path still id-shaped is a reference to an entity nobody looked up."""
+    try:
+        uuid.UUID(token.strip())
+    except ValueError:
+        return False
+    return True
 
 
 def _norm(text: str) -> str:
@@ -368,10 +391,15 @@ class Handle:
 class NoteGraphWriter:
     """The graph-write tools for ONE note conversation.
 
-    Built per conversation (not per turn) because the handle table and the call budgets
-    are properties of the conversation: the owner's reply is a second run on the same
-    thread and must be able to say "no, e3 is the other Dana" without re-resolving from
-    scratch."""
+    Built per conversation (not per call) because the handle table and the call budgets
+    are properties of the conversation: within the owner's reply thread the agent must be
+    able to say "no, e3 is the other Dana" without re-resolving from scratch, and the
+    budgets must count across the thread rather than resetting under every call. Building
+    one per call is exactly how `CORRECT_CALL_BUDGET` came to report "5 calls left" seven
+    times in a row.
+
+    The conversation's two RUNS do not share one, though — the unattended pass is the
+    worker's and the reply turn is the API's. See the module docstring."""
 
     def __init__(
         self,
@@ -618,7 +646,14 @@ class NoteGraphWriter:
         here can create an entity. It is what lets `correct_fact` reuse `_assert_one`
         whole: the write path addresses subjects by handle, and the on-reply turn earns
         its entity from `find_entity`/`read_entity` rather than from a handle table that
-        lives in another process."""
+        lives in another process.
+
+        Idempotent on the ENTITY, not on the call: one writer now serves a whole reply
+        thread, and re-adopting the same row per call would mint `e1`, `e2`, `e3` … for
+        one entity and leave the model reading three names for one thing."""
+        seen = self._handle_for(entity_id)
+        if seen is not None:
+            return self._by_handle[seen]
         handle = Handle(
             handle=f"e{len(self._by_handle) + 1}",
             entity=ResolvedEntity(id=entity_id, subject_id=subject_id),
@@ -716,6 +751,20 @@ class NoteGraphWriter:
         )
 
         obj = self.lookup(literal)
+        if obj is None and _looks_like_id(literal):
+            # An id-shaped object that resolved to nothing is NOT a literal value. Fall
+            # through and it is stored as one: the row gets `object_entity_id = NULL` and
+            # the raw uuid as its value, so `read_entity` and the wiki both render "Jeff
+            # works for f458b192-…" — and under `correct_fact` it is `pinned`, so nothing
+            # can auto-correct it later. Refuse instead, and name the two addresses that
+            # do work.
+            return (
+                f'err  facts[{idx}].object "{literal}" is an id this conversation has'
+                " not resolved, and an id is never a value. Pass a handle from"
+                " resolve_entity, or the value itself in words.",
+                None,
+                [],
+            )
         object_ref = obj.surface if obj is not None else None
         value_json = None if obj is not None else _quantity_value(literal)
         notes: list[str] = []
@@ -731,9 +780,14 @@ class NoteGraphWriter:
         # An owner CORRECTION carries no `quote` and is never weight-capped: the passage
         # it rests on is the owner's own message, which is not in the note's chunks when
         # the tool runs (the clarification block's re-ingest is asynchronous), so a quote
-        # check here could only ever fail and would cap every correction at the inferred
-        # ceiling — the one weight that cannot overwrite the value being corrected. Its
-        # attestation is WHO SPOKE, which is a property of the tool being bound at all.
+        # check here could only ever fail. What that would cost is the STORED WEIGHT, not
+        # the supersession — `decide()`'s correction branch reads neither confidence
+        # field and force-supersedes on the flag alone, so a capped correction would
+        # still overwrite and would merely file the owner's own word as a 0.4 guess. (The
+        # older reasoning here, and in TOOL_SURFACE correction 5, had it as "the one
+        # weight that cannot overwrite the value being corrected"; that is the same
+        # misreading of the guard this module was making one field over.) Its attestation
+        # is WHO SPOKE, which is a property of the tool being bound at all.
         if correction:
             attested, signals = True, _ATTESTED
         else:
@@ -741,8 +795,9 @@ class NoteGraphWriter:
             attested = self._attests(quote)
             if not attested:
                 notes.append(
-                    "quote is not in the note — recorded, but at low weight so it cannot"
-                    " overwrite anything"
+                    "quote is not in the note — recorded, but at low weight, so it is"
+                    " held for review rather than overwriting a confident value already"
+                    " on file"
                 )
             signals = _ATTESTED if attested else _UNATTESTED
         confidence = effective_weight(1.0, signals)
@@ -769,7 +824,17 @@ class NoteGraphWriter:
             # `health` and nothing can move a fact DOWN out of its note's domain.
             domain=self._target.domain,
             confidence=confidence,
-            self_confidence=1.0,
+            # The SAME capped number, not a bare 1.0 — the single line the "an unattested
+            # quote cannot overwrite a confident prior" guarantee actually rests on.
+            # `supersession.decide()`'s low-confidence guard keys on `self_confidence`,
+            # never on `confidence`, so a cap written to `confidence` alone is stored and
+            # read by nobody: the unattested row went active and superseded the attested
+            # head it was supposed not to touch, while the result line said it could not.
+            # The whole-note pipeline can keep the two apart because the model reports a
+            # number of its own; this surface has NO confidence field to report
+            # (TOOL_SURFACE R3, and no `inferred` field either), so the engine's own span
+            # check is the self-report, and it belongs on both.
+            self_confidence=confidence,
             # Recomputed, never asserted by the model (TOOL_SURFACE: no `inferred` field).
             inferred=not attested,
             # D11: the ONE field `assert_fact` deliberately withholds and `correct_fact`

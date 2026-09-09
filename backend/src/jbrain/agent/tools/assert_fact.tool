@@ -1,6 +1,6 @@
 ---
 name: assert_fact
-version: 1
+version: 2
 permission: mutate
 mutating: true
 side_effecting: true
@@ -82,8 +82,9 @@ genuinely unsure of are worth recording with the words the note used, not droppi
 `quote` is checked against the note. Copy the passage the fact rests on — for something
 the note implies rather than states, the passage the inference rests on. A quote that
 does not appear in the note does not stop the fact being recorded; it records it at a
-weight that cannot overwrite anything already known, which is nearly always worse than
-just quoting accurately.
+low weight, and a low-weight value that disagrees with a confident one already on file
+is HELD for the owner instead of replacing it. That is nearly always worse than just
+quoting accurately.
 
 The result tells you what the server did that you did not ask for: a value that replaced
 an older one (the old one is kept as history), a fact already on file (nothing changed),

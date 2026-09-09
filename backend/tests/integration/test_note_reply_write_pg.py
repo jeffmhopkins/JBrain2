@@ -13,8 +13,15 @@ What each test is defending:
   note flipping it back. Asserted on the ROWS, not on the result text, because the
   result text is the model's window and the rows are the fact;
 - **the identity key, not a fact id** — including the multi-row case, where the handler
-  mints `f1`/`f2`, writes NOTHING, and the model retries. That is the whole reason
+  lists what is live, writes NOTHING, and refuses, because a set-valued edge's identity
+  IS its object and there is no single write that changes one. That is the whole reason
   `read_entity` does not need a v5;
+- **an `object` that is an entity id becomes an EDGE**, resolved under the turn's own
+  scopes — never a bare uuid stored as a literal value on a pinned row;
+- **the call budget counts across the conversation**, which is only true while one
+  writer serves it. A fresh writer per call made `CORRECT_CALL_BUDGET` inert;
+- **the reply turn really reaches `resolve_entity` and `assert_fact`** (D8's set is a
+  superset), because a reply turn holding only `correct_fact` pins every fact it learns;
 - **the fold is staged and never enacted** (constraint 12). A note conversation is
   domain-narrowed by construction, `merge_entity_pair` asks Postgres
   `app.is_full_owner()` before any statement, and a half-completed cross-domain fold
@@ -53,8 +60,8 @@ from tests.integration.test_extraction_pg import (  # noqa: F401
     make_note,
     maker,
 )
-from tests.integration.test_note_conversation_rls import owner_ctx  # noqa: F401
-from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+from tests.integration.test_note_conversation_rls import owner_ctx as _owner_ctx
+from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -65,6 +72,17 @@ BODY = (
     "Talked to Jeff about the move. He said he lives at 118 Pine Ave now, and that "
     "Kaiya is seen by Dr. Patel."
 )
+
+
+@pytest.fixture
+async def owner_ctx(maker) -> SessionContext:  # noqa: F811
+    """A real owner principal, as a FIXTURE.
+
+    `test_note_conversation_rls.owner_ctx` is a plain coroutine function, not a fixture,
+    so importing the bare name gave every test in this file a parameter pytest could not
+    fill — all eight errored at setup with `fixture 'owner_ctx' not found`, which is a
+    whole file that never executed. Every sibling importer wraps it the same way."""
+    return await _owner_ctx(maker)
 
 
 def _router() -> LlmRouter:
@@ -255,21 +273,29 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
     owner_ctx,  # noqa: F811
 ) -> None:
     """Jeff saying "no, it's X" when nothing is on file is still Jeff saying X. Recording
-    it unpinned would leave the next note free to overwrite the thing he just told us."""
+    it unpinned would leave the next note free to overwrite the thing he just told us.
+
+    This is also the reason `assert_fact` has to be REACHABLE on a reply turn: pinning is
+    right for something Jeff disputed and wrong for everything else, and a reply turn
+    holding only this verb pins every fact it learns (see the on-reply tests below).
+
+    The entity's name is unique to this test on purpose. `_entity` inserts a fresh row
+    every call and this address is by NAME, so sharing "Jeff Hopkins" with the test above
+    made the lookup ambiguous and the correction was refused — which is how a test that
+    never ran also had a latent isolation bug."""
     note_id = await make_note(maker, domain="general", body=BODY)
     await ingest(maker, note_id, tmp_path)
     session_id = await _conversation(maker, owner_ctx, note_id)
-    jeff = await _entity(maker, "Jeff Hopkins")
+    jeff = await _entity(maker, "Jeff Hopkins (empty address)")
 
     await _handlers(maker)[CORRECT_FACT](
         {
-            "entity": "Jeff Hopkins",  # by NAME, not id — the note's own words
+            "entity": "Jeff Hopkins (empty address)",  # by NAME, not id
             "predicate": "homeLocation",
             "qualifier": "",
             "object": "412 Oak St",
             "statement": "Jeff lives at 412 Oak St.",
             "when": "",
-            "replaces": "",
         },
         _ctx(owner_ctx, session_id),
     )
@@ -279,15 +305,32 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
 
 
 @pytest.mark.asyncio
-async def test_a_multi_row_key_mints_handles_and_writes_nothing(maker, tmp_path, owner_ctx) -> None:  # noqa: F811
-    """The addressing design. `(entity, predicate, qualifier)` does not name one fact
-    when the predicate is set-valued — each distinct object is a co-equal live edge — so
-    the handler lists them as `f1`/`f2` and refuses, and the model retries. Nothing is
-    written on the refusal: a guess here is the wrong fact corrected forever."""
+async def test_a_multi_row_key_is_listed_and_refused_never_half_corrected(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """The addressing design, after the affordance that could not work was removed.
+
+    `(entity, predicate, qualifier)` does not name one fact when the predicate is
+    set-valued, and it CANNOT be made to. `entity_view` yields several groups at one key
+    only for a non-functional relationship (it splits per object), while `decide()`'s
+    correction branch fires only on a `single_head` address — state / attribute /
+    preference / FUNCTIONAL relationship. The two are exclusive, so on every key that can
+    hold several rows the correction flag is a no-op, and a set-valued edge's identity is
+    its object (`_facts_at_key` keeps `object_entity_id` in the key), so there is no
+    single write that changes one.
+
+    The tool used to answer with `f1`/`f2` handles and invite a retry with `replaces`.
+    The retry left both originals live, added a THIRD edge, and reported `ok … replaced`;
+    the disabled version of this test asserted `len(rows) == 3` without checking status,
+    so it would have passed while asserting the bug. `replaces` was validated against the
+    listing and then never read again — grep found four mentions, all of them the
+    validation."""
     note_id = await make_note(maker, domain="general", body=BODY)
     await ingest(maker, note_id, tmp_path)
     session_id = await _conversation(maker, owner_ctx, note_id)
-    jeff = await _entity(maker, "Jeff Hopkins")
+    jeff = await _entity(maker, "Jeff Hopkins (multi row)")
     civic = await _entity(maker, "the Civic", kind="Thing")
     kayak = await _entity(maker, "the kayak", kind="Thing")
     for obj, label in ((civic, "Civic"), (kayak, "kayak")):
@@ -308,33 +351,115 @@ async def test_a_multi_row_key_mints_handles_and_writes_nothing(maker, tmp_path,
         "object": "a bicycle",
         "statement": "Jeff owns a bicycle.",
         "when": "",
-        "replaces": "",
     }
     out = str(await _handlers(maker)[CORRECT_FACT](args, _ctx(owner_ctx, session_id)))
-    assert "holds 2 live values at once" in out
-    assert "f1" in out and "f2" in out
+    # What IS on file is still read back — the model has to be able to tell Jeff.
+    assert "holds 2 values at once" in out
     assert "Civic" in out and "kayak" in out
     assert "Nothing was changed" in out
-    # Nothing written: still exactly the two edges it started with.
-    assert len(await _rows(maker, jeff, "owns")) == 2
+    assert "cannot single one out" in out
+    # Nothing written: still exactly the two edges it started with, both live.
+    rows = await _rows(maker, jeff, "owns")
+    assert len(rows) == 2
+    assert {r.status for r in rows} == {"active"}
 
-    # A handle the listing never minted is refused rather than guessed at.
-    bad = str(
-        await _handlers(maker)[CORRECT_FACT](
-            {**args, "replaces": "f9"}, _ctx(owner_ctx, session_id)
-        )
-    )
-    assert "no such handle" in bad
-    assert len(await _rows(maker, jeff, "owns")) == 2
-
-    # And the retry naming one of them proceeds.
-    ok = str(
+    # And no `replaces` gets past it, because there is no such argument any more: a
+    # retry naming a handle is the same refusal, not a write.
+    retry = str(
         await _handlers(maker)[CORRECT_FACT](
             {**args, "replaces": "f1"}, _ctx(owner_ctx, session_id)
         )
     )
-    assert "no such handle" not in ok
-    assert len(await _rows(maker, jeff, "owns")) == 3
+    assert "cannot single one out" in retry
+    assert len(await _rows(maker, jeff, "owns")) == 2
+
+
+@pytest.mark.asyncio
+async def test_correcting_to_another_entitys_id_writes_an_edge_not_a_dangling_uuid(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """`correct_fact.tool` offers an id as the `object` when the right answer is a person
+    or an organization, and it has to mean an EDGE.
+
+    Passed through raw it was resolved against the writer's handle table — which held
+    only the subject — so an id never matched. The row landed with
+    `object_entity_id = NULL`, the bare uuid as its literal value, and `pinned=True`,
+    while the real edge was superseded and the model was told "ok … replaced". Pinned is
+    what made it terminal: nothing could auto-correct it, and `read_entity` and the wiki
+    both rendered "Jeff works for f458b192-…"."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    jeff = await _entity(maker, "Jeff Hopkins (edge)")
+    acme = await _entity(maker, "Acme", kind="Organization")
+    globex = await _entity(maker, "Globex", kind="Organization")
+    old = await _fact(
+        maker,
+        jeff,
+        note_id,
+        predicate="worksFor",
+        statement="Jeff works for Acme.",
+        object_id=acme,
+        kind="relationship",
+    )
+
+    out = str(
+        await _handlers(maker)[CORRECT_FACT](
+            {
+                "entity": jeff,
+                "predicate": "worksFor",
+                "qualifier": "",
+                "object": globex,  # the ID of the right answer
+                "statement": "Jeff works for Globex.",
+                "when": "",
+            },
+            _ctx(owner_ctx, session_id),
+        )
+    )
+    assert "Globex" in out
+    rows = {str(f.id): f for f in await _rows(maker, jeff, "worksFor")}
+    assert rows[old].status == "superseded"
+    live = [f for f in rows.values() if f.status == "active"]
+    assert len(live) == 1
+    # A real edge, not a uuid pretending to be a value.
+    assert live[0].object_entity_id is not None
+    assert str(live[0].object_entity_id) == globex
+    assert globex not in json.dumps(live[0].value_json or {})
+    assert live[0].pinned is True
+
+
+@pytest.mark.asyncio
+async def test_an_object_id_the_turn_cannot_see_is_refused_and_nothing_is_written(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """The object goes through the SAME scope gate as the subject. The write session runs
+    at full owner scope (constraint 2), so an unchecked object id would be a way to point
+    a general note's thread at a health entity and get it named back."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    jeff = await _entity(maker, "Jeff Hopkins (unseen object)")
+    clinic = await _entity(maker, "Bay Clinic", domain="health", kind="Organization")
+
+    out = str(
+        await _handlers(maker)[CORRECT_FACT](
+            {
+                "entity": jeff,
+                "predicate": "treatedBy",
+                "qualifier": "",
+                "object": clinic,
+                "statement": "Jeff is treated by Bay Clinic.",
+                "when": "",
+            },
+            _ctx(owner_ctx, session_id),  # general-scoped
+        )
+    )
+    assert "not an entity this conversation can see" in out
+    assert await _rows(maker, jeff, "treatedBy") == []
 
 
 @pytest.mark.asyncio
@@ -362,13 +487,193 @@ async def test_the_turns_read_scope_is_the_ceiling_on_what_can_be_corrected(  # 
                 "object": "Kaiser",
                 "statement": "Dr. Patel works at Kaiser.",
                 "when": "",
-                "replaces": "",
             },
             _ctx(owner_ctx, session_id),  # general-scoped, as a general note's thread is
         )
     )
     assert "not an entity this conversation can see" in out
     assert not await _rows(maker, clinical, "worksAt")
+
+
+@pytest.mark.asyncio
+async def test_the_correction_budget_counts_down_across_calls_and_then_stops(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """`CORRECT_CALL_BUDGET` is engine-side precisely because "a prompt-stated cap does
+    not hold" (`graphwritetools`), and for a wave it did not hold either: the handler
+    built a fresh `NoteGraphWriter` per call, so `ToolCallBudget(6)` was re-created every
+    time. Seven consecutive corrections each reported "5 calls left" and the seventh
+    still wrote.
+
+    One writer per CONVERSATION is the fix, so the count is asserted on the sequence, not
+    on one call — and the seventh must be refused rather than merely under-reported."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    jeff = await _entity(maker, "Jeff Hopkins (budget)")
+    # ONE handlers dict, as the process holds one registry — building a second per call
+    # is the very thing that hid the bug.
+    handlers = _handlers(maker)
+
+    remaining = []
+    for i in range(6):
+        out = str(
+            await handlers[CORRECT_FACT](
+                {
+                    "entity": jeff,
+                    "predicate": f"nickname{i}",
+                    "qualifier": "",
+                    "object": f"value {i}",
+                    "statement": f"Jeff's nickname{i} is value {i}.",
+                    "when": "",
+                },
+                _ctx(owner_ctx, session_id),
+            )
+        )
+        remaining.append(out.rsplit("correct_fact: ", 1)[1].split(" calls left")[0])
+    assert remaining == ["5", "4", "3", "2", "1", "0"]
+
+    seventh = str(
+        await handlers[CORRECT_FACT](
+            {
+                "entity": jeff,
+                "predicate": "nickname6",
+                "qualifier": "",
+                "object": "value 6",
+                "statement": "Jeff's nickname6 is value 6.",
+                "when": "",
+            },
+            _ctx(owner_ctx, session_id),
+        )
+    )
+    assert "out of budget" in seventh
+    assert await _rows(maker, jeff, "nickname6") == []
+
+    # A DIFFERENT conversation gets its own budget — the cap is per note, not per box.
+    other_note = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, other_note, tmp_path)
+    other_session = await _conversation(maker, owner_ctx, other_note)
+    fresh = str(
+        await handlers[CORRECT_FACT](
+            {
+                "entity": jeff,
+                "predicate": "nickname6",
+                "qualifier": "",
+                "object": "value 6",
+                "statement": "Jeff's nickname6 is value 6.",
+                "when": "",
+            },
+            _ctx(owner_ctx, other_session),
+        )
+    )
+    assert "correct_fact: 5 calls left" in fresh
+
+
+# --- the unattended pair, on the reply turn -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_reply_turn_can_resolve_and_assert_and_what_it_asserts_is_not_pinned(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """D8's on-reply set is a SUPERSET, and for a wave two of its names had no handler on
+    the only registry a reply turn consults — so neither was offered and neither could
+    dispatch. The consequence was not a missing feature. `correct_fact` was then the
+    turn's only write verb, and a correction at an empty address commits
+    `insert_pinned=True`, so every new fact the owner mentioned in passing was pinned
+    against every later note.
+
+    Both halves are asserted: the pair really does dispatch, and what `assert_fact`
+    writes is a live, UNPINNED fact a later note can still supersede."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    ctx = _ctx(owner_ctx, session_id)
+
+    resolved = str(
+        await handlers["resolve_entity"](
+            {"entities": [{"surface": "Dr. Patel", "kind": "person"}]}, ctx
+        )
+    )
+    assert "e1" in resolved
+
+    out = await handlers["assert_fact"](
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "CTO",
+                    "statement": "Dr. Patel is the CTO.",
+                    "when": "",
+                    "quote": "Kaiya is seen by Dr. Patel",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        row = (
+            await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
+        ).scalar_one()
+    assert row.status == "active"
+    # NOT pinned — the whole point. A later note may still supersede this.
+    assert row.pinned is False
+
+
+@pytest.mark.asyncio
+async def test_the_reply_turns_four_verbs_share_one_handle_table(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """One writer per conversation, asserted where it is visible to the model: a handle
+    minted by `resolve_entity` is still an address on a LATER call, and `correct_fact`
+    adopting the same entity reuses that handle rather than minting `e2` for it.
+
+    Per-call writers made both false — every call started at `e1` and the model was
+    reading a fresh vocabulary each time."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    ctx = _ctx(owner_ctx, session_id)
+
+    await handlers["resolve_entity"](
+        {"entities": [{"surface": "Dr. Patel", "kind": "person"}]}, ctx
+    )
+    second = str(
+        await handlers["resolve_entity"](
+            {"entities": [{"surface": "Kaiya", "kind": "person"}]}, ctx
+        )
+    )
+    # A second call continues the numbering rather than restarting it.
+    assert "e2" in second
+
+    # And a fact written against the FIRST call's handle still lands.
+    out = await handlers["assert_fact"](
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "doctor",
+                    "statement": "Dr. Patel is a doctor.",
+                    "when": "",
+                    "quote": "Kaiya is seen by Dr. Patel",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    assert "no such handle" not in str(out)
 
 
 # --- merge_entities -----------------------------------------------------------

@@ -479,11 +479,14 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # that dies in dispatch, so an allowlist grows with the handlers, never ahead of them.
 #
 # Every write tool here also joins `toolregistry.NEVER_DEFAULT`, or curator's wildcard absorbs
-# it on every ordinary chat turn. `resolve_entity`/`assert_fact` are additionally kept out of
-# the chat registry entirely (`readtools.OPTIONAL_NOTE_GRAPH_TOOLS`): their handlers are bound
-# to one note, so a chat session has nothing to bind. `ask_owner` is not — the owner's REPLY
-# into a note thread arrives as an ordinary /chat turn (D8), so its handler is wired on the
-# chat registry and this allowlist is the only thing keeping it off every other persona.
+# it on every ordinary chat turn — and for the note-graph verbs that set, plus this allowlist,
+# is the whole of the enforcement. Each is bound TWICE, on two registries that never meet: the
+# worker builds `graphwritetools.note_registry` for the unattended pass, and `replytools` binds
+# a session-addressed copy on the chat registry, because the owner's REPLY into a note thread
+# arrives as an ordinary /chat turn (D8). `ask_owner` is bound the second way only. The rule
+# above is what makes this necessary rather than optional: an allowlisted name with no handler
+# behind it is a tool call that dies in dispatch, and for a whole wave that is what these two
+# were on the reply turn.
 NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
     {"resolve_entity", "assert_fact", "ask_owner", "find_entity", "read_entity", "current_time"}
 )
@@ -496,7 +499,10 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 # A superset of the unattended set, not a swap. The reply turn is the same agent finishing
 # the same reading of the same note, so taking `assert_fact` away at the moment the owner
 # explains what the note actually meant would leave it able to discuss a correction and
-# unable to record one.
+# unable to record one — and worse than unable. `correct_fact` at an EMPTY address commits
+# active + pinned (`supersession.decide`), so a reply turn holding only that verb records
+# every new thing the owner mentions as a pinned fact no later note can supersede. Being a
+# superset is what keeps the ordinary "here is one more fact" on the ordinary write path.
 #
 # Why each added verb is on-reply rather than unattended, one line each:
 # - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room

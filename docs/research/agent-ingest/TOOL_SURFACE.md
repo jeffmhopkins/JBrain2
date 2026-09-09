@@ -48,9 +48,18 @@
 >    required" inverts.** The passage an owner correction rests on is the owner's own chat
 >    message, and the clarification block's re-ingest is asynchronous — so the note's
 >    chunks do not contain it when the tool runs. A required quote could only ever fail
->    its own check and cap every correction at the 0.4 inferred ceiling, which is exactly
->    the weight that cannot overwrite the value being corrected. Its attestation is WHO
->    SPOKE, which is a property of the tool being bound at all.
+>    its own check and would file the owner's own word at the 0.4 inferred ceiling. Its
+>    attestation is WHO SPOKE, which is a property of the tool being bound at all.
+>
+>    *Amended after the W3 adversarial review.* The conclusion holds; the stated reason —
+>    "the 0.4 ceiling is exactly the weight that cannot overwrite the value being
+>    corrected" — was a misreading of the guard. `decide()`'s correction branch
+>    (`supersession.py`, the `candidate.correction and single_head` arm) reads NEITHER
+>    confidence field: it force-supersedes on the flag alone. A capped correction would
+>    still overwrite; it would only be recorded as a guess. The same misreading, one field
+>    over, is what let `graphwritetools` write a bare `1.0` into `self_confidence` while
+>    capping `confidence`, so an unattested `assert_fact` silently superseded an attested
+>    prior for a whole wave.
 > 6. **`read_note` is not "inherited unchanged".** Risk 1 says note bodies reach the model
 >    unframed and that this is safe only because the persona reading them holds no tools;
 >    the on-reply set is the wave that falsifies it, and this row is where. It now fences
@@ -99,8 +108,8 @@ grammar. Anything load-bearing is `required` even when the call reads awkwardly.
 
 | Tool | Set | permission | side_effecting | Batch | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `resolve_entity` | unattended | mutate | yes | ≤12 | surfaces → run handles; the only minting path; writes the mention spine |
-| `assert_fact` | unattended | mutate | yes | ≤8 | the one fact-writing verb |
+| `resolve_entity` | both | mutate | yes | ≤12 | surfaces → run handles; the only minting path; writes the mention spine |
+| `assert_fact` | both | mutate | yes | ≤8 | the one fact-writing verb |
 | `ask_owner` | unattended | mutate | yes | — | record an open question on this thread and stop |
 | `find_entity` | unattended | read | no | — | *inherited unchanged* |
 | `read_entity` | unattended | read | no | — | *inherited unchanged* |
@@ -114,6 +123,15 @@ grammar. Anything load-bearing is `required` even when the call reads awkwardly.
 
 Six tools unattended, three of which write. `ARCHIVIST_TOOLS` is 12 and works on this
 model; `JERV_TOOLS` is ~45 and is where reliability visibly degrades.
+
+`resolve_entity` / `assert_fact` read **both** rather than "unattended" because the
+on-reply set is a superset and the reply turn has to reach them — which means being BOUND
+on the chat registry, not merely allowlisted. They shipped allowlisted and unbound (the
+chat registry dropped their sidecars), so a reply turn was offered neither and its only
+write verb was `correct_fact`, whose empty-address path pins. Every fact the owner taught
+a note thread was pinned against future supersession. They now bind through the
+conversation row the way `ask_owner` does; `NEVER_DEFAULT` plus the allowlist is what
+keeps them off every other persona, which is what was doing the real work anyway.
 
 ## Schema decisions worth defending
 
@@ -133,7 +151,15 @@ model; `JERV_TOOLS` is ~45 and is where reliability visibly degrades.
 - **`correct_fact` addresses by identity key** `(entity, predicate, qualifier)`, not by
   fact id — `read_entity`'s `_edge_line` prints no fact id (`readtools.py:596-604`), so
   id-addressing would force a `read_entity` v5 and a second addressing vocabulary. On a
-  multi-row key the handler mints `f1`/`f2` handles and the model retries.
+  multi-row key the handler LISTS what is live and refuses. It shipped with an `f1`/`f2`
+  retry under a `replaces` argument; that argument is gone, because the only keys that
+  hold several live rows are non-functional relationships, which are exactly the keys
+  `decide()`'s correction branch skips — and a set-valued edge's identity is its object
+  (`_facts_at_key`), so the retry added a third edge and reported a replacement.
+- **`correct_fact.object` may be an entity id**, and it is resolved and adopted as a
+  handle before the write, under the turn's own read scopes. The write path addresses
+  entities by handle and nothing else, so an id passed through raw resolved to nothing and
+  was stored as a literal VALUE on a pinned row.
 - **A batch never rolls back its successful elements.** Per-element savepoint; element 4
   failing must not undo 1–3, or whole-note atomicity returns through the side door.
 
