@@ -38,11 +38,20 @@ budgets and the handle table, so building one per call makes both inert — whic
 consecutive correction.
 
 **The correction itself is one flag, not a mechanism.** `ExtractedFact.correction` is
-what survives from the retired correction-note path (D11), and `supersession.decide()`
-is where it means anything: on a single-head address it supersedes every current head
-and commits active + pinned regardless of temporal order. So `correct_fact` writes
-through the same `commit_facts` `assert_fact` does, sets that one field, and reports what
-`decide()` did. `decide()` never becomes a model-facing verb (constraint 5).
+the field D11 keeps, and `supersession.decide()` is where it means anything: on a
+single-head address it supersedes every current head and commits active + pinned
+regardless of temporal order. So `correct_fact` writes through the same `commit_facts`
+`assert_fact` does, sets that one field, and reports what `decide()` did. `decide()`
+never becomes a model-facing verb (constraint 5).
+
+**`correct_fact` is not `file_correction` under another name, and the two do not merge.**
+It addresses ONE identity key resolved against the graph, refuses a key holding several
+live rows, and works only inside a note conversation — while the wiki's correction lever
+takes PROSE from a Talk thread or a lint card, in a place with no note conversation at
+all, and its whole point is to leave a NOTE behind: the citable source
+`wiki_citations.chunk_id` (NOT NULL) needs and the corpus rebuild re-derives the graph
+from. So `file_correction` keeps minting the note; what it lost with `integrate_note` is
+only the flag, and `graphwritetools.NoteTarget.is_correction` sets it now.
 
 **`merge_entities` can only ever STAGE** (constraint 12). A fold is a full-owner write —
 `merge_entity_pair` asks Postgres `app.is_full_owner()` before any statement, because RLS
@@ -277,6 +286,12 @@ def build_reply_write_handlers(
                 domain=note.domain,
                 captured_at=note.created_at,
                 tz_offset_minutes=note.tz_offset_minutes,
+                # Carried on the reply turn for the same reason the unattended pass
+                # carries it: a correction note's attested facts are the owner
+                # out-arguing the graph whichever turn reads them, and the old path
+                # elevated per NOTE, not per pass. `correct_fact` is unaffected — it
+                # passes `correction=True` outright.
+                provenance=note.provenance,
             ),
             # The owner at FULL scope, exactly as the unattended writes run (constraint
             # 2): resolution layer 1 carries no domain predicate, and a floored fact write

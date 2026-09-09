@@ -6,6 +6,13 @@ they file the inputs the builder re-derives from.
 - file_correction: mint an owner-authored correction note (provenance=owner_correction) and drive
   ingestion — its surface-attested facts force-supersede + pin the conflicting head (Wave A+), and
   the rebuilt article reflects the correction. The owner "out-argues the wiki."
+  **What turns the provenance into that force-supersede is no longer the arbiter.** It was
+  `analysis/pipeline.integrate_note` reading the provenance and calling
+  `plan_intent(correction=True)`; both are W5a's deletion. The note's own agent conversation now
+  carries the rule — `graphwritetools.NoteTarget.is_correction` — so this tool keeps minting the
+  NOTE, which is the part `correct_fact` cannot replace: a citable, re-derivable source with real
+  chunks behind `wiki_citations.chunk_id` (NOT NULL) rather than a triple typed into a thread that
+  has no note of its own.
 - add_source_exclusion: suppress a note as a source for an article (or globally) and queue a
   rebuild so the article is re-derived without it. Not deletion, not retraction — just un-sourced.
 - request_rebuild: queue a full re-derive of one article on demand.

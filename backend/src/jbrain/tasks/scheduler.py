@@ -35,9 +35,16 @@ _SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
+    """The owner principal's id, AS A STRING — which the annotation always claimed and
+    the body did not deliver: `app.principals.id` is a `uuid` column, so asyncpg hands
+    back a `uuid.UUID`, and a `SessionContext` built from one dies in `scoped_session`'s
+    `set_config` ("expected str, got UUID"). `tasks_tick` wrapped it defensively at its
+    own call site; every caller that trusted the signature — `note_converse`'s owner
+    resolver among them — did not."""
     async with scoped_session(maker, _SYSTEM_OWNER) as session:
         sql = text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1")
-        return (await session.execute(sql)).scalar()
+        found = (await session.execute(sql)).scalar()
+        return None if found is None else str(found)
 
 
 async def tasks_tick(
