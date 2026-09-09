@@ -182,6 +182,34 @@ def test_update_marks_worktree_safe_before_pull() -> None:
     assert safe < pull, "safe.directory must be set before the pull"
 
 
+def test_source_refresh_prunes_stale_remote_refs() -> None:
+    # A bare `git fetch origin` exits non-zero when a remote-tracking ref left by a
+    # deleted branch collides with a later branch that needs its name, and under
+    # `set -eu` that aborts the whole deploy — leaving the box on stale code with no
+    # way to recover it, since the owner has no shell to run git's suggested
+    # `git remote prune origin`. Both source refreshes must prune as they fetch.
+    for name in ("update-inner.sh", "refresh-inner.sh"):
+        text = (DEPLOY / name).read_text()
+        assert "git -C src fetch --prune origin" in text, (
+            f"{name} must prune while fetching, or one stale ref bricks the deploy"
+        )
+        assert "git -C src fetch origin\n" not in text, (
+            f"{name} still has an unpruned fetch"
+        )
+
+
+def test_update_rebuilds_remote_refs_when_prune_is_not_enough() -> None:
+    # Pruning clears the common collision, but not one between two refs the remote
+    # still has. The last resort is to drop every remote-tracking ref and refetch —
+    # they are wholly re-derivable, and it is the only recovery that cannot leave a
+    # directory/file collision behind. Without it a wedged ref store is unrecoverable
+    # remotely.
+    text = (DEPLOY / "update-inner.sh").read_text()
+    assert "for-each-ref" in text and "update-ref -d" in text, (
+        "update-inner.sh must be able to rebuild remote-tracking refs from scratch"
+    )
+
+
 def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     # The LLM gateway pins its resident model set (~91 GB) in unified memory and is
     # profile-gated, so the update's plain `up -d` never recreates it — it would sit

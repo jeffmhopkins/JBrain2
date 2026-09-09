@@ -34,7 +34,10 @@ git config --global --add safe.directory "$PWD/src"
 # Mirror the remote exactly rather than `pull --ff-only`, for the same reason the update
 # does: a deploy box should never diverge, and if it has, ff-only would abort and pin the
 # stack to stale source. `@{u}` is the tracked upstream — there is no ref to pass in.
-git -C src fetch origin
+# `--prune` for the same reason the full update prunes: a stale remote-tracking ref
+# collides with a later branch that needs its name, and a bare fetch exits non-zero and
+# takes the whole refresh down with it (update-inner.sh has the long version).
+git -C src fetch --prune origin
 git -C src reset --hard "@{u}"
 echo "[refresh] source now at $(git -C src rev-parse HEAD)"
 
