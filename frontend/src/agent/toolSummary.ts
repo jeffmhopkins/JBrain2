@@ -226,7 +226,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   file_correction: ["body"],
   // The W3 write tools batch (TOOL_SURFACE.md: ≤12 surfaces, ≤8 facts per call), so
   // their one legible target is an ARRAY — `inlinePiece` renders those elementwise.
-  resolve_entity: ["surfaces"],
+  resolve_entity: ["entities"],
   assert_fact: ["facts"],
   ask_owner: ["question"],
   propose_correction: ["correction"],

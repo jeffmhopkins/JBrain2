@@ -33,7 +33,7 @@ _SYNTHETIC = {"queued"}
 # `assert_fact` as a raw snake_case row. So these are allowed to be polished ahead of
 # their sidecar — and the assertion below is self-clearing: the moment a sidecar lands,
 # this test says to delete the name from here.
-_FORWARD = {"resolve_entity", "assert_fact", "ask_owner", "prefs_read", "prefs_write"}
+_FORWARD = set()
 
 
 def test_forward_entries_are_deleted_once_their_sidecar_lands() -> None:

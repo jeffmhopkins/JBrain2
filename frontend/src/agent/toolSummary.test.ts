@@ -172,7 +172,16 @@ describe("the note-conversation write tools", () => {
     const step = toolStep(
       tool({
         name: "resolve_entity",
-        args: { surfaces: ["Priya", "the shop", "Dr. Okafor", "Me"] },
+        // The real sidecar takes `entities`, an array of {surface, kind} — this fixture
+        // guessed a flat `surfaces` before the tool existed.
+        args: {
+          entities: [
+            { surface: "Priya", kind: "person" },
+            { surface: "the shop", kind: "place" },
+            { surface: "Dr. Okafor", kind: "person" },
+            { surface: "Me", kind: "person" },
+          ],
+        },
       }),
     );
     expect(step.inline).toBe("Priya, the shop, Dr. Okafor +1");
