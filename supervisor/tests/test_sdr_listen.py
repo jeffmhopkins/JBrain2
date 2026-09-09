@@ -3519,17 +3519,35 @@ def test_a_session_defaults_to_the_modes_widest_filter(
     # widths a redeployed box had stopped accepting.
     assert info.bandwidths_hz == (8_000, 6_000, 4_000, 3_000)
     assert info.as_dict()["bandwidths_hz"] == [8_000, 6_000, 4_000, 3_000]
+    # ...and the BOUNDS the presets sit inside. The drag runs anywhere in the range, so
+    # the client needs the range and not just the menu — from the box, for the same
+    # reason it does not hold its own ladder.
+    assert (info.bandwidth_min_hz, info.bandwidth_max_hz) == demod.BANDWIDTH_RANGE_HZ[
+        "am"
+    ]
+    assert info.bandwidth_step_hz == demod.BANDWIDTH_STEP_HZ
 
 
-def test_a_width_that_is_not_on_the_ladder_is_refused() -> None:
+def test_a_width_outside_the_range_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     """Refused, never clamped.
 
     Clamping would leave the radio listening at a width other than the one on screen,
     and a filter doing something other than what the owner believes is exactly the
-    failure this control exists to end."""
+    failure this control exists to end.
+
+    Inside the range anything on the grid is allowed, because the owner drags the
+    passband edge on the picture: "narrower than that station" is a position, not one of
+    four menu entries."""
+    _idle(monkeypatch)
+    low, high = demod.BANDWIDTH_RANGE_HZ["am"]
+    ok = listen.Session(5_000_000, "am", None, bandwidth_hz=5_000)
+    ok.stop()
+    assert ok.bandwidth_hz == 5_000, "a width no preset names must still be allowed"
     with pytest.raises(listen.SdrError) as bad:
-        listen.Session(5_000_000, "am", None, bandwidth_hz=5_000)
-    assert "8000" in str(bad.value)
+        listen.Session(5_000_000, "am", None, bandwidth_hz=high + 1_000)
+    assert str(high) in str(bad.value)
+    with pytest.raises(listen.SdrError, match="multiple"):
+        listen.Session(5_000_000, "am", None, bandwidth_hz=low + 50)
     # Anything that is not a number: the value comes off a JSON body, so a list or a
     # dict reaches this function as readily as an int does, and `int()` of one raises
     # TypeError rather than the sentence the owner needs.
@@ -3564,6 +3582,7 @@ def test_a_spectrum_session_reports_no_bandwidth(
     info = session.info()
     assert info.bandwidth_hz == 0
     assert info.bandwidths_hz == ()
+    assert (info.bandwidth_min_hz, info.bandwidth_max_hz) == (0, 0)
 
 
 def test_the_width_survives_a_retune_and_resets_on_a_mode_change(

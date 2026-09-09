@@ -679,7 +679,8 @@ def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
     whole reason this parameter exists is that a filter doing something other than what
     the owner believes is very hard to hear and impossible to see."""
     ladder = bandwidths_for(mode)
-    if not ladder:
+    bounds = demod.BANDWIDTH_RANGE_HZ.get(mode.lower())
+    if not ladder or bounds is None:
         raise SdrError(f"unknown mode {mode!r}")
     if bandwidth_hz is None:
         return ladder[0]
@@ -693,10 +694,15 @@ def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
         want = int(bandwidth_hz)
     except ValueError:
         raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz") from None
-    if want not in ladder:
+    low, high = bounds
+    if not low <= want <= high:
         raise SdrError(
-            f"{mode.lower()} has no {want} Hz filter "
-            f"(want one of {', '.join(str(w) for w in ladder)})"
+            f"{mode.lower()} filters run {low}-{high} Hz wide, not {want}"
+        )
+    if want % demod.BANDWIDTH_STEP_HZ:
+        raise SdrError(
+            f"a filter width must be a multiple of {demod.BANDWIDTH_STEP_HZ} Hz, "
+            f"and {want} is not"
         )
     return want
 
@@ -1265,6 +1271,13 @@ class SessionInfo:
     #: PWA holding its own copy would offer widths a redeployed box had stopped
     #: accepting, and the refusal would arrive as a 400 the owner cannot act on.
     bandwidths_hz: tuple[int, ...] = ()
+    #: The narrowest and widest this mode will build, and the grid a width must land on.
+    #: The presets above are quick picks INSIDE this; the drag on the tuning view runs
+    #: anywhere in it, so the client needs the bounds rather than just the menu — and it
+    #: needs them from the box, for the same reason it does not hold its own ladder.
+    bandwidth_min_hz: int = 0
+    bandwidth_max_hz: int = 0
+    bandwidth_step_hz: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1283,6 +1296,9 @@ class SessionInfo:
             "overflows": self.overflows,
             "bandwidth_hz": self.bandwidth_hz,
             "bandwidths_hz": list(self.bandwidths_hz),
+            "bandwidth_min_hz": self.bandwidth_min_hz,
+            "bandwidth_max_hz": self.bandwidth_max_hz,
+            "bandwidth_step_hz": self.bandwidth_step_hz,
         }
 
 
@@ -2942,6 +2958,7 @@ KISSPORT {self.kiss_port}
     def info(self) -> SessionInfo:
         with self._lock:
             listeners = len(self._subs)
+        bounds = demod.BANDWIDTH_RANGE_HZ.get(self.mode, (0, 0))
         return SessionInfo(
             session_id=self.id,
             frequency_hz=self.frequency_hz,
@@ -2960,6 +2977,9 @@ KISSPORT {self.kiss_port}
             # screen that has nothing to apply it to.
             bandwidth_hz=0 if self.sweep is not None else self.bandwidth_hz,
             bandwidths_hz=() if self.sweep is not None else bandwidths_for(self.mode),
+            bandwidth_min_hz=0 if self.sweep is not None else bounds[0],
+            bandwidth_max_hz=0 if self.sweep is not None else bounds[1],
+            bandwidth_step_hz=0 if self.sweep is not None else demod.BANDWIDTH_STEP_HZ,
         )
 
 

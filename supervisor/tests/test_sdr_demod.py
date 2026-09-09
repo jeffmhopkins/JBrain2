@@ -1013,17 +1013,60 @@ def test_a_narrow_ssb_filter_rejects_a_tone_past_its_edge():
     assert levels[3_100] - levels[1_800] > 25.0, levels
 
 
-def test_an_off_ladder_bandwidth_is_refused():
-    """Every width this ships is one a test has measured; anything else is refused.
+def test_a_width_outside_the_range_is_refused():
+    """Bounded, never clamped. A clamped width would leave the radio listening at
+    something other than the number on screen, which is the failure this control exists
+    to end — and it is one nobody can see or hear.
 
-    A free-running number would ship filter designs nobody has evaluated, and a bad one
-    does not crash — it just sounds slightly wrong, in a way only the owner's ear
-    ever sees."""
+    Between the bounds anything on the grid is allowed: the owner drags the passband
+    edge on the picture and it has to land where they put it, which is a position rather
+    than a menu choice."""
     demod = _load()
-    with pytest.raises(demod.DemodError) as bad:
-        demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_000)
-    # The refusal has to say what WOULD work: this reaches the owner through the API.
-    assert "8000" in str(bad.value) and "3000" in str(bad.value)
+    low, high = demod.BANDWIDTH_RANGE_HZ["am"]
+    # A width no preset names is fine, because the drag can ask for it.
+    assert demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_000).bandwidth_hz == 5_000
+    for outside in (low - demod.BANDWIDTH_STEP_HZ, high + demod.BANDWIDTH_STEP_HZ):
+        with pytest.raises(demod.DemodError) as bad:
+            demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=outside)
+        # The refusal says what WOULD work: this reaches the owner via the API.
+        assert str(low) in str(bad.value) and str(high) in str(bad.value)
+
+
+def test_a_width_off_the_grid_is_refused():
+    """100 Hz, not 1 kHz: SSB's 2.4 and NFM's 12.5 are 100 Hz multiples and neither is a
+    1 kHz one, so a coarser grid would put the classic filters out of reach of the very
+    control meant to offer them."""
+    demod = _load()
+    with pytest.raises(demod.DemodError, match="multiple"):
+        demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_050)
+    # ...and every preset is on the grid, or the ladder offers what the box refuses.
+    for mode, ladder in demod.BANDWIDTH_HZ.items():
+        low, high = demod.BANDWIDTH_RANGE_HZ[mode]
+        for width in ladder:
+            assert width % demod.BANDWIDTH_STEP_HZ == 0, (mode, width)
+            assert low <= width <= high, (mode, width)
+
+
+def test_every_width_on_the_grid_builds_a_real_filter():
+    """The range replaced a ladder, so the guarantee has to cover the range.
+
+    Walked at 1 kHz — the step the drag actually produces — asserting each chain builds
+    and its channel filter passes its own edge. A width that raised, or that quietly
+    came out attenuating its own passband, would reach the owner as a filter that
+    sounds wrong at one setting and fine at the next."""
+    demod = _load()
+    for mode, (low, high) in demod.BANDWIDTH_RANGE_HZ.items():
+        for width in range(low, high + 1, 1_000):
+            built = demod.Demodulator(mode, CAPTURE_HZ, bandwidth_hz=width)
+            assert built.bandwidth_hz == width, (mode, width)
+            assert built.channel_half_hz <= built.crop_reach_hz, (mode, width)
+            channel = built._build_channel()
+            if channel is None:  # wide FM: the front end is its own channel filter
+                continue
+            freqs = np.fft.rfftfreq(4096, 1.0 / built.if_rate_hz)
+            resp = np.abs(np.fft.rfft(channel._taps[::-1].real, 4096))
+            at_edge = resp[np.argmin(np.abs(freqs - built.channel_half_hz))]
+            assert 20.0 * np.log10(at_edge / resp[0]) > -6.5, (mode, width)
 
 
 def test_the_picture_does_not_zoom_when_the_filter_narrows():

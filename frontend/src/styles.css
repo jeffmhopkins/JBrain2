@@ -26492,6 +26492,9 @@ button.wf-sigpill {
   position: absolute;
   top: 0;
   bottom: 0;
+  /* The TOUCH target stays wide — a 12px one on a 32 kHz picture is a miss most tries.
+     What shrank is the grip drawn inside it, which at 12x28 covered a chunk of the trace
+     it is meant to sit beside and read as furniture rather than as an edge. */
   width: 28px;
   margin-left: -14px;
   padding: 0;
@@ -26506,14 +26509,14 @@ button.wf-sigpill {
 .sdr-edge::after {
   content: "";
   position: absolute;
-  left: 8px;
+  left: 11px;
   top: 50%;
-  margin-top: -14px;
-  width: 12px;
-  height: 28px;
-  border-radius: 4px;
+  margin-top: -9px;
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
   background: var(--accent);
-  opacity: 0.9;
+  opacity: 0.95;
 }
 .sdr-edge:disabled {
   cursor: default;
@@ -26524,7 +26527,9 @@ button.wf-sigpill {
 .sdr-edge-on::after,
 .sdr-edge:focus-visible::after {
   opacity: 1;
-  box-shadow: 0 0 0 4px var(--steel-tint);
+  /* Grows only while held, so the grip is findable under a fingertip without being
+     furniture the rest of the time. */
+  box-shadow: 0 0 0 5px var(--steel-tint);
 }
 .sdr-edge-live {
   position: absolute;

@@ -683,6 +683,9 @@ describe("the bandwidth control", () => {
     mode: "am",
     bandwidth_hz: 8000,
     bandwidths_hz: [8000, 6000, 4000, 3000],
+    bandwidth_min_hz: 2000,
+    bandwidth_max_hz: 8000,
+    bandwidth_step_hz: 100,
   };
 
   it("shows the width under the mode it belongs to, and only there", () => {
@@ -745,6 +748,9 @@ describe("the bandwidth control", () => {
       mode: "wbfm",
       bandwidth_hz: 180_000,
       bandwidths_hz: [180_000],
+      // min === max: there is nothing to choose, which is how wide FM says so.
+      bandwidth_min_hz: 180_000,
+      bandwidth_max_hz: 180_000,
     };
     const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(fixed);
     render(<SdrTunerControls listening={fixed} onReleased={() => {}} />);

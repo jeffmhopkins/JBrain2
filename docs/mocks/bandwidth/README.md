@@ -50,7 +50,13 @@ The ladder is per-mode, and wide FM has no control at all — a broadcast FM
 station is ~180 kHz wide, so narrowing clips the deviation and distorts rather
 than cleans.
 
-| Mode | Ladder (full channel width) |
+> **Superseded in part, 2026-09-09 (on air).** The ladder below is now the set of QUICK
+> PICKS, not the whole contract: a drag snaps to whole kilohertz anywhere inside a
+> per-mode range (`demod.BANDWIDTH_RANGE_HZ`), because "narrower than that station" is a
+> position rather than a menu choice. Each range's ceiling is its widest preset here. The
+> shapes and the chosen one are unchanged.
+
+| Mode | Quick picks (full channel width) |
 | --- | --- |
 | AM | 8 / 6 / 4 / 3 kHz |
 | NFM | 16 / 12.5 / 8 kHz |
