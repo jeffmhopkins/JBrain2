@@ -186,6 +186,25 @@ def passband_for(mode: str, bandwidth_hz: float) -> tuple[float, float]:
     return (-bandwidth_hz / 2.0, bandwidth_hz / 2.0)
 
 
+#: The picture widths the owner can choose between, per mode, in Hz — widest last so a
+#: zoom control reads left-to-right as it looks. Every entry must fit inside the mode's
+#: `max_span_hz`, which `test_every_view_span_fits_the_picture_it_crops` is what holds.
+#:
+#: **A span is a CROP, never a rebuild.** It changes how much of the row `_tuning_frame`
+#: keeps and nothing else — no filter is redesigned, no chain is replaced, and the audio
+#: does not stop. That is why these are bounded by what the existing chain already
+#: supplies rather than by what a wider one could: a zoom that clicked the audio would be
+#: a zoom nobody uses twice.
+VIEW_SPAN_HZ: dict[str, tuple[int, ...]] = {
+    "fm": (8_000, 16_000, 32_000),
+    "nfm": (8_000, 16_000, 32_000),
+    "am": (8_000, 16_000, 32_000),
+    "usb": (6_000, 12_000, 24_000),
+    "lsb": (6_000, 12_000, 24_000),
+    "wbfm": (120_000, 240_000, 360_000),
+}
+
+
 def channel_half_for(mode: str, bandwidth_hz: float) -> float:
     """The channel filter's half-width — the FILTER, not the passband.
 
@@ -764,6 +783,19 @@ class Demodulator:
             self.view_rate_hz *= 2
         #: ...and how much of it the front end keeps flat.
         self.view_half_hz = max(self.channel_half_hz, VIEW_SHARE * self.view_rate_hz)
+        #: How wide a picture this chain can be cropped to, at most — everything the
+        #: front end keeps flat. Past it the picture would be drawn out of the anti-alias
+        #: filter's own skirt, which is a station that is not there.
+        self.max_span_hz = 2.0 * self.view_half_hz
+        #: The picture's DEFAULT width: four times the widest filter, which is where it
+        #: has always sat — snapped to the nearest rung of this mode's ladder so the zoom
+        #: control opens with something selected rather than with the owner's current
+        #: width sitting between two of its buttons. On SSB that moves the default from
+        #: 13.6 to 12 kHz, which is the only mode where the two disagree.
+        want = min(4.0 * self.crop_reach_hz, self.max_span_hz)
+        self.view_span_hz = float(
+            min(VIEW_SPAN_HZ[key], key=lambda span: abs(span - want))
+        )
         deviation = FM_DEVIATION_HZ.get(key)
         self._gain = FM_HEADROOM * if_rate / (2.0 * deviation) if deviation else 1.0
 

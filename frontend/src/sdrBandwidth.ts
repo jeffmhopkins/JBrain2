@@ -44,14 +44,16 @@ export function widthFromOffset(mode: string, offsetHz: number): number {
   return away * 2;
 }
 
-/** How coarsely a DRAG lands: whole kilohertz.
+/** How coarsely a DRAG lands: half a kilohertz.
  *
- *  Not the box's own grid, which is 100 Hz — that finer step exists so the named
- *  presets stay reachable (SSB's 2.4 and NFM's 12.5 are neither of them whole
- *  kilohertz). A finger on a phone cannot place 100 Hz on a 32 kHz picture, and letting
- *  it try produces a width that reads as a typo. Whole kilohertz is what the owner asked
- *  for, and every value it produces is one the box accepts. */
-export const DRAG_STEP_HZ = 1000;
+ *  Not the box's own grid, which is 100 Hz — that finer step exists so the named presets
+ *  stay reachable (SSB's 2.4 and NFM's 12.5 are neither of them whole kilohertz). 500 Hz
+ *  is a multiple of it, so everything this produces is a width the box accepts.
+ *
+ *  Was 1 kHz, and on air that was still too coarse: 500 Hz is about 5 px on a 32 kHz
+ *  picture, which a fingertip can place, and on SSB it is the difference between 2.4 and
+ *  2.9 — two filters that sound quite different. */
+export const DRAG_STEP_HZ = 500;
 
 /** The width a drag to `wantHz` should commit, snapped to `DRAG_STEP_HZ` and held
  *  inside `[minHz, maxHz]`.

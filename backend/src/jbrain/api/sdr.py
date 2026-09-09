@@ -902,6 +902,32 @@ async def tune(
     return await _post(settings, "/listen/tune", body)
 
 
+#: Bounds for the picture width, as `MIN_BANDWIDTH_HZ` is for the filter: loose enough
+#: for every ladder the sidecar offers (6 kHz to 360 kHz today), tight enough that
+#: nonsense is a 422 here rather than a round trip. Which exact widths are real stays the
+#: sidecar's to say — it owns the ladders and what its chain can actually supply.
+MIN_VIEW_SPAN_HZ = 1_000
+MAX_VIEW_SPAN_HZ = 2_000_000
+
+
+@router.post("/view")
+async def view_span(
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    span_hz: Annotated[int, Query(ge=MIN_VIEW_SPAN_HZ, le=MAX_VIEW_SPAN_HZ)],
+    session_id: Annotated[str | None, Query(max_length=32)] = None,
+) -> dict[str, Any]:
+    """Set how wide the tuning picture is drawn. **Not a retune.**
+
+    Its own route rather than a `/tune` parameter because it is not a retune: `/tune`
+    rebuilds the demodulator, which is right for a filter change and wrong for a zoom —
+    it would click the audio every time the owner changed magnification."""
+    body: dict[str, Any] = {"span_hz": span_hz}
+    if session_id is not None:
+        body["session_id"] = session_id
+    return await _post(settings, "/listen/view", body)
+
+
 @router.post("/stop")
 async def stop(
     settings: SettingsDep,

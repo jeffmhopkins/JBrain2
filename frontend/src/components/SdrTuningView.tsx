@@ -314,6 +314,9 @@ export function SdrTuningView({
   bandwidthHz = 0,
   minHz = 0,
   maxHz = 0,
+  viewSpanHz = 0,
+  viewSpans = [],
+  onViewSpan,
   onBandwidth,
 }: {
   /** What the radio is tuned to. Passed rather than read off the row: the row is
@@ -329,6 +332,12 @@ export function SdrTuningView({
   bandwidthHz?: number;
   minHz?: number;
   maxHz?: number;
+  /** How wide the picture is drawn, and the widths this mode offers. Changing it is a
+   *  CROP on the box — no rebuild, no click in the audio — so unlike the bandwidth it
+   *  can be tapped freely while listening. */
+  viewSpanHz?: number;
+  viewSpans?: number[];
+  onViewSpan?: ((hz: number) => void) | undefined;
   /** Set a new width. Absent where the filter cannot be changed — a spectrum stare, or
    *  wide FM, where narrowing clips the deviation and distorts rather than cleans. */
   onBandwidth?: ((hz: number) => void) | undefined;
@@ -504,6 +513,16 @@ export function SdrTuningView({
     if (!holdingRef.current) setDragHz(null);
   }, [bandwidthHz]);
 
+  // The zoom, which is a ladder rather than a range: a magnification has no equivalent
+  // of "narrower than that station" to place by eye.
+  const zoomable = onViewSpan !== undefined && viewSpans.length > 1;
+  const stepZoom = () => {
+    const at = viewSpans.indexOf(viewSpanHz);
+    // Wraps rather than stopping, because a tap-to-cycle control that dead-ends looks
+    // broken — there is no second button here to go back with.
+    onViewSpan?.(viewSpans[(at + 1) % viewSpans.length] as number);
+  };
+
   const dragging = onBandwidth !== undefined && span > 0;
   const shownHz = dragHz ?? bandwidthHz;
   const edges = dragging && demodMode ? bandwidthEdges(demodMode, shownHz) : null;
@@ -517,9 +536,24 @@ export function SdrTuningView({
       <p className="sdr-label tv-label">
         Tuning
         <span className="tv-span">
-          {span > 0
-            ? `${kHz(span)} kHz view · ${kHz(edges ? edges.highHz - edges.lowHz : (row?.passbandHz ?? 0))} kHz passband`
-            : "waiting for the radio"}
+          {span > 0 ? (
+            <>
+              {/* The label IS the zoom. A tap steps to the next width and wraps, which
+                  is affordable here and nowhere else on this sheet: the box answers by
+                  cropping the next frame, so there is no rebuild and no click — a
+                  bandwidth button could not behave this way. */}
+              {zoomable ? (
+                <button type="button" className="tv-zoom" onClick={stepZoom}>
+                  {kHz(span)} kHz view
+                </button>
+              ) : (
+                `${kHz(span)} kHz view`
+              )}
+              {` · ${kHz(edges ? edges.highHz - edges.lowHz : (row?.passbandHz ?? 0))} kHz passband`}
+            </>
+          ) : (
+            "waiting for the radio"
+          )}
         </span>
       </p>
       <div className={`tv-chart${dragging ? " sdr-tuneview" : ""}`} ref={chartRef}>
