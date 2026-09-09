@@ -175,6 +175,52 @@ describe("FullBrainSurface", () => {
     expect(links.some((b) => b.classList.contains("entity-chip"))).toBe(true);
   });
 
+  // D3 of AGENT_INGEST_CONVERSATION_PLAN: every tool call is visible as a step,
+  // EXPANDABLE to what changed — and it renders from the PERSISTED TURN, so a
+  // conversation reopened days later (no event stream) says exactly what it said live.
+  it("replays a graph write on reopen: the step names it, and expands to what changed", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "[CAPTURED NOTE] Started 10mg Tuesday.", tools: [] },
+        {
+          role: "assistant",
+          content: "Recorded.",
+          tools: [
+            {
+              id: "c1",
+              name: "assert_fact",
+              ok: true,
+              sources: [],
+              facts: [
+                {
+                  kind: "fact",
+                  fact_id: "f1",
+                  label: "Me takes lisinopril 10mg",
+                  domain: "health",
+                  status: "written",
+                  predicate: "takes",
+                  value: "lisinopril 10mg",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
+
+    // The collapsed row names the write AND its domain in words — no tap needed to
+    // see that a health fact was written.
+    const row = await screen.findByRole("button", { name: /Recorded what the note says/ });
+    expect(row).toHaveTextContent("1 written · health");
+    // Expanding it shows what changed.
+    fireEvent.click(row);
+    expect(screen.getByText("entities modified")).toBeInTheDocument();
+    expect(screen.getByText("lisinopril 10mg")).toBeInTheDocument();
+  });
+
   it("replays a turn's tool view (e.g. a list_card)", async () => {
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> => [

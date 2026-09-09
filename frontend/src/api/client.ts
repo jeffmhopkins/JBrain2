@@ -1387,6 +1387,31 @@ export const FILTER_STATUS: Record<ReviewFilter, "open" | "resolved"> = {
   decided: "resolved",
 };
 
+/** One row of the review inbox's NOTES tab (D4 of AGENT_INGEST_CONVERSATION_PLAN) —
+ * an ingestion question or a staged approval waiting on the owner.
+ *
+ * There is deliberately no `id` and no action here. The row is a redirect: it carries
+ * the `session_id` to open and nothing a decision could be posted against, because the
+ * conversation is the only place ingestion is decided. The wire shape is what enforces
+ * that, not the screen. */
+export interface NotesInboxRow {
+  kind: "question" | "approval";
+  session_id: string;
+  /** The session's persona, so the redirect flips to the conversation tab that hosts
+   * it before opening the thread. */
+  agent: string;
+  note_id: string | null;
+  domain: string;
+  quote: string;
+  ask: string | null;
+  captured_at: string | null;
+  waiting_since: string;
+  committed: number;
+  /** A first pass still reading: listed so the note is visibly in hand, uncounted
+   * because nothing is waiting on the owner yet. */
+  live: boolean;
+}
+
 export interface BatchDecision {
   id: string;
   action: string;
@@ -3340,6 +3365,13 @@ export const api = {
   async reviewQueue(status: "open" | "resolved" | "deferred" = "open"): Promise<ReviewQueue> {
     const response = await request(`/api/review?status=${status}`);
     return (await response.json()) as ReviewQueue;
+  },
+
+  // The notes tab: ingestion questions and staged approvals, oldest wait first. A
+  // READ ONLY — there is no sibling call that answers one, by design (D4).
+  async notesInbox(): Promise<{ items: NotesInboxRow[] }> {
+    const response = await request("/api/review/notes");
+    return (await response.json()) as { items: NotesInboxRow[] };
   },
 
   // Skip is client-side only (cycle to the back of the local queue) — there

@@ -22,6 +22,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -281,3 +282,64 @@ async def test_list_open_scopes_to_session_plus_session_less(maker: async_sessio
     chat_a = {s.title for s in await repo.list_open(OWNER, sid_a)}
     assert "from chat A" in chat_a and "from nightly" in chat_a
     assert "from chat B" not in chat_a
+
+
+async def test_list_waiting_approvals_is_the_notes_tabs_half(maker: async_sessionmaker) -> None:
+    """D4/D17: anything staged inside a NOTE CONVERSATION waits on the review inbox's
+    notes tab. An ordinary chat's proposal does not (it keeps that chat's inline
+    approvals) and neither does a background one — it has no thread to redirect to.
+
+    The kind arm (`INSTRUCTION_PROPOSAL_KINDS`) is not exercised here: `owner_prefs` is
+    not yet in `proposals_kind_check`, and the migration that admits it belongs to the
+    wave that ships `prefs_write`. The union is deliberate for exactly that reason —
+    the conversation arm carries the tab until the kind exists."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    sessions = AgentSessionRepo(maker)
+    chat = await sessions.create(owner, domain_scopes=["general"], title="chat")
+    thread = await sessions.create(owner, domain_scopes=["general"], title="note thread")
+
+    # A note conversation over that second session, so the "staged inside a note
+    # conversation" arm has something to match.
+    note_id = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (CAST(:id AS uuid), :cid, 'general', 'seed')"
+            ),
+            {"id": note_id, "cid": f"prop-inbox-{note_id[:12]}"},
+        )
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(s, session_id=thread.id, note_id=note_id, body_sha="sha")
+
+    def one(kind: str, title: str, session_id: str | None) -> ProposalSpec:
+        return ProposalSpec(
+            kind=kind,
+            domain="general",
+            title=title,
+            nodes=[NodeSpec(str(uuid.uuid4()), "leaf", op="add_note", label=title)],
+            session_id=session_id,
+        )
+
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "in a thread", thread.id))
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "an ordinary chat", chat.id))
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "from nightly", None))
+
+    waiting = {w.title: w for w in await repo.list_waiting_approvals(OWNER)}
+    assert "in a thread" in waiting
+    assert "an ordinary chat" not in waiting
+    assert "from nightly" not in waiting
+    # What a redirect needs: the session to open and the persona hosting it.
+    assert waiting["in a thread"].session_id == thread.id
+    assert waiting["in a thread"].agent == "curator"
+
+    # And an APPROVED proposal drops out: it is waiting on the enact, not on a decision.
+    _, nodes = await repo.load(OWNER, next(iter(waiting.values())).id)
+    await repo.decide(OWNER, nodes[0].id, approve=True)
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.proposals SET status = 'approved' WHERE title = 'in a thread'")
+        )
+    assert "in a thread" not in {w.title for w in await repo.list_waiting_approvals(OWNER)}

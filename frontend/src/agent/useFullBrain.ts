@@ -99,6 +99,14 @@ const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
   research: ["jerv", "teacher", "archivist", "jmolt_observer"],
   fullbrain: ["curator", "note_ingest"],
 };
+/** The tab that HOSTS a persona. A handoff (a Tasks run, a notes-tab redirect) has a
+ * session id and its agent, and must flip to the right tab before opening it — an
+ * unknown persona lands in Research, where every non-owner-data agent lives. Derived
+ * from MODE_AGENTS so a persona cannot be listed on one tab and opened on another. */
+export function modeForAgent(agent: string): ConvMode {
+  return MODE_AGENTS.fullbrain.includes(agent) ? "fullbrain" : "research";
+}
+
 /** Which agents the new-chat picker OFFERS, per tab — a subset of MODE_AGENTS.
  * `note_ingest` is deliberately absent: the engine opens a note conversation with a
  * captured note as turn 0, and a hand-started one would be the persona W3 hands the
@@ -220,6 +228,8 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.web_sources?.length ? { webSources: tool.web_sources } : {}),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
+      ...(tool.facts?.length ? { facts: tool.facts } : {}),
+      ...(tool.truncated ? { truncated: true } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
       ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),

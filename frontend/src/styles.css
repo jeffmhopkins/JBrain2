@@ -6571,6 +6571,74 @@ button.small {
   font-size: var(--fs-title);
 }
 
+/* ----- Notes tab (AGENT_INGEST_CONVERSATION_PLAN D4; binding mock
+   docs/mocks/agent-ingest-inbox/a-inbox-holds.html) — a row is a REDIRECT. It reuses
+   the shipped .rrow2/.rrow-open/.rrow-chev row shell wholesale; what is different is
+   only WHAT it carries, because the answer controls the reviewed draft had were
+   removed by the ruling. ----- */
+.nrow-src {
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+/* the note as captured — quoted, so it reads as the owner's words rather than the
+   agent's, and clamped so a long note cannot push the question off the row. */
+.nrow-quote {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.nrow-quote::before {
+  content: "“";
+}
+.nrow-quote::after {
+  content: "”";
+}
+.nrow-ask {
+  font-size: var(--fs-note);
+  color: var(--text);
+  line-height: 1.5;
+}
+.nrow-meta {
+  flex-wrap: wrap;
+}
+.nchip {
+  font-size: var(--fs-micro);
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.nchip-ok {
+  background: var(--green-tint);
+  color: var(--text);
+}
+.nchip-work {
+  background: var(--steel-tint);
+  color: var(--text);
+}
+.nchip-ask {
+  background: var(--amber-tint);
+  color: var(--text);
+}
+/* the decided log's way back into the wiki tab — the same quiet sentence register the
+   empty lanes use, not a third segment (the two tabs are the ruling). */
+.rdecided-link {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  background: none;
+  border: none;
+  text-align: center;
+  cursor: pointer;
+}
+
 /* A thin brand rail flags inference rows so the list carries intentional
    colour instead of reading as flat grey. */
 .rrow-inference {
@@ -9144,6 +9212,89 @@ button.small {
   background: transparent;
   color: var(--text-3);
   font-weight: 400;
+}
+
+/* the "entity modified" rung (AGENT_INGEST_CONVERSATION_PLAN D3) — what a write tool
+   actually did to the graph, inside the step that did it. Same 23px result gutter and
+   same weights as the step's other rungs: this is the Worked block's register, not a
+   card of its own. */
+.fb-shell .fbw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 23px;
+  list-style: none;
+}
+.fb-shell .fbw-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fb-shell .fbw-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10.5px;
+}
+/* what became of the write. Tinted ground with the label in --text (the shipped
+   seg-active recipe), never an accent-coloured word on its own — the WORD is what
+   carries the state, the tint only reinforces it. */
+.fb-shell .fbw-verb {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.fb-shell .fbw-row.fbw-replaced .fbw-verb {
+  background: var(--steel-tint);
+}
+.fb-shell .fbw-row.fbw-held .fbw-verb {
+  background: var(--amber-tint);
+}
+/* the domain, as a dot AND its name — D3's "never colour alone" is the firewall being
+   legible, so the word is not optional decoration beside the dot. */
+.fb-shell .fbw-dom {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+}
+.fb-shell .fbw-src {
+  color: var(--text-3);
+}
+.fb-shell .fbw-row .fact-edge {
+  font-size: 12px;
+}
+.fb-shell .fbw-stmt {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.fb-shell .fbw-row .rdiff {
+  margin-top: 3px;
+}
+.fb-shell .fbw-trunc {
+  padding-left: 23px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--amber);
+}
+/* the row's own one-line summary of the write — the step's count-chip slot, so it
+   truncates with the row rather than wrapping it on a phone. */
+.fb-shell .fbw-cnt {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fbw-cnt.fbw-held {
+  color: var(--amber);
+}
+.fb-shell .fbw-cnt.fbw-failed {
+  color: var(--rose);
 }
 
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).

@@ -14,12 +14,14 @@ import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/clien
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
+import { EntityWrites } from "./EntityWrites";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
+import { stepWriteState, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
@@ -1769,6 +1771,15 @@ function StepRow({
   const hasSources = step.sources.length > 0;
   const hasEntities = step.entities.length > 0;
   const hasWebSources = step.webSources.length > 0;
+  // D3: a graph write is expandable to WHAT CHANGED, in the step that made it. The
+  // rung leads the detail (it is the consequence; the arguments are the request), and
+  // renders for a write tool even when nothing landed.
+  const writes = stepWriteState(step);
+  // In flight or failed, there is nothing to expand to yet: the row's own mark and its
+  // phrase already say "writing…" / "failed", and a rung reading "nothing was written"
+  // over a call still running would be a lie the owner cannot tell from the truth.
+  const hasWrites = writes !== "none" && writes !== "writing" && writes !== "failed";
+  const writeNote = writePhrase(step);
   const hasArgs = step.args != null && Object.keys(step.args).length > 0;
   const summary = step.summary?.trim();
   // The verbatim raw payload is worth a rung only when a friendly result (source
@@ -1809,10 +1820,14 @@ function StepRow({
             {step.webSources.length} result{step.webSources.length === 1 ? "" : "s"}
           </span>
         )}
+        {writeNote !== undefined && (
+          <span className={`fb-step-cnt fbw-cnt fbw-${writes}`}>{writeNote}</span>
+        )}
         <ChevronGlyph className="fb-step-caret" />
       </button>
       <div className="fb-step-detail">
         <div className="fb-step-di">
+          {hasWrites && <EntityWrites facts={step.facts} truncated={step.truncated} />}
           {hasArgs && <ArgsList args={step.args as Record<string, unknown>} />}
           {isErr ? (
             <>

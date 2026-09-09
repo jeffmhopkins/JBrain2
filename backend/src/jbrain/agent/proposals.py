@@ -13,6 +13,7 @@ trusted executor; rationale text in a node is data, never instruction (#1).
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,6 +23,13 @@ from jbrain.db.session import SessionContext, scoped_session
 # A dependency is "satisfied" when the node it points to is approved or already
 # enacted; anything else (pending, rejected, held) leaves it unmet.
 _SATISFIED = frozenset(("approved", "enacted"))
+
+# Proposal kinds that are a change to the owner's STANDING INSTRUCTIONS, and so belong
+# on the review inbox's notes tab rather than only inside the chat that staged them
+# (AGENT_INGEST_CONVERSATION_PLAN D15/D17 — `prefs_write` stages before it writes).
+# A set, not a single string, so W3's `owner_prefs` and any later instructions document
+# land here without a second query being written.
+INSTRUCTION_PROPOSAL_KINDS = frozenset({"owner_prefs"})
 
 
 @dataclass(frozen=True)
@@ -172,6 +180,23 @@ class ProposalSummary:
 
 
 @dataclass(frozen=True)
+class WaitingApproval:
+    """A staged proposal the review inbox's notes tab redirects to (D4/D17). Carries the
+    SESSION, because the tab's whole contract is that tapping a row opens the
+    conversation that staged it — a proposal with no session has no thread to open and
+    is therefore not one of these."""
+
+    id: str
+    kind: str
+    domain: str
+    title: str
+    session_id: str
+    # The session's persona, so the redirect flips to the tab that hosts it first.
+    agent: str
+    staged_at: datetime
+
+
+@dataclass(frozen=True)
 class NodeRow:
     id: str
     parent_id: str | None
@@ -314,6 +339,51 @@ class ProposalRepo:
             ).all()
         return [
             ProposalSummary(str(r.id), r.kind, r.status, r.domain_code, r.title, r.node_count)
+            for r in rows
+        ]
+
+    async def list_waiting_approvals(self, ctx: SessionContext) -> list[WaitingApproval]:
+        """Staged proposals the notes tab redirects to (D4/D17), oldest wait first.
+
+        Two ways in, unioned, because `prefs_write` can fire from either side of the
+        seam: a proposal of an INSTRUCTIONS kind wherever it was staged, and any
+        proposal staged inside a NOTE CONVERSATION whatever its kind. The second is what
+        keeps this honest against a sibling branch naming the kind differently — a
+        staged write the owner can only settle inside a note thread is findable either
+        way.
+
+        `status = 'staged'` only: an `approved` proposal is waiting on the ENACT, not on
+        the owner's decision, and the notes tab is the list of things waiting on them.
+        `session_id IS NOT NULL` is a hard predicate, not a tidy-up: a row here promises
+        a conversation to open, and a background proposal has none — those stay in the
+        unscoped inbox `list_open` serves."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT p.id, p.kind, p.domain_code, p.title, p.session_id,"
+                        " p.created_at, s.agent"
+                        " FROM app.proposals p"
+                        " JOIN app.agent_sessions s ON s.id = p.session_id"
+                        " WHERE p.status = 'staged' AND p.session_id IS NOT NULL"
+                        "   AND (p.kind = ANY(:kinds)"
+                        "        OR EXISTS (SELECT 1 FROM app.note_conversations c"
+                        "                    WHERE c.session_id = p.session_id))"
+                        " ORDER BY p.created_at ASC, p.id ASC"
+                    ),
+                    {"kinds": list(INSTRUCTION_PROPOSAL_KINDS)},
+                )
+            ).all()
+        return [
+            WaitingApproval(
+                id=str(r.id),
+                kind=r.kind,
+                domain=r.domain_code,
+                title=r.title,
+                session_id=str(r.session_id),
+                agent=r.agent,
+                staged_at=r.created_at,
+            )
             for r in rows
         ]
 

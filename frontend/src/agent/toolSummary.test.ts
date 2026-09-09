@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toolStep } from "./toolSummary";
 import type { ToolActivity } from "./transcript";
-import type { EntityRef } from "./types";
+import type { EntityRef, FactWrite } from "./types";
 
 function tool(over: Partial<ToolActivity> & { name: string }): ToolActivity {
   return { id: "c1", ok: true, ...over };
@@ -156,5 +156,56 @@ describe("toolStep", () => {
     expect(step.webSources).toEqual(webSources);
     // A tool that surfaced none gets an empty list, never undefined.
     expect(toolStep(tool({ name: "search" })).webSources).toEqual([]);
+  });
+});
+
+describe("the note-conversation write tools", () => {
+  it("labels them in the owner's terms, never the raw verb", () => {
+    expect(toolStep(tool({ name: "assert_fact" })).label).toBe("Recorded what the note says");
+    expect(toolStep(tool({ name: "resolve_entity" })).label).toBe("Resolved who the note means");
+    expect(toolStep(tool({ name: "ask_owner" })).label).toBe("Asked you a question");
+    expect(toolStep(tool({ name: "prefs_read" })).label).toBe("Read your standing instructions");
+    expect(toolStep(tool({ name: "prefs_write" })).label).toBe("Staged a standing instruction");
+  });
+
+  it("names a BATCHED argument elementwise, capped with a +N", () => {
+    const step = toolStep(
+      tool({
+        name: "resolve_entity",
+        args: { surfaces: ["Priya", "the shop", "Dr. Okafor", "Me"] },
+      }),
+    );
+    expect(step.inline).toBe("Priya, the shop, Dr. Okafor +1");
+  });
+
+  it("names each element of an array of objects by its first legible field", () => {
+    const step = toolStep(
+      tool({
+        name: "assert_fact",
+        args: { facts: [{ subject: "Me", predicate: "takes" }, { subject: "Priya" }] },
+      }),
+    );
+    expect(step.inline).toBe("Me, Priya");
+  });
+
+  it("carries the graph writes and the truncation flag onto the step", () => {
+    const facts: FactWrite[] = [
+      {
+        kind: "fact",
+        fact_id: "f1",
+        label: "Me takes lisinopril",
+        domain: "health",
+        status: "written",
+      },
+    ];
+    const step = toolStep(tool({ name: "assert_fact", facts, truncated: true }));
+    expect(step.facts).toEqual(facts);
+    expect(step.truncated).toBe(true);
+  });
+
+  it("defaults to no writes and not truncated, so a read tool is unaffected", () => {
+    const step = toolStep(tool({ name: "search" }));
+    expect(step.facts).toEqual([]);
+    expect(step.truncated).toBe(false);
   });
 });

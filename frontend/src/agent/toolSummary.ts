@@ -7,7 +7,7 @@
 // cannot ship as a raw snake_case row with no visible target.
 
 import type { SourceRef, ToolActivity } from "./transcript";
-import type { EntityRef, WebSource } from "./types";
+import type { EntityRef, FactWrite, WebSource } from "./types";
 
 export type { SourceRef };
 
@@ -26,6 +26,12 @@ export interface ToolStep {
   /** Entities the tool resolved — rendered as tappable links in the expanded
    * step, so a name reaches its page without exposing the raw id. */
   entities: EntityRef[];
+  /** Graph writes this call made — the D3 "entity modified" rung of the expanded
+   * step. Empty for every tool that writes nothing. */
+  facts: FactWrite[];
+  /** The call asserted only a prefix of what it was given, so its write list is
+   * partial and says so (D3's `truncated`). */
+  truncated: boolean;
   /** The call's arguments, for the expanded-step "arguments" list. */
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
@@ -44,6 +50,14 @@ const STEP_LABELS: Record<string, string> = {
   request_rebuild: "Requested an article rebuild",
   add_source_exclusion: "Excluded a source",
   file_correction: "Filed a correction note",
+  // The note conversation's write surface (AGENT_INGEST_CONVERSATION_PLAN D3/D16).
+  // Labelled in the owner's terms, never the verb's: the step says what the agent did
+  // to the owner's graph, and the expanded rung says what landed and in which domain.
+  resolve_entity: "Resolved who the note means",
+  assert_fact: "Recorded what the note says",
+  ask_owner: "Asked you a question",
+  prefs_read: "Read your standing instructions",
+  prefs_write: "Staged a standing instruction",
   propose_correction: "Staged a proposal",
   propose_merge: "Staged an entity merge",
   // The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3). Plain
@@ -221,6 +235,12 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   lookup_condition: ["name"],
   add_source_exclusion: ["domain", "reason"],
   file_correction: ["body"],
+  // The W3 write tools batch (TOOL_SURFACE.md: ≤12 surfaces, ≤8 facts per call), so
+  // their one legible target is an ARRAY — `inlinePiece` renders those elementwise.
+  resolve_entity: ["surfaces"],
+  assert_fact: ["facts"],
+  ask_owner: ["question"],
+  prefs_write: ["op"],
   propose_correction: ["correction"],
   propose_merge: ["reason"],
   remember: ["body_md"],
@@ -288,6 +308,8 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   "assert_fact",
   "read_note",
   "read_entity",
+  // D15 injects the standing instructions into the prompt; the read takes no argument.
+  "prefs_read",
   "read_wiki",
   "request_rebuild",
   "archivist_memory_read",
@@ -342,12 +364,48 @@ const FALLBACK_KEYS: readonly string[] = [
 // swallow it (matches the backend child-trace clamp in agent/spawn.py).
 const INLINE_PIECES = 2;
 const INLINE_PIECE_LEN = 200;
+// How many elements of a batched argument name themselves on the row before the rest
+// become a "+N". The W3 note-ingest tools take ≤12 surfaces / ≤8 facts per call
+// (TOOL_SURFACE.md), so a batch that printed every element would swallow the row.
+const INLINE_BATCH = 3;
+// The keys a batch ELEMENT is named by, first hit wins — the same "first legible key"
+// rule FALLBACK_KEYS applies to a whole argument map, one level down.
+const BATCH_ELEMENT_KEYS: readonly string[] = [
+  "surface",
+  "name",
+  "subject",
+  "statement",
+  "text",
+  "value",
+];
 
-function inlinePiece(v: unknown): string | undefined {
+function scalarPiece(v: unknown): string | undefined {
   if (typeof v === "number") return String(v);
   if (typeof v !== "string" || !v.trim()) return undefined;
   const s = v.trim();
   return s.length > INLINE_PIECE_LEN ? `${s.slice(0, INLINE_PIECE_LEN)}…` : s;
+}
+
+// One element of a batched argument: a bare string, or the first legible field of an
+// object (the batch shapes W2 measured are arrays of small objects).
+function elementPiece(v: unknown): string | undefined {
+  const scalar = scalarPiece(v);
+  if (scalar) return scalar;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  for (const key of BATCH_ELEMENT_KEYS) {
+    const piece = scalarPiece(o[key]);
+    if (piece) return piece;
+  }
+  return undefined;
+}
+
+function inlinePiece(v: unknown): string | undefined {
+  if (!Array.isArray(v)) return scalarPiece(v);
+  const named = v.map(elementPiece).filter((p): p is string => p !== undefined);
+  if (named.length === 0) return undefined;
+  const shown = named.slice(0, INLINE_BATCH).join(", ");
+  return named.length > INLINE_BATCH ? `${shown} +${named.length - INLINE_BATCH}` : shown;
 }
 
 function inlineArg(name: string, args: Record<string, unknown> | undefined): string | undefined {
@@ -413,6 +471,8 @@ export function toolStep(t: ToolActivity): ToolStep {
     sources,
     webSources: t.webSources ?? [],
     entities: t.entities ?? [],
+    facts: t.facts ?? [],
+    truncated: t.truncated === true,
     args: t.args,
     summary: t.summary,
   };
