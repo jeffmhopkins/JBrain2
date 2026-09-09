@@ -160,8 +160,50 @@ _KIND_HINTS: dict[str, str] = {
     "product": "Product",
     "device": "Device",
     "vehicle": "Vehicle",
+    # The thirteen types the registry declares that had NO word here at all, so a model
+    # could not name them and every such surface degraded to `Thing` — the same silent
+    # "matches no registered type" path the `Drug` fix above was for, reached far more
+    # often. `Observation` is the sharp one: its `default_fact_kind` is the only route to
+    # `kind: measurement` on an undeclared predicate, so without it a reading logged
+    # against a sensor or a lab is an `attribute` (collision → review) rather than a
+    # time-series point, and no scenario asserting `measurement` could ever pass.
+    #
+    # These are UNDESCRIBED in `resolve_entity.tool` — accepting a word the model reaches
+    # for on its own costs nothing, but teaching it a wider vocabulary is an ACI change
+    # and the sidecar is version-pinned, so that is its own deliberate bump.
+    "observation": "Observation",
+    "measurement": "Observation",
+    "reading": "Observation",
+    "encounter": "Encounter",
+    "visit": "Encounter",
+    "task": "Task",
+    "project": "Project",
+    "goal": "Goal",
+    "habit": "Habit",
+    "routine": "Habit",
+    "trip": "Trip",
+    "travel": "Trip",
+    "role": "Role",
+    "job": "Role",
+    "service": "Service",
+    "subscription": "Service",
+    "document": "DigitalDocument",
+    "file": "DigitalDocument",
+    "creative work": "CreativeWork",
+    "book": "CreativeWork",
+    "invoice": "Invoice",
+    "bill": "Invoice",
+    "account": "BankAccount",
     "thing": "Thing",
 }
+# The one value in the table above that is deliberately NOT a registry type, and the
+# consequence is load-bearing rather than incidental: `_fact_kind` looks the subject's
+# kind up in the registry, finds nothing, and returns `attribute` — the most cautious
+# kind, whose collisions go to review instead of overwriting. That is the right landing
+# place for a surface nobody could type, but it is a FALLBACK, not a classification, and
+# it is why an undeclared predicate on an unrecognised subject can never be a
+# `measurement`, a `state` or a `preference`. `test_every_kind_hint_is_a_registry_type`
+# pins the rest of the table against the registry so the next `Drug` is caught there.
 _DEFAULT_KIND = "Thing"
 
 # A literal value shaped like a measurement ("178 lb", "5.4 %", "120/80 mmHg" is left to
@@ -169,16 +211,32 @@ _DEFAULT_KIND = "Thing"
 # `supersession.values_equal` can compare ACROSS units, which is what makes a re-read of
 # the same reading land as "already recorded" instead of a fact_conflict.
 #
-# The unit must START WITH A LETTER (or %, ° or /). A bare `[^\d\s]` lets the number half
+# The unit must START WITH A LETTER (or % or °). A bare `[^\d\s]` lets the number half
 # backtrack and invent a unit out of the value's own tail: "80.0" parsed as 80 + unit
 # ".0", and the ISO date "1986-03-19" as 1986 + unit "-03-19" — two facts stating the
 # same weight in different words then compare unequal, and a birth date is stored as a
 # quantity. Found by re-pointing the scenario harness onto these tools.
-_QUANTITY = re.compile(r"^(-?\d+(?:\.\d+)?)\s*([A-Za-z%°/][^\s]{0,15})$")
+#
+# `/` is NOT a unit start, for the same reason: it let the number half eat a fraction or
+# a slashed date and call the remainder a unit — "1/2" as 1 + "/2", this module's own BP
+# example "120/80" as 120 + "/80", and "03/19/1986" as 3 + "/19/1986". A real unit that
+# contains a slash starts with a letter anyway (mg/dL, mi/h); a value that LEADS with one
+# is a composite the statement carries, which is exactly what the "120/80 mmHg is left to
+# the statement" note above always intended.
+_QUANTITY = re.compile(r"^(-?(?:0|[1-9]\d*)(?:\.\d+)?)\s*([A-Za-z%°][^\s]{0,15})$")
 
 # A literal that is only a number. Stored as a number rather than as a string so two
 # spellings of the same reading ("80" and "80.0") compare equal.
-_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
+#
+# A REDUNDANT LEADING ZERO is not a number here (`0|[1-9]\d*`, shared with _QUANTITY):
+# `int("01234")` is 1234, so a zip code, a routing digit or an ISO month stored as a
+# number comes back with a digit missing. Those fall through to the verbatim `{value}`
+# string, where the spelling the note used survives.
+_NUMBER = re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?$")
+
+# A unit that is only an exponent — "1e3" would otherwise parse as 1 + unit "e3", which
+# is a number mis-read as a quantity a thousand times too small.
+_EXPONENT = re.compile(r"^[eE][-+]?\d+$")
 
 # Whitespace-insensitive, case-insensitive containment — the same normalization the
 # arbiter's span check uses, so "attested" means here what it means there.
@@ -218,7 +276,7 @@ def _quantity_value(literal: str) -> dict[str, Any]:
     if _NUMBER.match(body):
         return {"value": float(body) if "." in body else int(body)}
     match = _QUANTITY.match(body)
-    if match is None:
+    if match is None or _EXPONENT.match(match.group(2)):
         return {"value": literal}
     number, unit = match.groups()
     return {"value": float(number) if "." in number else int(number), "unit": unit}

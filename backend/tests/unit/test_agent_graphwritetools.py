@@ -105,6 +105,42 @@ def test_the_kinds_are_described_not_enumerated_in_the_schema() -> None:
     assert gw._KIND_HINTS.get("wombat") is None
 
 
+def test_every_kind_hint_is_a_registry_type() -> None:
+    """The `Drug` bug, pinned by its VALUE rather than by key presence — which is all the
+    coverage above asserts, and is why a hint spelled `Drug` (a type the registry does not
+    declare) passed for as long as it did. A kind that matches no registered type makes
+    `_fact_kind` fall through to `attribute` for every fact about that entity, silently.
+
+    `Thing` is the one deliberate exception and is asserted as such: it is the fallback
+    for a word nobody described, and its consequence — the cautious `attribute` — is the
+    intended landing place, not an accident."""
+    registry = gw.get_registry()
+    unknown = {
+        word: kind
+        for word, kind in gw._KIND_HINTS.items()
+        if kind != gw._DEFAULT_KIND and kind not in registry.by_kind
+    }
+    assert not unknown, f"kind hints naming no registered type: {unknown}"
+    assert gw._KIND_HINTS["drug"] == "Medication"
+    assert gw._DEFAULT_KIND not in registry.by_kind
+    assert gw._fact_kind(registry, gw._DEFAULT_KIND, "wibble", object_present=False) == "attribute"
+
+
+def test_the_registrys_route_to_a_measurement_is_nameable() -> None:
+    """`Observation.default_fact_kind` is `measurement`, and it is the only default that
+    is — so with no hint word for it, `kind: measurement` was unreachable for any
+    undeclared predicate and every scenario asserting a reading time-series was
+    structurally doomed. Named now, so the model can say it."""
+    registry = gw.get_registry()
+    assert gw._KIND_HINTS["observation"] == "Observation"
+    assert gw._fact_kind(registry, "Observation", "wibble", object_present=False) == "measurement"
+    # Every type the registry declares is nameable by at least one hint word, so no
+    # declared behaviour is unreachable purely because nothing spells it.
+    named = set(gw._KIND_HINTS.values())
+    missing = {k for k in registry.by_kind if k[:1].isupper()} - named
+    assert not missing, f"registry types no word reaches: {sorted(missing)}"
+
+
 def test_both_tools_declare_themselves_writes() -> None:
     """`permission` is documentation rather than a gate here (`outcome_for` is never
     called by the loop), but the loop DOES read `mutating`/`side_effecting` to decide a
@@ -266,6 +302,38 @@ def test_a_quantity_literal_keeps_its_unit_apart_from_its_number() -> None:
     assert gw._quantity_value("178 lb") == {"value": 178, "unit": "lb"}
     assert gw._quantity_value("81.6kg") == {"value": 81.6, "unit": "kg"}
     assert gw._quantity_value("412 Oak Street") == {"value": "412 Oak Street"}
+
+
+def test_a_number_never_backtracks_a_unit_out_of_its_own_tail() -> None:
+    """The shipped bug, and the two literals that distinguish the fix from the old
+    `[^\\d\\s]` unit class — every other input behaved the same under both. "80.0" parsed
+    as 80 + unit ".0", so a weight restated as "80.0" compared UNEQUAL to the same weight
+    written "80" and filed a conflict; the ISO date "1986-03-19" parsed as 1986 + unit
+    "-03-19", storing a birth date as a quantity."""
+    assert gw._quantity_value("80.0") == {"value": 80.0}
+    assert gw._quantity_value("1986-03-19") == {"value": "1986-03-19"}
+
+
+def test_a_slashed_or_exponent_literal_is_not_a_quantity() -> None:
+    """Same shape as the `.0` bug, one character further on: a `/` unit start let the
+    number half eat a fraction or a slashed date. `120/80` is this module's own blood
+    pressure example, and reading it as 120 mmHg-of-something is a clinical value
+    silently halved. A bare exponent is the numeric twin."""
+    assert gw._quantity_value("1/2") == {"value": "1/2"}
+    assert gw._quantity_value("120/80") == {"value": "120/80"}
+    assert gw._quantity_value("120/80 mmHg") == {"value": "120/80 mmHg"}
+    assert gw._quantity_value("03/19/1986") == {"value": "03/19/1986"}
+    assert gw._quantity_value("1e3") == {"value": "1e3"}
+    # A unit that merely CONTAINS a slash still parses — it starts with a letter.
+    assert gw._quantity_value("95 mg/dL") == {"value": 95, "unit": "mg/dL"}
+
+
+def test_a_leading_zero_is_a_spelling_and_not_a_number() -> None:
+    """`int("01234")` is 1234, so a zip code stored as a number comes back a digit
+    short. Redundant leading zeros fall through to the verbatim `{value}` string."""
+    assert gw._quantity_value("01234") == {"value": "01234"}
+    assert gw._quantity_value("0") == {"value": 0}
+    assert gw._quantity_value("0.5 mg") == {"value": 0.5, "unit": "mg"}
 
 
 def test_an_edge_to_a_resolved_entity_is_a_relationship_whatever_else_it_looks_like() -> None:

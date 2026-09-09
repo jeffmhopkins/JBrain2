@@ -34,7 +34,24 @@ where it becomes visible (see the plan's W3 section):
     LATER note cannot reach the earlier note's fact; the settle sweep only
     retracts facts of the note it is settling.
   - **No structured `value_json`.** `object` is a string, so a literal value is
-    stored as `{value}` or `{value, unit}`.
+    stored as `{value}` or `{value, unit}`. Anything richer — a nested payload, a
+    13-key flat object, `{state, start, end}` on an interval — is flattened by
+    `_object_literal` before it ever reaches the tool, and an edge with an object
+    entity stores no `value_json` at all.
+  - **No `kind`.** `_fact_kind` derives it: an object edge is always
+    `relationship`, and everything else falls to the registry's declaration for
+    the predicate, then the subject type's default, then `attribute`. A
+    `measurement` time-series and a `preference` are not sayable on an
+    undeclared predicate, and asserting `kind: relationship` on an object edge
+    is now a tautology.
+  - **No `confidence`.** `assert_fact` stamps `self_confidence=1.0` on every
+    fact, and `supersession.decide`'s low-confidence guard is keyed on exactly
+    that field — so a model that knows its own read is a guess cannot say so,
+    and a 0.25 OCR read supersedes a 0.95 prior with no card. This is the SAFETY
+    one (`health_low_confidence_ocr_guard`).
+  - **No arbiter.** `derive_kinship_gender` and the rest of the arbiter's
+    derivations do not run on this path, so facts main inferred are simply
+    absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote 12).
 
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
@@ -173,21 +190,23 @@ def _object_literal(fact: ExtractedFact) -> str:
     from it, so a structured `value_json` has to be rendered down. A `value`/
     `unit` pair round-trips through the tool's quantity parser; a single-key dict
     gives its value; anything else is its non-boolean values in order, which is
-    roughly what a model reading the same sentence would have written."""
+    roughly what a model reading the same sentence would have written.
+
+    **Nothing here is shaped by what the engine needs to see.** This function is
+    the model stand-in, and the harness's whole contract is that it scripts a
+    PERFECT model so a failure means the engine changed. A branch tuned so the
+    engine's dedup would compare equal — there was one, re-spelling `{"kg": 80.0}`
+    as "80.0 kg" because dropping the unit made two spellings of one weight
+    incomparable — breaks that contract: it hides an engine gap behind a
+    sympathetic stand-in. The unit is dropped, and the scenarios that then fail
+    say so in their `xfail` (hist_backdated_measurement_insert)."""
     value = fact.value_json
     if isinstance(value, dict) and value:
         if "value" in value:
             unit = value.get("unit")
             return f"{value['value']} {unit}" if unit else str(value["value"])
         if len(value) == 1:
-            key, only = next(iter(value.items()))
-            # A one-key dict whose value is a NUMBER is a reading whose key is its
-            # unit (`{"kg": 80.0}`, `{"mgdl": 95}`) — a model reading the same
-            # sentence writes "80.0 kg", and dropping the unit would make two
-            # spellings of one weight incomparable.
-            if isinstance(only, (int, float)) and not isinstance(only, bool):
-                return f"{only} {key}"
-            return str(only)
+            return str(next(iter(value.values())))
         parts = [
             str(v) for v in value.values() if v is not None and not isinstance(v, bool) and v != []
         ]
