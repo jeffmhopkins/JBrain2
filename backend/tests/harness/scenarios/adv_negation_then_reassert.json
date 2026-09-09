@@ -1,6 +1,7 @@
 {
   "name": "re-asserting a relationship after negation must not leave a negated zombie",
   "description": "Adversarial assertion-transition probe, now fixed. Note 1 negates the worksFor edge ('Bjorn no longer works at Acme', assertion=negated). Note 2 re-asserts it ('Bjorn is back at Acme', assertion=asserted) — same functional predicate, same object entity Acme. Previously supersession.values_equal keyed on object_entity_id only for a pure edge, so the asserted candidate was 'equal' to the still-active negated row and decide returned refresh_id: the pipeline refreshed the NEGATED row in place and never updated its assertion, leaving a negated zombie that read as 'not working there' when the truth was the opposite. SPEC-CORRECT expectation encoded: an active ASSERTED worksFor to Acme after re-assertion, and NO active negated one. Fixed: values_equal returns False on a flipped assertion, so the re-assertion supersedes the negated head and the new active row carries assertion=asserted.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so note 1's NEGATED worksFor cannot be written at all. Both halves of this guard then read on a graph that never held a negation: the `absent_facts` zombie check matches zero rows because no negated row can exist, and the re-assertion it is supposed to catch has nothing to supersede. The added `assertion: negated, count: 1` is what gives the guard teeth again \u2014 it is the precondition the zombie check needs, and it is what fails today. Same root as the eight sibling negation scenarios; closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",
@@ -39,7 +40,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Bjorn", "predicate": "worksFor", "kind": "relationship", "assertion": "asserted", "status": "active"}
+      {"entity": "Bjorn", "predicate": "worksFor", "kind": "relationship", "assertion": "asserted", "status": "active"},
+      {"entity": "Bjorn", "predicate": "worksFor", "assertion": "negated", "count": 1}
     ],
     "absent_facts": [
       {"entity": "Bjorn", "predicate": "worksFor", "assertion": "negated", "status": "active"}

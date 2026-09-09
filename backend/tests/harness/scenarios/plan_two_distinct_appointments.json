@@ -1,6 +1,6 @@
 {
   "name": "two distinct appointments both remain active",
-  "description": "Two separate upcoming appointments must accumulate, not supersede each other — supersession is keyed on (entity, predicate, qualifier), so distinct appointment entities each keep their own active scheduledTime. A dentist cleaning and an eye exam are different entities; both stay active with no fact_conflict between them. Pins that distinct future plans accumulate (the appointment-identity scoping that makes reschedule safe also keeps unrelated appointments independent).",
+  "description": "Two separate upcoming appointments must accumulate, not supersede each other — supersession is keyed on (entity, predicate, qualifier), so distinct appointment entities each keep their own active scheduledTime. A dentist cleaning and an eye exam are different entities; both stay active with no fact_conflict between them. Pins that distinct future plans accumulate (the appointment-identity scoping that makes reschedule safe also keeps unrelated appointments independent). TOOL-PATH NOTE: the entity kind asserted here was 'appointment' before the W3 re-point and is now 'Event'. resolve_entity canonicalizes the declared word through _KIND_HINTS, so what is stored is the registry spelling. Stricter, not weaker.",
   "steps": [
     {
       "domain": "general",

@@ -1,6 +1,6 @@
 {
   "name": "unknown long-tail predicate commits raw with no review card",
-  "description": "Two-tier predicate model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): favoriteColor is declared by no entity type, so it is tier-2 long-tail. The pipeline's alias collapse misses (no durable predicate_aliases row), and the fact commits on its raw spelling — no embed round-trip, no new_predicate card, no unknown-predicate weight penalty holding it below the commit threshold. Pins the Wave-1 inversion of the retired behavior, where every unknown spelling filed one open new_predicate card. The zero-count review_items block mirrors rel_conjoined_past_employers.",
+  "description": "Two-tier predicate model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): favoriteColor is declared by no entity type, so it is tier-2 long-tail. The pipeline's alias collapse misses (no durable predicate_aliases row), and the fact commits on its raw spelling — no embed round-trip, no new_predicate card, no unknown-predicate weight penalty holding it below the commit threshold. Pins the Wave-1 inversion of the retired behavior, where every unknown spelling filed one open new_predicate card. The zero-count review_items block mirrors rel_conjoined_past_employers. TOOL-PATH NOTE: favoriteColor asserted kind='preference' before the W3 re-point and now asserts 'attribute' (no `kind` field on the tool). The tier-2 property this file pins is the raw PREDICATE spelling, which is unaffected. A {low_confidence_inference, count: 0} spec was also removed: that card is filed by the arbiter, which this path never runs, so the spec could not fail.",
   "steps": [
     {
       "domain": "general",
@@ -25,9 +25,6 @@
     ],
     "absent_facts": [
       {"predicate": "favoriteColor", "status": "pending_review"}
-    ],
-    "review_items": [
-      {"kind": "low_confidence_inference", "count": 0}
     ],
     "entities": [
       {"name": "Me", "kind": "Person", "status": "confirmed"}
