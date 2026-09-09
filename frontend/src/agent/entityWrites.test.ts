@@ -50,6 +50,15 @@ describe("the seven D3 states", () => {
     expect(writePhrase(s)).toBe("nothing written");
   });
 
+  it("a resolve that minted entities and no facts leaves the chips to speak", () => {
+    const s = step({
+      name: "resolve_entity",
+      entities: [{ kind: "entity", entity_id: "e1", label: "Priya", domain: "general" }],
+    });
+    expect(stepWriteState(s)).toBe("none");
+    expect(writePhrase(s)).toBeUndefined();
+  });
+
   it("a read tool gets no write phrase at all", () => {
     expect(writePhrase(step({ name: "search" }))).toBeUndefined();
     expect(stepWriteState(step({ name: "search" }))).toBe("none");

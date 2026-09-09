@@ -81,6 +81,9 @@ export function stepWriteState(step: ToolStep): StepWriteState {
   if (!WRITE_TOOLS.has(step.name) && step.facts.length === 0) return "none";
   if (step.ok === undefined) return "writing";
   if (step.ok === false) return "failed";
+  // A resolve that minted entities and no facts did NOT write nothing — the shipped
+  // entity chips are what it wrote, and claiming otherwise over them would be false.
+  if (step.facts.length === 0 && step.entities.length > 0) return "none";
   if (step.facts.length === 0) return "nothing";
   const tally = tallyWrites(step.facts);
   if (tally.replaced > 0 && tally.written === 0 && tally.held === 0) return "replaced";
