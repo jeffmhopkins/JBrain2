@@ -505,6 +505,70 @@ async def test_the_answer_is_recorded_once_even_if_the_owner_says_it_twice(
     assert note is not None and note.body.count("A: My sister.") == 1
 
 
+async def test_a_server_authored_outcome_is_never_filed_as_the_owners_answer(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """A `proposal_outcome` / `deferred_outcome` turn carries text the SERVER wrote — an
+    enact summary, a finished off-turn analysis — framed as a DATA report, which is why
+    the transcript already declines to record one as a user turn.
+
+    Filing one here would be the wrong-sentence-in-the-corpus failure this module names:
+    it pairs machine prose with the agent's open question, appends the pair to Jeff's own
+    note as SOURCE text (chunked, embedded, citable), and spends the question so his real
+    answer can never be paired. Nothing moves, and the thread stays waiting — the truth,
+    since nobody has answered yet."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
+        {"question": QUESTION}, _ctx(owner, session_id)
+    )
+    notes = SqlNotesRepo(maker)
+
+    outcome = await record_owner_reply(
+        maker,
+        notes,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="Enacted 1 of 1 — 1 approved, 0 held.",
+        owner_authored=False,
+    )
+
+    assert outcome is None
+    note = await notes.get_note(owner, note_id)
+    assert note is not None and note.body == NOTE_BODY
+    async with scoped_session(maker, owner) as s:
+        queued = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'ingest_note'"
+                    " AND payload->>'note_id' = :n"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert queued == 0
+    # The question is NOT consumed: the thread still waits, so the owner's real answer
+    # still has something to be paired with.
+    state, _ = await _state(maker, owner, session_id)
+    assert state == "waiting_on_owner"
+
+    answer = await record_owner_reply(
+        maker,
+        notes,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="My sister.",
+    )
+
+    assert answer is not None and answer.clarified is True and answer.question == QUESTION
+    note = await notes.get_note(owner, note_id)
+    assert note is not None
+    assert "A: My sister." in note.body
+    assert "Enacted 1 of 1" not in note.body
+
+
 async def test_a_reply_to_another_persona_s_chat_is_not_touched(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:

@@ -2593,6 +2593,28 @@ def test_model_message_frames_a_proposal_outcome_as_data() -> None:
     assert appt in hinted and "read_appointment" in hinted
 
 
+def test_only_a_turn_the_owner_typed_counts_as_owner_authored() -> None:
+    """The predicate the note-conversation reply path gates on. A `proposal_outcome` or
+    `deferred_outcome` turn carries text the SERVER wrote, and `record_owner_reply`
+    appends what it is given to the owner's own note as searchable, citable SOURCE text —
+    so an enact summary landing there would be a sentence Jeff never said, permanently in
+    his corpus, with the agent's open question spent on it."""
+    import jbrain.api.agent as agent_mod
+
+    typed = agent_mod.ChatRequest(session_id="s", message="My sister.")
+    assert typed.owner_authored is True
+
+    enact = agent_mod.ChatRequest(
+        session_id="s", message="Enacted 1 of 1 — 1 approved.", proposal_outcome=True
+    )
+    assert enact.owner_authored is False
+
+    deferred = agent_mod.ChatRequest(
+        session_id="s", message="Analysis finished.", deferred_outcome=True
+    )
+    assert deferred.owner_authored is False
+
+
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     """A finished deferred analysis resumes the chat with a short SYSTEM notice (not owner
     input): jerv is told the analysis is ready and to continue the owner's original request,

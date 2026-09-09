@@ -186,6 +186,18 @@ class ChatRequest(BaseModel):
     # its content, rather than treating the report as an instruction.
     deferred_outcome: bool = False
 
+    @property
+    def owner_authored(self) -> bool:
+        """Whether `message` is text JEFF TYPED, rather than text the server composed.
+
+        The two outcome flags above are the only shapes that make it false, and both say
+        so in their own comments. Named here rather than spelled inline at each use so
+        "is this the owner talking?" has one answer in this module: `_record_transcript`
+        asks it to decide whether a user turn exists at all, and the note-conversation
+        reply path asks it before appending anything to the owner's note as source text.
+        """
+        return not (self.proposal_outcome or self.deferred_outcome)
+
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
     return cast(AgentSessionRepo, request.app.state.agent_sessions)
@@ -777,6 +789,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # so an answer that cannot be filed is still an answer the agent reads. The persona
     # check is HERE as well as inside, so a chat turn of any other persona touches
     # neither the notes repo nor a second session maker on its way to the model.
+    #
+    # `owner_authored` is the same distinction `_record_transcript`'s `omit_user_turn`
+    # draws, and for a sharper reason: on those two turns `message` is text the SERVER
+    # wrote (an enact outcome, a deferred result), and a block pairs its text with the
+    # agent's open question and appends it to the note as SOURCE text. Filing one would
+    # put a sentence Jeff never said into his own note, permanently and searchably, and
+    # spend the question that his real answer was waiting to be paired with.
     if session.agent == NOTE_CONVERSE_AGENT:
         await record_owner_reply(
             request.app.state.session_maker,
@@ -785,6 +804,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             session_id=str(session.id),
             agent=session.agent,
             message=body.message,
+            owner_authored=body.owner_authored,
         )
 
     runlog = get_agent_runlog(request)
