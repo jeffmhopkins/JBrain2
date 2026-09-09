@@ -735,11 +735,13 @@ AGENTS: dict[str, AgentProfile] = {
 
 AGENT_NAMES = frozenset(AGENTS)
 
-# The personas an OWNER may select for a Full Brain session or task. `intake` lives in
-# AGENTS (so it is resolvable + version-pinned) but is a NON-owner persona — it belongs to
-# an intake_link principal, is resolved via `agent_for_intake`, and must never be stored in
-# app.agent_sessions/app.tasks (whose `agent` CHECK excludes it anyway). Owner-facing
-# validation gates on THIS set, not AGENT_NAMES, so an owner can't open an intake session.
+# Two different exclusions sit between AGENT_NAMES and what an owner may select, and they
+# are not the same question. `intake` lives in AGENTS (so it is resolvable +
+# version-pinned) but is a NON-owner persona — it belongs to an intake_link principal, is
+# resolved via `agent_for_intake`, and must never be stored owner-side at all (the `agent`
+# CHECK excludes it). The engine-only personas below ARE owner-side and ARE stored; they
+# are simply not a person's to start.
+
 # Owner-side personas the ENGINE opens and a person never picks. They are stored in
 # `app.agent_sessions` like any other owner persona (the CHECK admits them, 0192), and
 # they are the owner's own threads — but nothing may mint one from a request.
@@ -754,7 +756,8 @@ AGENT_NAMES = frozenset(AGENTS)
 # selectable — the engine opens it, never a picker" a fact rather than an intention.
 ENGINE_ONLY_PERSONAS = frozenset({"note_ingest"})
 
-# What an OWNER may SELECT — the session/task routes' gate.
+# What an OWNER may SELECT for a Full Brain session or task — the session/task routes'
+# gate (`is_owner_agent`, `api/sessions.py`, `api/tasks.py`), never AGENT_NAMES.
 OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS - ENGINE_ONLY_PERSONAS
 
 # What may be STORED owner-side: everything an owner selects, plus the engine-opened
