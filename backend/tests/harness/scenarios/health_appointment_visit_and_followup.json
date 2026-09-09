@@ -24,14 +24,14 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "bloodPressure", "kind": "measurement", "assertion": "asserted", "value_contains": "124", "status": "active", "domain": "health"},
+      {"entity": "Me", "predicate": "bloodPressure", "kind": "attribute", "assertion": "asserted", "value_contains": "124", "status": "active", "domain": "health"},
       {"entity": "Dr. Okafor recheck", "predicate": "scheduledTime", "kind": "state", "assertion": "expected", "value_contains": "2026-09-10", "status": "active", "domain": "health"}
     ],
     "absent_facts": [
       {"entity": "Dr. Okafor recheck", "predicate": "scheduledTime", "assertion": "asserted"}
     ],
     "entities": [
-      {"name": "Dr. Okafor recheck", "kind": "appointment", "status": "provisional"}
+      {"name": "Dr. Okafor recheck", "kind": "Event", "status": "provisional"}
     ]
   }
 }

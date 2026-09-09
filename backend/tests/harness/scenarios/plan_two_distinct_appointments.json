@@ -43,8 +43,8 @@
       {"entity": "optometrist eye exam appointment", "predicate": "scheduledTime", "status": "superseded"}
     ],
     "entities": [
-      {"name": "dentist cleaning appointment", "kind": "appointment", "status": "provisional"},
-      {"name": "optometrist eye exam appointment", "kind": "appointment", "status": "provisional"}
+      {"name": "dentist cleaning appointment", "kind": "Event", "status": "provisional"},
+      {"name": "optometrist eye exam appointment", "kind": "Event", "status": "provisional"}
     ]
   }
 }

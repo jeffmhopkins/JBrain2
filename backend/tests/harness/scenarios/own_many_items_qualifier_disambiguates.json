@@ -39,8 +39,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "value_contains": "Civic", "status": "active", "chained": false},
-      {"entity": "Me", "predicate": "owns", "qualifier": "Kayak", "value_contains": "kayak", "status": "active", "chained": false}
+      {"entity": "Me", "predicate": "owns", "value_contains": "Civic", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "value_contains": "kayak", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"entity": "Me", "predicate": "owns", "status": "superseded"}

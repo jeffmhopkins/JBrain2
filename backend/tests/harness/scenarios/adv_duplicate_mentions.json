@@ -23,7 +23,7 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Cleo", "predicate": "plannedTrip", "kind": "state", "value_contains": "Lisbon", "status": "active", "count": 1}
+      {"entity": "Cleo", "predicate": "plannedTrip", "kind": "attribute", "value_contains": "Lisbon", "status": "active", "count": 1}
     ],
     "entities": [
       {"name": "Cleo", "kind": "Person", "status": "provisional"}

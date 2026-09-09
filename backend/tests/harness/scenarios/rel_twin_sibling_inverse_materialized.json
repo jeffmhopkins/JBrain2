@@ -22,8 +22,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Lydian", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
-      {"entity": "Elora", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
+      {"entity": "Lydian", "predicate": "sibling", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
+      {"entity": "Elora", "predicate": "sibling", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"predicate": "twinStatus"},

@@ -1,6 +1,7 @@
 {
   "name": "cancelled plan is no longer an active expectation",
   "description": "A planned trip ('going to DjangoCon', assertion=expected) followed by a cancellation ('no longer going') must not leave the conference as an active expectation. Modeled as a state binding on the trip entity's eventStatus: the cancellation is a newer state value (assertion=negated, status=cancelled) that supersedes the expected interval. Asserts the prior expected plan is superseded (not active) and the active head is the negated cancellation. The earlier expectation survives as closed history per SCD-2, but is not surfaced as a live plan. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

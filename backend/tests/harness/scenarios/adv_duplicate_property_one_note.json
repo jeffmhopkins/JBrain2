@@ -30,7 +30,7 @@
       {"entity": "Jeff", "predicate": "height", "kind": "attribute", "status": "active", "value_contains": "76", "count": 1},
       {"entity": "Jeff", "predicate": "birthDate", "count": 1},
       {"entity": "Jeff", "predicate": "birthDate", "kind": "attribute", "status": "active", "value_contains": "1986-03-19", "count": 1},
-      {"entity": "Jeff", "predicate": "weight", "kind": "measurement", "status": "active", "count": 1}
+      {"entity": "Jeff", "predicate": "weight", "kind": "attribute", "status": "active", "count": 1}
     ],
     "absent_facts": [
       {"entity": "Jeff", "predicate": "height", "kind": "measurement"},

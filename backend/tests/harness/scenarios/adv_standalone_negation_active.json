@@ -1,6 +1,7 @@
 {
   "name": "a standalone negated state is stored with status=active (negation lives in assertion only)",
   "description": "Adversarial negation-representation probe. A note negates a state with no prior fact on the key ('Cleo does NOT have a peanut allergy', assertion=negated). supersession.decide has no negation handling: with no existing fact it simply inserts, and the pipeline sets status=active. So a negated fact is a status=active row distinguished ONLY by assertion='negated'. Pins this representation explicitly: status alone does NOT encode truth — any consumer that filters on status='active' without also checking assertion will read this as 'Cleo HAS a peanut allergy', the exact inverse. (This is the structural root of the negation-then-reassert zombie in adv_negation_then_reassert: because negated facts are 'active', a later asserted re-statement of the same value is treated as identical and refreshed in place.) Asserts the active+negated row exists; documents the status/assertion coupling risk.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

@@ -40,7 +40,7 @@
   "expect": {
     "facts": [
       {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "Acme", "count": 1},
-      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "ended", "status": "active", "chained": false}
+      {"entity": "Tomas", "predicate": "employer", "kind": "relationship", "value_contains": "until March 2026", "status": "active", "chained": false}
     ],
     "review_items": [
       {"kind": "fact_conflict", "summary_contains": "employer", "count": 0}

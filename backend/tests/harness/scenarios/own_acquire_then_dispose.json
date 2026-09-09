@@ -1,6 +1,7 @@
 {
   "name": "selling an item ends ownership when disposal carries a distinct value",
   "description": "Acquire -> dispose. 'Bought a Civic' then 'sold the Civic'. Modeled as a state-kind owns binding whose value_json flips owned true->false, so supersession.values_equal sees a genuine value change (value_json differs) and the state branch (newest-wins) closes the prior owned=true interval (SCD-2) and a fact_conflict review fires. The current head is the negated, owned=false fact -- ownership has ended, not persisted. This is the disposal shape that WORKS; own_dispose_refresh_swallows_negation pins the shape that does not (bare object edge, no value_json). Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

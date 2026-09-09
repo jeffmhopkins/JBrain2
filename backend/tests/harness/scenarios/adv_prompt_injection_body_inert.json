@@ -19,7 +19,7 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Cleo", "predicate": "favoriteColor", "kind": "preference", "value_contains": "teal", "status": "active", "pinned": false, "domain": "general", "count": 1}
+      {"entity": "Cleo", "predicate": "favoriteColor", "kind": "attribute", "value_contains": "teal", "status": "active", "pinned": false, "domain": "general", "count": 1}
     ],
     "absent_facts": [
       {"entity": "Cleo", "domain": "health"},

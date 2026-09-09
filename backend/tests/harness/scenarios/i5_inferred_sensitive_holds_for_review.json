@@ -1,6 +1,6 @@
 {
-  "name": "an inferred sensitive fact is held for review even though Lever A commits inferred facts",
-  "description": "I5 sensitive-inference net (ENTITY_GRAPH_INGEST_V2 §5, T1.2): Lever A retired the weight-ceiling review gate, so inferred facts now commit by default — EXCEPT on a clearly-sensitive predicate. A general note ('been really down, could barely get out of bed') never states a mood value; the model INFERS mood=depressed (inferred=true). Because `mood` is a deterministically floored-sensitive predicate (domain_floor -> health), two things must hold together: (1) the fact is floored into the HEALTH domain even though the note is general (firewall hardening, T1.3), and (2) it is held pending_review behind a low_confidence_inference card rather than silently committing an inferred mental-health state. A non-sensitive inferred fact in the same note (an implied hobby) commits active — proving the hold is the sensitive net, not a blanket inferred gate.",
+  "name": "an inferred sensitive fact commits, and the domain floor is what protects it",
+  "description": "What ratification REMOVED, re-pinned as the behaviour that replaced it. The I5 sensitive-inference HOLD lived in the arbiter (arbiter.py:159-171), which a note conversation never runs: D2 says a clear fact commits and the agent asks only when it cannot proceed, so an inferred mental-health reading is no longer parked behind a low_confidence_inference card - and that card kind is no longer filed at all. What the plan explicitly KEPT is the floor, and that is what this scenario now pins: a general note that never states a mood value still lands mood=depressed in the HEALTH domain, because domain_floor is keyed on the predicate and applied inside commit_facts, never chosen by the model (assert_fact has no `domain` field at all - D18's model-chosen domain is the model choosing the PREDICATE). A non-sensitive predicate in the same note stays general, so the floor is a per-predicate rule and not a whole-note escalation. The hold this file used to assert is deliberately gone; the firewall it was guarding is not.",
   "steps": [
     {
       "domain": "general",
@@ -22,11 +22,13 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "mood", "kind": "state", "value_contains": "depressed", "status": "pending_review", "domain": "health"},
-      {"entity": "Me", "predicate": "hobby", "kind": "state", "value_contains": "guitar", "status": "active", "domain": "general"}
+      {"entity": "Me", "predicate": "mood", "value_contains": "depressed", "status": "active", "domain": "health", "count": 1},
+      {"entity": "Me", "predicate": "hobby", "value_contains": "guitar", "status": "active", "domain": "general", "count": 1}
     ],
-    "review_items": [
-      {"kind": "low_confidence_inference", "domain": "health", "count": 1}
+    "absent_facts": [
+      {"entity": "Me", "predicate": "mood", "domain": "general"},
+      {"entity": "Me", "predicate": "hobby", "domain": "health"},
+      {"entity": "Me", "predicate": "mood", "status": "pending_review"}
     ]
   }
 }
