@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 
 from jbrain.agent import graphwritetools as gw
-from jbrain.agent.agents import NOTE_INGEST_TOOLS, agent_for
+from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
 from jbrain.agent.asktools import ASK_OWNER_TOOL
 from jbrain.agent.readtools import OPTIONAL_NOTE_GRAPH_TOOLS
 from jbrain.agent.toolfile import load_tool
@@ -149,8 +149,8 @@ def test_the_allowlist_and_the_bound_registry_are_the_same_set() -> None:
     out rather than folded into one of them: a sibling task adding a tool must show up
     as a change here, which is exactly how this assertion earned its keep."""
     profile = agent_for("note_ingest")
-    assert profile.tools == NOTE_INGEST_TOOLS
-    assert gw.GRAPH_WRITE_TOOLS | NOTE_READ_TOOLS | {ASK_OWNER_TOOL} == NOTE_INGEST_TOOLS
+    assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS
+    assert gw.GRAPH_WRITE_TOOLS | NOTE_READ_TOOLS | {ASK_OWNER_TOOL} == NOTE_INGEST_UNATTENDED_TOOLS
     # The three are disjoint — no tool is bound twice, by two different builders.
     assert not (gw.GRAPH_WRITE_TOOLS & NOTE_READ_TOOLS)
     assert ASK_OWNER_TOOL not in gw.GRAPH_WRITE_TOOLS | NOTE_READ_TOOLS
@@ -170,7 +170,7 @@ def test_nothing_outward_facing_is_in_the_unattended_set() -> None:
         "neighborhood",
         "analyze_image",
     ):
-        assert banned not in NOTE_INGEST_TOOLS
+        assert banned not in NOTE_INGEST_UNATTENDED_TOOLS
 
 
 def test_a_note_registry_holds_exactly_what_it_was_asked_for() -> None:

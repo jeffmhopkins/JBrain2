@@ -32,7 +32,7 @@ The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from jbrain.llm.promptfile import load_prompt
@@ -473,14 +473,10 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # replying does not sanitize the note body still sitting in context (untrusted content +
 # private data + egress is the complete trifecta).
 #
-# The ON-REPLY set (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`,
-# `relate`) unlocks only once the owner has actually replied — it must be a SECOND frozenset
-# chosen at turn assembly, never a flag on one set, because the allowlist is the only
-# enforcement (constraint 9). `prefs_read` is deliberately NOT here: D15 hands the owner's
-# standing instructions to this persona through the SYSTEM PROMPT (`converse._rules`), so the
-# tool it was also built as stays unreachable. A name allowlisted with no handler behind it is
-# a tool call that dies in dispatch, so the allowlist grows with the handlers, never ahead of
-# them.
+# `prefs_read` is deliberately in NEITHER set: D15 hands the owner's standing instructions
+# to this persona through the SYSTEM PROMPT (`converse._rules`), so the tool it was also
+# built as stays unreachable. A name allowlisted with no handler behind it is a tool call
+# that dies in dispatch, so an allowlist grows with the handlers, never ahead of them.
 #
 # Every write tool here also joins `toolregistry.NEVER_DEFAULT`, or curator's wildcard absorbs
 # it on every ordinary chat turn. `resolve_entity`/`assert_fact` are additionally kept out of
@@ -488,8 +484,41 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # to one note, so a chat session has nothing to bind. `ask_owner` is not — the owner's REPLY
 # into a note thread arrives as an ordinary /chat turn (D8), so its handler is wired on the
 # chat registry and this allowlist is the only thing keeping it off every other persona.
-NOTE_INGEST_TOOLS: frozenset[str] = frozenset(
+NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
     {"resolve_entity", "assert_fact", "ask_owner", "find_entity", "read_entity", "current_time"}
+)
+
+# The ON-REPLY surface (D8: "the full surface unlocks when you reply"). A SECOND frozenset
+# shaped like `JERV_TOOLS`/`ARCHIVIST_TOOLS`, chosen at turn assembly by
+# `agent_for_owner_reply` below — never a flag on one set, because which handlers are BOUND
+# is the only enforcement there is (constraint 9, TOOL_SURFACE R2).
+#
+# A superset of the unattended set, not a swap. The reply turn is the same agent finishing
+# the same reading of the same note, so taking `assert_fact` away at the moment the owner
+# explains what the note actually meant would leave it able to discuss a correction and
+# unable to record one.
+#
+# Why each added verb is on-reply rather than unattended, one line each:
+# - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
+#   is the note, and a note that talks its way into overriding the graph past the arbiter's
+#   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
+#   is actually in.
+# - `merge_entities` STAGES a fold and can never enact one (constraint 12). Staging is cheap
+#   and reversible, but a merge card raised while the owner is asleep is a decision queued
+#   against him by third-party text; raised in answer to his own message it is a reply.
+# - `prefs_write` delta-edits the STANDING INSTRUCTIONS injected into every future note
+#   conversation's system prompt. D17 fires it on his explicit request only, and "explicit
+#   request" has no meaning on a turn he is not present for.
+# `search` / `read_note` / `relate` are inherited unchanged, and are reads: the unattended
+# pass has the note in front of it and needs no corpus, while "no, that was the OTHER Dana"
+# is exactly the question the corpus answers.
+#
+# What is NOT in either set, and what the owner replying does not change: every
+# outward-facing tool (`web_*`, `news_*`, the connectors, `gmail_*`). His reply does not
+# sanitize the note body, which is still sitting in this turn's context — untrusted content
+# + private data + egress is the complete trifecta, and it is just as complete here.
+NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | frozenset(
+    {"correct_fact", "merge_entities", "prefs_write", "search", "read_note", "relate"}
 )
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
@@ -770,7 +799,7 @@ AGENTS: dict[str, AgentProfile] = {
     "note_ingest": _profile(
         "note_ingest",
         "note_ingest.prompt",
-        tools=NOTE_INGEST_TOOLS,
+        tools=NOTE_INGEST_UNATTENDED_TOOLS,
         reads_knowledge_base=True,
         budget_multiplier=2,
     ),
@@ -823,8 +852,43 @@ def agent_for(name: str) -> AgentProfile:
 
     OWNER sessions only. A non-owner principal must NEVER resolve through this: its
     curator fallback would hand a stranger the Full Brain knowledge agent. Non-owner
-    principals use `agent_for_intake`, which fails closed."""
+    principals use `agent_for_intake`, which fails closed.
+
+    This is the UNATTENDED resolution, and it is the one every caller gets by default —
+    the worker's note pass, the task runner, the session listing. The owner's own reply
+    turn asks for the wider surface explicitly through `agent_for_owner_reply`, so a
+    caller that forgets the distinction gets the narrow set, never the wide one."""
     return AGENTS.get(name, AGENTS[DEFAULT_AGENT])
+
+
+NOTE_INGEST_AGENT = "note_ingest"
+"""The note-conversation persona. Named here because this module owns the two sets its
+turn assembly picks between; `analysis/converse.py` and `analysis/clarify.py` each keep
+their own spelling of it rather than importing the LLM stack for one string."""
+
+
+def agent_for_owner_reply(name: str) -> AgentProfile:
+    """The profile for a turn the OWNER just sent — the `/chat` resolution.
+
+    This function IS the unattended/on-reply split (D8). It is the only thing that hands
+    out `NOTE_INGEST_ON_REPLY_TOOLS`, and it is called from exactly one place: `chat()` in
+    `api/agent.py`, where a turn exists precisely because the owner typed into the thread.
+    Every other resolution path — the worker's unattended note pass, the task runner, a
+    sub-agent, the session listing — goes through `agent_for` and gets the unattended set.
+
+    The split has to live at turn assembly rather than in the profile because the two
+    paths are different code (`analysis/converse.py`'s per-note executor in the worker,
+    `/chat` in the API) and a persona field can only carry one answer. Making the PROFILE
+    carry the unattended set and the reply turn ASK for more is the safe direction of that
+    asymmetry: forgetting to call this narrows a turn, while the reverse would have handed
+    `correct_fact` to a pass the owner is not present for.
+
+    Non-note personas are returned unchanged, so `/chat` can call this unconditionally
+    instead of carrying a persona test at the call site that a later edit could drop."""
+    profile = agent_for(name)
+    if profile.name != NOTE_INGEST_AGENT:
+        return profile
+    return replace(profile, tools=NOTE_INGEST_ON_REPLY_TOOLS)
 
 
 class PersonaResolutionError(ValueError):

@@ -27,7 +27,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, AgentProfile, agent_for
+from jbrain.agent.agents import (
+    DEEP_RESEARCH_TOOL,
+    SPAWN_TOOL,
+    AgentProfile,
+    agent_for_owner_reply,
+)
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_IMAGES_PER_TURN,
@@ -754,7 +759,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge
     # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
     # session that carries domains touches no owner data — the firewall, not a flag.
-    profile = agent_for(session.agent)
+    #
+    # `agent_for_owner_reply`, not `agent_for`: a /chat turn exists because the OWNER just
+    # sent one, which is what D8 unlocks the note persona's full surface on. It resolves
+    # every other persona identically, so this is not a note-only branch — it is the one
+    # place in the codebase that says "this turn has the owner in it".
+    profile = agent_for_owner_reply(session.agent)
     read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
 
     # A reply into a note conversation that is WAITING is an answer, and D6 makes an

@@ -73,6 +73,7 @@ from jbrain.agent.prefstools import build_owner_prefs_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
+from jbrain.agent.replytools import build_reply_write_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.sessiontools import build_session_handlers
@@ -85,6 +86,7 @@ from jbrain.analysis.neighborhood import (
     MAX_DEPTH,
     EdgeKinds,
 )
+from jbrain.analysis.noteframe import framed_note
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
@@ -237,6 +239,31 @@ OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # the sidecars are not in the chat registry at all, `NEVER_DEFAULT` keeps them out of
 # curator's wildcard if they ever were, and D16's closed allowlist is the third.
 OPTIONAL_NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
+
+# The verbs that make a turn able to WRITE the entity graph. `read_note` frames the body
+# it returns when the turn holds one of them — see `_holds_graph_writes`.
+GRAPH_WRITE_AUTHORITY = frozenset({"assert_fact", "correct_fact"})
+_FETCHED_NOTE = "a note you fetched with read_note"
+
+
+def _holds_graph_writes(ctx: ToolContext) -> bool:
+    """Whether THIS turn can write the entity graph, from the turn's own effective tool
+    names (`ToolContext.agent_tools`, which the loop sets to the admitted set).
+
+    This is the trigger for framing a fetched note body, and it is asked of the turn
+    rather than of the persona on purpose. The hazard is not "note_ingest is reading" —
+    it is untrusted third-party text arriving in a turn that holds write authority over
+    the graph, and `agent_tools` is precisely the thing that says whether it does. It is
+    the same mechanical-boundary idiom `jmoltobservetools` uses to decide what an observe
+    turn may hold, rather than a convention about who wired what.
+
+    W3's on-reply set (D8) is what makes this live: before it, every persona reading a
+    note body through this tool held no graph writes at all — which is exactly the
+    premise plan risk 1 says W3 falsifies. Curator and jerv are unchanged: they hold
+    neither verb, so their `read_note` output is byte-for-byte what it was."""
+    return bool(ctx.agent_tools & GRAPH_WRITE_AUTHORITY)
+
+
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
 # (graceful degrade, docs/archive/EMAIL_ARCHIVIST_PLAN.md).
@@ -819,6 +846,8 @@ def build_read_handlers(
         # a later note superseded or a correction retracted.
         currency = await entities.note_currency(ctx.session, [note.id])
         body = format_note(note) + format_currency(currency.get(note.id, []))
+        if _holds_graph_writes(ctx):
+            body = framed_note(body, about=_FETCHED_NOTE)
         source = NoteSource(note_id=note.id, domain=note.domain, snippet=_note_snippet(note.body))
         return ToolOutput(body, (source,))
 
@@ -1237,6 +1266,13 @@ def build_registry(
             # unattended first pass runs in the worker on its own explicit registry
             # instead (`analysis/converse.py`).
             **build_ask_owner_handlers(maker),
+            # The note conversation's ON-REPLY writes (`correct_fact`, `merge_entities`),
+            # note_ingest-only by allowlist and in NEVER_DEFAULT so curator's wildcard
+            # never absorbs them. Wired on THIS registry for the same reason `ask_owner`
+            # is: D8's on-reply half unlocks on the owner's /chat turn, and this is the
+            # registry that turn consults. Neither takes a note id — both find their
+            # conversation through the turn's session id and refuse outside one.
+            **build_reply_write_handlers(maker, proposals, entities, notes, router),
             # jmolt's scratchpad tools (`web`-gated, jmolt-only) over the `jmolt_scratch`
             # table — always wired (the table always exists); the M19 RLS split, not this
             # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).

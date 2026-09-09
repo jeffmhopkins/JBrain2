@@ -166,13 +166,43 @@ describe("the note-conversation write tools", () => {
     expect(toolStep(tool({ name: "ask_owner" })).label).toBe("Asked you a question");
     expect(toolStep(tool({ name: "prefs_read" })).label).toBe("Read your standing instructions");
     expect(toolStep(tool({ name: "prefs_write" })).label).toBe("Staged a standing instruction");
+    // The on-reply pair (D8). The two labels have to say which one WROTE and which only
+    // staged — that is the difference between something on file and something Jeff still
+    // has to approve, and it is the whole content of the step for him.
+    expect(toolStep(tool({ name: "correct_fact" })).label).toBe("Corrected a fact you disputed");
+    expect(toolStep(tool({ name: "merge_entities" })).label).toBe("Staged an entity fold");
+  });
+
+  it("names the on-reply writes by what they are about, not by their arguments", () => {
+    // Neither batches — one disputed value, one pair of records — so the inline piece is
+    // the thing Jeff would recognise in the strip.
+    expect(
+      toolStep(
+        tool({
+          name: "correct_fact",
+          args: {
+            entity: "e-1",
+            predicate: "homeLocation",
+            statement: "Jeff lives at 412 Oak St.",
+          },
+        }),
+      ).inline,
+    ).toBe("Jeff lives at 412 Oak St.");
+    expect(
+      toolStep(
+        tool({ name: "merge_entities", args: { entity_a: "Dana Whitfield", entity_b: "Dana W" } }),
+      ).inline,
+    ).toBe("Dana Whitfield · Dana W");
   });
 
   it("names a BATCHED argument elementwise, capped with a +N", () => {
+    // `entities`, not `surfaces` — the key `resolve_entity.tool` actually declares. The
+    // polish landed before the sidecar did (the old `_FORWARD` window), and named the
+    // wrong one; a backend test now pins every INLINE_ARGS key to its tool's schema.
     const step = toolStep(
       tool({
         name: "resolve_entity",
-        args: { surfaces: ["Priya", "the shop", "Dr. Okafor", "Me"] },
+        args: { entities: ["Priya", "the shop", "Dr. Okafor", "Me"] },
       }),
     );
     expect(step.inline).toBe("Priya, the shop, Dr. Okafor +1");

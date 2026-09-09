@@ -58,6 +58,12 @@ const STEP_LABELS: Record<string, string> = {
   ask_owner: "Asked you a question",
   prefs_read: "Read your standing instructions",
   prefs_write: "Staged a standing instruction",
+  // The on-reply half (D8). `correct_fact` WROTE — it replaced a value and pinned it —
+  // while `merge_entities` only staged, and the two labels have to say which, because
+  // "staged" is the whole difference between something you still have to approve and
+  // something already on file.
+  correct_fact: "Corrected a fact you disputed",
+  merge_entities: "Staged an entity fold",
   propose_correction: "Staged a proposal",
   propose_merge: "Staged an entity merge",
   // Memory + scratchpads
@@ -226,9 +232,14 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   file_correction: ["body"],
   // The W3 write tools batch (TOOL_SURFACE.md: ≤12 surfaces, ≤8 facts per call), so
   // their one legible target is an ARRAY — `inlinePiece` renders those elementwise.
-  resolve_entity: ["surfaces"],
+  resolve_entity: ["entities"],
   assert_fact: ["facts"],
   ask_owner: ["question"],
+  // The on-reply writes are NOT batched — one disputed value, one pair of entities — so
+  // their inline piece is the thing the owner would recognise in the strip: what the
+  // fact was corrected TO, and which two records are being folded.
+  correct_fact: ["statement"],
+  merge_entities: ["entity_a", "entity_b"],
   propose_correction: ["correction"],
   propose_merge: ["reason"],
   remember: ["body_md"],
