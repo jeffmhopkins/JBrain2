@@ -3,7 +3,10 @@
 > **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
 >
 > W3 in flight. Landed so far: **T3** — the unattended/on-reply split (D8) and the verbs
-> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12).
+> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12); and
+> **T4** — the scenario harness re-pointed onto the write tools, then corrected against an
+> independent adversarial review. Two things T4 was briefed to do are **not** done and are
+> recorded as open: the eval corpora, and the real-model adversarial scenario.
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -431,6 +434,54 @@ them green. The eval corpora (`evals/integrate_runner.py` and its cases) are sup
 too. Author a **new** adversarial scenario running a real model against a hostile body:
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
+
+*Landed (T4): the harness describes the tool path.* `runner._compile_intent` is gone;
+`runner._tool_calls` compiles each step's scripted extraction into the `resolve_entity` /
+`assert_fact` arguments a faithful agent would send, and `NoteGraphWriter` executes them
+against real Postgres — one function, not 75 files, exactly as briefed. A `tool_calls` key
+on a step overrides it where the faithful default cannot express the case (one scenario
+uses it). `settle_note` runs ONCE per note over the union of every call's writes
+(constraint 6), unioned in-process by a `_LedgerPipeline` subclass until the 0191 ledger
+is the source.
+
+*Corrected after an independent adversarial review of that re-point.* The re-point's own
+commit reported "54 real passes, 21 documented gaps"; the review found four of those
+passes vacuous, two xfail reasons mis-attributed, and ~20 `expect` assertions weakened
+rather than deleted. All of it is now either restored, xfailed or written down —
+`backend/tests/harness/README.md` carries the six-gap table, the 26-scenario xfail index
+and a table of every changed-but-not-xfailed assertion. The corpus is **49 passing / 26
+strict-xfail of 75**, and the five conversions were all greens that could not fail:
+`adv_negation_then_reassert` (its zombie guard needs a negated row the tool cannot write),
+`hist_retrospective_closes_open_interval` and `plan_relative_date_resolution` (assertions
+retargeted onto the scenario's own statement text), `rel_enumerated_children_fan_out` (the
+arbiter's four derived `gender` facts silently absent), `own_joint_co_ownership` (the
+`{share: joint}` value silently absent). Two production bugs the re-point fixed but did
+not pin — the `_QUANTITY` unit class and `_KIND_HINTS["drug"]` — now have regression
+tests, along with four more mis-parses of the same shape (`1/2`, `120/80`, `03/19/1986`,
+`1e3`, and leading zeros) and the thirteen registry types no hint word could reach,
+`Observation` among them — the only default route to `kind: measurement`.
+
+**Still open from T4, both briefed above and neither done:**
+
+- **The eval corpora are untouched.** `src/jbrain/evals/integrate_runner.py` and
+  `src/jbrain/evals/integrate_cases/00_core.json` still score the `integrate.note` prompt
+  and the `IntegrationIntent` shape, and `tests/unit/test_integrate_eval.py` still runs
+  them in CI. They are green, and they measure a path the note conversation no longer
+  takes. (The plan's path `evals/integrate_runner.py` is `src/jbrain/evals/`.)
+- **The new adversarial scenario was not written.** `adv_prompt_injection_body_inert.json`
+  is still the tautology this paragraph names, and it is now *more* of one: the write path
+  is a tool loop, which is a shape hostile note text could plausibly drive, and no scenario
+  exercises the loop at all.
+
+*Scope reduction recorded rather than discovered.* `docs/research/agent-ingest/
+X5-EVALS-TESTING.md` designed this re-point as an N-turn `FakeLlmClient` router replaying
+scripted tool calls through the real `AgentLoop`, promising that `expect{}` "survives
+verbatim". The implementation calls the two handlers directly instead. Neither half held:
+`expect{}` did not survive verbatim (see the README's two tables), and the loop itself —
+`max_steps`, the per-conversation budgets, the tool sidecars' schemas and the harmony
+grammar they compile to — is now **outside** the harness. The 75 scenarios are
+behaviour-preservation evidence for the WRITE PATH only. W5a's ~940-line deletion rests on
+that narrower claim.
 
 *Landed (T1): `owner_prefs`.* `app.owner_prefs` (migration 0195, owner-only RLS, ENABLE
 + FORCE) holds one capped document of standing instructions, injected into every note

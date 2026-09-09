@@ -1,4 +1,16 @@
-> **Status:** Research · **Last verified:** 2026-09-08
+> **Status:** Research · **Last verified:** 2026-09-09
+>
+> **§1.1 is superseded by what W3/T4 actually built.** Two of its designs did not
+> ship, and neither difference was recorded when the re-point merged. (a) The harness
+> does **not** replay an N-turn `FakeLlmClient` through the real `AgentLoop`;
+> `runner._tool_calls` calls the two write handlers directly, so `max_steps`, the
+> per-conversation budgets, the tool sidecars' schemas and the grammar they compile to
+> are all **outside** the 75 scenarios. (b) `expect{}` did **not** survive verbatim:
+> the tool surface has no `assertion`, `kind`, `qualifier`, structured `value_json` or
+> `confidence`, so ~20 assertions were rewritten and 26 scenarios are now strict-xfail.
+> `backend/tests/harness/README.md` is the current, true account. The scenarios remain
+> behaviour-preservation evidence for the WRITE PATH; they are no longer evidence about
+> the loop.
 
 # X5 — Testing and evaluating an agentic ingest
 
@@ -56,10 +68,10 @@ multi-turn, human-in-the-loop agent honest under the same CI gates
 
 | Asset | Where | Fate |
 |---|---|---|
-| 75 scenario JSON files | `backend/tests/harness/scenarios/` (75 files) | **Reshaped** — `expect{}` survives verbatim, `steps[].extraction`/`intent` become a transcript |
+| 75 scenario JSON files | `backend/tests/harness/scenarios/` (75 files) | **Reshaped — but `expect{}` did NOT survive verbatim.** `steps[].extraction` stayed; `intent` went; ~20 assertions were rewritten and 26 files are strict-xfail (README's two tables) |
 | `Snapshot`/`FactRow`/`ReviewRow`/`EntityRow` + `check()` | `backend/tests/harness/scenario.py:89-156`, `:159` | **Survives untouched** — asserts the graph, not the input |
 | `_compile_intent` (faithful-default intent) | `backend/tests/harness/runner.py:85-154` | **Dies** — there is no intent |
-| `_integrator` (two scripted model calls) | `backend/tests/harness/runner.py:53-62` | **Reshaped** into an N-turn `FakeLlmClient(turns=…)` router |
+| `_integrator` (two scripted model calls) | `backend/tests/harness/runner.py:53-62` | **Not built as designed.** Shipped as `_tool_calls`, which calls the write handlers directly — no router, no `AgentLoop`, so the loop is untested by the corpus |
 | `_seed_note` / `_snapshot` | `backend/tests/harness/runner.py:219-304` | **Survives** — same note seeding, same graph read-back |
 | `xfail(strict)` known-gap encoding | `backend/tests/integration/test_harness_scenarios.py:30-38` | **Survives** — still the right mechanism for a known-open agent failure mode |
 | Per-scenario `TRUNCATE` at *setup* | `backend/tests/integration/test_harness_scenarios.py:60-76` | **Survives** — will need the new conversation/question tables added to the list |
