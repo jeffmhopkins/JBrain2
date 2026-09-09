@@ -168,6 +168,19 @@ Two consequences that have each cost a session real time:
    it cost a red CI run on PR #1372: an `int()` on a value that is `object` until
    something narrows it, in a file the author had "verified" with ruff and pytest alone.
 
+3. **Every package's gate set is wider than the obvious command.** `frontend` CI is
+   `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build` — four, and the
+   lint script covers more than `src/`, so `npx biome check src` passes while CI fails.
+   Run the package's own npm scripts, not a tool invocation you composed yourself.
+
+   ⟲ Two red CI runs in one session came from exactly this: a `deploy/sdr/` edit checked
+   with ruff and pytest but never pyright, and a frontend edit checked with
+   `biome check src` rather than `npm run lint`. Both had passed "locally".
+
+**Read every exit code.** Chaining checks into one command and piping each to `tail`
+hides the one that failed — the second of those two red runs was visible locally and
+scrolled past. One command per gate, or `echo $?` after each.
+
 **A change to `deploy/sdr/` is verified by `supervisor`'s WHOLE gate set** — `ruff check
 .`, `ruff format --check .`, `pyright`, `pytest` — not the subset that looks relevant.
 Run all four from `supervisor/`; the pyright config already knows how to read the

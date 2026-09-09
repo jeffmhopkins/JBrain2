@@ -359,6 +359,9 @@ export function SdrTuningView({
   // Whether a finger is actually down, which `dragHz` alone can no longer say: it now
   // also holds a released-but-not-yet-confirmed width.
   const holdingRef = useRef(false);
+  // The width the SESSION last reported, so the effect below fires on a change rather
+  // than on every render that happens to pass the same number through.
+  const confirmedRef = useRef(bandwidthHz);
   // The waterfall's own pixels, kept off-screen at one column per BIN and one row per
   // DEVICE pixel. Off-screen because the visible canvas is scrolled every frame and a
   // scrolled canvas no longer holds the numbers a resize or a colour-window change has
@@ -496,6 +499,8 @@ export function SdrTuningView({
   // Skipped while a finger is down, or a change landing mid-drag would yank the edge
   // out from under it.
   useEffect(() => {
+    if (confirmedRef.current === bandwidthHz) return;
+    confirmedRef.current = bandwidthHz;
     if (!holdingRef.current) setDragHz(null);
   }, [bandwidthHz]);
 
