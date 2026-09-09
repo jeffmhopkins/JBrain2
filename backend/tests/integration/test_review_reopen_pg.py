@@ -90,16 +90,32 @@ async def seed_fact(
 
 
 async def seed_entity(
-    maker: async_sessionmaker[AsyncSession], name: str, *, domain: str = "general"
+    maker: async_sessionmaker[AsyncSession],
+    name: str,
+    *,
+    domain: str = "general",
+    status: str = "provisional",
+    subject: bool = False,
 ) -> str:
+    """One entity. `subject` links a fresh subject row, which is what makes an
+    entity outrank its pair in `plan_merge` (the owner is never merged away)."""
     eid = str(uuid.uuid4())
+    sid = str(uuid.uuid4()) if subject else None
     async with scoped_session(maker, OWNER) as s:
+        if sid is not None:
+            await s.execute(
+                text(
+                    "INSERT INTO app.subjects (id, display_name, kind)"
+                    " VALUES (:id, :name, 'person')"
+                ),
+                {"id": sid, "name": name},
+            )
         await s.execute(
             text(
-                "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
-                " VALUES (:id, 'Person', :name, :domain)"
+                "INSERT INTO app.entities (id, kind, canonical_name, status, subject_id,"
+                " domain_code) VALUES (:id, 'Person', :name, :status, :sub, :domain)"
             ),
-            {"id": eid, "name": name, "domain": domain},
+            {"id": eid, "name": name, "status": status, "sub": sid, "domain": domain},
         )
     return eid
 
@@ -320,6 +336,181 @@ async def test_merge_reject_reopen_keeps_permanent_distinction(
         b=b,
     )
     assert edge.n == 1
+
+
+async def test_merge_accept_follows_a_tombstone_to_the_survivor(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two overlapping open cards, resolved in sequence. The second names a side
+    the first tombstoned, so folding its payload verbatim would repoint a live
+    entity's rows ONTO a tombstone — silently undoing the first merge. The accept
+    re-derives the pair through the fold instead, and the effect it records names
+    the pair it actually folded, so its own reopen is exact."""
+    repo = SqlAnalysisRepo(maker)
+    note = await seed_note(maker)
+    keep = await seed_entity(maker, "Dr. Ana Patel (chain)")
+    middle = await seed_entity(maker, "A. Patel (chain)")
+    stale = await seed_entity(maker, "Ana P. (chain)")
+    stale_fact = await seed_fact(maker, note, stale, predicate="medicalSpecialty")
+    first = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": middle})
+    second = await seed_item(maker, "merge_proposal", {"entity_a": middle, "entity_b": stale})
+
+    assert await repo.resolve_review(OWNER, first, "accept", {}) is not None
+    resolved = await repo.resolve_review(OWNER, second, "accept", {})
+
+    assert resolved is not None
+    (effect,) = resolved["resolution"]["effects"]
+    # The card said "fold into middle"; middle is a tombstone, so the survivor wins.
+    assert effect["action"] == "merged"
+    assert effect["entity_id"] == stale and effect["into"] == keep
+    assert effect["fact_ids"] == [stale_fact]
+    folded = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=stale
+    )
+    assert folded.status == "merged" and str(folded.merged_into_id) == keep
+    moved = await one_row(
+        maker, OWNER, "SELECT entity_id FROM app.facts WHERE id = :id", id=stale_fact
+    )
+    assert str(moved.entity_id) == keep
+    # The first merge is untouched — nothing was resurrected to be folded onto.
+    tombstone = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=middle
+    )
+    assert tombstone.status == "merged" and str(tombstone.merged_into_id) == keep
+
+    reopened = await repo.reopen_review(OWNER, second)
+    assert reopened is not None and reopened["status"] == "open"
+    restored = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=stale
+    )
+    assert restored.status == "provisional" and restored.merged_into_id is None
+    back = await one_row(
+        maker, OWNER, "SELECT entity_id FROM app.facts WHERE id = :id", id=stale_fact
+    )
+    assert str(back.entity_id) == stale
+
+
+async def test_merge_accept_on_an_already_merged_pair_writes_nothing(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Both sides of a card resolving to ONE live entity means the owner's
+    assertion is already true: the accept records why and writes nothing, so the
+    reopen has nothing to undo and says so."""
+    repo = SqlAnalysisRepo(maker)
+    keep = await seed_entity(maker, "Kia Sportage (noop)")
+    gone = await seed_entity(maker, "the Kia (noop)")
+    first = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": gone})
+    again = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": gone})
+
+    assert await repo.resolve_review(OWNER, first, "accept", {}) is not None
+    resolved = await repo.resolve_review(OWNER, again, "accept", {})
+
+    assert resolved is not None and resolved["status"] == "resolved"
+    (effect,) = resolved["resolution"]["effects"]
+    assert effect == {
+        "action": "merge_noop",
+        "reason": "already merged",
+        "entity_a": keep,
+        "entity_b": gone,
+        "live_entity_id": keep,
+    }
+    survivor = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=keep
+    )
+    assert survivor.status == "provisional" and survivor.merged_into_id is None
+
+    reopened = await repo.reopen_review(OWNER, again)
+    assert reopened is not None and reopened["status"] == "open"
+    assert reopened["reopen_note"] is not None and "folded nothing" in reopened["reopen_note"]
+    unchanged = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=gone
+    )
+    assert unchanged.status == "merged" and str(unchanged.merged_into_id) == keep
+
+
+async def test_merge_accept_re_ranks_so_the_subject_side_is_never_folded_away(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A card's direction is ranked when it is FILED; the pair can outrank it
+    later. Accept re-runs plan_merge, so the subject-linked side survives however
+    the payload happened to be written."""
+    repo = SqlAnalysisRepo(maker)
+    note = await seed_note(maker)
+    loser = await seed_entity(maker, "J. Hopkins (rank)")
+    owner_side = await seed_entity(maker, "Me (rank)", subject=True)
+    owner_fact = await seed_fact(maker, note, owner_side, predicate="worksFor")
+    # Payload written the wrong way round: entity_b is the one that must survive.
+    item = await seed_item(maker, "merge_proposal", {"entity_a": loser, "entity_b": owner_side})
+
+    resolved = await repo.resolve_review(OWNER, item, "accept", {})
+
+    assert resolved is not None
+    (effect,) = resolved["resolution"]["effects"]
+    assert effect["entity_id"] == loser and effect["into"] == owner_side
+    subject_row = await one_row(
+        maker,
+        OWNER,
+        "SELECT status, merged_into_id FROM app.entities WHERE id = :id",
+        id=owner_side,
+    )
+    assert subject_row.status == "provisional" and subject_row.merged_into_id is None
+    stayed = await one_row(
+        maker, OWNER, "SELECT entity_id FROM app.facts WHERE id = :id", id=owner_fact
+    )
+    assert str(stayed.entity_id) == owner_side
+
+    reopened = await repo.reopen_review(OWNER, item)
+    assert reopened is not None and reopened["status"] == "open"
+    restored = await one_row(
+        maker, OWNER, "SELECT status, merged_into_id FROM app.entities WHERE id = :id", id=loser
+    )
+    assert restored.status == "provisional" and restored.merged_into_id is None
+
+
+async def test_merge_accept_refuses_a_pair_a_permanent_distinction_forbids(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Rejecting writes a distinct_from edge that survives the reopen by doctrine.
+    The re-queued card must therefore not be acceptable — else the inbox could
+    enact the merge its own permanent negative knowledge forbids."""
+    repo = SqlAnalysisRepo(maker)
+    entity_a = await seed_entity(maker, "Chase Visa (distinct)")
+    entity_b = await seed_entity(maker, "Chase Sapphire (distinct)")
+    item = await seed_item(maker, "merge_proposal", {"entity_a": entity_a, "entity_b": entity_b})
+    assert await repo.resolve_review(OWNER, item, "reject", {}) is not None
+    assert await repo.reopen_review(OWNER, item) is not None
+
+    with pytest.raises(UnknownAction, match="distinct_from"):
+        await repo.resolve_review(OWNER, item, "accept", {})
+
+    still_open = await one_row(
+        maker, OWNER, "SELECT status FROM app.review_items WHERE id = :id", id=item
+    )
+    assert still_open.status == "open"
+    untouched = await one_row(
+        maker, OWNER, "SELECT status FROM app.entities WHERE id = :id", id=entity_b
+    )
+    assert untouched.status == "provisional"
+
+
+async def test_merge_accept_refuses_a_side_that_resolves_to_nothing_live(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """An id naming no live entity (deleted, out of scope, or a chain dead-ending
+    on a tombstone with nowhere to go) is the caller's ordinary can't-resolve
+    path: the card stays open rather than recording a fold that never happened."""
+    repo = SqlAnalysisRepo(maker)
+    keep = await seed_entity(maker, "Dr. Okafor (nowhere)")
+    ghost = str(uuid.uuid4())
+    item = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": ghost})
+
+    with pytest.raises(UnknownAction, match="no live entity"):
+        await repo.resolve_review(OWNER, item, "accept", {})
+
+    still_open = await one_row(
+        maker, OWNER, "SELECT status, resolution FROM app.review_items WHERE id = :id", id=item
+    )
+    assert still_open.status == "open" and still_open.resolution is None
 
 
 async def test_domain_promotion_reopen_restores_domain_and_pin(

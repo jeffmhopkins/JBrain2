@@ -527,6 +527,66 @@ NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | froz
     {"correct_fact", "merge_entities", "prefs_write", "search", "read_note", "relate"}
 )
 
+# The THIRD-PARTY surface (D10, and plan risk 1 answered by which handlers are bound).
+# A note whose BODY A STRANGER WROTE — today the `untrusted_origin` note an approved
+# guided-intake submission enacts into (`agent/proposaltools.intake_note_executor`) —
+# opens the same conversation every other note opens, and that conversation now holds
+# graph writes. This is the set it gets, and it is a THIRD frozenset rather than a flag
+# on one of the two above for the reason constraint 9 gives: which handlers are BOUND is
+# the only enforcement there is, so the difference has to be a difference of names.
+#
+# The rule it encodes, stated once: **a stranger's words may cause a FACT, and nothing
+# else.** They may resolve and mint entities and assert facts about them, because that
+# is what the owner approved the submission FOR — D10's "unrestricted in *what* it may
+# write" is honoured exactly, both graph-write verbs present, unnarrowed, at the same
+# budgets, through the same `commit_facts`, with the same floor and the same span check.
+# They may not open a channel to the owner, escalate past the arbiter, edit a standing
+# instruction, or aim the corpus.
+#
+# Dropped from the UNATTENDED set:
+# - `ask_owner`. Its question is MODEL-AUTHORED FROM STRANGER-CONTROLLED TEXT, and it
+#   lands in the owner's notes tab wearing his own agent's voice — after the review step
+#   (materialize -> Proposal -> approve) that is the entire trust boundary of the intake
+#   feature has already happened. The answer he types is then appended to the note as
+#   SOURCE text (D6) and re-ingested: chunked, embedded, searchable, citable. So a
+#   stranger-steered question is a prompt that writes the owner's own reply into his own
+#   corpus. Nothing reaches the submitter (no set here holds an egress verb, and the
+#   intake session is a different principal on a different table), so this is not an
+#   exfiltration hole — it is an UNREVIEWED INBOUND MESSAGE CHANNEL, and it costs
+#   nothing to not have one. D2 stands in its place: what is clear commits, what is not
+#   is left alone.
+#
+# And the whole ON-REPLY set is dropped as well — one set serving BOTH turns is the
+# substantive claim here. D8 widens the reply turn on the premise that the owner is the
+# only voice in the room. On a third-party note he is not: the stranger's body is turn 0
+# and is still in this turn's context, which is the plan's own reason for keeping `web_*`
+# out of the on-reply set, applied to the verbs the owner's presence was meant to justify.
+# - `correct_fact` force-supersedes AND PINS (`supersession.decide`'s correction branch
+#   reads neither confidence field), so what it writes is a fact no later note can ever
+#   supersede. A stranger who can shape what the owner types into the thread gets a
+#   durable write past every arbiter guard. The owner has not lost the verb — it is
+#   reachable from a reply into any note conversation whose body he wrote.
+# - `merge_entities` stages a fold. A fold card raised out of stranger text is a decision
+#   queued against the owner by the stranger, on whichever turn raises it.
+# - `prefs_write` delta-edits the standing instructions injected into EVERY FUTURE note
+#   conversation's system prompt. A rule that lands there is persistent, corpus-wide
+#   prompt injection with a stranger at its source, and the Proposal gate in front of it
+#   is the owner tapping Enact on a card whose label the model wrote.
+# - `search` / `read_note` / `relate` are reads, and safe in the direction that usually
+#   matters — no egress verb exists in any of the three sets to carry anything out. They
+#   go because they let the stranger's text AIM the owner's corpus, and buy nothing on a
+#   materialized interview, which is self-contained by construction.
+NOTE_INGEST_THIRD_PARTY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS - frozenset(
+    {"ask_owner"}
+)
+
+# The four verbs that WRITE the entity graph from a note conversation. Named as a set
+# because W4 has to subtract exactly them, in two places, and a hand-listed second copy
+# would drift the day a fifth write verb lands.
+NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
+    {"resolve_entity", "assert_fact", "correct_fact", "merge_entities"}
+)
+
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
 # set — never `agent_for`, whose curator fallback would be catastrophic for a stranger.
@@ -895,6 +955,78 @@ def agent_for_owner_reply(name: str) -> AgentProfile:
     if profile.name != NOTE_INGEST_AGENT:
         return profile
     return replace(profile, tools=NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def narrow_for_third_party_note(profile: AgentProfile) -> AgentProfile:
+    """The profile for a note conversation whose BODY someone other than the owner wrote
+    (D10, plan risk 1). Applied LAST, over whatever the turn resolved to.
+
+    It is a narrowing, and that is the awkward direction: `AgentProfile.tools` carries the
+    unattended set precisely so a caller who never heard of the split gets the SAFE answer,
+    and a caller who forgets to call THIS gets the unsafe one. Three things carry that
+    weight instead of the default:
+
+    - both turn paths already resolve their profile in exactly one place each
+      (`analysis/converse._run_turn` for the unattended pass, `chat()` for the reply), and
+      both are persona-gated blocks that already exist;
+    - the caller that decides whether to apply it fails CLOSED — an unreadable note or
+      conversation is treated as third-party (`analysis/thirdparty.py`), so a DB blip
+      narrows a turn rather than widening one;
+    - the worker's registry does not BIND `ask_owner` for such a note at all, so the
+      allowlist is the second lock over a tool that is not there, not the only one.
+
+    Every other persona comes back the same OBJECT, so a caller can apply it
+    unconditionally rather than carrying a persona test that a later edit could drop.
+
+    **It INTERSECTS, and that is what makes it compose with `narrow_for_emr`.** A note can
+    satisfy both W4 predicates at once — an approved intake submission that enacts into a
+    health `Records` note carrying an EMR-shaped attachment is third-party-bodied AND
+    importer-owned — and the merged result has to be the INTERSECTION of both narrowings,
+    never whichever ran second. Assigning `NOTE_INGEST_THIRD_PARTY_TOOLS` outright would
+    have handed such a note `resolve_entity` and `assert_fact` back the moment this ran
+    after the EMR subtraction: a stranger's body writing facts onto a note whose graph the
+    deterministic parse owns, which is exactly the two-writers state `ingest/emr/ownership`
+    exists to make unreachable. Intersecting makes the two narrowings commute, so the
+    "third-party runs LAST" rule below is belt over braces rather than the only lock.
+
+    The ordering rule still stands and is still load-bearing for a different reason:
+    `agent_for_owner_reply` WIDENS, and a widening applied after this one would undo it."""
+    if profile.name != NOTE_INGEST_AGENT:
+        return profile
+    if profile.tools is None:
+        # The wildcard D16 forbids for this persona. Unreachable today; if it ever became
+        # reachable the safe reading is the third-party ceiling, not "narrow nothing".
+        return replace(profile, tools=NOTE_INGEST_THIRD_PARTY_TOOLS)
+    return replace(profile, tools=profile.tools & NOTE_INGEST_THIRD_PARTY_TOOLS)
+
+
+def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
+    """Subtract every graph-write verb from a note conversation whose note the EMR
+    importer owns (W4/D9, `ingest/emr/ownership.py`).
+
+    Applied AFTER the unattended/on-reply split, so it narrows both — the owner replying
+    does not unlock a write surface here, which is the one place W4 breaks D8's "the full
+    surface unlocks when you reply". It has to: `correct_fact` at an empty address commits
+    active + PINNED, and a pinned lab head makes every later import of that reading `held`
+    — the owner would silently freeze a value the next draw is supposed to supersede. What
+    the reply turn keeps is `ask_owner`, the entity reads, `search`/`read_note`/`relate`
+    and `prefs_write`: it can explain the import and be told how to handle the next one.
+
+    Two locks, deliberately: this one narrows the ALLOWLIST, and `converse`'s per-note
+    registry independently declines to BIND the handlers. Constraint 9 says the surface is
+    the registry's, not the prompt's; the allowlist alone would leave `/chat`'s registry
+    holding live handlers behind one `frozenset` field.
+
+    Non-note personas are returned unchanged, so a caller may apply it unconditionally.
+
+    Composes with `narrow_for_third_party_note` in either order: this one SUBTRACTS and
+    that one INTERSECTS, so a note that is both third-party-bodied and importer-owned ends
+    up with `NOTE_INGEST_THIRD_PARTY_TOOLS - NOTE_GRAPH_WRITE_TOOLS` — the reads and the
+    clock — whichever runs first.
+    """
+    if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
+        return profile
+    return replace(profile, tools=profile.tools - NOTE_GRAPH_WRITE_TOOLS)
 
 
 class PersonaResolutionError(ValueError):

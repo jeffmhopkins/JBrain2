@@ -33,6 +33,7 @@ from jbrain.agent.agents import (
     SPAWN_TOOL,
     AgentProfile,
     agent_for_owner_reply,
+    narrow_for_third_party_note,
 )
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
@@ -69,8 +70,10 @@ from jbrain.analysis.clarify import (
     NOTE_CONVERSE_AGENT,
     close_owner_reply,
     record_owner_reply,
+    reply_profile_for_session,
 )
 from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.analysis.thirdparty import conversation_is_third_party
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.research_service import ResearchLibrary
@@ -828,6 +831,49 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 profile.prompt, await _standing_instructions(request, owner_ctx)
             ),
         )
+        # W4's two narrowings of the reply turn, in that order. Both are subtractions from
+        # `agent_for_owner_reply`'s widening, they are independent, and a note can be BOTH
+        # (an approved intake submission enacting into a health `Records` note with an
+        # EMR-shaped attachment) — in which case the turn must end up with the
+        # INTERSECTION, which is what `narrow_for_third_party_note` intersecting rather
+        # than assigning guarantees whichever order they run in.
+        #
+        # W4/D9: narrowed if this thread's note is one the deterministic EMR importer
+        # owns. `fhir_status` has no tool field, so a lab value the model wrote is one the
+        # FHIR lifecycle can never supersede — and `correct_fact` at an empty address
+        # PINS, which would freeze a reading against the next draw. This turn keeps
+        # `ask_owner`, the reads and `prefs_write`; it loses the four write verbs. The
+        # unattended pass narrowed on the same predicate in `analysis/converse.py`, and
+        # the worker's per-note registry binds no write handler for such a note either.
+        # It fails CLOSED, like the third-party lookup beside it — see the docstring on
+        # `reply_profile_for_session` for why the merge flipped it from open.
+        profile = await reply_profile_for_session(
+            request.app.state.session_maker,
+            cast(NotesRepo, request.app.state.notes_repo),
+            owner_ctx,
+            session_id=str(session.id),
+            agent=session.agent,
+            profile=profile,
+        )
+        # D10 / plan risk 1, the reply half. D8 widens this turn on the premise that the
+        # owner is the only voice in the room; on a note a STRANGER wrote he is not — the
+        # submitted body is turn 0 and is still in this turn's context. So a third-party
+        # note conversation keeps the third-party set on the reply turn too, and the
+        # verbs the owner's presence was meant to justify (`correct_fact`'s pinned
+        # force-supersede, `merge_entities`' fold card, `prefs_write`'s edit of the
+        # instructions injected into every future note conversation) stay out.
+        #
+        # Applied AFTER `agent_for_owner_reply`, deliberately: the widening is what it
+        # undoes, so it has to run last, and it is idempotent for every other persona.
+        # The lookup fails closed (`thirdparty.conversation_is_third_party`), so the
+        # failure mode is a narrowed reply turn, never a widened one.
+        if await conversation_is_third_party(
+            request.app.state.session_maker,
+            cast(NotesRepo, request.app.state.notes_repo),
+            owner_ctx,
+            session_id=str(session.id),
+        ):
+            profile = narrow_for_third_party_note(profile)
 
     # A reply into a note conversation that is WAITING is an answer, and D6 makes an
     # answer part of the note: it is appended as a timestamped clarification block, which

@@ -221,6 +221,17 @@ place, several mutations stayed live in the file, and the "clean" backup was the
   deliberately-run eval suite outside CI.
 - Tests are deterministic: no network, no real clock (inject time), no
   ordering dependence. The suite stays fast enough to run on every commit.
+- **A test file must pass when it is the only file in the run.** Sharing an
+  interpreter hides real defects: `test_lists_pg.py` failed alone for months and
+  was green in CI only because `--dist loadscope` happened to seat, in the same
+  xdist worker, a sibling that imported the model `jbrain.models.lists` needed and
+  did not import itself — SQLAlchemy resolves a ForeignKey's target by string, at
+  flush, so the missing mapping raised on the first INSERT and never at import.
+  A failure only a solo run can see is invisible to the suite that is supposed to
+  catch it, so pinning it takes a test that reconstructs the isolation
+  (`tests/unit/test_model_module_isolation.py` re-imports each model module in a
+  subprocess with a purged `sys.modules`) — checking the fix by running the file
+  alone once proves nothing about tomorrow.
 
 ### CI runtime budget
 - **Every workflow job declares `timeout-minutes`.** A job that omits it inherits

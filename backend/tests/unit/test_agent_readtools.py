@@ -1021,8 +1021,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # silent edit to either is a behaviour change to every note the box ingests.
         "assert_fact.tool": (
             "assert_fact",
-            2,
-            "ac8cd9c686a4afedbdda18b26ce5eab937de36cf2c8ceedcd859ee1bbb2a4b4c",
+            3,
+            "eeeb9b746c317fbc570e046c202660a626baaaac181cd9e705b7ce6e00d1ea10",
         ),
         "resolve_entity.tool": (
             "resolve_entity",

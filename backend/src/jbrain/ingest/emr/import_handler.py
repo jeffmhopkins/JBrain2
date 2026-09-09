@@ -40,9 +40,9 @@ from jbrain.ingest.emr.dispatch import Attachment as SourceInput
 from jbrain.ingest.emr.dispatch import Source, parse_corpus, select_source
 from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch
 from jbrain.ingest.emr.integrate import (
+    EmrNoteCommit,
     file_firewall_cards,
     file_parked_cards,
-    integrate_parse_result,
 )
 from jbrain.ingest.emr.onecontent import pdf_word_pages
 from jbrain.ingest.emr.reconcile import REVIEW_KIND
@@ -121,6 +121,20 @@ class EmrImportPipeline:
         sources = await self._build_sources(attachments)
         corpus = parse_corpus(sources)
 
+        # ONE commit for the whole note, fed one attachment at a time and settled once
+        # (D9 / plan constraint 6). A decrypted archive attaches many PDFs to one note,
+        # and `settle_note` retracts every non-pinned fact of the note it is not told
+        # about — so the old per-attachment `integrate_parse_result` loop had each PDF's
+        # settle retract the PDFs before it, and a two-PDF import kept only the last
+        # one's readings.
+        run = EmrNoteCommit(
+            self._pipeline,
+            self._maker,
+            ctx,
+            note_id=uuid.UUID(note_id),
+            note_domain=domain,
+            captured_at=captured_at,
+        )
         # Layer-2 firewall catches, paired with the attachment they came from. The
         # guard holding a whereabouts fact out of the graph is only half the control:
         # a silent hold tells the owner nothing, so every catch is carded below (§3.6).
@@ -134,18 +148,11 @@ class EmrImportPipeline:
             if not att_refs:
                 att_refs = note_refs
             resolver = self._resolver(anchors, att_refs)
-            catches = await integrate_parse_result(
-                self._pipeline,
-                self._maker,
-                ctx,
-                note_id=uuid.UUID(note_id),
-                note_domain=domain,
-                captured_at=captured_at,
-                chunks=att_refs,
-                result=parsed.result,
-                chunk_for_anchor=resolver,
+            catches = await run.commit_source(
+                chunks=att_refs, result=parsed.result, chunk_for_anchor=resolver
             )
             caught += [(parsed.ref, c) for c in catches]
+        await run.settle()
         await file_firewall_cards(
             self._maker,
             ctx,

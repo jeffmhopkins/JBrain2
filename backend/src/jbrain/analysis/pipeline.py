@@ -247,6 +247,21 @@ class CommitOutcome:
     writes: dict[int, FactWrite] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class AppliedIntent:
+    """One `commit_intent` pass: what it wrote, and what a later `settle_note` needs.
+
+    `extraction` is carried rather than rebuilt because `settle_note` reads it for the
+    mention/alias/ambiguity sweeps and the `note_analysis` stamp, and a caller
+    committing SEVERAL intents onto one note has to settle over the UNION of them —
+    rebuilding it from one intent would make the sweeps retract the others' work.
+    """
+
+    override: dict[str, ResolvedEntity | None]
+    outcome: CommitOutcome
+    extraction: Extraction
+
+
 # `entity_mentions.confidence` is Postgres `real` (float4) and the resolver's
 # value is a Python float64, so a stored 0.9 reads back as 0.8999999761581421 —
 # only 1.0 round-trips exactly. An exact `!=` would therefore call every
@@ -575,18 +590,81 @@ class AnalysisPipeline:
         extractor: str,
         dropped_facts: int = 0,
     ) -> dict[str, ResolvedEntity | None]:
-        """Commit an arbiter-approved IntegrationIntent through the deterministic
-        commit_facts + settle_note pair (plan §9, Option 1). A rejected plan is a
-        no-op: the note stays pending_integration, nothing is written (N5: no
-        partial commit). Active-eligible facts commit; review-held facts (cross-subject,
-        ambiguous, low weight) are written as inert `pending_review` rows and each
-        linked to its low_confidence_inference card — all in this one transaction
-        (N5), so a human can later accept (pin) or reject (retract) it.
+        """Commit an arbiter-approved IntegrationIntent AND settle its note — the
+        whole-note, one-intent-per-note path (plan §9, Option 1).
 
-        Returns the committed mention_ref -> entity map (`{}` for a rejected plan)
-        so the caller can persist the Integrator's resolution pins from the SAME
-        entities the commit used, without re-resolving (which would double-mint
-        provisionals).
+        A caller with SEVERAL intents for one note must not call this in a loop:
+        `settle_note` is whole-note, so the second call's sweep retracts the first
+        call's facts. Use `commit_intent` per intent, union the outcomes, and settle
+        once (`ingest/emr/integrate.py` is the in-repo caller that does)."""
+        applied = await self.commit_intent(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            captured_at=captured_at,
+            chunks=chunks,
+            intent=intent,
+            plan=plan,
+            title=title,
+            tags=tags,
+            extractor=extractor,
+            dropped_facts=dropped_facts,
+        )
+        if applied is None:
+            return {}
+        # One note, one pass: this run's sets ARE the whole conversation's.
+        await self.settle_note(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            chunks=chunks,
+            extraction=applied.extraction,
+            extractor=extractor,
+            resolved=applied.outcome.resolved,
+            touched=applied.outcome.touched,
+            projected=applied.outcome.projected,
+            mention_ids=applied.outcome.mention_ids,
+        )
+        return applied.override
+
+    async def commit_intent(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        captured_at: datetime,
+        chunks: list[_ChunkRef],
+        intent: IntegrationIntent,
+        plan: ArbiterPlan,
+        title: str,
+        tags: list[str],
+        extractor: str,
+        dropped_facts: int = 0,
+    ) -> AppliedIntent | None:
+        """Everything `apply_intent` does EXCEPT `settle_note` — the half a caller
+        with several intents for ONE note may run in a loop.
+
+        This is the seam the EMR importer writes through (plan D9 / TOOL_SURFACE gap
+        3): `IntentFact.fhir_status` rides `plan_to_extraction` into `ExtractedFact`
+        and on into `decide()`'s `_lab_status_transition`, and there is no model-facing
+        field that carries it. An importer that wrote through the note-conversation
+        tools instead would silently lose the lab lifecycle.
+
+        A rejected plan returns None and is a no-op: the note stays
+        pending_integration, nothing is written (N5: no partial commit). None is also
+        the signal to skip the settle, and that is load-bearing — a caller that settled
+        on a rejected plan would retract the note's whole graph on the strength of a
+        pass that committed nothing.
+
+        Active-eligible facts commit; review-held facts (cross-subject, ambiguous, low
+        weight) are written as inert `pending_review` rows and each linked to its
+        low_confidence_inference card — all in this one transaction (N5), so a human
+        can later accept (pin) or reject (retract) it.
+
+        `AppliedIntent.override` is the committed mention_ref -> entity map, so the
+        caller can persist the Integrator's resolution pins from the SAME entities the
+        commit used, without re-resolving (which would double-mint provisionals).
 
         `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
         the rebuilt extraction can file the `extraction_truncated` card (W0). The
@@ -599,7 +677,7 @@ class AnalysisPipeline:
                 note_id=str(note_id),
                 violations=[v.code for v in plan.fatal_violations],
             )
-            return {}
+            return None
         override = await self._resolve_from_intent(
             session, list(intent.entity_resolutions), note_domain=note_domain
         )
@@ -624,23 +702,19 @@ class AnalysisPipeline:
             resolution_override=override,
             held_indices=held_indices,
         )
-        # One note, one pass: this run's sets ARE the whole conversation's.
-        await self.settle_note(
-            session,
-            note_id=note_id,
-            note_domain=note_domain,
-            chunks=chunks,
-            extraction=extraction,
-            extractor=extractor,
-            resolved=outcome.resolved,
-            touched=outcome.touched,
-            projected=outcome.projected,
-            mention_ids=outcome.mention_ids,
-        )
         # Recompute the deterministic signals (pure, cheap) so each held card can
-        # carry the same ceiling arithmetic the arbiter used — apply_intent is also
+        # carry the same ceiling arithmetic the arbiter used — `commit_intent` is also
         # called standalone (eval harness) with a pre-built plan, so the signals
-        # aren't threaded in.
+        # aren't threaded in. Filed HERE rather than after the settle because the card
+        # and the inert `pending_review` row it points at are one unit, and a
+        # multi-source caller (`ingest/emr/integrate.EmrNoteCommit`) settles ONCE for
+        # several commits — a filing that lived after the settle would file no card at
+        # all for those. It is safe on either side of the settle only because the card
+        # dedup keys on the HELD ROW's id: the row this pass wrote is in `touched` so
+        # the sweep spares it and its card stands, while a stale card from a previous
+        # pass points at a row the sweep DID retract and is deleted with it. Keyed on
+        # the mention surface instead, the stale card suppressed this pass's card and
+        # was then deleted, leaving a held fact with nothing on the owner's desk.
         signals = compute_signals(intent, [c.text for c in chunks])
         await self._file_inference_reviews(
             session,
@@ -651,7 +725,7 @@ class AnalysisPipeline:
             signals=signals,
             held_ids=outcome.held_ids,
         )
-        return override
+        return AppliedIntent(override=override, outcome=outcome, extraction=extraction)
 
     async def _resolve_from_intent(
         self,
@@ -764,27 +838,45 @@ class AnalysisPipeline:
             # _upsert_fact's `fact.domain or note_domain` collapses to note_domain
             # — we start there, then apply the same floor + ratchet.
             card_domain = _review_card_domain(fact.predicate, note_domain)
-            # Re-analysis must not multiply identical open cards.
-            existing = (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM app.review_items"
-                        " WHERE kind = 'low_confidence_inference' AND status = 'open'"
-                        " AND payload->>'note_id' = :nid AND payload->>'entity_ref' = :ref"
-                        " AND payload->>'predicate' = :pred AND payload->>'qualifier' = :qual"
-                        " LIMIT 1"
-                    ),
-                    {
-                        "nid": str(note_id),
-                        "ref": fact.entity_ref,
-                        "pred": fact.predicate,
-                        "qual": fact.qualifier,
-                    },
-                )
-            ).first()
-            if existing is not None:
-                continue
             held_id = held_ids.get(i)
+            # Re-analysis must not multiply identical open cards — and must not
+            # SUPPRESS a needed one either. The dedup key is therefore the held ROW's
+            # id, the same identity `_insert_held_fact` keys its idempotent refresh on
+            # (note_id, entity_id, predicate, qualifier, object, domain). Keying it on
+            # the mention SURFACE instead let the two disagree: a re-analysis that
+            # resolves the same `entity_ref` to a different entity — or a note whose
+            # domain an owner PATCH moved — mints a NEW held row while the OLD run's
+            # card still matches the surface, so the new card was skipped and the
+            # settle then deleted the old one as pointing at a retracted fact. A
+            # `pending_review` fact with no card is exactly what N11 forbids. On the
+            # row's id the two agree, and they agree whichever side of `settle_note`
+            # this runs on. Open-only, like every other sweep here: a resolved or
+            # dismissed card is a human decision and never suppresses a fresh one.
+            if held_id is not None:
+                probe = text(
+                    "SELECT 1 FROM app.review_items"
+                    " WHERE kind = 'low_confidence_inference' AND status = 'open'"
+                    " AND payload->>'fact_id' = :fid LIMIT 1"
+                )
+                params: dict[str, Any] = {"fid": str(held_id)}
+            else:
+                # No row was written (the entity or object did not resolve), so there is
+                # no id to key on and the identity key is all there is.
+                probe = text(
+                    "SELECT 1 FROM app.review_items"
+                    " WHERE kind = 'low_confidence_inference' AND status = 'open'"
+                    " AND payload->>'note_id' = :nid AND payload->>'entity_ref' = :ref"
+                    " AND payload->>'predicate' = :pred AND payload->>'qualifier' = :qual"
+                    " AND payload->>'fact_id' IS NULL LIMIT 1"
+                )
+                params = {
+                    "nid": str(note_id),
+                    "ref": fact.entity_ref,
+                    "pred": fact.predicate,
+                    "qual": fact.qualifier,
+                }
+            if (await session.execute(probe, params)).first() is not None:
+                continue
             # Render the card from the COMMITTED held fact (the row the note view
             # reads), not the raw planned fact: _insert_held_fact shape-checked and
             # coerced its value_json ("Female (inferred from 'wife')" -> "female"),

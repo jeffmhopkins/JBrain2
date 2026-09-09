@@ -18,8 +18,9 @@ from sqlalchemy import func, select, text
 
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
+from jbrain.ingest.emr.athena import parse_athena
 from jbrain.ingest.emr.epic import parse_epic
-from jbrain.ingest.emr.integrate import integrate_parse_result
+from jbrain.ingest.emr.integrate import EmrNoteCommit, integrate_parse_result
 from jbrain.ingest.emr.pathology import PATHOLOGY_TASK
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, Fact, ReviewItem
@@ -35,6 +36,7 @@ pytestmark = [
 ]
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "emr" / "epic_report.txt"
+_ATHENA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "emr" / "athena_panel.txt"
 
 
 def _pipeline(maker) -> AnalysisPipeline:  # noqa: F811
@@ -351,3 +353,61 @@ async def test_read_encounters_tool_lists_and_expands(maker, tmp_path):  # noqa:
     assert m, listing
     detail = await handlers["read_encounters"]({"encounter_id": m.group(1)}, owner)
     assert "Chen, Sarah MD" in detail and "D69.6" in detail
+
+
+async def test_every_entity_a_source_wrote_reaches_the_one_settle(maker, tmp_path):  # noqa: F811
+    """`EmrNoteCommit` accumulates four things across sources, and `resolved` is the one
+    that is a MAP.
+
+    `_touched` / `_projected` / `_mention_ids` union; `resolved` was a dict merge, so a
+    mention_ref reused by two attachments kept only the LAST source's entity. The refs
+    collide by design — they are semantic keys (`org:…`, `cond:…`, `obs:…`) and `new`-mode
+    resolution mints a fresh provisional per intent — and `settle_note` reads that map for
+    `_register_declared_aliases`, `_reproject_entities` and `_promote_corroborated`. So a
+    dropped entry is an entity whose facts the sweep spared and whose projection and
+    promotion silently never ran.
+
+    Asserted as the invariant the settle actually needs — every entity this note's live
+    facts hang off is visible to it — rather than on the collision, which is a property of
+    which two fixtures happen to share a ref."""
+    note_id = await make_note(maker, domain="health", body="Imported EMR records.")
+    await ingest(maker, note_id, tmp_path)
+    chunks = await _load_chunks(maker, note_id)
+    anchor = str(chunks[0].id)
+
+    run = EmrNoteCommit(
+        _pipeline(maker),
+        maker,
+        SYSTEM_CTX,
+        note_id=uuid.UUID(note_id),
+        note_domain="health",
+        captured_at=datetime.now(UTC),
+    )
+    for fixture in (_ATHENA_FIXTURE, _FIXTURE):
+        parse = parse_athena if fixture is _ATHENA_FIXTURE else parse_epic
+        await run.commit_source(
+            chunks=chunks,
+            result=parse(fixture.read_text()),
+            chunk_for_anchor=lambda _a: anchor,
+        )
+    assert await run.settle() is True
+
+    seen = {e.id for e in run._resolved.values() if e is not None}
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        written = {
+            r[0]
+            for r in (
+                await s.execute(
+                    text(
+                        "SELECT DISTINCT entity_id FROM app.facts"
+                        " WHERE note_id = CAST(:n AS uuid) AND status <> 'retracted'"
+                    ),
+                    {"n": note_id},
+                )
+            ).all()
+        }
+    assert written, "the two sources wrote no facts at all"
+    assert written <= seen, (
+        "entities the sweep spared are invisible to the settle's projection and"
+        f" promotion passes: {sorted(written - seen)}"
+    )

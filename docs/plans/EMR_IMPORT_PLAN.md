@@ -1,6 +1,24 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-08 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+>
+> **The import now settles a note ONCE** (W4/D9 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`).
+> `integrate.py` drove one `apply_intent` per parsed SOURCE, and `apply_intent` ends in the
+> whole-note `settle_note` — so on a decrypted archive, which attaches many PDFs to one note,
+> each PDF's settle retracted the PDFs before it and only the last source's readings stayed
+> live. `EmrNoteCommit` now commits each source through `AnalysisPipeline.commit_intent` (the
+> half of `apply_intent` that does everything except the settle), unions the
+> `touched`/`projected`/`mention_ids` sets, and settles once. The note's §6.6 per-source
+> transaction isolation is unchanged; what a crash now costs is the settle, not the earlier
+> attachments. `integrate_parse_result` survives as the single-source wrapper.
+>
+> **And an EMR note's conversation holds no graph-write verb.** `fhir_status` (§3.5) is not
+> expressible as a model tool field, so a lab value written by the note conversation is one
+> `_lab_status_transition` can never supersede; `ingest/emr/ownership.emr_owned` mirrors 0122's
+> own trigger filter and `agents.narrow_for_emr` subtracts the write verbs on both the
+> unattended pass and the owner's reply turn, with the worker's per-note registry declining to
+> bind them as the second lock. **Layer 2 (§3.6) is untouched** and stays a hard non-commit:
+> the guard runs inside `lower_parse_result`, before an intent exists.
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Waves
 W0–W3 are complete (W0 gates + fixtures; W1 storage bedrock — schema defs, the
@@ -1615,13 +1633,17 @@ and unit-tested (`backend/src/jbrain/ingest/emr/`):
   the shipped arbiter consumes, with the per-draw fan + analyte-constant facts, `fhir_status` on
   `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, and the
   **Layer-2 firewall guard** run on every prospective fact. All intents `validate_intent`-clean.
-- **`integrate.py`** — the deterministic integration driver: `integrate_parse_result` lowers a
-  parse result and commits each fact through `plan_intent → apply_intent` on an RLS session, no LLM.
+- **`integrate.py`** — the deterministic integration driver: `EmrNoteCommit` lowers each parsed
+  source and commits its facts through `plan_intent → AnalysisPipeline.commit_intent` on an RLS
+  session, no LLM, then settles the note ONCE over every source's union.
   The `value` measurement carries `valid_from = collected_at` (§3.3 — the address the §3.5 transition
-  keys on); the parser emits UTC-aware datetimes. **One intent per NOTE** (not per grouping unit): the
-  shipped `_apply` reconciles the whole note via its touched-set retract sweep, so a second per-unit
-  apply on the same note would retract the first unit's facts — the §6.6 per-unit transaction
-  isolation is a follow-on needing incremental note commits. An end-to-end integration test on real
+  keys on); the parser emits UTC-aware datetimes. **One intent per PARSED SOURCE, one settle per
+  NOTE.** `lower_parse_result` still returns one intent per parse result (a facility transfer's
+  segments share it so `partOfEncounter` resolves intra-intent), and the whole-note retract sweep
+  is what forced the second half: it retracts every non-pinned fact of the note it is not told
+  about, so a settle per source retracted the sources before it — which is what a decrypted
+  archive's several PDFs actually hit. `integrate_parse_result` is the single-source wrapper over
+  the same object, kept for the callers that have exactly one. An end-to-end integration test on real
   Postgres proves the Epic fixture mints the health entities, final readings commit active, and the
   corrected-without-original platelet is held `pending_review` (proving `fhir_status` reaches
   `decide`).

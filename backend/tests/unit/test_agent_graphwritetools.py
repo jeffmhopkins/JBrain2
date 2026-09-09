@@ -59,7 +59,15 @@ def test_every_field_the_write_needs_is_required() -> None:
     `scratch_write` calls the model filled the required one every time and the optional
     one never once, and llama.cpp compiles `required` into the tool grammar. An optional
     `quote` would mean no fact is ever attested; an optional `object` would mean no fact
-    ever has a value."""
+    ever has a value.
+
+    v3's two additions are required on the same terms. `when_end` carries the explicit
+    empty-string escape `when` does; `confidence` is a NUMBER, and its type is the point
+    — `evals/shape_probe.py` measured the string spelling coming back "high"/"low" every
+    time, and a JSON type is the only closed vocabulary a tool grammar can enforce
+    without an `enum`. What the model cannot be trusted with is WHEN to fill either one,
+    which is `_close_interval`'s three refusals and `_self_report`'s min, not the
+    schema's job."""
     item = _spec("assert_fact").params["properties"]["facts"]["items"]
     assert set(item["required"]) == {
         "subject",
@@ -67,7 +75,9 @@ def test_every_field_the_write_needs_is_required() -> None:
         "object",
         "statement",
         "when",
+        "when_end",
         "quote",
+        "confidence",
     }
     assert set(item["properties"]) == set(item["required"])
 
@@ -411,3 +421,117 @@ def test_a_write_that_left_the_notes_domain_says_where_it_landed() -> None:
     assert "filed under health" in gw._write_line(0, "Dana", "allergy", "shellfish", floored, [])
     ordinary = FactWrite(gw.uuid.uuid4(), WRITTEN, "general", "Dana works at Everlane")
     assert "filed under" not in gw._write_line(0, "Dana", "worksAt", "Everlane", ordinary, [])
+
+
+# --- v3: the interval end (TOOL_SURFACE gap 4) --------------------------------
+
+
+def test_an_interval_end_closes_the_temporal_it_is_given() -> None:
+    """The whole of gap 4: a note that states a closed interval in ONE sentence no
+    longer needs a later note to close it."""
+    anchor = gw.datetime(2026, 3, 14, tzinfo=gw.UTC)
+    temporal = gw._temporal("2019", anchor, None)
+    closed, refused = gw._close_interval(temporal, "2023", None)
+    assert refused is None
+    assert closed is not None and closed.resolved_end is not None
+    assert closed.resolved_start == temporal.resolved_start
+
+
+def test_an_end_period_closes_when_the_period_ends_not_when_it_starts() -> None:
+    """ "until 2023" ends when 2023 ends. `_temporal` expands a bare year to its FIRST
+    day, which is right for a start and a whole period wrong for an end."""
+    anchor = gw.datetime(2026, 3, 14, tzinfo=gw.UTC)
+    year = gw._close_interval(gw._temporal("2019", anchor, None), "2023", None)[0]
+    assert year is not None and year.resolved_end is not None
+    assert (year.resolved_end.year, year.resolved_end.month) == (2023, 12)
+    month = gw._close_interval(gw._temporal("2023-01", anchor, None), "2026-03", None)[0]
+    assert month is not None and month.resolved_end is not None
+    assert (month.resolved_end.year, month.resolved_end.month) == (2026, 3)
+    # December has no month 13 to borrow from.
+    december = gw._close_interval(gw._temporal("2023", anchor, None), "2025-12", None)[0]
+    assert december is not None and december.resolved_end is not None
+    assert (december.resolved_end.year, december.resolved_end.month) == (2025, 12)
+
+
+def test_the_three_ends_the_measurement_says_the_model_invents_are_refused() -> None:
+    """`evals/shape_probe.py` put `when_end` in front of the live model on a note with
+    exactly one closed interval: it closed that one every time AND stamped an end on
+    nearly every other fact, in three shapes. Each is refused here, and each refusal is
+    a result line rather than a dropped fact — the fact commits with the start it had."""
+    anchor = gw.datetime(2026, 3, 14, tzinfo=gw.UTC)
+    started = gw._temporal("2019", anchor, None)
+
+    # A phrase that is not a date at all ("present", "last week").
+    same, refused = gw._close_interval(started, "present", None)
+    assert same is started and refused is not None and "not a date" in refused
+
+    # An end on a fact that never had a start.
+    none_temporal, refused = gw._close_interval(None, "2023", None)
+    assert none_temporal is None and refused is not None and "no `when`" in refused
+
+    # Today's date on a fact the note dated today — the shape the model produced most
+    # often. The comparison is period against period, so naming the same day, month or
+    # year as the start is a restatement rather than a close.
+    today = gw._temporal("2026-09-09", anchor, None)
+    same, refused = gw._close_interval(today, "2026-09-09", None)
+    assert same is today and refused is not None and "not after" in refused
+    same, refused = gw._close_interval(started, "2019", None)
+    assert same is started and refused is not None and "not after" in refused
+    # A finer end INSIDE the start's period is the same restatement one level down.
+    same, refused = gw._close_interval(started, "2019-06", None)
+    assert same is started and refused is not None and "not after" in refused
+
+
+def test_no_end_is_the_common_case_and_changes_nothing() -> None:
+    """The empty-string escape: `when_end` is required so the grammar fills it, and
+    empty is the answer for nearly every fact."""
+    anchor = gw.datetime(2026, 3, 14, tzinfo=gw.UTC)
+    started = gw._temporal("2019", anchor, None)
+    assert gw._close_interval(started, "", None) == (started, None)
+    assert gw._close_interval(None, "", None) == (None, None)
+
+
+# --- v3: a declared value predicate never takes a name as an edge (gap 5) -----
+
+
+def test_a_declared_value_predicate_takes_its_object_literally() -> None:
+    """The Sammy bug. `object` is one string doing two jobs and the model writes a name
+    for both, so a literal that happened to equal a resolved surface silently became an
+    edge — an entity's own nickname became a self-edge, and the display projection then
+    had no name fact to read. The registry already knows which predicates take an edge:
+    `value_shape: ref`."""
+    registry = gw.get_registry()
+    assert not gw._takes_entity_object(registry, "Person", "name.nickname")
+    assert not gw._takes_entity_object(registry, "Person", "name.full")
+    # A drift spelling normalizes first, so the fix cannot be dodged by spelling.
+    assert not gw._takes_entity_object(registry, "Person", "legalName")
+
+
+def test_an_undeclared_predicate_keeps_the_permissive_link() -> None:
+    """Tier-2 is most of the graph and the registry has no opinion there. Refusing to
+    link an undeclared predicate's object would break far more edges than it fixed."""
+    registry = gw.get_registry()
+    assert gw._takes_entity_object(registry, "Person", "hangsOutWith")
+    assert gw._takes_entity_object(registry, "Sasquatch", "name.nickname")
+
+
+def test_a_handle_still_addresses_an_entity_under_a_value_predicate() -> None:
+    """`lookup` checks the handle table first in every case: the model writing `e2` is
+    an unambiguous statement that it means the entity, and the registry never overrides
+    that."""
+    writer = object.__new__(gw.NoteGraphWriter)
+    writer._by_handle = {}
+    writer._by_surface = {}
+    handle = gw.Handle(
+        handle="e1",
+        entity=gw.ResolvedEntity(id=gw.uuid.uuid4(), subject_id=None),
+        surface="Sammy",
+        kind="Person",
+        name="Celine Kitina Hopkins",
+        domain="general",
+        visible=True,
+    )
+    writer._remember(handle)
+    assert writer.lookup("e1", by_name=False) is handle
+    assert writer.lookup("Sammy", by_name=False) is None
+    assert writer.lookup("Sammy", by_name=True) is handle

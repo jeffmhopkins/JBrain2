@@ -18,41 +18,71 @@ changed, not the model — the faithful agent lives in `_tool_calls` and nowhere
 else, one function rather than seventy-five files.
 
 **What the tool surface cannot say**, and so what a scenario can no longer
-script. Each is a real gap in `assert_fact`, recorded here because the harness is
-where it becomes visible (see the plan's W3 section):
+script. Each was a real gap in `assert_fact`; three are closed and three are
+accepted, and every one of the six was decided by putting the candidate schema
+in front of the live model (`backend/evals/shape_probe.py`, the `fields` suite)
+rather than by argument. The finding that decided them, and the one worth
+carrying: **`required` buys presence, not membership.** gpt-oss fills every
+required string field every time — with a value it invented. Asked for a fact
+`kind` from a six-word list, in an imperative "copy exactly one of these words
+and never any other", it wrote `residence`, `employment`, `medical`: 7 of 80.
+Asked for an `assertion` from a five-word list: 0 of 72. The only closed
+vocabularies a tool grammar can enforce without a JSON-Schema `enum` (plan
+constraint 8) are the JSON types themselves — `number` and `boolean` — and the
+two fields that ship are one of each shape or a plain ISO date.
 
-  - **No `qualifier`.** The identity key is `entity.predicate[.qualifier]`
-    pointing at a value or another entity, and the tool has no field for the
-    middle term. Where the extraction's qualifier named the OBJECT entity
-    (`owns.Civic` → Civic) nothing is lost: a non-functional predicate keys on
-    its object. Where it discriminated two scalar facts under one predicate (two
-    diagnoses in one note, three readings) those facts now collide.
-  - **No `assertion` but `asserted`.** A future date still normalizes to
-    `expected` and a past marker in the statement still closes the interval —
+  - **No `qualifier`, and none is coming (accepted).** Probed as a required
+    field, the model filled it with prose on 61 of 86 facts ("previous weight
+    182 lb in March", "vehicle no longer owned"), and an over-applied qualifier
+    splits an identity key so nothing supersedes again — strictly worse than the
+    collision it was meant to fix. What EXISTS is the dotted path
+    `registry.decompose_predicate` already reads and `assert_fact` v3 teaches:
+    `name.nickname.friends` stores as name.nickname + friends, bounded to the
+    five registry predicates declaring a `qualifier_vocab`. `_predicate` below
+    folds there and nowhere else. A long-tail qualifier is still dropped, so two
+    scalar facts under one undeclared predicate still collide. And the channel is
+    OPEN but unreached: this synthesiser uses it because it is a perfect model,
+    while the live one wrote `has nickname` where the registry declares
+    `name.nickname` and carried a third segment 0 times in 39.
+  - **No `assertion` but `asserted` (accepted).** A future date still normalizes
+    to `expected` and a past marker in the statement still closes the interval —
     both are `_upsert_fact`'s own normalizers, and they still fire. A NEGATED
-    fact ("I sold the Civic") has no expression at all, so a disposal stated in a
-    LATER note cannot reach the earlier note's fact; the settle sweep only
-    retracts facts of the note it is settling.
-  - **No structured `value_json`.** `object` is a string, so a literal value is
-    stored as `{value}` or `{value, unit}`. Anything richer — a nested payload, a
-    13-key flat object, `{state, start, end}` on an interval — is flattened by
-    `_object_literal` before it ever reaches the tool, and an edge with an object
-    entity stores no `value_json` at all.
-  - **No `kind`.** `_fact_kind` derives it: an object edge is always
+    fact ("I sold the Civic") has no expression at all, so a disposal stated in
+    a LATER note cannot reach the earlier note's fact; the settle sweep only
+    retracts facts of the note it is settling. The measurement is above; the
+    owner's `correct_fact` on the reply turn is the channel that survives.
+  - **No structured `value_json` (accepted).** `object` is a string, so a
+    literal value is stored as `{value}` or `{value, unit}`. Anything richer — a
+    nested payload, a 13-key flat object — is flattened by `_object_literal`
+    before it ever reaches the tool, and an edge with an object entity stores no
+    `value_json` at all. The deliberate narrowing TOOL_SURFACE gap 5 states: the
+    model is never asked to nest.
+  - **An interval END is sayable (closed).** `when_end` is v3's seventh flat
+    scalar, and `_when_end` below scripts it. The model fills it and closes the
+    one genuinely-closed interval in a note — and stamps an end on nearly every
+    other fact too, so `graphwritetools._close_interval` refuses an end that is
+    not a date, has no start, or does not pass the start's own period.
+  - **No `kind` (accepted).** `_fact_kind` derives it: an object edge is always
     `relationship`, and everything else falls to the registry's declaration for
     the predicate, then the subject type's default, then `attribute`. A
     `measurement` time-series and a `preference` are not sayable on an
     undeclared predicate, and asserting `kind: relationship` on an object edge
-    is now a tautology.
-  - **No `confidence`.** The tool surface has no confidence field, so a model
-    that knows its own read is a guess cannot say so. The guard itself is live —
-    `assert_fact` stamps `self_confidence=confidence`, so an unattested write
-    lands at 0.4, under `LOW_CONFIDENCE`, and is held — but a 0.25 self-report
-    on an otherwise well-quoted read has no channel. This is the SAFETY one
-    (`health_low_confidence_ocr_guard`).
-  - **No arbiter.** `derive_kinship_gender` and the rest of the arbiter's
-    derivations do not run on this path, so facts main inferred are simply
-    absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote 12).
+    is now a tautology. Closing it means DECLARING the predicate, not asking the
+    model.
+  - **A `confidence` self-report is sayable (closed).** As a JSON `number`, not
+    a string — the string spelling came back "high"/"low" every time. It only
+    ever LOWERS: `min(engine weight, model number)`, so a model claiming 1.0 on
+    an unattested quote still lands at 0.4. Measured over 94 items, the live
+    model marked down zero legible facts, which is the direction that matters
+    for a guard that HOLDS. It under-reports rather than over-reports: on an
+    unreadable line it converges on exactly 0.5, which is not `< LOW_CONFIDENCE`,
+    so a scenario scripting a self-report BELOW the threshold is scripting a
+    better model than the box has — which is the harness's contract, not a
+    cheat.
+  - **No arbiter (accepted).** `derive_kinship_gender` and the rest of the
+    arbiter's derivations do not run on this path, so facts main inferred are
+    simply absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote
+    12).
 
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
@@ -96,6 +126,7 @@ from jbrain.analysis.pipeline import (
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
+from jbrain.schema import get_registry
 from tests.harness.scenario import (
     EntityRow,
     FactRow,
@@ -220,14 +251,51 @@ def _object_literal(fact: ExtractedFact) -> str:
 
 
 def _when(fact: ExtractedFact) -> str:
-    """The `when` string — the ISO START the note gave, or empty. Only the start:
-    the tool has one date field, and `_upsert_fact`'s own normalizers derive the
-    future (`expected`) and past-marker (interval close) treatment from it and
-    from the statement."""
+    """The `when` string — the ISO START the note gave, or empty."""
     temporal = fact.temporal
     if temporal is None or temporal.resolved_start is None:
         return ""
     return temporal.resolved_start.isoformat()
+
+
+def _when_end(fact: ExtractedFact) -> str:
+    """The `when_end` string — the ISO END the note gave, or empty. `assert_fact`
+    v3 carries an interval end as a seventh flat scalar (TOOL_SURFACE gap 4), so
+    a note that states a CLOSED interval in one sentence no longer needs a later
+    note to close it. Empty is the overwhelmingly common answer, and the tool's
+    handler refuses an end that has no start, does not parse, or does not follow
+    its start — the three shapes `evals/shape_probe.py` measured the live model
+    producing."""
+    temporal = fact.temporal
+    if temporal is None or temporal.resolved_end is None:
+        return ""
+    return temporal.resolved_end.isoformat()
+
+
+def _predicate(fact: ExtractedFact) -> str:
+    """The `predicate` string, with a qualifier folded into the dotted path where
+    the registry says the predicate takes one.
+
+    `assert_fact` has no `qualifier` field and is not getting one (TOOL_SURFACE
+    gap 3): the live model fills a qualifier field with a date, a phrase or the
+    object's own name on most of the facts in a note, and an over-applied
+    qualifier splits an identity key so nothing ever supersedes again. What it
+    HAS is the channel `registry.decompose_predicate` already reads and v3's
+    `predicate` description now teaches — `name.nickname.friends` is stored as
+    name.nickname + friends. That channel is only open for the five registry
+    predicates declaring a `qualifier_vocab`, so this folds there and nowhere
+    else: a long-tail qualifier is still dropped, and the scenarios that then
+    collide still say so in their `xfail`.
+
+    The round trip is the test, not a spelling rule — if the registry does not
+    recover the segment, the dotted form would land as a NOVEL predicate, which
+    would separate the two facts by corrupting the key rather than qualifying
+    it."""
+    if not fact.qualifier:
+        return fact.predicate
+    dotted = f"{fact.predicate}.{fact.qualifier}"
+    _, recovered = get_registry().decompose_predicate(dotted, "")
+    return dotted if recovered == fact.qualifier else fact.predicate
 
 
 def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[dict]]:
@@ -266,10 +334,12 @@ def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[di
     facts = [
         {
             "subject": fact.entity_ref,
-            "predicate": fact.predicate,
+            "predicate": _predicate(fact),
             "object": fact.object_entity_ref or _object_literal(fact),
             "statement": fact.statement,
             "when": _when(fact),
+            "when_end": _when_end(fact),
+            "confidence": fact.confidence,
             "quote": surface_by_name.get(fact.entity_ref) or body_quote,
         }
         for fact in extraction.facts
@@ -454,7 +524,8 @@ async def _snapshot(maker: async_sessionmaker[AsyncSession]) -> Snapshot:
                 text(
                     "SELECT e.canonical_name AS entity, f.predicate, f.qualifier, f.kind,"
                     " f.assertion, f.status, f.statement, f.value_json,"
-                    " f.superseded_by IS NOT NULL AS chained, f.pinned, f.domain_code AS domain"
+                    " f.superseded_by IS NOT NULL AS chained, f.pinned, f.domain_code AS domain,"
+                    " f.valid_to IS NOT NULL AS closed"
                     " FROM app.facts f JOIN app.entities e ON e.id = f.entity_id"
                 )
             )
@@ -482,6 +553,7 @@ async def _snapshot(maker: async_sessionmaker[AsyncSession]) -> Snapshot:
                 statement=r.statement,
                 value_json=r.value_json,
                 chained=r.chained,
+                closed=r.closed,
                 pinned=r.pinned,
                 domain=r.domain,
             )
@@ -536,7 +608,7 @@ async def _cli_run(url: str, path: str) -> int:
         for f in snap.facts:
             print(
                 f"  {f.entity}.{f.predicate} [{f.kind}/{f.assertion}/{f.status}]"
-                f" {f.statement!r} chained={f.chained} domain={f.domain}"
+                f" {f.statement!r} chained={f.chained} closed={f.closed} domain={f.domain}"
             )
         for r in snap.reviews:
             print(f"  REVIEW [{r.kind}/{r.status}] {r.summary} (domain={r.domain})")

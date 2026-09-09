@@ -99,6 +99,15 @@ class FactRow:
     chained: bool
     pinned: bool
     domain: str
+    closed: bool
+    """Whether the fact's interval has an END (`valid_to IS NOT NULL`).
+
+    Added with `assert_fact` v3's `when_end`: before it, the only column a scenario
+    could read a closed interval out of was `value_json`, and an edge written through
+    the tool stores none — so `hist_retrospective_closes_open_interval` had to assert
+    the word "ended" in a payload the write path never produces. The two-axis model
+    (current = active AND valid_to IS NULL) makes this the column that actually says
+    it."""
 
 
 @dataclass
@@ -144,6 +153,8 @@ def _fact_matches(row: FactRow, spec: dict[str, Any]) -> bool:
         if key == "status" and row.status != want:
             return False
         if key == "chained" and row.chained != want:
+            return False
+        if key == "closed" and row.closed != want:
             return False
         if key == "pinned" and row.pinned != want:
             return False

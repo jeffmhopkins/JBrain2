@@ -250,9 +250,20 @@ OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # `graphwritetools.note_registry` — the unattended pass never consults this one.
 NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
 
-# The verbs that make a turn able to WRITE the entity graph. `read_note` frames the body
-# it returns when the turn holds one of them — see `_holds_graph_writes`.
-GRAPH_WRITE_AUTHORITY = frozenset({"assert_fact", "correct_fact"})
+# The verbs that give a turn DURABLE-STATE authority a fetched note body could drive.
+# `read_note` frames the body it returns when the turn holds one of them — see
+# `_holds_graph_writes`.
+#
+# `prefs_write` is here because of W4/D9, and it is not a widening for its own sake: on a
+# note the EMR importer owns, `agents.narrow_for_emr` removes every graph-write verb from
+# the reply turn, and that turn still holds `read_note` and `prefs_write`. Keyed on the
+# graph verbs alone, the narrowing would have made a fetched body arrive UNFRAMED in the
+# one turn W4 created — plan risk 1, re-opened by a fix for something else. `prefs_write`
+# only STAGES a Proposal (D17), which is why it is not a graph write; what it stages is a
+# standing instruction injected into every future note conversation's system prompt, which
+# is exactly the kind of durable authority a stranger's note text must not be able to
+# reach unframed.
+GRAPH_WRITE_AUTHORITY = frozenset({"assert_fact", "correct_fact", "prefs_write"})
 _FETCHED_NOTE = "a note you fetched with read_note"
 
 

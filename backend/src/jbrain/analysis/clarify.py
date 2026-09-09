@@ -62,8 +62,10 @@ from dataclasses import dataclass
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import latest_question
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.note_conversation import (
     NoteConversationRepo,
     note_body_sha,
@@ -93,6 +95,59 @@ class OwnerReply:
 
     note_moved: bool
     """Whether the note had changed under the conversation since it was read."""
+
+
+async def reply_profile_for_session(
+    maker: async_sessionmaker[AsyncSession],
+    notes: NotesRepo,
+    ctx: SessionContext,
+    *,
+    session_id: str,
+    agent: str,
+    profile: AgentProfile,
+) -> AgentProfile:
+    """Narrow a note conversation's ON-REPLY profile when the EMR importer owns its note
+    (W4/D9, `ingest/emr/ownership.py`).
+
+    `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; this is the
+    one subtraction W4 makes to it. It lives here rather than in the route because it
+    needs the conversation row and the note behind it, which this module already reads —
+    and because the route must be able to call it unconditionally: a non-note persona,
+    an unknown session, or a note the importer does not own all return the profile
+    unchanged.
+
+    FAILS CLOSED, at every step: no conversation row, no note, a soft-deleted note, or a
+    raised exception all narrow. This half shipped failing OPEN, on the reading that the
+    narrowing is a correctness guard rather than a firewall; W4's merge flipped it, and
+    the reason is the OTHER predicate. `thirdparty.conversation_is_third_party` asks the
+    SAME two questions of the SAME two rows on this same turn and fails closed, so a note
+    read that blips already narrows the turn — to the third-party set, which still holds
+    `resolve_entity` and `assert_fact`. Failing open here meant a blip left the graph
+    writes bound on precisely the notes where a write is unsupersedable: `correct_fact`
+    at an empty address commits active + PINNED, and a pinned lab head makes every later
+    import of that reading `held`. The cost of the closed direction is that one reply
+    turn on an EMR note loses verbs it would not have been allowed to use anyway — the
+    unattended pass narrowed on the same predicate, and the worker's per-note registry
+    binds no write handler for such a note either way.
+    """
+    if agent != NOTE_CONVERSE_AGENT or profile.tools is None:
+        return profile
+    try:
+        async with scoped_session(maker, ctx) as s:
+            conversation = await NoteConversationRepo().get(s, session_id)
+        if conversation is None:
+            log.warning("note_reply.no_conversation_row_for_emr", session_id=session_id)
+            return narrow_for_emr(profile)
+        note = await notes.get_note(ctx, str(conversation.note_id))
+    except Exception as exc:  # noqa: BLE001 — an unreadable note is a note we narrow for
+        log.warning("note_reply.emr_check_failed", session_id=session_id, error=repr(exc))
+        return narrow_for_emr(profile)
+    if note is None:
+        log.warning("note_reply.note_gone_for_emr", session_id=session_id)
+        return narrow_for_emr(profile)
+    if not emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments]):
+        return profile
+    return narrow_for_emr(profile)
 
 
 async def record_owner_reply(
