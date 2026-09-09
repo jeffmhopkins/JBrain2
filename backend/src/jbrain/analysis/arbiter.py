@@ -18,8 +18,11 @@ What the plan encodes:
   active vs pending_review per kind (N11).
 - A mention the agent left ambiguous, or a cross-subject attribution, forces its
   facts to review regardless of weight (N3 — never a silent wrong/leaky link).
-- Merges and distinct-from proposals always route to review (N3 — the agent
-  never folds identity).
+- The agent never folds identity (N3). It carries `merge_proposals` /
+  `distinct_proposals` on the INTENT, where `validate_intent` reads them; the
+  plan holds no copy, because nothing downstream of it ever filed a card from
+  one. Staging a fold is the note conversation's `merge_entities` (plan
+  constraint 12), and that verb only ever stages.
 """
 
 from __future__ import annotations
@@ -37,7 +40,6 @@ from jbrain.analysis.extraction import (
     domain_floor,
 )
 from jbrain.analysis.intent import (
-    EntityPairProposal,
     EntityResolution,
     IntegrationIntent,
     IntentFact,
@@ -79,9 +81,6 @@ class ArbiterPlan:
     rejected: bool  # a fatal structural violation held the whole intent
     fatal_violations: tuple[IntentViolation, ...]
     facts: tuple[PlannedFact, ...]
-    # Identity proposals that always route to review (never auto-enacted).
-    merge_proposals: tuple[EntityPairProposal, ...]
-    distinct_proposals: tuple[EntityPairProposal, ...]
 
     @property
     def to_commit(self) -> tuple[PlannedFact, ...]:
@@ -118,8 +117,6 @@ def plan_intent(
             rejected=True,
             fatal_violations=tuple(v for v in violations if v.severity == "fatal"),
             facts=(),
-            merge_proposals=(),
-            distinct_proposals=(),
         )
 
     # Mentions the agent could not pin to a single, same-subject identity force
@@ -185,8 +182,6 @@ def plan_intent(
         rejected=False,
         fatal_violations=(),
         facts=tuple(planned),
-        merge_proposals=tuple(intent.merge_proposals),
-        distinct_proposals=tuple(intent.distinct_proposals),
     )
 
 
