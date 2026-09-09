@@ -171,7 +171,7 @@ class ChannelSink(Sink):
         chain: demod.Demodulator,
         *,
         audio: Callable[[demod.Audio], None],
-        view: Callable[[iq.Spectrum, tuple[float, float]], None] | None = None,
+        view: Callable[[iq.Spectrum, tuple[float, float], float], None] | None = None,
         view_bins: int = 0,
         want: int = 0,
         finish: Callable[[], None] | None = None,
@@ -220,6 +220,11 @@ class ChannelSink(Sink):
                 at=reading.at,
             ),
             self.chain.passband_hz,
+            # How wide to CROP, which is deliberately not derived from the passband
+            # above: it comes from the mode's widest filter, so narrowing the one in
+            # force shrinks the shaded box inside a picture that holds still
+            # (`demod.Demodulator.crop_reach_hz`).
+            self.chain.crop_reach_hz,
         )
 
     def close(self) -> None:

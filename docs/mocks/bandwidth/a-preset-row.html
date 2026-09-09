@@ -1,0 +1,174 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A — Bandwidth is a row under mode</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --green-tint: rgba(143,188,154,.13);
+  --amber-tint: rgba(201,163,106,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --steel-tint: rgba(127,167,201,.18); --amber-tint: rgba(201,163,106,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; max-width: 390px; margin: 0 auto; width: 100%; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 5; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; overflow: hidden; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.wf { margin: 0 16px; height: 128px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .55; }
+.wf .bin.nb { background: var(--amber); }
+.wf .pass { position: absolute; top: 0; bottom: 0; background: rgba(127,167,201,.15);
+  border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); transition: left .18s ease, width .18s ease; }
+.wf .dial { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text); opacity: .5; }
+.wf .tag { position: absolute; top: 6px; font-size: 9px; color: var(--text-3); letter-spacing: .04em; transform: translateX(-50%); }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.readout { padding: 6px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 34px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.rmode { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
+.lbl { padding: 0 16px 5px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.seg { display: flex; gap: 6px; padding: 0 16px 12px; }
+.seg button { flex: 1; min-height: 44px; padding: 7px 4px; border: 1px solid var(--border);
+  border-radius: 9px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.seg button[disabled] { opacity: .32; }
+.rej { margin: 0 16px 12px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.rej b { font-variant-numeric: tabular-nums; font-weight: 600; }
+.rej.good b { color: var(--ok); } .rej.bad b { color: var(--warn); }
+.hint { padding: 0 16px 16px; font-size: 12px; color: var(--text-3); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .wf .pass { transition: none; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>A &mdash; Bandwidth is a row under mode.</b> A second segmented row, the same shape as the MODE row above it, holding the filter widths that make sense for the current mode. One tap, no hidden state, and the ladder re-labels itself when the mode changes.<br><br><b>Watch the picture.</b> The shaded box is what the demodulator hears. The amber signal at <b>+5&nbsp;kHz</b> is the neighbouring broadcaster. At <b>8&nbsp;kHz</b> it sits inside the box &mdash; that is the interference you can hear. Tap down to <b>6&nbsp;kHz</b> and it falls outside.<br><br><b>Today AM is 16 kHz</b> and is not on this ladder, because it is strictly worse than 8: measured on the real chain, 16 and 8 give <em>identical</em> audio out to 3.5 kHz, and 16 gives the neighbour a free 15 dB. The widest rung becomes the new default.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Listen</div>
+    <div class="wf" id="wf"></div>
+    <div class="axis"><span>&minus;12 kHz</span><span>5.000 MHz</span><span>+12 kHz</span></div>
+    <div class="readout">5.000<small>MHz</small></div>
+    <div class="rmode" id="rmode">AM &middot; 8 kHz</div>
+    <div class="lbl">Mode</div>
+    <div class="seg" id="modes"></div>
+    <div class="lbl">Bandwidth</div>
+    <div class="seg" id="bws"></div>
+    <div class="rej" id="rej"></div>
+    <p class="hint">Wide FM has no bandwidth row: a broadcast FM station is ~180 kHz wide and narrowing the filter clips the deviation, which distorts rather than cleans.</p>
+  </div>
+</div>
+<script>
+const MODES = ["wbfm", "fm", "am", "usb", "lsb"];
+// Full channel widths in Hz. Matches the ladder the demodulator will accept.
+const LADDER = {
+  am:   [8000, 6000, 4000, 3000],
+  fm:   [16000, 12500, 8000],
+  usb:  [3100, 2400, 1800],
+  lsb:  [3100, 2400, 1800],
+  wbfm: [],
+};
+// MEASURED on the real chain, AM only: two equal AM carriers 5 kHz apart, the wanted
+// one modulated at 1 kHz and the neighbour at 1.7 kHz, and this is how far the
+// neighbour's tone lands below the wanted one in the audio. 16 kHz is today's default.
+const REJECT = { 16000: 0.0, 8000: 14.8, 6000: 85.2, 4000: 110.0, 3000: 103.1 };
+let mode = "am", bw = 8000;
+const SPAN = 24000; // the strip covers -12..+12 kHz
+
+function bins() {
+  const wf = document.getElementById("wf"); wf.innerHTML = "";
+  const W = wf.clientWidth || 358;
+  const x = (hz) => ((hz + SPAN / 2) / SPAN) * W;
+  // Wanted station: carrier at 0, sidebands out to +/-4 kHz. Neighbour at +5 kHz.
+  for (let hz = -11800; hz <= 11800; hz += 200) {
+    const d0 = Math.abs(hz), d1 = Math.abs(hz - 5000);
+    let h = 4 + Math.random() * 5;                                  // noise floor
+    if (d0 < 4200) h = Math.max(h, 78 * Math.exp(-d0 / 2600) + Math.random() * 7);
+    if (d0 < 260) h = 112;                                          // our carrier
+    let nb = false;
+    if (d1 < 4200) { const g = 66 * Math.exp(-d1 / 2600) + Math.random() * 7; if (g > h) { h = g; nb = true; } }
+    if (d1 < 260) { h = 96; nb = true; }                            // their carrier
+    const b = document.createElement("div");
+    b.className = "bin" + (nb ? " nb" : "");
+    b.style.left = x(hz) + "px"; b.style.height = Math.min(h, 120) + "px";
+    wf.appendChild(b);
+  }
+  const dial = document.createElement("div"); dial.className = "dial"; dial.style.left = x(0) + "px"; wf.appendChild(dial);
+  const pass = document.createElement("div"); pass.className = "pass"; pass.id = "pass"; wf.appendChild(pass);
+  const t1 = document.createElement("div"); t1.className = "tag"; t1.style.left = x(5000) + "px"; t1.textContent = "+5 kHz"; wf.appendChild(t1);
+  place();
+}
+function place() {
+  const wf = document.getElementById("wf"), W = wf.clientWidth || 358;
+  const x = (hz) => ((hz + SPAN / 2) / SPAN) * W;
+  const p = document.getElementById("pass");
+  // usb/lsb are one-sided: the passband sits beside the carrier, not around it.
+  let lo, hi;
+  if (mode === "usb") { lo = 300; hi = 300 + bw; }
+  else if (mode === "lsb") { hi = -300; lo = -300 - bw; }
+  else { lo = -bw / 2; hi = bw / 2; }
+  p.style.left = x(lo) + "px"; p.style.width = (x(hi) - x(lo)) + "px";
+}
+function draw() {
+  const mSeg = document.getElementById("modes"); mSeg.innerHTML = "";
+  MODES.forEach((m) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = m.toUpperCase();
+    b.setAttribute("aria-pressed", String(m === mode));
+    b.onclick = () => { mode = m; const l = LADDER[m]; if (l.length && !l.includes(bw)) bw = l[0]; draw(); };
+    mSeg.appendChild(b);
+  });
+  const bSeg = document.getElementById("bws"); bSeg.innerHTML = "";
+  const ladder = LADDER[mode];
+  if (!ladder.length) {
+    const b = document.createElement("button"); b.type = "button"; b.disabled = true; b.textContent = "180 kHz (fixed)";
+    bSeg.appendChild(b);
+  } else {
+    ladder.forEach((w) => {
+      const b = document.createElement("button"); b.type = "button";
+      b.textContent = w >= 10000 ? (w / 1000).toFixed(1).replace(".0", "") + "k" : (w / 1000).toFixed(w % 1000 ? 1 : 0) + "k";
+      b.setAttribute("aria-pressed", String(w === bw));
+      b.onclick = () => { bw = w; draw(); };
+      bSeg.appendChild(b);
+    });
+  }
+  const label = ladder.length ? (bw / 1000).toFixed(bw % 1000 ? 1 : 0) + " kHz" : "180 kHz";
+  document.getElementById("rmode").textContent = mode.toUpperCase() + " · " + label;
+  // Only AM has been measured, so only AM gets a number. The others say nothing
+  // rather than guessing, which is the whole point of putting it on screen.
+  const r = document.getElementById("rej"), db = mode === "am" ? REJECT[bw] : null;
+  if (db === null || db === undefined) {
+    r.className = "rej"; r.innerHTML = "<span>Neighbour at +5 kHz</span><b>—</b>";
+  } else {
+    r.className = "rej " + (db >= 40 ? "good" : "bad");
+    r.innerHTML = "<span>Neighbour at +5 kHz</span><b>" +
+      (db >= 40 ? "−" + db.toFixed(0) + " dB" : db < 1 ? "as loud as the station" : "−" + db.toFixed(0) + " dB") + "</b>";
+  }
+  place();
+}
+document.getElementById("theme").onclick = (e) => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  e.target.textContent = light ? "Light" : "Dark";
+  bins();
+};
+bins(); draw();
+addEventListener("resize", () => { bins(); draw(); });
+</script>

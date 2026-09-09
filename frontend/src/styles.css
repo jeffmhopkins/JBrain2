@@ -26456,3 +26456,86 @@ button.wf-sigpill {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* The filter width, under the mode it belongs to (docs/mocks/bandwidth, shape D).
+   Inside the mode button rather than beside it: mode and bandwidth are one setting to
+   the owner — "AM, 6 kHz wide" — and two controls for one setting is what shape D was
+   chosen to avoid. */
+.sdr-modes .seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.15;
+}
+.sdr-bw {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.sdr-modes .seg-on .sdr-bw {
+  color: var(--accent);
+}
+
+/* The passband's draggable edges, over the tuning view's canvas. Handles rather than a
+   slider: the value being set is WHERE THE EDGE SITS on this picture, and a slider
+   somewhere else would make the owner map a number onto the interference by eye. */
+.sdr-tuneview {
+  position: relative;
+  touch-action: none;
+}
+.sdr-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  margin-left: -14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Comfortably past the 44px minimum in the tall direction, and 28px wide so two
+     handles on a narrow AM filter do not overlap into one unhittable target. */
+  min-height: 44px;
+}
+.sdr-edge::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  margin-top: -14px;
+  width: 12px;
+  height: 28px;
+  border-radius: 4px;
+  background: var(--accent);
+  opacity: 0.9;
+}
+.sdr-edge:disabled {
+  cursor: default;
+}
+.sdr-edge:disabled::after {
+  opacity: 0.35;
+}
+.sdr-edge-on::after,
+.sdr-edge:focus-visible::after {
+  opacity: 1;
+  box-shadow: 0 0 0 4px var(--steel-tint);
+}
+.sdr-edge-live {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 6px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--scrim);
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
