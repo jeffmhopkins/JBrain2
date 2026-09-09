@@ -147,22 +147,46 @@ def test_correct_fact_addresses_by_identity_key_and_never_by_fact_id() -> None:
     props = load_tool(TOOLS_DIR / "correct_fact.tool").spec.params["properties"]
     assert {"entity", "predicate", "qualifier"} <= set(props)
     assert not [k for k in props if "fact_id" in k or k == "id"]
-    # `replaces` is the multi-row escape, and it is a HANDLE the handler minted, not a
-    # row id — the model never sees or types a fact's identity.
-    assert "replaces" in props
-    assert "f1" in props["replaces"]["description"] or "f1/f2" in props["replaces"]["description"]
+    # And no `replaces` either. It was the multi-row escape — a handle over the entity
+    # page's grouping — and it could not work: the only keys that hold several live rows
+    # are non-functional relationships, which are exactly the keys `decide()`'s correction
+    # branch skips (it acts on a `single_head` address only). The retry it invited left
+    # both originals live, added a third row, and reported `ok … replaced`.
+    assert "replaces" not in props
+
+
+def test_the_four_note_graph_verbs_are_all_bound_for_the_reply_turn() -> None:
+    """`NOTE_INGEST_ON_REPLY_TOOLS` names six tools; four of them write the graph and all
+    four have to be BOUND on the chat registry, which is the reply turn's only registry.
+
+    For a whole wave two of them were not: `build_registry` dropped the `resolve_entity`
+    and `assert_fact` sidecars unconditionally, so the reply turn was offered neither and
+    could dispatch neither, and its only remaining write verb was `correct_fact` — whose
+    empty-address path commits active + PINNED. Every fact the owner taught a note thread
+    was pinned against every later note."""
+    handlers = build_reply_write_handlers(_unusable_maker(), _proposals(), _entities(), _notes())
+    assert set(handlers) == {CORRECT_FACT, MERGE_ENTITIES, "resolve_entity", "assert_fact"}
+    assert set(handlers) <= NOTE_INGEST_ON_REPLY_TOOLS
+    # Every one of them has a sidecar in the chat registry's directory, or the name is
+    # allowlisted with nothing behind it — the failure this test exists for.
+    for name in handlers:
+        assert (TOOLS_DIR / f"{name}.tool").exists(), name
 
 
 # --- the refusals ------------------------------------------------------------
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("name", sorted(REPLY_WRITE_TOOLS))
-async def test_neither_tool_does_anything_outside_a_note_conversation(name: str) -> None:
-    """Neither takes a note id — a write primitive a hostile body could point at another
+@pytest.mark.parametrize("name", sorted(REPLY_WRITE_TOOLS | {"resolve_entity", "assert_fact"}))
+async def test_no_tool_does_anything_outside_a_note_conversation(name: str) -> None:
+    """None takes a note id — a write primitive a hostile body could point at another
     note is a hole, not a tool — so a turn with no conversation behind it is refused. In
     TEXT: a raise here becomes `loop.py`'s generic internal error, which tells the model
-    nothing and invites the same call again."""
+    nothing and invites the same call again.
+
+    Parametrized over all FOUR since `resolve_entity`/`assert_fact` joined the chat
+    registry: they are the two that mint entities and write facts, so "this turn has no
+    note" is the one refusal they most need."""
     handlers = build_reply_write_handlers(_unusable_maker(), _proposals(), _entities(), _notes())
     out = await handlers[name]({"entity": "x", "entity_a": "a", "entity_b": "b"}, _ctx(None))
     assert isinstance(out, str)

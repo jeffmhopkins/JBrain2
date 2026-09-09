@@ -231,14 +231,24 @@ OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
 # otherwise its sidecar has no handler and is dropped.
 OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # The note conversation's graph-write sidecars (AGENT_INGEST_CONVERSATION_PLAN.md W3).
-# Always dropped from THIS registry — never conditionally: a `resolve_entity` /
-# `assert_fact` handler is bound to ONE note (its id, domain, chunks and handle table
-# are the writer's, not arguments a model supplies), so there is no such thing as a chat
-# session's copy. `analysis.converse` builds its own registry per conversation from
-# `graphwritetools.note_registry`. This is the outermost of the three locks on them —
-# the sidecars are not in the chat registry at all, `NEVER_DEFAULT` keeps them out of
-# curator's wildcard if they ever were, and D16's closed allowlist is the third.
-OPTIONAL_NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
+#
+# They used to be dropped from THIS registry unconditionally, on the ground that a
+# `resolve_entity` / `assert_fact` handler is bound to ONE note and a chat session has
+# nothing to bind. The premise was wrong in the same way it would have been wrong for
+# `ask_owner`: the note is not an argument, it is read from the conversation row the
+# turn's `agent_session_id` names, so a reply turn has exactly one note it can write and
+# a chat turn outside a note conversation has none. `replytools` binds them that way.
+#
+# The drop was not free. `NOTE_INGEST_ON_REPLY_TOOLS` allowlists both, but an allowlisted
+# name whose sidecar is absent is never offered and cannot dispatch — so a reply turn's
+# only write verb was `correct_fact`, and a correction at an empty address PINS. Every
+# fact the owner taught a note thread was pinned against future supersession.
+#
+# What still holds them shut is what was always doing the work: `NEVER_DEFAULT` keeps
+# them out of curator's `allow=None` wildcard, and D16's closed allowlist admits them to
+# `note_ingest` alone. `analysis.converse` still builds the WORKER's own registry from
+# `graphwritetools.note_registry` — the unattended pass never consults this one.
+NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
 
 # The verbs that make a turn able to WRITE the entity graph. `read_note` frames the body
 # it returns when the turn holds one of them — see `_holds_graph_writes`.
@@ -1333,7 +1343,6 @@ def build_registry(
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
-            | OPTIONAL_NOTE_GRAPH_TOOLS
             | OPTIONAL_GMAIL_TOOLS
             | OPTIONAL_MOLTBOOK_TOOLS
             | OPTIONAL_MOLTBOOK_WRITE_TOOLS

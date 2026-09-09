@@ -3,7 +3,10 @@
 > **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
 >
 > W3 in flight. Landed so far: **T3** — the unattended/on-reply split (D8) and the verbs
-> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12).
+> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12) —
+> plus the fixes from the adversarial review of the graph-write surface (see T2a below:
+> the weight cap now lands on the field `decide()` reads, `replaces` is gone, an id
+> `object` becomes an edge, and the reply turn can reach `assert_fact` at all).
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -531,12 +534,57 @@ one item per turn. Both write through W1's `commit_facts`: the resolver, the men
 spine, `decide()`, the floor, the ratchet and the citation anchor are the shipped ones,
 so the tools add no second write path and `decide()` never becomes a verb. `quote` is
 required and CHECKED — an unattested quote still commits (Lever A) at the arbiter's own
-0.4 inferred-overwrite ceiling, so it can never silently rewrite a stated value. No
+0.4 inferred-overwrite ceiling, so it cannot overwrite a confident prior. No
 `domain`/`inferred`/`supersedes`/`correction` field and no `enum` anywhere. Per-element
 SAVEPOINT. Handles (`e1`…) are per CONVERSATION, held in the writer; `assert_fact`
 accepts a handle or the exact surface that earned one and nothing else, so
 `resolve_entity` stays the only minting path. Budgets are engine-side per conversation
 (8 resolve / 10 assert calls) with the remainder appended to every result.
+
+*Corrected after an adversarial review of the graph-write surface — five findings, all
+reproduced before they were fixed. Recorded here because four of them were things this
+plan and `TOOL_SURFACE.md` both asserted and no code enforced:*
+
+- **The 0.4 cap was stored on the field nothing reads.** `decide()`'s low-confidence
+  guard keys on `self_confidence`; `graphwritetools` capped `confidence` and wrote a bare
+  `1.0` into `self_confidence`, so an unattested `assert_fact` went `active` and
+  superseded an attested prior while the result line told the model it could not overwrite
+  anything. The tool surface has no confidence field to report (R3), so the engine's own
+  span check IS the self-report and now sits on both. The claim is also stated correctly
+  now: an unattested value cannot overwrite a CONFIDENT prior — `attribute` reaches
+  `attribute_collision` first and holds both sides; `state`/functional-relationship reach
+  the weight guard and the head stays live.
+- **The `quote`-omission argument for `correct_fact` was a misreading of the same
+  guard.** `decide()`'s correction branch reads neither confidence field — it
+  force-supersedes on the flag alone — so a capped correction would still overwrite and
+  would merely file the owner's own word as a 0.4 guess. The conclusion (no `quote`)
+  stands; the reason is that its attestation is WHO SPOKE. See TOOL_SURFACE correction 5,
+  amended.
+- **`correct_fact`'s `replaces` is removed**, and with it the multi-row retry. The
+  affordance could not work: `entity_view` yields several groups at one key only for a
+  NON-functional relationship, which is exactly the shape `decide()`'s correction branch
+  skips (it needs a `single_head` address), and a set-valued edge's identity IS its object
+  (`_facts_at_key`). The retry left both original edges live, added a third, and reported
+  `ok … replaced`. The handler now lists what is live and refuses.
+- **An `object` that is an entity id is resolved and adopted** before the write, under the
+  turn's own read scopes. Passed through raw it was matched against a handle table holding
+  only the subject, so it never resolved: the row landed `object_entity_id = NULL` with the
+  bare uuid as its literal value and `pinned=True`, the real edge superseded. The shared
+  write path also refuses any id-shaped object no handle answers to, so `assert_fact`
+  cannot reach the same state.
+- **`resolve_entity`/`assert_fact` are now BOUND on the chat registry too.** D8's on-reply
+  set has always allowlisted them, but `build_registry` dropped both sidecars
+  unconditionally — so on a reply turn neither was offered and neither could dispatch, and
+  `correct_fact` was the only write verb left. A correction at an empty address commits
+  `insert_pinned=True`, so every fact the owner taught a note thread was pinned against
+  future supersession, including by later notes. They bind the way `ask_owner` does
+  (through the conversation row, never an argument); `NEVER_DEFAULT` plus the allowlist is
+  what keeps them closed, which is what was doing the real work anyway.
+- **`CORRECT_CALL_BUDGET` was inert**, because the handler built a fresh `NoteGraphWriter`
+  per call and re-created `ToolCallBudget(6)` with it. One writer per conversation now
+  serves all four verbs, so the budget counts down and the handle table survives the turn.
+  The docstring claim that handles span the unattended pass and the reply was never true
+  and is gone: those are two processes.
 
 Three things that answer questions the plan had left open:
 
@@ -647,14 +695,19 @@ on-reply handler at all, so the two locks fail independently.
 under the TURN's read scopes — which is the firewall, since the write session is the
 owner's full scope (constraint 2) and cannot be one. An entity the conversation cannot
 read is an entity it cannot correct. On a key holding several live rows (a set-valued
-relationship: each distinct object is a co-equal current edge) the handler mints `f1`/`f2`
-over the entity page's own grouping, writes NOTHING, and the model retries with
-`replaces`; the handles are positional, so the retry needs no stored state. The write is
-`_assert_one` with `correction=True` — one flag, feeding `decide()`'s existing
-force-supersede-and-pin branch, so there is no second write path and `decide()` stays off
-the model's vocabulary. It carries **no `quote`**: the owner's words are not in the note's
-chunks when the tool runs, so a required quote would cap every correction at the inferred
-ceiling — the one weight that cannot overwrite the value being corrected.
+relationship: each distinct object is a co-equal current edge) the handler lists what is
+live and REFUSES: it shipped with an `f1`/`f2` retry under `replaces`, and the review
+above is why that is gone — those keys are exactly the ones `decide()`'s correction branch
+skips, and a set-valued edge's identity IS its object, so the retry could only ever add a
+third edge while reporting a replacement. An `object` that is an entity id is resolved and
+adopted under the turn's own scopes before the write, so it becomes an EDGE rather than a
+uuid stored as a literal value. The write is `_assert_one` with `correction=True` — one
+flag, feeding `decide()`'s existing force-supersede-and-pin branch, so there is no second
+write path and `decide()` stays off the model's vocabulary. It carries **no `quote`**: the
+owner's words are not in the note's chunks when the tool runs, so a required quote could
+only ever fail its own check and would file the owner's own word at the inferred ceiling.
+Its attestation is WHO SPOKE. It would not change what the write DOES — `decide()`'s
+correction branch reads neither confidence field.
 
 **The fold is staged, and staging is the only shape available** (constraint 12). It raises
 the same `merge_entities` node op `propose_merge` does, so the owner's approval runs the

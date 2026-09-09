@@ -1,16 +1,26 @@
-"""`correct_fact` and `merge_entities` — the two write verbs that need Jeff in the room.
+"""The note-graph tools an owner's REPLY turn dispatches.
+
+`correct_fact` and `merge_entities` — the two write verbs that need Jeff in the room —
+plus the reply turn's copies of `resolve_entity` and `assert_fact`, which D8's on-reply
+allowlist has always named and which nothing had ever bound.
 
 W3 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, built to
 docs/research/agent-ingest/TOOL_SURFACE.md's on-reply rows. D8 splits the note persona's
 surface in two and `agents.agent_for_owner_reply` is the seam; these are the handlers
 behind the half that only a turn the owner sent can reach.
 
-**Both are bound on the CHAT registry, not on the worker's per-note one.** The owner's
-reply into a note thread is an ordinary `/chat` turn, so that is the only registry the
-reply turn consults — the same reason `ask_owner` is wired there. Neither takes a note
-id: both find their conversation through `ToolContext.agent_session_id`, and outside a
-note conversation both refuse. A write primitive a hostile body could point at another
-note is not a tool, it is a hole.
+**All four are bound on the CHAT registry, not on the worker's per-note one.** The
+owner's reply into a note thread is an ordinary `/chat` turn, so that is the only
+registry the reply turn consults — the same reason `ask_owner` is wired there. None
+takes a note id: they find their conversation through `ToolContext.agent_session_id`,
+and outside a note conversation all four refuse. A write primitive a hostile body could
+point at another note is not a tool, it is a hole.
+
+**`assert_fact` on the reply turn is a safety property, not a convenience.** Without it
+the only write verb a reply turn holds is `correct_fact`, and a correction at an empty
+address commits `insert_pinned=True` — so a new fact the owner states in passing ("and
+her title is CTO") lands PINNED against every later note. The verb that records a new
+fact has to be reachable in the turn that learns one.
 
 **`correct_fact` addresses by identity key `(entity, predicate, qualifier)`, never by
 fact id.** `readtools._edge_line` prints an entity's facts as `predicate: statement` and
@@ -18,9 +28,14 @@ prints no fact id at all, so id-addressing would force a `read_entity` v5 and a 
 addressing vocabulary the model has to learn on top of the one it already reads. The key
 the model can SEE is the key it writes. On a key that holds several live rows — a
 set-valued relationship, where each distinct object is a co-equal current edge — the
-handler mints `f1`/`f2` handles, writes nothing, and the model retries naming which one.
-The handles are positional over the entity page's own grouping, so they are stable for
-the retry without any per-conversation state to keep.
+handler lists what is there and REFUSES: a correction of one of them is not an operation
+this graph has, because a set-valued edge's identity is its object. See the comment at
+the check for why the `replaces` retry the tool used to offer could not work.
+
+**The four handlers share one writer per conversation.** `NoteGraphWriter` owns the call
+budgets and the handle table, so building one per call makes both inert — which is what
+`CORRECT_CALL_BUDGET` did until it was found reporting "5 calls left" on the seventh
+consecutive correction.
 
 **The correction itself is one flag, not a mechanism.** `ExtractedFact.correction` is
 what survives from the retired correction-note path (D11), and `supersession.decide()`
@@ -52,6 +67,7 @@ instead is a refusal the model will simply repeat.
 from __future__ import annotations
 
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -60,7 +76,12 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.contracts import ProposalRef
-from jbrain.agent.graphwritetools import NoteGraphWriter, NoteTarget
+from jbrain.agent.graphwritetools import (
+    ASSERT_FACT,
+    RESOLVE_ENTITY,
+    NoteGraphWriter,
+    NoteTarget,
+)
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import NodeSpec, ProposalRepo, ProposalSpec
 from jbrain.agent.toolregistry import ToolHandler
@@ -85,10 +106,16 @@ MERGE_ENTITIES = "merge_entities"
 # wildcard; both are asserted in tests, because either alone is not enough (constraint 9).
 REPLY_WRITE_TOOLS = frozenset({CORRECT_FACT, MERGE_ENTITIES})
 
-# How many live rows one identity key may hold before the model has to say which. Not a
-# cap on anything — a set-valued predicate ("owns", "attended") legitimately holds many —
-# only the point past which the listing stops being useful to read back.
+# How many live rows one identity key is listed back with. Not a cap on anything — a
+# set-valued predicate ("owns", "attended") legitimately holds many — only the point past
+# which the listing stops being useful to read back.
 _MAX_HANDLES = 8
+
+# How many conversations' writers this registry keeps alive at once. A writer holds the
+# note's chunk text, its handle table and its call budgets, so it must not be immortal;
+# a handful covers every thread a person has open, and evicting one only costs the next
+# call a re-read.
+_MAX_LIVE_WRITERS = 32
 
 
 @dataclass(frozen=True)
@@ -189,14 +216,34 @@ def build_reply_write_handlers(
     notes: NotesRepo,
     router: LlmRouter | None = None,
 ) -> dict[str, ToolHandler]:
-    """`correct_fact` + `merge_entities`, wired for the chat registry.
+    """The four note-graph tools a REPLY turn dispatches, wired for the chat registry.
 
-    `router` is what an `AnalysisPipeline` needs to exist; `correct_fact` uses none of
-    the model calls on it (`commit_facts` is deterministic), but the pipeline is the
-    object that owns the write path and it does not construct without one. On a box with
-    no router the handler refuses in text rather than the sidecar vanishing: an
-    allowlisted tool that is silently absent is a tool the model is told it has."""
+    `correct_fact` + `merge_entities` (the on-reply writes) and `resolve_entity` +
+    `assert_fact` (the unattended pair, which D8 keeps on the reply turn because it is
+    the same agent finishing the same note). All four find their conversation through
+    `ToolContext.agent_session_id`, never through an argument.
+
+    `router` is what an `AnalysisPipeline` needs to exist; none of these use the model
+    calls on it (`commit_facts` is deterministic), but the pipeline is the object that
+    owns the write path and it does not construct without one. On a box with no router
+    the handler refuses in text rather than the sidecar vanishing: an allowlisted tool
+    that is silently absent is a tool the model is told it has."""
     pipeline: AnalysisPipeline | None = None
+    # One `NoteGraphWriter` per CONVERSATION, for the life of this registry — which is
+    # the process's, since `readtools.build_registry` is called once at startup.
+    #
+    # Not an optimisation. The writer owns the call budgets and the handle table, and
+    # building one per call made both inert: `CORRECT_CALL_BUDGET` re-created a fresh
+    # `ToolCallBudget(6)` on every call, so seven consecutive corrections each reported
+    # "5 calls left" and the seventh still wrote — the exact failure `graphwritetools`
+    # says the engine-side budget exists to prevent, because "a prompt-stated cap does
+    # not hold". `adopt()` likewise restarted at `e1` every time.
+    #
+    # Bounded, and small: a thread that has gone quiet must not pin its writer (and the
+    # note's chunk text) in memory forever. Evicting one only costs the next call a
+    # re-read of the note and a re-mint of its handles — and it CANNOT be used to reset a
+    # budget, because eviction is oldest-first and never reachable from inside a turn.
+    writers: OrderedDict[str, tuple[frozenset[str], NoteGraphWriter]] = OrderedDict()
 
     def _pipeline() -> AnalysisPipeline | None:
         nonlocal pipeline
@@ -205,6 +252,87 @@ def build_reply_write_handlers(
 
             pipeline = _Pipeline(maker, router)
         return pipeline
+
+    def _writer(
+        session_id: str, note: NoteInfo, analyzer: AnalysisPipeline, ctx: ToolContext
+    ) -> NoteGraphWriter:
+        scopes = frozenset(ctx.scopes)
+        existing = writers.get(session_id)
+        if existing is not None and existing[0] == scopes:
+            writers.move_to_end(session_id)
+            return existing[1]
+        # A cached writer is keyed on the turn's READ SCOPES as well as its conversation.
+        # `Handle.visible` is decided at mint time, so a handle minted while the turn
+        # could see `health` would keep reporting that entity's canonical name after the
+        # turn narrowed. Unreachable today — a note thread's scopes are recomputed from
+        # the note and `set_scopes` refuses an engine-only persona — but the cost of the
+        # invariant is one comparison and the cost of it being wrong is a name leaving its
+        # domain. The BUDGETS carry across the rebuild: a rebuild must never be a way to
+        # buy calls.
+        writer = NoteGraphWriter(
+            maker,
+            analyzer,
+            target=NoteTarget(
+                note_id=uuid.UUID(note.id),
+                domain=note.domain,
+                captured_at=note.created_at,
+                tz_offset_minutes=note.tz_offset_minutes,
+            ),
+            # The owner at FULL scope, exactly as the unattended writes run (constraint
+            # 2): resolution layer 1 carries no domain predicate, and a floored fact write
+            # is refused by RLS outright on a narrowed session. `read_scopes` stays the
+            # TURN's, so a cross-domain entity's canonical name is still withheld from the
+            # result text — the write widens, the reporting does not.
+            write_ctx=SessionContext(principal_id="worker", principal_kind="owner"),
+            read_scopes=ctx.scopes,
+            extractor="note_ingest_reply",
+        )
+        if existing is not None:
+            writer.resolve_budget = existing[1].resolve_budget
+            writer.assert_budget = existing[1].assert_budget
+            writer.correct_budget = existing[1].correct_budget
+        writers[session_id] = (scopes, writer)
+        while len(writers) > _MAX_LIVE_WRITERS:
+            writers.popitem(last=False)
+        return writer
+
+    async def _bound(ctx: ToolContext, tool: str) -> tuple[NoteGraphWriter | None, str | None, str]:
+        """The writer for this turn's conversation, or the refusal text to return.
+
+        The whole gate the four share: a note conversation this principal can see, a note
+        that still exists, and a write path on this box."""
+        found = await _note_for_session(maker, ctx)
+        if found is None:
+            return (
+                None,
+                None,
+                (
+                    f"{tool} works only inside a note's conversation, and this turn is not"
+                    " one. Nothing was changed."
+                ),
+            )
+        note_id, session_id = found
+        analyzer = _pipeline()
+        if analyzer is None:
+            return (
+                None,
+                None,
+                (
+                    f"{tool} cannot reach the write path on this box. Nothing was changed —"
+                    " tell Jeff it was not recorded."
+                ),
+            )
+        note: NoteInfo | None = await notes.get_note(ctx.session, note_id)
+        if note is None:
+            return (
+                None,
+                None,
+                (
+                    "the note this conversation is about is gone, so there is nothing to"
+                    " record against."
+                ),
+            )
+        return _writer(session_id, note, analyzer, ctx), note_id, ""
 
     async def _resolve_one(ctx: ToolContext, token: str, *, field: str) -> tuple[Named | None, str]:
         """One entity the model named, under the TURN's read scopes.
@@ -260,25 +388,9 @@ def build_reply_write_handlers(
         return named, ""
 
     async def correct_fact_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        found = await _note_for_session(maker, ctx)
-        if found is None:
-            return (
-                "correct_fact works only inside a note's conversation, and this turn is"
-                " not one. Nothing was changed."
-            )
-        note_id, _session_id = found
-        analyzer = _pipeline()
-        if analyzer is None:
-            return (
-                "correct_fact cannot reach the write path on this box. Nothing was"
-                " changed — tell Jeff the correction was not recorded."
-            )
-        note: NoteInfo | None = await notes.get_note(ctx.session, note_id)
-        if note is None:
-            return (
-                "the note this conversation is about is gone, so there is nothing to"
-                " record a correction against."
-            )
+        writer, note_id, refusal = await _bound(ctx, CORRECT_FACT)
+        if writer is None or note_id is None:
+            return refusal
 
         named, why = await _resolve_one(ctx, _clean(arguments.get("entity")), field="entity")
         if named is None:
@@ -301,52 +413,60 @@ def build_reply_write_handlers(
             )
 
         # The identity key resolved against the graph BEFORE anything is written. A key
-        # holding several live rows (a set-valued relationship: each distinct object is a
-        # co-equal current edge) does not name one fact, so the handler mints handles over
-        # the entity page's own grouping and writes nothing. The handles are positional
-        # rather than stored, so the retry re-derives them from the same page — and if the
-        # graph moved underneath, it re-derives them from the page as it now stands, which
-        # is the only listing worth acting on anyway.
+        # holding several live rows does not name one fact, and — this is the part that
+        # matters — there is nothing `correct_fact` can honestly do about it.
+        #
+        # `entity_view` yields several groups at one (predicate, qualifier) ONLY for a
+        # non-functional relationship, where it splits per object (`analysis/repo.py`),
+        # while `decide()`'s correction branch acts only on a `single_head` address —
+        # state, attribute, preference, or a FUNCTIONAL relationship. The two conditions
+        # are exclusive, so on every key that can hold several rows the `correction` flag
+        # is a no-op and the write falls through to the ordinary accumulate path.
+        #
+        # A set-valued edge's identity IS its object (`pipeline._facts_at_key` keeps
+        # `object_entity_id` in the key for a non-functional predicate), so "replace the
+        # Civic edge with a bicycle" is not one fact changing value — it is one fact
+        # ending and another beginning, which this data model has no single write for.
+        # The handler used to mint f1/f2 handles and invite a retry naming one; that
+        # retry left both original edges live, added a third, and reported `ok … replaced`
+        # — the worst of the three outcomes. So the listing stays (the model still has to
+        # be able to tell the owner what IS on file) and the affordance that could not
+        # work is gone.
         heads = _current_groups(named.view, predicate, qualifier)
-        replaces = _clean(arguments.get("replaces"))
-        if len(heads) > 1 and not replaces:
+        if len(heads) > 1:
             listing = "\n".join(
                 _head_line(f"f{i + 1}", row) for i, row in enumerate(heads[:_MAX_HANDLES])
             )
             return (
-                f"{named.name}.{predicate} holds {len(heads)} live values at once, so"
-                " that address does not name one fact:\n"
+                f"{named.name}.{predicate} holds {len(heads)} values at once, and they"
+                " are co-equal — each is its own fact, not a version of one value:\n"
                 f"{listing}\n"
-                "Nothing was changed. Call correct_fact again with `replaces` set to the"
-                " handle of the one that is wrong."
+                "Nothing was changed, and correct_fact cannot single one out. Tell Jeff"
+                " what is on file and ask which of these he means."
             )
-        if replaces and heads:
-            index = replaces.lower().removeprefix("f")
-            if not index.isdigit() or not 1 <= int(index) <= len(heads):
-                return (
-                    f"correct_fact: no such handle {replaces!r} at"
-                    f" {named.name}.{predicate}. Call it again without `replaces` to see"
-                    " the handles as they stand now."
-                )
 
-        writer = NoteGraphWriter(
-            maker,
-            analyzer,
-            target=NoteTarget(
-                note_id=uuid.UUID(note_id),
-                domain=note.domain,
-                captured_at=note.created_at,
-                tz_offset_minutes=note.tz_offset_minutes,
-            ),
-            # The owner at FULL scope, exactly as the unattended writes run (constraint
-            # 2): resolution layer 1 carries no domain predicate, and a floored fact write
-            # is refused by RLS outright on a narrowed session. `read_scopes` stays the
-            # TURN's, so a cross-domain entity's canonical name is still withheld from the
-            # result text — the write widens, the reporting does not.
-            write_ctx=SessionContext(principal_id="worker", principal_kind="owner"),
-            read_scopes=ctx.scopes,
-            extractor="note_ingest_correction",
-        )
+        # An `object` that is an entity id is resolved HERE, under the turn's own read
+        # scopes, and adopted as a handle — the write path addresses entities by handle
+        # and nothing else. Passed through raw it resolved against a handle table holding
+        # only the subject, so it never matched: the row landed with
+        # `object_entity_id = NULL`, the bare uuid as its literal value and `pinned=True`,
+        # the real edge superseded, and "ok … replaced" reported back. `read_entity` and
+        # the wiki then rendered "Jeff works for f458b192-…", and because it was pinned
+        # nothing could auto-correct it.
+        object_token = value
+        if _as_uuid(value) is not None:
+            target, why = await _resolve_one(ctx, value, field="object")
+            if target is None:
+                return f"correct_fact: {why}"
+            object_token = writer.adopt(
+                entity_id=target.entity_id,
+                subject_id=target.subject_id,
+                surface=target.name,
+                name=target.name,
+                kind=str(target.view.get("kind") or "Thing"),
+                domain=target.domain,
+            ).handle
+
         subject = writer.adopt(
             entity_id=named.entity_id,
             subject_id=named.subject_id,
@@ -360,7 +480,7 @@ def build_reply_write_handlers(
                 "subject": subject.handle,
                 "predicate": predicate,
                 "qualifier": qualifier,
-                "object": value,
+                "object": object_token,
                 "statement": _clean(arguments.get("statement")),
                 "when": _clean(arguments.get("when")),
             }
@@ -481,7 +601,38 @@ def build_reply_write_handlers(
 
         return run
 
+    async def resolve_entity_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        writer, _note_id, refusal = await _bound(ctx, RESOLVE_ENTITY)
+        if writer is None:
+            return refusal
+        return await writer.resolve_entity(arguments, ctx)
+
+    async def assert_fact_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        writer, _note_id, refusal = await _bound(ctx, ASSERT_FACT)
+        if writer is None:
+            return refusal
+        return await writer.assert_fact(arguments, ctx)
+
     return {
         CORRECT_FACT: _texted(CORRECT_FACT, correct_fact_tool),
         MERGE_ENTITIES: _texted(MERGE_ENTITIES, merge_entities_tool),
+        # The unattended pair, on the reply turn. `NOTE_INGEST_ON_REPLY_TOOLS` has always
+        # allowlisted both — D8's set is a superset, so that taking `assert_fact` away
+        # "at the moment the owner explains what the note actually meant would leave it
+        # able to discuss a correction and unable to record one" — but the chat registry
+        # dropped the sidecars unconditionally, so neither was ever offered and neither
+        # could dispatch. The consequence was not a missing feature: the reply turn's only
+        # remaining write verb was `correct_fact`, whose empty-address path commits
+        # `insert_pinned=True`, so EVERY fact the owner taught the thread was pinned
+        # against future supersession — including by later notes.
+        #
+        # They bind here for the same reason `ask_owner` does, and the reason the drop was
+        # ever justified does not survive it: a handler is bound to one note, but the note
+        # comes from the CONVERSATION ROW (`_note_for_session`), never from an argument,
+        # so there is exactly one note a given turn can write and a chat turn outside a
+        # note conversation reaches none. The two locks that were doing the real work are
+        # untouched — `NOTE_INGEST_*_TOOLS` is the allowlist and both names are in
+        # `toolregistry.NEVER_DEFAULT`, so curator's wildcard cannot absorb them.
+        RESOLVE_ENTITY: _texted(RESOLVE_ENTITY, resolve_entity_tool),
+        ASSERT_FACT: _texted(ASSERT_FACT, assert_fact_tool),
     }

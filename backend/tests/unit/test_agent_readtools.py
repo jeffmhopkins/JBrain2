@@ -935,6 +935,13 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_merge",
         "correct_fact",
         "merge_entities",
+        # The note persona's graph writes. On THIS registry because the owner's reply
+        # into a note thread is an ordinary /chat turn and this is the registry it
+        # consults — they were dropped here for a wave, which left the reply turn
+        # allowlisted for two tools it was never offered. Reachable by `note_ingest`
+        # alone: both are in NEVER_DEFAULT and in no other profile's allowlist.
+        "resolve_entity",
+        "assert_fact",
         "lookup_medication",
         "lookup_condition",
         "geocode_reverse",
@@ -984,7 +991,17 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     # here for the same reason and a sharper one: they are bound on the chat registry,
     # because the owner's reply IS a chat turn (D8), so NEVER_DEFAULT is the only thing
     # standing between a force-supersede and the curator's wildcard.
-    never_default = {"prefs_read", "prefs_write", "correct_fact", "merge_entities"}
+    never_default = {
+        "prefs_read",
+        "prefs_write",
+        "correct_fact",
+        "merge_entities",
+        # And the two graph writes, now that this registry binds them for the reply turn
+        # (D8). Dropping their sidecars used to be the outer lock; NEVER_DEFAULT is what
+        # replaced it, so a regression here hands `assert_fact` to curator's wildcard.
+        "resolve_entity",
+        "assert_fact",
+    }
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
     assert {t.name for t in registry.schemas_for({"general"})} == (
@@ -1004,8 +1021,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # silent edit to either is a behaviour change to every note the box ingests.
         "assert_fact.tool": (
             "assert_fact",
-            1,
-            "288a7f1806611a45f16f917411125c1037e2065bae315669e67b10cada9d3abb",
+            2,
+            "ac8cd9c686a4afedbdda18b26ce5eab937de36cf2c8ceedcd859ee1bbb2a4b4c",
         ),
         "resolve_entity.tool": (
             "resolve_entity",
@@ -1017,8 +1034,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # do to the graph.
         "correct_fact.tool": (
             "correct_fact",
-            1,
-            "7ce9897c0511b4ecd32e3fc316e3f46291b474241f7a6f6b98f615ca9d498b9b",
+            2,
+            "becabce6a226ac12c43a1970dc139058727ce13e8044c8fbb90cf6c78fb661b0",
         ),
         "merge_entities.tool": (
             "merge_entities",

@@ -48,9 +48,10 @@ ToolHandler = Callable[..., Awaitable[Any]]
 #
 # `resolve_entity` / `assert_fact` are here for the first reason and a sharper one: they
 # are `mutate`-classed GRAPH WRITES bound to one note conversation. Without this line the
-# wildcard hands the note-ingestion persona's write verbs to the CURATOR. Belt to the
-# braces of `readtools.OPTIONAL_NOTE_GRAPH_TOOLS`, which keeps the two sidecars out of
-# the chat registry altogether (they can only be bound to a note).
+# wildcard hands the note-ingestion persona's write verbs to the CURATOR. This is now the
+# OUTER lock rather than the inner one: the chat registry used to drop both sidecars, but
+# that also made them unreachable on the reply turn D8 allowlists them for, so they are
+# bound there (`replytools`) and the allowlist plus this set are what keep them closed.
 #
 # `ask_owner` is a write too — it records the question and moves the conversation to
 # `waiting_on_owner` — but it is here for the note-thread reason rather than the graph

@@ -10,8 +10,8 @@ enforces around it:
   JSON-Schema `enum` anywhere in the union the persona is offered (plan constraint 8 —
   an enum in this persona's tool set segfaults gpt-oss's harmony grammar);
 - the WIRING, because D8 and D16 are properties of which handlers are bound, never of
-  the prompt (plan constraint 9): the allowlist, `NEVER_DEFAULT`, and the fact that the
-  chat registry cannot serve these tools at all;
+  the prompt (plan constraint 9): the allowlist, `NEVER_DEFAULT`, and which registries
+  bind these two — the worker's per-note one and, for the reply turn, the chat one;
 - the argument reading, because a batch is where a well-formed call quietly becomes a
   dropped fact.
 """
@@ -20,9 +20,9 @@ import json
 from pathlib import Path
 
 from jbrain.agent import graphwritetools as gw
-from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
+from jbrain.agent.agents import AGENTS, NOTE_INGEST_UNATTENDED_TOOLS, agent_for
 from jbrain.agent.asktools import ASK_OWNER_TOOL
-from jbrain.agent.readtools import OPTIONAL_NOTE_GRAPH_TOOLS
+from jbrain.agent.readtools import NOTE_GRAPH_TOOLS
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import NEVER_DEFAULT
 from jbrain.analysis.converse import NOTE_READ_TOOLS
@@ -129,12 +129,24 @@ def test_the_write_tools_are_never_absorbed_by_the_curator_wildcard() -> None:
     assert gw.GRAPH_WRITE_TOOLS <= NEVER_DEFAULT
 
 
-def test_the_chat_registry_cannot_serve_them_at_all() -> None:
-    """The outermost lock, and the reason it is unconditional rather than feature-gated:
-    a handler is bound to ONE note (its id, domain, chunks and handle table live in the
-    writer), so a chat session has nothing to bind. `build_registry` drops both sidecars
-    instead of demanding handlers for them."""
-    assert OPTIONAL_NOTE_GRAPH_TOOLS == gw.GRAPH_WRITE_TOOLS
+def test_the_chat_registry_binds_them_for_the_reply_turn_and_no_one_else() -> None:
+    """The chat registry USED to drop both sidecars, on the ground that a handler is
+    bound to one note. That also made them unreachable on the reply turn D8 allowlists
+    them for — an allowlisted name with no sidecar is never offered and cannot dispatch —
+    which left `correct_fact`, whose empty-address path PINS, as a reply turn's only
+    write verb.
+
+    So they are bound (`replytools`, addressed through the conversation row, exactly as
+    `ask_owner` is) and the locks that were doing the real work are asserted here: the
+    curator's wildcard cannot absorb them, and no OTHER persona allowlists them. The
+    binding itself is `test_agent_replytools.py`, next to the fakes it needs."""
+    assert NOTE_GRAPH_TOOLS == gw.GRAPH_WRITE_TOOLS
+    assert gw.GRAPH_WRITE_TOOLS <= NEVER_DEFAULT
+    for name, profile in AGENTS.items():
+        if name == "note_ingest":
+            continue
+        allowed = profile.tools or frozenset()
+        assert not (gw.GRAPH_WRITE_TOOLS & (allowed | profile.extra_tools)), name
 
 
 def test_the_allowlist_and_the_bound_registry_are_the_same_set() -> None:
