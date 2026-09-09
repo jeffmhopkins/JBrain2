@@ -1811,6 +1811,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Which radio, resolved by the api from the owner's settings. Absent
                 # keeps the historical "whatever enumerates first" for a one-dongle box.
                 serial=listen.validate_serial(body.get("serial")),
+                # Absent means the mode's default, so a client that predates the
+                # bandwidth control gets exactly what it always got.
+                bandwidth_hz=body.get("bandwidth_hz"),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -1862,7 +1865,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"detail": f"nothing is {doing}"})
             return
         try:
-            session.tune(int(body.get("frequency_hz", 0)), body.get("mode"))
+            session.tune(
+                int(body.get("frequency_hz", 0)),
+                body.get("mode"),
+                body.get("bandwidth_hz"),
+            )
         except listen.SessionGone:
             # Released between resolving it above and retuning it. `tune` refuses rather
             # than relaunching, because a relaunch here would spawn an rtl_fm for a

@@ -20,6 +20,7 @@ import {
   toggleSdrAudio,
 } from "../sdrAudio";
 import { type BandSection, loadBands } from "../sdrBands";
+import { bandwidthAdjustable, bandwidthLabel, bandwidthSpoken } from "../sdrBandwidth";
 import {
   sdrCaptions,
   startSdrCaptions,
@@ -161,6 +162,7 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   // switch bands; an explicit choice then sticks for the rest of the session.
   const [pickedStep, setPickedStep] = useState<number | null>(null);
   const [stepOpen, setStepOpen] = useState(false);
+  const [bwOpen, setBwOpen] = useState(false);
   const stepHz = pickedStep ?? DEFAULT_STEP_HZ[listening.mode] ?? FALLBACK_STEP_HZ;
 
   // The band table, for the one question this control asks of it: does a complete
@@ -250,6 +252,13 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     if (editing) freqInput.current?.select();
   }, [editing]);
 
+  // The filter width, and the rungs this mode offers. Both come from the SESSION rather
+  // than a table here: the ladder is the demodulator's (deploy/sdr/demod.py), and a copy
+  // in the PWA would go on offering widths a redeployed box had stopped accepting.
+  const ladder = listening.bandwidths_hz ?? [];
+  const width = listening.bandwidth_hz ?? 0;
+  const adjustable = bandwidthAdjustable(listening);
+
   const act = async (run: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -261,6 +270,14 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       setBusy(false);
     }
   };
+
+  /** Send a new filter width, and nothing else.
+   *
+   *  The frequency goes back unchanged and NO mode is named: a session keeps its width
+   *  across a retune, but naming a mode resets it to that mode's default, so sending one
+   *  here would silently undo the very change being made. */
+  const setWidth = (hz: number) =>
+    act(() => api.sdrTune(listening.frequency_hz / 1_000_000, undefined, listening.session_id, hz));
 
   const tune = (mhzValue: number) => {
     // Checked here too, not only in the typed field: a 100 kHz step held down from
@@ -479,26 +496,70 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
 
       {/* A fieldset with its legend, not a div wearing role="group": the grouping is
           real, so the element that means it is the one to use. */}
-      <fieldset className="seg-set" aria-label="Demodulation mode">
-        <legend className="sdr-label">Mode</legend>
+      {/* A fieldset with its legend, not a div wearing role="group": the grouping is
+          real, so the element that means it is the one to use.
+
+          **The mode button carries its width** (docs/mocks/bandwidth, shape D). Tapping
+          a mode you are not on switches mode; tapping the one you ARE on opens its
+          filter ladder. That keeps a second row off a sheet already holding a
+          waterfall, a readout, a transport and captions — and the draggable handles on
+          the tuning view are what stop the second level being undiscoverable. */}
+      <fieldset
+        className="seg-set"
+        aria-label={adjustable ? "Demodulation mode and bandwidth" : "Demodulation mode"}
+      >
+        <legend className="sdr-label">{adjustable ? "Mode & bandwidth" : "Mode"}</legend>
         <div className="seg-row sdr-modes">
-          {MODES.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`seg${mode === listening.mode ? " seg-on" : ""}`}
-              aria-pressed={mode === listening.mode}
-              disabled={busy}
-              onClick={() =>
-                void act(() =>
-                  api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
-                )
-              }
-            >
-              {mode.toUpperCase()}
-            </button>
-          ))}
+          {MODES.map((mode) => {
+            const on = mode === listening.mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                className={`seg${on ? " seg-on" : ""}`}
+                aria-pressed={on}
+                aria-haspopup={on && adjustable ? "dialog" : undefined}
+                aria-expanded={on && adjustable ? bwOpen : undefined}
+                disabled={busy}
+                onClick={() => {
+                  if (on) {
+                    if (adjustable) setBwOpen((was) => !was);
+                    return;
+                  }
+                  setBwOpen(false);
+                  // No width sent: the sidecar resets to the new mode's default, because
+                  // the ladders differ per mode and carrying a width across would refuse
+                  // an ordinary mode press (deploy/sdr/listen.py `Session.tune`).
+                  void act(() =>
+                    api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
+                  );
+                }}
+              >
+                {mode.toUpperCase()}
+                {on && width > 0 && <em className="sdr-bw">{bandwidthLabel(width)}</em>}
+              </button>
+            );
+          })}
         </div>
+        {bwOpen && adjustable && (
+          <div className="sdr-steps" aria-label={`${listening.mode.toUpperCase()} bandwidth`}>
+            {ladder.map((hz) => (
+              <button
+                key={hz}
+                type="button"
+                aria-pressed={hz === width}
+                className={`sdr-stepopt${hz === width ? " sdr-stepopt-on" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  setBwOpen(false);
+                  void setWidth(hz);
+                }}
+              >
+                {bandwidthSpoken(hz)}
+              </button>
+            ))}
+          </div>
+        )}
       </fieldset>
 
       {listening.engine !== undefined && listening.engine !== "iq" && (
@@ -517,6 +578,12 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           onTune={(hz) =>
             void act(() => api.sdrTune(hz / 1_000_000, undefined, listening.session_id))
           }
+          demodMode={listening.mode}
+          bandwidthHz={width}
+          ladder={ladder}
+          // Absent where there is nothing to choose, which is what makes the handles
+          // disappear on wide FM rather than appear and refuse.
+          onBandwidth={adjustable ? (hz) => void setWidth(hz) : undefined}
         />
       )}
 

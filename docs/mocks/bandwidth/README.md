@@ -57,7 +57,36 @@ than cleans.
 | USB, LSB | 3.1 / 2.4 / 1.8 kHz |
 | Wide FM | none — fixed at 180 kHz |
 
-## The three shapes
+## Chosen: **D** — C's shape, made draggable (2026-09-09)
+
+`d-mode-width-draggable.html` is the binding spec. The owner picked C's economy
+and B's directness together, and they turn out to be the two halves of one
+control rather than a compromise:
+
+- **The mode button carries its width**, and a second tap on the mode you are
+  already on opens the ladder. No second row, which matters on a sheet that
+  already holds a waterfall, a readout, a transport and captions.
+- **The shaded box on the picture is draggable**, snapping to those same rungs.
+
+They answer two different questions. The popover is for when you know the number
+you want; the drag is for when what you actually want is *"narrower than that
+station"* — which is the question the owner started with, and one no list of
+numbers asks well. Both write the same setting, so the button relabels as you
+drag and the ladder ticks show where the drag will land.
+
+C's weakness was discoverability, and the drag is what repairs it: the handles
+are visible on the picture without touching anything, so the feature announces
+itself even though the ladder is one level down. Arrow keys walk the same rungs,
+so the control is not pointer-only.
+
+A is not built. Its one advantage — the measured rejection readout beside the
+choice — is kept in D, under the mode row.
+
+## The shapes
+
+**D — `d-mode-width-draggable.html`. THE BINDING SPEC.** C's mode button and
+popover, B's draggable passband, and A's measured rejection readout. Three ways
+into one value — tap, drag, arrow key — all snapping to the same ladder.
 
 **A — `a-preset-row.html`. Bandwidth is a row under mode.** A second segmented
 row, the same shape as the MODE row above it. One tap, nothing hidden, and the
@@ -77,7 +106,7 @@ its ladder in a popover. Shortest sheet of the three, and each rung is labelled
 with what it is *for* (shortwave, crowded, DX) rather than being a bare number.
 *Discoverability is the weakness — nothing says the second tap does anything.*
 
-All three are single-file and fully offline, dark-first with a working
+All four are single-file and fully offline, dark-first with a working
 light/dark toggle, phone-framed, tokens-only (no raw hex outside the token
 sheet), ≥44px targets, `prefers-reduced-motion` honoured, and keyboard-operable
 (B's handles are `role="slider"` with arrow-key support).

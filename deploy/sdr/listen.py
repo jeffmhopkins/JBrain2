@@ -659,6 +659,42 @@ def validate(frequency_hz: int, mode: str) -> str:
     return key
 
 
+def bandwidths_for(mode: str) -> tuple[int, ...]:
+    """Every filter width a mode offers, widest first, from the demodulator itself.
+
+    One source of truth: `demod.BANDWIDTH_HZ`. A copy here would be a second place to
+    forget, and the failure would be a control offering a width the box then refuses."""
+    return tuple(demod.BANDWIDTH_HZ.get(mode.lower(), ()))
+
+
+def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
+    """The filter width, defaulted and bounded to what this mode actually offers.
+
+    `None` means "the mode's default", which is the widest rung — the same answer every
+    caller got before the width was a parameter at all, so an old client that never
+    sends one is unaffected.
+
+    Refused rather than clamped. Clamping a width the owner asked for would give them a
+    radio quietly listening at some other bandwidth than the one on screen, and the
+    whole reason this parameter exists is that a filter doing something other than what
+    the owner believes is very hard to hear and impossible to see."""
+    ladder = bandwidths_for(mode)
+    if not ladder:
+        raise SdrError(f"unknown mode {mode!r}")
+    if bandwidth_hz is None:
+        return ladder[0]
+    try:
+        want = int(bandwidth_hz)
+    except (TypeError, ValueError):
+        raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz") from None
+    if want not in ladder:
+        raise SdrError(
+            f"{mode.lower()} has no {want} Hz filter "
+            f"(want one of {', '.join(str(w) for w in ladder)})"
+        )
+    return want
+
+
 # Narrowband FM is the only thing 1200-baud AFSK arrives on. Accepting `usb` or `wbfm`
 # for a logging session would start a radio that reports healthy and can never decode.
 APRS_MODES = ("fm", "nfm")
@@ -1214,6 +1250,15 @@ class SessionInfo:
     engine: str = "rtl_fm"
     #: USB buffers dropped under this session. See `Session.overflows`.
     overflows: int = 0
+    #: How wide the demodulator's filter is, as a FULL channel width in Hz — the number
+    #: the bandwidth control shows. Zero on a session that has no channel (a spectrum
+    #: stare), which is how a client tells "no filter" from "the narrowest one".
+    bandwidth_hz: int = 0
+    #: Every width THIS mode offers, widest first. Sent with the session rather than
+    #: hardcoded in the client because the ladder is a property of the demodulator: a
+    #: PWA holding its own copy would offer widths a redeployed box had stopped
+    #: accepting, and the refusal would arrive as a 400 the owner cannot act on.
+    bandwidths_hz: tuple[int, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1230,6 +1275,8 @@ class SessionInfo:
             "sweep": self.sweep,
             "engine": self.engine,
             "overflows": self.overflows,
+            "bandwidth_hz": self.bandwidth_hz,
+            "bandwidths_hz": list(self.bandwidths_hz),
         }
 
 
@@ -1244,6 +1291,7 @@ class Session:
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
         serial: str | None = None,
+        bandwidth_hz: int | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.sweep = sweep
@@ -1278,6 +1326,10 @@ class Session:
             frequency_hz = self.sweep.centre_hz
         self.frequency_hz = frequency_hz
         self.mode = validate(frequency_hz, mode)
+        #: The filter width in force, validated HERE rather than when the demodulator is
+        #: built, so a width this box cannot serve is refused before anything opens the
+        #: radio — the same order everything else in this constructor follows.
+        self.bandwidth_hz = validate_bandwidth(self.mode, bandwidth_hz)
         self.audio_peak = 0.0
         self._subs: set[queue.Queue[bytes | None]] = set()
         # Captioning subscribers. Segmenting only runs while at least one is attached,
@@ -1512,6 +1564,7 @@ class Session:
                 self.mode,
                 LISTEN_CAPTURE_HZ,
                 offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+                bandwidth_hz=self.bandwidth_hz,
             )
         except demod.DemodError as bad:
             raise RadioUnavailable(f"this build cannot demodulate {self.mode}: {bad}") from bad
@@ -2602,7 +2655,12 @@ KISSPORT {self.kiss_port}
             return True
         return self.purpose == PURPOSE_LISTEN and self.engine == "iq"
 
-    def tune(self, frequency_hz: int, mode: str | None = None) -> None:
+    def tune(
+        self,
+        frequency_hz: int,
+        mode: str | None = None,
+        bandwidth_hz: int | None = None,
+    ) -> None:
         """Move this session to another station, keeping its id and its listeners.
 
         **IN PLACE on our own engine, which is the point (A2).** "`rtl_fm` cannot be
@@ -2621,12 +2679,23 @@ KISSPORT {self.kiss_port}
         validation, then building the new demodulator — happens before the radio moves,
         so a request that cannot be served leaves a working session exactly as it was."""
         wanted = validate(frequency_hz, mode or self.mode)
+        # **The width STICKS across a retune, and resets when the mode changes.** A
+        # narrow filter is a decision about a crowded band, not about one station, so
+        # re-picking it at every step of the dial would make it useless exactly where it
+        # is needed. But the ladders differ per mode, so a width carried into a mode that
+        # has no such rung would be refused — and that refusal would arrive on an
+        # ordinary mode button press, which is not where the owner asked for anything
+        # about bandwidth. Changing mode therefore falls back to that mode's default.
+        if bandwidth_hz is None:
+            bandwidth_hz = self.bandwidth_hz if wanted == self.mode else None
+        width = validate_bandwidth(wanted, bandwidth_hz)
         running, held, enc = self._capture, self._radio, self._enc
         if running is None or held is None or enc is None:
             # `rtl_fm`, which really cannot be retuned: tear it down and build it again.
             def apply() -> None:
                 self.frequency_hz = frequency_hz
                 self.mode = wanted
+                self.bandwidth_hz = width
                 self.audio_peak = 0.0
 
             self._restart(apply)
@@ -2642,6 +2711,7 @@ KISSPORT {self.kiss_port}
                 wanted,
                 LISTEN_CAPTURE_HZ,
                 offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+                bandwidth_hz=width,
             )
         except demod.DemodError as bad:
             raise RadioUnavailable(f"this build cannot demodulate {wanted}: {bad}") from bad
@@ -2654,6 +2724,7 @@ KISSPORT {self.kiss_port}
             )
             self.frequency_hz = frequency_hz
             self.mode = wanted
+            self.bandwidth_hz = width
             self.audio_peak = 0.0
             self._demod = chain
 
@@ -2878,6 +2949,11 @@ KISSPORT {self.kiss_port}
             sweep=self.sweep.as_dict() if self.sweep is not None else None,
             engine=self.engine,
             overflows=self.overflows,
+            # Zero on a session with no channel to filter — a spectrum stare tunes to a
+            # SPAN, and reporting a width there would put a bandwidth control on a
+            # screen that has nothing to apply it to.
+            bandwidth_hz=0 if self.sweep is not None else self.bandwidth_hz,
+            bandwidths_hz=() if self.sweep is not None else bandwidths_for(self.mode),
         )
 
 
@@ -3004,6 +3080,7 @@ class Tuner:
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
         serial: str | None = None,
+        bandwidth_hz: int | None = None,
     ) -> SessionInfo:
         validate_purpose(purpose)
         key = serial or self.ANY
@@ -3012,7 +3089,9 @@ class Tuner:
             busy = self._busy(key)
             if busy is not None:
                 raise busy
-            session = Session(frequency_hz, mode, gain, purpose, sweep, serial)
+            session = Session(
+                frequency_hz, mode, gain, purpose, sweep, serial, bandwidth_hz
+            )
             self._sessions[key] = session
             return session.info()
 

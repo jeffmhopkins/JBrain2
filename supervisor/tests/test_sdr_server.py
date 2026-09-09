@@ -1445,6 +1445,7 @@ def test_a_reset_frees_the_radio_before_it_answers(sidecar: str, monkeypatch) ->
 
     Both failure exits are checked, because they are separate `return`s and the bug was
     in the shape of the function rather than in either branch."""
+
     def boom(node: str) -> None:
         # Mirrors the real `usbdev.reset`, which screens the path before it opens
         # anything — so both exits below are reachable with the stub in place.

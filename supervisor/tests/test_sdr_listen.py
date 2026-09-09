@@ -3492,3 +3492,98 @@ class TestWhichRadioIsDrawing:
         tuner = self._tuner(monkeypatch, [listening, watching])
 
         assert tuner.drawing() is watching
+
+
+# -- filter bandwidth ----------------------------------------------------------------
+
+
+def _idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Session that never opens a radio: the fields under test are set before any
+    engine starts, and starting one here would only test the fake."""
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+
+
+def test_a_session_defaults_to_the_modes_widest_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that never mentions bandwidth gets exactly what it always got."""
+    _idle(monkeypatch)
+    session = listen.Session(5_000_000, "am", None)
+    session.stop()
+    assert session.bandwidth_hz == listen.bandwidths_for("am")[0] == 8_000
+    info = session.info()
+    assert info.bandwidth_hz == 8_000
+    # The ladder travels WITH the session: a PWA holding its own copy would offer
+    # widths a redeployed box had stopped accepting.
+    assert info.bandwidths_hz == (8_000, 6_000, 4_000, 3_000)
+    assert info.as_dict()["bandwidths_hz"] == [8_000, 6_000, 4_000, 3_000]
+
+
+def test_a_width_that_is_not_on_the_ladder_is_refused() -> None:
+    """Refused, never clamped.
+
+    Clamping would leave the radio listening at a width other than the one on screen,
+    and a filter doing something other than what the owner believes is exactly the
+    failure this control exists to end."""
+    with pytest.raises(listen.SdrError) as bad:
+        listen.Session(5_000_000, "am", None, bandwidth_hz=5_000)
+    assert "8000" in str(bad.value)
+    with pytest.raises(listen.SdrError):
+        listen.Session(5_000_000, "am", None, bandwidth_hz="wide")
+
+
+def test_a_spectrum_session_reports_no_bandwidth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stare tunes to a SPAN, so there is no channel for a filter to be.
+
+    Zero rather than the mode's default, so a client can tell "no filter here" from
+    "the narrowest one" and put no bandwidth control on a screen that cannot use it."""
+    _idle(monkeypatch)
+    sweep = listen.Sweep.of(
+        144_000_000, 144_200_000, 25_000, 60, capture=(2_400_000, 512)
+    )
+    # The engine stubbed out: a spectrum session needs SoapySDR, and what is under test
+    # is what `info()` REPORTS, which is decided before anything opens a radio.
+    monkeypatch.setattr(listen.Session, "_start_pipeline", lambda self: None)
+    # ...and the health check that follows it, which has no engine to confirm.
+    monkeypatch.setattr(listen.Session, "_confirm_started", lambda self: None)
+    session = listen.Session(
+        0, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=sweep
+    )
+    info = session.info()
+    assert info.bandwidth_hz == 0
+    assert info.bandwidths_hz == ()
+
+
+def test_the_width_survives_a_retune_and_resets_on_a_mode_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrow filter is a decision about a crowded BAND, not about one station.
+
+    Re-picking it at every step of the dial would make it useless exactly where it is
+    needed. But the ladders differ per mode, so carrying a width into a mode with no
+    such rung would refuse an ordinary mode-button press — which is not where the owner
+    asked for anything about bandwidth — so a mode change falls back to that mode's
+    default instead."""
+    _idle(monkeypatch)
+    session = listen.Session(5_000_000, "am", None, bandwidth_hz=4_000)
+    # `_restart` stubbed to just apply: this is about which width the rules choose, and
+    # rebuilding a pipeline around it would only exercise the fake process.
+    with mock.patch.object(listen.Session, "_restart", lambda self, apply: apply()):
+        session.tune(5_010_000)
+        assert session.bandwidth_hz == 4_000, "the width should follow the dial"
+        session.tune(5_010_000, "usb")
+        assert session.bandwidth_hz == listen.bandwidths_for("usb")[0] == 3_100
+        # ...and an explicit width still wins over both rules.
+        session.tune(5_010_000, "usb", 1_800)
+        assert session.bandwidth_hz == 1_800
+
+
+def test_bandwidths_for_comes_from_the_demodulator() -> None:
+    """One source of truth. A copy in `listen` would be a second place to forget a rung,
+    and the failure would be a control offering a width the box then refuses."""
+    for mode, ladder in demod.BANDWIDTH_HZ.items():
+        assert listen.bandwidths_for(mode) == tuple(ladder)

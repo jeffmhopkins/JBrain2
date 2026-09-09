@@ -955,7 +955,9 @@ def test_am_bandwidth_rejects_the_neighbour(bandwidth_hz, floor_db):
     wanted audio afterwards."""
     demod = _load()
     built = demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=bandwidth_hz)
-    pcm = _fed(built, _two_am(0.5, wanted_hz=1_000.0, neighbour_hz=1_700.0, spacing_hz=5_000.0))
+    pcm = _fed(
+        built, _two_am(0.5, wanted_hz=1_000.0, neighbour_hz=1_700.0, spacing_hz=5_000.0)
+    )
     wanted = _tone_level(built, pcm, 1_000.0)
     neighbour = _tone_level(built, pcm, 1_700.0)
     assert wanted - neighbour >= floor_db, (
@@ -1015,7 +1017,8 @@ def test_an_off_ladder_bandwidth_is_refused():
     """Every width this ships is one a test has measured; anything else is refused.
 
     A free-running number would ship filter designs nobody has evaluated, and a bad one
-    does not crash — it just sounds slightly wrong, where only the owner's ear sees it."""
+    does not crash — it just sounds slightly wrong, in a way only the owner's ear
+    ever sees."""
     demod = _load()
     with pytest.raises(demod.DemodError) as bad:
         demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_000)

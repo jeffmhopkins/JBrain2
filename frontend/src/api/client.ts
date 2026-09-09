@@ -2730,10 +2730,19 @@ export const api = {
     return (await response.json()) as SdrListening;
   },
 
-  async sdrTune(frequencyMhz: number, mode?: string, sessionId?: string): Promise<SdrListening> {
+  async sdrTune(
+    frequencyMhz: number,
+    mode?: string,
+    sessionId?: string,
+    bandwidthHz?: number,
+  ): Promise<SdrListening> {
     let query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
     if (mode) query += `&mode=${encodeURIComponent(mode)}`;
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    // Sending a width WITHOUT a mode is how the control changes only the filter: the
+    // session keeps its width across a retune, and naming a mode would reset it to that
+    // mode's default (deploy/sdr/listen.py `Session.tune`).
+    if (bandwidthHz) query += `&bandwidth_hz=${encodeURIComponent(bandwidthHz)}`;
     const response = await request(`/api/sdr/tune?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
   },
