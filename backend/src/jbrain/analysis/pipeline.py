@@ -72,6 +72,7 @@ from jbrain.analysis.entities import (
     create_provisional,
     declared_alias,
     get_or_create_me,
+    live_entity_by_id,
     near_duplicate_entity,
     normalize_alias,
     parse_disambiguation,
@@ -134,6 +135,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
+from jbrain.notes.compose import compose_body
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
 from jbrain.schema.models import _norm_key
@@ -354,7 +356,10 @@ class AnalysisPipeline:
             if note is None or note.deleted_at is not None:
                 log.info("integration.skipped", note_id=note_id, reason="missing or deleted")
                 return
-            body, domain, captured_at = note.body, note.domain_code, note.created_at
+            # Composed (D6): `body` is only the chunkless fallback below, but an
+            # owner's answer is part of the note's text wherever it is read.
+            body = compose_body(note.body, note.clarifications)
+            domain, captured_at = note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
             # An owner correction note (Phase 6 §4) extracts at full weight and
             # force-supersedes + pins the current head, so it out-argues the graph.
@@ -617,10 +622,11 @@ class AnalysisPipeline:
         note_domain: str,
     ) -> dict[str, ResolvedEntity | None]:
         """Validate the agent's coreference into a name(=mention_ref)→entity
-        override (plan §9). An existing-mode ref is honored only if its entity is
-        fetchable under the session's scope; missing/out-of-scope/malformed-id →
-        None (the fact then skips — never a guess, and a synthetic ref can't be
-        re-resolved). new-mode mints a provisional; ambiguous → None."""
+        override (plan §9). An existing-mode ref is honored only if its id reaches a
+        LIVE entity under the session's scope, following a merge tombstone to its
+        survivor (`live_entity_by_id`); missing/out-of-scope/malformed-id → None (the
+        fact then skips — never a guess, and a synthetic ref can't be re-resolved).
+        new-mode mints a provisional; ambiguous → None."""
         override: dict[str, ResolvedEntity | None] = {}
         for r in resolutions:
             if r.mode == "existing" and r.proposed_entity_id:
@@ -641,9 +647,10 @@ class AnalysisPipeline:
                     and len(await same_name_entity_ids(session, r.mention_ref)) >= 2
                 ):
                     continue
-                entity = (
-                    await session.execute(select(Entity).where(Entity.id == eid))
-                ).scalar_one_or_none()
+                # Through the fold, not around it: an id the owner has since merged
+                # away resolves to its survivor, so a re-analysis can never mint live
+                # rows on a tombstone and silently un-do the merge.
+                entity = await live_entity_by_id(session, eid)
                 override[r.mention_ref] = (
                     ResolvedEntity(
                         id=entity.id, subject_id=entity.subject_id, created=False, method="llm"

@@ -19,6 +19,7 @@ Three pieces, two of which need **no API key**:
 | `evals/audit.py` | **No** | Offline self-consistency + closed-set temporal audit of the case set. CI-enforced. |
 | be-the-model critic | a model (the agent itself) | An agent acts as the extractor over every case and flags expectations a *faithful* extraction would fail (case bugs / over-strict asserts). |
 | `evals/run.py` (`scripts/prompt-eval.sh`) | **Yes** (the configured provider) | Runs the REAL prompt through a REAL model and scores its output. Opt-in, never in CI. |
+| `evals/shape_probe.py` | **Yes** (the live box, via a debug token) | Scores whether the model FILLS a proposed *tool schema* — a different question from whether a prompt's output is right, and the one a new tool surface raises first. Opt-in, never in CI. |
 
 ## The loop (what a session should do)
 

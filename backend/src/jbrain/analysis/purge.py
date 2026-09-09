@@ -6,7 +6,10 @@ sanctioned exception [decided]: notes are the sole sources of truth, so
 deleting a note is a privacy promise that everything derived from it goes
 too — facts, entity mentions, temporal tokens, review items in ANY status
 (resolved history carries frozen snippets of the note's text), the
-note_analysis row, and provisional entities no surviving note references.
+note_analysis row, provisional entities no surviving note references, and
+the note's agent ingest conversations (whose transcripts hold the body).
+The note's clarification blocks (D6) go too: they are not derived — the owner
+typed them — but the promise is about the note, and they are part of its text.
 The note row itself stays soft-deleted (the settled Phase 2 behavior); only
 the derived graph purges, and the pipeline skips deleted notes, so nothing
 re-creates these artifacts afterward.
@@ -19,9 +22,10 @@ recorded effects, the purge re-derives chain repairs from what survives.
 
 `purge_note_artifacts(keep_pinned=True)` is the SECOND caller of this destructive
 half: the corpus rebuild sweep (analysis/rebuild.py), which re-derives from notes
-that still exist. Its three exemptions are on that keyword's docstring — a rebuild
+that still exist. Its five exemptions are on that keyword's docstring — a rebuild
 is not a deletion promise, so pinned decisions, every review item that is not still
-open (and the facts it names), and agent episodes all survive it.
+open (and the facts it names), agent episodes, note conversations and the note's
+own clarification blocks all survive it.
 """
 
 import uuid
@@ -37,7 +41,7 @@ from sqlalchemy.orm import aliased
 from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.emr_projection import project_emr
 from jbrain.analysis.geofence_projection import project_place_geofences
-from jbrain.models.agent import AgentEpisode, AgentEpisodeRef
+from jbrain.models.agent import AgentEpisode, AgentEpisodeRef, AgentSession
 from jbrain.models.analysis import (
     Entity,
     EntityDistinction,
@@ -46,6 +50,8 @@ from jbrain.models.analysis import (
     NoteAnalysis,
     TemporalToken,
 )
+from jbrain.models.note_conversation import NoteConversation
+from jbrain.models.notes import NoteClarification
 
 log = structlog.get_logger()
 
@@ -373,10 +379,10 @@ async def purge_note_artifacts(
     chains first. A never-analyzed note has nothing here and is a no-op.
 
     `keep_pinned=False` is the privacy delete this module exists for: total, down to
-    resolved review history and agent episodes.
+    resolved review history, agent episodes and ingest conversations.
 
     `keep_pinned=True` selects the REBUILD posture (analysis/rebuild.py) — the same
-    destructive half with three deliberate exemptions, because a rebuild re-derives
+    destructive half with five deliberate exemptions, because a rebuild re-derives
     from notes that still exist rather than honoring a deletion promise:
 
     1. Facts a human verdict rests on survive (`rebuild_spare_fact_ids`): the pinned
@@ -392,6 +398,16 @@ async def purge_note_artifacts(
        note's frozen snippets.
     3. Agent episodes stay. Nothing re-derives them, so purging them here would be
        silent data loss, not a rebuild.
+    4. Note conversations stay, for the same reason and one stronger: a thread holds
+       the OWNER'S answers to the agent's clarification questions, which no re-derive
+       from the notes can reconstruct. Destroying a thread because the graph is being
+       re-derived would throw away the human half of the ingest and orphan any question
+       still waiting in the notes inbox.
+    5. Clarification blocks stay. They are SOURCE — the owner typed them, and D7 makes
+       them chunks of the note — so a rebuild that deleted them would leave the graph
+       unable to re-derive from the notes, corpus-wide and silently. The whole premise
+       of `keep_pinned=True` is re-deriving FROM the notes; a clarification is part of
+       the note.
     """
     keep_ids = await rebuild_spare_fact_ids(session, note_id) if keep_pinned else set()
     keep_mentions = await rebuild_spare_mention_ids(session, note_id) if keep_pinned else set()
@@ -468,8 +484,28 @@ async def purge_note_artifacts(
     await project_emr(session, candidates)
     await project_place_geofences(session, candidates)
     if not keep_pinned:
+        await _purge_clarifications(session, note_id)
         await _purge_episodes(session, note_id)
+        await _purge_conversations(session, note_id)
     return PurgeCounts(purged=len(doomed), kept=len(keep_ids))
+
+
+async def _purge_clarifications(session: AsyncSession, note_id: uuid.UUID) -> None:
+    """Delete the note's clarification blocks (D6, migration 0193).
+
+    This runs on the PRIVACY delete only — never under `keep_pinned=True`, see
+    exemption 5 above. It has to be an explicit statement rather than the table's
+    ON DELETE CASCADE for the same reason `_purge_episodes` does: deleting a note is a
+    SOFT delete that keeps the `app.notes` row (invariant #11), so the cascade never
+    fires on the one path that needs it.
+
+    Placed here rather than in `SqlNotesRepo.delete_note` because this is the second
+    reaper too: `backfill_deleted_note_artifacts` sweeps notes soft-deleted by paths
+    that never touch the repo (an intake link's teardown, intake/repo.py), and a
+    clarification left behind by one of those is owner-typed text surviving a deletion
+    promise.
+    """
+    await session.execute(delete(NoteClarification).where(NoteClarification.note_id == note_id))
 
 
 async def _purge_episodes(session: AsyncSession, note_id: uuid.UUID) -> None:
@@ -481,6 +517,37 @@ async def _purge_episodes(session: AsyncSession, note_id: uuid.UUID) -> None:
         delete(AgentEpisode).where(
             AgentEpisode.id.in_(
                 select(AgentEpisodeRef.episode_id).where(AgentEpisodeRef.note_id == note_id)
+            )
+        )
+    )
+
+
+async def _purge_conversations(session: AsyncSession, note_id: uuid.UUID) -> None:
+    """Delete the note's ingest conversations WHOLE — the `agent_sessions` row, not just
+    the `note_conversations` side row — so no transcript keeps the deleted note's body
+    or the owner's answers about it. The same reasoning as `_purge_episodes`, and the
+    reason `note_conversations` carries no DELETE grant: erasing the side row alone
+    would strand exactly the content the promise is about.
+
+    Explicit rather than a cascade: `app.notes` soft-deletes (notes/repo.py), so the
+    `note_conversations.note_id` FK's ON DELETE CASCADE never fires on a note delete
+    (constraint 11 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md). Deleting the
+    session cascades the side row, the tool-call ledger, the turns, and the runs (0021).
+
+    The blast radius is therefore a WHOLE session, and the invariant that keeps it
+    correct lives at the other end: `NoteConversationRepo.start` is opened on a session
+    created FOR the note. D1's "same agent, same loop, same memory" is about the agent,
+    not about reusing an `agent_sessions` row — attaching a conversation to a running
+    Full Brain chat would put that chat's entire history inside this DELETE. Stated
+    rather than guarded because the only structural guard available in W2 (refuse a
+    session that already has turns) would encode an ordering W3's loop has not chosen
+    yet, and a guard that fails closed on the legitimate path is unfixable on a box
+    with no terminal (CLAUDE.md #10).
+    """
+    await session.execute(
+        delete(AgentSession).where(
+            AgentSession.id.in_(
+                select(NoteConversation.session_id).where(NoteConversation.note_id == note_id)
             )
         )
     )
@@ -673,6 +740,14 @@ async def backfill_deleted_note_artifacts(
                 SELECT 1 FROM app.review_items r
                 WHERE r.payload->>'note_id' = n.id::text
             )
+            -- The artifacts `purge_note_artifacts` deletes WHOLE. Without them a note
+            -- whose only surviving artifact is an episode, an ingest conversation or a
+            -- clarification block matches nothing and is never swept, so the idempotence
+            -- claim above ("a fully purged note matches no candidate predicate") would
+            -- be true only because the sweep cannot see what it left behind.
+            OR EXISTS (SELECT 1 FROM app.agent_episode_refs er WHERE er.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.note_conversations c WHERE c.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.note_clarifications c WHERE c.note_id = n.id)
         )
         """
     )

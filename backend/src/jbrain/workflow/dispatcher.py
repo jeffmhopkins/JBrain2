@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import queue
 from jbrain.db.session import ScopeStampError, narrowed_context, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.workflow import events as event_emit
 from jbrain.workflow import scheduler
@@ -234,10 +235,28 @@ def compute_diff(
     would: list[WouldEnqueue],
 ) -> ShadowDiff:
     """Compare the engine's would-be enqueues against the hardcoded path's recorded
-    baseline (`_shadow_enqueued`, E7a). Shadow equivalence is: the engine produces
-    exactly the job kind the hardcoded path produced. A one-action pipeline (the
-    three seeded defs) should yield exactly one would-be enqueue whose `kind`
-    matches the baseline `kind`; the payload should carry the same row id.
+    baseline (`_shadow_enqueued`, E7a). Shadow equivalence is: the engine still
+    produces the job kind the hardcoded path produced, carrying the same row id.
+
+    That is a SUBSET check, not an equality one, and deliberately so. The baseline
+    names the ONE kind the hardcoded path enqueued when its event type was cut over,
+    but an event type may since have gained further pipelines bound to it that are
+    purely ADDITIVE — `note.ingested` now drives both the integration and the note
+    conversation, neither displacing the other (AGENT_INGEST_CONVERSATION_PLAN.md
+    D13). Under equality every such note would log a permanent mismatch warning, which
+    is how a real one goes unnoticed.
+
+    Subset, but EXACTLY-ONCE on the baseline kind. What is tolerated is another KIND
+    beside the baseline; what is not is the baseline kind arriving twice, or arriving
+    against a different row. Matching "some enqueue has this kind and this payload"
+    was too weak in both directions: two triggers resolving to the same kind (one of
+    them wrong) read as a match as long as the first was right, and a duplicated
+    baseline — the same job enqueued twice off one event — read as a match by
+    construction. Both are the misconfiguration this diff is the only observer of.
+
+    The verdict is DIAGNOSTIC, not a gate: `live_enqueue` submits `diff.enqueues`
+    whatever this returns (only an `error` diff is withheld). So narrowing it does not
+    stop an extra job being run — it stops one being run unremarked.
 
     A missing baseline (an event with no `_shadow_enqueued`) is not a mismatch — it
     is an unobservable event (e.g. a future event type with no hardcoded twin); the
@@ -257,13 +276,19 @@ def compute_diff(
     actual_kind = actual.get("kind")
     actual_payload = actual.get("payload") or {}
     would_kinds = [w.kind for w in would]
-    if would_kinds != [actual_kind]:
+    matched = [w for w in would if w.kind == actual_kind]
+    if not matched:
         discrepancies.append(
             f"kind mismatch: engine would enqueue {would_kinds}, hardcoded enqueued {actual_kind!r}"
         )
-    elif would and would[0].payload != actual_payload:
+    elif len(matched) > 1:
         discrepancies.append(
-            f"payload mismatch: engine {would[0].payload}, hardcoded {actual_payload}"
+            f"duplicate baseline kind: engine would enqueue {actual_kind!r} {len(matched)}"
+            f" times, hardcoded enqueued it once ({[w.payload for w in matched]})"
+        )
+    elif matched[0].payload != actual_payload:
+        discrepancies.append(
+            f"payload mismatch: engine {matched[0].payload}, hardcoded {actual_payload}"
         )
     return ShadowDiff(
         event_id=event.id,
@@ -288,7 +313,7 @@ def _describe(w: WouldEnqueue) -> dict[str, Any]:
 # A kind absent here has no note-keyed twin; if it carries no per-target payload key
 # at all it is deduped kind-only (_KIND_DEDUP below), else its own action keeps its
 # dedup.
-_NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note"))
+_NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note", "note_converse"))
 
 # Payload-keyless idempotent sweeps the dispatcher live-enqueues off an event but
 # which carry NO per-target key (so the note-keyed guard above cannot apply).
@@ -320,6 +345,14 @@ async def _note_state(
             )
         ).first()
     return (row.ingest_state, row.integration_state) if row is not None else None
+
+
+async def _has_live_conversation(maker: async_sessionmaker[AsyncSession], note_id: str) -> bool:
+    """Whether this note already has a live agent conversation (`running` or
+    `waiting_on_owner` — migration 0191's live pair). Read under SYSTEM_CTX like every
+    other guard here: `note_conversations` is owner-only, cross-domain machinery."""
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return (await NoteConversationRepo().live_for_note(session, note_id)) is not None
 
 
 async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnqueue) -> bool:
@@ -368,6 +401,19 @@ async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnque
         # Skip a note already integrated (past the reconciler's eligibility); an
         # absent note (None) is left to the handler's own missing-note no-op.
         return state is not None and state[1] == "integrated"
+    if w.kind == "note_converse":
+        # A note has at most one LIVE conversation, and `note_conversations_one_live`
+        # (migration 0191) is what makes that race-free. But the index refuses the
+        # second INSERT with an IntegrityError, and an IntegrityError inside a worker
+        # handler is a failed job and a 500 in the run log for a note that is simply
+        # already being read — so the graceful arm belongs here, in front of it. Queued
+        # twin first (the cheap check), then the live thread. Both are skips, not
+        # errors; the index stays the authority for the race neither read can close.
+        if await queue.has_active(
+            maker, SYSTEM_CTX, w.kind, payload_field="note_id", value=note_id, statuses=("queued",)
+        ):
+            return True
+        return await _has_live_conversation(maker, note_id)
     # ingest_note: queued twin first, then the pending-state skip.
     if await queue.has_active(
         maker, SYSTEM_CTX, w.kind, payload_field="note_id", value=note_id, statuses=("queued",)

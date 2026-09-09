@@ -10,15 +10,18 @@ from jbrain.agent.agents import (
     AGENTS,
     ARCHIVIST_TOOLS,
     DEFAULT_AGENT,
+    ENGINE_ONLY_PERSONAS,
     GMAIL_TOOLS,
     INTAKE_TOOLS,
     JERV_TOOLS,
     MEMORY_TOOLS,
     NON_OWNER_PERSONAS,
+    NOTE_INGEST_TOOLS,
     OWNER_AGENTS,
     RESEARCH_TOOLS,
     REVIEW_TOOLS,
     SPAWN_TOOL,
+    STORABLE_OWNER_AGENTS,
     SUBAGENT_PERSONAS,
     SUMMARIZE_TOOLS,
     WEB_TOOLS,
@@ -28,9 +31,12 @@ from jbrain.agent.agents import (
     is_agent,
     is_owner_agent,
 )
+from jbrain.agent.readtools import TOOLS_DIR
+from jbrain.agent.toolfile import load_tool
+from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 
 
-def test_seventeen_agents_are_defined() -> None:
+def test_eighteen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -51,6 +57,7 @@ def test_seventeen_agents_are_defined() -> None:
                 "research_fetch",
                 "jmolt",
                 "jmolt_observer",
+                "note_ingest",
             }
         )
         == AGENT_NAMES
@@ -386,8 +393,11 @@ def test_intake_is_a_capture_only_non_owner_persona() -> None:
 def test_intake_is_not_owner_selectable() -> None:
     """intake is a NON-owner persona: resolvable + pinned, but excluded from the set an
     owner may open a session/task as (it must never land in app.agent_sessions, whose
-    agent CHECK excludes it). is_owner_agent gates the owner session/task routes."""
-    assert AGENT_NAMES - frozenset({"intake"}) == OWNER_AGENTS
+    agent CHECK excludes it). is_owner_agent gates the owner session/task routes.
+
+    OWNER_AGENTS excludes the ENGINE-ONLY personas as well — a different exclusion for a
+    different reason (they are owner-side, they are simply not a person's to pick)."""
+    assert AGENT_NAMES - frozenset({"intake"}) - ENGINE_ONLY_PERSONAS == OWNER_AGENTS
     assert "intake" not in OWNER_AGENTS
     assert is_owner_agent("curator") and is_owner_agent("jerv")
     assert not is_owner_agent("intake")
@@ -402,6 +412,135 @@ def test_agent_for_intake_fails_closed_never_curator() -> None:
     for bad in ("curator", "jerv", "archivist", "research", "nonesuch", ""):
         with pytest.raises(PersonaResolutionError):
             agent_for_intake(bad)
+
+
+# --- note_ingest: the note conversation's closed allowlist (D16) ----------
+#
+# AGENT_INGEST_CONVERSATION_PLAN.md D1/D16: a note conversation is the ordinary agent loop
+# under its OWN closed tool allowlist, never the curator wildcard. W2 ships the mechanism
+# with an empty set (the graph-write tools do not exist yet), so these tests are what make
+# W3's widening deliberate rather than accidental.
+
+# The four verbs D16 names as provably outside the persona. `file_correction` and
+# `add_source_exclusion` write a NOTE that re-enters ingestion, so a hostile note body could
+# launder itself into an owner-attributed source note and a second conversation.
+_FORBIDDEN_FOUR = frozenset(
+    {"file_correction", "add_source_exclusion", "make_intake_link", "remember"}
+)
+
+# Every domain scope a session can hold — the widest a note conversation could ever run at,
+# so the closure below is proven by the ALLOWLIST rule and not by domain invisibility.
+_EVERY_SCOPE = frozenset({"general", "health", "finance", "location", "external", "jmolt"})
+
+
+async def _noop(_args: dict, _ctx: object) -> object:  # pragma: no cover - never dispatched
+    return None
+
+
+def _every_shipped_tool() -> ToolRegistry:
+    """The real registry over every shipped `.tool` sidecar, handlers stubbed. Going
+    through the registry (not the dataclass field) is the point: `allowed_names` is the
+    dispatch-time gate the loop actually consults."""
+    return ToolRegistry(
+        [RegisteredTool(load_tool(p), _noop) for p in sorted(TOOLS_DIR.glob("*.tool"))]
+    )
+
+
+def test_note_ingest_holds_an_explicit_empty_allowlist_not_the_wildcard() -> None:
+    """`tools` is a frozenset, never None. `None` is the curator wildcard — the single
+    thing D16 forbids for the persona that will hold graph writes — and the difference is
+    invisible at the call site (`allow is not None` is the whole gate)."""
+    note = AGENTS["note_ingest"]
+    assert note.tools is not None
+    assert isinstance(note.tools, frozenset)
+    assert note.tools == NOTE_INGEST_TOOLS == frozenset()
+    # `extra_tools` is admitted AHEAD of the web / NEVER_DEFAULT gates, so it is the one way
+    # to hand this persona a tool without touching its allowlist. It stays empty in W3 too.
+    assert note.extra_tools == frozenset()
+    # W2: the note is turn 0 and nothing needs retrieval, and a False agent runs with empty
+    # read scopes, so a mis-scoped session reads no domain data.
+    assert note.reads_knowledge_base is False
+    # 2x, matching the KB-less children: inert while the persona is tool-less, but W3's
+    # resolve/assert chain runs many calls per note and a truncated turn is a correctness
+    # problem (plan constraint 6: the settle sweep must not run on one), not a short answer.
+    assert note.budget_multiplier == 2
+
+
+def test_note_ingest_admits_no_tool_through_the_real_registry() -> None:
+    """The closure, proven at the dispatch gate rather than on the dataclass: at every
+    scope, over every shipped sidecar, the admitted set is empty. Rule 2 of `_admits`
+    (`allow is not None and name not in allow`) is what closes it, and it fires BEFORE the
+    web and NEVER_DEFAULT gates — so the emptiness does not depend on a tool's permission
+    class, its domains, or its NEVER_DEFAULT membership."""
+    registry = _every_shipped_tool()
+    note = AGENTS["note_ingest"]
+    assert len(registry) > 100  # the real sidecar set, not a two-tool stub
+
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == frozenset()
+        assert registry.schemas_for(scopes, note.tools, note.extra_tools) == []
+
+
+def test_note_ingest_cannot_reach_the_four_verbs_d16_names() -> None:
+    """`file_correction`, `add_source_exclusion`, `make_intake_link` and `remember` are
+    REAL registered tools that the curator wildcard does admit — they are outside this
+    persona because its allowlist excludes them, not because they are absent from the box.
+    That contrast is the whole content of D16."""
+    registry = _every_shipped_tool()
+    note, curator = AGENTS["note_ingest"], AGENTS["curator"]
+    assert all(name in registry for name in _FORBIDDEN_FOUR)
+
+    admitted = registry.allowed_names(_EVERY_SCOPE, note.tools, note.extra_tools)
+    assert not (_FORBIDDEN_FOUR & admitted)
+    # The wildcard reaches all four — what a note conversation would inherit without D16.
+    wildcard = registry.allowed_names(_EVERY_SCOPE, curator.tools, curator.extra_tools)
+    assert wildcard >= _FORBIDDEN_FOUR
+    # And the closure holds for the classes the wildcard itself excludes, so no future
+    # loosening of the web / NEVER_DEFAULT gates can leak one in through the back.
+    assert not ({"web_search", "web_fetch", SPAWN_TOOL, "deep_produce"} & admitted)
+
+
+def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None:
+    """`agent_for` falls back to the KB-capable curator — the WILDCARD persona — on any
+    unknown name. A typo between this profile's key and the DB CHECK would therefore hand a
+    note conversation every tool D16 exists to withhold, silently. Pin the exact key."""
+    profile = agent_for("note_ingest")
+    assert profile is AGENTS["note_ingest"]
+    assert profile.name == "note_ingest"
+    assert profile.tools == frozenset()  # not curator's None
+    assert is_agent("note_ingest")
+
+
+def test_note_ingest_is_owner_side_and_never_spawnable() -> None:
+    """It mints an app.agent_sessions row, so it must be STORABLE owner-side (migration
+    0192 widens both agent CHECKs to match; test_agent_session_rls/test_tasks_rls iterate
+    STORABLE_OWNER_AGENTS against the DB, which is what keeps AGENTS and the CHECK from
+    drifting).
+
+    It is NOT in SUBAGENT_PERSONAS: a spawnable note-ingest persona would be a path for any
+    other agent to reach whatever W3 grants this one — jerv could spawn a child holding the
+    graph writes. Nothing spawns a note conversation; the ingest path opens it."""
+    assert "note_ingest" in STORABLE_OWNER_AGENTS
+    assert "note_ingest" not in NON_OWNER_PERSONAS
+    assert "note_ingest" not in SUBAGENT_PERSONAS
+
+
+def test_note_ingest_is_engine_only_and_not_selectable() -> None:
+    """ASSISTANT.md says the note persona "is not selectable — the engine opens it, never
+    a picker", and this is what makes that true rather than aspirational.
+
+    `POST /sessions {"agent": ...}` and the task launcher both gate on OWNER_AGENTS
+    (`api/sessions.py`, `api/tasks.py`), so leaving `note_ingest` in that set accepted a
+    hand-started note persona: no note, no frame, no `note_conversations` row, and
+    owner-chosen read scopes. Inert today behind the empty allowlist — and exactly the
+    door W3 must not find already open when it fills that allowlist with graph writes."""
+    assert "note_ingest" in ENGINE_ONLY_PERSONAS
+    assert "note_ingest" not in OWNER_AGENTS
+    assert not is_owner_agent("note_ingest")
+    # The engine-only set narrows what a person may pick, and nothing else: every other
+    # owner persona is still selectable, and the storable set is unchanged.
+    assert is_owner_agent("curator") and is_owner_agent("archivist")
+    assert STORABLE_OWNER_AGENTS == AGENT_NAMES - NON_OWNER_PERSONAS
 
 
 def test_agent_for_falls_back_to_curator() -> None:
@@ -488,6 +627,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "jmolt_observer": (
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
+        ),
+        "note_ingest": (
+            "agent-note-ingest-v1",
+            "dbaf96c696d253309ac2d3b1c1a93106e201f65d581f3e32a6e44c6db60c6b39",
         ),
     }
     assert set(pins) == AGENT_NAMES

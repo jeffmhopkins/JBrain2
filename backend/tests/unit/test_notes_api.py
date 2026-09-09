@@ -17,7 +17,14 @@ from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
-from jbrain.notes.service import AttachmentInfo, ExtractInfo, NoteInfo, NoteUpdate, UnknownDomain
+from jbrain.notes.service import (
+    AttachmentInfo,
+    ClarificationsAltered,
+    ExtractInfo,
+    NoteInfo,
+    NoteUpdate,
+    UnknownDomain,
+)
 from jbrain.storage import FsBlobStore
 from tests.unit.fakes import FakeAuthRepo
 
@@ -103,6 +110,10 @@ class FakeNotesRepo:
     ) -> NoteInfo | None:
         if changes.domain is not None and changes.domain not in KNOWN_DOMAINS:
             raise UnknownDomain(changes.domain)
+        # The real repo raises this when the PATCH body is not the note's composed text
+        # with its D6 clarification blocks intact; the marker stands in for that here.
+        if changes.body is not None and "MANGLED-BLOCKS" in changes.body:
+            raise ClarificationsAltered(note_id)
         for i, n in enumerate(self.notes):
             if n.id == note_id:
                 updated = dataclasses.replace(
@@ -505,6 +516,21 @@ def test_patch_note_unknown_domain_400(
     c, _, _ = client
     note = c.post("/api/notes", json={"client_id": "p3", "body": "b"}).json()
     assert c.patch(f"/api/notes/{note['id']}", json={"domain": "nope"}).status_code == 400
+
+
+def test_patch_that_mangles_clarification_blocks_409s_and_reingests_nothing(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    """Nothing is written and no re-ingest is queued: the composed text the editor sent
+    back did not end in the note's own blocks, and both other readings of that string
+    lose data (store it and the blocks double; cut at the marker and a body that merely
+    contains the marker is truncated)."""
+    c, _, jobs = client
+    note = c.post("/api/notes", json={"client_id": "p9", "body": "b"}).json()
+    jobs.enqueued.clear()
+    resp = c.patch(f"/api/notes/{note['id']}", json={"body": "MANGLED-BLOCKS"})
+    assert resp.status_code == 409
+    assert jobs.enqueued == []
 
 
 def test_patch_missing_note_404(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:

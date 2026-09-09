@@ -9,6 +9,7 @@ from sqlalchemy import (
     Double,
     Float,
     ForeignKey,
+    Identity,
     Integer,
     Text,
     func,
@@ -97,6 +98,51 @@ class Note(Base):
     )
 
     attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
+    # Owner answers appended to this note (D6, migration 0193). Eager like
+    # attachments because EVERY reader of the note's text needs them: the body a
+    # reader sees is `compose_body(note.body, note.clarifications)`, never the raw
+    # column. Ordered by seq so composition is deterministic.
+    clarifications: Mapped[list["NoteClarification"]] = relationship(
+        lazy="selectin", order_by="NoteClarification.seq"
+    )
+
+
+class NoteClarification(Base):
+    """One appended, timestamped clarification block (D6, migration 0193).
+
+    The note's `body` column stays exactly as its author wrote it — a clarification
+    never rewrites it, and an owner body edit never destroys clarifications, because
+    they are different rows. `jbrain.notes.compose.compose_body` joins them at read
+    time, appending AFTER the body so the offsets into the note's text cannot shift —
+    `app.chunks.char_start`/`char_end`, and the chunk-relative spans on
+    `app.entity_mentions` built from them. `app.facts` has no span columns at all; it
+    cites a chunk by id, which is `ingest.carryover`'s job to preserve.
+
+    Immutable after insert: 0193 grants only `UPDATE (domain_code)`, for the domain
+    carry when a note moves domain — and a trigger makes that carry mandatory, since
+    the block's domain must equal its note's.
+    """
+
+    __tablename__ = "note_clarifications"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.notes.id", ondelete="CASCADE")
+    )
+    # DB-generated (GENERATED ALWAYS AS IDENTITY): a global sequence, so two answers
+    # racing onto the same note still get a total order.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True))
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    # The conversation the answer came from (D1); NULL once that session is purged.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    # Duplicated from the note so the RLS policy needs no join (the 0002 attachment
+    # idiom); `update_note` carries it on a domain move.
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AttachmentExtract(Base):

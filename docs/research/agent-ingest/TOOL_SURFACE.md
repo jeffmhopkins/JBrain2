@@ -1,6 +1,6 @@
 # Note-Conversation Persona — Proposed Tool Surface
 
-> **Status:** Research · **Last verified:** 2026-09-08 — an independent design pass for
+> **Status:** Research · **Last verified:** 2026-09-09 — an independent design pass for
 > `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. Not ratified. No code written.
 
 The complete proposed tool list for the persona described in the plan: the agent that
@@ -171,12 +171,33 @@ scout's in-repo lesson.
    only if measurement shows *referential* surfaces ("the dog", "she") degrading the spine.
 3. **`assert_fact.confidence`** — only ever lowers a ceiling.
 4. **`assert_fact.sensitive`** — `domain_floor` covers the known predicates already.
-5. **The batch shape itself.** This is the largest unmeasured reliability risk in the
-   design: gpt-oss fills flat scalar args reliably, but arrays-of-objects are unmeasured
-   on this box. If W3 finds well-formed-call rate below ~95%, the fallback is **one flat
-   fact per call, no arrays anywhere**, `max_steps` raised, and D14's throughput cost
-   accepted a second time. Design the handlers so that degradation is a sidecar change,
-   not a rewrite.
+5. **The batch shape itself — MEASURED 2026-09-09, and the risk did not survive.**
+   It was the largest unmeasured reliability risk here: gpt-oss fills flat scalar args
+   reliably, and arrays-of-objects had never been tried on this box. Probed through
+   `/tool-probe` against the live `agent.turn` route (gpt-oss-120b, reasoning low), 20
+   samples per shape on one note:
+
+   | shape | well-formed | items per turn |
+   | --- | --- | --- |
+   | `assert_fact` batched array-of-objects, 4 string fields | **20/20** | 7.6 |
+   | `assert_fact` flat scalar, one fact per call | 20/20 | **1.0** |
+   | `resolve_entity` batched array-of-objects, 2 fields | **20/20** | 8.9 |
+   | `resolve_entity` batched array of plain strings | 20/20 | 8.4 |
+
+   Well-formed here means every item carried all its required non-blank string fields
+   *and* every `quote` was a verbatim substring of the note — 80/80 across all four
+   shapes, no truncation, no invented field, no non-verbatim quote. **Ship batched.**
+   The flat fallback is not a safety net worth holding open: it is equally well-formed
+   and yields exactly one fact per turn, so the same note costs seven or eight round
+   trips instead of one, on a serial GPU, while the owner waits (D14 risk 4).
+
+   What this does **not** measure, and W3 still owes: a single-turn probe sees only the
+   model's *first* call, and with the full six-tool set attached that first call is
+   always `resolve_entity` — so `assert_fact`'s behaviour in the real loop, after
+   resolution results come back, is unobserved. `/debug/replay` now takes inline
+   `raw_tools` for exactly this, and is the instrument to use once W3's tools exist.
+   Longer and messier notes, and the ≤8/≤12 ceilings under a note that overflows them,
+   are also unprobed. Still: design the handlers so degradation stays a sidecar change.
 6. **`ask_owner` calibration** is the behaviour to instrument in W3. Over-asking ends every
    note `awaiting_owner` and the sweep never runs; under-asking commits wrong links. The
    lever is description text, not schema.

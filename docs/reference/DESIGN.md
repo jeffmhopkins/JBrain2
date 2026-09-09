@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-08
+> **Status:** Living · **Last verified:** 2026-09-09
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -694,7 +694,13 @@ caret/selection; the thumb bar holds live `words · chars` (+ amber
 `· unsaved`) and a 44px **done** button — surface-2 until savable, then
 green-tint per the green=save rule — riding above the keyboard; dirty ✕
 arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
-saving PATCHes the body and re-triggers ingestion; the editor also owns
+saving PATCHes the body and re-triggers ingestion (a note that has gained
+clarification blocks loads them in the editor like any other text, and the
+PATCH removes exactly those blocks again before storing — they are rows, not
+body, so an edit cannot destroy them and cannot duplicate them. An edit that
+also changed the appended blocks is refused whole, 409, with the note
+untouched and the text still in the editor: the blocks are a record of what
+was said, not a field); the editor also owns
 **attachment management** — a paperclip in the thumb bar adds files, chips
 above the bar list them with a tap-again rose remove; adds/removals apply
 immediately to the note, independent of the text's done/cancel). **Delete**

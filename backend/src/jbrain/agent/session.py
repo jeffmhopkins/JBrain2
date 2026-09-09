@@ -141,20 +141,53 @@ class AgentSessionRepo:
         no_memory: bool = False,
     ) -> AgentSessionInfo:
         async with scoped_session(self._maker, ctx) as session:
-            row = AgentSession(
-                principal_id=uuid.UUID(ctx.principal_id),
+            return await self.create_on(
+                session,
+                ctx,
+                domain_scopes=domain_scopes,
+                subject_ids=subject_ids,
                 title=title,
                 agent=agent,
-                parent_session_id=uuid.UUID(parent_session_id) if parent_session_id else None,
+                parent_session_id=parent_session_id,
                 depth=depth,
                 no_memory=no_memory,
-                domain_scopes=list(domain_scopes),
-                subject_ids=[uuid.UUID(s) for s in subject_ids],
             )
-            session.add(row)
-            await session.flush()
-            await session.refresh(row)
-            return _info(row)
+
+    async def create_on(
+        self,
+        session: AsyncSession,
+        ctx: SessionContext,
+        *,
+        domain_scopes: Sequence[str],
+        subject_ids: Sequence[str] = (),
+        title: str = "",
+        agent: str = "curator",
+        parent_session_id: str | None = None,
+        depth: int = 0,
+        no_memory: bool = False,
+    ) -> AgentSessionInfo:
+        """`create`, on the caller's already-RLS-scoped transaction.
+
+        For a caller that must open a session AND the row that gives it meaning
+        atomically: `analysis/converse.py` writes the `note_conversations` row beside
+        it, and the note's one-live index can refuse that row. In two transactions a
+        refusal strands the session — an empty thread in the owner's chat list that
+        only a compensating delete removes, and that delete can itself fail. Here the
+        rollback takes both."""
+        row = AgentSession(
+            principal_id=uuid.UUID(ctx.principal_id),
+            title=title,
+            agent=agent,
+            parent_session_id=uuid.UUID(parent_session_id) if parent_session_id else None,
+            depth=depth,
+            no_memory=no_memory,
+            domain_scopes=list(domain_scopes),
+            subject_ids=[uuid.UUID(s) for s in subject_ids],
+        )
+        session.add(row)
+        await session.flush()
+        await session.refresh(row)
+        return _info(row)
 
     async def list(self, ctx: SessionContext) -> list[AgentSessionInfo]:
         # Each card carries its turn count, a resume preview (the latest turn,

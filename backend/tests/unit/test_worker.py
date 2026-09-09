@@ -642,6 +642,10 @@ async def test_run_registers_all_job_handlers(
         "ingest_note",
         "embed_note",
         "integrate_note",
+        # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2) — in-code only,
+        # not in ACTION_SPECS / the app.actions seed; migration 0194 seeds its
+        # note.ingested trigger, BESIDE integrate_note's, not instead of it (D13).
+        "note_converse",
         "ocr_attachment",
         # The audio sibling of ocr_attachment — in-code only, not in ACTION_SPECS /
         # the app.actions seed (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).

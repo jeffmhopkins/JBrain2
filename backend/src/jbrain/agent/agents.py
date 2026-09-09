@@ -454,6 +454,27 @@ SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 # (docs/archive/GUIDED_INTAKE_PLAN.md §5, W2).
 INTAKE_TOOLS: frozenset[str] = frozenset()
 
+# The note-conversation persona's allowlist: EMPTY, and empty as a MECHANISM
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D16). A note is turn 0 of an ordinary agent
+# conversation, but that conversation runs under its own CLOSED allowlist and never
+# curator's `tools=None` wildcard — whose admitted set reaches `file_correction`,
+# `add_source_exclusion`, `make_intake_link` and `remember`, the four verbs D16 names as
+# provably outside this persona (the first two would write a note that re-enters ingestion,
+# laundering third-party text into an owner-attributed source). W2 ships only the mechanism:
+# the graph-write tools do not exist yet, so the set is empty and dispatch refuses every
+# call — `ToolRegistry._admits` rejects any name outside a non-None `allow` BEFORE it
+# consults the web / NEVER_DEFAULT gates, so an empty frozenset is a hard floor no later
+# registry change can lift.
+#
+# W3 adds the UNATTENDED set here (docs/research/agent-ingest/TOOL_SURFACE.md): `resolve_entity`,
+# `assert_fact`, `ask_owner`, `find_entity`, `read_entity`, `prefs_read`. The ON-REPLY set
+# (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`, `relate`) unlocks
+# only once the owner has actually replied (D8) — that must be a SECOND frozenset chosen at
+# turn assembly, never a flag on one set, because the allowlist is the only enforcement
+# (constraint 9). Every write tool added must also join `toolregistry.NEVER_DEFAULT`, or
+# curator's wildcard absorbs it on every ordinary chat turn.
+NOTE_INGEST_TOOLS: frozenset[str] = frozenset()
+
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
 # set — never `agent_for`, whose curator fallback would be catastrophic for a stranger.
@@ -685,20 +706,76 @@ AGENTS: dict[str, AgentProfile] = {
         reads_knowledge_base=False,
         budget_multiplier=1,
     ),
+    # note_ingest — the note conversation (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D1/D16).
+    # An OWNER persona the engine opens with a captured note as turn 0, not a picker choice.
+    # `tools` is an explicit empty frozenset, never None: the wildcard is precisely what D16
+    # forbids for a persona that will hold graph writes, and `frozenset()` closes the set now
+    # so W3 widens it deliberately rather than by inheriting a default.
+    # `extra_tools` stays EMPTY here in every wave. On /chat an `extra` name is admitted
+    # AHEAD of the registry's web and NEVER_DEFAULT gates (`toolregistry._admits`), which is
+    # exactly the door D16 closes. On the path this persona actually runs, `LoopTurnExecutor`
+    # never forwards `extra_tools` at all, so a grant here would be silently dropped rather
+    # than admitted — differently wrong, equally a reason to gain tools only through the
+    # allowlist.
+    # `reads_knowledge_base=False` for W2: the note arrives as turn 0, so nothing needs
+    # retrieval yet, and a False agent runs with EMPTY read scopes, so even a mis-scoped
+    # session reads no domain data. W3 must revisit it — plan constraint 2 wants the
+    # conversation owner-scoped to `(note_domain, 'general')`, and the entity read tools are
+    # domain-visible, so they cannot be reached under empty scopes.
+    # 2x budget (not 1x), and NOT as truncation protection — that comes from the settled/failed
+    # latch (`converse.py`), which withholds the sweep at any multiplier. The step cap already
+    # has an order of magnitude of headroom over W3's measured batch sizes (TOOL_SURFACE.md:
+    # ~7.6 facts and ~8.9 entities per call, so a 20-fact note is ~5 calls against a floor of
+    # 20 steps). What `scale` actually moves is `max_cost_tokens`, 200k -> 400k, and only on
+    # the UNATTENDED pass: the owner's reply turn is supervised and ignores it. So this is a
+    # headroom-vs-cost call under plan risk 4, bounded by NOTE_TURN_WALL_CLOCK, not a
+    # correctness guard.
+    "note_ingest": _profile(
+        "note_ingest",
+        "note_ingest.prompt",
+        tools=NOTE_INGEST_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
 }
 
 AGENT_NAMES = frozenset(AGENTS)
 
-# The personas an OWNER may select for a Full Brain session or task. `intake` lives in
-# AGENTS (so it is resolvable + version-pinned) but is a NON-owner persona — it belongs to
-# an intake_link principal, is resolved via `agent_for_intake`, and must never be stored in
-# app.agent_sessions/app.tasks (whose `agent` CHECK excludes it anyway). Owner-facing
-# validation gates on THIS set, not AGENT_NAMES, so an owner can't open an intake session.
-OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS
+# Two different exclusions sit between AGENT_NAMES and what an owner may select, and they
+# are not the same question. `intake` lives in AGENTS (so it is resolvable +
+# version-pinned) but is a NON-owner persona — it belongs to an intake_link principal, is
+# resolved via `agent_for_intake`, and must never be stored owner-side at all (the `agent`
+# CHECK excludes it). The engine-only personas below ARE owner-side and ARE stored; they
+# are simply not a person's to start.
+
+# Owner-side personas the ENGINE opens and a person never picks. They are stored in
+# `app.agent_sessions` like any other owner persona (the CHECK admits them, 0192), and
+# they are the owner's own threads — but nothing may mint one from a request.
+#
+# `note_ingest` is one because it is only itself with a note behind it: the runner opens
+# it in the same transaction as its `note_conversations` row, seeded with a captured note
+# as turn 0 under the frame, and W3 hands it the graph-write tools. A session started
+# from `POST /sessions {"agent":"note_ingest"}` has none of that — no note, no frame, no
+# conversation row, owner-chosen read scopes — and would be the write persona reachable
+# by a request. Harmless while the allowlist is an empty frozenset, which is exactly why
+# it is closed now rather than after W3 fills it. Also keeps `ASSISTANT.md`'s "not
+# selectable — the engine opens it, never a picker" a fact rather than an intention.
+ENGINE_ONLY_PERSONAS = frozenset({"note_ingest"})
+
+# What an OWNER may SELECT for a Full Brain session or task — the session/task routes'
+# gate (`is_owner_agent`, `api/sessions.py`, `api/tasks.py`), never AGENT_NAMES.
+OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS - ENGINE_ONLY_PERSONAS
+
+# What may be STORED owner-side: everything an owner selects, plus the engine-opened
+# personas. This is the set the two `agent` CHECK constraints must admit, and the set the
+# RLS suites iterate — selectability and storability are different questions, and pinning
+# the CHECK to the selectable set alone would fail the moment the engine opens a session.
+STORABLE_OWNER_AGENTS = OWNER_AGENTS | ENGINE_ONLY_PERSONAS
 
 
 def is_owner_agent(name: str) -> bool:
-    """Whether an OWNER may run this persona (excludes the non-owner intake persona)."""
+    """Whether an OWNER may SELECT this persona (excludes the non-owner intake persona
+    and the engine-only ones the owner never picks)."""
     return name in OWNER_AGENTS
 
 

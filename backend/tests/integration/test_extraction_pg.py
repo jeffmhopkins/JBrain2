@@ -87,6 +87,23 @@ async def ingest(maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path
     await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
 
 
+async def reingest_a_rewritten_body(
+    maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path: Any, body: str
+) -> None:
+    """Re-ingest over a REWRITTEN body — what actually nulls `facts.chunk_id` now.
+
+    An unchanged re-ingest no longer does: `ingest.carryover` keeps a rebuilt chunk's row
+    when it comes back byte-identical, so a re-ingest stops destroying the note's entity
+    mentions and its published wiki citations. The in-place re-anchor stays load-bearing
+    for the cases carry-over declines, and a rewrite is the plainest of them.
+    """
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = :n"), {"b": body, "n": note_id}
+        )
+    await ingest(maker, note_id, tmp_path)
+
+
 async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:
     """A real owner principal so ingest's worker-side note.ingested emit (which has
     no per-content principal) can resolve one — without it emit_event short-circuits

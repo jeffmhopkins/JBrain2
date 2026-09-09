@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue, worker
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
 from jbrain.ingest.ocr import MAX_OCR_BYTES, OcrPipeline
@@ -61,7 +62,10 @@ EMPTY_INTENT = '{"resolutions": [], "facts": []}'
 
 
 def _registry():  # noqa: ANN202
-    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+    # note.ingested drives the note conversation as well as integration since
+    # migration 0194; without its spec the dispatcher cannot resolve that pipeline and
+    # the whole tick errors before it enqueues anything.
+    return build_registry((*ACTION_SPECS, PURGE_ACTION, NOTE_CONVERSE_SPEC))
 
 
 async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:

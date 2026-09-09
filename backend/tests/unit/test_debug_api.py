@@ -1159,12 +1159,14 @@ class _ScriptedRouter:
     def __init__(self, names: list[str]) -> None:
         self.names = names
         self.seen_messages: list[Any] = []
+        self.seen_tools: list[Any] = []
 
     async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         return ("local", "gpt-oss-120b")
 
     async def converse(self, task: str, *, messages: Any, tools: Any = (), **kw: Any) -> LlmTurn:
         self.seen_messages.append(list(messages))
+        self.seen_tools.append(list(tools))
         step = sum(1 for m in messages if isinstance(m, ToolResultMessage))
         if step >= len(self.names):
             return LlmTurn(
@@ -1284,6 +1286,61 @@ def test_replay_honours_the_step_cap(debug_client: tuple[TestClient, str]) -> No
     )
 
     assert resp.json()["steps_taken"] == 3
+
+
+def test_replay_can_attach_a_tool_the_registry_does_not_have_yet(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """A tool surface being DESIGNED cannot be measured past its first move otherwise.
+
+    `tool-probe` takes inline schemas but returns one call, and a model that resolves
+    before it writes never reaches the write tool in a single turn — so the shape of the
+    call that matters is unobservable until the tool ships, which is the wrong order.
+    Registry names stay supported; raw schemas are appended after them."""
+    client, key = debug_client
+    router = _ScriptedRouter(["resolve_entity", "assert_fact"])
+    _state(client).llm_router = router
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={
+            "user_text": "Dana moved to the Mission and started at Everlane in March.",
+            "raw_tools": [
+                {"name": "resolve_entity", "description": "Resolve named things."},
+                {
+                    "name": "assert_fact",
+                    "description": "Record facts.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"facts": {"type": "array", "items": {"type": "object"}}},
+                    },
+                },
+            ],
+            "stubs": [{"name": "resolve_entity", "result": "Dana Whitfield -> ent_1"}],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["call_sequence"] == ["resolve_entity", "assert_fact"]
+    assert body["tool_count"] == 2
+    # The write tool reached the model on the second turn, carrying its own schema — the
+    # whole point, since that is the call a single-turn probe can never see.
+    assert [t.name for t in router.seen_tools[1]] == ["resolve_entity", "assert_fact"]
+    assert router.seen_tools[1][1].input_schema["properties"]["facts"]["type"] == "array"
+    assert body["steps"][0]["result_used"] == "Dana Whitfield -> ent_1"
+
+
+def test_replay_rejects_a_malformed_raw_tool(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={"user_text": "hi", "raw_tools": [{"description": "no name"}]},
+    )
+    assert resp.status_code == 400
+    assert "raw_tools" in resp.json()["detail"]
 
 
 def test_replay_rejects_an_unknown_tool(debug_client: tuple[TestClient, str]) -> None:
