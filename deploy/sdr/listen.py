@@ -683,9 +683,15 @@ def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
         raise SdrError(f"unknown mode {mode!r}")
     if bandwidth_hz is None:
         return ladder[0]
+    # The value arrives off a JSON body, so it is `object` until something narrows it —
+    # and `int()` of an arbitrary object is exactly what a type checker refuses. `bool`
+    # is excluded by hand because it IS an `int` to Python, and `True` would otherwise
+    # sail through as 1 Hz and be refused for the wrong reason.
+    if isinstance(bandwidth_hz, bool) or not isinstance(bandwidth_hz, int | float | str):
+        raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz")
     try:
         want = int(bandwidth_hz)
-    except (TypeError, ValueError):
+    except ValueError:
         raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz") from None
     if want not in ladder:
         raise SdrError(

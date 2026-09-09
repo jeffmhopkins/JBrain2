@@ -3530,8 +3530,16 @@ def test_a_width_that_is_not_on_the_ladder_is_refused() -> None:
     with pytest.raises(listen.SdrError) as bad:
         listen.Session(5_000_000, "am", None, bandwidth_hz=5_000)
     assert "8000" in str(bad.value)
-    with pytest.raises(listen.SdrError):
-        listen.Session(5_000_000, "am", None, bandwidth_hz="wide")
+    # Anything that is not a number: the value comes off a JSON body, so a list or a
+    # dict reaches this function as readily as an int does, and `int()` of one raises
+    # TypeError rather than the sentence the owner needs.
+    for junk in ("wide", [8000], {"hz": 8000}, object()):
+        with pytest.raises(listen.SdrError):
+            listen.Session(5_000_000, "am", None, bandwidth_hz=junk)  # type: ignore[arg-type]
+    # `True` is an `int` to Python and would otherwise sail through as 1 Hz, refused for
+    # the wrong reason and with a message naming a width nobody asked for.
+    with pytest.raises(listen.SdrError, match="not a filter width"):
+        listen.Session(5_000_000, "am", None, bandwidth_hz=True)  # type: ignore[arg-type]
 
 
 def test_a_spectrum_session_reports_no_bandwidth(
