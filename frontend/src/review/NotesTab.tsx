@@ -14,7 +14,7 @@ import { DomainDot } from "./DomainDot";
 
 /** How long it has waited, in the register the mock uses ("asked 9 days ago"). Coarse
  * on purpose: an exact clock on an unanswered question is nagging, which D5 rules out. */
-export function waitedFor(since: string, now: Date = new Date()): string {
+function waitedFor(since: string, now: Date = new Date()): string {
   const ms = now.getTime() - new Date(since).getTime();
   const hours = Math.floor(ms / 3_600_000);
   if (hours < 1) return "just now";
@@ -37,7 +37,7 @@ function sourceLabel(row: NotesInboxRow): string {
 
 function NotesRow({ row, onOpen }: { row: NotesInboxRow; onOpen: () => void }): ReactNode {
   return (
-    <div className="rrow2 nrow">
+    <div className="rrow2">
       <button type="button" className="rrow-open" onClick={onOpen}>
         <span className="rrow-line">
           <DomainDot domain={row.domain} />
