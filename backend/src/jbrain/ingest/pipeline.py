@@ -1,9 +1,15 @@
 """The ingest_note job handler: note + attachments -> searchable chunks.
 
-Idempotent by design: each run deletes the note's existing chunks and rebuilds
-them in one transaction, so re-enqueueing (new attachment, retry, backfill) is
-always safe. Chunk ids are therefore not stable across re-ingestion — fine
-until Phase 3 starts hanging facts off chunks.
+Idempotent by design: each run rebuilds the note's chunks in one transaction, so
+re-enqueueing (new attachment, retry, backfill) is always safe.
+
+A rebuilt chunk KEEPS ITS ROW when it comes back byte-identical, and hands its
+references over when it does not but a surviving chunk covers it — `ingest.carryover`.
+Five tables point at `app.chunks.id` and two of them cascade, so the older
+delete-everything-then-insert destroyed the note's entity mentions and its published
+wiki citations on every re-ingest. D6's clarification blocks made that fire on every
+answered question, which is what forced the change; a body the owner actually rewrote
+still gets fresh ids for the part that changed.
 
 Runs under the owner-kind system context (queue.SYSTEM_CTX): ingestion is the
 owner's own machinery and must read notes in every domain; RLS still applies,
@@ -22,6 +28,7 @@ from sqlalchemy.sql import func
 
 from jbrain import queue
 from jbrain.db.session import scoped_session
+from jbrain.ingest.carryover import ChunkShape, plan_carry_over
 from jbrain.ingest.chunker import chunk_text
 from jbrain.ingest.extract import (
     KIND_TEXT_LAYER,
@@ -54,6 +61,99 @@ class _AttachmentRef:
     sha256: str
     filename: str
     size_bytes: int
+
+
+def _shape(c: Chunk) -> ChunkShape:
+    return ChunkShape(
+        attachment_id=c.attachment_id,
+        source_kind=c.source_kind,
+        source_anchor=c.source_anchor,
+        granularity=c.granularity,
+        domain_code=c.domain_code,
+        char_start=c.char_start,
+        char_end=c.char_end,
+        text=c.text,
+    )
+
+
+# Every table that points at a chunk and would otherwise lose the row (CASCADE) or the
+# citation (SET NULL) when the note is re-chunked. `entity_mentions` is listed apart
+# because its spans are chunk-relative and have to be shifted, not just repointed.
+_REPOINTED = ("app.facts", "app.temporal_tokens")
+
+
+async def _carry_over_chunks(session: AsyncSession, note_id: UUID, built: list[Chunk]) -> None:
+    """Replace the note's chunks with `built`, keeping every reference that can be kept.
+
+    The old code was `DELETE WHERE note_id` then insert. That is why a re-ingest wiped
+    the note's entity mentions and its published wiki citations — both cascade — and
+    left its facts and temporal tokens pointing at nothing. See `ingest.carryover` for
+    the two rules; here is only their application, in the one order that works: the new
+    rows must EXIST before anything can point at them, and the old ones must not be
+    deleted until nothing does.
+    """
+    old = list(
+        (await session.execute(select(Chunk).where(Chunk.note_id == note_id).order_by(Chunk.seq)))
+        .scalars()
+        .all()
+    )
+    plan = plan_carry_over([_shape(c) for c in old], [_shape(c) for c in built])
+
+    kept: dict[int, Chunk] = {}
+    for old_idx, new_idx in plan.reuse:
+        row = old[old_idx]
+        # Identical in every column the shape covers, so only its position can differ.
+        row.seq = built[new_idx].seq
+        kept[new_idx] = row
+    session.add_all([c for j, c in enumerate(built) if j not in kept])
+    # Ids are assigned on flush, and the re-anchor UPDATEs below are FK writes against
+    # them.
+    await session.flush()
+
+    for old_idx, new_idx in plan.reanchor:
+        source, target = old[old_idx], kept.get(new_idx, built[new_idx])
+        await _repoint(session, source, target)
+
+    doomed = [c.id for i, c in enumerate(old) if i not in plan.reused_old]
+    if doomed:
+        await session.execute(delete(Chunk).where(Chunk.id.in_(doomed)))
+
+
+async def _repoint(session: AsyncSession, source: Chunk, target: Chunk) -> None:
+    """Hand one doomed chunk's references to the surviving chunk that covers it."""
+    shift = (source.char_start or 0) - (target.char_start or 0)
+    for table in _REPOINTED:
+        await session.execute(
+            text(f"UPDATE {table} SET chunk_id = :new WHERE chunk_id = :old"),  # noqa: S608
+            {"new": target.id, "old": source.id},
+        )
+    # Chunk-RELATIVE spans (analysis.pipeline._locate indexes into chunk.text), so the
+    # move is only exact because the target covers the source; `carryover` will not
+    # propose one that does not.
+    await session.execute(
+        text(
+            "UPDATE app.entity_mentions"
+            " SET chunk_id = :new, char_start = char_start + :shift,"
+            "     char_end = char_end + :shift"
+            " WHERE chunk_id = :old"
+        ),
+        {"new": target.id, "old": source.id, "shift": shift},
+    )
+    # Guarded by domain and note even though `carryover` already matched on both: the
+    # `wiki_citation_firewall` trigger RAISES on a mismatch, and an aborted transaction
+    # here would fail the whole ingest rather than lose one citation.
+    await session.execute(
+        text(
+            "UPDATE app.wiki_citations SET chunk_id = :new"
+            " WHERE chunk_id = :old AND note_id = :note AND domain_code = :domain"
+        ),
+        {
+            "new": target.id,
+            "old": source.id,
+            "note": target.note_id,
+            "domain": target.domain_code,
+        },
+    )
 
 
 class IngestPipeline:
@@ -112,8 +212,7 @@ class IngestPipeline:
         try:
             chunks = await self._build_chunks(note_id, domain, body, attachments, extracts)
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
-                await session.execute(delete(Chunk).where(Chunk.note_id == note_id))
-                session.add_all(chunks)
+                await _carry_over_chunks(session, UUID(note_id), chunks)
                 await session.execute(
                     update(Note)
                     .where(Note.id == note_id)

@@ -241,17 +241,35 @@ written ids come from the write path.
 
 *Clarification blocks, as built (migration 0193).* The body column is never appended to;
 `app.note_clarifications` holds `(note_id, seq, question, answer, session_id, domain_code,
-created_at)` and `jbrain.notes.compose.compose_body` joins them onto the body for the three
-readers that matter — `_note_info` (list/get/PATCH, and so the note view and `read_note`),
-the ingest chunk build (D7), and the integrator's chunkless body fallback. An un-clarified
-note composes to its body byte-for-byte, and blocks append *after* the body, so no existing
-`char_start`/`char_end` moves. Three consequences worth carrying:
+created_at)` and `jbrain.notes.compose.compose_body` joins them onto the body for the four
+readers of a note's text — `_note_info` (list/get/PATCH, and so the note view and
+`read_note`), the search leg's `body_preview` (`search/repo.py`), the ingest chunk build
+(D7), and the integrator's chunkless body fallback. An un-clarified note composes to its
+body byte-for-byte, and blocks append *after* the body, so no chunk boundary moves.
 
-- **The editor round trip.** The note editor loads `NoteInfo.body`, which is now composed, and
-  PATCHes the whole string back. `update_note` therefore cuts at the first block marker before
-  storing — otherwise an untouched save bakes the blocks into the column and the next read
-  doubles them. This is what makes "frozen" enforced rather than conventional (COLD_REVIEW E's
-  objection to `DESIGN.md:697`): the editor stays, and it simply cannot reach the blocks.
+**What that offset claim actually guarantees, precisely.** The offsets that exist are
+`app.chunks.char_start`/`char_end` (indices into the composed text) and the CHUNK-RELATIVE
+spans on `app.entity_mentions` that `analysis/pipeline.py`'s `_locate` derives from them.
+`app.facts` has **no span columns**; it cites a chunk by id. So "appending after the body
+cannot shift an anchored citation" was never the mechanism protecting a fact — what
+threatens a fact's citation is the re-ingest, a different problem with a different fix
+(below). Earlier drafts of this section, of `compose.py` and of 0193's header said facts
+carry `char_start`/`char_end`. They do not.
+
+Five consequences worth carrying:
+
+- **The editor round trip, and the truncation bug it first shipped with.** The note editor
+  loads `NoteInfo.body`, which is composed, and PATCHes the whole string back, so
+  `update_note` has to remove the blocks again — otherwise an untouched save bakes them into
+  the column and the next read doubles them. The first cut did that by splitting the incoming
+  text at the first `"\n\n[clarification "`, which is **ordinary prose**: paste a clarified
+  note's displayed text into a new note (or simply type it), let that note get its own first
+  clarification, and an untouched re-save silently and permanently deletes every paragraph
+  after the pasted line. `strip_clarifications` now RECONSTRUCTS the exact suffix from the
+  stored rows and removes only that, and refuses (`ClarificationsAltered` → HTTP 409, nothing
+  written) when the text does not end in it. Nothing scans the body for a marker; a note
+  cannot be truncated by its own content. This is still what makes "frozen" enforced rather
+  than conventional (COLD_REVIEW E's objection to `DESIGN.md:697`).
 - **RLS is the note's, not owner-only.** `USING (app.has_domain_scope(domain_code))`, the
   notes/chunks/facts policy — *not* the `is_owner()` posture of `graph_rebuild_runs`/
   `archivist_memory`, which hold metadata and scratchpad. A clarification is the owner's words
@@ -259,6 +277,30 @@ note composes to its body byte-for-byte, and blocks append *after* the body, so 
   owner-only would let the narrowed session a note conversation runs as (constraint 2) read
   across the firewall. Grants are `SELECT, INSERT, DELETE` plus `UPDATE (domain_code)` alone,
   so the text is immutable in Postgres and the domain still carries on a note move.
+- **A trigger, not the policy, ties the block's domain to its note's.** The policy checks only
+  the domain the writer NAMES, and the FK to `app.notes` bypasses RLS the way FK checks always
+  do — so a *general*-scoped capability token could stamp `general` on a clarification of a
+  **health** note, and the owner would then read that text inside the health note's body,
+  where D7 makes it a health chunk and health facts. 0193 now carries the 0045 subsection rule
+  (`SECURITY DEFINER`, `BEFORE INSERT OR UPDATE`), which also turns the domain carry on a note
+  move from a convention into a requirement. Non-negotiable #3: in Postgres, not app code.
+- **The re-ingest is no longer a destroy-and-rebuild** (`jbrain.ingest.carryover`). This is
+  COLD_REVIEW section E item 6, which W1 did **not** cover: W1 re-anchored `facts.chunk_id` on
+  the refresh path, but `wiki_citations.chunk_id` and `entity_mentions.chunk_id` are ON DELETE
+  **CASCADE**, so a re-ingest deleted a published revision's citations and every mention of the
+  note outright — `link_method='human'` ones included, and the id arrays a review reopen
+  replays. A cascaded row cannot be re-anchored afterwards; it is already gone, which is why
+  W1's remedy does not transfer. So `ingest_note` now keeps a rebuilt chunk's ROW when it comes
+  back byte-identical, and otherwise hands its references to a surviving chunk that covers its
+  span AND holds the same characters there (mention spans shift by exactly
+  `old.char_start - new.char_start`). An appended block is precisely that case: a long note's
+  body chunks are identical, a short note's single paragraph is absorbed by one containing it.
+  A genuinely rewritten body, or a note that moved domain, matches neither rule and behaves as
+  before. **The one reference it does not carry is `app.resolution_pin`**, whose primary key
+  contains `chunk_id` and whose `occurrence_index` is chunk-relative: two old chunks
+  re-anchored onto one new chunk would collide on the key, and no span shift can correct an
+  occurrence count taken inside different text. Pins survive the identical-chunk case and are
+  lost in the absorbed-chunk case, exactly as they were before.
 - **Purge sides.** The privacy delete takes the blocks (explicitly — the note delete is soft,
   so 0193's cascade never fires); the rebuild sweep keeps them, or the graph stops re-deriving
   from the notes corpus-wide and silently. `backfill_deleted_note_artifacts` counts them as a
@@ -266,7 +308,39 @@ note composes to its body byte-for-byte, and blocks append *after* the body, so 
 
 The append path is `SqlNotesRepo.append_clarification` plus its `NotesRepo` Protocol entry —
 no route and no tool in W2; W3's `ask_owner` is the caller. It enqueues its own `ingest_note`
-inside its transaction rather than relying on a caller to remember.
+inside its transaction rather than relying on a caller to remember. That enqueue makes the
+method **owner-only**: `app.jobs` is `is_owner()` RLS, so it works under the narrowed owner
+session constraint 2 describes (tested) and a capability-token caller gets a raw
+`ProgrammingError` from the job insert — fail-closed and correct, but a driver error rather
+than a refusal, so W3 must not offer this behind a token-authenticated surface.
+
+**Two limits recorded rather than fixed here, both W3's, both because W2 ships no writer:**
+
+- *A block is unframed and its marker is forgeable from inside its own text.* A crafted answer
+  — or, once `ask_owner` exists, an agent-authored question over a hostile note body (risk 1:
+  `read_note` still returns bodies unframed) — can put a second, fabricated, wrongly-timestamped
+  block inside a real one, and a reader cannot tell them apart. There is **no data-loss path**:
+  the suffix is reconstructed from the rows, so a forged marker is only characters (tested).
+  T4's `framed_note` helps only the note conversation's turn 0, where the composed body arrives
+  inside the DATA frame; it does nothing for `read_note`, which is risk 1's remaining half.
+  Making a block unforgeable means either an out-of-band marker the editor round trip must also
+  survive, or rendering blocks from rows instead of from text — a note-screen change D6 rules
+  out for W2, and a decision that belongs with `ask_owner` and the D3 chip.
+- *There is no redaction path for a single block.* 0193 grants `DELETE`, so the schema is
+  ready, but no repo method and no route reach it — a secret typed into an answer can today be
+  removed only by deleting the whole note, losing the body and the graph with it.
+  `ingest/emr/intake_handler.py` scrubs `notes.body` for exactly this reason. **The wave that
+  ships the writer ships the eraser**: on a box with no terminal (CLAUDE.md #10) an
+  unredactable field is not a limit the owner can work around.
+
+*The block's line structure renders where it is read, and only there.* `Stream.tsx` renders the
+body as a text child inside a 3-line clamp with no `white-space`, so the bubble preview shows a
+block as one run-on line — as it does every multi-line note, and always has. The note SCREEN
+runs the body through the assistant Markdown renderer (`NoteScreen.tsx` → `agent/markdown.tsx`),
+which makes the blank line a paragraph and the soft newlines `<br>`s, so a block renders as
+designed. `white-space: pre-wrap` on `.note-body` would change how every note in the stream
+renders — a design change, and D6 says the note screen does not change — so nothing was changed
+there. Plain text stays the right block format because it is the only one correct on both.
 
 **W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
 "entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and

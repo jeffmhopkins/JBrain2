@@ -5,13 +5,17 @@ clarification blocks as the owner answers the agent's questions. The naive stora
 append onto `app.notes.body` — loses every block the first time the owner edits the
 note, because `PATCH /notes/{id}` is a whole-value overwrite. So the blocks live here
 and are composed onto the body at READ time (`jbrain.notes.compose`), which also keeps
-the original body's character offsets untouched: facts carry `char_start`/`char_end`
-spans and appending after the body is the only place that cannot shift them.
+the original body's character offsets untouched. Precisely: the offsets that exist are
+`app.chunks.char_start`/`char_end` into the note's composed text, and the CHUNK-RELATIVE
+spans on `app.entity_mentions` that `analysis.pipeline._locate` derives from them.
+`app.facts` carries no span — it cites a chunk by id — so appending after the body is
+what keeps the chunk boundaries stable, and `ingest.carryover` is what keeps the ids
+stable across the re-ingest that follows.
 
 D7: the composed text is what ingest chunks, so a block is a chunk of the same note and
 a fact extracted from it has a real chunk to cite.
 
-Two shapes here are deliberate and depart from the obvious precedents:
+Three shapes here are deliberate and depart from the obvious precedents:
 
 * `domain_code`, and the `has_domain_scope` policy the notes/chunks/facts tables use —
   NOT the owner-only policy of `graph_rebuild_runs` (0188) or `archivist_memory` (0094).
@@ -27,6 +31,11 @@ Two shapes here are deliberate and depart from the obvious precedents:
   carry when `update_note` moves the note (the 0002 attachment invariant). A
   column-level grant makes "the text is never rewritten" a Postgres property instead
   of a code convention, which is the D6 freeze stated in the only place that holds.
+
+* A trigger, not just the RLS policy, ties `domain_code` to the note's — the 0045
+  subsection rule. The policy validates the domain the writer NAMES; nothing in it
+  reaches the note, and the FK bypasses RLS the way FK checks always do. See the comment
+  on the trigger for what that let through.
 
 No UPDATE on the rest and no route: the append path is a repo method (W3's `ask_owner`
 calls it), so there is no way to edit a block through the API at all.
@@ -83,6 +92,48 @@ def upgrade() -> None:
         WITH CHECK (app.has_domain_scope(domain_code))
         """
     )
+    # A block's domain must EQUAL its note's, enforced in Postgres — the 0045 subsection
+    # rule, for the same reason it was put there rather than in app code (non-negotiable
+    # #3). The policy above only checks the domain the WRITER supplies, and the FK to
+    # app.notes bypasses RLS as every FK check does, so without this a general-scoped
+    # capability token can stamp `general` on a clarification of a HEALTH note: the text
+    # then composes into the health note's body (jbrain.notes.compose), and D7 turns it
+    # into a health chunk and health facts. The app path already reads the note under
+    # RLS first, so this is the backstop, not the mechanism.
+    #
+    # SECURITY DEFINER + pinned search_path for the same reason 0045 needs it: the
+    # writers are narrowed sessions under FORCE RLS, and an INVOKER lookup of a note
+    # outside their scope returns NULL rather than the true row. A NULL note domain is a
+    # hard failure (IS DISTINCT FROM is NULL-safe), so a clarification can never be
+    # written against a note the checker cannot see.
+    #
+    # UPDATE is covered as well as INSERT: the one granted update is `update_note`'s
+    # domain carry when a note MOVES, and the trigger is exactly what makes that carry
+    # mandatory rather than conventional — the block's new domain has to be the note's.
+    op.execute(
+        """
+        CREATE FUNCTION app.note_clarification_domain_matches() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp AS $$
+        DECLARE note_domain text;
+        BEGIN
+            SELECT domain_code INTO note_domain FROM app.notes WHERE id = NEW.note_id;
+            IF note_domain IS NULL OR NEW.domain_code IS DISTINCT FROM note_domain THEN
+                RAISE EXCEPTION
+                    'note_clarification domain % must equal its note''s domain',
+                    NEW.domain_code;
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER note_clarification_domain_matches
+        BEFORE INSERT OR UPDATE ON app.note_clarifications
+        FOR EACH ROW EXECUTE FUNCTION app.note_clarification_domain_matches()
+        """
+    )
     # DELETE is the note-deletion privacy purge (analysis/purge.py). It has to be
     # explicit: the note delete is SOFT, so the ON DELETE CASCADE above never fires on
     # it — the cascade only covers a genuine hard delete of the row.
@@ -92,3 +143,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TABLE app.note_clarifications")
+    op.execute("DROP FUNCTION IF EXISTS app.note_clarification_domain_matches()")

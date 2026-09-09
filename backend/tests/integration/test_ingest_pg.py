@@ -225,9 +225,17 @@ async def test_pipeline_ingests_note_with_attachments(
     assert hits and hits >= 2  # note body + pdf page 1
 
 
-async def test_reingestion_replaces_chunks(
+async def test_reingestion_keeps_the_unchanged_chunks_and_adds_the_new_one(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
+    """A chunk that comes back byte-identical KEEPS ITS ROW (`ingest.carryover`).
+
+    Chunk ids used to churn on every re-ingest, and five tables point at them: two
+    cascade, so the note's `entity_mentions` and its published `wiki_citations` were
+    destroyed each time. Holding the row is what stops that, and the visible
+    consequence here is that the untouched body chunk survives a re-ingest triggered by
+    something else entirely — an attachment arriving.
+    """
     note_id = await make_note(maker, domain="health", body="morning BP reading 120 over 80")
     pipeline = IngestPipeline(maker, blobs)
     await pipeline.ingest_note({"note_id": note_id})
@@ -244,13 +252,35 @@ async def test_reingestion_replaces_chunks(
     await pipeline.ingest_note({"note_id": note_id})
     second = await chunk_rows(maker, OWNER, note_id)
 
-    # Old chunks are gone (ids not stable across re-ingestion, by design),
-    # the body chunk is rebuilt, and the new attachment is now indexed.
-    assert {c["id"] for c in first}.isdisjoint({c["id"] for c in second})
+    assert {c["id"] for c in first} <= {c["id"] for c in second}
     assert sum(1 for c in second if c["source_kind"] == "note") == len(first)
     assert any(c["text"] == "cholesterol within range" for c in second)
-    # Re-ingest re-enqueues embedding: rebuilt chunks all start unembedded.
+    # Re-ingest still re-enqueues embedding; the handler fills only NULL embeddings, so
+    # a carried-over chunk keeps the vector it already had.
     assert await embed_jobs_for(maker, note_id) == 2
+
+
+async def test_reingestion_replaces_a_chunk_whose_text_changed(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The other half: carry-over is identity-based, not blanket. A rewritten body has
+    no identical twin and no chunk covering the old span with the same characters, so it
+    gets a fresh row exactly as before."""
+    note_id = await make_note(maker, domain="health", body="morning BP reading 120 over 80")
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+    first = await chunk_rows(maker, OWNER, note_id)
+
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = :n"),
+            {"b": "evening pulse 58 resting", "n": note_id},
+        )
+    await pipeline.ingest_note({"note_id": note_id})
+    second = await chunk_rows(maker, OWNER, note_id)
+
+    assert {c["id"] for c in first}.isdisjoint({c["id"] for c in second})
+    assert any(c["text"] == "evening pulse 58 resting" for c in second)
 
 
 async def test_pipeline_failure_marks_note_failed(

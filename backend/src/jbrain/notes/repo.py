@@ -14,6 +14,7 @@ from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note, Note
 from jbrain.notes.compose import compose_body, strip_clarifications
 from jbrain.notes.service import (
     AttachmentInfo,
+    ClarificationsAltered,
     ExtractInfo,
     NoteInfo,
     NoteUpdate,
@@ -153,12 +154,14 @@ class SqlNotesRepo:
                     # The editor loads what `_note_info` served — body + clarification
                     # blocks — and PATCHes the whole string back, so an untouched save
                     # would otherwise bake the blocks into the body column and double
-                    # them on the next read. Cut them off again; the rows are the
-                    # record. Guarded on the note actually having any, so the strip
-                    # cannot touch a note that has never been clarified.
-                    note.body = (
-                        strip_clarifications(changes.body) if note.clarifications else changes.body
-                    )
+                    # them on the next read. Remove exactly the suffix this note's own
+                    # rows compose to; a body that merely LOOKS like it carries a block
+                    # (pasted from a clarified note, or typed) is left whole, because a
+                    # note must never be truncatable by its own text.
+                    stripped = strip_clarifications(changes.body, note.clarifications)
+                    if stripped is None:
+                        raise ClarificationsAltered(note_id)
+                    note.body = stripped
                 if changes.domain is not None and changes.domain != note.domain_code:
                     note.domain_code = changes.domain
                     # Attachments duplicate the note's domain (0002 invariant)
