@@ -364,3 +364,38 @@ async def test_executor_refuses_rather_than_writing_when_the_op_no_longer_applie
             _node({"edit": "add", "rule_number": 0, "text": "x" * (MAX_RULE_CHARS + 1)}),
         )
     assert store["content"] == "a"
+
+
+# --- every failure is TEXT (the module docstring's claim, now enforced) --------
+
+
+class _ExplodingRepo(FakeProposalRepo):
+    async def stage(self, ctx: object, *, principal_id: str, spec: ProposalSpec) -> str:
+        raise RuntimeError("app.proposals is unreachable")
+
+
+async def test_a_failure_inside_either_handler_is_a_result_line_not_a_raise() -> None:
+    """The module has claimed "every failure is TEXT, never an exception" since it
+    shipped, and neither handler was wrapped: a DB or RLS error reached `loop.py`'s
+    generic "hit an internal error", which tells the model nothing — and for
+    `prefs_write` leaves it unable to tell "your edit is staged" from "nothing happened",
+    so it would report a staged approval that does not exist.
+
+    `asktools._guarded` does this properly; both handlers follow it now."""
+    handlers = _handlers({"content": "a"}, _ExplodingRepo())
+
+    staged = await handlers["prefs_write"](
+        {"op": "add", "rule_number": 0, "text": "stop splitting ingredients"}, CTX
+    )
+    assert isinstance(staged, str)
+    assert "Nothing was staged" in staged
+    assert "waiting for his approval" in staged
+
+    def boom():  # noqa: ANN202
+        raise RuntimeError("app.owner_prefs is unreachable")
+
+    read = await build_owner_prefs_handlers(boom, FakeProposalRepo())["prefs_read"](  # type: ignore[arg-type]
+        {}, CTX
+    )
+    assert isinstance(read, str)
+    assert "Couldn't read" in read

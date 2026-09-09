@@ -749,7 +749,7 @@ async def run() -> None:
         # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2/W3), running BESIDE
         # integrate_note off the same note.ingested event — D13 forbids removing a
         # producer before its replacement is merged, so this wave pays for both.
-        # Its registry is built PER NOTE and holds five tools, not the chat registry: a
+        # Its registry is built PER NOTE and holds six tools, not the chat registry: a
         # graph-write handler is bound to ONE note, so there is no session-agnostic copy
         # of it to filter down to, and building from names keeps "this persona reaches
         # nothing else" a property of what was constructed (D16 is a second lock on it).

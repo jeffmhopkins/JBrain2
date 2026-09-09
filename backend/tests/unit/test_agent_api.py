@@ -879,8 +879,74 @@ def test_chat_buffer_retry_is_forced_off_for_a_spawner(
     assert sse_events(resp.text)[-1]["type"] == "done"
 
 
-def test_chat_buffer_retry_is_forced_off_for_a_note_conversation(
+@pytest.fixture
+def no_standing_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A note-conversation turn reads `owner_prefs` from the database, and the test app
+    has none. Stand in for the empty document — the shape a box whose owner has never
+    set a rule is in."""
+    import jbrain.api.agent as agent_mod
+
+    async def none(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", none)
+
+
+def test_a_note_reply_turn_is_given_the_owners_standing_instructions(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D15 says the standing instructions go into EVERY note conversation's prompt, and
+    only the unattended pass did it. The consequence was precise: `prefs_write` is in the
+    ON-REPLY set alone, so the one turn that can edit the numbered list was the one turn
+    that had never been shown it — and `prefs_read` is deliberately unreachable on the
+    premise that the injection makes it redundant, which was true there and false here.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def rules(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return ["Stop splitting recipe ingredients into separate facts."]
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", rules)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-p", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router = stream_router(
+        [LlmTurn("noted", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["noted"]]
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-p", "message": "stop doing that"})
+
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    system = fake.stream_calls[0]["system"]
+    assert "Stop splitting recipe ingredients into separate facts." in system
+    # Framed as JEFF's instructions, not as the note's data — the one thing in a note
+    # conversation's context that IS an instruction has to say so.
+    assert "standing instructions" in system.lower()
+
+
+def test_a_curator_chat_gets_no_standing_instructions_block(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # The injection is the note persona's, not every persona's: `owner_prefs` says how to
+    # read a NOTE, and an ordinary chat has none.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-c", "", "active", ("general",), (), NOW, NOW))
+    router = stream_router([LlmTurn("hi", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["hi"]])
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-c", "message": "hello"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    assert "standing instructions" not in fake.stream_calls[0]["system"].lower()
+
+
+def test_chat_buffer_retry_is_forced_off_for_a_note_conversation(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    no_standing_rules: None,
 ) -> None:
     # The same objection as the spawner above, with the graph writes in place of the fan.
     # The on-reply surface holds `assert_fact`, `correct_fact`, `merge_entities` and

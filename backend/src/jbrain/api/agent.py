@@ -19,6 +19,7 @@ import time
 import uuid
 from bisect import bisect_left
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -51,6 +52,7 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.plantools import format_plan_results
+from jbrain.agent.prefstools import with_standing_instructions
 from jbrain.agent.readtools import (
     canvas_hidden_tools,
     compose_hidden_tools,
@@ -81,6 +83,7 @@ from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.models.plan import PlanRepo
 from jbrain.notes.service import NotesRepo
 from jbrain.storage import BlobStore
@@ -197,6 +200,31 @@ class ChatRequest(BaseModel):
         reply path asks it before appending anything to the owner's note as source text.
         """
         return not (self.proposal_outcome or self.deferred_outcome)
+
+
+async def _standing_instructions(request: Request, owner_ctx: SessionContext) -> list[str]:
+    """The owner's `owner_prefs` rules for a note-conversation turn (D15).
+
+    A named seam, not an inline read, because it is the one pre-turn DB read on this
+    path that must NOT be best-effort — and because the difference deserves somewhere to
+    be stated. `owner_prefs` is owner-only RLS, so the scoped read is the firewall.
+
+    Raises 503 rather than running without the rules, the same direction
+    `converse._rules` chose and for the same reason: the reply turn is the one that
+    writes the graph and holds `correct_fact`, which force-supersedes and PINS. A turn
+    that ignored Jeff's standing instructions and committed anyway would write the graph
+    the way he asked it not to, and pin it; a 503 he can resend is recoverable. It costs
+    nothing in the ordinary case either — no rules is an empty list, not a failure, and a
+    read that genuinely fails means a database this turn could not have used anyway.
+    """
+    try:
+        async with scoped_session(request.app.state.session_maker, owner_ctx) as db:
+            return await OwnerPrefsRepo().read_rules(db, owner_ctx.principal_id or "")
+    except Exception as exc:
+        log.warning("chat.standing_instructions_failed", error=repr(exc))
+        raise HTTPException(
+            status_code=503, detail="couldn't read your standing instructions — try again"
+        ) from exc
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -778,6 +806,28 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # place in the codebase that says "this turn has the owner in it".
     profile = agent_for_owner_reply(session.agent)
     read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
+
+    # D15: the owner's standing instructions go into EVERY note conversation's system
+    # prompt, ahead of the note. `analysis/converse.py` does it for the unattended pass,
+    # and this is the other half — which was missing, with a sharp consequence: the
+    # unattended pass sees the rules and cannot call `prefs_write`, while the reply turn
+    # is the only turn that CAN call it and was the one turn where the document was
+    # invisible. `prefs_read` is deliberately unreachable on the premise that the prompt
+    # injection makes it redundant, which was true there and false here — so the model
+    # was asked to edit a numbered list it had never been shown.
+    #
+    # Fails the turn rather than running without them, the same direction
+    # `converse._rules` chose and for the same reason: this is the turn that writes the
+    # graph and force-supersedes, and a turn that ignored Jeff's rules and committed
+    # anyway would write the graph the way he asked it not to. A 503 he can retry is
+    # recoverable; that write is not.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        profile = replace(
+            profile,
+            prompt=with_standing_instructions(
+                profile.prompt, await _standing_instructions(request, owner_ctx)
+            ),
+        )
 
     # A reply into a note conversation that is WAITING is an answer, and D6 makes an
     # answer part of the note: it is appended as a timestamped clarification block, which

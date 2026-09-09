@@ -150,9 +150,9 @@ class InvalidStateTransition(ValueError):
 def note_body_sha(body: str) -> str:
     """The `note_body_sha` a conversation is opened against. D6 appends clarification
     blocks and that re-ingests the note, so a resumed pass can compare this against the
-    live body to learn the note moved under it. Nothing compares it yet — the reader
-    lands in W3 with the resume path; W2 stores the value so the comparison has
-    something to read when it does."""
+    live body to learn the note moved under it. `analysis/clarify.py` is that reader: on
+    the owner's reply it compares this against the note's composed text, and re-stamps
+    the field only when the two still agree."""
     return hashlib.sha256(body.encode()).hexdigest()
 
 
