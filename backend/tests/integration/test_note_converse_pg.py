@@ -768,6 +768,12 @@ async def test_the_owners_standing_instructions_lead_the_prompt_ahead_of_the_not
 async def test_an_owner_with_no_standing_instructions_pays_nothing(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
+    # Written explicitly rather than assumed: the module shares one owner and one
+    # database, so "no rules" has to be a state this test establishes, not one it
+    # inherits from whichever tests ran before it.
+    async with scoped_session(maker, owner) as s:
+        await OwnerPrefsRepo().write_rules(s, owner.principal_id or "", [])
+
     turn = FakeTurn()
     note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
     await _runner(maker, owner, turn).note_converse({"note_id": note_id})
