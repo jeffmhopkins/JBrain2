@@ -65,6 +65,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -72,12 +73,22 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent import readtools
 from jbrain.agent.agents import AgentProfile, agent_for
-from jbrain.agent.clock import now_block
+from jbrain.agent.clock import build_clock_handlers, now_block
+from jbrain.agent.graphwritetools import (
+    NoteGraphWriter,
+    NoteTarget,
+    NoteToolset,
+    note_registry,
+)
+from jbrain.agent.readtools import build_entity_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.models.agent import AgentTurn
@@ -99,8 +110,14 @@ NOTE_CONVERSE_KIND = "note_converse"
 """The worker dispatch key + the `ActionSpec.handler` binding."""
 
 NOTE_CONVERSE_AGENT = "note_ingest"
-"""The persona (D16, migration 0192). Hardcoded, never a parameter: the closed empty
+"""The persona (D16, migration 0192). Hardcoded, never a parameter: the closed
 allowlist is the guarantee, and a caller-supplied persona would be the door around it."""
+
+# The READ tools this persona inherits unchanged (TOOL_SURFACE). Named here so the
+# registry built below and `agents.NOTE_INGEST_TOOLS` cannot drift apart — a test pins
+# the registry's names to the allowlist, because a tool in one and not the other is
+# either a dead offer or an unreachable handler.
+NOTE_READ_TOOLS = frozenset({"find_entity", "read_entity", "current_time"})
 
 NOTE_CONVERSE_SPEC = ActionSpec(
     name="note_converse",
@@ -215,6 +232,9 @@ class LedgerRow:
     detail: str
     entity_ids: tuple[str, ...]
     domains: tuple[str, ...]
+    # The fact rows the call WROTE (empty for every read tool, and for a write that
+    # landed nothing). Constraint 6's `touched` set is the union of these.
+    fact_ids: tuple[str, ...] = ()
 
 
 def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
@@ -225,17 +245,31 @@ def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
     recorder would ship dead and W3 would inherit a mapper that has never run.
 
     `entity_ids`/`domains` come from the step's resolved-entity chips
-    (`ToolOutcome.entities`), which is what the write path reports and what the D3 chip
-    reuses. `fact_ids` stays empty: nothing shipped reports fact ids on a tool step, and
-    inventing one from an argument would make the ledger record what the model ASKED
-    for rather than what landed. `detail` is capped for the same reason `args` is —
-    a hostile body can drive a large tool summary onto a disk the owner cannot reclaim
-    from a terminal (CLAUDE.md #10)."""
+    (`ToolOutcome.entities`) and `fact_ids` from its WRITE chips (`ToolOutput.facts` /
+    `contracts.FactWriteRef`) — both reported by the write path itself, never inferred
+    from what the model ASKED for: `resolve_entity`/`assert_fact` surface the rows they
+    actually wrote, and a call that wrote nothing surfaces nothing. Constraint 6's
+    settle sweep reads this back as `touched`, so the direction matters in both
+    directions: an id here that did not land SPARES a fact the sweep should retract, and
+    a landed id missing here RETRACTS a fact the note still says.
+
+    A write's domain is unioned from both chips — a fact's domain is the floored and
+    ratcheted one the write path chose, which can be strictly above its entity's.
+
+    `detail` is capped for the same reason `args` is — a hostile body can drive a large
+    tool summary onto a disk the owner cannot reclaim from a terminal (CLAUDE.md #10)."""
     rows: list[LedgerRow] = []
     for step in tool_steps:
         entities = [e for e in step.get("entities", []) if isinstance(e, Mapping)]
+        facts = [f for f in step.get("facts", []) if isinstance(f, Mapping)]
         ids = tuple(str(e["entity_id"]) for e in entities if e.get("entity_id"))
-        domains = tuple(sorted({str(e["domain"]) for e in entities if e.get("domain")}))
+        fact_ids = tuple(str(f["fact_id"]) for f in facts if f.get("fact_id"))
+        domains = tuple(
+            sorted(
+                {str(e["domain"]) for e in entities if e.get("domain")}
+                | {str(f["domain"]) for f in facts if f.get("domain")}
+            )
+        )
         rows.append(
             LedgerRow(
                 name=str(step.get("name", "")),
@@ -245,10 +279,32 @@ def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
                 ok=step.get("ok") is True,
                 detail=str(step.get("summary") or "")[:MAX_ARG_CHARS],
                 entity_ids=ids,
+                fact_ids=fact_ids,
                 domains=domains,
             )
         )
     return rows
+
+
+def note_read_scopes(profile: AgentProfile, note: NoteInfo) -> tuple[str, ...]:
+    """The RLS read scope a note conversation's TOOLS run under (plan constraint 2):
+    the note's own domain plus `general`, and nothing else — a health note's thread can
+    read health and general entities, never finance.
+
+    The one place this is computed. It is also what is stored as the session row's
+    `domain_scopes`, but every turn recomputes it FROM THE NOTE rather than reading the
+    row back: the row is metadata an owner-facing route could once have rewritten (now
+    refused — `AgentSessionRepo.set_scopes`), and W2-era rows carry `[]` from when the
+    persona read nothing. Deriving it here means neither can widen or starve a turn.
+
+    A `reads_knowledge_base=False` profile gets EMPTY scopes, which is a firewall rather
+    than a flag: it can then read no domain row at all.
+
+    Note what this does NOT scope: the graph WRITE path. `graphwritetools` runs its
+    commits at full owner scope because layer 1 of resolution carries no domain
+    predicate (narrowing it mints duplicates) and a floored fact write would be refused
+    outright. These scopes bound what the conversation may READ and be told."""
+    return (note.domain, "general") if profile.reads_knowledge_base else ()
 
 
 def _title(note: NoteInfo) -> str:
@@ -271,6 +327,12 @@ class NoteConverseRunner:
     executor: TurnExecutor
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
+    # Builds the turn executor for ONE note, so the graph-write tools can be BOUND to
+    # that note (W3): `resolve_entity`/`assert_fact` take no note id from the model —
+    # a write primitive a hostile body could point at another note is not a tool, it is
+    # a hole. None keeps W2's behaviour (the fixed `executor` above, whose registry is
+    # empty), which is what the tests that fake a turn use.
+    executor_for_note: Callable[[NoteInfo, Sequence[str]], TurnExecutor] | None = None
 
     async def note_converse(self, payload: dict[str, Any]) -> object:
         """Open the note's conversation, read the note in it, and settle it.
@@ -304,14 +366,7 @@ class NoteConverseRunner:
                 return None
 
         profile = agent_for(NOTE_CONVERSE_AGENT)
-        # Constraint 2 wants the conversation owner-scoped to `(note_domain, 'general')`.
-        # In W2 the persona is `reads_knowledge_base=False`, so it runs with EMPTY read
-        # scopes and reads no domain data at all — the firewall, not a flag. The
-        # expression is written out anyway so W3's flip to True is one field, not a
-        # rediscovery of what the scope was supposed to be.
-        read_scopes: tuple[str, ...] = (
-            (note.domain, "general") if profile.reads_knowledge_base else ()
-        )
+        read_scopes = note_read_scopes(profile, note)
         # ONE transaction for the session row and the conversation row that gives it
         # meaning. The one-live index can refuse the second, and a session opened in a
         # transaction of its own would survive that refusal as an orphan — an empty
@@ -370,8 +425,13 @@ class NoteConverseRunner:
             # exactly the state that suppresses every future pass over the note. The
             # reclaim below is the backstop for a KILLED worker; this is the bound for a
             # worker that is still alive and getting nowhere.
+            executor = (
+                self.executor
+                if self.executor_for_note is None
+                else self.executor_for_note(note, read_scopes)
+            )
             async with asyncio.timeout(NOTE_TURN_WALL_CLOCK.total_seconds()):
-                executed = await self.executor.run_turn(
+                executed = await executor.run_turn(
                     profile=profile,
                     read_ctx=read_context(owner_ctx.principal_id, read_scopes),
                     read_scopes=read_scopes,
@@ -468,6 +528,7 @@ class NoteConverseRunner:
                         ok=row.ok,
                         detail=row.detail,
                         entity_ids=row.entity_ids,
+                        fact_ids=row.fact_ids,
                         domains=row.domains,
                     )
                     call_ids.append(call.id)
@@ -522,24 +583,74 @@ class NoteConverseRunner:
 
 
 def note_converse_handler(
-    maker: async_sessionmaker[AsyncSession], router: LlmRouter
+    maker: async_sessionmaker[AsyncSession],
+    router: LlmRouter,
+    *,
+    pipeline: AnalysisPipeline | None = None,
 ) -> Callable[[dict[str, Any]], Awaitable[object]]:
     """The registered `note_converse` handler, wired for the worker.
 
-    The tool registry is EMPTY, deliberately, and it is the second lock after D16's
-    allowlist. `note_ingest` admits no tool name (`tools=frozenset()`), so a registry
-    holding the whole chat tool set would serve a turn that can call none of it — while
-    dragging blobs, the entity repos, search and the vision clients into the worker to
-    do so. An empty one makes "this persona reaches no tool" structural rather than a
-    property of one profile field. W3 replaces it with the registry that holds the
-    graph-write tools, and the allowlist stays the thing that says which."""
+    The registry is built PER NOTE and holds exactly five tools: the two graph writes
+    bound to this note, the two entity reads inherited unchanged, and the clock. Not the
+    chat registry — not even a filtered view of it. Two reasons, and the second is the
+    one that makes it structural rather than tidy:
+
+    - a graph-write handler is bound to ONE note (its id, domain, chunks and handle
+      table live in the writer), so there is no chat-session copy of it to filter down
+      to. `readtools.build_registry` drops both sidecars outright for that reason;
+    - a registry holding only these five means "this persona reaches nothing else" is a
+      property of what was BUILT, not of one `frozenset` field — and D16's allowlist,
+      which is a second lock over the same set, still says which of the five it may call.
+
+    `pipeline` is the shared `AnalysisPipeline` (the worker's, with its embedder and
+    settings store); one is built here when a caller has none, which is the harness case
+    — resolution then runs without embedding layer 2, exactly as `integrate_note` does
+    on a box with no embed client."""
+    analyzer = pipeline if pipeline is not None else AnalysisPipeline(maker, router)
+    entities = SqlAnalysisRepo(maker)
+    tools_dir = Path(readtools.__file__).parent / "tools"
+    # find_entity / read_entity / current_time, INHERITED UNCHANGED (TOOL_SURFACE): the
+    # agent has to be able to see what the graph already says about a name before it
+    # asserts against it, and to resolve "this morning" without guessing. They read
+    # under the turn's narrowed `(note_domain, 'general')` scope — which is only
+    # reachable at all because `note_ingest` now reads the knowledge base.
+    inherited: dict[str, Any] = {
+        **build_entity_handlers(entities),
+        **build_clock_handlers(),
+    }
+    inherited = {k: v for k, v in inherited.items() if k in NOTE_READ_TOOLS}
+
+    def executor_for_note(note: NoteInfo, read_scopes: Sequence[str]) -> TurnExecutor:
+        writer = NoteGraphWriter(
+            maker,
+            analyzer,
+            target=NoteTarget(
+                note_id=uuid.UUID(note.id),
+                domain=note.domain,
+                captured_at=note.created_at,
+                tz_offset_minutes=note.tz_offset_minutes,
+            ),
+            # The WRITE session is the owner at FULL scope, like `integrate_note`'s:
+            # entity resolution layer 1 carries no domain predicate (narrowing mints
+            # duplicates) and a floored fact write would be refused by RLS outright
+            # (plan constraint 2). `read_scopes` is passed separately so the writer
+            # withholds a cross-domain entity's NAME from the result text.
+            write_ctx=SessionContext(principal_id="worker", principal_kind="owner"),
+            read_scopes=read_scopes,
+        )
+        toolset = NoteToolset(writer=writer, inherited=inherited)
+        return LoopTurnExecutor(router, note_registry(tools_dir, toolset.handlers()))
+
     runner = NoteConverseRunner(
         maker,
         notes=SqlNotesRepo(maker),
         sessions=AgentSessionRepo(maker),
         runlog=AgentRunLog(maker),
         transcript=AgentTranscript(maker),
+        # Never used once `executor_for_note` is set; an empty registry keeps the
+        # fallback inert rather than accidentally permissive.
         executor=LoopTurnExecutor(router, ToolRegistry(())),
         owner_principal_id=lambda: _owner_principal_id(maker),
+        executor_for_note=executor_for_note,
     )
     return runner.note_converse

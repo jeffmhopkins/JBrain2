@@ -977,6 +977,20 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
 def test_sidecars_pinned_to_their_versions() -> None:
     """Editing a tool's behavior must be a deliberate version bump (the CI guard)."""
     pins = {
+        # The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3).
+        # These two descriptions are the model's whole instruction on how to record a
+        # note's meaning — the batch shape, the handle discipline, the quote rule — so a
+        # silent edit to either is a behaviour change to every note the box ingests.
+        "assert_fact.tool": (
+            "assert_fact",
+            1,
+            "288a7f1806611a45f16f917411125c1037e2065bae315669e67b10cada9d3abb",
+        ),
+        "resolve_entity.tool": (
+            "resolve_entity",
+            1,
+            "3bdba3fe654175045bffaddace6ed84ebf5003b7fa951e18cb413d98f9e4e779",
+        ),
         "aprs_recent.tool": (
             "aprs_recent",
             3,

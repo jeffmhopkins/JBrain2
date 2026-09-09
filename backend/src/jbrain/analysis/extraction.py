@@ -186,10 +186,31 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
 }  # fmt: skip
 
 
+# Separators a predicate spelling may carry between words. The table above is keyed
+# on the SEPARATOR-FREE lowercase form because the spelling a writer uses is not part
+# of what a predicate MEANS: `bloodPressure`, `blood_pressure` and `Blood Pressure`
+# are one predicate, and the floor must not be dodgeable by choosing a different one.
+# This matters now that a model writes predicates through `assert_fact` rather than
+# only through the note.extract prompt (which taught camelCase): the agent's snake_case
+# `blood_pressure` used to miss the table entirely and land a clinical fact in the
+# note's domain (AGENT_INGEST_CONVERSATION_PLAN.md D18 — the agent's domain choice IS
+# its predicate choice, so the predicate lookup is what has to hold).
+_PREDICATE_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
 def domain_floor(predicate: str) -> str | None:
     """The minimum (restricted) domain a clearly-sensitive predicate forces, or
-    None for predicates the model is left to classify on its own."""
-    return _DOMAIN_BY_PREDICATE.get(predicate.lower())
+    None for predicates the model is left to classify on its own.
+
+    Matched separator- and case-insensitively, and a DOTTED path falls back to its
+    base segment (`bloodPressure.systolic` floors exactly as `bloodPressure` does):
+    a qualifier of a sensitive predicate is at least as sensitive as the predicate
+    it qualifies. Both rules only ever ADD a floor, never remove one."""
+    key = _PREDICATE_SEPARATORS.sub("", predicate).lower()
+    floor = _DOMAIN_BY_PREDICATE.get(key)
+    if floor is None and "." in key:
+        floor = _DOMAIN_BY_PREDICATE.get(key.split(".", 1)[0])
+    return floor
 
 
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:

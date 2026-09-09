@@ -83,6 +83,11 @@ class TranscriptAccumulator:
                     step["proposal"] = event.proposal.model_dump()
                 if event.entities:
                     step["entities"] = [e.model_dump() for e in event.entities]
+                # The rows a write tool wrote. Persisted like the chips above so the
+                # D3 chip replays on reopen — and read back by the note conversation's
+                # ledger, which is where constraint 6's `touched` set comes from.
+                if event.facts:
+                    step["facts"] = [f.model_dump() for f in event.facts]
                 # Web citation sources (jerv) — persisted so the favicon chips and
                 # their [^n] targets replay on reopen.
                 if event.web_sources:

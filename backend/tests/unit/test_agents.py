@@ -453,32 +453,53 @@ def test_note_ingest_holds_an_explicit_empty_allowlist_not_the_wildcard() -> Non
     note = AGENTS["note_ingest"]
     assert note.tools is not None
     assert isinstance(note.tools, frozenset)
-    assert note.tools == NOTE_INGEST_TOOLS == frozenset()
+    assert note.tools == NOTE_INGEST_TOOLS
+    # W3's unattended set, and nothing else: two graph writes, two entity reads, the clock.
+    assert note.tools == {
+        "resolve_entity",
+        "assert_fact",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    }
     # `extra_tools` is admitted AHEAD of the web / NEVER_DEFAULT gates, so it is the one way
     # to hand this persona a tool without touching its allowlist. It stays empty in W3 too.
     assert note.extra_tools == frozenset()
-    # W2: the note is turn 0 and nothing needs retrieval, and a False agent runs with empty
-    # read scopes, so a mis-scoped session reads no domain data.
-    assert note.reads_knowledge_base is False
+    # W3: True, and the flip is what makes constraint 2 real — a False agent runs with EMPTY
+    # read scopes, under which the domain-visible entity reads cannot reach a row and there
+    # are no scopes to narrow to `(note_domain, 'general')`.
+    assert note.reads_knowledge_base is True
     # 2x, matching the KB-less children: inert while the persona is tool-less, but W3's
     # resolve/assert chain runs many calls per note and a truncated turn is a correctness
     # problem (plan constraint 6: the settle sweep must not run on one), not a short answer.
     assert note.budget_multiplier == 2
 
 
-def test_note_ingest_admits_no_tool_through_the_real_registry() -> None:
-    """The closure, proven at the dispatch gate rather than on the dataclass: at every
-    scope, over every shipped sidecar, the admitted set is empty. Rule 2 of `_admits`
-    (`allow is not None and name not in allow`) is what closes it, and it fires BEFORE the
-    web and NEVER_DEFAULT gates — so the emptiness does not depend on a tool's permission
-    class, its domains, or its NEVER_DEFAULT membership."""
+def test_note_ingest_admits_only_its_allowlist_through_the_real_registry() -> None:
+    """The closure, proven at the dispatch gate rather than on the dataclass: over every
+    shipped sidecar, the admitted set is exactly the allowlist and never more. Rule 2 of
+    `_admits` (`allow is not None and name not in allow`) is what closes it, and it fires
+    BEFORE the web and NEVER_DEFAULT gates — so the closure does not depend on a tool's
+    permission class, its domains, or its NEVER_DEFAULT membership.
+
+    This registry globs the sidecar directory, so it holds the graph writes too — which
+    is the stricter test: even where their sidecars ARE present, the closure holds. The
+    registry `analysis.converse` actually builds is narrower still (five tools bound to
+    one note), and `readtools.build_registry` drops both sidecars outright."""
     registry = _every_shipped_tool()
     note = AGENTS["note_ingest"]
     assert len(registry) > 100  # the real sidecar set, not a two-tool stub
 
-    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
-        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == frozenset()
-        assert registry.schemas_for(scopes, note.tools, note.extra_tools) == []
+    for scopes in (frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, note.tools, note.extra_tools)
+        assert admitted == note.tools
+    # With NO scopes the allowlist is unchanged — the entity reads declare no `domains`,
+    # so registry VISIBILITY was never what the `reads_knowledge_base` flip bought. What
+    # it bought is at the DB: `read_context(pid, ())` is `owner_scoped` with an empty
+    # scope list, so `has_domain_scope` is false for every domain and those two tools
+    # would answer "nothing in scope" for every name in the note. RLS is the firewall;
+    # the allowlist is the surface.
+    assert registry.allowed_names(frozenset(), note.tools, note.extra_tools) == note.tools
 
 
 def test_note_ingest_cannot_reach_the_four_verbs_d16_names() -> None:
@@ -507,7 +528,8 @@ def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None
     profile = agent_for("note_ingest")
     assert profile is AGENTS["note_ingest"]
     assert profile.name == "note_ingest"
-    assert profile.tools == frozenset()  # not curator's None
+    assert profile.tools == NOTE_INGEST_TOOLS  # a closed set, not curator's None
+    assert profile.tools is not None
     assert is_agent("note_ingest")
 
 
@@ -629,8 +651,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v1",
-            "dbaf96c696d253309ac2d3b1c1a93106e201f65d581f3e32a6e44c6db60c6b39",
+            "agent-note-ingest-v2",
+            "3f446b7a9253015f47e365cfd623bb218cf01d631dd8ab1362e6ff8ea5f6dca5",
         ),
     }
     assert set(pins) == AGENT_NAMES

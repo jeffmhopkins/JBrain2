@@ -33,8 +33,24 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
+#
+# `resolve_entity` / `assert_fact` are here for the same reason and a sharper one: they
+# are `mutate`-classed GRAPH WRITES bound to one note conversation
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 9). Without this line the
+# wildcard hands the note-ingestion persona's write verbs to the CURATOR on every
+# ordinary chat turn. Mandatory for every write tool this plan adds — and belt to the
+# braces of `readtools.OPTIONAL_NOTE_GRAPH_TOOLS`, which keeps the two sidecars out of
+# the chat registry altogether (they can only be bound to a note).
 NEVER_DEFAULT: frozenset[str] = frozenset(
-    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research", "deep_produce"}
+    {
+        "spawn_subagent",
+        "deep_research",
+        "decompose_research",
+        "deepest_research",
+        "deep_produce",
+        "resolve_entity",
+        "assert_fact",
+    }
 )
 
 

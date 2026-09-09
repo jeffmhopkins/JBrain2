@@ -123,6 +123,26 @@ class EntityRef(BaseModel):
     facts: list[str] = Field(default_factory=list)
 
 
+class FactWriteRef(BaseModel):
+    """One fact row a WRITE tool actually wrote, as the tool reports it back.
+
+    Distinct from `FactRef` (a citation pointer): this says a write LANDED, and it
+    carries the domain because that is what the write path decided — the note's
+    domain floored by the predicate and ratcheted — not what the model asked for.
+    The note conversation's ledger stores these ids as `fact_ids`
+    (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 6: the whole-note settle
+    sweep retracts every non-pinned fact of the note NOT in that set, so an empty one
+    is a retraction armed), and the D3 chip renders the label + domain in words."""
+
+    fact_id: str
+    label: str
+    domain: Domain
+    # What the write did, in `analysis.pipeline`'s vocabulary (written / already /
+    # replaced / held / closed / historical / promoted). A plain string, not a Literal:
+    # the write path owns the vocabulary and this model only carries it.
+    outcome: str = "written"
+
+
 class NoteRef(BaseModel):
     kind: Literal["note"] = "note"
     note_id: str
@@ -256,6 +276,10 @@ class ToolResultEvent(BaseModel):
     proposal: ProposalRef | None = None
     # Entities a tool resolved this turn (find_entity), surfaced as tappable chips.
     entities: list[EntityRef] = Field(default_factory=list)
+    # Fact rows a WRITE tool wrote this turn (the note conversation's graph tools).
+    # Empty for every read tool. Carried on the event rather than derived from the
+    # summary text so the ledger records what LANDED, never what the model asked for.
+    facts: list[FactWriteRef] = Field(default_factory=list)
 
 
 class ToolViewEvent(BaseModel):

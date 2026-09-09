@@ -46,6 +46,11 @@ const STEP_LABELS: Record<string, string> = {
   file_correction: "Filed a correction note",
   propose_correction: "Staged a proposal",
   propose_merge: "Staged an entity merge",
+  // The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3). Plain
+  // labels for the Worked strip; the richer "entity modified" chip that expands to what
+  // each write changed is a sibling task of the same wave (D3).
+  resolve_entity: "Resolved the note's entities",
+  assert_fact: "Recorded what the note says",
   // Memory + scratchpads
   recall: "Recalled past notes",
   memory_read: "Read memory",
@@ -269,6 +274,10 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 const NO_INLINE: ReadonlySet<string> = new Set([
   // takes no arguments — there is only one radio to release
   "sdr_stop",
+  // Both take one array of objects — a batch of surfaces, a batch of facts — so there
+  // is no single human-readable target to sit beside the label.
+  "resolve_entity",
+  "assert_fact",
   "read_note",
   "read_entity",
   "read_wiki",

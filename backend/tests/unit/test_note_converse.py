@@ -271,14 +271,25 @@ def test_the_dispatcher_carries_a_note_keyed_dedup_arm_for_it() -> None:
     assert "integrate_note" in _NOTE_DEDUP_KINDS
 
 
-def test_the_persona_is_the_closed_one_and_reaches_no_tool() -> None:
-    from jbrain.agent.agents import agent_for
+def test_the_persona_is_the_closed_one_and_holds_only_the_unattended_set() -> None:
+    """W3 fills the allowlist, and what matters is that it stays a CLOSED one: never the
+    curator wildcard (D16), never an `extra_tools` grant (which `toolregistry._admits`
+    admits AHEAD of the web / NEVER_DEFAULT gates), and nothing outward-facing (D8)."""
+    from jbrain.agent.agents import NOTE_INGEST_TOOLS, agent_for
 
     profile = agent_for(NOTE_CONVERSE_AGENT)
     assert profile.name == NOTE_CONVERSE_AGENT
-    # Never the curator wildcard (D16); an empty frozenset, not None.
-    assert profile.tools == frozenset()
+    assert profile.tools == NOTE_INGEST_TOOLS
+    assert profile.tools is not None and profile.tools != frozenset()
     assert profile.extra_tools == frozenset()
+    # The unattended surface, exactly: two graph writes, two entity reads, the clock.
+    assert profile.tools == {
+        "resolve_entity",
+        "assert_fact",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    }
 
 
 # --- the lifecycle bounds -----------------------------------------------------

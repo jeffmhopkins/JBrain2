@@ -17,7 +17,7 @@ chunk in the fact's domain — a citation never crosses the firewall
 
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -190,6 +190,40 @@ _Span = tuple[uuid.UUID, int, int]
 _MentionKey = tuple[uuid.UUID, int, int, uuid.UUID]
 
 
+# What one fact's write actually DID, in the vocabulary the note-conversation tools
+# report back to the model (docs/research/agent-ingest/TOOL_SURFACE.md, "Result shapes
+# are the ACI"). `decide()` is deterministic and NOT model-facing (constraint 5), so
+# this is the model's only window into it: a write it did not ask for — a value
+# replaced and kept as history, a duplicate recognised, a clash parked — is reported
+# rather than silently done.
+WRITTEN = "written"
+ALREADY = "already"  # same identity key, same value: refreshed in place
+CLOSED = "closed"  # supplied the END of an open interval, no new row
+REPLACED = "replaced"  # superseded one or more heads, which are kept as history
+HELD = "held"  # decide() could not resolve it: recorded, not live
+HISTORICAL = "historical"  # inserted already-superseded (a newer value is on file)
+PROMOTED = "promoted"  # a previously held row this pass rates live
+
+
+@dataclass(frozen=True)
+class FactWrite:
+    """One fact's landing, as the write path saw it.
+
+    `replaced` carries the STATEMENTS of the heads this write superseded (never their
+    ids — the model addresses facts by meaning, not by id: `read_entity` prints no
+    fact id, TOOL_SURFACE "correct_fact addresses by identity key"). `hold_reason` is
+    `decide()`'s own `review_kind`, never a confidence gate — those are gone under
+    Lever A."""
+
+    fact_id: uuid.UUID
+    outcome: str
+    domain: str
+    statement: str
+    replaced: tuple[str, ...] = ()
+    hold_reason: str = ""
+    conflicting: str = ""
+
+
 @dataclass(frozen=True)
 class CommitOutcome:
     """What one `commit_facts` pass asserted, carried to `settle_note`.
@@ -206,6 +240,11 @@ class CommitOutcome:
     projected: set[uuid.UUID]
     mention_ids: set[uuid.UUID]
     held_ids: dict[int, uuid.UUID]
+    # {extraction.facts index: what that fact's write did}. Keyed by index because
+    # two facts can share an identity key, and empty for an index whose fact was
+    # skipped (an unlinked entity). The whole-note path ignores it; the
+    # note-conversation tools render it back to the model.
+    writes: dict[int, FactWrite] = field(default_factory=dict)
 
 
 # `entity_mentions.confidence` is Postgres `real` (float4) and the resolver's
@@ -918,7 +957,9 @@ class AnalysisPipeline:
 
         touched: set[uuid.UUID] = set()
         held_ids: dict[int, uuid.UUID] = {}
+        writes: dict[int, FactWrite] = {}
         for i, fact in enumerate(extraction.facts):
+            write: FactWrite | None = None
             if i in held_indices:
                 fact_id = await self._insert_held_fact(
                     session,
@@ -934,8 +975,11 @@ class AnalysisPipeline:
                 )
                 if fact_id is not None:
                     held_ids[i] = fact_id
+                    write = FactWrite(
+                        fact_id, HELD, note_domain, fact.statement, hold_reason="review"
+                    )
             else:
-                fact_id = await self._upsert_fact(
+                write = await self._upsert_fact(
                     session,
                     fact=fact,
                     resolved=resolved,
@@ -951,8 +995,9 @@ class AnalysisPipeline:
             # fact this run still asserts — including a still-held pending_review
             # row (without this, re-analysis would churn its id and orphan the
             # open card's fact_id link).
-            if fact_id is not None:
-                touched.add(fact_id)
+            if write is not None:
+                touched.add(write.fact_id)
+                writes[i] = write
             await session.flush()
 
         return CommitOutcome(
@@ -963,6 +1008,7 @@ class AnalysisPipeline:
             projected={e.id for e in resolved.values() if e is not None},
             mention_ids=mention_ids,
             held_ids=held_ids,
+            writes=writes,
         )
 
     async def settle_note(
@@ -2121,7 +2167,7 @@ class AnalysisPipeline:
         captured_at: datetime,
         chunks: list[_ChunkRef],
         extractor: str,
-    ) -> uuid.UUID | None:
+    ) -> FactWrite | None:
         # A still-future fact is `expected`, never an asserted past event; and an
         # undated "used to" relationship is CLOSED, not current — both resolved
         # against the note's capture anchor (docs/reference/ANALYSIS.md "Temporal model").
@@ -2260,7 +2306,7 @@ class AnalysisPipeline:
                 valid_to=decision.close_valid_to,
                 chunk_id=closed_chunk,
             )
-            return fact_id
+            return FactWrite(fact_id, CLOSED, fact_domain, fact.statement)
 
         if decision.refresh_id is not None:
             # Same identity key, same value: refresh the rendering and provenance in
@@ -2377,7 +2423,9 @@ class AnalysisPipeline:
                         extractor=extractor,
                         snippet=_cite(anchor, chunks),
                     )
-            return fact_id
+            return FactWrite(
+                fact_id, PROMOTED if promoted else ALREADY, fact_domain, fact.statement
+            )
 
         anchor = anchor_for.get(fact.entity_ref)
         base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
@@ -2500,7 +2548,28 @@ class AnalysisPipeline:
                     domain_code=fact_domain,
                 )
             )
-        return new_fact.id
+        # What the write DID, for the caller that has to explain it (the
+        # note-conversation tools). Read off `decision` alone: the same branch the
+        # rows above were written from, so the report can never drift from the write.
+        by_id = {e.id: e for e in existing}
+        replaced = tuple(by_id[i].statement for i in decision.supersede_ids if i in by_id)
+        if decision.insert_status == "pending_review":
+            outcome = HELD
+        elif decision.insert_status == "retracted":
+            outcome = HISTORICAL
+        elif replaced:
+            outcome = REPLACED
+        else:
+            outcome = WRITTEN
+        return FactWrite(
+            new_fact.id,
+            outcome,
+            fact_domain,
+            fact.statement,
+            replaced=replaced,
+            hold_reason=decision.review_kind or "",
+            conflicting=conflict.statement if conflict is not None else "",
+        )
 
     async def _entity_name(self, session: AsyncSession, entity_id: uuid.UUID | None) -> str | None:
         """The canonical name of an entity id, or None. Used to render an edge's
