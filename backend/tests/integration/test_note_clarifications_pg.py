@@ -313,6 +313,70 @@ async def test_the_append_queues_its_own_re_ingest(
     assert state == "pending"
 
 
+async def test_one_block_can_be_erased_without_taking_the_note_with_it(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The eraser the writer owes (W3/T2b ships `ask_owner`, so it ships this).
+
+    An answer is free text the owner typed into a thread — it can carry a password or
+    something they thought better of — and once appended it IS the note's text: chunked,
+    embedded, searchable, citable. Before this the only removal was deleting the whole
+    note, losing the body and the graph with it, on a box with no terminal."""
+    repo = SqlNotesRepo(maker)
+    note_id = await make_note(maker)
+    await repo.append_clarification(OWNER, note_id, question="Which 10k?", answer="Canal loop.")
+    await repo.append_clarification(
+        OWNER, note_id, question="Where do you keep the spare key?", answer="Under the third pot."
+    )
+
+    blocks = await repo.list_clarifications(OWNER, note_id)
+    assert blocks is not None
+    assert [b.question for b in blocks] == ["Which 10k?", "Where do you keep the spare key?"]
+    note = await repo.delete_clarification(OWNER, note_id, blocks[1].id)
+
+    assert note is not None
+    assert "Under the third pot." not in note.body
+    assert "Canal loop." in note.body
+    assert await block_count(maker, note_id) == 1
+    # The note's text shrank, so a re-ingest is queued: a redaction whose old chunk sat
+    # on in the search index would not be a redaction. (Two appends queued one each.)
+    async with scoped_session(maker, OWNER) as s:
+        queued = int(
+            (
+                await s.execute(
+                    text(
+                        "SELECT count(*) FROM app.jobs WHERE kind = 'ingest_note'"
+                        " AND payload->>'note_id' = :n"
+                    ),
+                    {"n": note_id},
+                )
+            ).scalar_one()
+        )
+        state = (
+            await s.execute(
+                text("SELECT ingest_state FROM app.notes WHERE id = :n"), {"n": note_id}
+            )
+        ).scalar_one()
+    assert queued == 3
+    assert state == "pending"
+
+
+async def test_a_block_cannot_be_erased_through_another_note(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The note predicate is in the DELETE alongside the id. RLS narrows by DOMAIN, so it
+    would not stop one note's route erasing another note's block."""
+    repo = SqlNotesRepo(maker)
+    mine = await make_note(maker)
+    other = await make_note(maker)
+    await repo.append_clarification(OWNER, other, question="Which 10k?", answer="Canal loop.")
+    blocks = await repo.list_clarifications(OWNER, other)
+    assert blocks is not None and len(blocks) == 1
+
+    assert await repo.delete_clarification(OWNER, mine, blocks[0].id) is None
+    assert await block_count(maker, other) == 1
+
+
 async def test_the_block_is_chunked_as_part_of_the_note(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:

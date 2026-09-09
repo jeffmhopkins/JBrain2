@@ -467,25 +467,29 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # registry change can lift.
 #
 # W3 fills the UNATTENDED half (docs/research/agent-ingest/TOOL_SURFACE.md): the two graph
-# writes, plus the entity reads and the clock, inherited unchanged. That is the whole
-# unattended surface — D8: nothing outward-facing runs while the owner is asleep, and every
-# `web_*` / connector / vision tool stays out of the ON-REPLY set too, because the owner
+# writes, `ask_owner`, plus the entity reads and the clock, inherited unchanged. That is the
+# whole unattended surface — D8: nothing outward-facing runs while the owner is asleep, and
+# every `web_*` / connector / vision tool stays out of the ON-REPLY set too, because the owner
 # replying does not sanitize the note body still sitting in context (untrusted content +
 # private data + egress is the complete trifecta).
 #
 # The ON-REPLY set (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`,
 # `relate`) unlocks only once the owner has actually replied — it must be a SECOND frozenset
 # chosen at turn assembly, never a flag on one set, because the allowlist is the only
-# enforcement (constraint 9). `ask_owner` and `prefs_read` are sibling tasks of this wave and
-# are added by them: a name allowlisted before its handler exists is a tool call that dies in
-# dispatch, so the allowlist grows with the handlers, never ahead of them.
+# enforcement (constraint 9). `prefs_read` is deliberately NOT here: D15 hands the owner's
+# standing instructions to this persona through the SYSTEM PROMPT (`converse._rules`), so the
+# tool it was also built as stays unreachable. A name allowlisted with no handler behind it is
+# a tool call that dies in dispatch, so the allowlist grows with the handlers, never ahead of
+# them.
 #
 # Every write tool here also joins `toolregistry.NEVER_DEFAULT`, or curator's wildcard absorbs
 # it on every ordinary chat turn. `resolve_entity`/`assert_fact` are additionally kept out of
 # the chat registry entirely (`readtools.OPTIONAL_NOTE_GRAPH_TOOLS`): their handlers are bound
-# to one note, so a chat session has nothing to bind.
+# to one note, so a chat session has nothing to bind. `ask_owner` is not — the owner's REPLY
+# into a note thread arrives as an ordinary /chat turn (D8), so its handler is wired on the
+# chat registry and this allowlist is the only thing keeping it off every other persona.
 NOTE_INGEST_TOOLS: frozenset[str] = frozenset(
-    {"resolve_entity", "assert_fact", "find_entity", "read_entity", "current_time"}
+    {"resolve_entity", "assert_fact", "ask_owner", "find_entity", "read_entity", "current_time"}
 )
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
@@ -743,9 +747,14 @@ AGENTS: dict[str, AgentProfile] = {
     # - the flip widens NOTHING retroactively. `read_scopes` is also what is stored as the
     #   session row's `domain_scopes`, so every W2-era note session keeps `[]` forever.
     #   Deliberately NOT backfilled: those threads wrote no graph (the persona held no
-    #   tools), a reply into one is a sibling task's path, and that path recomputes the
-    #   scopes from the NOTE at turn time rather than trusting the stored row — so a
-    #   backfill would only make a stale row look authoritative.
+    #   tools), so a backfill would only make a stale row look authoritative. The two
+    #   turn paths read that row differently, and the difference is only ever NARROWING:
+    #   the unattended pass recomputes from the NOTE (`converse.note_read_scopes`), while
+    #   the owner's REPLY turn is an ordinary `/chat` turn and takes `session.domain_scopes`
+    #   as stored. For a W3-era thread the two agree by construction — the stored row IS
+    #   what `note_read_scopes` returned. For a W2-era one the reply turn gets `[]` and
+    #   reads no domain row at all, which is a starved turn, never a widened one, and the
+    #   route that could have widened it is closed below.
     # - `POST /sessions/{id}/scope` is ungated on persona, so the owner-facing route could
     #   widen an engine-opened write persona past `(note_domain, 'general')` on a session
     #   the owner never started. Inert while this flag was False; closed now in

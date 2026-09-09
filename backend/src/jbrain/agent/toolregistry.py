@@ -34,21 +34,31 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
 #
-# `prefs_write` is here because it is a WRITE tool with no allowlist yet
-# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 9): the on-reply set it
-# belongs to is not built, and the wildcard would otherwise hand the owner's standing
-# instructions to the curator on every ordinary chat turn. `prefs_read` is here because
-# `owner_prefs` is the NOTE persona's standing-instruction surface — offering it to
-# curator alongside `memory_read` puts two overlapping memory surfaces in one tool
-# union, the contradiction docs/research/agent-ingest/TOOL_SURFACE.md names as the one
-# gpt-oss handles worst. Both stay reachable only through an explicit allowlist.
-# `resolve_entity` / `assert_fact` are here for the same reason and a sharper one: they
-# are `mutate`-classed GRAPH WRITES bound to one note conversation
-# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 9). Without this line the
-# wildcard hands the note-ingestion persona's write verbs to the CURATOR on every
-# ordinary chat turn. Mandatory for every write tool this plan adds — and belt to the
+# Everything AGENT_INGEST_CONVERSATION_PLAN.md adds is here too (its constraint 9: every
+# write tool the plan ships joins this set, or the wildcard hands it to the curator on
+# every ordinary chat turn).
+#
+# `prefs_write` is a WRITE tool with no allowlist at all: the on-reply set it belongs to
+# is not built, and the wildcard would otherwise hand the owner's standing instructions
+# to the curator. `prefs_read` is here for the other reason — `owner_prefs` is the NOTE
+# persona's standing-instruction surface, and offering it to curator alongside
+# `memory_read` puts two overlapping memory surfaces in one tool union, the contradiction
+# docs/research/agent-ingest/TOOL_SURFACE.md names as the one gpt-oss handles worst.
+# Both stay reachable only through an explicit allowlist — and neither is in one yet.
+#
+# `resolve_entity` / `assert_fact` are here for the first reason and a sharper one: they
+# are `mutate`-classed GRAPH WRITES bound to one note conversation. Without this line the
+# wildcard hands the note-ingestion persona's write verbs to the CURATOR. Belt to the
 # braces of `readtools.OPTIONAL_NOTE_GRAPH_TOOLS`, which keeps the two sidecars out of
 # the chat registry altogether (they can only be bound to a note).
+#
+# `ask_owner` is a write too — it records the question and moves the conversation to
+# `waiting_on_owner` — but it is here for the note-thread reason rather than the graph
+# one: outside a note conversation there is nothing for it to write to, so the wildcard
+# would hand the curator a tool whose best outcome is a refusal it wasted a step on.
+# Unlike the two graph writes it IS wired into the chat registry, because the owner's
+# reply into a note thread arrives as an ordinary /chat turn (D8) — the allowlist, not
+# the registry, is what keeps it off every other persona.
 NEVER_DEFAULT: frozenset[str] = frozenset(
     {
         "spawn_subagent",
@@ -60,6 +70,7 @@ NEVER_DEFAULT: frozenset[str] = frozenset(
         "prefs_write",
         "resolve_entity",
         "assert_fact",
+        "ask_owner",
     }
 )
 

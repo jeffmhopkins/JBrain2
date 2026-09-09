@@ -39,6 +39,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_write_handlers,
 )
 from jbrain.agent.archivisttools import build_archivist_memory_handlers
+from jbrain.agent.asktools import build_ask_owner_handlers
 from jbrain.agent.bartools import build_bar_handlers
 from jbrain.agent.briefs import FEED_TAG, neutralize_boundary
 from jbrain.agent.charttools import build_chart_handlers
@@ -1229,6 +1230,13 @@ def build_registry(
             # is in any profile's allowlist and both are NEVER_DEFAULT, so curator's
             # wildcard cannot absorb them; `prefs_write` only ever STAGES a Proposal.
             **build_owner_prefs_handlers(maker, proposals),
+            # The note conversation's `ask_owner` (note_ingest-only by allowlist, and in
+            # NEVER_DEFAULT so curator's wildcard never absorbs it). Wired on THIS
+            # registry because the owner's REPLY into a note thread is an ordinary /chat
+            # turn (D8) and the agent may still be unable to proceed after it — the
+            # unattended first pass runs in the worker on its own explicit registry
+            # instead (`analysis/converse.py`).
+            **build_ask_owner_handlers(maker),
             # jmolt's scratchpad tools (`web`-gated, jmolt-only) over the `jmolt_scratch`
             # table — always wired (the table always exists); the M19 RLS split, not this
             # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).

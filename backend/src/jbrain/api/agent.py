@@ -58,6 +58,11 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
+from jbrain.analysis.clarify import (
+    NOTE_CONVERSE_AGENT,
+    close_owner_reply,
+    record_owner_reply,
+)
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -72,6 +77,7 @@ from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.models.plan import PlanRepo
+from jbrain.notes.service import NotesRepo
 from jbrain.storage import BlobStore
 from jbrain.web import FaviconFetcher, FaviconResult
 from jbrain.web.favicon import normalize_host
@@ -751,6 +757,26 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     profile = agent_for(session.agent)
     read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
 
+    # A reply into a note conversation that is WAITING is an answer, and D6 makes an
+    # answer part of the note: it is appended as a timestamped clarification block, which
+    # re-ingests the note so the block becomes chunks of it (D7) and the graph re-derives.
+    # The engine does it, not a tool — a model that had to remember to file the owner's
+    # answer would sometimes not, and the answer would exist only as chat
+    # (AGENT_INGEST_CONVERSATION_PLAN, TOOL_SURFACE.md "Verbs deliberately NOT tools").
+    # Before the turn, so this turn already sees the note it just changed; never raises,
+    # so an answer that cannot be filed is still an answer the agent reads. The persona
+    # check is HERE as well as inside, so a chat turn of any other persona touches
+    # neither the notes repo nor a second session maker on its way to the model.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        await record_owner_reply(
+            request.app.state.session_maker,
+            cast(NotesRepo, request.app.state.notes_repo),
+            owner_ctx,
+            session_id=str(session.id),
+            agent=session.agent,
+            message=body.message,
+        )
+
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
     await sessions.touch(owner_ctx, session.id)
@@ -1357,6 +1383,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         stop_reason=stop_reason,
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
+                    )
+                # Close the note conversation this reply re-opened. In the `finally`, not
+                # the `done` path: a Stop, a dropped turn or a mid-turn error still has to
+                # release the note's one live slot, because the re-ingest the owner's
+                # answer queued emits its own `note.ingested` and the pass that event
+                # opens is suppressed while this one stands. A turn that ended by asking
+                # ANOTHER question is left waiting — `state_for_stop` says so.
+                if session.agent == NOTE_CONVERSE_AGENT:
+                    await close_owner_reply(
+                        request.app.state.session_maker,
+                        owner_ctx,
+                        session_id=str(session.id),
+                        agent=session.agent,
+                        stop_reason=stop_reason,
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

@@ -66,6 +66,10 @@ const STEP_LABELS: Record<string, string> = {
   scratch_manage: "Tidied its scratchpad",
   journal: "Wrote a journal entry",
   name_session: "Named the session",
+  // The note conversation's one question (AGENT_INGEST_CONVERSATION_PLAN, D2/D5). A
+  // minimal entry: the richer chip that renders the question and the answer belongs
+  // with the D3 tool component.
+  ask_owner: "Asked you a question",
   time_left: "Checked time remaining",
   // Web + research
   web_search: "Searched the web",
@@ -229,6 +233,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   scratch_manage: ["op", "filename"],
   journal: ["entry"],
   name_session: ["name"],
+  ask_owner: ["question"],
   read_labs: ["analyte"],
   chart_measurements: ["measurement", "subject"],
   make_intake_link: ["domain", "fields_brief"],
