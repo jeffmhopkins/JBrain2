@@ -48,10 +48,24 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class ChunkShape:
-    """Every stored column of a chunk except `id`, `seq` and the derived vectors.
+    """What a chunk IS, for the purpose of deciding it came back unchanged.
 
-    `seq` is excluded on purpose: it is a position in the rebuilt list, so a chunk that
-    merely moved is still the same chunk and is reused (its row's `seq` is updated).
+    Every stored column of `app.chunks` except six, each excluded on purpose:
+
+    * `id` — the row identity carry-over exists to preserve; comparing it would defeat it.
+    * `note_id` — constant across one note's carry-over, so it carries no signal.
+    * `seq` — a position in the rebuilt list, so a chunk that merely MOVED is still the
+      same chunk and is reused (its row's `seq` is then updated to the new position).
+    * `tsv` — generated from `text`, which is compared.
+    * `embedding` — derived from `text` under whatever model was current when it was
+      written, so it is not evidence about the chunk.
+    * `embedding_model` — the stamp on that vector. Excluded for the SAME reason, and it
+      is the one exclusion with a consequence: a reused row keeps a vector embedded under
+      a model that may no longer be ours, and `embed_note` only fills NULLs, so nothing on
+      the ingest path ever revisits it. That is deliberate — throwing a good vector away
+      to re-derive it identically would be worse — and the drift it allows is swept by
+      `reembed_stale` (`analysis/reembed.py`, the `chunks` target), which is where the
+      re-embed-after-a-model-change path now lives for chunks.
     """
 
     attachment_id: UUID | None
