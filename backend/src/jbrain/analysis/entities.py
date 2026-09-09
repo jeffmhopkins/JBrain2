@@ -913,6 +913,47 @@ async def merge_entity_pair(
     return repointed
 
 
+# How far a stale id may be chased through folds. A fold does not re-point the
+# tombstones already aimed at its loser, so `a -> b -> c` chains are real; the bound
+# is what keeps a malformed cycle from spinning instead of resolving.
+_MERGE_CHAIN_LIMIT = 8
+
+
+async def live_entity_by_id(session: AsyncSession, entity_id: uuid.UUID):
+    """The LIVE entity an id names, following merge tombstones to the survivor.
+
+    A caller holding an entity id may be holding one the owner has since merged away:
+    every context builder filters `status != 'merged'`, but a fold that lands while an
+    analysis is in flight turns the id it echoes back into a tombstone, and any replay
+    of a stored decision (`app.resolution_pin` already keeps entity ids) would make that
+    routine rather than a race. Loading that id raw hands back a merged row, and writing
+    to it resurrects the duplicate the merge removed. The fold records where it went
+    (`merged_into_id`), and merging is the owner's decision that the two are the same
+    thing, so the honest answer to a stale id is the survivor — not a refusal (the
+    loser's aliases stay on the tombstone, so a fall-through to `_exact_matches`
+    would mint a fresh duplicate) and not the tombstone.
+
+    None when the id is unknown, out of the session's scope, or the chain does not
+    end on a live row — the caller's existing "can't resolve this" path, never a guess.
+    """
+    eid = entity_id
+    for _ in range(_MERGE_CHAIN_LIMIT):
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, subject_id, status, merged_into_id FROM app.entities WHERE id = :id"
+                ),
+                {"id": str(eid)},
+            )
+        ).first()
+        if row is None or row.status != "merged":
+            return row
+        if row.merged_into_id is None:
+            return None  # tombstoned with nowhere to go: nothing live to write to
+        eid = row.merged_into_id
+    return None
+
+
 async def resolve_entity(
     session: AsyncSession,
     name: str,
