@@ -33,8 +33,25 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
+#
+# `prefs_write` is here because it is a WRITE tool with no allowlist yet
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 9): the on-reply set it
+# belongs to is not built, and the wildcard would otherwise hand the owner's standing
+# instructions to the curator on every ordinary chat turn. `prefs_read` is here because
+# `owner_prefs` is the NOTE persona's standing-instruction surface — offering it to
+# curator alongside `memory_read` puts two overlapping memory surfaces in one tool
+# union, the contradiction docs/research/agent-ingest/TOOL_SURFACE.md names as the one
+# gpt-oss handles worst. Both stay reachable only through an explicit allowlist.
 NEVER_DEFAULT: frozenset[str] = frozenset(
-    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research", "deep_produce"}
+    {
+        "spawn_subagent",
+        "deep_research",
+        "decompose_research",
+        "deepest_research",
+        "deep_produce",
+        "prefs_read",
+        "prefs_write",
+    }
 )
 
 

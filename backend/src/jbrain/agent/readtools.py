@@ -68,6 +68,7 @@ from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.metricstools import build_metrics_handlers
 from jbrain.agent.plantools import build_plan_handlers
+from jbrain.agent.prefstools import build_owner_prefs_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
@@ -1214,6 +1215,11 @@ def build_registry(
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
+            # The note persona's standing instructions (D15) over the owner-only
+            # `owner_prefs` table — always wired (the table always exists). Neither tool
+            # is in any profile's allowlist and both are NEVER_DEFAULT, so curator's
+            # wildcard cannot absorb them; `prefs_write` only ever STAGES a Proposal.
+            **build_owner_prefs_handlers(maker, proposals),
             # jmolt's scratchpad tools (`web`-gated, jmolt-only) over the `jmolt_scratch`
             # table — always wired (the table always exists); the M19 RLS split, not this
             # code, is the firewall (docs/plans/JMOLT_PLAN.md, W2).

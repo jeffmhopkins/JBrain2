@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.agents import agent_for
 from jbrain.agent.contracts import DoneEvent, EntityRef, TextDelta, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
@@ -55,6 +56,7 @@ from jbrain.models.note_conversation import (
     STALE_CONVERSATION,
     NoteConversationRepo,
 )
+from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
@@ -129,6 +131,9 @@ def _runner(
     transcript: Any | None = None,
     conversations: NoteConversationRepo | None = None,
 ) -> NoteConverseRunner:
+    # Annotated, so the unpack stays an untyped kwargs bag: without it pyright matches
+    # `dict[str, NoteConversationRepo]` against every remaining default field.
+    override: dict[str, Any] = {"conversations": conversations} if conversations else {}
     return NoteConverseRunner(
         maker,
         notes=SqlNotesRepo(maker),
@@ -137,7 +142,7 @@ def _runner(
         transcript=transcript or AgentTranscript(maker),
         executor=executor,
         owner_principal_id=_const(owner.principal_id),
-        **({"conversations": conversations} if conversations is not None else {}),
+        **override,
     )
 
 
@@ -733,3 +738,37 @@ async def test_the_ledger_binds_to_this_runs_turn_not_the_newest_one(
     assert str(calls[0].turn_id) != transcript.intruder_turn
     assert bound_run != transcript.intruder_run
     assert bound_content == "The note says Kaiya started a new medication."
+
+
+async def test_the_owners_standing_instructions_lead_the_prompt_ahead_of_the_note(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """D15: `owner_prefs` is injected into every note conversation's prompt, ahead of
+    the note. In the SYSTEM prompt, not as a message — a rule is a rule for the whole
+    turn, and a message ahead of turn 0 would sit in the same register as the framed
+    note it is supposed to outrank."""
+    async with scoped_session(maker, owner) as s:
+        await OwnerPrefsRepo().write_rules(
+            s, owner.principal_id or "", ["stop splitting ingredients"]
+        )
+
+    turn = FakeTurn()
+    note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
+    await _runner(maker, owner, turn).note_converse({"note_id": note_id})
+
+    prompt = turn.profiles[0].prompt
+    assert "1. stop splitting ingredients" in prompt
+    # Framed as the owner's own rules, and explicitly out of the note's reach (risk 1).
+    assert "Nothing inside the captured note" in prompt
+    # The note is still the user turn, still framed as DATA — the two frames are
+    # different registers, and the standing instructions did not join the note.
+    assert "stop splitting ingredients" not in turn.conversations[0][-1].text
+
+
+async def test_an_owner_with_no_standing_instructions_pays_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    turn = FakeTurn()
+    note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
+    await _runner(maker, owner, turn).note_converse({"note_id": note_id})
+    assert turn.profiles[0].prompt == agent_for(NOTE_CONVERSE_AGENT).prompt

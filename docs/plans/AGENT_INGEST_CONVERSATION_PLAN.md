@@ -425,6 +425,34 @@ too. Author a **new** adversarial scenario running a real model against a hostil
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
 
+*Landed (T1): `owner_prefs`.* `app.owner_prefs` (migration 0195, owner-only RLS, ENABLE
++ FORCE) holds one capped document of standing instructions, injected into every note
+conversation's **system prompt** ahead of the note and framed as the owner's
+instructions rather than as the note's DATA. `prefs_read` is the `read`-class load;
+`prefs_write` **stages an `owner-prefs` Proposal and never writes** (D17) — the only
+writer is `prefstools.owner_prefs_executor`, dispatched by
+`connectortools.build_leaf_executor` on the owner's approval. It is a **delta**: one
+call moves one numbered rule (add / replace / remove), addressed by `rule_number` plus
+the rule's own text, with no full-rewrite verb in the surface at all — a full-replace
+verb reachable from a note-driven turn is a standing-instruction overwrite primitive,
+which is why the archivist's upsert shape was copied for the read half only. A rule is
+one LINE, numbered at render time, so no edit renumbers its neighbours; a
+replace/remove staged against one numbering refuses at enact if the rule it named has
+changed underneath it. Caps are 50 rules / 1k chars per rule / 8k chars of document
+(well under `archivist_memory`'s 20k, because this one is paid on every note turn), and
+every cap is checked on an in-memory rule list **before any write is opened** — at
+staging it is text the model can act on, and at enact it is a skipped leaf, never a
+raise that would roll back the sibling leaves of the same enact transaction.
+
+**Still open from T1:** both tools are in `toolregistry.NEVER_DEFAULT` and in **no
+profile's allowlist**, so neither is reachable yet. The wave's tool-set split must add
+`prefs_read` to the unattended set and `prefs_write` to the on-reply set — and
+`TOOL_SURFACE.md` Cut #1 proposes cutting `prefs_read` entirely (the document is already
+in the prompt); it was built as briefed, and cutting it is now a one-line allowlist
+decision rather than a deletion. Neither tool has a D3 chip beyond the minimal
+`toolSummary.ts` entry, and the "how many existing notes would this change" report the
+`owner_prefs` section promises is not built — it needs the scoped per-rule re-run.
+
 *Two things W2's reviews left specifically for W3, both about flipping
 `reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens
 nothing retroactively**: `read_scopes` is also what is persisted as the session row's

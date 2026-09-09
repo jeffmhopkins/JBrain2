@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-09 — added the **`note_ingest`** persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
+> **Status:** Living · **Last verified:** 2026-09-09 — added the **`note_ingest`** persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist. Then **`owner_prefs`** — the owner's standing instructions, injected into that conversation's system prompt ahead of the note, whose write verb stages a Proposal and edits one numbered rule at a time.
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -55,7 +55,10 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    autonomous write path** to behavioral / self-semantic memory. Such memory is
    created or changed only by an owner-issued, owner-confirmed `remember` action —
    never inferred from conversational content, never from a non-owner principal —
-   and references the **owner subject only**.
+   and references the **owner subject only**. The note persona's standing
+   instructions (`owner_prefs`, below) are the same rule made structural: its write
+   verb stages a Proposal and cannot write, and it edits one numbered rule at a
+   time, because the conversation it is offered in has third-party text as turn 0.
 4. **Episodic domain scope is fail-closed, RLS-enforced.** An episodic trace is
    scoped to the **most-restrictive domain any content in that turn touched**,
    enforced by an RLS column, not an LLM classifier. A multi-domain answer's
@@ -70,7 +73,9 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    has no runtime path to change its own prompts, tools, or behavior. *(The
    removed Loops 2–4 — skill promotion, durable-knowledge promotion, prompt/tool
    self-edit — and their promotion gate are gone; this rule now bounds Loop 1 and
-   the note door alone.)*
+   the note door alone.)* The owner's standing instructions do change what the
+   note persona's prompt says, and are the deliberate exception the rule already
+   allows: the agent cannot write them, only the owner's approval does.
 7. **Agent-drafted corrections are attributed and not privileged.** Agent-authored
    notes are provenance-flagged, carry the source ID of the content that prompted
    them, get **normal (not elevated) extraction weight** when sourced from
@@ -949,6 +954,7 @@ it, every time.
 |---|---|---|---|---|
 | **Working / core identity** (persona, owner preferences, behavioral rules) | `agent_memory` rows rendered as MD; small always-loaded index | Owner (policy) + owner-confirmed `remember` | No | **Owner-confirmed only** (non-neg. 3) |
 | **Working / task scratchpad** (current multi-step state, plan, IDs) | `agent_memory` row, task-scoped | Agent | No | Auto; archived on task completion |
+| **Standing instructions** (how to handle a note: "keep recipes whole") | `owner_prefs`, one owner-only row, one rule per line | Owner, via `prefs_write`'s staged Proposal | No | **Owner-confirmed only**; one numbered rule per approval |
 | **Semantic (self)** — behavioral learnings | `agent_memory` topic blocks, lazy-loaded | Owner-confirmed; seeded by owner corrections | No | **Owner-confirmed only** |
 | **Episodic** — conversation/task traces, tool logs | `agent_episodes` rows + segregated-namespace embeddings; pointers to fact/entity IDs | Agent (auto-append) | No | Auto-write; fail-closed domain scope; nightly decay |
 | **Semantic (world)** — facts about the owner's life | **NOT agent memory** — `facts`/`entities`, cited to chunks | Extraction pipeline, from **notes** | **Yes** | Pipeline + review inbox |
@@ -963,6 +969,26 @@ curated-MD/lazy-topic pattern: a small always-loaded index, lazy topic blocks,
 and **ACE-style delta edits (ADD/UPDATE/REMOVE on individual bullets), never full
 rewrites** — full regeneration rots accumulated self-knowledge (brevity bias /
 context collapse).
+
+**`owner_prefs` — the note persona's standing instructions** (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`
+D15/D17). One owner-only row (`app.owner_prefs`, migration 0195) holding a single
+capped document of the owner's own rules for handling notes, injected into every note
+conversation's **system prompt** ahead of the note and framed as the owner's
+instructions, explicitly distinct from the note's DATA frame. It borrows the
+archivist's cross-session-memory shape for the READ half and deliberately rejects it
+for the WRITE half: `archivist_memory_write` is a bare full-replace upsert, safe only
+because that persona is `permission: web` and reads no untrusted text, while this
+document lives in a conversation whose turn 0 may be third-party text (plan risk 1).
+So `prefs_write` (a) **stages a Proposal** and cannot write — the only writer is the
+trusted leaf executor on the owner's approval — and (b) is a **delta**: one call moves
+one numbered rule (add / replace / remove), and no full-rewrite verb exists, so no
+single approval can wipe the standing orders. It is fired only on the owner's explicit
+request; it is in `toolregistry.NEVER_DEFAULT` and in no profile's allowlist. A rule is
+one LINE, numbered at render time, so an edit cannot renumber its neighbours; the
+document is capped at 50 rules / 8k characters (well under the archivist's 20k, because
+this one is paid for on **every** note turn), and every cap is checked on an in-memory
+rule list before any write is opened — including at enact, where a refusal is a skipped
+leaf rather than a raise that would roll back its siblings.
 
 **Retrieval reuses the existing RRF hybrid search** (dense + FTS), in a
 **segregated memory namespace** (a discriminator column the query filters on, and
