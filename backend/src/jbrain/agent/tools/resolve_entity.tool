@@ -26,7 +26,7 @@ params:
             type: string
             description: >-
               What sort of thing it is, one word: person, organization, place, event,
-              condition, medication, animal, or thing.
+              condition, medication, animal, product, device, vehicle, or thing.
         required: [surface, kind]
   required: [entities]
 examples:

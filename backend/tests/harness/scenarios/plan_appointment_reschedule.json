@@ -124,7 +124,7 @@
     "entities": [
       {
         "name": "Dr. Nguyen dentist appointment",
-        "kind": "appointment",
+        "kind": "Event",
         "status": "provisional"
       }
     ]

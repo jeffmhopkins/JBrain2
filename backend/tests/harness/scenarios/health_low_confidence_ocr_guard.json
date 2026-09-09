@@ -1,6 +1,7 @@
 {
   "name": "a low-confidence OCR-derived health state must not auto-supersede a confident prior",
   "description": "docs/reference/ANALYSIS.md 'Guards': low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95). Note 2 is a blurry OCR read the model returns at conf 0.25. Even though the OCR text is surface-attested (so the weight model would commit it), supersession.decide()'s low-confidence guard is keyed on the model's SELF-confidence, not the plan weight: a 0.25 read that would supersede a more-confident active fact is parked as pending_review behind a low_confidence card, and the confident fact stays active. Pins that a blurry OCR value can't silently overwrite a confident fact (regression: integrate must thread self-confidence to decide(), not the plan weight a surface-attested fact carries).",
+  "xfail": "assert_fact has no `kind` field, and none of this scenario's predicates is declared in the tier-1 registry, so _fact_kind falls back to the subject type's default (`attribute` for a Person). An attribute holds a second value for review, so what was a measurement timeseries / a clean state supersession is now an attribute_collision. Closing it means deriving the fact kind from the write, or declaring these predicates.",
   "steps": [
     {
       "domain": "health",

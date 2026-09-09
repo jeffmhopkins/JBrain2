@@ -44,7 +44,7 @@
       {"kind": "fact_conflict", "summary_contains": "team standup's scheduledTime", "count": 0}
     ],
     "entities": [
-      {"name": "team standup", "kind": "appointment", "status": "provisional"}
+      {"name": "team standup", "kind": "Event", "status": "provisional"}
     ]
   }
 }

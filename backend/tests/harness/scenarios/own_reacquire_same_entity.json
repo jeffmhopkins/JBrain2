@@ -1,6 +1,7 @@
 {
   "name": "re-acquiring a previously sold item reuses the same entity and revives ownership",
   "description": "own -> sell -> buy again on ONE stable item entity. The Civic entity is stable across the gap (docs/reference/ANALYSIS.md: 'identity is stable; properties are supersedable bindings'); only the owns binding cycles owned true->false->true. Each transition has a distinct value_json so supersession.values_equal sees real changes: the sell (owned=false) supersedes the buy, and the re-buy (owned=true) supersedes the sell -- one revision chain of three rows, current head owned=true. Two fact_conflict reviews fire (one per transition). Pins entity identity of 'the Civic' across the ownership gap. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

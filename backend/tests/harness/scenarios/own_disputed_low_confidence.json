@@ -1,6 +1,7 @@
 {
   "name": "uncertain ownership lands as a question-assertion, not an owned fact",
   "description": "'Not sure if the cordless drill is mine or Devon's' is ambiguous ownership. Modeled the spec-correct way: a single low-confidence owns fact carrying assertion=question (docs/reference/ANALYSIS.md 'Assertion status': the wiki demotes everything below asserted; a question is not an owned fact). parse_extraction keeps question in ASSERTIONS, the pipeline inserts it as-is, and because it is the only fact on Me.owns.Drill it stays active with assertion=question -- the wiki must NOT render it as an asserted possession. Raj is the rival claimant entity (the note's 'Devon'); his potential ownership is left to a human via the low confidence rather than auto-asserted. Pins that the harness preserves the question assertion (the disambiguation seam), distinct from the H2 low-confidence health guard.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

@@ -146,10 +146,20 @@ _KIND_HINTS: dict[str, str] = {
     "event": "Event",
     "appointment": "Event",
     "condition": "MedicalCondition",
-    "medication": "Drug",
-    "drug": "Drug",
+    # `Medication`, not `Drug`: the SCHEMA REGISTRY declares Medication, and the
+    # kind is what `_fact_kind` looks a predicate up under. A `Drug` entity
+    # matches no registered type, so every fact about it silently falls back to
+    # `attribute` — found by re-pointing the harness onto these tools.
+    "medication": "Medication",
+    "drug": "Medication",
     "animal": "Animal",
     "pet": "Animal",
+    # The registry declares these and the `note.extract` prompt teaches them
+    # ("kind prefers a schema.org type … Product"), so a note about a car or a
+    # laptop had no word here and degraded to `Thing`.
+    "product": "Product",
+    "device": "Device",
+    "vehicle": "Vehicle",
     "thing": "Thing",
 }
 _DEFAULT_KIND = "Thing"
@@ -158,7 +168,17 @@ _DEFAULT_KIND = "Thing"
 # the statement). Recognised so the stored `value_json` is `{value, unit}` — the shape
 # `supersession.values_equal` can compare ACROSS units, which is what makes a re-read of
 # the same reading land as "already recorded" instead of a fact_conflict.
-_QUANTITY = re.compile(r"^(-?\d+(?:\.\d+)?)\s*([^\d\s][^\s]{0,15})$")
+#
+# The unit must START WITH A LETTER (or %, ° or /). A bare `[^\d\s]` lets the number half
+# backtrack and invent a unit out of the value's own tail: "80.0" parsed as 80 + unit
+# ".0", and the ISO date "1986-03-19" as 1986 + unit "-03-19" — two facts stating the
+# same weight in different words then compare unequal, and a birth date is stored as a
+# quantity. Found by re-pointing the scenario harness onto these tools.
+_QUANTITY = re.compile(r"^(-?\d+(?:\.\d+)?)\s*([A-Za-z%°/][^\s]{0,15})$")
+
+# A literal that is only a number. Stored as a number rather than as a string so two
+# spellings of the same reading ("80" and "80.0") compare equal.
+_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 # Whitespace-insensitive, case-insensitive containment — the same normalization the
 # arbiter's span check uses, so "attested" means here what it means there.
@@ -194,7 +214,10 @@ def _quantity_value(literal: str) -> dict[str, Any]:
     unit apart so cross-unit equality works; anything else is stored verbatim under
     `value`, the one key every renderer already understands (`display._structured_label`)
     and the shape `_shape_check` validates against the predicate's declared shape."""
-    match = _QUANTITY.match(literal.strip())
+    body = literal.strip()
+    if _NUMBER.match(body):
+        return {"value": float(body) if "." in body else int(body)}
+    match = _QUANTITY.match(body)
     if match is None:
         return {"value": literal}
     number, unit = match.groups()

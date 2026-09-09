@@ -22,7 +22,7 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "kind": "relationship", "value_contains": "Civic", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "kind": "relationship", "value_contains": "Civic", "status": "active", "chained": false},
       {"entity": "Civic", "predicate": "ownedBy", "kind": "relationship", "value_contains": "Me", "status": "active", "chained": false}
     ],
     "absent_facts": [

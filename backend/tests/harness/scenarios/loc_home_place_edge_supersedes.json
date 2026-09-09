@@ -104,7 +104,7 @@
       {
         "entity": "Sarah",
         "predicate": "homeLocation",
-        "kind": "state",
+        "kind": "relationship",
         "value_contains": "Denver",
         "status": "superseded",
         "chained": true
@@ -112,7 +112,7 @@
       {
         "entity": "Sarah",
         "predicate": "homeLocation",
-        "kind": "state",
+        "kind": "relationship",
         "value_contains": "Boulder",
         "status": "active",
         "chained": false

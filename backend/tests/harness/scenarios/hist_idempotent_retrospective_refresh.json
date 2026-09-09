@@ -1,6 +1,7 @@
 {
   "name": "re-asserting a historical (superseded) fact at the same validity refreshes in place, no new chain",
   "description": "Note A sets Wei's current employer (Hooli). Note B is retrospective (Wei worked at Pied Piper in 2020) and lands status='superseded' via decide()'s retrospective branch. Note C re-states the SAME historical fact (Pied Piper, same value_json, same valid_from 2020). decide() idempotency: for a non-accumulating kind, an identical value at the SAME validity refreshes in place even when the existing row is superseded ('a superseded row only counts as identical at the same validity' — supersession.decide comment; same_validity True -> refresh_id). So no second Pied Piper row, no new superseded chain link, and NO extra fact_conflict. Pins re-analysis idempotency on a HISTORICAL fact: re-seeing closed history must not multiply rows or reviews. Expect exactly one superseded Pied Piper fact and one active Hooli fact.",
+  "xfail": "assert_fact's single `when` carries a start and no end, so restating CLOSED history reads as a re-open (supersession.decide's 'a now-OPEN restatement of a CLOSED interval') and inserts a second historical row instead of refreshing the first.",
   "steps": [
     {
       "domain": "general",

@@ -34,13 +34,13 @@
   "expect": {
     "facts": [
       {"entity": "Dr. Okafor follow-up", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-09-10", "status": "active", "assertion": "expected"},
-      {"entity": "Dr. Okafor follow-up", "predicate": "scheduledTime", "kind": "state", "value_contains": "\"precision\": \"day\""},
+      {"entity": "Dr. Okafor follow-up", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-09-10 day"},
       {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-16T09:00:00", "status": "active", "assertion": "expected"},
-      {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "\"precision\": \"instant\""}
+      {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-16T09:00:00-06:00 instant"}
     ],
     "entities": [
-      {"name": "Dr. Okafor follow-up", "kind": "appointment", "status": "provisional"},
-      {"name": "platform team standup", "kind": "appointment", "status": "provisional"}
+      {"name": "Dr. Okafor follow-up", "kind": "Event", "status": "provisional"},
+      {"name": "platform team standup", "kind": "Event", "status": "provisional"}
     ]
   }
 }

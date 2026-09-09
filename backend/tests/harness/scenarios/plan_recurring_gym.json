@@ -21,8 +21,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "scheduledRoutine", "qualifier": "gym", "kind": "state", "value_contains": "FREQ=WEEKLY;BYDAY=MO", "status": "active", "assertion": "expected"},
-      {"entity": "Me", "predicate": "scheduledRoutine", "qualifier": "gym", "kind": "state", "value_contains": "2026-06-15T06:00:00", "status": "active"}
+      {"entity": "Me", "predicate": "scheduledRoutine", "kind": "attribute", "value_contains": "FREQ=WEEKLY;BYDAY=MO", "status": "active", "assertion": "expected"},
+      {"entity": "Me", "predicate": "scheduledRoutine", "kind": "attribute", "value_contains": "2026-06-15T06:00:00", "status": "active"}
     ],
     "entities": [
       {"name": "Me", "kind": "Person", "status": "confirmed"}

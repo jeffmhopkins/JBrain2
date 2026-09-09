@@ -123,7 +123,7 @@
     "entities": [
       {
         "name": "Dr. Reyes appointment",
-        "kind": "appointment",
+        "kind": "Event",
         "status": "provisional"
       }
     ]

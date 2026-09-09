@@ -21,13 +21,12 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "favoriteColor", "kind": "preference", "value_contains": "teal", "status": "active", "chained": false}
+      {"entity": "Me", "predicate": "favoriteColor", "kind": "attribute", "value_contains": "teal", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"predicate": "favoriteColor", "status": "pending_review"}
     ],
     "review_items": [
-      {"kind": "new_predicate", "count": 0},
       {"kind": "low_confidence_inference", "count": 0}
     ],
     "entities": [

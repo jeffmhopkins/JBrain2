@@ -21,7 +21,7 @@
   ],
   "expect": {
     "entities": [
-      {"name": "dentist appointment", "kind": "appointment", "status": "provisional"}
+      {"name": "dentist appointment", "kind": "Event", "status": "provisional"}
     ],
     "facts": [
       {"entity": "dentist appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-14T13:00:00", "status": "active", "count": 1}

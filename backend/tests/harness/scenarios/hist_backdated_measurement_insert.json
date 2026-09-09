@@ -1,6 +1,7 @@
 {
   "name": "a backdated reading inserted between two existing measurements never supersedes",
   "description": "Three weight measurements for Wei: note A at 2026-04-01, note B at 2026-04-15, then note C captured last (2026-04-20) but backdated to a DISTINCT instant 2026-04-08 between them. Measurements accumulate and NEVER auto-supersede (docs/reference/ANALYSIS.md fact kinds: measurement = time-series). decide() for kind='measurement' with a distinct valid_from hits the time-series branch (return Decision(insert=True)) — no same-instant clash, so no fact_conflict, no superseded chain. All three stay active regardless of capture order. Pins that out-of-order arrival in a measurement series is harmless: insertion order doesn't matter, only the (metric, instant) identity, and distinct instants coexist.",
+  "xfail": "assert_fact has no `kind` field, and none of this scenario's predicates is declared in the tier-1 registry, so _fact_kind falls back to the subject type's default (`attribute` for a Person). An attribute holds a second value for review, so what was a measurement timeseries / a clean state supersession is now an attribute_collision. Closing it means deriving the fact kind from the write, or declaring these predicates.",
   "steps": [
     {
       "domain": "health",
