@@ -711,19 +711,25 @@ AGENTS: dict[str, AgentProfile] = {
     # `tools` is an explicit empty frozenset, never None: the wildcard is precisely what D16
     # forbids for a persona that will hold graph writes, and `frozenset()` closes the set now
     # so W3 widens it deliberately rather than by inheriting a default.
-    # `extra_tools` stays EMPTY here in every wave — an `extra` name is admitted AHEAD of the
-    # registry's web and NEVER_DEFAULT gates (`toolregistry._admits`), which is exactly the
-    # door D16 closes; a graph-write persona must gain tools only through its allowlist.
+    # `extra_tools` stays EMPTY here in every wave. On /chat an `extra` name is admitted
+    # AHEAD of the registry's web and NEVER_DEFAULT gates (`toolregistry._admits`), which is
+    # exactly the door D16 closes. On the path this persona actually runs, `LoopTurnExecutor`
+    # never forwards `extra_tools` at all, so a grant here would be silently dropped rather
+    # than admitted — differently wrong, equally a reason to gain tools only through the
+    # allowlist.
     # `reads_knowledge_base=False` for W2: the note arrives as turn 0, so nothing needs
     # retrieval yet, and a False agent runs with EMPTY read scopes, so even a mis-scoped
     # session reads no domain data. W3 must revisit it — plan constraint 2 wants the
     # conversation owner-scoped to `(note_domain, 'general')`, and the entity read tools are
     # domain-visible, so they cannot be reached under empty scopes.
-    # 2x budget (not 1x): in W2 the multiplier is nearly inert — a tool-less turn is one pass
-    # over one note — but the first thing W3 hangs off this profile is a many-call
-    # resolve/assert chain over a whole note, and under plan constraint 6 a TRUNCATED turn is
-    # a correctness problem (it has asserted only a prefix, so the settle sweep must not run),
-    # not merely a short answer. 2 matches the KB-less children; it is not jerv's 6 cost lever.
+    # 2x budget (not 1x), and NOT as truncation protection — that comes from the settled/failed
+    # latch (`converse.py`), which withholds the sweep at any multiplier. The step cap already
+    # has an order of magnitude of headroom over W3's measured batch sizes (TOOL_SURFACE.md:
+    # ~7.6 facts and ~8.9 entities per call, so a 20-fact note is ~5 calls against a floor of
+    # 20 steps). What `scale` actually moves is `max_cost_tokens`, 200k -> 400k, and only on
+    # the UNATTENDED pass: the owner's reply turn is supervised and ignores it. So this is a
+    # headroom-vs-cost call under plan risk 4, bounded by NOTE_TURN_WALL_CLOCK, not a
+    # correctness guard.
     "note_ingest": _profile(
         "note_ingest",
         "note_ingest.prompt",

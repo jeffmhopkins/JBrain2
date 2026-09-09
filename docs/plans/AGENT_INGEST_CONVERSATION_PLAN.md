@@ -425,6 +425,18 @@ too. Author a **new** adversarial scenario running a real model against a hostil
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
 
+*Two things W2's reviews left specifically for W3, both about flipping
+`reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens
+nothing retroactively**: `read_scopes` is also what is persisted as the session row's
+`domain_scopes`, so every W2-era note session keeps `[]` forever and a reply turn into an
+old thread would read nothing. Decide backfill-or-accept deliberately rather than
+discovering it. Second, **`POST /sessions/{id}/scope` is ungated on persona**. The
+engine-only split closes session *creation*, but `rescope_session` will happily rewrite an
+engine-opened note conversation's scopes — so the moment the flag flips, the owner-facing
+route can widen the graph-write persona past `(note_domain, 'general')` on a session the
+owner never started. Inert today only because a False profile's stored scopes are never
+read.
+
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no
 domain-floor backstop and `address`/`geo` are deliberately outside the floor, so it is
