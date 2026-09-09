@@ -941,3 +941,51 @@ async def test_an_owner_with_no_standing_instructions_pays_nothing(
     note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
     await _runner(maker, owner, turn).note_converse({"note_id": note_id})
     assert turn.profiles[0].prompt == agent_for(NOTE_CONVERSE_AGENT).prompt
+
+
+async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The W5a gate, pinned: `settled` is the CONVERSATION's state, never the note's.
+
+    The conversation's write path is `commit_facts` only (`agent/graphwritetools.py`)
+    and calls `settle_note` nowhere, so a finished pass leaves the note
+    `pending_integration` and writes no `note_analysis` row. `integrate_note` is
+    therefore still the sole producer of both, and of everything else `settle_note`
+    owns — the mention reconcile, the declared-alias sweep, the retraction of facts a
+    re-extraction dropped and the chain repair behind it, the stale-ambiguity and
+    truncation cards, the entity reprojection, the corroboration promotion.
+
+    Constraint 6 is why it is not merely unwired: `ConversationWrites.facts` is filled
+    by the unattended pass and EMPTY for the owner's reply turn (an ordinary /chat turn
+    that reaches `NoteConversationRepo` nowhere), so wiring
+    `settle_note(touched=writes().facts)` today would retract every unpinned fact the
+    owner's own reply just added. The plan's precondition — move the recorder into the
+    tool dispatch, or scope the sweep to the unattended pass — is unlanded.
+
+    So this asserts an ABSENCE on purpose. Retiring `integrate_note` while it holds
+    strands the corpus at `pending_integration`, which `backfill_pending_integration`
+    and the workflow reconciler both key on, with no whole-note sweep left at all.
+    """
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+
+    rows = await _conversation(maker, owner, note_id)
+    assert [r.state for r in rows] == ["settled"]
+
+    async with scoped_session(maker, owner) as s:
+        state = (
+            await s.execute(
+                text("SELECT integration_state FROM app.notes WHERE id = CAST(:n AS uuid)"),
+                {"n": note_id},
+            )
+        ).scalar_one()
+        analyzed = (
+            await s.execute(
+                text("SELECT count(*) FROM app.note_analysis WHERE note_id = CAST(:n AS uuid)"),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert state == "pending_integration"
+    assert analyzed == 0

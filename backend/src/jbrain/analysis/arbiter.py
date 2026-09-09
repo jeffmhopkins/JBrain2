@@ -18,8 +18,11 @@ What the plan encodes:
   active vs pending_review per kind (N11).
 - A mention the agent left ambiguous, or a cross-subject attribution, forces its
   facts to review regardless of weight (N3 — never a silent wrong/leaky link).
-- Merges and distinct-from proposals always route to review (N3 — the agent
-  never folds identity).
+- The agent never folds identity (N3). It carries `merge_proposals` /
+  `distinct_proposals` on the INTENT, where `validate_intent` reads them; the
+  plan holds no copy, because nothing downstream of it ever filed a card from
+  one. Staging a fold is the note conversation's `merge_entities` (plan
+  constraint 12), and that verb only ever stages.
 """
 
 from __future__ import annotations
@@ -37,7 +40,6 @@ from jbrain.analysis.extraction import (
     domain_floor,
 )
 from jbrain.analysis.intent import (
-    EntityPairProposal,
     EntityResolution,
     IntegrationIntent,
     IntentFact,
@@ -79,9 +81,6 @@ class ArbiterPlan:
     rejected: bool  # a fatal structural violation held the whole intent
     fatal_violations: tuple[IntentViolation, ...]
     facts: tuple[PlannedFact, ...]
-    # Identity proposals that always route to review (never auto-enacted).
-    merge_proposals: tuple[EntityPairProposal, ...]
-    distinct_proposals: tuple[EntityPairProposal, ...]
 
     @property
     def to_commit(self) -> tuple[PlannedFact, ...]:
@@ -118,8 +117,6 @@ def plan_intent(
             rejected=True,
             fatal_violations=tuple(v for v in violations if v.severity == "fatal"),
             facts=(),
-            merge_proposals=(),
-            distinct_proposals=(),
         )
 
     # Mentions the agent could not pin to a single, same-subject identity force
@@ -185,8 +182,6 @@ def plan_intent(
         rejected=False,
         fatal_violations=(),
         facts=tuple(planned),
-        merge_proposals=tuple(intent.merge_proposals),
-        distinct_proposals=tuple(intent.distinct_proposals),
     )
 
 
@@ -717,7 +712,6 @@ def plan_to_extraction(
     *,
     title: str = "",
     tags: list[str] | None = None,
-    commit_only: bool = False,
     dropped_facts: int = 0,
 ) -> Extraction:
     """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
@@ -727,14 +721,6 @@ def plan_to_extraction(
     intent doesn't carry them). A1b-ii threads the agent's resolutions in as a
     name→entity override so `_resolve_entities` honors them.
 
-    `commit_only` writes only active-eligible facts (`plan.to_commit`) — the
-    A1b-ii-1 safety: a review-held fact (cross-subject, low weight) has no
-    commit path that respects its pending_review disposition yet, and some
-    carry high weight `decide()` would otherwise commit, so they are excluded
-    until A1b-ii-2 writes them as pending_review + a low_confidence_inference
-    card. Mentions still cover every resolution (an entity may be mentioned
-    without a committed fact).
-
     `dropped_facts` carries the per-note cap's tail-drop count from the upstream
     extract step forward onto the rebuilt Extraction. The intent/plan only ever
     see the already-capped fact list, so this count would otherwise reset to 0
@@ -742,7 +728,6 @@ def plan_to_extraction(
     clipped long note (W0)."""
     if plan.rejected:
         raise ValueError("cannot build an extraction from a rejected plan")
-    source = plan.to_commit if commit_only else plan.facts
     # kind="Thing" for an existing resolution is harmless under Option 1: the
     # resolution-override (A1b-ii) supplies the entity directly, so kind_hint only
     # matters on the resolver fallback path, which an in-override ref never hits.
@@ -756,7 +741,7 @@ def plan_to_extraction(
     ]
     facts = [
         _to_extracted(pf.fact, pf.weight, correction=pf.correction, fhir_status=pf.fhir_status)
-        for pf in source
+        for pf in plan.facts
     ]
     return Extraction(
         title=title,

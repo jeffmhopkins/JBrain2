@@ -1,6 +1,6 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️ (W5a blocked — see W5)
 >
 > W4's two halves have both landed and are merged. INTAKE (D10): the third tool set, and
 > the finding that the port itself had already happened by accident in W2. EMR (D9): the
@@ -1256,6 +1256,50 @@ model write is unsupersedable (`correct_fact` at an empty address PINS, and a pi
 head holds every later draw). So the EMR lookup now fails closed too: no conversation row,
 no note, a soft-deleted note or any exception all narrow, for each predicate
 independently.
+
+*W5a attempted, and the gate is NOT met — the wave is blocked, not skipped.* The
+six-gap half of the gate holds and was honoured: every one of the 23 `xfail` strings
+and the README's eight-row table were read against the code, and nothing on the "may
+not delete" list was touched. What blocks the wave is the OTHER half, D13's per-PR
+rule, and it fails on two independent counts the plan's own line numbers hid:
+
+- **`pipeline.py:305-478` is `integrate_note` exactly, and it is still the sole
+  producer of the whole-note settle.** The conversation's write path is `commit_facts`
+  only (`agent/graphwritetools.py`) and calls `settle_note` **nowhere**, so nothing but
+  `integrate_note` runs the mention reconcile, the declared-alias sweep, the retraction
+  of facts a re-extraction dropped and the chain repair behind it, the stale-ambiguity
+  and truncation cards, the entity reprojection, the corroboration promotion, or the
+  `note_analysis` stamp that `api/notes.py`'s `analyzed` flag and `/analysis` read —
+  nor the `notes.integration_state = 'integrated'` flip that
+  `queue.backfill_pending_integration`, the workflow reconciler and `rebuild.py` all
+  key on. `emr/ownership.py` already states the first half of this ("the CONVERSATION
+  adds no sweep of its own today"); what it does not say is that this makes the
+  deletion a producer removal with no replacement. Wiring the sweep is blocked on the
+  precondition W4 was briefed to land and did not: `ConversationWrites.facts` is filled
+  by the unattended pass and **empty for the owner's reply turn**, so
+  `settle_note(touched=writes().facts)` today would retract every unpinned fact the
+  owner's own reply just added (`models/note_conversation.py`). Pinned by
+  `test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`.
+- **`arbiter.py` cannot go at all, and that is W4's own doing.** Its EMR half routes
+  the deterministic importer through `arbiter.plan_intent`
+  (`ingest/emr/integrate.py`), and `commit_intent` — the seam that importer and the
+  eval runner write through — itself calls `plan_to_extraction` and `compute_signals`.
+  `ArbiterPlan` / `PlannedFact` / `plan_intent` / `plan_to_extraction` /
+  `compute_signals` therefore have a live non-model producer. Only the three helpers
+  `integrate_note` alone calls — `recover_dropped_fields`, `derive_kinship_gender`,
+  `dedup_intent_facts` — are W5a's to take, and only after the first bullet clears.
+
+So W5a's real size is not ~940 lines; it is three helpers plus `integrate_note`, and
+it is gated on the settle wiring, which is a *replacement*, not a deletion. Sequence
+it as W4c (move the ledger recorder into tool dispatch, wire the scoped sweep, decide
+the `integrate_note` / `emr_parse` race the third writer would make three-way) and
+only then W5a.
+
+What did land under W5a: two genuinely dead pieces inside `arbiter.py`, both
+unreachable regardless of the gate — `plan_to_extraction`'s `commit_only` arm (A1b-ii-1's
+safety, superseded by A1b-ii-2's index routing, no caller since) and `ArbiterPlan`'s
+write-only `merge_proposals` / `distinct_proposals`, which nothing read, so the module
+docstring's "merges and distinct-from proposals always route to review" was false.
 
 **W5 — Teardown, decomposed.** W5a: the old chain (`pipeline.py:305-478` + `arbiter.py`,
 ~940 LOC), gated on W3's runner re-point **and on the six-gap decision above, which is the

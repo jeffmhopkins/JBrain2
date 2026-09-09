@@ -205,8 +205,43 @@ survivor in its scenarios' `xfail` strings; collected here:
 - **Gap 4 (`value_json`)** — `facts.value_json`, `_quantity_value`'s unit split,
   and `supersession.values_equal`'s cross-unit comparison: the EMR importer and
   the projections write and read structured values through the non-model path.
-- **Gap 8 (arbiter)** — nothing. This one is a genuine loss, recorded in
-  `rel_enumerated_children_fan_out`, and W5 deleting `arbiter.py` is the plan.
+- **Gap 8 (arbiter)** — nothing *the harness covers*. The derivations are a genuine
+  loss, recorded in `rel_enumerated_children_fan_out`. But "W5 deleting `arbiter.py`
+  is the plan" is now **false as written**, and the reason is outside this corpus:
+  W4's EMR half routes the deterministic importer through `arbiter.plan_intent`
+  (`ingest/emr/integrate.py`), and `AnalysisPipeline.commit_intent` — the seam both
+  that importer and the eval runner write through — calls `plan_to_extraction` and
+  `compute_signals` itself. `ArbiterPlan` / `PlannedFact` / `plan_intent` /
+  `plan_to_extraction` / `compute_signals` therefore have a live non-model producer.
+  What W5a may take is the three helpers only `integrate_note` calls
+  (`recover_dropped_fields`, `derive_kinship_gender`, `dedup_intent_facts`) — and only
+  once `integrate_note` itself can go, which is its own gate below.
+
+### The gate this corpus does NOT close
+
+The six-gap decision is half of W5a's gate; the other half is D13's per-PR rule, *no
+PR removes a producer before its replacement is merged and green*. That half is **not
+met**, and no scenario here can show it, because the harness drives the write tools
+directly and then calls `settle_note` itself.
+
+Production does not. The note conversation's write path is `commit_facts` only
+(`agent/graphwritetools.py`) and calls `settle_note` **nowhere**, so `integrate_note`
+remains the sole producer of everything the whole-note settle owns — the mention
+reconcile, the declared-alias sweep, the retraction of facts a re-extraction dropped
+and the chain repair behind it, the stale-ambiguity and truncation cards, the entity
+reprojection, the corroboration promotion, the `note_analysis` stamp — plus the
+`notes.integration_state = 'integrated'` flip that `queue.backfill_pending_integration`
+and the workflow reconciler key on.
+
+Wiring it is blocked on a precondition the plan states and W4 did not land:
+`ConversationWrites.facts` is filled by the unattended pass and **empty for the owner's
+reply turn**, so `settle_note(touched=writes().facts)` today would retract every
+unpinned fact the owner's own reply just added (`models/note_conversation.py`). The
+recorder has to move into the tool dispatch, or the sweep be scoped to the unattended
+pass, first.
+
+`tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
+pins the absence, so this is a red test rather than a rediscovery.
 
 ## Known gaps (current xfail guards)
 

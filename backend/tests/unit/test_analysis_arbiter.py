@@ -133,15 +133,22 @@ def test_missing_signals_commit_under_lever_a():
     assert len(plan.to_commit) == 1 and plan.to_review == ()
 
 
-def test_merge_and_distinct_proposals_carried_for_review():
-    plan = plan_intent(
-        _intent(
-            merge_proposals=[EntityPairProposal("e1", "e2")],
-            distinct_proposals=[EntityPairProposal("e3", "e4")],
-        )
+def test_identity_proposals_are_inert_at_the_arbiter():
+    # N3, stated as what the code actually does: the plan carries NO copy of the
+    # intent's identity proposals, because no consumer ever filed a card from one.
+    # `validate_intent` is where they are read (test_analysis_intent); a fold is
+    # STAGED by the note conversation's `merge_entities` (plan constraint 12), never
+    # here. So a proposal-bearing intent plans exactly like one without.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact()],
+        merge_proposals=[EntityPairProposal("e1", "e2")],
+        distinct_proposals=[EntityPairProposal("e3", "e4")],
     )
-    assert len(plan.merge_proposals) == 1
-    assert len(plan.distinct_proposals) == 1
+    plan = plan_intent(intent)
+    assert not plan.rejected
+    assert len(plan.to_commit) == 1 and plan.to_review == ()
+    assert not hasattr(plan, "merge_proposals")
 
 
 def test_inferred_sensitive_fact_holds_for_review_i5():
@@ -330,16 +337,17 @@ def test_plan_to_extraction_dropped_facts_defaults_to_zero():
     assert plan_to_extraction(intent, plan).dropped_facts == 0
 
 
-def test_plan_to_extraction_commit_only_excludes_review_facts():
-    # commit_only drops review-held facts (cross-subject here) but keeps every
-    # mention — the A1b-ii-1 safety so a high-weight review fact can't commit.
+def test_plan_to_extraction_carries_review_held_facts_too():
+    # The A1b-ii-1 `commit_only` escape hatch is gone: a review-held fact rides
+    # the extraction so `commit_intent` can write it as an inert pending_review
+    # row (A1b-ii-2), keyed by the index this 1:1 mapping preserves.
     intent = _intent(
         entity_resolutions=[_res("m1"), _res("m2", cross_subject=True)],
         facts=[_fact(entity_ref="m1"), _fact(entity_ref="m2")],
     )
     plan = plan_intent(intent, signals={0: _surface_sig(), 1: _surface_sig()})
-    ex = plan_to_extraction(intent, plan, commit_only=True)
-    assert [f.entity_ref for f in ex.facts] == ["m1"]
+    ex = plan_to_extraction(intent, plan)
+    assert [f.entity_ref for f in ex.facts] == ["m1", "m2"]
     assert len(ex.mentions) == 2
 
 
