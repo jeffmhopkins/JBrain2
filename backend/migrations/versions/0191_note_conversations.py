@@ -27,7 +27,11 @@ four states above do that already: `settled` and `failed` both release the note.
 
 `note_body_sha` is the body the conversation was started against. D6 appends
 clarification blocks to a note and that re-ingests it, so a resumed conversation must be
-able to tell the note moved under it without diffing prose.
+able to tell the note moved under it without diffing prose. NOTHING READS IT YET: the
+comparison lands in W3 with the resume path, and until it does the column is stored
+evidence with no live mechanism behind it. That is also the honest correction to the
+`stale` argument above — a comparison cannot rot, but one nobody performs answers
+nothing either, so W3 owes the reader, not merely the column.
 
 **Live = `running` or `waiting_on_owner`**, and `note_conversations_one_live` makes at
 most one of those exist per note (the 0188 partial-unique idiom, keyed on `note_id`
@@ -39,28 +43,49 @@ and holding a note hostage to a thread nobody can revive is unfixable on a box w
 terminal (CLAUDE.md #10).
 
 RLS: owner-only, `app.is_owner()`, ENABLE and FORCE — the `agent_session_plans` /
-`graph_rebuild_runs` posture. Deliberately NO `domain_code` on either table:
+`graph_rebuild_runs` posture, with NO domain gate on either table.
 
-- The notes tab must list every thread waiting on the owner whatever narrowing the
-  session rendering it happens to carry. A domain-gated row would silently drop threads
-  from the inbox and the owner would never learn they existed. A narrowed owner still
-  sees the row; what it cannot read is the NOTE, which keeps its own policy — so the
-  thread appears and its title does not, which is the honest split.
-- On the ledger the same column would be wrong in both directions. Stamped from the
-  note's domain it is too loose, because `args` can carry the quote for a fact that
-  ratcheted above the note (constraints 1 and 2). Stamped from the ratcheted maximum it
-  hides the row from the conversation that wrote it — a note conversation runs
-  owner-scoped to `(note_domain, 'general')`. And `has_all_domain_scopes('{}')` is true
-  for every session, so the column's own default would fail open on exactly the calls
-  that wrote nothing. A firewall whose key the writer picks is not a firewall.
+The counter-precedent is `app.agent_episodes` (0017:110-117), and it is the closer one:
+agent-written, domain-tagged, content-bearing, and gated on
+`app.is_owner() AND app.has_all_domain_scopes(domain_scopes)` over a `NOT NULL` column
+with no default. The answer is not that a domain gate would fail open — that would only
+be true of a `DEFAULT '{}'` this migration would have inflicted on itself, and it does
+not: `domains` is `NOT NULL` with NO DEFAULT, so a writer states where the write landed
+even when the answer is "nowhere". The answer is that gating the LEDGER on
+`has_all_domain_scopes(domains)` breaks D3 for exactly the writes that matter most. A
+fact on a `general` note that the deterministic domain floor ratchets to `health`
+produces a row stamped `{health}`; the conversation that wrote it runs owner-scoped to
+`(note_domain, 'general')` under constraint 2, so it could not read back its own write to
+render the chip. A chip that goes blank precisely on the sensitive writes is worse than
+no chip at all.
+
+Owner-only is defensible here rather than merely convenient, on two counts. First, it
+adds no exposure for the note it is about: `app.agent_turns` already holds that same
+note's BODY in this same session, owner-only and with no domain gate — the ledger's
+`args` are a capped echo of text the transcript beside it keeps in full. Second, every
+read path is scoped to one session (`tool_calls`, `writes`), so what a narrowed
+conversation can reach is its own thread, not the corpus of them. That scoping is
+load-bearing for this whole argument, and `test_note_conversations_pg.py` proves it
+rather than asserting it.
+
+The conversation row's own lack of a domain is a separate, easier call: the notes tab
+must list every thread waiting on the owner whatever narrowing the session rendering it
+carries, or a domain-gated row silently drops a question from the inbox and the owner
+never learns it existed. A narrowed owner still sees the row; what it cannot read is the
+NOTE, which keeps its own policy — the thread appears and its title does not, which is
+the honest split.
 
 The ledger records **what a write claimed**. It is not itself the firewall: the firewall
 is the RLS on `app.facts` / `app.entities` / `app.chunks`, the tables actually written.
 `domains` is a plain `text[]` for that reason — and it is filled by the handler from what
 the write path reported, never from a model argument. It cannot FK `app.domains(code)`
-(Postgres has no per-element array FK), and a validating trigger would abort the ledger
-write for a call that already landed, which is the wrong trade: a lost audit row is worse
-than an unrecognised code string.
+(Postgres has no per-element array FK) and it gets no validating trigger, because a
+trigger would abort the ledger write for a call that already landed — the same trade the
+size cap makes. The codes are instead checked at the repo boundary
+(`models/note_conversation.py:validate_domains`) against the four owner-knowledge
+domains, so an unrecognised code is REFUSED rather than stored: a docstring contract is
+not a contract, and a ledger that records a domain the firewall does not have is a
+ledger that lies about where a write went.
 
 `args jsonb` is stored, never executed. Under risk 1 of the plan a note body may be
 third-party text and the model copies note text into `quote`/`statement`, so anything
@@ -160,7 +185,10 @@ def upgrade() -> None:
             -- leaves a dangling id, which is correct for an audit of what happened.
             entity_ids uuid[] NOT NULL DEFAULT '{}',
             fact_ids uuid[] NOT NULL DEFAULT '{}',
-            domains text[] NOT NULL DEFAULT '{}',
+            -- No DEFAULT: a writer states where the write landed, even when the
+            -- answer is the empty array. The default is what would have made a
+            -- domain gate here fail open, and nothing needs one.
+            domains text[] NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now()
         )
         """

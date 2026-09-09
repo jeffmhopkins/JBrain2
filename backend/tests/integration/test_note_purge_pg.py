@@ -249,8 +249,8 @@ async def seed_conversation(maker: async_sessionmaker[AsyncSession], note_id: st
         )
         await s.execute(
             text(
-                "INSERT INTO app.note_conversation_tool_calls (session_id, name, ok)"
-                " VALUES (:sid, 'assert_fact', true)"
+                "INSERT INTO app.note_conversation_tool_calls (session_id, name, ok, domains)"
+                " VALUES (:sid, 'assert_fact', true, ARRAY['general'])"
             ),
             {"sid": sid},
         )
@@ -579,4 +579,73 @@ async def test_backfill_sweeps_preexisting_orphans(
     # Provisional entity with no surviving references goes too.
     assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=entity) == 0
     # Idempotent: the swept note no longer matches any candidate predicate.
+    assert await backfill_deleted_note_artifacts(maker) == 0
+
+
+async def test_backfill_sees_a_note_stranded_with_only_a_conversation(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The privacy backstop's candidate predicate enumerated the artifacts it knew about,
+    and the two `purge_note_artifacts` deletes WHOLE — the ingest conversation and the
+    agent episode — were not among them. A note whose only surviving artifact is a thread
+    full of its own body therefore matched nothing and was never swept, while the
+    docstring claimed idempotence on the grounds that a purged note matches no predicate.
+    """
+    from jbrain.analysis.purge import backfill_deleted_note_artifacts
+
+    note = await seed_note(maker)
+    sid = await seed_conversation(maker, note)
+    # A pre-cascade deletion: the note row soft-deletes and nothing else runs.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": note}
+        )
+
+    assert await backfill_deleted_note_artifacts(maker) == 1
+
+    assert await count(maker, "SELECT count(*) FROM app.agent_sessions WHERE id = :id", id=sid) == 0
+    assert (
+        await count(
+            maker, "SELECT count(*) FROM app.note_conversations WHERE session_id = :id", id=sid
+        )
+        == 0
+    )
+    assert await backfill_deleted_note_artifacts(maker) == 0
+
+
+async def test_backfill_sees_a_note_stranded_with_only_an_episode(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The identical pre-existing hole, one line away in the same predicate: an episode
+    is a memory row holding text derived from the note, and `_purge_episodes` deletes it
+    whole — but nothing led the sweep to the note that owns it."""
+    from jbrain.analysis.purge import backfill_deleted_note_artifacts
+
+    note = await seed_note(maker)
+    episode = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episodes (id, body, domain_scopes)"
+                " VALUES (:id, 'she saw Dr Patel', ARRAY['general'])"
+            ),
+            {"id": episode},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episode_refs (id, episode_id, note_id)"
+                " VALUES (gen_random_uuid(), :eid, :nid)"
+            ),
+            {"eid": episode, "nid": note},
+        )
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": note}
+        )
+
+    assert await backfill_deleted_note_artifacts(maker) == 1
+
+    assert (
+        await count(maker, "SELECT count(*) FROM app.agent_episodes WHERE id = :id", id=episode)
+        == 0
+    )
     assert await backfill_deleted_note_artifacts(maker) == 0

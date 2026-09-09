@@ -65,6 +65,14 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 # to sit beside this, is now `jbrain.sdr.tuner` rather than a third copy of itself.
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
+#: The widest and narrowest filter the sidecar will accept, in Hz. Only a BOUND, not the
+#: ladder: the ladder is per-mode and lives in `deploy/sdr/demod.py`, and duplicating it
+#: here would be a second place to forget a rung. This exists so an absurd value is
+#: refused as a 422 by the schema rather than travelling to the sidecar to come back a
+#: 400 — the sidecar remains the authority on which exact widths are real.
+MIN_BANDWIDTH_HZ = 1_000
+MAX_BANDWIDTH_HZ = 200_000
+
 # The lease purpose a logging session holds, and where APRS lives in North America
 # when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
 # command frequency open).
@@ -294,6 +302,7 @@ async def listen(
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
     serial: SerialQuery = None,
+    bandwidth_hz: Annotated[int | None, Query(ge=MIN_BANDWIDTH_HZ, le=MAX_BANDWIDTH_HZ)] = None,
 ) -> dict[str, Any]:
     """Take a radio and start listening. 409 when it is already held.
 
@@ -312,6 +321,9 @@ async def listen(
             "mode": mode,
             "gain": gain,
             "serial": chosen.serial,
+            # Omitted rather than sent as null, so the sidecar's own default applies and
+            # this route need not know what it is.
+            **({"bandwidth_hz": bandwidth_hz} if bandwidth_hz is not None else {}),
         },
     )
 
@@ -872,14 +884,21 @@ async def tune(
     frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str | None, Query(pattern=f"^({'|'.join(MODES)})$")] = None,
     session_id: Annotated[str | None, Query(max_length=32)] = None,
+    bandwidth_hz: Annotated[int | None, Query(ge=MIN_BANDWIDTH_HZ, le=MAX_BANDWIDTH_HZ)] = None,
 ) -> dict[str, Any]:
-    """Retune the live session. The session id survives, so the icon does not blink."""
+    """Retune the live session. The session id survives, so the icon does not blink.
+
+    A bandwidth with no frequency change is how the control sends a new filter width:
+    the session keeps its width across a retune, so passing the current frequency back
+    with a new width changes only the filter."""
     _tunable(frequency_mhz)
     body: dict[str, Any] = {"frequency_hz": int(round(frequency_mhz * 1_000_000))}
     if mode is not None:
         body["mode"] = mode
     if session_id is not None:
         body["session_id"] = session_id
+    if bandwidth_hz is not None:
+        body["bandwidth_hz"] = bandwidth_hz
     return await _post(settings, "/listen/tune", body)
 
 

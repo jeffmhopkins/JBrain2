@@ -674,3 +674,102 @@ describe("counting in channels", () => {
     await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
   });
 });
+
+describe("the bandwidth control", () => {
+  // A session on a box that has the control: AM, tuned to the owner's 5 MHz case.
+  const NARROW: SdrListening = {
+    ...LISTENING,
+    frequency_hz: 5_000_000,
+    mode: "am",
+    bandwidth_hz: 8000,
+    bandwidths_hz: [8000, 6000, 4000, 3000],
+  };
+
+  it("shows the width under the mode it belongs to, and only there", () => {
+    // Mode and bandwidth are one setting to the owner — "AM, 8 kHz wide" — which is why
+    // shape D puts them in one button instead of adding a second row.
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    const row = screen.getByRole("group", { name: "Demodulation mode and bandwidth" });
+    const buttons = [...row.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["WBFM", "FM", "AM8k", "USB", "LSB"]);
+  });
+
+  it("opens the ladder on a second tap of the mode already selected", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^AM/ }));
+    // Every rung the SESSION offered, said in full where there is room for it.
+    const ladder = screen.getByRole("group", { name: /bandwidth$/ });
+    expect([...ladder.querySelectorAll(".sdr-stepopt")].map((b) => b.textContent)).toEqual([
+      "8 kHz",
+      "6 kHz",
+      "4 kHz",
+      "3 kHz",
+    ]);
+    // ...and tapping the mode did NOT retune, which is the whole point of the second tap.
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("sends a new width with no mode, so the sidecar does not reset it", async () => {
+    // The session keeps its width across a retune but resets it when the mode changes,
+    // so naming a mode here would silently undo the change being made.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^AM/ }));
+    const ladder = screen.getByRole("group", { name: /bandwidth$/ });
+    fireEvent.click([...ladder.querySelectorAll(".sdr-stepopt")][1] as HTMLElement);
+
+    expect(tune).toHaveBeenCalledWith(5, undefined, "abc123", 6000);
+  });
+
+  it("switches mode without carrying the width across", async () => {
+    // The ladders differ per mode, so a width carried into a mode with no such rung
+    // would refuse an ordinary mode press — which is not where the owner asked for
+    // anything about bandwidth.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "USB" }));
+
+    expect(tune).toHaveBeenCalledWith(5, "usb", "abc123");
+  });
+
+  it("draws no control where there is nothing to choose", async () => {
+    // Wide FM has one rung: narrowing a 180 kHz station clips the deviation, which
+    // distorts rather than cleans.
+    const fixed: SdrListening = {
+      ...LISTENING,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      bandwidths_hz: [180_000],
+    };
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(fixed);
+    render(<SdrTunerControls listening={fixed} onReleased={() => {}} />);
+
+    // The width is still SHOWN — it is a true fact about the radio — but the fieldset
+    // is the plain one and a second tap opens nothing.
+    expect(screen.getByRole("group", { name: "Demodulation mode" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^WBFM/ }).textContent).toBe("WBFM180k");
+    fireEvent.click(screen.getByRole("button", { name: /^WBFM/ }));
+    expect(document.querySelectorAll(".sdr-stepopt").length).toBe(0);
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("says nothing at all on a sidecar older than the control", () => {
+    // Neither field sent: the control must be absent rather than defaulted, because a
+    // width invented here would be one the box has no idea about.
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    const row = screen.getByRole("group", { name: "Demodulation mode" });
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "WBFM",
+      "FM",
+      "AM",
+      "USB",
+      "LSB",
+    ]);
+  });
+});

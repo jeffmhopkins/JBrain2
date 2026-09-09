@@ -514,23 +514,25 @@ git config --global --add safe.directory "$PWD/src"
 # diverge, but if it has (a stray commit/edit), ff-only refuses and aborts the update,
 # pinning the stack to stale source. fetch + hard reset to the tracked upstream
 # self-heals — discarding local src changes by design, since src is a pristine mirror.
-# `--prune` here is not hygiene, it is what keeps the box updatable at all. A
-# remote-tracking ref left behind by a deleted branch collides with any later branch
-# whose name needs that slot (`refs/remotes/origin/x` cannot exist beside
-# `refs/remotes/origin/x/y`), and a bare fetch then reports "some local refs could not
-# be updated" and EXITS NON-ZERO — aborting the update under `set -e` while the stack
-# still runs stale code. Pruning happens before refs are written, so it clears the
-# collision in the same pass. Observed 2026-09-09: a deploy died on a branch name from
-# an unrelated PR, and the fix git itself suggests (`git remote prune origin`) needs a
-# shell on a box whose owner has none — so the recovery has to live here.
-if ! git -C src fetch --prune origin; then
-    echo "[update] fetch still conflicted; rebuilding remote-tracking refs"
-    # Remote-tracking refs are wholly re-derivable from the remote, so dropping them is
-    # cheap and it is the only thing that cannot leave a directory/file collision behind.
-    git -C src for-each-ref --format='%(refname)' refs/remotes/origin |
-        while read -r ref; do git -C src update-ref -d "$ref"; done
-    git -C src fetch --prune origin
-fi
+# **Only `main`, and with `--prune`.** This fetched every branch and pruned nothing, so
+# the box accumulated a remote-tracking ref for every branch this repo has ever had —
+# and when a new branch name collides with the SHAPE of a stale one, git cannot create
+# the ref and the whole fetch exits non-zero. MEASURED: with a stale
+# `refs/remotes/origin/wave1/old-task` left behind, a `wave1` branch appearing upstream
+# gives "cannot lock ref 'refs/remotes/origin/wave1' ... cannot create", exit 1 — and
+# under `set -eu` that aborts the update BEFORE the reset below, so the stack stays on
+# stale source even though `origin/main` fetched fine in the same command. Nothing is
+# corrupted; the new commits are already in the object store, unreferenced by the
+# worktree.
+#
+# The owner has no terminal to run the `git remote prune origin` git suggests
+# (CLAUDE.md #10), so it happens here, and only `main` is fetched at all: the next line
+# resets to it and nothing else is ever read, so no other branch can collide again. The
+# prune is belt to that braces — it clears the refs already stranded on a box that has
+# hit this — and it is best-effort because a failure to tidy must never become a failure
+# to update.
+git -C src remote prune origin || true
+git -C src fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
 git -C src reset --hard "@{u}"
 
 # Refresh host helper scripts from the updated tree (mv keeps any running

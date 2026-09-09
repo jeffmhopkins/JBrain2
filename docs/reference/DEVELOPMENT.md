@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-09-09
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -151,18 +151,27 @@ Two consequences that have each cost a session real time:
 1. **`backend/` is 100 columns and every other Python package is 88.** Formatting a
    supervisor file with the backend's config, or vice versa, reformats lines CI will
    then reject — and the diff buries the actual change.
-2. **`deploy/sdr/` is linted and typechecked by NOTHING.** It is *tested* by
-   `supervisor`'s pytest, which loads `deploy/sdr/*.py` by path (that is why
-   `deploy/sdr/**` is in the `changes` filter for the supervisor job), but no job runs
-   ruff or pyright over it, and `supervisor`'s pyright `include` is `["src", "tests"]`.
-   So: run ruff there only with an explicit `--line-length` matching the file's existing
-   style, or not at all. Running it bare applies ruff's 88-column default to files
-   hand-kept near 96 and produces a large unrelated reformat.
+2. **`deploy/sdr/` is LINTED by nothing but TYPECHECKED by `supervisor`'s pyright.**
+   It is *tested* by `supervisor`'s pytest, which loads `deploy/sdr/*.py` by path (that
+   is why `deploy/sdr/**` is in the `changes` filter for the supervisor job). No job
+   runs ruff over it — so run ruff there only with an explicit `--line-length` matching
+   the file's existing style, or not at all; running it bare applies ruff's 88-column
+   default to files hand-kept near 96 and produces a large unrelated reformat.
 
-**A change to `deploy/sdr/` is verified by `supervisor`'s suite**, and typechecking it
-needs `pyright` pointed at it explicitly — its modules import each other by bare name
-(they share one WORKDIR in the image), so a bare run reports unresolved imports rather
-than real errors.
+   But `supervisor/pyproject.toml` puts `../deploy/sdr` in pyright's `include`, together
+   with the `extraPaths` that make the sidecar's bare-name imports resolve. **A sidecar
+   edit that no local check covers can still fail CI on types**, and the only way to see
+   it first is `(cd supervisor && uv run pyright)`.
+
+   ⟲ This entry said pyright's `include` was `["src", "tests"]` and that the sidecar was
+   typechecked by nothing. It has not been true since that line was added, and believing
+   it cost a red CI run on PR #1372: an `int()` on a value that is `object` until
+   something narrows it, in a file the author had "verified" with ruff and pytest alone.
+
+**A change to `deploy/sdr/` is verified by `supervisor`'s WHOLE gate set** — `ruff check
+.`, `ruff format --check .`, `pyright`, `pytest` — not the subset that looks relevant.
+Run all four from `supervisor/`; the pyright config already knows how to read the
+sidecar's tree, so no extra pointing is needed.
 
 ### Shell discipline
 

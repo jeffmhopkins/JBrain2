@@ -49,6 +49,15 @@ export interface SdrListening {
    *  noise. Nothing renders it today; the name is what keeps it that way. */
   audio_peak: number;
   listeners: number;
+  /** How wide the demodulator's filter is, as a FULL channel width in Hz. Zero on a
+   *  session with no channel (a spectrum stare), and absent on a sidecar older than the
+   *  bandwidth control — both of which mean "draw no bandwidth control". */
+  bandwidth_hz?: number;
+  /** Every width THIS mode offers, widest first. Sent WITH the session rather than
+   *  hardcoded here, because the ladder is a property of the demodulator: a copy in the
+   *  PWA would go on offering widths a redeployed box had stopped accepting, and the
+   *  refusal would arrive as a 400 the owner cannot act on. */
+  bandwidths_hz?: number[];
 }
 
 export interface SdrState {

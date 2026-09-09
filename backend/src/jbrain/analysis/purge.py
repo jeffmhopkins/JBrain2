@@ -382,7 +382,7 @@ async def purge_note_artifacts(
     resolved review history, agent episodes and ingest conversations.
 
     `keep_pinned=True` selects the REBUILD posture (analysis/rebuild.py) — the same
-    destructive half with four deliberate exemptions, because a rebuild re-derives
+    destructive half with five deliberate exemptions, because a rebuild re-derives
     from notes that still exist rather than honoring a deletion promise:
 
     1. Facts a human verdict rests on survive (`rebuild_spare_fact_ids`): the pinned
@@ -494,7 +494,7 @@ async def _purge_clarifications(session: AsyncSession, note_id: uuid.UUID) -> No
     """Delete the note's clarification blocks (D6, migration 0193).
 
     This runs on the PRIVACY delete only — never under `keep_pinned=True`, see
-    exemption 4 above. It has to be an explicit statement rather than the table's
+    exemption 5 above. It has to be an explicit statement rather than the table's
     ON DELETE CASCADE for the same reason `_purge_episodes` does: deleting a note is a
     SOFT delete that keeps the `app.notes` row (invariant #11), so the cascade never
     fires on the one path that needs it.
@@ -533,6 +533,16 @@ async def _purge_conversations(session: AsyncSession, note_id: uuid.UUID) -> Non
     `note_conversations.note_id` FK's ON DELETE CASCADE never fires on a note delete
     (constraint 11 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md). Deleting the
     session cascades the side row, the tool-call ledger, the turns, and the runs (0021).
+
+    The blast radius is therefore a WHOLE session, and the invariant that keeps it
+    correct lives at the other end: `NoteConversationRepo.start` is opened on a session
+    created FOR the note. D1's "same agent, same loop, same memory" is about the agent,
+    not about reusing an `agent_sessions` row — attaching a conversation to a running
+    Full Brain chat would put that chat's entire history inside this DELETE. Stated
+    rather than guarded because the only structural guard available in W2 (refuse a
+    session that already has turns) would encode an ordering W3's loop has not chosen
+    yet, and a guard that fails closed on the legitimate path is unfixable on a box
+    with no terminal (CLAUDE.md #10).
     """
     await session.execute(
         delete(AgentSession).where(
@@ -730,6 +740,13 @@ async def backfill_deleted_note_artifacts(
                 SELECT 1 FROM app.review_items r
                 WHERE r.payload->>'note_id' = n.id::text
             )
+            -- The artifacts `purge_note_artifacts` deletes WHOLE. Without them a note
+            -- whose only surviving artifact is an episode, an ingest conversation or a
+            -- clarification block matches nothing and is never swept, so the idempotence
+            -- claim above ("a fully purged note matches no candidate predicate") would
+            -- be true only because the sweep cannot see what it left behind.
+            OR EXISTS (SELECT 1 FROM app.agent_episode_refs er WHERE er.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.note_conversations c WHERE c.note_id = n.id)
             OR EXISTS (SELECT 1 FROM app.note_clarifications c WHERE c.note_id = n.id)
         )
         """

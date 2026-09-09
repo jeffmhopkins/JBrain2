@@ -230,7 +230,7 @@ def test_a_channel_view_is_centred_on_the_station_not_on_the_radio() -> None:
     sink = capture.ChannelSink(
         chain,
         audio=lambda out: None,
-        view=lambda spectrum, passband: seen.append((spectrum, passband)),
+        view=lambda spectrum, passband, reach: seen.append((spectrum, passband, reach)),
         view_bins=512,
         want=RATE // 10,
     )
@@ -238,12 +238,15 @@ def test_a_channel_view_is_centred_on_the_station_not_on_the_radio() -> None:
     _run(held, [sink], frames=4)
 
     assert seen, "the channel sink drew nothing"
-    spectrum, passband = seen[0]
+    spectrum, passband, reach = seen[0]
     middle = spectrum.start_hz + spectrum.bins / 2 * spectrum.bin_hz
     assert middle == pytest.approx(station, abs=spectrum.bin_hz)
     # The PASSBAND as two edges, not a half-width doubled: on SSB those are not the same
     # thing, and this sink used to hand over the symmetric one (C14).
     assert passband == chain.passband_hz == (-8_000.0, 8_000.0)
+    # ...and the crop reach ALONGSIDE it rather than derived from it, so narrowing the
+    # filter shrinks the shaded box without zooming the picture in on it.
+    assert reach == chain.crop_reach_hz == 8_000.0
 
 
 def test_a_channel_sink_that_draws_nothing_still_makes_audio() -> None:
