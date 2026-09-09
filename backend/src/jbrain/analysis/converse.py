@@ -345,14 +345,16 @@ class NoteConverseRunner:
         """Persist the exchange, the ledger, and the meter seed.
 
         Ledger first: a call is recorded as it happened, before the assistant turn
-        exists, then bound to it (the `turn_attachments` idiom the repo's `bind_turn`
-        implements). W3 moves the recording INTO the tool dispatch, where `ok` and the
-        written ids come from the write path itself; the binding half is unchanged."""
+        exists, then bound to it BY ID. Binding whatever is unbound would let an earlier
+        turn that died mid-flight have its calls adopted by this one. W3 moves the
+        recording INTO the tool dispatch, where `ok` and the written ids come from the
+        write path itself; the binding half is unchanged."""
         rows = ledger_rows(executed.tools)
+        call_ids: list[uuid.UUID] = []
         if rows:
             async with scoped_session(self.maker, owner_ctx) as s:
                 for row in rows:
-                    await self.conversations.record_tool_call(
+                    call = await self.conversations.record_tool_call(
                         s,
                         session_id,
                         name=row.name,
@@ -362,6 +364,7 @@ class NoteConverseRunner:
                         entity_ids=row.entity_ids,
                         domains=row.domains,
                     )
+                    call_ids.append(call.id)
         await self.transcript.record_exchange(
             owner_ctx,
             session_id=session_id,
@@ -375,7 +378,7 @@ class NoteConverseRunner:
             turn_id = await self._latest_assistant_turn(owner_ctx, session_id)
             if turn_id is not None:
                 async with scoped_session(self.maker, owner_ctx) as s:
-                    await self.conversations.bind_turn(s, session_id, turn_id)
+                    await self.conversations.bind_turn(s, session_id, turn_id, call_ids=call_ids)
         if executed.context_window and executed.context_used:
             with contextlib.suppress(Exception):
                 await self.sessions.record_context(

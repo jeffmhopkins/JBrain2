@@ -147,6 +147,18 @@ async def _note(
     return note.id
 
 
+async def _session(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, note_id: str
+) -> str:
+    """An `agent_sessions` row opened FOR this note, the way the runner opens one — a
+    conversation's `session_id` must be dedicated to its note, since the note's purge
+    deletes that session whole."""
+    session = await AgentSessionRepo(maker).create(
+        owner, domain_scopes=[], title=f"note {note_id[:8]}", agent=NOTE_CONVERSE_AGENT
+    )
+    return session.id
+
+
 async def _turns(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext, session_id: str
 ) -> list[tuple[str, str]]:
@@ -254,16 +266,24 @@ async def test_turn_zero_is_framed_as_data_not_handed_over_bare(
 async def test_a_second_run_neither_opens_a_second_conversation_nor_raises(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """A note has ONE live conversation. Here the first is still live (`running`), so
-    the second run is a quiet skip — no second thread, no orphan session, no raise."""
-    note_id = await _note(maker, owner, "dinner with sam on friday")
-    runner = _runner(maker, owner, FakeTurn())
-    await runner.note_converse({"note_id": note_id})
+    """A note has ONE live conversation. Here the first is still live, so the second run
+    is a quiet skip — no second thread, no orphan session, no raise.
 
-    # Put the first thread back into a LIVE state, as a W3 `ask_owner` would.
-    first = (await _conversation(maker, owner, note_id))[0]
+    The live thread is opened directly rather than by running once and forcing the
+    settled thread back: `settled` and `failed` are terminal, and a retry opens a FRESH
+    conversation rather than reviving a finished one. Reviving here would have tested a
+    transition the repo refuses."""
+    note_id = await _note(maker, owner, "dinner with sam on friday")
+    first_sid = await _session(maker, owner, note_id)
     async with scoped_session(maker, owner) as s:
-        await NoteConversationRepo().set_state(s, first.sid, "waiting_on_owner")
+        await NoteConversationRepo().start(
+            s,
+            session_id=first_sid,
+            note_id=note_id,
+            body_sha="0" * 64,
+            state="waiting_on_owner",
+        )
+    first = (await _conversation(maker, owner, note_id))[0]
 
     second = FakeTurn()
     await _runner(maker, owner, second).note_converse({"note_id": note_id})
