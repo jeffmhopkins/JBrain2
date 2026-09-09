@@ -471,6 +471,44 @@ route can widen the graph-write persona past `(note_domain, 'general')` on a ses
 owner never started. Inert today only because a False profile's stored scopes are never
 read.
 
+*Landed (T2a): the two tools that write the graph.* `agent/graphwritetools.py` +
+`resolve_entity.tool` / `assert_fact.tool`, batched (≤12 / ≤8) on the measured shapes —
+the flat fallback is not held open, since it is equally well-formed and yields exactly
+one item per turn. Both write through W1's `commit_facts`: the resolver, the mention
+spine, `decide()`, the floor, the ratchet and the citation anchor are the shipped ones,
+so the tools add no second write path and `decide()` never becomes a verb. `quote` is
+required and CHECKED — an unattested quote still commits (Lever A) at the arbiter's own
+0.4 inferred-overwrite ceiling, so it can never silently rewrite a stated value. No
+`domain`/`inferred`/`supersedes`/`correction` field and no `enum` anywhere. Per-element
+SAVEPOINT. Handles (`e1`…) are per CONVERSATION, held in the writer; `assert_fact`
+accepts a handle or the exact surface that earned one and nothing else, so
+`resolve_entity` stays the only minting path. Budgets are engine-side per conversation
+(8 resolve / 10 assert calls) with the remainder appended to every result.
+
+Three things that answer questions the plan had left open:
+
+- **D18's "the agent chooses the domain" is the agent choosing the PREDICATE**, and
+  nothing else — there is no field, and the conversation is scoped so nothing can land
+  outside `(note_domain, 'general')` or below the note's own domain. What that leans on
+  is `domain_floor`, whose table is keyed on the camelCase spellings the `note.extract`
+  prompt teaches, while a tool-writing model emits `blood_pressure`. It now matches
+  separator- and case-insensitively with a dotted-base fallback, so a clinical fact
+  cannot land in `general` because of a separator. Both rules only ever add a floor.
+- **The `fact_ids` ledger is filled**, through a `facts` chip on the tool result
+  (`contracts.FactWriteRef` → `ToolOutput` → `ToolResultEvent` → the transcript step →
+  `ledger_rows`), so what is recorded is what the write path REPORTED, never what the
+  model asked for. The sibling wiring `settle_note` can now read `touched` from
+  `NoteConversationRepo.writes()`. **`mention_ids` still has no channel** — the ledger
+  has no column for them and migrations are not this task's — so a `settle_note` call
+  must NOT pass an empty `mention_ids` set: `_reconcile_mentions` would delete every
+  mention of the note (constraint 7's failure, exactly).
+- **The rescope gap is closed** in `AgentSessionRepo.set_scopes` (refused for
+  `ENGINE_ONLY_PERSONAS`, 409 at the route), so it holds for every caller rather than
+  one route. On the retroactive half: **accepted, not backfilled** — a W2-era thread
+  wrote no graph, and `converse.note_read_scopes` recomputes a turn's scopes FROM THE
+  NOTE rather than reading the stored row, so a backfill would only make a stale row
+  look authoritative.
+
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no
 domain-floor backstop and `address`/`geo` are deliberately outside the floor, so it is

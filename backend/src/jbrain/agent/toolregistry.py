@@ -42,6 +42,13 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # curator alongside `memory_read` puts two overlapping memory surfaces in one tool
 # union, the contradiction docs/research/agent-ingest/TOOL_SURFACE.md names as the one
 # gpt-oss handles worst. Both stay reachable only through an explicit allowlist.
+# `resolve_entity` / `assert_fact` are here for the same reason and a sharper one: they
+# are `mutate`-classed GRAPH WRITES bound to one note conversation
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 9). Without this line the
+# wildcard hands the note-ingestion persona's write verbs to the CURATOR on every
+# ordinary chat turn. Mandatory for every write tool this plan adds — and belt to the
+# braces of `readtools.OPTIONAL_NOTE_GRAPH_TOOLS`, which keeps the two sidecars out of
+# the chat registry altogether (they can only be bound to a note).
 NEVER_DEFAULT: frozenset[str] = frozenset(
     {
         "spawn_subagent",
@@ -51,6 +58,8 @@ NEVER_DEFAULT: frozenset[str] = frozenset(
         "deep_produce",
         "prefs_read",
         "prefs_write",
+        "resolve_entity",
+        "assert_fact",
     }
 )
 

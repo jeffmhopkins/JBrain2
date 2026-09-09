@@ -17,7 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.agent.agents import NON_OWNER_PERSONAS, STORABLE_OWNER_AGENTS
 from jbrain.agent.runlog import AgentRunLog
-from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionRepo, EngineSessionRescope, read_context
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -225,6 +225,32 @@ async def test_set_scopes_rescopes_and_is_owner_only(maker: async_sessionmaker) 
     assert (await repo.get(owner, info.id)).domain_scopes == ("general", "health")  # type: ignore[union-attr]
     await repo.set_scopes(owner, info.id, ["health"])
     assert (await repo.get(owner, info.id)).domain_scopes == ("health",)  # type: ignore[union-attr]
+
+
+async def test_an_engine_opened_note_conversation_cannot_be_rescoped(
+    maker: async_sessionmaker,
+) -> None:
+    """`POST /sessions/{id}/scope` is owner-authenticated and was ungated on persona. The
+    engine-only split closed session CREATION, but not this: the moment `note_ingest`
+    flipped to `reads_knowledge_base=True` (W3), an owner-facing request could widen a
+    graph-WRITE conversation the owner never started past the `(note_domain, 'general')`
+    scope its note implies (AGENT_INGEST_CONVERSATION_PLAN.md constraint 2).
+
+    Refused in the REPO rather than in the route, so it holds for every caller. It is not
+    a privilege check — the owner is the owner — it is that this session's scope is
+    derived from what it was opened to read, and is not a thing to set by hand."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="a note", agent="note_ingest")
+
+    with pytest.raises(EngineSessionRescope):
+        await repo.set_scopes(owner, info.id, ["general", "health", "finance"])
+    assert (await repo.get(owner, info.id)).domain_scopes == ("general",)  # type: ignore[union-attr]
+
+    # An ordinary chat is untouched by the gate.
+    chat = await repo.create(owner, domain_scopes=["general"], title="chat", agent="curator")
+    await repo.set_scopes(owner, chat.id, ["general", "health"])
+    assert (await repo.get(owner, chat.id)).domain_scopes == ("general", "health")  # type: ignore[union-attr]
 
 
 async def test_list_aggregates_turns_preview_and_staged(maker: async_sessionmaker) -> None:

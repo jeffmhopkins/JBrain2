@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import DEFAULT_AGENT, OWNER_AGENTS, is_owner_agent
-from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo
+from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, EngineSessionRescope
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
@@ -139,8 +139,17 @@ async def rescope_session(
     request: Request, principal: PrincipalDep, session_id: str, body: SessionRescope
 ) -> Response:
     """Adjust a chat's read scope after start — owner-only; RLS still enforces the
-    firewall on every query the session's tools run."""
-    await get_agent_sessions(request).set_scopes(ctx_for(principal), session_id, body.domain_scopes)
+    firewall on every query the session's tools run.
+
+    A session the ENGINE opened (a note conversation) is refused: its scope comes from
+    the note it reads, and it holds graph-write tools (409, not 404 — the session exists
+    and the owner may read it; only this verb does not apply to it)."""
+    try:
+        await get_agent_sessions(request).set_scopes(
+            ctx_for(principal), session_id, body.domain_scopes
+        )
+    except EngineSessionRescope as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return Response(status_code=204)
 
 

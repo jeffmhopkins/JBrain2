@@ -23,6 +23,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     EntityRef,
+    FactWriteRef,
     GeneralKnowledgeEvent,
     JobEnqueuedEvent,
     NoteSource,
@@ -369,6 +370,7 @@ class ToolOutput(str):
     view: ViewPayload | None
     job: JobRef | None
     deferred: DeferredRef | None
+    facts: tuple[FactWriteRef, ...]
 
     def __new__(
         cls,
@@ -380,6 +382,7 @@ class ToolOutput(str):
         job: JobRef | None = None,
         web_sources: tuple[WebSource, ...] = (),
         deferred: DeferredRef | None = None,
+        facts: tuple[FactWriteRef, ...] = (),
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -389,6 +392,9 @@ class ToolOutput(str):
         out.view = view
         out.job = job
         out.deferred = deferred
+        # The rows a WRITE tool actually wrote. Every other tool leaves it empty; a
+        # note conversation's ledger reads it back as `fact_ids` (constraint 6).
+        out.facts = facts
         return out
 
 
@@ -462,6 +468,8 @@ def _persisted_step(
         step["proposal"] = dispatched.proposal.model_dump()
     if dispatched.entities:
         step["entities"] = [e.model_dump() for e in dispatched.entities]
+    if dispatched.facts:
+        step["facts"] = [f.model_dump() for f in dispatched.facts]
     if dispatched.view is not None:
         step["view"] = dispatched.view.model_dump()
     return step
@@ -481,6 +489,7 @@ class _Dispatched:
     job: JobRef | None
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
+    facts: tuple[FactWriteRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1257,6 +1266,7 @@ class AgentLoop:
                     web_sources=list(dispatched.web_sources),
                     proposal=dispatched.proposal,
                     entities=list(dispatched.entities),
+                    facts=list(dispatched.facts),
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1557,6 +1567,7 @@ class AgentLoop:
                         web_sources=list(dispatched.web_sources),
                         proposal=dispatched.proposal,
                         entities=list(dispatched.entities),
+                        facts=list(dispatched.facts),
                     )
                 )
                 if dispatched.view is not None:
@@ -1702,6 +1713,7 @@ class AgentLoop:
             out.job if out else None,
             out.web_sources if out else (),
             out.deferred if out else None,
+            out.facts if out else (),
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

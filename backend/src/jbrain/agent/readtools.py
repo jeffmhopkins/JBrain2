@@ -227,6 +227,15 @@ OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
 # present only when the artifact store + blob store are wired into build_web_handlers;
 # otherwise its sidecar has no handler and is dropped.
 OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
+# The note conversation's graph-write sidecars (AGENT_INGEST_CONVERSATION_PLAN.md W3).
+# Always dropped from THIS registry — never conditionally: a `resolve_entity` /
+# `assert_fact` handler is bound to ONE note (its id, domain, chunks and handle table
+# are the writer's, not arguments a model supplies), so there is no such thing as a chat
+# session's copy. `analysis.converse` builds its own registry per conversation from
+# `graphwritetools.note_registry`. This is the outermost of the three locks on them —
+# the sidecars are not in the chat registry at all, `NEVER_DEFAULT` keeps them out of
+# curator's wildcard if they ever were, and D16's closed allowlist is the third.
+OPTIONAL_NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
 # (graceful degrade, docs/archive/EMAIL_ARCHIVIST_PLAN.md).
@@ -1280,6 +1289,7 @@ def build_registry(
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
+            | OPTIONAL_NOTE_GRAPH_TOOLS
             | OPTIONAL_GMAIL_TOOLS
             | OPTIONAL_MOLTBOOK_TOOLS
             | OPTIONAL_MOLTBOOK_WRITE_TOOLS

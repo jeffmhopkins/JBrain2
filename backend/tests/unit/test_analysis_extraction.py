@@ -1155,6 +1155,30 @@ def test_domain_floor_raises_general_to_restricted_only() -> None:
     assert domain_floor("homeLocation") is None  # a home city is ordinary
 
 
+def test_the_floor_matches_the_predicate_not_the_spelling() -> None:
+    """The table is written in the camelCase the note.extract prompt teaches, and that
+    was the only writer until W3. The note-conversation agent writes predicates through
+    `assert_fact`, where the natural spelling is snake_case — `blood_pressure` missing the
+    table entirely would land a clinical fact in the note's `general` domain. Since D18
+    makes the agent's ONLY lever on a fact's domain the predicate it spells (there is no
+    `domain` field, by the firewall red-team rule), the lookup is what has to hold.
+
+    Both rules here only ever ADD a floor, never remove one."""
+    from jbrain.analysis.extraction import domain_floor
+
+    for spelling in ("blood_pressure", "Blood Pressure", "BLOODPRESSURE", "blood-pressure"):
+        assert domain_floor(spelling) == "health", spelling
+    assert domain_floor("takes_medication") == "health"
+    assert domain_floor("has_account") == "finance"
+    # A dotted path falls back to its base segment: a qualifier of a sensitive predicate
+    # is at least as sensitive as the predicate it qualifies.
+    assert domain_floor("bloodPressure.systolic") == "health"
+    assert domain_floor("blood_pressure.diastolic") == "health"
+    # And an ordinary predicate is still unfloored however it is spelled.
+    assert domain_floor("home_location") is None
+    assert domain_floor("name.full") is None
+
+
 def test_part_of_day_token_becomes_a_within_day_range() -> None:
     payload: dict[str, Any] = {
         "title": "t", "tags": ["a", "b", "c"],

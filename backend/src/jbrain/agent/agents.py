@@ -466,14 +466,27 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # consults the web / NEVER_DEFAULT gates, so an empty frozenset is a hard floor no later
 # registry change can lift.
 #
-# W3 adds the UNATTENDED set here (docs/research/agent-ingest/TOOL_SURFACE.md): `resolve_entity`,
-# `assert_fact`, `ask_owner`, `find_entity`, `read_entity`, `prefs_read`. The ON-REPLY set
-# (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`, `relate`) unlocks
-# only once the owner has actually replied (D8) — that must be a SECOND frozenset chosen at
-# turn assembly, never a flag on one set, because the allowlist is the only enforcement
-# (constraint 9). Every write tool added must also join `toolregistry.NEVER_DEFAULT`, or
-# curator's wildcard absorbs it on every ordinary chat turn.
-NOTE_INGEST_TOOLS: frozenset[str] = frozenset()
+# W3 fills the UNATTENDED half (docs/research/agent-ingest/TOOL_SURFACE.md): the two graph
+# writes, plus the entity reads and the clock, inherited unchanged. That is the whole
+# unattended surface — D8: nothing outward-facing runs while the owner is asleep, and every
+# `web_*` / connector / vision tool stays out of the ON-REPLY set too, because the owner
+# replying does not sanitize the note body still sitting in context (untrusted content +
+# private data + egress is the complete trifecta).
+#
+# The ON-REPLY set (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`,
+# `relate`) unlocks only once the owner has actually replied — it must be a SECOND frozenset
+# chosen at turn assembly, never a flag on one set, because the allowlist is the only
+# enforcement (constraint 9). `ask_owner` and `prefs_read` are sibling tasks of this wave and
+# are added by them: a name allowlisted before its handler exists is a tool call that dies in
+# dispatch, so the allowlist grows with the handlers, never ahead of them.
+#
+# Every write tool here also joins `toolregistry.NEVER_DEFAULT`, or curator's wildcard absorbs
+# it on every ordinary chat turn. `resolve_entity`/`assert_fact` are additionally kept out of
+# the chat registry entirely (`readtools.OPTIONAL_NOTE_GRAPH_TOOLS`): their handlers are bound
+# to one note, so a chat session has nothing to bind.
+NOTE_INGEST_TOOLS: frozenset[str] = frozenset(
+    {"resolve_entity", "assert_fact", "find_entity", "read_entity", "current_time"}
+)
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
@@ -717,11 +730,26 @@ AGENTS: dict[str, AgentProfile] = {
     # never forwards `extra_tools` at all, so a grant here would be silently dropped rather
     # than admitted — differently wrong, equally a reason to gain tools only through the
     # allowlist.
-    # `reads_knowledge_base=False` for W2: the note arrives as turn 0, so nothing needs
-    # retrieval yet, and a False agent runs with EMPTY read scopes, so even a mis-scoped
-    # session reads no domain data. W3 must revisit it — plan constraint 2 wants the
-    # conversation owner-scoped to `(note_domain, 'general')`, and the entity read tools are
-    # domain-visible, so they cannot be reached under empty scopes.
+    # `reads_knowledge_base=True` as of W3, and the flip is what makes constraint 2 real.
+    # Note what it is NOT: the entity read tools declare no `domains`, so registry
+    # visibility never depended on it. It is enforced one layer down — a False agent runs
+    # with EMPTY read scopes, and `read_context` is `owner_scoped`, so `has_domain_scope`
+    # is false for every domain and `find_entity`/`read_entity` would answer "nothing in
+    # scope" for every name in the note. The agent has to be able to see what the graph
+    # already says before it writes against it, and there would be no scopes to narrow to
+    # `(note_domain, 'general')` either. `converse.note_read_scopes` is the one
+    # place that computes them.
+    # Two consequences, both handled rather than discovered (plan W3):
+    # - the flip widens NOTHING retroactively. `read_scopes` is also what is stored as the
+    #   session row's `domain_scopes`, so every W2-era note session keeps `[]` forever.
+    #   Deliberately NOT backfilled: those threads wrote no graph (the persona held no
+    #   tools), a reply into one is a sibling task's path, and that path recomputes the
+    #   scopes from the NOTE at turn time rather than trusting the stored row — so a
+    #   backfill would only make a stale row look authoritative.
+    # - `POST /sessions/{id}/scope` is ungated on persona, so the owner-facing route could
+    #   widen an engine-opened write persona past `(note_domain, 'general')` on a session
+    #   the owner never started. Inert while this flag was False; closed now in
+    #   `AgentSessionRepo.set_scopes`, which refuses an engine-only persona outright.
     # 2x budget (not 1x), and NOT as truncation protection — that comes from the settled/failed
     # latch (`converse.py`), which withholds the sweep at any multiplier. The step cap already
     # has an order of magnitude of headroom over W3's measured batch sizes (TOOL_SURFACE.md:
@@ -734,7 +762,7 @@ AGENTS: dict[str, AgentProfile] = {
         "note_ingest",
         "note_ingest.prompt",
         tools=NOTE_INGEST_TOOLS,
-        reads_knowledge_base=False,
+        reads_knowledge_base=True,
         budget_multiplier=2,
     ),
 }
