@@ -1,0 +1,180 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C — The mode button carries the width</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; max-width: 390px; margin: 0 auto; width: 100%; position: relative; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 5; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; overflow: hidden; position: relative; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.wf { margin: 0 16px; height: 128px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .55; }
+.wf .bin.nb { background: var(--amber); }
+.wf .pass { position: absolute; top: 0; bottom: 0; background: rgba(127,167,201,.15);
+  border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); transition: left .18s ease, width .18s ease; }
+.wf .dial { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text); opacity: .5; }
+.wf .tag { position: absolute; top: 6px; font-size: 9px; color: var(--text-3); letter-spacing: .04em; transform: translateX(-50%); }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.readout { padding: 6px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 34px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 6px 16px 5px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.seg { display: flex; gap: 6px; padding: 0 16px 14px; }
+.seg button { flex: 1; min-height: 48px; padding: 5px 3px; border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.seg button em { font-style: normal; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.seg button[aria-pressed=true] em { color: var(--accent); }
+.hint { padding: 0 16px 16px; font-size: 12px; color: var(--text-3); }
+.scrim { position: absolute; inset: 0; background: var(--scrim); display: none; }
+.scrim.open { display: block; }
+.pop { position: absolute; left: 16px; right: 16px; bottom: 16px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px 10px; display: none; }
+.pop.open { display: block; }
+.pop h3 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
+.pop p { margin: 0 0 12px; font-size: 12px; color: var(--text-3); }
+.pop .row { display: flex; gap: 6px; }
+.pop .row button { flex: 1; min-height: 48px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.pop .row button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pop .row button em { font-style: normal; font-size: 9px; color: var(--text-3); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .wf .pass { transition: none; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>C &mdash; The mode button carries the width.</b> No second row. Each mode button shows the width it is currently set to, and tapping the mode you are <em>already on</em> opens its ladder. One control, two levels &mdash; the sheet stays short, which matters on a screen that already holds a waterfall, a readout, a transport and captions.<br><br><b>Try it:</b> tap <b>AM</b> (already selected) to open the widths. The argument against this shape is discoverability &mdash; nothing on screen says the second tap does anything.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Listen</div>
+    <div class="wf" id="wf"></div>
+    <div class="axis"><span>&minus;12 kHz</span><span>5.000 MHz</span><span>+12 kHz</span></div>
+    <div class="readout">5.000<small>MHz</small></div>
+    <div class="lbl">Mode &amp; bandwidth</div>
+    <div class="seg" id="modes"></div>
+    <p class="hint">Wide FM shows &ldquo;180k&rdquo; and a second tap does nothing: narrowing a broadcast FM filter clips the deviation and distorts rather than cleans.</p>
+    <div class="scrim" id="scrim"></div>
+    <div class="pop" id="pop" role="dialog" aria-label="Bandwidth">
+      <h3 id="poph">AM bandwidth</h3>
+      <p id="popp">How much either side of 5.000 MHz the radio listens to.</p>
+      <div class="row" id="poprow"></div>
+    </div>
+  </div>
+</div>
+<script>
+const MODES = ["wbfm", "fm", "am", "usb", "lsb"];
+const LADDER = { am: [8000, 6000, 4000, 3000], fm: [16000, 12500, 8000], usb: [3100, 2400, 1800], lsb: [3100, 2400, 1800], wbfm: [180000] };
+// What each width is FOR, so the ladder is not five bare numbers.
+const WHY = {
+  8000: "full audio", 6000: "shortwave", 4000: "crowded", 3000: "very crowded",
+  16000: "25 kHz", 12500: "12.5 kHz", 3100: "wide", 2400: "voice", 1800: "DX", 180000: "fixed",
+};
+// Chosen width per mode, remembered so switching mode and back does not lose it.
+const chosen = { am: 8000, fm: 16000, usb: 3100, lsb: 3100, wbfm: 180000 };
+let mode = "am";
+const SPAN = 24000;
+const wf = document.getElementById("wf");
+const px = (hz) => ((hz + SPAN / 2) / SPAN) * (wf.clientWidth || 358);
+const fmt = (w) => (w >= 100000 ? "180k" : w >= 10000 ? (w / 1000).toFixed(w % 1000 ? 1 : 0) + "k" : (w / 1000).toFixed(w % 1000 ? 1 : 0) + "k");
+
+function bins() {
+  wf.innerHTML = "";
+  for (let hz = -11800; hz <= 11800; hz += 200) {
+    const d0 = Math.abs(hz), d1 = Math.abs(hz - 5000);
+    let h = 4 + Math.random() * 5;
+    if (d0 < 4200) h = Math.max(h, 78 * Math.exp(-d0 / 2600) + Math.random() * 7);
+    if (d0 < 260) h = 112;
+    let nb = false;
+    if (d1 < 4200) { const g = 66 * Math.exp(-d1 / 2600) + Math.random() * 7; if (g > h) { h = g; nb = true; } }
+    if (d1 < 260) { h = 96; nb = true; }
+    const b = document.createElement("div");
+    b.className = "bin" + (nb ? " nb" : "");
+    b.style.left = px(hz) + "px"; b.style.height = Math.min(h, 120) + "px";
+    wf.appendChild(b);
+  }
+  const dial = document.createElement("div"); dial.className = "dial"; dial.style.left = px(0) + "px"; wf.appendChild(dial);
+  const pass = document.createElement("div"); pass.className = "pass"; pass.id = "pass"; wf.appendChild(pass);
+  const t = document.createElement("div"); t.className = "tag"; t.style.left = px(5000) + "px"; t.textContent = "+5 kHz"; wf.appendChild(t);
+  place();
+}
+function place() {
+  const bw = chosen[mode];
+  let lo, hi;
+  if (mode === "usb") { lo = 300; hi = 300 + bw; }
+  else if (mode === "lsb") { hi = -300; lo = -300 - bw; }
+  else { lo = -bw / 2; hi = bw / 2; }
+  const p = document.getElementById("pass");
+  p.style.left = px(Math.max(lo, -SPAN / 2)) + "px";
+  p.style.width = (px(Math.min(hi, SPAN / 2)) - px(Math.max(lo, -SPAN / 2))) + "px";
+}
+function closePop() {
+  document.getElementById("pop").classList.remove("open");
+  document.getElementById("scrim").classList.remove("open");
+}
+function openPop() {
+  if (mode === "wbfm") return;
+  const row = document.getElementById("poprow"); row.innerHTML = "";
+  document.getElementById("poph").textContent = mode.toUpperCase() + " bandwidth";
+  document.getElementById("popp").textContent = mode === "usb" || mode === "lsb"
+    ? "How wide a slice of the sideband the radio listens to."
+    : "How much either side of 5.000 MHz the radio listens to.";
+  LADDER[mode].forEach((w) => {
+    const b = document.createElement("button"); b.type = "button";
+    b.innerHTML = fmt(w) + "<em>" + (WHY[w] || "") + "</em>";
+    b.setAttribute("aria-pressed", String(w === chosen[mode]));
+    b.onclick = () => { chosen[mode] = w; closePop(); draw(); };
+    row.appendChild(b);
+  });
+  document.getElementById("pop").classList.add("open");
+  document.getElementById("scrim").classList.add("open");
+}
+function draw() {
+  const seg = document.getElementById("modes"); seg.innerHTML = "";
+  MODES.forEach((m) => {
+    const b = document.createElement("button"); b.type = "button";
+    const on = m === mode;
+    b.innerHTML = m.toUpperCase() + "<em>" + fmt(chosen[m]) + "</em>";
+    b.setAttribute("aria-pressed", String(on));
+    if (on && m !== "wbfm") b.setAttribute("aria-haspopup", "dialog");
+    b.onclick = () => { if (on) { openPop(); } else { mode = m; draw(); } };
+    seg.appendChild(b);
+  });
+  place();
+}
+document.getElementById("scrim").onclick = closePop;
+document.getElementById("theme").onclick = (e) => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  e.target.textContent = light ? "Light" : "Dark";
+  bins();
+};
+bins(); draw();
+addEventListener("resize", () => { bins(); draw(); });
+</script>
