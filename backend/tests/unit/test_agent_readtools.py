@@ -947,6 +947,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # may name the chat it is in, and the handler refuses one that already has a name
         # (jbrain.agent.sessiontools). Not in `web`: it touches no network.
         "name_session",
+        # The note persona's standing instructions (AGENT_INGEST_CONVERSATION_PLAN D15).
+        # Registered — a handler must exist for the sidecar — but reachable by nobody:
+        # both are in NEVER_DEFAULT and in no profile's allowlist, so registration here
+        # is the binding, not a grant (asserted in test_agent_prefstools.py).
+        "prefs_read",
+        "prefs_write",
         *web,
     }
     assert registry.names() == shipped
@@ -966,10 +972,16 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "find_when_at",
         "save_place",
     }
+    # The standing-instruction tools are `read`/`sensitive`, not `web`, so only
+    # NEVER_DEFAULT keeps them out of the wildcard's set — which is the whole reason
+    # they are in it (AGENT_INGEST_CONVERSATION_PLAN constraint 9).
+    never_default = {"prefs_read", "prefs_write"}
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location - web
-    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web
+    assert {t.name for t in registry.schemas_for({"general"})} == (
+        shipped - location - web - never_default
+    )
+    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web - never_default
     # jerv's allowlist surfaces exactly the web tools and nothing else.
     assert {t.name for t in registry.schemas_for(set(), web)} == web
 
@@ -1561,6 +1573,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "name_session",
             1,
             "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
+        ),
+        "prefs_read.tool": (
+            "prefs_read",
+            1,
+            "a8a1430a8f357bf43ea7fca4de79079e7d5f479f2d552b8459e88e24a6fb9ae6",
+        ),
+        "prefs_write.tool": (
+            "prefs_write",
+            1,
+            "b1dc0865b1ab23ba75003028e516adca6f3de47e0863ac06ba97626ffeca5419",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

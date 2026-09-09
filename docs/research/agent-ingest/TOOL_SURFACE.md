@@ -1,7 +1,11 @@
 # Note-Conversation Persona — Proposed Tool Surface
 
 > **Status:** Research · **Last verified:** 2026-09-09 — an independent design pass for
-> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. Not ratified. No code written.
+> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. Not ratified. Code now exists for
+> **`prefs_read` and `prefs_write`** (W3/T1) — built as the plan's `owner_prefs` section
+> specifies, so `prefs_read` was built rather than taken by Cut #1 below; that cut is now
+> a one-line allowlist decision, not a deletion. Neither is in any allowlist yet. Every
+> other row here is still unwritten.
 
 The complete proposed tool list for the persona described in the plan: the agent that
 reads a note, writes the entity/fact graph through tools, and shows the owner what it

@@ -63,7 +63,7 @@ import contextlib
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, timedelta
 from typing import Any
 
@@ -74,6 +74,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
+from jbrain.agent.prefstools import with_standing_instructions
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
@@ -87,6 +88,7 @@ from jbrain.models.note_conversation import (
     NoteConversationRepo,
     note_body_sha,
 )
+from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
 from jbrain.tasks.runner import ExecutedTurn, LoopTurnExecutor, TurnExecutor
@@ -271,6 +273,7 @@ class NoteConverseRunner:
     executor: TurnExecutor
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
+    prefs: OwnerPrefsRepo = field(default_factory=OwnerPrefsRepo)
 
     async def note_converse(self, payload: dict[str, Any]) -> object:
         """Open the note's conversation, read the note in it, and settle it.
@@ -363,6 +366,17 @@ class NoteConverseRunner:
         state = "failed"
         ran = False
         try:
+            # The owner's standing instructions (D15), read INSIDE the try so a DB blip
+            # lands the conversation `failed` — the shipped path for "this pass did not
+            # finish" — instead of raising out of the job and retrying forever. Failing
+            # closed is the right direction: a pass that ignored the owner's rules and
+            # settled anyway would write the graph the way he asked it not to, and the
+            # `integrate_note` pipeline is still writing beside this one (D13), so a
+            # failed conversation costs a thread, not the note.
+            profile = replace(
+                profile,
+                prompt=with_standing_instructions(profile.prompt, await self._rules(owner_ctx)),
+            )
             # The hard turn ceiling. `LoopTurnExecutor` has none of its own — the one in
             # the repo lives in `api/agent.py`, around the /chat stream — and this is the
             # first handler to drive a full ReAct turn from the worker. Without it a
@@ -431,6 +445,17 @@ class NoteConverseRunner:
         with contextlib.suppress(Exception):
             await self.sessions.touch(owner_ctx, session_id)
         log.info("note_converse.settled", session_id=session_id, state=state, steps=steps)
+
+    async def _rules(self, owner_ctx: SessionContext) -> list[str]:
+        """The owner's standing instructions for this pass (D15).
+
+        Read once, at turn assembly, on the owner's own scope — `owner_prefs` is
+        owner-only RLS, so the read is the firewall's, not this method's. It goes into
+        the SYSTEM prompt rather than a message: a rule is a rule for the whole turn,
+        including the reply turns W3 adds, and a message ahead of turn 0 would sit in
+        the same register as the framed note it is supposed to outrank."""
+        async with scoped_session(self.maker, owner_ctx) as s:
+            return await self.prefs.read_rules(s, owner_ctx.principal_id or "")
 
     async def _record(
         self,
