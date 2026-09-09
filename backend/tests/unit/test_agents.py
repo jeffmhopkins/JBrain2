@@ -10,6 +10,7 @@ from jbrain.agent.agents import (
     AGENTS,
     ARCHIVIST_TOOLS,
     DEFAULT_AGENT,
+    ENGINE_ONLY_PERSONAS,
     GMAIL_TOOLS,
     INTAKE_TOOLS,
     JERV_TOOLS,
@@ -20,6 +21,7 @@ from jbrain.agent.agents import (
     RESEARCH_TOOLS,
     REVIEW_TOOLS,
     SPAWN_TOOL,
+    STORABLE_OWNER_AGENTS,
     SUBAGENT_PERSONAS,
     SUMMARIZE_TOOLS,
     WEB_TOOLS,
@@ -391,8 +393,11 @@ def test_intake_is_a_capture_only_non_owner_persona() -> None:
 def test_intake_is_not_owner_selectable() -> None:
     """intake is a NON-owner persona: resolvable + pinned, but excluded from the set an
     owner may open a session/task as (it must never land in app.agent_sessions, whose
-    agent CHECK excludes it). is_owner_agent gates the owner session/task routes."""
-    assert AGENT_NAMES - frozenset({"intake"}) == OWNER_AGENTS
+    agent CHECK excludes it). is_owner_agent gates the owner session/task routes.
+
+    OWNER_AGENTS excludes the ENGINE-ONLY personas as well — a different exclusion for a
+    different reason (they are owner-side, they are simply not a person's to pick)."""
+    assert AGENT_NAMES - frozenset({"intake"}) - ENGINE_ONLY_PERSONAS == OWNER_AGENTS
     assert "intake" not in OWNER_AGENTS
     assert is_owner_agent("curator") and is_owner_agent("jerv")
     assert not is_owner_agent("intake")
@@ -507,17 +512,35 @@ def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None
 
 
 def test_note_ingest_is_owner_side_and_never_spawnable() -> None:
-    """It mints an app.agent_sessions row, so it must be owner-side (migration 0192 widens
-    both agent CHECKs to match; test_agent_session_rls/test_tasks_rls iterate OWNER_AGENTS
-    against the DB, which is what keeps AGENTS and the CHECK from drifting).
+    """It mints an app.agent_sessions row, so it must be STORABLE owner-side (migration
+    0192 widens both agent CHECKs to match; test_agent_session_rls/test_tasks_rls iterate
+    STORABLE_OWNER_AGENTS against the DB, which is what keeps AGENTS and the CHECK from
+    drifting).
 
     It is NOT in SUBAGENT_PERSONAS: a spawnable note-ingest persona would be a path for any
     other agent to reach whatever W3 grants this one — jerv could spawn a child holding the
     graph writes. Nothing spawns a note conversation; the ingest path opens it."""
-    assert "note_ingest" in OWNER_AGENTS
+    assert "note_ingest" in STORABLE_OWNER_AGENTS
     assert "note_ingest" not in NON_OWNER_PERSONAS
-    assert is_owner_agent("note_ingest")
     assert "note_ingest" not in SUBAGENT_PERSONAS
+
+
+def test_note_ingest_is_engine_only_and_not_selectable() -> None:
+    """ASSISTANT.md says the note persona "is not selectable — the engine opens it, never
+    a picker", and this is what makes that true rather than aspirational.
+
+    `POST /sessions {"agent": ...}` and the task launcher both gate on OWNER_AGENTS
+    (`api/sessions.py`, `api/tasks.py`), so leaving `note_ingest` in that set accepted a
+    hand-started note persona: no note, no frame, no `note_conversations` row, and
+    owner-chosen read scopes. Inert today behind the empty allowlist — and exactly the
+    door W3 must not find already open when it fills that allowlist with graph writes."""
+    assert "note_ingest" in ENGINE_ONLY_PERSONAS
+    assert "note_ingest" not in OWNER_AGENTS
+    assert not is_owner_agent("note_ingest")
+    # The engine-only set narrows what a person may pick, and nothing else: every other
+    # owner persona is still selectable, and the storable set is unchanged.
+    assert is_owner_agent("curator") and is_owner_agent("archivist")
+    assert STORABLE_OWNER_AGENTS == AGENT_NAMES - NON_OWNER_PERSONAS
 
 
 def test_agent_for_falls_back_to_curator() -> None:

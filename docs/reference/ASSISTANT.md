@@ -410,8 +410,17 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 - **`note_ingest`** — the **note conversation**
   (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`): a captured note is turn 0 of an
   ordinary agent conversation, opened by the `note_converse` action off `note.ingested`
-  and rendered by the same transcript route as any chat. It is not selectable — the
-  engine opens it, never a picker. Its allowlist is an explicit **empty** `frozenset()`,
+  and rendered by the same transcript route as any chat. It is **not selectable** — the
+  engine opens it, never a picker — and that is enforced, not conventional:
+  `note_ingest` is in `ENGINE_ONLY_PERSONAS`, so it is excluded from `OWNER_AGENTS` and
+  `POST /sessions {"agent":"note_ingest"}` (and the task launcher) refuse it with a 422,
+  while the two `agent` CHECKs still admit it so the engine can store one. Its threads
+  **are** listed: the PWA's Full Brain tab carries `note_ingest` beside the curator
+  (`useFullBrain.MODE_AGENTS`), so an ingested note's conversation is openable from the
+  chat list. Listed, not landed on — the tab still opens the curator, because a note
+  thread is always the newest Full Brain session and would otherwise take the surface
+  every time the owner captures anything. Its allowlist is an explicit **empty**
+  `frozenset()`,
   never the curator wildcard (D16), and in this wave the executor's tool registry is
   empty too, so the persona provably reaches nothing; the graph-write tools hang off it
   later. Turn 0 is the note **fenced as DATA** the way the `intake` persona fences a

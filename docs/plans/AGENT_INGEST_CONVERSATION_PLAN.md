@@ -224,20 +224,89 @@ session's read scopes, so the domain-visible entity read tools cannot be reached
 *Landed:* the conversation itself — the `note_converse` action (`analysis/converse.py`),
 seeded onto `note.ingested` **beside** `integrate_note`, not instead of it (D13). It opens
 an ordinary `agent_sessions` row under `note_ingest`, drives one turn through the shared
-`LoopTurnExecutor`, persists through `AgentTranscript` (so the thread renders on the
-shipped transcript route with no frontend work), records every tool call into the 0191
-ledger and binds it to its assistant turn, and settles `settled` / `failed` — `failed`
-also for a turn that did not end cleanly, since constraint 6's sweep must never see a
-truncated pass. Turn 0 is the note **fenced as DATA** (`framed_note`, the
+`LoopTurnExecutor`, persists through `AgentTranscript`, records every tool call into the
+0191 ledger and binds it to its assistant turn, and settles `settled` / `failed` —
+`failed` also for a turn that did not end cleanly, since constraint 6's sweep must never
+see a truncated pass. Turn 0 is the note **fenced as DATA** (`framed_note`, the
 `intake/turn.py:_RECIPIENT_FRAME` pattern), closing the unframed-body half of risk 1
 while the persona still holds no tools. The dispatcher gained the graceful arm in front
 of `note_conversations_one_live`, so a re-delivered event is a logged skip rather than an
-IntegrityError in a worker. The trigger ships **enabled**: one extra `agent.turn` per note
-producing no graph writes at all this wave is risk 4, and a disabled trigger would ship
-W2's retreat point already retreated from. Its tool registry is empty as well as its
+IntegrityError in a worker. The trigger ships **enabled**: a disabled one would ship W2's
+retreat point already retreated from. Its tool registry is empty as well as its
 allowlist. Still open for W3: the executor's registry, `reads_knowledge_base`, the
 `waiting_on_owner` producer, and moving the recorder into the tool dispatch so `ok` and the
 written ids come from the write path.
+
+*Closed against an adversarial review of that task (2026-09-09).* Seven findings, and the
+wave's own retreat point was the first of them:
+
+- **The thread was invisible, so the wave did not deliver what it promised.** The
+  transcript ROUTE renders it, but the PWA filters every session through
+  `useFullBrain.MODE_AGENTS`, and `note_ingest` was in neither tab — the owner paid an
+  `agent.turn` per note for a thread only a debug token could reach, which is CLAUDE.md
+  #10's escape hatch, not its answer. `note_ingest` now sits on the **Full Brain** tab's
+  listing set (it is a conversation about the owner's own notes; every Research agent is
+  defined by reading none of them). Listing only, split from a new `NEW_AGENT_OPTIONS`
+  that drives the picker and the tab's auto-open: a note thread is always the newest Full
+  Brain session, so listing it in the *same* set would have made every captured note take
+  the surface. No chip, no inbox tab, no notes-tab redirect — those stay W3 (D4).
+- **A conversation stranded in `running` was permanent, and it silently removed its note
+  from the pipeline.** Nothing reaped one, and `_has_live_conversation` suppresses every
+  later `note_converse` for that note while it stands — so a worker SIGKILLed mid-turn
+  (which `Ops -> Update` produces on every deploy: `docker compose stop -t 30 worker`)
+  took the note out for good, on a box with no terminal. Now `live_for_note` reclaims a
+  stale `running` pass to `failed` before it reads, `queue.claim`'s stale-lock shape —
+  fused into the read it would otherwise block, so both gates get it. `waiting_on_owner`
+  is never reaped: it holds the owner's question. The horizon is `STALE_CONVERSATION`,
+  **derived** as twice `NOTE_TURN_WALL_CLOCK` — which is the second half: the runner had
+  no wall clock at all (`_MAX_TURN_WALL_CLOCK_S` is `api/agent.py`'s, around the /chat
+  stream), and this is the first handler driving a full ReAct turn from the worker. 30
+  minutes, far below /chat's 7500s because this turn has no sub-agent fan.
+- **A failure inside `_record` settled the conversation anyway.** `status="done"` and
+  `state="settled"` were latched before the persist, and the `except` swallowed its
+  raise — leaving `settled` with an empty transcript and an empty ledger. That is not a
+  benign hole: W3 hangs `settle_note` off `settled` and reads `touched` from the ledger,
+  so an empty one reads as "this note says nothing" and arms a retraction of the note's
+  whole non-pinned graph. The persist now happens first and the settle is conditional on
+  it; the run records `stop_reason="record_failed"` so the two failure kinds stay apart.
+- **The orphan cleanup is gone rather than fixed.** The session row and the
+  `note_conversations` row are written in ONE transaction (`AgentSessionRepo.create_on`),
+  so a lost race to the one-live index rolls back both. There is no compensating delete
+  left to fail silently, and no non-`IntegrityError` path that leaks a session either.
+  This matters more now the thread is listed: an orphan would be a permanent empty chat.
+- **The DATA frame is closed with a per-turn nonce** — `[CAPTURED NOTE #<rand>] … [END
+  CAPTURED NOTE #<rand>]`. `intake/turn.py`'s open-ended prefix is enough for a persona
+  that holds no tools in any wave; this one is the seat the graph writes go in, and an
+  unterminated frame is impersonable by the text it fences (a body writes its own end
+  marker and its own second header, and nothing says which is the system's).
+- **`note_ingest` is now genuinely not selectable.** It was in `OWNER_AGENTS`, so
+  `POST /sessions {"agent":"note_ingest"}` was accepted — inert behind the empty
+  allowlist, and exactly the door W3 must not find open. `ENGINE_ONLY_PERSONAS` splits
+  "an owner may pick it" from "the engine may store it"; the two `agent` CHECKs still
+  admit it (their RLS suites iterate `STORABLE_OWNER_AGENTS`).
+- **The ledger binds by `run_id`**, not by newest-assistant-turn — free, since
+  `record_exchange` stamps it, and W3's owner reply is a second run in the same session.
+- **The cost is per `note.ingested` EVENT, not per note.** A re-ingest is a second thread
+  and a second turn: an attachment landing on an already-ingested note, and every D6
+  clarification (`append_clarification` enqueues `ingest_note` itself). A photo captured
+  WITH its `attachments_expected` hint pays once — the emit gate defers until OCR is
+  done — so the "image notes always cost two" reading is wrong. `graph_rebuild` does not
+  amplify at all: `backfill_pending_integration` enqueues `integrate_note` directly and
+  emits no event.
+
+*Recorded limit, not fixed here.* `resolve_event` returns a whole-event error on the
+first unresolvable trigger and discards the enqueues it had already computed, so a worker
+running **pre-0194 code against a ≥0194 database** stops enqueuing `integrate_note` for
+every note — 0194's trigger resolves to an action its registry does not have. This is the
+one window where D13's "no producer removed before its replacement is merged" is
+transiently violated. It is not fixed in this wave because the defect is the dispatcher's
+and predates T4 (any event type with two triggers, one unresolvable, loses the other's
+enqueue), and separating the E3 resolution error from the E1/E2 authorization errors —
+which SHOULD stay whole-event fail-closed — is its own change with its own tests. The
+window is narrow: `Ops -> Update` quiesces the worker across `migrate`, so the normal path
+never sees it; it needs an image rolled back without its schema. And `integrate_note`
+recovers by itself through `backfill_pending_integration`. What does not recover is the
+conversation, which in this wave writes nothing.
 
 *Clarification blocks, as built (migration 0193).* The body column is never appended to;
 `app.note_clarifications` holds `(note_id, seq, question, answer, session_id, domain_code,

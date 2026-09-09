@@ -244,9 +244,19 @@ def compute_diff(
     purely ADDITIVE — `note.ingested` now drives both the integration and the note
     conversation, neither displacing the other (AGENT_INGEST_CONVERSATION_PLAN.md
     D13). Under equality every such note would log a permanent mismatch warning, which
-    is how a real one goes unnoticed. What this check exists to catch is the baseline
-    kind going MISSING, or arriving against a different row — an extra kind beside it
-    is configuration.
+    is how a real one goes unnoticed.
+
+    Subset, but EXACTLY-ONCE on the baseline kind. What is tolerated is another KIND
+    beside the baseline; what is not is the baseline kind arriving twice, or arriving
+    against a different row. Matching "some enqueue has this kind and this payload"
+    was too weak in both directions: two triggers resolving to the same kind (one of
+    them wrong) read as a match as long as the first was right, and a duplicated
+    baseline — the same job enqueued twice off one event — read as a match by
+    construction. Both are the misconfiguration this diff is the only observer of.
+
+    The verdict is DIAGNOSTIC, not a gate: `live_enqueue` submits `diff.enqueues`
+    whatever this returns (only an `error` diff is withheld). So narrowing it does not
+    stop an extra job being run — it stops one being run unremarked.
 
     A missing baseline (an event with no `_shadow_enqueued`) is not a mismatch — it
     is an unobservable event (e.g. a future event type with no hardcoded twin); the
@@ -270,6 +280,11 @@ def compute_diff(
     if not matched:
         discrepancies.append(
             f"kind mismatch: engine would enqueue {would_kinds}, hardcoded enqueued {actual_kind!r}"
+        )
+    elif len(matched) > 1:
+        discrepancies.append(
+            f"duplicate baseline kind: engine would enqueue {actual_kind!r} {len(matched)}"
+            f" times, hardcoded enqueued it once ({[w.payload for w in matched]})"
         )
     elif matched[0].payload != actual_payload:
         discrepancies.append(
