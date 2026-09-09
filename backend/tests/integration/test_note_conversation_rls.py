@@ -12,7 +12,8 @@ Owner-only, ENABLE + FORCE, like `agent_session_plans`. Three properties matter:
 
 Plus the two grant decisions: a conversation row cannot be DELETEd (it dies with its
 session, so erasing it alone would strand a transcript full of the note's body), and a
-ledger row takes UPDATE on `turn_id` and nothing else.
+ledger row takes UPDATE on `turn_id` and nothing else — and the schema decision the
+owner-only argument rests on, that `domains` carries no DEFAULT.
 """
 
 import uuid
@@ -20,7 +21,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -235,6 +236,27 @@ async def test_a_ledger_row_takes_only_a_turn_binding(maker: async_sessionmaker)
                 text(
                     "UPDATE app.note_conversation_tool_calls SET detail = 'rewritten'"
                     " WHERE session_id = CAST(:sid AS uuid)"
+                ),
+                {"sid": sid},
+            )
+
+
+async def test_a_ledger_row_must_state_where_the_write_landed(
+    maker: async_sessionmaker,
+) -> None:
+    """`domains` is NOT NULL with NO DEFAULT. A `DEFAULT '{}'` is what would have made a
+    domain gate on this table fail open — `has_all_domain_scopes('{}')` is true for every
+    session — so the writer states where the write landed even when the answer is the
+    empty array, and 0191's owner-only argument does not have to lean on that default
+    being harmless."""
+    owner = await owner_ctx(maker)
+    sid, _ = await seed_conversation(maker, owner)
+    with pytest.raises(IntegrityError):
+        async with scoped_session(maker, owner) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.note_conversation_tool_calls (session_id, name, ok)"
+                    " VALUES (CAST(:sid AS uuid), 'assert_fact', true)"
                 ),
                 {"sid": sid},
             )

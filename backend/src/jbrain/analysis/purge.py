@@ -505,6 +505,16 @@ async def _purge_conversations(session: AsyncSession, note_id: uuid.UUID) -> Non
     `note_conversations.note_id` FK's ON DELETE CASCADE never fires on a note delete
     (constraint 11 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md). Deleting the
     session cascades the side row, the tool-call ledger, the turns, and the runs (0021).
+
+    The blast radius is therefore a WHOLE session, and the invariant that keeps it
+    correct lives at the other end: `NoteConversationRepo.start` is opened on a session
+    created FOR the note. D1's "same agent, same loop, same memory" is about the agent,
+    not about reusing an `agent_sessions` row — attaching a conversation to a running
+    Full Brain chat would put that chat's entire history inside this DELETE. Stated
+    rather than guarded because the only structural guard available in W2 (refuse a
+    session that already has turns) would encode an ordering W3's loop has not chosen
+    yet, and a guard that fails closed on the legitimate path is unfixable on a box
+    with no terminal (CLAUDE.md #10).
     """
     await session.execute(
         delete(AgentSession).where(
@@ -702,6 +712,13 @@ async def backfill_deleted_note_artifacts(
                 SELECT 1 FROM app.review_items r
                 WHERE r.payload->>'note_id' = n.id::text
             )
+            -- The two artifacts `purge_note_artifacts` deletes WHOLE. Without them a
+            -- note whose only surviving artifact is an episode or an ingest
+            -- conversation matches nothing and is never swept, so the idempotence
+            -- claim above ("a fully purged note matches no candidate predicate")
+            -- would be true only because the sweep cannot see what it left behind.
+            OR EXISTS (SELECT 1 FROM app.agent_episode_refs er WHERE er.note_id = n.id)
+            OR EXISTS (SELECT 1 FROM app.note_conversations c WHERE c.note_id = n.id)
         )
         """
     )

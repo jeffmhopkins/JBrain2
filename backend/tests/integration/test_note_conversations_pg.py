@@ -4,10 +4,16 @@ The behaviour that lives in SQL rather than in Python: the one-live-conversation
 unique index and which states it treats as live, the ledger's `seq` ordering and its
 late `turn_id` binding, and the whole-conversation `touched`/`projected` union that
 constraint 6's settle sweep reads back.
+
+Plus the three promises the pure functions cannot make on their own — that a capped
+`args` blob really survives the JSONB bind processor, that every read path is scoped to
+one session (which is what 0191's owner-only RLS argument rests on), and that the
+lifecycle refuses the edges that would silently drop the owner's question.
 """
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -16,7 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.note_conversation import NoteConversationRepo, note_body_sha
+from jbrain.models.note_conversation import (
+    InvalidStateTransition,
+    NoteConversationRepo,
+    note_body_sha,
+)
 from tests.conftest import docker_available
 from tests.integration.test_note_conversation_rls import owner_ctx
 from tests.integration.test_rls import database_url  # noqa: F401
@@ -174,7 +184,7 @@ async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
 
     async with scoped_session(maker, owner) as s:
         await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
-        await repo.record_tool_call(
+        first = await repo.record_tool_call(
             s,
             sid,
             name="resolve_entity",
@@ -183,7 +193,7 @@ async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
             entity_ids=[entity],
             domains=["general"],
         )
-        await repo.record_tool_call(
+        second = await repo.record_tool_call(
             s,
             sid,
             name="assert_fact",
@@ -194,7 +204,7 @@ async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
             domains=["health"],
             detail="written",
         )
-        await repo.record_tool_call(
+        third = await repo.record_tool_call(
             s,
             sid,
             name="assert_fact",
@@ -204,6 +214,7 @@ async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
             domains=["finance"],
             detail="no such handle",
         )
+        turn_one_calls = [first.id, second.id, third.id]
 
     async with scoped_session(maker, owner) as s:
         calls = await repo.tool_calls(s, sid)
@@ -220,13 +231,81 @@ async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
             ),
             {"tid": turn, "sid": sid},
         )
-        await repo.bind_turn(s, sid, turn)
+        await repo.bind_turn(s, sid, turn, call_ids=turn_one_calls)
         # A later call belongs to the NEXT turn and must not be re-attributed.
-        await repo.record_tool_call(s, sid, name="ask_owner", ok=True)
+        await repo.record_tool_call(s, sid, name="ask_owner", ok=True, domains=[])
 
     async with scoped_session(maker, owner) as s:
         calls = await repo.tool_calls(s, sid)
     assert [str(c.turn_id) if c.turn_id else None for c in calls] == [turn, turn, turn, None]
+
+
+async def test_an_interrupted_turns_calls_are_not_adopted_by_the_next_turn(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """Constraint 6 names the case: a turn cut off by `max_steps` or by consecutive tool
+    errors (`loop.py:131-133`) asserted a prefix and wrote no assistant turn, so its
+    calls stay unbound forever. Binding "every unbound row" therefore hands them to the
+    NEXT exchange and the D3 chip renders that write under the wrong one."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+
+    # Turn one: one call, then the turn dies. No assistant turn is written.
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        orphan = await repo.record_tool_call(
+            s, sid, name="assert_fact", ok=True, fact_ids=[uuid.uuid4()], domains=["general"]
+        )
+
+    # Turn two: one call, and this time an assistant turn.
+    turn_two = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        second = await repo.record_tool_call(
+            s, sid, name="assert_fact", ok=True, fact_ids=[uuid.uuid4()], domains=["general"]
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_turns (id, session_id, role, content)"
+                " VALUES (CAST(:tid AS uuid), CAST(:sid AS uuid), 'assistant', 'second')"
+            ),
+            {"tid": turn_two, "sid": sid},
+        )
+        await repo.bind_turn(s, sid, turn_two, call_ids=[second.id])
+
+    async with scoped_session(maker, owner) as s:
+        by_id = {c.id: c for c in await repo.tool_calls(s, sid)}
+    assert by_id[orphan.id].turn_id is None
+    assert str(by_id[second.id].turn_id) == turn_two
+
+
+async def test_a_turn_binding_cannot_reach_another_conversation(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """`session_id` stays in the predicate, so a stray id cannot bind a stranger's row."""
+    repo = NoteConversationRepo()
+    mine, theirs = await seed_session(maker, owner), await seed_session(maker, owner)
+    turn = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=mine, note_id=await seed_note(maker, owner), body_sha="sha")
+        await repo.start(
+            s, session_id=theirs, note_id=await seed_note(maker, owner), body_sha="sha"
+        )
+        stranger = await repo.record_tool_call(
+            s, theirs, name="assert_fact", ok=True, domains=["general"]
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_turns (id, session_id, role, content)"
+                " VALUES (CAST(:tid AS uuid), CAST(:sid AS uuid), 'assistant', 'mine')"
+            ),
+            {"tid": turn, "sid": mine},
+        )
+        await repo.bind_turn(s, mine, turn, call_ids=[stranger.id])
+
+    async with scoped_session(maker, owner) as s:
+        (row,) = await repo.tool_calls(s, theirs)
+    assert row.turn_id is None
 
 
 async def test_writes_accumulate_across_turns_and_skip_failures(
@@ -263,13 +342,20 @@ async def test_writes_accumulate_across_turns_and_skip_failures(
             entity_ids=[entity],
             domains=["health"],
         )
-        await repo.record_tool_call(s, sid, name="assert_fact", ok=False, fact_ids=[ghost])
+        await repo.record_tool_call(
+            s, sid, name="assert_fact", ok=False, fact_ids=[ghost], domains=[]
+        )
 
     async with scoped_session(maker, owner) as s:
         written = await repo.writes(s, sid)
     assert written.facts == {fact_a, fact_b}
     assert written.entities == {entity}
     assert written.domains == {"general", "health"}
+    # `frozen=True` only stops the fields being rebound; a caller that dropped an id
+    # from a mutable set would silently widen the sweep, so the sets are frozen too.
+    assert isinstance(written.facts, frozenset)
+    assert isinstance(written.entities, frozenset)
+    assert isinstance(written.domains, frozenset)
 
 
 async def test_oversized_args_are_capped_not_refused(
@@ -284,10 +370,154 @@ async def test_oversized_args_are_capped_not_refused(
     async with scoped_session(maker, owner) as s:
         await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
         await repo.record_tool_call(
-            s, sid, name="assert_fact", ok=True, args={"facts": [{"quote": "x" * 100_000}]}
+            s,
+            sid,
+            name="assert_fact",
+            ok=True,
+            args={"facts": [{"quote": "x" * 100_000}]},
+            domains=["general"],
         )
 
     async with scoped_session(maker, owner) as s:
         (call,) = await repo.tool_calls(s, sid)
     assert call.args["_truncated"] is True
     assert len(call.args["facts"][0]["quote"]) == 2000
+
+
+async def test_a_non_json_argument_does_not_abort_the_write(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """The cap exists so the ledger never costs a call its graph write — and the
+    serializer is where that promise was actually broken. Nothing sets `json_serializer`
+    on the engine, so SQLAlchemy's JSONB bind processor uses a bare `json.dumps` and a
+    `UUID` (the most likely W3 arg shape) raised inside the flush. Proved end to end,
+    because a pure-function assertion cannot see the bind processor."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    entity = uuid.uuid4()
+
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        await repo.record_tool_call(
+            s,
+            sid,
+            name="assert_fact",
+            args={"entity_id": entity, "at": datetime(2026, 9, 9, tzinfo=UTC)},
+            ok=True,
+            entity_ids=[entity],
+            domains=["general"],
+        )
+
+    async with scoped_session(maker, owner) as s:
+        (call,) = await repo.tool_calls(s, sid)
+    assert call.args["entity_id"] == str(entity)
+
+
+async def test_an_unknown_domain_code_is_refused_before_the_row_lands(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """`domains` cannot FK `app.domains(code)` and gets no trigger, so the repo boundary
+    is the contract — a ledger that names a domain the firewall does not have is a
+    ledger that lies about where the write went."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        with pytest.raises(ValueError, match="unknown domain code"):
+            await repo.record_tool_call(s, sid, name="assert_fact", ok=True, domains=["medical"])
+
+    async with scoped_session(maker, owner) as s:
+        assert await repo.tool_calls(s, sid) == []
+
+
+async def test_every_read_path_is_scoped_to_one_session(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """Owner-only RLS is the table's firewall, so this session predicate is the ONLY
+    thing keeping one note's thread out of another's chip and settle set. 0191's
+    docstring rests on it, so it is proved rather than asserted."""
+    repo = NoteConversationRepo()
+    mine, theirs = await seed_session(maker, owner), await seed_session(maker, owner)
+    my_fact, their_fact = uuid.uuid4(), uuid.uuid4()
+
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=mine, note_id=await seed_note(maker, owner), body_sha="a")
+        await repo.start(s, session_id=theirs, note_id=await seed_note(maker, owner), body_sha="b")
+        await repo.record_tool_call(
+            s, mine, name="assert_fact", ok=True, fact_ids=[my_fact], domains=["general"]
+        )
+        await repo.record_tool_call(
+            s, theirs, name="assert_fact", ok=True, fact_ids=[their_fact], domains=["health"]
+        )
+
+    async with scoped_session(maker, owner) as s:
+        calls = await repo.tool_calls(s, mine)
+        written = await repo.writes(s, mine)
+    assert [c.name for c in calls] == ["assert_fact"]
+    assert {f for c in calls for f in c.fact_ids} == {my_fact}
+    assert written.facts == frozenset({my_fact})
+    assert written.domains == frozenset({"general"})
+
+
+async def test_a_waiting_thread_cannot_be_failed_silently(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """The partial unique index blocks a RIVAL conversation, not a REPLACEMENT state. A
+    retry or a reaper flipping `waiting_on_owner -> failed` drops the owner's question
+    out of the notes tab and releases the note with no trace, so the edge needs saying
+    out loud."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        await repo.set_state(s, sid, "waiting_on_owner")
+        with pytest.raises(InvalidStateTransition, match="waiting_on_owner"):
+            await repo.set_state(s, sid, "failed")
+
+    async with scoped_session(maker, owner) as s:
+        conv = await repo.get(s, sid)
+        assert conv is not None and conv.state == "waiting_on_owner"
+        # The named override is the way through, and the owner's reply is the other one.
+        abandoned = await repo.set_state(s, sid, "failed", abandon_question=True)
+    assert abandoned is not None and abandoned.state == "failed"
+
+
+async def test_a_finished_thread_does_not_reopen(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """`settled` and `failed` released the note; a retry opens a fresh conversation
+    rather than reviving one that already let go."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        await repo.set_state(s, sid, "settled")
+        with pytest.raises(InvalidStateTransition, match="settled"):
+            await repo.set_state(s, sid, "running")
+
+
+async def test_a_missing_conversation_still_reads_as_gone(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """None means gone; the exception means refused. The two must not blur."""
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        assert await repo.set_state(s, str(uuid.uuid4()), "settled") is None
+
+
+async def test_a_conversation_cannot_be_opened_already_finished(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """One opened straight into `settled` would release a note it never read, and the
+    one-live index would not even notice."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    async with scoped_session(maker, owner) as s:
+        with pytest.raises(InvalidStateTransition, match="opens live"):
+            await repo.start(s, session_id=sid, note_id=note, body_sha="sha", state="settled")
