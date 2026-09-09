@@ -1433,6 +1433,64 @@ def test_a_reset_that_the_kernel_refuses_says_so(sidecar: str, monkeypatch) -> N
     assert free == 200
 
 
+def test_a_reset_frees_the_radio_before_it_answers(sidecar: str, monkeypatch) -> None:
+    """Every way out of `/reset` must release the lease BEFORE the response is written.
+
+    Answering first is a race the caller can never win: the reply reaches the client
+    while the handler thread has not yet run its `finally`, so the very next request —
+    and after a reset the next request is always "use the radio" — is refused with "the
+    radio is already resetting the radio". It is invisible on an idle box and shows up
+    on a loaded one, which is the worst way for a recovery path to fail: hardest exactly
+    when it is most needed, and it reads to the owner as a reset that did not work.
+
+    Both failure exits are checked, because they are separate `return`s and the bug was
+    in the shape of the function rather than in either branch."""
+    def boom(node: str) -> None:
+        # Mirrors the real `usbdev.reset`, which screens the path before it opens
+        # anything — so both exits below are reachable with the stub in place.
+        if not node.startswith("/dev/bus/usb/"):
+            raise ValueError(f"{node!r} is not a USB device node")
+        raise OSError(19, "No such device")
+
+    monkeypatch.setattr(sys.modules["usbdev"], "reset", boom)
+
+    # Observed AT THE MOMENT the response is written, which is the only way to pin an
+    # ordering rather than a timing. Racing it from the client instead passes either way
+    # — a full HTTP round trip is far slower than the few instructions between the two
+    # statements, so the client almost always loses the race it is trying to detect and
+    # the test would report a bug it cannot see.
+    held_when_answered: list[tuple[int, bool]] = []
+    real_json = server.Handler._json
+
+    def spy(self, code: int, body: dict[str, Any]) -> None:
+        held_when_answered.append((code, server.TUNER.reserved()))
+        real_json(self, code, body)
+
+    monkeypatch.setattr(server.Handler, "_json", spy)
+
+    status, _ = _post(
+        sidecar, "/reset", {"serial": WIRE, "device_node": "/dev/bus/usb/003/010"}
+    )
+    assert status == 502
+    # ...and the refusal that never reaches usbdev at all takes the same exit.
+    bad, _ = _post(sidecar, "/reset", {"serial": WIRE, "device_node": "/etc/passwd"})
+    assert bad == 400
+
+    assert [code for code, _ in held_when_answered] == [502, 400]
+    assert not any(held for _, held in held_when_answered), (
+        "the lease was still held while the reply was being written"
+    )
+    # ...and the radio really is usable straight afterwards, which is what all of that
+    # ordering is in aid of.
+    free, _ = _post(
+        sidecar,
+        "/listen/start",
+        {"frequency_hz": 99_300_000, "mode": "wbfm", "serial": WIRE},
+    )
+    assert free == 200
+    _post(sidecar, "/listen/stop", {"serial": WIRE})
+
+
 def test_a_node_that_is_not_a_device_node_is_refused(sidecar: str) -> None:
     """`os.open` on a caller-supplied path inside a ROOT container is not a thing to
     leave open — even one only the api can reach today, because "only the api can reach

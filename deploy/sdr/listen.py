@@ -1651,9 +1651,9 @@ class Session:
             enc.stdin.flush()
 
     def _publish_channel(
-        self, spectrum: "iq.Spectrum", passband: tuple[float, float]
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float], reach_hz: float
     ) -> None:
-        self._publish_frame(self._tuning_frame(spectrum, passband))
+        self._publish_frame(self._tuning_frame(spectrum, passband, reach_hz))
 
     def _publish_band(self, spectrum: "iq.Spectrum") -> None:
         self._publish_frame(self._band_frame(spectrum))
@@ -1691,8 +1691,10 @@ class Session:
             if not self._restarting:
                 self._end_frames()
 
-    def _tuning_frame(self, spectrum: "iq.Spectrum", passband: tuple[float, float]) -> Frame:
-        """The channel's own spectrum, cropped to twice what the demodulator hears.
+    def _tuning_frame(
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float], reach_hz: float
+    ) -> Frame:
+        """The channel's own spectrum, cropped to twice the mode's WIDEST passband.
 
         Twice the passband is the span the mock settled on
         (docs/mocks/sdr-tuning-view/), and cropping to it is what makes the shaded band
@@ -1703,13 +1705,20 @@ class Session:
 
         The crop stays CENTRED on the tuned frequency even where the passband is not
         (SSB), because "am I centred?" is a question about the dial: it reaches four
-        times the passband's furthest edge, which is the same span every symmetric mode
-        had before C14 and now also holds all of SSB's."""
+        times `reach_hz`, which is the same span every symmetric mode had before C14 and
+        now also holds all of SSB's.
+
+        **`reach_hz` is the mode's WIDEST filter, not the one in force.** Cropping to the
+        live passband would zoom the picture in every time the owner narrowed the filter
+        — hiding the interfering station at the moment they narrowed it to reject that
+        station, and keeping the shaded box the same fraction of the picture at every
+        setting, so the control would look like it had done nothing. Holding the picture
+        still and letting the box shrink inside it is the visual argument for the whole
+        feature (`demod.Demodulator.crop_reach_hz`)."""
         low, high = passband
-        reach = max(abs(low), abs(high))
         keep = min(
             spectrum.bins,
-            max(TUNING_BINS // 8, int(round(4.0 * reach / spectrum.bin_hz))),
+            max(TUNING_BINS // 8, int(round(4.0 * reach_hz / spectrum.bin_hz))),
         )
         first = (spectrum.bins - keep) // 2
         return Frame(

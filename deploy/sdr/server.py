@@ -1368,6 +1368,15 @@ class Handler(BaseHTTPRequestHandler):
         if busy is not None:
             self._json(409, {"detail": str(busy)})
             return
+        # **Decide while the lease is held, release it, and only then answer.** Writing
+        # the response from inside the `try` loses a race the caller can never win: the
+        # client has the reply in hand while this thread has not yet reached its
+        # `finally`, and the very next thing anything does after a reset is try to use
+        # the radio — which the lease is still refusing, with "the radio is already
+        # resetting the radio". Invisible on an idle box and reproducible on a busy one,
+        # which is the worst way for a recovery path to fail: it fails hardest exactly
+        # when it is most needed, and it reads to the owner as "the reset did not work".
+        answer: tuple[int, dict[str, Any]]
         try:
             # The lease is not the whole answer any more. It knows about child processes
             # and TTL reservations; it cannot see an IN-PROCESS device handle, and the
@@ -1381,7 +1390,7 @@ class Handler(BaseHTTPRequestHandler):
             open_here = listen.blocking_key(radio.holders(), named or listen.ANY_DEVICE)
             if open_here is not None:
                 doing = radio.holders().get(open_here, "in use")
-                self._json(
+                answer = (
                     409,
                     {
                         "detail": f"the radio ({open_here or 'unnamed'}) is still open "
@@ -1390,24 +1399,24 @@ class Handler(BaseHTTPRequestHandler):
                         f"will, restart the sdr service."
                     },
                 )
-                return
-            usbdev.reset(node)
+            else:
+                usbdev.reset(node)
+                # The node number changes as a result — a reset device comes back at the
+                # next free address — so the caller is told to look again rather than
+                # reuse it.
+                answer = (200, {"reset": True, "serial": named, "was": node})
         except ValueError as bad:
-            self._json(400, {"detail": str(bad)})
-            return
+            answer = (400, {"detail": str(bad)})
         except OSError as failed:
             # ENODEV is the ordinary one: the node moved between the scan and now, which
             # a reset itself causes. Said plainly, because "try again" really is the fix.
-            self._json(
+            answer = (
                 502,
                 {"detail": f"the radio would not reset ({failed.strerror or failed}). "},
             )
-            return
         finally:
             TUNER.unreserve(named)
-        # The node number changes as a result — a reset device comes back at the next
-        # free address — so the caller is told to look again rather than reuse it.
-        self._json(200, {"reset": True, "serial": named, "was": node})
+        self._json(*answer)
 
     def _soapy_probe(self, body: dict[str, Any]) -> None:
         """F0's questions, asked of a real dongle, answered as a verdict.
