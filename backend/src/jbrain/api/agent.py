@@ -1130,6 +1130,17 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # so a future deep-research-only agent stays covered.)
     if profile.tools is not None and profile.tools & {SPAWN_TOOL, DEEP_RESEARCH_TOOL}:
         buffer_retry = False
+    # ...and never for a note conversation, which is the same objection with the writes
+    # in place of the fan. Its on-reply surface holds `assert_fact`, `correct_fact`,
+    # `merge_entities` and `prefs_write`, and a re-produce re-dispatches all of them:
+    # `correct_fact` force-supersedes a SECOND time, `merge_entities` stages a second
+    # fold, `prefs_write` a second standing-instruction Proposal — one owner message
+    # arriving in the inbox twice, and in the graph twice. The loop now ends a HALTED
+    # turn on this path (`_produce_buffered`), but a turn that ends any other way is
+    # still a whole graph write the reflexion loop would run again for a better
+    # paragraph. Post-hoc verify-and-annotate still applies, as it does for jerv.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        buffer_retry = False
     # The PWA's live position for this turn (both coords or nothing), reused by the
     # location tool to answer from the phone's current spot. When a turn carries a
     # fix we cache it as the owner's last-known position; when it carries none we fall

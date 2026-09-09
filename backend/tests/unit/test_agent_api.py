@@ -879,6 +879,33 @@ def test_chat_buffer_retry_is_forced_off_for_a_spawner(
     assert sse_events(resp.text)[-1]["type"] == "done"
 
 
+def test_chat_buffer_retry_is_forced_off_for_a_note_conversation(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # The same objection as the spawner above, with the graph writes in place of the fan.
+    # The on-reply surface holds `assert_fact`, `correct_fact`, `merge_entities` and
+    # `prefs_write`; a re-produce re-dispatches every one of them, so one owner message
+    # would force-supersede twice and stage two Proposals for the same edit — arriving in
+    # the inbox twice and in the graph twice, for a better closing paragraph.
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-n", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
+    router = stream_router(
+        [LlmTurn("recorded that", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["recorded that"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-n", "message": "my sister"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # The streaming adapter ran; the non-streaming buffered produce path did not.
+    assert fake.stream_calls and fake.converse_calls == []
+    # (The tail here is the provenance label, not `done` — this persona reads the
+    # knowledge base and this turn cited nothing.)
+    assert any(e["type"] == "done" for e in sse_events(resp.text))
+
+
 def test_chat_persists_proposal_and_entity_chips(
     client: TestClient,
     repo: FakeAuthRepo,

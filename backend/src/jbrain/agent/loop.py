@@ -528,11 +528,24 @@ class _BufferedTurn:
     entities: tuple[EntityRef, ...]
     mutated: bool
     stop_reason: str
+    # A turn-ending tool ended this attempt (`ask_owner`). Carried separately from
+    # `stop_reason` because it also has to suppress the RETRY: `reflect` re-runs the
+    # producer, and re-producing a halted turn would re-dispatch the very side-effecting
+    # writes the halt exists to stop — asking the owner a second question, staging a
+    # second Proposal, writing the graph again — for a turn whose whole point is that
+    # nothing more happens until they answer.
+    halted: bool = False
 
 
 def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
     """The Loop-1 trigger applied to a buffered turn: evidence (sources OR entities),
-    a mutation, or sensitive data actually touched (not merely a held scope)."""
+    a mutation, or sensitive data actually touched (not merely a held scope).
+
+    A HALTED turn is never critique-worthy, whatever it gathered. It ended on a tool
+    that says "stop here and wait for Jeff", and the improvement loop's move is to run
+    the whole turn again."""
+    if turn.halted:
+        return False
     return critique_worthy(
         source_count=len(turn.sources),
         entity_count=len(turn.entities),
@@ -1609,9 +1622,12 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
@@ -1643,6 +1659,26 @@ class AgentLoop:
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A turn-ending tool (`ask_owner`). The THIRD dispatch loop, and the last
+                # one that did not honour this — `/chat` picks this path whenever the
+                # owner has reflexion buffer-retry on, and the owner's reply into a note
+                # thread IS a `/chat` turn, so the halt was silently a property of which
+                # entry point a caller happened to take. After `ask_owner` flips the
+                # thread to `waiting_on_owner` the loop went on for up to 19 more steps
+                # of `correct_fact`, `merge_entities` and `prefs_write` against a note it
+                # had just said it could not read.
+                return _BufferedTurn(
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    halt_seen,
+                    halted=True,
+                )
+
             if any_error:
                 return _BufferedTurn(
                     tuple(events),
