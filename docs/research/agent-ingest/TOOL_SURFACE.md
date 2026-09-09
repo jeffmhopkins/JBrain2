@@ -1,7 +1,31 @@
 # Note-Conversation Persona — Proposed Tool Surface
 
 > **Status:** Research · **Last verified:** 2026-09-09 — an independent design pass for
-> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. Not ratified. No code written.
+> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. **The two write tools are now BUILT
+> to this document** (`backend/src/jbrain/agent/graphwritetools.py`, W3/T2a): batched,
+> `quote` required and checked, no `domain`/`inferred`/`supersedes` field, no `enum`, a
+> per-element savepoint, failures as text, and the result shapes below implemented as the
+> ACI. Three corrections this document owes, found once there was code against the real
+> schema — the design is unchanged, the details were wrong:
+>
+> 1. **`assert_fact` has six fields, not four.** `statement` and `when` are required
+>    alongside subject/predicate/object/quote. The `statement` is what the wiki and the
+>    review cards print (a synthesized one reads as a row of fields), and without `when`
+>    no dated fact is expressible at all — the appointments projection and every interval
+>    depend on it. Both are REQUIRED with an explicit empty-string escape for `when`,
+>    since R3 says an optional field is never filled. This is two more fields than the
+>    probe measured; the degradation path (drop `when`, synthesize the statement) is a
+>    sidecar plus handler change, as gap 4 anticipated.
+> 2. **"`domain_floor` runs first regardless" was not true for the spelling this persona
+>    writes.** The floor's table is keyed on the camelCase the note.extract prompt
+>    teaches; `assert_fact`'s natural spelling is snake_case, and `blood_pressure` missed
+>    the table entirely. The lookup is now separator- and case-insensitive with a
+>    dotted-base fallback. Without that fix, D18's "the agent chooses the domain for novel
+>    predicates" would silently have extended to *registered* ones.
+> 3. **`resolve_entity` is not free of the resolver's own vocabulary.** A handle is this
+>    module's addressing and must never reach `_resolve_entities`, which resolves — and
+>    failing that MINTS — on `mention.name`: an `e1` ref creates an entity called "e1".
+>    Refs are surfaces; handles are the model's shorthand for them.
 
 The complete proposed tool list for the persona described in the plan: the agent that
 reads a note, writes the entity/fact graph through tools, and shows the owner what it
