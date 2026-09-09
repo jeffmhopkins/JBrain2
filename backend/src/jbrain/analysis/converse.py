@@ -73,7 +73,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent import readtools
-from jbrain.agent.agents import AgentProfile, agent_for
+from jbrain.agent.agents import (
+    AgentProfile,
+    agent_for,
+    narrow_for_emr,
+    narrow_for_third_party_note,
+)
 from jbrain.agent.asktools import ASK_OWNER_TOOL, build_ask_owner_handlers
 from jbrain.agent.clock import build_clock_handlers, now_block
 from jbrain.agent.graphwritetools import (
@@ -88,10 +93,12 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.noteframe import framed_note
+from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
@@ -122,6 +129,16 @@ allowlist is the guarantee, and a caller-supplied persona would be the door arou
 # the registry's names to the allowlist, because a tool in one and not the other is
 # either a dead offer or an unreachable handler.
 NOTE_READ_TOOLS = frozenset({"find_entity", "read_entity", "current_time"})
+
+
+def note_owned_by_emr(note: NoteInfo) -> bool:
+    """Whether the deterministic EMR importer owns this note's graph writes (W4/D9).
+
+    One function, two call sites — the profile narrowing and the registry build — so the
+    two locks can never disagree about which notes they cover. The markers are the ones
+    migration 0122's own trigger filter uses; see `ingest/emr/ownership.py`."""
+    return emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments])
+
 
 NOTE_CONVERSE_SPEC = ActionSpec(
     name="note_converse",
@@ -351,7 +368,28 @@ class NoteConverseRunner:
                 log.info("note_converse.already_live", note_id=note_id)
                 return None
 
+        # W4's two narrowings, both halves, in that order. Neither is exclusive of the
+        # other and a note can be BOTH: an approved intake submission enacting into a
+        # health `Records` note with an EMR-shaped attachment is third-party-bodied AND
+        # importer-owned, and such a note must end up with the INTERSECTION — the entity
+        # reads and the clock, no write verb and no `ask_owner`. That is a property of
+        # `narrow_for_third_party_note` intersecting rather than assigning, so the order
+        # here is the documented one rather than the load-bearing one.
+        #
+        # W4/D9: on an EMR note the persona keeps its reads and `ask_owner` and loses
+        # every graph-write verb — the deterministic parse owns those facts, and it owns
+        # this note's one whole-note settle (constraint 6).
+        #
+        # D10 / plan risk 1: a note whose body the OWNER DID NOT WRITE runs on the
+        # third-party set — the same graph writes, no `ask_owner`. The port needed no new
+        # trigger (`note.ingested` has been opening this conversation over an
+        # `untrusted_origin` note since W2); it needed this line, and the registry below
+        # that declines to bind the handler.
         profile = agent_for(NOTE_CONVERSE_AGENT)
+        if note_owned_by_emr(note):
+            profile = narrow_for_emr(profile)
+        if is_third_party(note.provenance):
+            profile = narrow_for_third_party_note(profile)
         read_scopes = note_read_scopes(profile, note)
         # ONE transaction for the session row and the conversation row that gives it
         # meaning. The one-live index can refuse the second, and a session opened in a
@@ -390,7 +428,15 @@ class NoteConverseRunner:
         session_id: str,
         read_scopes: Sequence[str],
     ) -> None:
-        turn_0 = framed_note(note.body, captured=capture_line(note))
+        # Same fence, same nonce, one word about whose text it is (D10). The nonce is
+        # drawn FROM THE BODY, so a submitter cannot predict the delimiter and cannot
+        # forge one either — which is the property that matters most on the one note
+        # whose author is known to be somebody else.
+        turn_0 = framed_note(
+            note.body,
+            captured=capture_line(note),
+            about=THIRD_PARTY_ABOUT if is_third_party(note.provenance) else OWN_NOTE_ABOUT,
+        )
         run_id = await self.runlog.start(
             owner_ctx, session_id=session_id, prompt_version=profile.version
         )
@@ -624,10 +670,15 @@ def note_converse_handler(
 ) -> Callable[[dict[str, Any]], Awaitable[object]]:
     """The registered `note_converse` handler, wired for the worker.
 
-    The registry is built PER NOTE and holds exactly six tools: the two graph writes
-    bound to this note, `ask_owner`, the two entity reads inherited unchanged, and the
-    clock. Not the chat registry — not even a filtered view of it. Two reasons, and the
-    second is the one that makes it structural rather than tidy:
+    The registry is built PER NOTE and holds six tools: the two graph writes bound to
+    this note, `ask_owner`, the two entity reads inherited unchanged, and the clock. W4
+    takes tools OFF that list per note, and the two subtractions are independent: FOUR of
+    the six on a note the deterministic EMR importer owns, where neither graph write is
+    bound at all (D9, `note_owned_by_emr` below); FIVE on a note whose body the owner did
+    not write, where `ask_owner` is left unbound (D10); and THREE — the two entity reads
+    and the clock — on a note that is both. Not the chat registry — not even a filtered
+    view of it. Two reasons, and the second is the one that makes it structural rather
+    than tidy:
 
     - a graph-write handler is bound to ONE note (its id, domain, chunks and handle
       table live in the writer), so there is no chat-session copy of it to filter down
@@ -662,7 +713,7 @@ def note_converse_handler(
         **build_clock_handlers(),
     }
     inherited = {k: v for k, v in inherited.items() if k in NOTE_READ_TOOLS}
-    inherited |= build_ask_owner_handlers(maker)
+    ask_owner = build_ask_owner_handlers(maker)
 
     def executor_for_note(note: NoteInfo, read_scopes: Sequence[str]) -> TurnExecutor:
         writer = NoteGraphWriter(
@@ -682,7 +733,25 @@ def note_converse_handler(
             write_ctx=SessionContext(principal_id="worker", principal_kind="owner"),
             read_scopes=read_scopes,
         )
-        toolset = NoteToolset(writer=writer, inherited=inherited)
+        # W4's enforcement, both halves, and the reason it is HERE rather than in the
+        # allowlist alone (constraint 9 / TOOL_SURFACE R2): a name with no handler behind
+        # it cannot dispatch however the profile is resolved, so each narrowing gets a
+        # second lock that fails independently of the first.
+        #
+        # D10: on a note the owner did not write, `ask_owner` is not BOUND — its sidecar
+        # is never loaded, the model is never offered the verb, and there is no handler
+        # for a later allowlist edit to make callable.
+        # D9: an EMR note's facts are the importer's, so this registry binds no
+        # graph-write handler for one. The narrowed profile says the same (the runner
+        # applies `narrow_for_emr` before the turn).
+        #
+        # The two conditions are independent, so a note that is both keeps only the two
+        # entity reads and the clock — matching the intersected allowlist exactly.
+        toolset = NoteToolset(
+            writer=writer,
+            inherited=inherited if is_third_party(note.provenance) else inherited | ask_owner,
+            writes_graph=not note_owned_by_emr(note),
+        )
         return LoopTurnExecutor(router, note_registry(tools_dir, toolset.handlers()))
 
     runner = NoteConverseRunner(

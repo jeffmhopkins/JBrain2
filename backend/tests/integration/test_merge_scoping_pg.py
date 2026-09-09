@@ -309,9 +309,11 @@ async def test_the_trigger_is_blind_when_the_loser_row_is_out_of_scope(
 async def test_the_python_guard_covers_the_shape_the_trigger_cannot(
     maker: async_sessionmaker[AsyncSession],  # noqa: F811
 ) -> None:
-    """The same out-of-scope-loser shape through the real review path. `_apply_resolution`
-    reads entity_a/entity_b straight off the card and never scope-checks them (unlike
-    `merge_entities`), so the session guard is the only thing standing here."""
+    """The same out-of-scope-loser shape through the real review path. The card's own
+    ids are worthless evidence here — RLS hides the loser, so every read the accept
+    makes about the pair is filtered — which is why the accept asks the session guard
+    BEFORE it resolves either id, and refuses as a scope error rather than as a
+    can't-find-this one."""
     keep, gone, fact = await _cross_scope_pair(maker)
     item = await seed_item(maker, "merge_proposal", {"entity_a": keep, "entity_b": gone})
 

@@ -98,10 +98,21 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    widening, and any connector can be disabled. Location connectors are
    **local-first** so location data stays on-box (an on-box lookup egresses
    nothing and needs no Proposal).
-10. **Untrusted-origin content never triggers a background job.** Any batched or
-    scheduled agent processing runs only on owner-originated content, never on note
-    bodies, intake submissions, or other untrusted-origin input. *(This once also
-    capped a per-principal self-improvement spend budget; those pipelines were
+10. **Untrusted-origin content triggers exactly one background job, on a surface with
+    no channel out.** The rule was "never", and the note conversation amended it
+    (`AGENT_INGEST_CONVERSATION_PLAN.md` D10): a note whose body a stranger wrote — an
+    approved intake submission, `notes.provenance = 'untrusted_origin'` — opens the same
+    unattended `note_ingest` pass every note opens, and that pass writes the graph. What
+    keeps the amendment bounded is not the prompt but **which handlers are bound**: such
+    a conversation runs on `agents.NOTE_INGEST_THIRD_PARTY_TOOLS` — `resolve_entity`,
+    `assert_fact`, `find_entity`, `read_entity`, `current_time` — on the unattended pass
+    AND on the owner's reply, so a stranger's words may cause a fact and nothing else.
+    No `ask_owner` (a question written out of stranger text into the owner's inbox in his
+    own agent's voice, whose answer becomes source text on the note), and none of the
+    on-reply verbs D8 would otherwise unlock, because D8's premise — the owner is the
+    only voice in the room — is false while the submitted body is still turn 0. Every
+    other batched or scheduled job still runs only on owner-originated content. *(This
+    once also capped a per-principal self-improvement spend budget; those pipelines were
     removed, but the no-untrusted-trigger rule stands for every remaining job.)*
 11. **Purge is total.** Note deletion cascades to agent episodic memory — delete
     or redact the episode, not merely repair pointers — with a test asserting no
@@ -427,8 +438,9 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   every time the owner captures anything. Its allowlist is an explicit **closed**
   `frozenset`, never the curator wildcard (D16), and the executor's tool registry is
   assembled by NAME rather than globbed from the sidecar directory, so a tool reaches
-  this persona only by being written into both. It is the one persona with **two**
-  allowlists (D8). Reading a note on its own it holds **six**: the note-bound graph
+  this persona only by being written into both. It is the one persona with **three**
+  allowlists (D8, D10) and one further subtraction over them (D9, the EMR narrowing
+  below). Reading a note on its own it holds **six**: the note-bound graph
   writes `resolve_entity` and `assert_fact`, `ask_owner`, and `find_entity` /
   `read_entity` / `current_time` inherited unchanged. Once the owner replies it holds
   **twelve** — those six plus `correct_fact`, `merge_entities`, `prefs_write`, `search`,
@@ -436,15 +448,47 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   not sanitize the note body still in context. The choice is a second RESOLUTION
   (`agents.agent_for_owner_reply`, called only by `/chat`, which by definition is a turn
   the owner sent), not a flag — and `AgentProfile.tools` carries the NARROW set, so a
-  caller that does not ask for the wider one gets the safe answer by default. Turn 0 is
+  caller that does not ask for the wider one gets the safe answer by default. The third
+  allowlist is the **five** of `NOTE_INGEST_THIRD_PARTY_TOOLS`, and it applies on BOTH
+  turns of a note whose body the owner did not write (`notes.provenance =
+  'untrusted_origin'` — an approved intake submission; non-negotiable #10). It is the
+  unattended six minus `ask_owner`, and it does not widen on reply, because D8's premise
+  is that the owner is the only voice in the room and a stranger's body is still turn 0.
+  The graph writes are untouched: D10 is "unrestricted in *what* it may write". Applied
+  by `agents.narrow_for_third_party_note`, LAST (it undoes the widening), over a lookup
+  that fails closed — an unreadable note or conversation reads as third-party, so a
+  failure narrows a turn rather than widening one. On the unattended pass `ask_owner` is
+  additionally not BOUND at all: its sidecar is never loaded into that note's registry,
+  so the allowlist is a second lock over a verb that is not in the room. Turn 0 is
   the note **fenced as
   DATA** the way the `intake` persona fences a stranger's reply — a note body may carry
   an email, a forwarded message or text read off a photo, so nothing inside it is an
-  instruction. The conversation's lifecycle and its per-tool-call ledger live in
+  instruction; a third-party body gets the same nonce-closed fence with one clause
+  naming whose text it is. The conversation's lifecycle and its per-tool-call ledger live in
   `app.note_conversations` (see `ANALYSIS.md`); at most one live conversation exists per
   note. It **does** write the graph now, through the two bound tools — and still beside
   the shipped extraction pipeline (D13), never instead of it; both go through W1's
   `commit_facts`, so there is one write path, not two. `ANALYSIS.md` has that half.
+  - **Except on a note the EMR importer owns** (W4/D9), where it holds NO graph-write verb
+    at all — not on the unattended pass and not on the reply turn, which is the one place
+    W4 narrows what D8 unlocks. `fhir_status` is EMR-only, set by the parser, and has no
+    tool field, so a lab value the model wrote is one the FHIR lifecycle can never
+    supersede — that is the reason that holds today, and it is sufficient on its own. The
+    second reason is prospective: the note's whole-note settle is the importer's, so once
+    the conversation gains a settle of its own (it has none today — its write path is
+    `commit_facts` only) a second writer would retract the importer's facts.
+    `ingest/emr/ownership.emr_owned` is the predicate (migration
+    0122's own trigger filter), `agents.narrow_for_emr` the allowlist half, and the
+    worker's per-note registry declines to bind the handlers as the second lock. The
+    thread still opens, still reads, and still holds `ask_owner`: what it loses is the
+    ability to write facts a deterministic parser is authoritative for.
+  - **The D9 and D10 narrowings compose, and the narrower wins.** They are independent
+    predicates and a note can satisfy both — an approved intake submission the owner
+    filed to health / `Records` with the archive or a PDF attached. Such a note's
+    conversation holds `find_entity` / `read_entity` / `current_time` and nothing else,
+    on both turns: no `ask_owner` (D10) and no write verb (D9). It is the intersection
+    rather than whichever narrowing ran last because `narrow_for_third_party_note`
+    intersects where `narrow_for_emr` subtracts, so the two commute.
   - **`ask_owner`** is "record one open question on this thread and stop". It writes its
     own ledger row and moves the conversation to `waiting_on_owner` in one transaction —
     the question has to be durable the moment it is asked, because the owner can answer

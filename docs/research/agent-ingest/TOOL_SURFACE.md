@@ -74,6 +74,77 @@
 >    `merge_entities` can have at all (constraint 12 leaves it no other). The bullet's
 >    other four verbs are still out, on their own merits.
 >
+> **The six expressiveness gaps the W3 harness re-point exposed are now decided**, and the
+> deciding was done the way this document's cut 5 was done — by putting each candidate
+> schema in front of the live model through `/api/debug/tool-probe` and scoring what came
+> back (`backend/evals/shape_probe.py`, the `fields` suite; gpt-oss-120b, reasoning low, 12
+> samples an arm). `assert_fact` is v3: `when_end` and `confidence` are added, three gaps
+> are accepted with the measurement written down, and one was a validation bug rather than
+> a schema gap. Four more corrections this document owes:
+>
+> 8. **R3 is right and incomplete, and the missing half is what decided four of the six
+>    gaps. Required buys PRESENCE, not MEMBERSHIP.** gpt-oss fills every required string
+>    field every time — with a value it invented. Asked for a fact `kind` from a six-word
+>    list, in an imperative "copy exactly ONE of these six words, and never any other
+>    word", it wrote `residence` ×15, `employment` ×10, `medical` ×9: **7 legal in 80**.
+>    Asked for an `assertion` from a five-word list: **0 in 72** (`civic_sold`,
+>    `current_weight`, `dana works at everlane`). Asked for a `qualifier` "only when two
+>    facts collide": prose on **61 of 86** facts. The three fields R3's logic most
+>    obviously licenses are the three that cannot be built. The corollary: **the only
+>    closed vocabularies a tool grammar can enforce without an `enum` are the JSON types**
+>    — `number` and `boolean` — so a field whose values are WORDS is not expressible on
+>    this box at all, and a field whose value is a number or a date is.
+> 9. **R1's "'That's simply false' is already expressible as `assertion: "negated"`
+>    (`extraction.py:24`)" is FALSE for this surface, and cannot be made true.** That
+>    value exists on the extraction schema; **no tool field reaches it**, which is what ten
+>    negation scenarios xfail on. Both spellings were measured: the string above, and a
+>    `negated` **boolean** — the enum-free shape correction 8 says is the only one that can
+>    carry a closed vocabulary. The boolean is filled perfectly (80/80 legal, 0
+>    over-applied) and is **inert**: it came back `false` 80 times out of 80, including
+>    every time on "I finally sold the Civic last week so it is gone". The string fills
+>    with garbage; the boolean fills with the majority class and never fires. R1's
+>    additive-verbs rule survives — retraction is still not a verb — but its stated escape
+>    hatch does not exist, and the channel that does is `correct_fact` on the owner's reply
+>    turn.
+> 10. **Cut 3 is REVERSED, and its own stated reason is why.** "`assert_fact.confidence` —
+>     only ever lowers a ceiling" was written as grounds to cut the field; it is the
+>     property that makes the field safe. It ships as a JSON **`number`** — the string
+>     spelling came back "high"/"low" every time, 0 of 24 legal — and `self_confidence` is
+>     `min(engine span check, model number)`, so a model claiming 1.0 on a quote the note
+>     does not contain still lands at the 0.4 ceiling. The direction that matters for a
+>     guard that HOLDS facts is the false positive, and across 94 facts on two notes the
+>     live model marked down **zero** legible ones. It under-reports rather than
+>     over-reports: on a note whose middle line is explicitly unreadable it landed *on* 0.5
+>     as often as below it, and 0.5 is not < `supersession.LOW_CONFIDENCE`. So it is a
+>     backstop for the clearly illegible case, not a calibrated dial, and the sidecar's
+>     wording names a concrete low number rather than a threshold to stay under. Across
+>     121 facts on three notes the live model marked down zero legible ones, and on a note
+>     whose middle line is explicitly unreadable it converges on exactly **0.5** — which is
+>     not `< LOW_CONFIDENCE`. Naming "0.3 or lower" instead of "below 0.5" made it more
+>     CONSISTENT (7 of 10 smudged facts, against 6 of 11) without moving it under the
+>     threshold. The channel is built and proved; the calibration is short, and moving
+>     `LOW_CONFIDENCE` to meet it is deliberately not done — it is a live threshold the
+>     whole `note.extract` path feeds.
+> 11. **Gap 5 below is not the only thing `object` being one string costs.** A literal that
+>     happens to equal a resolved surface silently became an EDGE to that entity — an
+>     entity's own nickname became a self-edge, and the display projection then had no name
+>     fact to read (the Sammy bug). That is a validation fix, not a schema change: the
+>     registry already declares which predicates take an edge (`value_shape: ref`), so a
+>     declared non-ref predicate takes its object literally whatever it spells. An explicit
+>     handle still wins everywhere, and an undeclared tier-2 predicate keeps the permissive
+>     link, because the registry has no opinion there.
+> 12. **The qualifier channel that already existed is unreached by the live model, and the
+>     blocker is one layer earlier than the qualifier.** `registry.decompose_predicate`
+>     recovers a qualifier folded into a dotted path, so `name.nickname.friends` needed no
+>     new field — and v3's `predicate` description teaches it. Probed on a note with three
+>     audience-scoped nicknames, **0 of 39** nickname facts carried a third segment, and
+>     the model did not reach for the registry's base spelling either: it wrote
+>     `has nickname`, `hasNickname`, `calledByFriends` where the registry declares
+>     `name.nickname`. `has nickname` matches no `renamed_from`, so it lands as a novel
+>     predicate and `decompose_predicate` never gets the chance. Widening the attractors is
+>     registry work, and it gates the qualifier channel, D18's domain floor and the
+>     predicate-consolidation pipeline alike.
+>
 > One shape worth naming because it costs an hour to find: **`entity_view` carries no
 > `subject_id`**, and `(subject, entity, predicate, qualifier)` is the write path's
 > identity key — so an address resolved from the entity page alone filters on
@@ -90,8 +161,11 @@ did. Grounded in the shipped `.tool` sidecar format, the existing write path, an
 
 **R1 — Every model-facing verb is additive.** The persona can add to the graph and
 replace a value with a newer one. Retraction is not a verb; it is the engine's settle
-sweep. "That's simply false" is already expressible as `assertion: "negated"`
-(`extraction.py:24`). This is stricter than `B3-GRAPH-TOOLS.md`, which proposed a
+sweep. ~~"That's simply false" is already expressible as `assertion: "negated"`
+(`extraction.py:24`).~~ **Not on this surface — see header correction 9.** That value is
+on the extraction schema and no tool field reaches it; both a string and a boolean
+spelling were measured and neither works. The unattended pass cannot state a negation at
+all, and `correct_fact` on the owner's reply turn is what carries it. This is stricter than `B3-GRAPH-TOOLS.md`, which proposed a
 `retract_fact` — that was written before D4 removed the review inbox, and a retracted
 head with no inbox is invisible on a box the owner cannot shell into.
 
@@ -103,6 +177,9 @@ shaped like `JERV_TOOLS` / `ARCHIVIST_TOOLS`, not one set with flags.
 consecutive `scratch_write` v2 calls, gpt-oss-120b filled the required `filename` every
 time and the optional `content` never once. llama.cpp compiles `required` into the tool
 grammar. Anything load-bearing is `required` even when the call reads awkwardly.
+**Corollary, measured after the fact and the thing that decided four of the six gaps:
+required buys PRESENCE, not MEMBERSHIP** — a required field whose legal values are WORDS
+comes back filled with a word the model invented. See header correction 8.
 
 ## The list
 
@@ -206,11 +283,23 @@ Each is something the current pipeline does that no proposed tool covers:
    the EMR import goes *through* the conversation, so the importer must reach W1's
    `commit_facts` directly rather than via the model — otherwise lab-status transitions
    (`_lab_status_transition`, `supersession.py:537`) silently stop working.
-4. **`resolved_end` and `precision` are dropped as model fields.** Precision derives from
-   the ISO shape; an end date normally arrives as `_interval_close` from a later note. A
-   bounded interval stated in one sentence ("we lived there 2019 to 2023") now needs the
-   closing note. If it bites, add `when_end` as a seventh flat scalar, never a nested
-   object.
+4. ~~**`resolved_end` and `precision` are dropped as model fields.**~~ **CLOSED in v3,
+   exactly as sketched.** Precision still derives from the ISO shape and is not a model
+   field. `when_end` is the seventh flat scalar, never a nested object. What the sketch
+   did not anticipate is that the field needs a HANDLER as much as a schema: the model
+   closes the one genuinely-closed interval in a note nearly every time *and* stamps an
+   end on nearly every other fact — 53 over-applications in 64 items, as "present", "last
+   week", "unspecified", and today's date on a fact the note dated today. So
+   `_close_interval` refuses an end that is not a date, has no `when` to close, or does
+   not pass the START'S OWN PERIOD. That last comparison is period-against-period, not
+   instant-against-instant: an instant test would have admitted every one of the "today
+   on a fact dated today" cases and closed the owner's current address at the end of
+   today. On the shipping eight-field schema the model produced **45 spurious ends in 56
+   items and the handler admitted 0 of them**, while admitting 4 of the 7 that named the
+   real interval — the other three arrived with a blank `when`, which is the conservative
+   direction and equals the behaviour before the field existed. The two added fields cost
+   nothing measurable: 8.0 facts a turn and the same well-formedness as the six-field
+   control on the same note.
 5. **Structured value shapes** (`postal_address`, `geo`) are reachable only through
    `statement` + shape recovery. A deliberate narrowing: the model is never asked to nest.
 
@@ -264,7 +353,9 @@ scout's in-repo lesson.
    mention for every surface it locates; a settle-time alias scan over the handle table
    and turn-0 seeds catches pre-seeded entities the model never resolved). Add the tool
    only if measurement shows *referential* surfaces ("the dog", "she") degrading the spine.
-3. **`assert_fact.confidence`** — only ever lowers a ceiling.
+3. ~~**`assert_fact.confidence`** — only ever lowers a ceiling.~~ **TAKEN BACK in v3, on
+   that reason.** "Only ever lowers" is the safety property, not the objection — see
+   header correction 10.
 4. **`assert_fact.sensitive`** — `domain_floor` covers the known predicates already.
 5. **The batch shape itself — MEASURED 2026-09-09, and the risk did not survive.**
    It was the largest unmeasured reliability risk here: gpt-oss fills flat scalar args
@@ -299,4 +390,7 @@ scout's in-repo lesson.
 
 **Not cuttable under any pressure:** `assert_fact.quote` staying required, and `inferred` /
 `cross_subject` / `domain` staying out of the schema. Those four are what keep the model
-supplying meaning and the engine supplying mechanics.
+supplying meaning and the engine supplying mechanics. v3 adds a fifth: **`confidence`
+composing as a MINIMUM.** A confidence that could raise the engine's own span check would
+hand the model a way to talk its way past attestation, which is the one thing this surface
+is built so it cannot do.

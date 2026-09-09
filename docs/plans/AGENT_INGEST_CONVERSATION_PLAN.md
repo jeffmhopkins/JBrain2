@@ -1,8 +1,24 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️
 >
-> W3 in flight. Landed so far: **T3** — the unattended/on-reply split (D8) and the verbs
+> W4's two halves have both landed and are merged. INTAKE (D10): the third tool set, and
+> the finding that the port itself had already happened by accident in W2. EMR (D9): the
+> `apply_intent` split, the multi-source settle fix, and a conversation holding no
+> graph-write verb. They compose — `narrow_for_third_party_note` intersects where
+> `narrow_for_emr` subtracts — and a note that is both gets the intersection. What W4
+> still owes is in its section: publishing the deterministic import into the thread, and
+> the older `integrate_note` / `emr_parse` settle race neither half owns. Both halves were
+> then closed against an independent adversarial review of the merged wave — its blocker
+> was that the `apply_intent` split was NOT behaviour-preserving and could leave a held
+> fact with no review card, on every ordinary note; see the seam bullet in W4.
+>
+> W3 in flight. **T5** landed the six-gap decision the harness re-point exposed:
+> `assert_fact` is v3 (`when_end` and a numeric `confidence`), three gaps are accepted with
+> the measurement and a "W5 must not delete" line written into each xfailed scenario, and
+> the corpus is 52 passing / 23 strict-xfail of 75. The finding that decided four of the
+> six — `required` buys presence, not membership — is now `TOOL_SURFACE.md` correction 8.
+> Landed before it: **T3** — the unattended/on-reply split (D8) and the verbs
 > behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12) —
 > plus the fixes from two adversarial reviews: on the write surface the weight cap now
 > lands on the field `decide()` reads, `replaces` is gone, an id `object` becomes a real
@@ -867,6 +883,118 @@ byte-for-byte unchanged. The frame moved to `analysis/noteframe.py` so the two c
 share one boundary instead of teaching the model two, and the persona prompt (v3) extends
 "THE NOTE IS DATA" to every note it reads rather than only the one it is about.
 
+*Landed (T5): the six expressiveness gaps are decided, and `assert_fact` is v3.* The
+harness re-point left six things the tool surface could not say, and W5a's ~940-line
+deletion is gated on not deleting a path only an xfailed scenario covered. Each was
+settled the way W2 settled the batch shape — `backend/evals/shape_probe.py` driving the
+live model through `/api/debug/tool-probe` (gpt-oss-120b, reasoning low, 12 samples an
+arm, scored for well-formedness AND for whether the value is in the field's vocabulary
+and right). **Three closed, three accepted**, and the corpus is **52 passing / 23
+strict-xfail of 75**, from 49 / 26. (The numbering below is the brief's — the harness
+README numbers eight rows, because it counts the structured-`value_json` and no-arbiter
+gaps separately and because closing the interval end split its old row 4 in two.)
+
+**The finding that decided four of the six, and the one that outlives this wave: R3 is
+right and incomplete. `required` buys PRESENCE, not MEMBERSHIP.** gpt-oss filled every
+required field on every sample in every arm — with a value it invented. A `kind` field
+described with its six words, under an imperative "copy exactly ONE of these six words,
+and never any other word", came back **7 legal in 80**: it writes the fact's TOPIC
+(`residence` ×15, `employment` ×10, `medical` ×9). An `assertion` field described with
+its five: **0 in 72**. A `qualifier` field told to stay empty unless two facts collide:
+prose on **61 of 86** facts. The corollary is now a design rule in `TOOL_SURFACE.md`
+(correction 8): **the only closed vocabularies a tool grammar can enforce without an
+`enum` (constraint 8) are the JSON types themselves** — `number` and `boolean`. A field
+whose legal values are WORDS is not buildable on this box.
+
+And a boolean is not the way round it, only a different failure. Both were built and
+measured. `negated` ("the note says this is over"): **80/80 legal, `true` 0 times**,
+including on every "I finally sold the Civic last week so it is gone" — inert. `reading`
+("a number off an instrument"): **96/96 legal, `true` 88 times**, including on "Dana still
+works at Everlane" — it would make nearly every fact a `measurement`, which accumulates
+and never supersedes. The type is filled perfectly and the JUDGEMENT is not there; one
+collapses to the majority class, the other to the other one.
+
+- **Gap 4 — one `when`, no interval end. CLOSED.** `when_end`, a seventh flat scalar,
+  never a nested object, exactly as `TOOL_SURFACE.md` gap 4 sketched. What the sketch did
+  not anticipate is that the field needs a HANDLER as much as a schema: the model closes
+  the one genuinely-closed interval in a note nearly every time *and* stamps an end on
+  nearly every other — **53 over-applications in 64 items**, as "present", "last week",
+  "unspecified", and today's date on a fact the note dated today. `_close_interval`
+  refuses an end that is not a date, has no `when` to close, or does not pass the START'S
+  OWN PERIOD; that last comparison is period-against-period, and an instant-against-instant
+  test would have admitted every "today on a fact dated today" and closed the owner's
+  current address at the end of today. The measurement that says the discipline is enough: on the SHIPPING eight-field schema the model produced 45 spurious ends in 56 items and the handler admitted **0 of 45**, while admitting 4 of the 7 that named the real interval - the other three arrived with a blank `when`, which is the conservative direction and equals the behaviour before the field existed. Those eight fields also cost nothing: 8.0 facts a turn and the same well-formedness as the six-field control on the same note. Flips
+  `hist_retrospective_closes_open_interval` and `hist_idempotent_retrospective_refresh`.
+- **Gap 6 — no channel for the model's own confidence. CLOSED, and it is the SAFETY one.**
+  A JSON **`number`**: the string spelling of this field came back "high"/"low" every time
+  (0 of 24 legal), the number spelling 94 of 94. `self_confidence` is now `min(engine span
+  check, model number)` — **only ever lowers**, which is `TOOL_SURFACE.md` cut 3's own
+  words, written as grounds to cut the field and in fact the property that makes it safe:
+  a model claiming 1.0 on a quote the note does not contain still lands at the 0.4
+  ceiling. The direction that matters for a guard that HOLDS facts is the false positive,
+  and across 94 facts on two notes the live model marked down **zero** legible ones. It
+  under-reports rather than over-reports — on a note whose middle line is explicitly
+  unreadable it landed *on* 0.5 as often as below it, and 0.5 is not `< LOW_CONFIDENCE` —
+  so it is a backstop for the clearly illegible case, not a calibrated dial, and that is
+  written into the sidecar's wording. Two integration tests, because the guarantee is only
+  observable end to end. **The calibration is measured and short of the threshold, and that is stated rather than papered over.** Across 121 facts on three notes the live model marked down zero legible ones — the direction that matters for a guard that HOLDS. On a note whose middle line is explicitly unreadable it converges on exactly **0.5**, and 0.5 is not `< LOW_CONFIDENCE` (0.5). Sharpening the description from 'below 0.5' to a concrete '0.3 or lower' made it more CONSISTENT (7 of 10 smudged facts marked down, against 6 of 11) without moving it below the threshold. So the channel is built and proved — `test_note_graph_write_pg.py` holds a 0.25 read behind a `low_confidence` card — and on this box today the model does not emit a number that fires it. Moving `LOW_CONFIDENCE` to catch 0.5 is deliberately NOT done: it is a live threshold the whole `note.extract` path also feeds, and widening a hold rule to catch one model's rounding would park real facts behind cards on a box whose owner has no inbox.
+- **Gap 5 — an `object` string silently becoming an edge. CLOSED, as a validation fix
+  rather than a schema change**, as the brief guessed. A literal that happened to equal a
+  resolved surface became an edge to that entity — an entity's own nickname became a
+  self-edge and the display projection then had no name fact to read. The registry already
+  declares which predicates take an edge (`value_shape: ref`), so a declared non-ref
+  predicate takes its object literally whatever it spells. An explicit handle still wins
+  everywhere; an undeclared tier-2 predicate keeps the permissive link.
+- **Gap 3 — no `qualifier`. ACCEPTED, with a bounded channel and no new field.** The
+  measurement above says a `qualifier` field would split 71% of identity keys, and a split
+  key means nothing ever supersedes — strictly worse than the collision it was meant to
+  fix. What ships instead is the channel `registry.decompose_predicate` already read and
+  the v3 sidecar now teaches: `name.nickname.friends` stores as name.nickname + friends,
+  bounded to the five registry predicates declaring a `qualifier_vocab`. With gap 5 it
+  flips `name_legal_reprojects_canonical`. A LONG-TAIL qualifier is still dropped.
+  **Measured, and the channel is open but unreached.** The harness's perfect model uses it, which is what flips `name_legal_reprojects_canonical`; the LIVE model does not. Probed on a note with three audience-scoped nicknames, **0 of 39** nickname facts carried a third dotted segment — and the model did not reach for the registry's base spelling either, writing `has nickname`, `hasNickname` and `calledByFriends` where the registry declares `name.nickname`. So the blocker is one layer earlier than the qualifier: predicate NORMALIZATION. `has nickname` matches no `renamed_from`, so it lands as a novel predicate and `decompose_predicate` never gets the chance to recover anything. Registry work again — widen the attractors — not tool work. What v3 buys today is that the channel exists and is documented, so a model that does write the registry spelling is understood.
+- **Gap 1 — no `kind`. ACCEPTED.** 7/80 as a string, 88/96 false-fires as a boolean.
+  Closing it is **registry work, not tool work**: `_fact_kind` already prefers a declared
+  predicate's `kind` over the subject type's default, so declaring `bodyWeight`,
+  `bloodPressure`, `medicationRegimen` and their kin under `schema/defs/` closes seven
+  scenarios without asking the model anything. That is tier-1 work under
+  `ENTITY_GRAPH_REFOCUS_PLAN.md`, deliberately not done here.
+- **Gap 2 — no `assertion`. ACCEPTED.** Neither spelling is a channel. R1's claim that
+  "'That's simply false' is already expressible as `assertion: "negated"`" is FALSE for
+  this surface and cannot be made true; `TOOL_SURFACE.md` correction 9 records it. The
+  unattended pass cannot state a negation, and the owner's reply turn — `correct_fact`,
+  which force-supersedes and pins — is what carries it.
+
+**What W5 may therefore not delete.** Each accepted gap is a promise that something else
+still carries the meaning, and each xfailed scenario's own `xfail` string now names its
+survivor. Collected: `facts.assertion` and its CHECK, `supersession.CURRENT_ASSERTIONS` /
+`_IRREALIS` and the negated-supersedes arm of `decide()`, and `extraction.ASSERTIONS`
+(gap 2 — the EMR importer and the reply turn still write non-asserted rows and three read
+surfaces filter on the column); `_fact_kind`, the registry's per-predicate `kind`
+declaration and the `attribute_collision` card (gap 1 — the only thing between an
+undeclared measurement and a silent overwrite); `facts.qualifier`, the identity key that
+includes it, and `decompose_predicate` plus its `qualifier_vocab` declarations (gap 3);
+`facts.value_json`, `_quantity_value`'s unit split and `values_equal`'s cross-unit
+comparison (gap 4's structured-value half — the EMR importer and the projections write and
+read structured values through the non-model path). The arbiter is the one accepted gap
+with no survivor: deleting it is the plan, and `rel_enumerated_children_fan_out` is where
+the loss is recorded.
+
+*Also found, and corrected in place.* `health_low_confidence_ocr_guard` — the corpus's one
+SAFETY scenario — was xfailed on a root that is no longer true. Its confidence channel is
+live and proved; what blocks it is two gaps upstream of the guard, because
+`medicationRegimen` is declared by no type so `_fact_kind` lands it as `attribute` and the
+collision routes to `attribute_collision` before `decide()`'s state-supersession arm (where
+the low-confidence branch lives) is ever reached, and its qualifier `antihypertensive` is
+long-tail so the two regimens do not share an identity key at all. Declaring one predicate
+closes both. This is the sharpest argument for the tier-1 declaration work: the guard the
+plan most wants is unreachable for a registry reason, not a tool one.
+
+*Also: the harness snapshot gained a column.* `closed` (`valid_to IS NOT NULL`) — before
+it, the only column a scenario could read a closed interval out of was `value_json`, which
+an EDGE never stores, so the close scenario had to assert the word "ended" in a payload the
+write path does not produce.
+
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no
 domain-floor backstop and `address`/`geo` are deliberately outside the floor, so it is
@@ -876,8 +1004,265 @@ same day (`490c54987`, `166e24691`, 2026-07-03), so the control fired silently f
 entire life. Its card lands on the wiki tab (D4). The rebuild sweep is already in hand from W1, so it can serve as cutover instrument
 and rollback lever.
 
+*Landed (the intake half, D10): the third tool set, and the finding that the port had
+already happened.* **Intake was never wired onto the conversation, because nothing had to
+be.** `ingest/pipeline.py` emits `note.ingested` on every settled ingest whatever the
+provenance, so the `untrusted_origin` note an approved submission enacts into
+(`proposaltools.intake_note_executor`) has been opening a `note_converse` thread since W2
+— and W3 handed that thread `resolve_entity` / `assert_fact` / `ask_owner`. Risk 1 was
+therefore live and unmarked on the W3 branch, and `ASSISTANT.md` #10 ("untrusted-origin
+content never triggers a background job") had been false since W2 with nothing saying so.
+D13 holds trivially: no producer moved, and the shipped materialize → Proposal → approve →
+enact → `integrate_note` path is byte-for-byte unchanged.
+
+So what W4 owed was the DIFFERENCE, and it is a **third frozenset**, not a flag
+(constraint 9): `NOTE_INGEST_THIRD_PARTY_TOOLS` — the unattended six minus `ask_owner` —
+serving **both** turns. The rule it encodes is *a stranger's words may cause a FACT and
+nothing else*. Both graph writes stay, unnarrowed, at the same budgets, through the same
+`commit_facts` — D10's "unrestricted in *what* it may write" is honoured exactly. What
+goes is `ask_owner`: its question is model-authored out of stranger-controlled text and
+lands in the owner's notes tab in his own agent's voice, AFTER the materialize → approve
+step that is the whole trust boundary of the intake feature, and the answer he types is
+appended to the note as source text and re-ingested — chunked, embedded, citable. Nothing
+reaches the submitter (no set holds an egress verb, and the intake session is a different
+principal on a different table), so it is not an exfiltration hole; it is an unreviewed
+inbound message channel, and D2 stands in its place.
+
+**The reply turn does not widen, and that is the substantive call.** D8 unlocks
+`correct_fact` / `merge_entities` / `prefs_write` on the premise that the owner is the
+only voice in the room. On a third-party note he is not — the submitted body is turn 0
+and is still in the turn's context, which is this plan's own reason for keeping `web_*`
+out of the on-reply set. `correct_fact` is the sharp one: `decide()`'s correction branch
+reads neither confidence field, so it force-supersedes AND pins, and a stranger who can
+shape what the owner types gets a fact no later note can supersede. `prefs_write` is the
+durable one: a rule landing in `owner_prefs` is corpus-wide prompt injection in every
+future note conversation's system prompt. The cost is real and stated: the owner cannot
+`correct_fact` from an intake thread. He has not lost the verb — it is reachable from a
+reply into any note conversation whose body he wrote.
+
+Enforcement is where R2 asks for it. On the unattended pass `ask_owner` is not BOUND:
+`converse.executor_for_note` builds that note's registry without it, so the sidecar is
+never loaded and there is no handler for a later allowlist edit to make callable. On
+`/chat` the allowlist is the lock, applied by `agents.narrow_for_third_party_note` LAST
+(it undoes `agent_for_owner_reply`'s widening) over `thirdparty.conversation_is_third_party`,
+which fails closed at every step — an unreadable conversation or note reads as
+third-party, so a DB blip narrows a turn rather than widening one. The predicate is
+`notes.provenance`, deliberately not a new column: 0111 already admits the value, the
+enacting executor already sets it, and `queue.INTEGRATION_BACKFILL_ORDER_BY` already
+reads it, so a second marker would be a second thing to keep true. The frame is the SAME
+nonce-closed fence with one clause naming whose text it is — belt to the tool set's
+braces, and on the same boundary rather than a second one.
+
+`tests/integration/test_intake_conversation_pg.py` builds the shipped chain (mint →
+redeem → submission → the real `intake_note_executor` → conversation) and proves the
+capability-token principal's reach did not grow by one row: zero on `notes`,
+`note_conversations`, `note_conversation_tool_calls`, `note_clarifications`,
+`agent_sessions`, `agent_turns`, `entities`, `facts`, `chunks` and `proposals` while the
+owner sees every planted row, and RLS refusal on the three INSERTs that would let a
+submitter file its own turn, its own clarification block, or its own conversation.
+
+*Corrected 2026-09-09 (adversarial review).* As shipped it planted rows in only SEVEN of
+those ten, so `assert seen == 0` was unfalsifiable on `facts`, `chunks` and `proposals` —
+and `facts` is the one the whole premise rests on (the conversation writes facts out of a
+stranger's text; can the stranger read them back?). All ten are planted now. Separately,
+the fail-closed proof for `conversation_is_third_party` reached only its FIRST branch:
+the test believed a soft delete leaves the thread behind, but `delete_note` →
+`purge_note_artifacts` → `_purge_conversations` deletes the whole `agent_sessions` row
+and cascades the side row, so `get()` returned `None` every time and the `_Broken` repo
+was never called. The note-is-gone and exception branches are unit cases now
+(`tests/unit/test_note_converse.py`), where a conversation row can exist with no note
+behind it; flipping either to fail open now fails.
+
+*Landed (the EMR half, D9): the boundary is `fhir_status`, and it is now in code.*
+`TOOL_SURFACE.md` gap 3 named the hazard and the answer both: `fhir_status` is EMR-only,
+set by the parser, and `supersession._lab_status_transition` is what reads it — the
+transition that keeps a FHIR *preliminary* reading from becoming a citable current value
+(constraint 4). `assert_fact` has no such field, and constraint 8 forbids the enum-shaped
+vocabulary one would need. So the importer writes through W1's seam **directly** and the
+conversation over an EMR note holds **no graph-write verb at all**.
+
+- **The seam.** `apply_intent` splits into `commit_intent` (resolve, plan-to-extraction,
+  `commit_facts`, the held-fact review cards) and `settle_note`. `apply_intent` is now
+  the two of them, one after the other, and returns what it always returned.
+  `ingest/emr/integrate.EmrNoteCommit` is the multi-source caller — it commits one
+  parsed source at a time, in that source's own transaction, unions
+  `touched`/`projected`/`mention_ids` and the extractions, and calls `settle_note`
+  **once**.
+
+  **The split was written as behaviour-preserving and was not, and the correction is
+  where the seam now stands** (found by an adversarial review of W4, 2026-09-09, on the
+  ORDINARY note path — nothing EMR about it). Putting the held-fact cards inside
+  `commit_intent` moved them from AFTER the whole-note settle to BEFORE it, and the two
+  steps write `app.review_items` in opposite directions: `_file_inference_reviews`
+  skipped a card when an OPEN one already matched, `settle_note` deletes open cards
+  pointing at facts it just retracted. Their keys disagreed —
+  the card's was `(note_id, entity_ref, predicate, qualifier)`, the held row's is
+  `(note_id, entity_id, predicate, qualifier, object, domain_code)` — so a re-analysis
+  that resolved one `entity_ref` to a DIFFERENT entity (or a note an owner PATCH moved
+  between domains) minted a fresh held row, had its card suppressed by the previous
+  run's, and then watched the settle delete that one: a `pending_review` fact with no
+  card, which is precisely what N11 exists to prevent. **The fix is the KEY, not the
+  order**: the dedup now keys on the held ROW's id, the same identity
+  `_insert_held_fact` refreshes on, so the two agree and the invariant holds on either
+  side of the settle. `test_a_re_resolved_held_fact_never_ends_up_with_no_card` is the
+  pin and is parametrized over both orders — it failed on the shipped order and passed
+  on the pre-split one, which is exactly how the regression stayed invisible.
+- **That fixed a live bug, and the bug is the argument for the port.** A decrypted EMR
+  archive attaches MANY PDFs to one note; each is fingerprinted, parsed and lowered
+  separately. Driving those through `apply_intent` in a loop ran the whole-note settle
+  per attachment, so the second PDF's settle retracted the first PDF's facts — a
+  two-source import kept only the last source's readings. Nothing caught it because every
+  EMR test in the suite attached exactly one file. Reproduced against the old shape before
+  the fix (only one attachment's citations stayed live), and pinned by
+  `test_two_emr_attachments_on_one_note_both_survive_the_settle`, which discriminates on
+  the **cited chunk's attachment id**: the two fixtures' analytes overlap, so an
+  analyte-name assertion is satisfied by either source alone and proves nothing.
+
+  **Stated plainly beside it: on the live box this fix is not yet realizable.** In
+  production `integrate_note` and `emr_parse` BOTH fan out of one `note.ingested` on a
+  health `Records` note with no ordering between them, and each ends in a whole-note
+  settle — the collision the section below records as still open and owned by nobody. A
+  real multi-PDF import therefore loses either ALL the EMR facts or none of them,
+  depending on which producer settles last, and that whole-note loss MASKS the
+  per-attachment one this bullet fixes. The test is real and the fix is real — the loop
+  is gone and `EmrNoteCommit` settles once — but the benefit is only collectable once the
+  race is decided rather than raced. Do not read "a two-PDF import now keeps both PDFs"
+  as an end-to-end production claim; read it as "the importer no longer destroys its own
+  earlier attachments", which is the half this wave owns.
+- **The narrowing, two locks.** `ingest/emr/ownership.emr_owned` mirrors migration 0122's
+  own trigger filter (health + `Records` + an EMR-shaped attachment) — deriving "the
+  importer owns this" from anything else would let the two disagree.
+  `agents.narrow_for_emr` subtracts `NOTE_GRAPH_WRITE_TOOLS` from the ALLOWLIST, applied
+  by `analysis/converse.py` on the unattended pass and by `clarify.reply_profile_for_session`
+  on the `/chat` reply turn; `graphwritetools.NoteToolset(writes_graph=False)` declines to
+  BIND the handlers in the worker's per-note registry. Constraint 9 says the surface is
+  the registry's, so both are here and they fail independently.
+- **This is the one place W4 breaks D8.** The owner replying does NOT unlock a write
+  surface on an EMR note. `correct_fact` at an empty address commits active + PINNED, and
+  a pinned lab head makes every later import of that reading `held` — the owner would
+  silently freeze a value the next draw is meant to supersede. What the reply turn keeps
+  is `ask_owner`, the entity reads, `search`/`read_note`/`relate` and `prefs_write`.
+- **What the conversation adds over the deterministic parse: nothing yet, and that is the
+  honest answer.** The parse is deterministic and total; there is no meaning for a model
+  to supply. What the conversation is for on an EMR note is being a place the import can
+  be explained and questioned — and that half is NOT built here: the deterministic run
+  still reports only through `review_items` (firewall / parked-read / unrecognised-source
+  cards), and `emr_parse` and `note_converse` are still two jobs off one event with no
+  ordering between them. Publishing the import into the thread's ledger and its D3 chip is
+  the next task, and it needs the ordering decided rather than raced.
+- **The `record_tool_call` precondition is sidestepped, not solved.** The plan requires
+  moving the recorder into the tool dispatch (or scoping the sweep) before wiring
+  `settle_note(touched=writes().facts)`. Nothing here wires it: on an EMR note the
+  conversation writes no facts at all, so its ledger is empty *because it is empty*, and
+  the note's one settle is the importer's. The precondition still stands for every other
+  note and for D10.
+- **The rebuild sweep needed no change**, and was checked rather than assumed:
+  `rebuild._rebuild_one` already re-enqueues `emr_parse` (`_EMR_REPARSE_SQL`) inside the
+  same transaction as the purge, so a corpus rebuild re-drives the deterministic producer
+  and is the cutover instrument and rollback lever this wave asks for.
+- **D13 holds.** `emr_parse` keeps working throughout; no producer removed, no trigger
+  touched, no migration.
+
+*Closed against an adversarial review of the merged wave (2026-09-09).* Its blocker was
+the `apply_intent` split and is recorded at the seam bullet above; the intake half's two
+test gaps are recorded at the isolation paragraph. Three more, and what each cost:
+
+- **Both W4 narrowings were untested at their allowlist call sites.** Inverting the
+  predicate in `clarify.reply_profile_for_session` — so the EMR reply turn kept the full
+  on-reply surface and every ORDINARY note got narrowed instead — left 192 tests passing;
+  deleting the runner's `if note_owned_by_emr(note): profile = narrow_for_emr(profile)`
+  left 114 passing. Every test naming these functions drove them as pure functions, tested
+  the registry lock, or monkeypatched the reply lookup away at the route, so the "two
+  locks that fail independently" claim held for the registry only.
+  `test_a_note_the_importer_owns_runs_the_unattended_pass_with_no_write_verb` and
+  `test_the_reply_turn_over_a_live_emr_note_loses_the_writes_and_a_plain_one_keeps_them`
+  drive both over a real note and both mutants now die.
+- **`EmrNoteCommit._resolved` was last-wins where its siblings union.**
+  `touched`/`projected`/`mention_ids` are sets; `resolved` is a MAP, and the EMR refs are
+  semantic keys (`org:…`, `cond:…`, `obs:…`) that `new`-mode resolution mints a fresh
+  provisional for per intent — so one ref on two attachments is two entities and the dict
+  merge kept only the last. The settle reads that map for `_register_declared_aliases`,
+  `_reproject_entities` and `_promote_corroborated`, so the dropped entity's facts were
+  spared by the sweep while its projection and promotion silently never ran. Latent rather
+  than live today — the EMR vocabulary carries no naming predicate and `entity_promotion`
+  defaults off — but the asymmetry is a trap, so displaced entities are now re-filed under
+  their own id and the two fixtures drop three entities without it.
+- **`emr_owned` is MUTABLE, and it is recorded rather than guarded.** `NoteUpdate` lets a
+  PATCH change `domain` and `destination`; `update_note` then sets `ingest_state="pending"`
+  → re-ingest → `note.ingested` → a fresh conversation, and a note moved off `Records` or
+  out of `health` no longer reads as importer-owned, so the conversation gets
+  `resolve_entity`/`assert_fact` over facts the deterministic parse wrote with a
+  `fhir_status` no tool can carry. It is not guarded because **the tool set is not where
+  this bites**: the same move takes the note out of 0122's trigger filter, so `emr_parse`
+  stops firing, while `integrate_note` still fires on the same event and its whole-note
+  settle retracts the parse's facts outright. The first-order loss is the domain move
+  destroying the EMR graph; the model's write verbs are second order behind it, and both
+  are the same open question as the `integrate_note`/`emr_parse` race below. A guard, when
+  that question is decided, has a durable marker already written by the importer itself
+  and needs no new column: `app.facts.extractor = 'emr:deterministic'` on the note answers
+  "did the parse already write here", which is the question that actually matters, where
+  0122's filter answers "will it write here next".
+
+Also recorded, out of scope and untouched by this wave: `readtools.py`'s `search` returns
+`format_search(...)` UNFRAMED while `read_note` fences its body, and `search` sits in
+`NOTE_INGEST_ON_REPLY_TOOLS` beside the graph writes — so an owner-note reply turn can
+pull other notes' excerpts into a write-capable turn with no DATA frame. Pre-existing to
+W3 and W4; both W4 narrowings happen to remove `search`, so it is reachable only on the
+owner's own notes, which is the shape W3 judged acceptable for `read_note` before the
+frame went in. It should get the same frame, on the same `agent_tools`-keyed boundary.
+
+*Still open in W4* (this was written as "intake (D10) is not ported", which the intake
+half above did that same day): the *older, larger* collision this work PROVED but did not
+fix. `integrate_note` and `emr_parse` both fan out from one `note.ingested` on a health
+`Records` note, both write facts on that note, and each ends in the whole-note settle. `ANALYSIS.md` already says "no ordering is promised between the two
+passes and none is at ingest either" — what it does not say is that the LOSER's facts are
+RETRACTED, not merely ordered late.
+`test_the_generic_integrator_does_not_retract_the_emr_parse_it_races` is the evidence: run
+the real `integrate_note` path over a note `emr_parse` has already written, and every fact
+the parse wrote is gone. It is a strict xfail, so it fails the suite the day it is fixed.
+That predates this wave (it is the shipped `apply_intent`, on both sides) and it is out of
+the EMR half's scope. It was written expecting D10's port to decide who owns a note's
+settle; D10's port turned out to move no producer at all (it is a tool-set difference and
+nothing else), so with both halves merged this is **still open and owned by nobody** —
+W5's, or its own task, and the strict xfail is what keeps it from being forgotten. Note the mercy that hides it in the small case: a REJECTED plan
+skips the settle entirely, so a note whose extraction yields nothing usable does not
+retract — which is why this bites hardest on the notes whose PDFs the extractor reads well.
+
+**The two halves compose, and the narrower wins.** The predicates are independent and a
+note can satisfy both: an approved intake submission enacts into an `untrusted_origin`
+note (D10), and if the owner filed that submission to health / `Records` with the archive
+or a PDF attached, `emr_owned` reads the same note as importer-owned (D9). Nothing forbids
+that note, and getting its tool set wrong is SILENT — the thread looks identical, and the
+only difference is a fact written out of a stranger's text onto a note the deterministic
+parse is authoritative for. So the merged answer is the **intersection**:
+`narrow_for_emr` SUBTRACTS `NOTE_GRAPH_WRITE_TOOLS` and `narrow_for_third_party_note`
+INTERSECTS `NOTE_INGEST_THIRD_PARTY_TOOLS` — it was an assignment while it was the only
+narrowing, which would have handed `resolve_entity` and `assert_fact` straight back
+whenever it ran second, which is the order both call sites use. Intersecting makes the two
+commute, so "third-party runs LAST" is now belt over braces (it still matters against
+`agent_for_owner_reply`, which WIDENS). Such a note's conversation holds `find_entity` /
+`read_entity` / `current_time` on both turns, and the worker's registry binds neither
+`ask_owner` nor a graph write for it —
+`test_a_note_that_is_both_third_party_and_emr_owned_gets_the_intersection` and
+`test_a_note_that_is_both_a_strangers_and_the_importers_binds_only_reads` are the pins.
+
+The other thing the merge had to settle is the FAILURE direction, where the two halves
+genuinely disagreed. Both reply-turn predicates read the same conversation row and the
+same note on the same turn; `thirdparty.conversation_is_third_party` failed CLOSED and
+`clarify.reply_profile_for_session` failed OPEN, each defensible alone. Composed, a note
+read that blipped narrowed the turn to the third-party set — which still holds
+`resolve_entity` and `assert_fact` — and left them bound on an EMR note, the one place a
+model write is unsupersedable (`correct_fact` at an empty address PINS, and a pinned lab
+head holds every later draw). So the EMR lookup now fails closed too: no conversation row,
+no note, a soft-deleted note or any exception all narrow, for each predicate
+independently.
+
 **W5 — Teardown, decomposed.** W5a: the old chain (`pipeline.py:305-478` + `arbiter.py`,
-~940 LOC), gated on W3's runner re-point. W5b: the arbiter card kinds and the inbox's
+~940 LOC), gated on W3's runner re-point **and on the six-gap decision above, which is the
+other half of that gate**: an accepted gap is a path no scenario can cover, so the "what
+W5 may not delete" list in W3/T5 — and the same list in each xfailed scenario's own `xfail`
+string — is binding on this wave. Nothing on it is dead code just because the harness is
+green without it. W5b: the arbiter card kinds and the inbox's
 ingest tab, with an explicit surviving-kinds list. W5c: correction-note retirement plus
 the `SECURITY DEFINER` move and grant revoke — a security-path change needing its own RLS
 isolation test, which cannot ride a 3,000-line deletion. **Port `file_correction`

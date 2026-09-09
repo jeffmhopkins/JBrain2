@@ -29,6 +29,8 @@ from jbrain.agent.agents import (
     NOTE_INGEST_UNATTENDED_TOOLS,
     agent_for,
     agent_for_owner_reply,
+    narrow_for_emr,
+    narrow_for_third_party_note,
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.readtools import GRAPH_WRITE_AUTHORITY, _holds_graph_writes
@@ -214,14 +216,12 @@ def test_the_frame_is_keyed_on_the_turns_write_authority_not_its_persona() -> No
     graph, so the trigger asks the turn (`ToolContext.agent_tools`, the loop's admitted
     set) rather than guessing at who wired what — the same mechanical-boundary idiom
     `jmoltobservetools` uses."""
-    assert {"assert_fact", "correct_fact"} == GRAPH_WRITE_AUTHORITY
+    assert {"assert_fact", "correct_fact", "prefs_write"} == GRAPH_WRITE_AUTHORITY
     assert not _holds_graph_writes(_ctx())
-    assert _holds_graph_writes(
-        ToolContext(session=OWNER, scopes=("general",), agent_tools=frozenset({"correct_fact"}))
-    )
-    assert _holds_graph_writes(
-        ToolContext(session=OWNER, scopes=("general",), agent_tools=frozenset({"assert_fact"}))
-    )
+    for verb in GRAPH_WRITE_AUTHORITY:
+        assert _holds_graph_writes(
+            ToolContext(session=OWNER, scopes=("general",), agent_tools=frozenset({verb}))
+        )
     # Curator and jerv hold neither verb, so their `read_note` output is unchanged — the
     # frame is a new boundary for the write-holding persona, not a chat-wide change.
     assert not (GRAPH_WRITE_AUTHORITY & (AGENTS["jerv"].tools or frozenset()))
@@ -235,6 +235,25 @@ def test_the_reply_turn_holds_both_read_note_and_the_authority_that_frames_it() 
     in the repo to hold `read_note` AND a graph-write verb at the same time."""
     assert "read_note" in NOTE_INGEST_ON_REPLY_TOOLS
     assert GRAPH_WRITE_AUTHORITY & NOTE_INGEST_ON_REPLY_TOOLS
+    # ...and it survives W4's EMR narrowing, which removes every GRAPH verb from the
+    # reply turn on an EMR-owned note. Without `prefs_write` in the set, that narrowing
+    # would have handed the one turn W4 created a fetched body with no frame on it —
+    # plan risk 1, re-opened by a fix for something else.
+    narrowed = narrow_for_emr(agent_for_owner_reply("note_ingest")).tools or frozenset()
+    assert "read_note" in narrowed
+    assert GRAPH_WRITE_AUTHORITY & narrowed
+    assert _holds_graph_writes(
+        ToolContext(session=OWNER, scopes=("general",), agent_tools=narrowed)
+    )
+    # W4's OTHER narrowing closes the same question the other way. A third-party note's
+    # reply turn holds neither `read_note` nor `prefs_write`, so there is no fetched body
+    # to frame and no durable-authority verb the framing would be keyed on — and that
+    # stays true when the two narrowings compose on one note.
+    third_party = narrow_for_third_party_note(agent_for_owner_reply("note_ingest"))
+    both = narrow_for_emr(third_party).tools or frozenset()
+    for tools in (third_party.tools or frozenset(), both):
+        assert "read_note" not in tools
+        assert "prefs_write" not in tools
     # The unattended pass holds neither `read_note` nor any corpus read, so its only
     # untrusted text is turn 0 — which `converse.framed_note` already fences.
     assert "read_note" not in NOTE_INGEST_UNATTENDED_TOOLS

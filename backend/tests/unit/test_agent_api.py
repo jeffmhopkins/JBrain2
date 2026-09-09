@@ -2389,6 +2389,125 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert ("sess-j", "agent-jerv-v48") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
+def _note_write_registry() -> ToolRegistry:
+    """The three note-write sidecars, bound to inert handlers — enough to see which of
+    them `/chat` actually offers a note conversation's reply turn."""
+    import jbrain.agent.readtools as readtools
+    from jbrain.agent.toolfile import load_tool
+
+    async def _inert(_args: dict, _ctx: object) -> object:  # pragma: no cover - never called
+        return {}
+
+    return ToolRegistry(
+        [
+            RegisteredTool(load_tool(readtools.TOOLS_DIR / f"{n}.tool"), _inert)
+            for n in ("assert_fact", "ask_owner", "correct_fact")
+        ]
+    )
+
+
+@pytest.mark.parametrize("third_party", [True, False])
+def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_no_correction(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+    third_party: bool,
+) -> None:
+    """D10's reply half, at the gate `/chat` actually consults.
+
+    D8 widens this turn because the owner is the only voice in the room. On a note a
+    STRANGER wrote he is not — the submitted body is turn 0 of this thread and is still
+    in context — so `correct_fact` (a force-supersede that PINS) and `ask_owner` are not
+    offered, while `assert_fact` still is: D10 keeps the write path unrestricted.
+
+    Parametrized against its own negative, because the failure this guards is the
+    narrowing applying to EVERY note conversation — which would look identical from the
+    third-party side and would quietly cost the owner the verbs D8 exists to give him.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def _origin(*_a: object, **_k: object) -> bool:
+        return third_party
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _origin)
+    # The OTHER W4 predicate on this same turn, held to "not an EMR note". It reads the
+    # conversation row and the note through app state this hand-wired app does not have,
+    # and it fails CLOSED, so leaving it live would narrow every case here for a reason
+    # that has nothing to do with D10.
+    _not_emr(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-tp", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-tp", "message": "my cousin"})
+    assert resp.status_code == 200
+    offered = {t.name for t in fake.stream_calls[0]["tools"]}
+    assert "assert_fact" in offered
+    if third_party:
+        assert offered == {"assert_fact"}
+    else:
+        assert offered == {"assert_fact", "ask_owner", "correct_fact"}
+
+
+def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold W4's EMR predicate at "the importer does not own this note"."""
+    import jbrain.api.agent as agent_mod
+
+    async def _identity(*_a: object, profile: object, **_k: object) -> object:
+        return profile
+
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _identity)
+
+
+def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_nothing(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+) -> None:
+    """W4's two narrowings composing on ONE reply turn, at the gate `/chat` consults.
+
+    Neither half of the wave could write this: each was built against a branch that did
+    not have the other. A note can satisfy both predicates — an approved intake
+    submission the owner filed to health / `Records` with the archive or a PDF attached —
+    and the turn has to come out with the INTERSECTION. Getting it wrong is silent: the
+    thread renders identically, and the only difference is a fact written out of a
+    stranger's text onto a note the deterministic parse is authoritative for.
+
+    Of this registry's three tools none survives: `ask_owner` is D10's, `correct_fact`
+    is in both narrowings, and `assert_fact` — which D10 deliberately KEEPS — goes to
+    D9, because on an EMR note the model holds no graph-write verb at all."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.agent.agents import narrow_for_emr
+
+    async def _third_party(*_a: object, **_k: object) -> bool:
+        return True
+
+    async def _emr(*_a: object, profile: object, **_k: object) -> object:
+        return narrow_for_emr(profile)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _third_party)
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _emr)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-both", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-both", "message": "my cousin"})
+    assert resp.status_code == 200
+    assert {t.name for t in fake.stream_calls[0]["tools"]} == set()
+
+
 def test_chat_curator_is_offered_no_web_tools(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:

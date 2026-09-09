@@ -29,7 +29,13 @@ from jbrain.models.notes import Attachment, Chunk
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.test_extraction_pg import (  # noqa: F401
+    analyzer,
+    extraction_payload,
+    ingest,
+    make_note,
+    maker,
+)
 from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [
@@ -415,3 +421,209 @@ async def test_unrecognized_source_cards_once_and_stays_dismissed(
         cards = await _unrecognized_cards(s, note_id)
         assert len(cards) == 1
         assert cards[0].status == "dismissed"
+
+
+# --- one note, one settle (W4/D9, plan constraint 6) --------------------------
+
+
+_EPIC = Path(__file__).resolve().parents[1] / "fixtures" / "emr" / "epic_report.txt"
+
+
+async def _sourcing_attachments(s, note_id: str) -> set[str]:
+    """The attachments this note's ACTIVE facts still cite — which SOURCE survived the
+    settle.
+
+    Keyed on the citation rather than on analyte names because the two fixtures overlap:
+    athena's three analytes are all present in the Epic report too, so "Potassium is
+    live" is satisfied by either source and proves nothing. Each source is integrated
+    against ITS OWN attachment chunks (`import_handler._chunk_index`), so the cited
+    chunk's `attachment_id` is the one thing that says which PDF a live fact came from.
+    """
+    rows = (
+        await s.execute(
+            text(
+                "SELECT DISTINCT c.attachment_id FROM app.facts f"
+                " JOIN app.chunks c ON c.id = f.chunk_id"
+                " WHERE f.note_id = :n AND f.status = 'active'"
+                "   AND c.attachment_id IS NOT NULL"
+            ),
+            {"n": note_id},
+        )
+    ).all()
+    return {str(r[0]) for r in rows}
+
+
+async def test_two_emr_attachments_on_one_note_both_survive_the_settle(maker, tmp_path):  # noqa: F811
+    """The bug the W4 port fixes, and the reason the importer needs W1's seam.
+
+    A decrypted EMR archive attaches MANY PDFs to ONE note, and each is dispatched to
+    its own parser and lowered to its own intent. Committing those through `apply_intent`
+    in a loop ran `settle_note` per attachment — and `settle_note` is whole-note: it
+    retracts every non-pinned fact of the note it is not told about (plan constraint 6).
+    So the second PDF's settle retracted the first PDF's readings, and a two-source
+    import kept only the last source's. Nothing caught it because every EMR test in the
+    suite attached exactly one file.
+
+    `EmrNoteCommit` accumulates `touched`/`projected`/`mention_ids` across every source
+    and settles ONCE. The two fixtures OVERLAP in their analytes — Potassium, Creatinine
+    and Platelet count are in both — so an analyte-name assertion would be satisfied by
+    either source alone and would prove nothing. `_sourcing_attachments` discriminates on
+    the CITED CHUNK's attachment id instead, which is the only thing that says which PDF
+    a live fact came from."""
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported EMR records.")
+    a_athena = await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    a_epic = await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_EPIC.read_text()))
+    await ingest(maker, note_id, tmp_path)
+
+    await EmrImportPipeline(maker, blobs, _pipeline(maker)).parse({"note_id": note_id})
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        sourced = await _sourcing_attachments(s, note_id)
+        assert sourced == {str(a_athena), str(a_epic)}, (
+            "a source's facts were swept by another source's settle; live citations"
+            f" name only {sorted(sourced)}"
+        )
+
+        # And the note settled exactly once — one `note_analysis` stamp, which is also
+        # the PWA's "analyzed" watermark.
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.note_analysis WHERE note_id = :n"), {"n": note_id}
+            )
+        ).scalar_one() == 1
+
+
+async def test_fhir_status_still_reaches_decide_through_the_accumulating_path(maker, tmp_path):  # noqa: F811
+    """`fhir_status` is the field that makes the importer/tool boundary non-negotiable
+    (TOOL_SURFACE gap 3): it is EMR-only, set by the parser, has no `assert_fact` field,
+    and is what `supersession._lab_status_transition` reads.
+
+    The Epic fixture's platelet reading arrives `status corrected` with no prior reading
+    at its draw — the §3.5 red-team shape, which the status-aware transition holds for
+    review and a status-blind commit would make a live current value. Asserted HERE, on
+    the multi-source handler path, because that is the path W4 re-plumbed onto
+    `commit_intent`; `test_emr_integrate_pg` proves the same thing for a single source."""
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported EMR records.")
+    await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_EPIC.read_text()))
+    await ingest(maker, note_id, tmp_path)
+
+    await EmrImportPipeline(maker, blobs, _pipeline(maker)).parse({"note_id": note_id})
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        held = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.facts f"
+                    " JOIN app.entities e ON e.id = f.entity_id"
+                    " WHERE f.note_id = :n AND f.predicate = 'value'"
+                    "   AND e.canonical_name = 'Platelet count'"
+                    "   AND f.status = 'pending_review'"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+        # ...and the held row was NOT swept by the one settle: `commit_facts` puts a
+        # pending_review id into `touched` precisely so the whole-note sweep spares it.
+        assert held >= 1, "the `corrected` platelet went live — fhir_status was lost"
+
+
+async def test_layer_2_holds_across_sources_and_the_shared_settle(
+    maker,  # noqa: F811
+    tmp_path,
+    stripping_disabled,
+):
+    """Layer 2 is a hard NON-COMMIT, and the port must not have made it a filter.
+
+    The guard runs inside `lower_parse_result`, on the way from a parser candidate to an
+    `IntentFact` — so a location-locked predicate never becomes a fact any commit path
+    can see, and there is nothing downstream (no plan, no `commit_intent`, no settle) to
+    un-hold. This is the multi-source version of the single-attachment test above: a
+    second source commits AFTER the catch and the one whole-note settle runs after both,
+    and the address is still absent from the graph while both catches are carded."""
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported EMR records.")
+    a_athena = await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    a_epic = await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_EPIC.read_text()))
+    await ingest(maker, note_id, tmp_path)
+
+    await EmrImportPipeline(maker, blobs, _pipeline(maker)).parse({"note_id": note_id})
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        # Both sources committed and survived, so the settle really did run over both.
+        assert await _sourcing_attachments(s, note_id) == {str(a_athena), str(a_epic)}
+
+        # Nothing whereabouts-shaped reached the graph, in ANY status — a `retracted` or
+        # `pending_review` address row would still be the value sitting in the health
+        # domain, which is exactly what Layer 2 exists to prevent.
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.facts WHERE note_id = :n AND predicate = 'address'"),
+                {"n": note_id},
+            )
+        ).scalar_one() == 0
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.facts WHERE note_id = :n AND statement LIKE :a"),
+                {"n": note_id, "a": "%Elm Street%"},
+            )
+        ).scalar_one() == 0
+
+        # ...and the owner is told, once per attachment the guard fired in.
+        cards = await _firewall_cards(s, note_id)
+        assert {c.payload["attachment_id"] for c in cards} == {str(a_athena), str(a_epic)}
+        assert all(c.payload["predicate"] == "address" for c in cards)
+        assert all("Elm" not in json.dumps(c.payload) for c in cards)
+
+
+# --- the OTHER settle collision, recorded rather than fixed (W4) --------------
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Two producers, one note, and a whole-note settle on each. `note.ingested` on a"
+        " health Records note fans out to BOTH `integrate_note` (0040) and `emr_parse`"
+        " (0122); each ends in `settle_note`, which retracts every non-pinned fact of the"
+        " note it was not told about. So whichever runs second does not merely write late"
+        " — it RETRACTS the other's facts. This predates W4 (it is the shipped"
+        " `apply_intent`, on both sides) and W4's EMR half fixed only the collision"
+        " BETWEEN EMR sources. It was written expecting D10 to decide who owns a note's"
+        " settle; D10 landed as a tool-set difference that moves no producer, so with both"
+        " W4 halves merged this is owned by nobody yet. It turns green the day it is"
+        " decided."
+    ),
+    strict=True,
+)
+async def test_the_generic_integrator_does_not_retract_the_emr_parse_it_races(maker, tmp_path):  # noqa: F811
+    """Both producers' facts should survive one note. Today the second one wins outright.
+
+    `_IntegrateDriver` is the real `integrate_note` path with the two model calls
+    scripted, so what runs here is the shipped extraction → arbiter → apply, not a
+    stand-in for it. The extraction deliberately says nothing about the labs: the point
+    is that a settle does not need to CONTRADICT the EMR facts to retract them, only to
+    not mention them.
+    """
+    blobs = FsBlobStore(tmp_path)
+    note_id = await make_note(maker, domain="health", body="Imported athena labs.")
+    await _attach_pdf(maker, blobs, note_id, _pdf_from_lines(_ATHENA.read_text()))
+    await ingest(maker, note_id, tmp_path)
+
+    await EmrImportPipeline(maker, blobs, _pipeline(maker)).parse({"note_id": note_id})
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await _sourcing_attachments(s, note_id)  # the EMR facts are live
+
+    # ...and now the OTHER producer of the same event runs.
+    # TWO scripted extractions, not one: the note's chunks come from two SOURCES (the
+    # body and the PDF attachment), and `_extract_note` makes one model call per source
+    # group. Scripting one leaves the second call to consume the intent JSON and die on a
+    # missing `title` — which xfails this test for a reason that has nothing to do with
+    # the settle it is about.
+    extract = json.dumps(extraction_payload())
+    await analyzer(maker, [extract, extract]).analyze_note({"note_id": note_id})
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        assert await _sourcing_attachments(s, note_id), (
+            "integrate_note's whole-note settle retracted every fact emr_parse wrote"
+        )

@@ -594,6 +594,106 @@ async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # no
     assert cards[0].payload["fact_id"] == str(held[0].id)  # link still valid
 
 
+@pytest.mark.parametrize("order", ["file_then_settle", "settle_then_file"])
+async def test_a_re_resolved_held_fact_never_ends_up_with_no_card(
+    maker,  # noqa: F811
+    tmp_path,
+    order,
+    monkeypatch,
+):
+    """N11's invariant — a `pending_review` fact is owner-VISIBLE, never silently held —
+    across a re-analysis that resolves the same mention_ref to a DIFFERENT entity.
+
+    Two idempotency keys have to agree for that to hold, and they were written apart.
+    `_insert_held_fact` keys its row on `(note_id, entity_id, predicate, qualifier,
+    object_entity_id, domain_code)`, so a re-resolution mints a SECOND held row; the
+    card dedup used to key on `(note_id, entity_ref, predicate, qualifier)`, which the
+    re-resolution leaves unchanged, so the FIRST run's still-open card suppressed the
+    new one — and then `settle_note` deleted that card, because the row it pointed at
+    had just been retracted. Net: a `pending_review` fact with no card at all.
+
+    Parametrized over the ORDER of the two steps because the fix must not depend on it:
+    W1's split moved `_file_inference_reviews` from after the settle to before it, and
+    nothing failed. Keying the dedup on the HELD ROW's id rather than on the mention
+    surface is what makes both orders safe.
+    """
+    a_id = await _seed_entity(maker, "Initech")
+    b_id = await _seed_entity(maker, "Initech Holdings")
+    note_id = await make_note(maker, domain="general", body="Initech notes.")
+    await ingest(maker, note_id, tmp_path)
+
+    def _for(entity_id: str):  # noqa: ANN202
+        intent = _intent(
+            note_id,
+            [
+                EntityResolution(
+                    mention_ref="m1",
+                    mode="existing",
+                    proposed_entity_id=entity_id,
+                    cross_subject=True,
+                )
+            ],
+            [_fact("m1", statement="Initech is in tech")],
+        )
+        return intent, plan_intent(intent, signals={0: _SURFACE})
+
+    async def _pass(entity_id: str) -> None:
+        intent, plan = _for(entity_id)
+        if order == "file_then_settle":
+            await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+            return
+        # The other order: hold the card filing back and run it AFTER the settle, the
+        # way `apply_intent` composed the two before W1 split them.
+        deferred: list[dict[str, Any]] = []
+
+        async def _defer(_self, _session, **kw) -> None:  # noqa: ANN001, ANN202
+            deferred.append(kw)
+
+        monkeypatch.setattr(AnalysisPipeline, "_file_inference_reviews", _defer)
+        try:
+            await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+        finally:
+            monkeypatch.undo()
+        pipeline = _pipeline(maker)
+        async with scoped_session(maker, SYSTEM_CTX) as session:
+            for kw in deferred:
+                await pipeline._file_inference_reviews(session, **kw)
+
+    await _pass(a_id)
+    await _pass(b_id)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        live = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.note_id == uuid.UUID(note_id), Fact.status == "pending_review"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        cards = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "low_confidence_inference",
+                        ReviewItem.payload["note_id"].astext == note_id,
+                        ReviewItem.status == "open",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    # The re-resolution moved the held fact onto the other entity, and it is still held.
+    assert len(live) == 1
+    assert str(live[0].entity_id) == b_id
+    # ...and it is still on the owner's desk. One card, pointing at the LIVE row.
+    assert [c.payload["fact_id"] for c in cards] == [str(live[0].id)]
+
+
 async def _seed_person(maker, name: str) -> str:  # noqa: F811
     async with scoped_session(maker, SYSTEM_CTX) as session:
         ent = Entity(kind="Person", canonical_name=name, status="confirmed", domain_code="general")

@@ -67,7 +67,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -349,6 +349,62 @@ def _temporal(when: str, anchor: datetime, tz_offset_minutes: int | None) -> Ext
     )
 
 
+def _period_end(precision: str, parsed: datetime) -> datetime:
+    """The LAST instant a period of this precision covers. "until 2023" ends when 2023
+    ends, not when it begins — `_temporal` expands a bare year or month to its FIRST day,
+    which is the right reading for a start and a whole period wrong for an end."""
+    if precision == "year":
+        return parsed.replace(year=parsed.year + 1) - timedelta(seconds=1)
+    if precision == "month":
+        year, month = divmod(parsed.month, 12)
+        return parsed.replace(year=parsed.year + year, month=month + 1) - timedelta(seconds=1)
+    if precision == "day":
+        return parsed + timedelta(days=1) - timedelta(seconds=1)
+    return parsed
+
+
+def _close_interval(
+    temporal: ExtractedTemporal | None, when_end: str, tz_offset_minutes: int | None
+) -> tuple[ExtractedTemporal | None, str | None]:
+    """Attach an interval END to a temporal, or refuse and say why.
+
+    The three refusals are the whole design of this field, and they come straight out of
+    `evals/shape_probe.py`'s measurement rather than out of caution. The live model gets
+    the one genuinely-closed interval in a note right nearly every time — and stamps an
+    end on nearly every OTHER fact too, in three shapes: a phrase that is not a date at
+    all ("present", "last week"), today's date on a fact that is still true, and an end
+    on a fact that never had a start. So:
+
+    - **no start, no end.** An end alone would close an interval the note never opened,
+      and `normalize_past_assertion` already owns the "stated as over, no dates at all"
+      case with a far narrower net.
+    - **not a date, no end.** The value must parse, exactly as `when` must.
+    - **not past the start's own period, no end.** The comparison is period end against
+      period end, not instant against instant: an end that names the SAME period as the
+      start ("2026-09-09" on a fact the note dated this morning) is a restatement, and
+      admitting it would close today's residence at the end of today. That is the exact
+      shape the measurement produced most often, and an instant-against-instant test
+      would have let every one of them through.
+
+    Each refusal is a result line, never a dropped fact: the fact commits with the start
+    it had, which is what would have happened before this field existed."""
+    if not when_end:
+        return temporal, None
+    if temporal is None or temporal.resolved_start is None:
+        return temporal, f'when_end "{when_end}" has no `when` to close — recorded as open'
+    try:
+        end = _temporal(when_end, temporal.resolved_start, tz_offset_minutes)
+    except ValueError:
+        return temporal, f'when_end "{when_end}" is not a date — recorded as open'
+    parsed = end.resolved_start
+    if parsed is None:
+        return temporal, f'when_end "{when_end}" is not a date — recorded as open'
+    closed_at = _period_end(end.precision, parsed)
+    if closed_at <= _period_end(temporal.precision, temporal.resolved_start):
+        return temporal, f'when_end "{when_end}" is not after `when` — recorded as open'
+    return replace(temporal, resolved_end=closed_at), None
+
+
 @dataclass(frozen=True)
 class NoteTarget:
     """The note a conversation's writes land on. Fixed for the life of the
@@ -440,12 +496,20 @@ class NoteGraphWriter:
         if handle.visible:
             self._by_surface.setdefault(_norm(handle.name), handle)
 
-    def lookup(self, token: str) -> Handle | None:
+    def lookup(self, token: str, *, by_name: bool = True) -> Handle | None:
         """A handle, or the exact surface that earned one. Nothing else resolves — an
         unknown name here would make `assert_fact` a second minting path, and minting is
-        `resolve_entity`'s alone (TOOL_SURFACE: "the only minting path")."""
+        `resolve_entity`'s alone (TOOL_SURFACE: "the only minting path").
+
+        `by_name=False` drops the second half: a HANDLE still addresses an entity, but a
+        name does not. That is the object-side rule for a predicate the registry declares
+        as taking a value rather than an edge — see `_takes_entity_object`. A subject is
+        always looked up both ways: a subject is an entity by definition."""
         key = token.strip()
-        return self._by_handle.get(key) or self._by_surface.get(_norm(key))
+        found = self._by_handle.get(key)
+        if found is not None or not by_name:
+            return found
+        return self._by_surface.get(_norm(key))
 
     def _handle_for(self, entity_id: uuid.UUID) -> str | None:
         for handle in self._by_handle.values():
@@ -778,7 +842,7 @@ class NoteGraphWriter:
             predicate, _text(item, "qualifier", "of", "for")
         )
 
-        obj = self.lookup(literal)
+        obj = self.lookup(literal, by_name=_takes_entity_object(registry, subject.kind, predicate))
         if obj is None and _looks_like_id(literal):
             # An id-shaped object that resolved to nothing is NOT a literal value. Fall
             # through and it is stored as one: the row gets `object_entity_id = NULL` and
@@ -804,6 +868,11 @@ class NoteGraphWriter:
                 temporal = _temporal(when, self._target.anchor, self._target.tz_offset_minutes)
             except ValueError:
                 notes.append(f'when "{when}" is not a date — recorded undated')
+        temporal, refused = _close_interval(
+            temporal, _text(item, "when_end", "until", "end"), self._target.tz_offset_minutes
+        )
+        if refused:
+            notes.append(refused)
 
         # An owner CORRECTION carries no `quote` and is never weight-capped: the passage
         # it rests on is the owner's own message, which is not in the note's chunks when
@@ -833,6 +902,20 @@ class NoteGraphWriter:
                 )
             signals = _ATTESTED if attested else _UNATTESTED
         confidence = effective_weight(1.0, signals)
+        # The model's own read-confidence, and the ONE rule that makes the field safe:
+        # it can only ever LOWER (TOOL_SURFACE cut 3's own words, which were the reason
+        # to cut it and are the reason it is safe to add). A model claiming 1.0 on a
+        # quote the note does not contain still lands at the 0.4 inferred ceiling; a
+        # model reporting 0.25 on a blurry OCR read of a blood-pressure medication lands
+        # under `supersession.LOW_CONFIDENCE` and is HELD instead of overwriting a
+        # confident prior. Measured over 94 facts on the live model, zero legible facts
+        # were marked down — which is the direction that matters, because the cost of a
+        # spurious low number is a true fact parked behind a card on a box whose owner
+        # has no inbox to clear it from.
+        self_report = None if correction else _self_report(item)
+        if self_report is not None and self_report < confidence:
+            confidence = self_report
+            notes.append(f"you recorded this as a {self_report:g} read")
 
         if not statement:
             statement = _statement(subject.label, predicate, obj.label if obj else literal)
@@ -862,10 +945,10 @@ class NoteGraphWriter:
             # never on `confidence`, so a cap written to `confidence` alone is stored and
             # read by nobody: the unattested row went active and superseded the attested
             # head it was supposed not to touch, while the result line said it could not.
-            # The whole-note pipeline can keep the two apart because the model reports a
-            # number of its own; this surface has NO confidence field to report
-            # (TOOL_SURFACE R3, and no `inferred` field either), so the engine's own span
-            # check is the self-report, and it belongs on both.
+            # Since v3 the number is the MINIMUM of the engine's span check and the
+            # model's own `confidence` — two independent reasons to distrust a fact, and
+            # the lower one wins. They stay on both fields because `decide()` compares
+            # `candidate.self_confidence` against the incumbent's `confidence`.
             self_confidence=confidence,
             # Recomputed, never asserted by the model (TOOL_SURFACE: no `inferred` field).
             inferred=not attested,
@@ -978,6 +1061,50 @@ def _fact_kind(registry: Any, entity_kind: str, predicate: str, *, object_presen
     return "attribute"
 
 
+def _takes_entity_object(registry: Any, entity_kind: str, predicate: str) -> bool:
+    """Whether this predicate's object may be addressed by an entity NAME.
+
+    `assert_fact.object` is one string doing two jobs, and the model writes a name for
+    both: `worksAt` → "Everlane" is an edge, `name.nickname` → "Sammy" is a value. The
+    handle table cannot tell them apart, so a literal that happens to equal a resolved
+    surface silently became an edge pointing at that entity — the Sammy bug, where an
+    entity's own nickname became a self-edge and the display projection then had no name
+    fact to read.
+
+    The registry already knows: a predicate declares `value_shape: ref` when its object
+    is another entity, and `text`/`quantity`/`enum`/… when it is a value. So a DECLARED
+    non-ref predicate takes its object literally, whatever it happens to spell. An
+    undeclared (tier-2) predicate keeps the permissive behaviour: the registry has no
+    opinion, and refusing to link there would break far more edges than it fixed.
+
+    An explicit handle still wins in every case (`lookup` checks it first). The model
+    saying `e2` is an unambiguous statement that it means the entity."""
+    declared = registry.predicate_for_kind(entity_kind, predicate)
+    if declared is None:
+        return True
+    return str(declared.value_shape) == "ref"
+
+
+def _self_report(item: Mapping[str, Any]) -> float | None:
+    """The model's own `confidence`, or None for anything that is not a number in [0, 1].
+
+    A JSON `number` rather than a string, and that is the whole reason this field
+    exists at all where `kind` and `assertion` do not: measured against the live model,
+    the string spelling came back "high" and "low" every time, and a JSON type is the
+    only closed vocabulary a tool grammar can enforce without an `enum` (plan constraint
+    8). A value outside the range is discarded rather than clamped — a model that wrote
+    `95` meant a percentage, and reading it as 1.0 would silently CANCEL a self-report
+    that was trying to be cautious."""
+    raw = item.get("confidence", item.get("certainty"))
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 0.0 <= value <= 1.0 else None
+
+
 def _entity_ref(handle: Handle) -> EntityRef:
     return EntityRef(
         entity_id=str(handle.entity.id),
@@ -1033,13 +1160,22 @@ class NoteToolset:
 
     writer: NoteGraphWriter
     inherited: Mapping[str, ToolHandler] = field(default_factory=dict)
+    # W4/D9: on a note the EMR importer owns, the two graph writes are NOT BOUND at all.
+    # `fhir_status` is not expressible as a tool field, so a lab value the model wrote is
+    # one `_lab_status_transition` can never supersede, and a second whole-note settle on
+    # the same note retracts the importer's facts. The allowlist says the same thing
+    # (`agents.narrow_for_emr`); this is the second, independent lock, on the side
+    # constraint 9 says the surface actually lives — a name with no handler behind it
+    # cannot dispatch however the profile is resolved.
+    writes_graph: bool = True
 
     def handlers(self) -> dict[str, ToolHandler]:
-        return {
-            RESOLVE_ENTITY: self.writer.resolve_entity,
-            ASSERT_FACT: self.writer.assert_fact,
-            **dict(self.inherited),
-        }
+        writes: dict[str, ToolHandler] = (
+            {RESOLVE_ENTITY: self.writer.resolve_entity, ASSERT_FACT: self.writer.assert_fact}
+            if self.writes_graph
+            else {}
+        )
+        return {**writes, **dict(self.inherited)}
 
 
 def note_registry(tools_dir: Any, handlers: Mapping[str, ToolHandler]) -> ToolRegistry:

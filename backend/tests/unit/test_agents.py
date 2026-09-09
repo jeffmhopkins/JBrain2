@@ -17,6 +17,7 @@ from jbrain.agent.agents import (
     MEMORY_TOOLS,
     NON_OWNER_PERSONAS,
     NOTE_INGEST_ON_REPLY_TOOLS,
+    NOTE_INGEST_THIRD_PARTY_TOOLS,
     NOTE_INGEST_UNATTENDED_TOOLS,
     OWNER_AGENTS,
     RESEARCH_TOOLS,
@@ -32,6 +33,7 @@ from jbrain.agent.agents import (
     agent_for_owner_reply,
     is_agent,
     is_owner_agent,
+    narrow_for_third_party_note,
 )
 from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
@@ -544,6 +546,148 @@ def test_the_reply_turn_admits_the_on_reply_verbs_and_still_nothing_else() -> No
     # The D16 four stay outside on the reply turn too — the owner replying does not
     # unlock the verbs that write a note back into ingestion.
     assert not (_FORBIDDEN_FOUR & NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def test_the_third_party_set_is_the_unattended_write_core_minus_the_owner_channel() -> None:
+    """D10, enumerated. A stranger's words may cause a FACT and nothing else.
+
+    Both graph writes survive, unnarrowed — D10 says intake commits "unrestricted in
+    *what* it may write", and taking `assert_fact` away would be a different decision
+    from the one ratified. What goes is the one verb that is a CHANNEL: `ask_owner`
+    writes a model-authored question, out of stranger-controlled text, into the owner's
+    notes tab in his own agent's voice, and the answer he types is appended to the note
+    as source text and re-ingested."""
+    assert {
+        "resolve_entity",
+        "assert_fact",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    } == NOTE_INGEST_THIRD_PARTY_TOOLS
+    assert {"ask_owner"} == NOTE_INGEST_UNATTENDED_TOOLS - NOTE_INGEST_THIRD_PARTY_TOOLS
+    # A strict subset of BOTH shipped sets, which is what makes it a narrowing rather
+    # than a third surface with its own reach: it can hold nothing the owner's own note
+    # conversation does not already hold.
+    assert NOTE_INGEST_THIRD_PARTY_TOOLS < NOTE_INGEST_UNATTENDED_TOOLS
+    assert NOTE_INGEST_THIRD_PARTY_TOOLS < NOTE_INGEST_ON_REPLY_TOOLS
+
+
+def test_a_third_party_note_never_reaches_an_on_reply_verb_on_either_turn() -> None:
+    """The claim that makes this one set instead of two: it serves the reply turn too.
+
+    D8 widens the reply turn because the owner is the only voice in the room. On a note
+    a stranger wrote he is not — the submitted body is turn 0 and is still in context —
+    so the three on-reply WRITES stay out with him present. `correct_fact` is the sharp
+    one: its `decide()` branch force-supersedes and PINS, so a fact it writes is one no
+    later note can supersede, past every confidence guard in the arbiter."""
+    registry = _every_shipped_tool()
+    # The verbs are all really in this registry, so the closure below is the allowlist's
+    # doing and not an accident of what happens to be wired.
+    assert all(n in registry for n in ("correct_fact", "merge_entities", "prefs_write"))
+    narrowed = narrow_for_third_party_note(agent_for_owner_reply("note_ingest"))
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+        assert admitted == NOTE_INGEST_THIRD_PARTY_TOOLS
+        assert "ask_owner" not in admitted
+        assert not (admitted & (NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_THIRD_PARTY_TOOLS))
+    # The D16 four are outside it too, so a stranger's body cannot reach the verbs that
+    # would write a note back into ingestion under the owner's own attribution.
+    assert not (_FORBIDDEN_FOUR & NOTE_INGEST_THIRD_PARTY_TOOLS)
+
+
+def test_the_third_party_narrowing_runs_last_and_leaves_every_other_persona_alone() -> None:
+    """It UNDOES the on-reply widening, so ordering is load-bearing: applied before
+    `agent_for_owner_reply` it would be silently overwritten by it, and the reply turn on
+    a stranger's note would hold `prefs_write` while every test of the narrowing passed.
+
+    Idempotent, and identity on every other persona, so `/chat` can apply it without a
+    persona test at the call site that a later edit could drop."""
+    widened = agent_for_owner_reply("note_ingest")
+    once = narrow_for_third_party_note(widened)
+    assert once.tools == NOTE_INGEST_THIRD_PARTY_TOOLS
+    assert narrow_for_third_party_note(once).tools == NOTE_INGEST_THIRD_PARTY_TOOLS
+    # The other order is the bug this asserts against.
+    assert agent_for_owner_reply(once.name).tools == NOTE_INGEST_ON_REPLY_TOOLS
+    # Otherwise the note persona unchanged: same prompt version, same empty extra_tools
+    # (which `_admits` honours AHEAD of the NEVER_DEFAULT gate), same KB access.
+    assert once.name == "note_ingest"
+    assert once.version == AGENTS["note_ingest"].version
+    assert once.extra_tools == frozenset()
+    assert once.reads_knowledge_base is True
+    for name in AGENT_NAMES - {"note_ingest"}:
+        assert narrow_for_third_party_note(AGENTS[name]) is AGENTS[name]
+    assert narrow_for_third_party_note(agent_for("no-such-agent")) is AGENTS[DEFAULT_AGENT]
+
+
+def test_an_emr_note_narrows_both_turns_at_the_dispatch_gate() -> None:
+    """W4/D9's narrowing, asserted where the loop actually asks — over every shipped
+    sidecar, at every scope, on BOTH turns.
+
+    The reply turn is the one that matters most and the one the split's own asymmetry
+    does not cover: `agent_for_owner_reply` WIDENS, so a caller that forgot the EMR
+    narrowing would hand a note the deterministic parser owns the full write surface.
+    `correct_fact` is the sharpest of the four — at an empty address it commits active +
+    PINNED, and a pinned lab head makes every later import of that reading `held`."""
+    from jbrain.agent.agents import NOTE_GRAPH_WRITE_TOOLS, narrow_for_emr
+
+    registry = _every_shipped_tool()
+    assert all(n in registry for n in NOTE_GRAPH_WRITE_TOOLS)  # not a wiring accident
+    for base in (AGENTS["note_ingest"], agent_for_owner_reply("note_ingest")):
+        narrowed = narrow_for_emr(base)
+        for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+            admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+            assert not (admitted & NOTE_GRAPH_WRITE_TOOLS)
+            # ...and nothing else was lost with them: the thread can still ask, read the
+            # graph, and be told what the deterministic parse did.
+            assert admitted == (base.tools or frozenset()) - NOTE_GRAPH_WRITE_TOOLS
+            assert "ask_owner" in admitted
+
+
+def test_a_note_that_is_both_third_party_and_emr_owned_gets_the_intersection() -> None:
+    """W4's two halves over ONE note, which is the case neither half could write alone.
+
+    The predicates are independent and a note can satisfy both: an approved guided-intake
+    submission enacts into an `untrusted_origin` note (D10), and if the owner filed that
+    submission to health / `Records` with the archive or PDF attached, `emr_owned` reads
+    it as importer-owned too (D9). Nothing forbids that note; what must not happen is the
+    turn coming out WIDER than either narrowing alone. Getting it wrong is silent — the
+    thread looks identical, and the only visible difference is a fact written onto a note
+    the deterministic parse is authoritative for, out of a stranger's text.
+
+    So the merged answer is the INTERSECTION of the two, and the composition is a property
+    of the functions rather than of the call order: `narrow_for_emr` SUBTRACTS and
+    `narrow_for_third_party_note` INTERSECTS, so they commute. Assigning the third-party
+    set outright — the shape the intake half shipped, correct while it was alone — would
+    hand `resolve_entity` and `assert_fact` straight back whenever it ran second, which is
+    exactly the order `/chat` and the unattended runner both use."""
+    from jbrain.agent.agents import NOTE_GRAPH_WRITE_TOOLS, narrow_for_emr
+
+    both = NOTE_INGEST_THIRD_PARTY_TOOLS - NOTE_GRAPH_WRITE_TOOLS
+    # Enumerated, not derived: what a stranger's words on an EMR note may reach is the two
+    # entity reads and the clock. No write verb, and no channel to the owner.
+    assert both == {"find_entity", "read_entity", "current_time"}
+
+    registry = _every_shipped_tool()
+    for base in (AGENTS["note_ingest"], agent_for_owner_reply("note_ingest")):
+        # Both orders, because two call sites apply them and a third could pick either.
+        emr_then_third = narrow_for_third_party_note(narrow_for_emr(base))
+        third_then_emr = narrow_for_emr(narrow_for_third_party_note(base))
+        assert emr_then_third.tools == both
+        assert third_then_emr.tools == both
+        for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+            for narrowed in (emr_then_third, third_then_emr):
+                admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+                assert admitted == both
+                # Neither half's own guarantee is weakened by the other being applied.
+                assert not (admitted & NOTE_GRAPH_WRITE_TOOLS)
+                assert "ask_owner" not in admitted
+                assert not (admitted - NOTE_INGEST_THIRD_PARTY_TOOLS)
+                assert not (_FORBIDDEN_FOUR & admitted)
+    # Applying either one twice, or in either order, is the same set: a caller may narrow
+    # unconditionally without knowing what another caller already did.
+    once = narrow_for_third_party_note(narrow_for_emr(AGENTS["note_ingest"]))
+    assert narrow_for_emr(once).tools == both
+    assert narrow_for_third_party_note(once).tools == both
 
 
 def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> None:
