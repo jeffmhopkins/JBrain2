@@ -60,11 +60,6 @@ const STEP_LABELS: Record<string, string> = {
   prefs_write: "Staged a standing instruction",
   propose_correction: "Staged a proposal",
   propose_merge: "Staged an entity merge",
-  // The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3). Plain
-  // labels for the Worked strip; the richer "entity modified" chip that expands to what
-  // each write changed is a sibling task of the same wave (D3).
-  resolve_entity: "Resolved the note's entities",
-  assert_fact: "Recorded what the note says",
   // Memory + scratchpads
   recall: "Recalled past notes",
   memory_read: "Read memory",
@@ -72,18 +67,12 @@ const STEP_LABELS: Record<string, string> = {
   remember: "Staged a memory change",
   archivist_memory_read: "Read memory",
   archivist_memory_write: "Updated memory",
-  prefs_read: "Read your standing instructions",
-  prefs_write: "Staged a standing-instruction change",
   scratch_list: "Listed its scratchpad",
   scratch_read: "Read its scratchpad",
   scratch_write: "Wrote its scratchpad",
   scratch_manage: "Tidied its scratchpad",
   journal: "Wrote a journal entry",
   name_session: "Named the session",
-  // The note conversation's one question (AGENT_INGEST_CONVERSATION_PLAN, D2/D5). A
-  // minimal entry: the richer chip that renders the question and the answer belongs
-  // with the D3 tool component.
-  ask_owner: "Asked you a question",
   time_left: "Checked time remaining",
   // Web + research
   web_search: "Searched the web",
@@ -240,7 +229,6 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   resolve_entity: ["surfaces"],
   assert_fact: ["facts"],
   ask_owner: ["question"],
-  prefs_write: ["op"],
   propose_correction: ["correction"],
   propose_merge: ["reason"],
   remember: ["body_md"],
@@ -253,7 +241,6 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   scratch_manage: ["op", "filename"],
   journal: ["entry"],
   name_session: ["name"],
-  ask_owner: ["question"],
   read_labs: ["analyte"],
   chart_measurements: ["measurement", "subject"],
   make_intake_link: ["domain", "fields_brief"],
@@ -302,10 +289,6 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 const NO_INLINE: ReadonlySet<string> = new Set([
   // takes no arguments — there is only one radio to release
   "sdr_stop",
-  // Both take one array of objects — a batch of surfaces, a batch of facts — so there
-  // is no single human-readable target to sit beside the label.
-  "resolve_entity",
-  "assert_fact",
   "read_note",
   "read_entity",
   // D15 injects the standing instructions into the prompt; the read takes no argument.
@@ -313,7 +296,6 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   "read_wiki",
   "request_rebuild",
   "archivist_memory_read",
-  "prefs_read",
   "scratch_list",
   "time_left",
   "gmail_read",
