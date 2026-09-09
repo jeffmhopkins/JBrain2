@@ -32,19 +32,14 @@ function DomainTag({ domain }: { domain: string }): ReactNode {
   );
 }
 
-/** One write: what it says, what became of it, and where it landed. */
+/** One write: what it says, what became of it, and where it landed. A supersession
+ * shows the predicate and hands the two VALUES to the diff, rather than printing the
+ * new value twice — the diff is where before and after belong. */
 function WriteRow({ fact }: { fact: FactWrite }): ReactNode {
   const verb = writeVerb(fact);
-  const edge =
-    fact.predicate !== undefined && fact.value !== undefined ? (
-      <span className="fact-edge">
-        <span className="edge-path">{edgePath(fact.predicate, fact.qualifier ?? null)}</span>
-        <span className="edge-arrow"> → </span>
-        <span className="edge-value">{fact.value}</span>
-      </span>
-    ) : (
-      <span className="fbw-stmt">{fact.label}</span>
-    );
+  const path =
+    fact.predicate === undefined ? null : edgePath(fact.predicate, fact.qualifier ?? null);
+  const superseded = fact.status === "replaced" && fact.replaced !== undefined;
   return (
     <li className={`fbw-row fbw-${verb}`}>
       <div className="fbw-head">
@@ -52,14 +47,24 @@ function WriteRow({ fact }: { fact: FactWrite }): ReactNode {
         <DomainTag domain={fact.domain} />
         {fact.from_attachment && <span className="fbw-src">from a photo</span>}
       </div>
-      {edge}
-      {fact.status === "replaced" && fact.replaced !== undefined && (
-        <ClaimDiffView
-          before={fact.replaced}
-          after={fact.value ?? fact.label}
-          afterLabel="now"
-          arrowLabel="↓ replaced by this note"
-        />
+      {superseded ? (
+        <>
+          {path !== null && <span className="edge-path">{path}</span>}
+          <ClaimDiffView
+            before={fact.replaced as string}
+            after={fact.value ?? fact.label}
+            afterLabel="now"
+            arrowLabel="↓ replaced by this note"
+          />
+        </>
+      ) : path !== null && fact.value !== undefined ? (
+        <span className="fact-edge">
+          <span className="edge-path">{path}</span>
+          <span className="edge-arrow"> → </span>
+          <span className="edge-value">{fact.value}</span>
+        </span>
+      ) : (
+        <span className="fbw-stmt">{fact.label}</span>
       )}
     </li>
   );
