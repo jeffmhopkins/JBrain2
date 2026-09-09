@@ -746,14 +746,19 @@ async def run() -> None:
         "embed_research_report": research_report_embedder.embed_research_report,
         "title_research_report": research_report_titler.title_research_report,
         "integrate_note": analyzer.integrate_note,
-        # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2), running BESIDE
+        # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2/W3), running BESIDE
         # integrate_note off the same note.ingested event — D13 forbids removing a
         # producer before its replacement is merged, so this wave pays for both.
-        # Its tool registry is EMPTY, not the chat registry: the `note_ingest` persona
-        # admits nothing (tools=frozenset(), D16), so binding the real tool set here
-        # would drag every readtool dependency into the worker to serve a turn that can
-        # call none of them. W3 swaps in the registry holding the graph-write tools.
-        "note_converse": note_converse_handler(maker, router),
+        # Its registry is built PER NOTE and holds five tools, not the chat registry: a
+        # graph-write handler is bound to ONE note, so there is no session-agnostic copy
+        # of it to filter down to, and building from names keeps "this persona reaches
+        # nothing else" a property of what was constructed (D16 is a second lock on it).
+        # The SAME `AnalysisPipeline` the shipped integration runs on, not a second one:
+        # the graph-write tools commit through its `commit_facts`, so sharing it is what
+        # gives them entity-resolution layer 2 (the embedder) and the live value-shape
+        # setting — a private pipeline would silently resolve without embeddings and
+        # write on subtly different terms from the path running beside it (D13).
+        "note_converse": note_converse_handler(maker, router, pipeline=analyzer),
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(
             maker, blobs, router, SqlSettingsStore(maker), RapidOcrClient(settings.rapidocr_url)
