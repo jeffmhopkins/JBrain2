@@ -114,7 +114,7 @@ def test_a_body_cannot_forge_the_end_of_its_own_frame() -> None:
 
 def test_the_tag_is_fresh_for_every_note() -> None:
     """A tag reused across notes would let note A teach the model note B's delimiter."""
-    from jbrain.analysis.converse import frame_nonce
+    from jbrain.analysis.noteframe import frame_nonce
 
     assert len({frame_nonce("body") for _ in range(50)}) == 50
     # The runner never passes one, so every turn draws its own.
@@ -126,11 +126,11 @@ def test_a_tag_the_body_already_contains_is_redrawn(monkeypatch: Any) -> None:
     """The collision is astronomically unlikely and handled anyway, because "unlikely"
     is not the property the frame needs: a closing marker the body already carries is a
     closing marker the body owns."""
-    from jbrain.analysis import converse
+    from jbrain.analysis import noteframe
 
     draws = iter(["c011", "c011", "fresh"])
-    monkeypatch.setattr(converse.secrets, "token_hex", lambda _n: next(draws))
-    assert converse.frame_nonce("a note that happens to say c011 in it") == "fresh"
+    monkeypatch.setattr(noteframe.secrets, "token_hex", lambda _n: next(draws))
+    assert noteframe.frame_nonce("a note that happens to say c011 in it") == "fresh"
 
 
 def test_the_capture_time_is_rendered_in_the_zone_the_note_was_captured_in() -> None:
@@ -325,12 +325,12 @@ def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:
     """W3 fills the allowlist, and what matters is that it stays a CLOSED one: never the
     curator wildcard (D16), never an `extra_tools` grant (which `toolregistry._admits`
     admits AHEAD of the web / NEVER_DEFAULT gates), and nothing outward-facing (D8)."""
-    from jbrain.agent.agents import NOTE_INGEST_TOOLS, agent_for
+    from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
     from jbrain.agent.toolregistry import NEVER_DEFAULT
 
     profile = agent_for(NOTE_CONVERSE_AGENT)
     assert profile.name == NOTE_CONVERSE_AGENT
-    assert profile.tools == NOTE_INGEST_TOOLS
+    assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS
     assert profile.tools is not None and profile.tools != frozenset()
     assert profile.extra_tools == frozenset()
     # The unattended surface, exactly: two graph writes, `ask_owner`, two entity reads,
@@ -359,7 +359,7 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
     reads, T2b `ask_owner`. Each was complete alone, and none could see the union, so
     each pinned a set that was right on its own branch and wrong on the merged one.
 
-    The two directions this closes are different faults. A name in `NOTE_INGEST_TOOLS`
+    The two directions this closes are different faults. A name in the unattended set
     with no handler in this registry is a tool call that dies in dispatch, offered to the
     model every turn. A handler in this registry outside the allowlist is worse: the
     registry is the second lock, and a tool present in it is one allowlist edit away from
@@ -367,7 +367,7 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
     counting, because "unreachable" is the whole of what T1 built them as (D15 hands the
     persona its standing instructions through the SYSTEM PROMPT instead), and a future
     handler wired into this registry is exactly how that would stop being true."""
-    from jbrain.agent.agents import NOTE_INGEST_TOOLS, agent_for
+    from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
     from jbrain.analysis.converse import note_converse_handler
 
     engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/none")
@@ -399,10 +399,10 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
         "current_time",
     }
     assert registry.names() == six
-    assert six == NOTE_INGEST_TOOLS
+    assert six == NOTE_INGEST_UNATTENDED_TOOLS
     # Neither prefs tool reaches the persona, from either side of the lock.
     assert not ({"prefs_read", "prefs_write"} & registry.names())
-    assert not ({"prefs_read", "prefs_write"} & NOTE_INGEST_TOOLS)
+    assert not ({"prefs_read", "prefs_write"} & NOTE_INGEST_UNATTENDED_TOOLS)
 
     # And the two locks agree at the gate the loop consults, under the turn's own
     # narrowed scopes: every admitted name has a handler here, and nothing else does.
@@ -411,6 +411,49 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
         frozenset({"health", "general"}), profile.tools, profile.extra_tools
     )
     assert admitted == six
+
+
+async def test_the_unattended_pass_never_gets_the_on_reply_surface() -> None:
+    """D8's first direction, on the path the unattended pass actually runs.
+
+    `LoopTurnExecutor` passes `profile.tools` straight through as `tools_allow`, so the
+    worker's pass is gated by the SAME field `/chat` reads — which is precisely why the
+    split cannot be a property of the profile and has to be chosen at turn assembly. The
+    worker never calls `agent_for_owner_reply`, and this is the assertion that says so
+    from the far end: the registry it builds holds no on-reply handler at all, and the
+    profile it runs admits no on-reply name even if one appeared."""
+    from jbrain.agent.agents import (
+        NOTE_INGEST_ON_REPLY_TOOLS,
+        NOTE_INGEST_UNATTENDED_TOOLS,
+        agent_for,
+    )
+    from jbrain.analysis.converse import note_converse_handler
+
+    engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/none")
+    try:
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        runner = note_converse_handler(maker, LlmRouter({}, {})).__self__  # type: ignore[attr-defined]
+        note = NoteInfo(
+            id="0f7a1c4e-2b3d-4a5f-8c9d-0e1f2a3b4c5d",
+            client_id="c1",
+            domain="general",
+            destination=None,
+            body="Kaiya started a new medication.",
+            created_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
+        )
+        assert runner.executor_for_note is not None
+        executor = runner.executor_for_note(note, ("general",))
+    finally:
+        await engine.dispose()
+
+    on_reply_only = NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS
+    assert on_reply_only  # the assertion below is vacuous if the sets ever collapse
+    # No handler: `correct_fact`/`merge_entities` are not built into this registry, so
+    # there is nothing here for an allowlist edit to make callable.
+    assert not (on_reply_only & executor.registry.names())
+    # And no allowlist entry either: the profile the runner resolves is the unattended
+    # one, so both locks say no independently.
+    assert not (on_reply_only & (agent_for(NOTE_CONVERSE_AGENT).tools or frozenset()))
 
 
 # --- the lifecycle bounds -----------------------------------------------------

@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-09 — the `note_ingest` persona gained its verbs. It **writes the graph** through `resolve_entity` + `assert_fact` bound to one note (`agent/graphwritetools.py`, see `ANALYSIS.md` for the write path), and it can **stop and ask**: **`ask_owner`** ("record one open question on this thread and stop") is the only producer of the `waiting_on_owner` state, ending its turn through the loop rather than by prose. With it, the **owner-reply path**: a reply into a waiting note thread is paired with the recorded question and appended to the note as a D6 clarification block, which re-ingests the note (D7) and resumes the conversation — and a single block can now be listed and erased (`GET`/`DELETE /notes/{id}/clarifications`), since an answer is free text that becomes the note's own searchable text. Beside all of it, **`owner_prefs`** — the owner's standing instructions, injected into that conversation's system prompt ahead of the note, whose write verb stages a Proposal and edits one numbered rule at a time. Prior: added the persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
+> **Status:** Living · **Last verified:** 2026-09-09 — the `note_ingest` persona gained its verbs, and then a SECOND allowlist (D8): reading a note alone it holds six tools, and once Jeff replies it also holds `correct_fact` (address a wrong value by `(entity, predicate, qualifier)`, force-supersede and pin it), `merge_entities` (stage a fold — enacting one is a full-owner write a note conversation may not make), `prefs_write`, and the corpus reads `search`/`read_note`/`relate`; `read_note` now fences the body it returns for any turn holding a graph write. It **writes the graph** through `resolve_entity` + `assert_fact` bound to one note (`agent/graphwritetools.py`, see `ANALYSIS.md` for the write path), and it can **stop and ask**: **`ask_owner`** ("record one open question on this thread and stop") is the only producer of the `waiting_on_owner` state, ending its turn through the loop rather than by prose. With it, the **owner-reply path**: a reply into a waiting note thread is paired with the recorded question and appended to the note as a D6 clarification block, which re-ingests the note (D7) and resumes the conversation — and a single block can now be listed and erased (`GET`/`DELETE /notes/{id}/clarifications`), since an answer is free text that becomes the note's own searchable text. Beside all of it, **`owner_prefs`** — the owner's standing instructions, injected into that conversation's system prompt ahead of the note, whose write verb stages a Proposal and edits one numbered rule at a time. Prior: added the persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -427,9 +427,17 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   every time the owner captures anything. Its allowlist is an explicit **closed**
   `frozenset`, never the curator wildcard (D16), and the executor's tool registry is
   assembled by NAME rather than globbed from the sidecar directory, so a tool reaches
-  this persona only by being written into both. It holds **six**: the note-bound graph
+  this persona only by being written into both. It is the one persona with **two**
+  allowlists (D8). Reading a note on its own it holds **six**: the note-bound graph
   writes `resolve_entity` and `assert_fact`, `ask_owner`, and `find_entity` /
-  `read_entity` / `current_time` inherited unchanged. Turn 0 is the note **fenced as
+  `read_entity` / `current_time` inherited unchanged. Once the owner replies it holds
+  **twelve** — those six plus `correct_fact`, `merge_entities`, `prefs_write`, `search`,
+  `read_note` and `relate`. Nothing outward-facing is in either: the owner replying does
+  not sanitize the note body still in context. The choice is a second RESOLUTION
+  (`agents.agent_for_owner_reply`, called only by `/chat`, which by definition is a turn
+  the owner sent), not a flag — and `AgentProfile.tools` carries the NARROW set, so a
+  caller that does not ask for the wider one gets the safe answer by default. Turn 0 is
+  the note **fenced as
   DATA** the way the `intake` persona fences a stranger's reply — a note body may carry
   an email, a forwarded message or text read off a photo, so nothing inside it is an
   instruction. The conversation's lifecycle and its per-tool-call ledger live in
@@ -453,6 +461,29 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
     the unattended pass ends by. The conversation's `note_body_sha` is read here — the
     only reader — to tell "the note moved under this thread" from "this thread's own
     answer changed it", and is re-stamped only in the second case.
+  - **`correct_fact`** is what a reply saying "no, that's wrong" turns into (D11). It
+    addresses by identity key `(entity, predicate, qualifier)` — the address
+    `read_entity` prints — never by fact id, and the entity is resolved under the TURN's
+    own read scopes, so the only rows it can be pointed at are ones the conversation
+    could already see. On a key holding several live values it lists them as `f1`/`f2`,
+    writes nothing, and the model retries naming one. The write is the ordinary graph
+    write with `correction=True`, which is what `supersession.decide()` reads to
+    supersede the current head(s) and commit the new value **active + pinned** — so a
+    later note re-flags it rather than flipping it back. It takes no `quote`: its
+    authority is the owner's own turn, not a passage of the note.
+  - **`merge_entities`** stages a fold and can never enact one. An entity fold is a
+    **full-owner** write (`merge_entity_pair` asks Postgres `app.is_full_owner()` first,
+    because RLS would silently narrow its repoints and strand half a cross-domain
+    entity's facts on the tombstone), and a note conversation runs domain-narrowed — so
+    it raises the same Proposal the chat persona's `propose_merge` does, and the owner's
+    approval runs the one shipped fold. The survivor is chosen at enact by `plan_merge`,
+    never by the model.
+  - **`read_note` frames what it returns here**, which it does for no other persona. A
+    fetched note body is third-party text arriving in a turn that can now correct a
+    fact, so it comes back inside the same nonce-closed `[CAPTURED NOTE #tag]` fence as
+    turn 0 (`analysis/noteframe.py`). The trigger is the TURN's own write authority
+    (`ToolContext.agent_tools`), not the persona name — curator and jerv hold no graph
+    write and see exactly what they saw before.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
   (`web_search`, `news_search`, `science_search`, `web_fetch`), the dataless `current_time`, and
   the owner-approved `current_location`, and **no knowledge-base tools** — it runs with empty read

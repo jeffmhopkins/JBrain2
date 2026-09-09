@@ -59,6 +59,13 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # Unlike the two graph writes it IS wired into the chat registry, because the owner's
 # reply into a note thread arrives as an ordinary /chat turn (D8) — the allowlist, not
 # the registry, is what keeps it off every other persona.
+#
+# `correct_fact` and `merge_entities` are the ON-REPLY writes, and both are here for the
+# sharpest version of the first reason. They are wired into the chat registry (the reply
+# turn's only registry) and they are `sensitive`-classed, which is documentation and not
+# a gate — `outcome_for`/`DEFAULT_OWNER_POLICY` is never consulted by the loop. Without
+# this line curator's `allow=None` would absorb a verb that force-supersedes and PINS a
+# fact, and one that stages a fold of two identities, on every ordinary chat turn.
 NEVER_DEFAULT: frozenset[str] = frozenset(
     {
         "spawn_subagent",
@@ -71,6 +78,8 @@ NEVER_DEFAULT: frozenset[str] = frozenset(
         "resolve_entity",
         "assert_fact",
         "ask_owner",
+        "correct_fact",
+        "merge_entities",
     }
 )
 

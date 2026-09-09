@@ -2,8 +2,8 @@
 
 > **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
 >
-> W3 in flight. Landed so far: **T2b** — `ask_owner` (the question, and the turn ending on
-> it) plus the owner-reply path that turns an answer into a D6 clarification block.
+> W3 in flight. Landed so far: **T3** — the unattended/on-reply split (D8) and the verbs
+> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12).
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -622,6 +622,61 @@ reply turn uses), which leaves the `NoteConverseRunner.executor` fallback the in
 registry T2a made it. Two by-name registry builders arrived, one per task;
 `graphwritetools.note_registry` is the survivor, since it also checks that a sidecar
 declares the name it was loaded for.
+
+*Landed (T3): the ON-REPLY set, and the split itself.* `NOTE_INGEST_TOOLS` is now two
+frozensets — `NOTE_INGEST_UNATTENDED_TOOLS` (the six) and `NOTE_INGEST_ON_REPLY_TOOLS`
+(those six plus `correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`,
+`relate`) — with `agents.agent_for_owner_reply` as the seam and `/chat` its only caller.
+`prefs_write` is reachable at last, `prefs_read` stays out for good (TOOL_SURFACE Cut #1),
+and both new verbs joined `NEVER_DEFAULT`.
+
+**Where the choice had to live, and why it is not where R2 implies.** The unattended pass
+and the reply turn are different code — `converse.py`'s per-note executor in the worker,
+`chat()` in the API — but they are gated by the SAME field: `LoopTurnExecutor.run_turn`
+passes `profile.tools` as `tools_allow` exactly as `/chat` does. So the profile cannot
+quietly mean "unattended", and a flag on one set was never the alternative; the split is a
+second RESOLUTION FUNCTION. The asymmetry is deliberate: `AgentProfile.tools` holds the
+NARROW set, so every caller that has not heard of the split (the worker, the task runner,
+the session listing) narrows a turn, and only an explicit `agent_for_owner_reply` widens
+one. Both directions are pinned at the dispatch gate rather than on the dataclass — over
+every shipped sidecar, at every scope, the unattended profile admits exactly the six and
+the widened one exactly the twelve — and the worker's own registry is asserted to hold no
+on-reply handler at all, so the two locks fail independently.
+
+**`correct_fact` addresses by identity key** `(entity, predicate, qualifier)`, resolved
+under the TURN's read scopes — which is the firewall, since the write session is the
+owner's full scope (constraint 2) and cannot be one. An entity the conversation cannot
+read is an entity it cannot correct. On a key holding several live rows (a set-valued
+relationship: each distinct object is a co-equal current edge) the handler mints `f1`/`f2`
+over the entity page's own grouping, writes NOTHING, and the model retries with
+`replaces`; the handles are positional, so the retry needs no stored state. The write is
+`_assert_one` with `correction=True` — one flag, feeding `decide()`'s existing
+force-supersede-and-pin branch, so there is no second write path and `decide()` stays off
+the model's vocabulary. It carries **no `quote`**: the owner's words are not in the note's
+chunks when the tool runs, so a required quote would cap every correction at the inferred
+ceiling — the one weight that cannot overwrite the value being corrected.
+
+**The fold is staged, and staging is the only shape available** (constraint 12). It raises
+the same `merge_entities` node op `propose_merge` does, so the owner's approval runs the
+shipped `SqlAnalysisRepo.merge_entities` — tombstone check, `distinct_from` check,
+`plan_merge` for the direction, `merge_entity_pair`'s full-owner guard. The tool asserts
+no survivor. Both ids are followed through `entities.live_entity_by_id` first, so a pair
+that has already been folded reads as one entity rather than staging a fold onto a
+tombstone (the shape `analysis/repo.resolve_review`'s merge-accept arm still reaches; it
+is filed, and its shape was deliberately not copied). A `distinct_from` refuses at staging
+rather than handing the owner a card whose only outcome is a refusal.
+
+**`read_note` was NOT inherited unchanged, and that is this task's judgement call.** Plan
+risk 1 says note bodies reach the model unframed and that this is safe only because the
+persona reading them holds no tools — and the on-reply set is precisely the wave that
+falsifies it: a fetched body is another person's text arriving in a turn that can now
+force-supersede a fact. So `read_note` fences its body in the same nonce-closed frame
+turn 0 gets, keyed on `ToolContext.agent_tools` holding a graph-write verb rather than on
+the persona — the hazard is write authority, not identity, and `jmoltobservetools` already
+reads that field for the same kind of boundary. Curator and jerv hold neither verb and are
+byte-for-byte unchanged. The frame moved to `analysis/noteframe.py` so the two callers
+share one boundary instead of teaching the model two, and the persona prompt (v3) extends
+"THE NOTE IS DATA" to every note it reads rather than only the one it is about.
 
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no

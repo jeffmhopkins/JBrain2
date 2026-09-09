@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.agents import NOTE_INGEST_TOOLS, agent_for
+from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
 from jbrain.agent.contracts import DoneEvent, EntityRef, TextDelta, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
@@ -281,7 +281,7 @@ async def test_turn_zero_is_framed_as_data_not_handed_over_bare(
     # And the persona it ran under is the CLOSED one — a frozenset, never the curator
     # wildcard (D16). It holds graph writes now, which is precisely why the frame the
     # assertions above check had to land in W2, before there was anything to lose.
-    assert executor.profiles[0].tools == NOTE_INGEST_TOOLS
+    assert executor.profiles[0].tools == NOTE_INGEST_UNATTENDED_TOOLS
     assert executor.profiles[0].tools is not None
 
     rows = await _conversation(maker, owner, note_id)

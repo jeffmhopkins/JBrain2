@@ -41,13 +41,19 @@ CTX = ToolContext(session=OWNER, scopes=("general",), agent_session_id="sess-1")
 # --- reachability: the registry, not the prompt (plan constraint 9) ---------
 
 
-def test_neither_tool_is_reachable_by_any_persona_yet() -> None:
-    """The on-reply set `prefs_write` belongs to does not exist (a sibling task builds
-    it), so until it does the tool must be unreachable rather than half-reachable: in
-    NEVER_DEFAULT so curator's `allow=None` wildcard cannot absorb it, and in no
-    profile's explicit allowlist either."""
+def test_prefs_write_is_reachable_only_from_the_on_reply_turn() -> None:
+    """W3 built the on-reply set `prefs_write` was waiting on (D8), and that is the ONLY
+    place it becomes reachable: D17 fires it on the owner's explicit request, and there
+    is no such thing as an explicit request on a turn he is not present for.
+
+    `prefs_read` stays unreachable from everywhere — TOOL_SURFACE Cut #1 is taken, since
+    D15 already injects the document into the note persona's system prompt."""
+    from jbrain.agent.agents import NOTE_INGEST_ON_REPLY_TOOLS, agent_for_owner_reply
+
     prefs = {"prefs_read", "prefs_write"}
     assert prefs <= NEVER_DEFAULT
+    # No STORED profile holds either: `AgentProfile.tools` is the unattended resolution,
+    # so the unattended note pass cannot reach `prefs_write` any more than curator can.
     # `extra_tools` is admitted AHEAD of the NEVER_DEFAULT gate, so a grant there would
     # undo the line above — check it on every profile, wildcard ones included.
     holders = {
@@ -56,6 +62,11 @@ def test_neither_tool_is_reachable_by_any_persona_yet() -> None:
         if prefs & ((profile.tools or frozenset()) | profile.extra_tools)
     }
     assert holders == set()
+    # The owner's own reply turn, and nothing else, adds exactly `prefs_write`.
+    assert "prefs_write" in NOTE_INGEST_ON_REPLY_TOOLS
+    assert "prefs_read" not in NOTE_INGEST_ON_REPLY_TOOLS
+    assert agent_for_owner_reply("curator").tools is None  # still the wildcard...
+    assert "prefs_write" not in (agent_for_owner_reply("jerv").tools or frozenset())
 
 
 # --- the pure document ------------------------------------------------------

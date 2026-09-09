@@ -27,13 +27,12 @@ _SUMMARY_TS = _REPO / "frontend" / "src" / "agent" / "toolSummary.ts"
 # "queued" job step). They may appear in the frontend maps without a sidecar.
 _SYNTHETIC = {"queued"}
 
-# The note-conversation write surface (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md W3,
-# `docs/research/agent-ingest/TOOL_SURFACE.md`). Its sidecars and its PWA polish land on
-# separate branches, and the polish has to land first or the wave's own chip renders
-# `assert_fact` as a raw snake_case row. So these are allowed to be polished ahead of
-# their sidecar — and the assertion below is self-clearing: the moment a sidecar lands,
-# this test says to delete the name from here.
-_FORWARD = set()
+# Tools polished in `toolSummary.ts` ahead of the `.tool` sidecar that defines them —
+# the shape W3 needed while the note-conversation write surface landed across sibling
+# branches. EMPTY now: every W3 tool has its sidecar, so the staleness gate covers the
+# whole surface again. The assertion below is self-clearing in both directions — a name
+# added here whose sidecar exists fails immediately.
+_FORWARD: set[str] = set()
 
 
 def test_forward_entries_are_deleted_once_their_sidecar_lands() -> None:

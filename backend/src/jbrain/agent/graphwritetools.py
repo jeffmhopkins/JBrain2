@@ -124,6 +124,10 @@ MAX_FACTS = 8
 # any note carries — so hitting one is a runaway, not ordinary work.
 RESOLVE_CALL_BUDGET = 8
 ASSERT_CALL_BUDGET = 10
+# `correct_fact` is un-batched (one disputed value, one identity key), so its budget is
+# a count of DISAGREEMENTS, not of round trips. Six is more than any one reply carries;
+# past it the model is arguing with the graph rather than recording what Jeff said.
+CORRECT_CALL_BUDGET = 6
 
 # The kinds a surface may be declared as, mapped onto the resolver's `kind_hint`
 # vocabulary. In the DESCRIPTION, never a JSON-Schema `enum`: an enum in a sidecar
@@ -310,6 +314,7 @@ class NoteGraphWriter:
         self._note_text = ""
         self.resolve_budget = ToolCallBudget(RESOLVE_CALL_BUDGET)
         self.assert_budget = ToolCallBudget(ASSERT_CALL_BUDGET)
+        self.correct_budget = ToolCallBudget(CORRECT_CALL_BUDGET)
 
     # --- handles ---------------------------------------------------------------
 
@@ -513,8 +518,86 @@ class NoteGraphWriter:
         lines.append(f"assert_fact: {self.assert_budget.remaining} calls left this note")
         return ToolOutput("\n".join(lines), entities=tuple(refs), facts=tuple(writes))
 
+    # --- correct_fact ----------------------------------------------------------
+
+    def adopt(
+        self,
+        *,
+        entity_id: uuid.UUID,
+        subject_id: uuid.UUID | None,
+        surface: str,
+        name: str,
+        kind: str,
+        domain: str,
+    ) -> Handle:
+        """Register an entity the caller resolved ELSEWHERE as a handle of this writer.
+
+        `resolve_entity` stays the only MINTING path — this adopts a row that already
+        exists and that the caller located under the turn's own read scopes, so nothing
+        here can create an entity. It is what lets `correct_fact` reuse `_assert_one`
+        whole: the write path addresses subjects by handle, and the on-reply turn earns
+        its entity from `find_entity`/`read_entity` rather than from a handle table that
+        lives in another process."""
+        handle = Handle(
+            handle=f"e{len(self._by_handle) + 1}",
+            entity=ResolvedEntity(id=entity_id, subject_id=subject_id),
+            surface=surface,
+            kind=kind,
+            name=name,
+            domain=domain,
+            visible=domain in self._read_scopes,
+        )
+        self._remember(handle)
+        return handle
+
+    async def correct_fact(self, item: Mapping[str, Any]) -> ToolOutput:
+        """Write ONE owner correction: force-supersede the address's current head(s) and
+        pin the new value (D11).
+
+        Not batched, unlike its two siblings, and that is the design rather than an
+        omission: a correction is one thing the owner disputed, addressed by one identity
+        key the handler had to disambiguate against the graph first. Batching it would
+        make the multi-row retry — the whole of the addressing design — a per-element
+        conversation inside one result.
+
+        The write is `_assert_one` with `correction=True`, so every mechanic is the
+        shipped one: the same resolver override, the same `commit_facts`, the same
+        `decide()`, the same domain floor and ratchet, the same result vocabulary."""
+        if self.correct_budget.exhausted:
+            return ToolOutput(
+                "correct_fact is out of budget for this note. Tell Jeff what is still"
+                " wrong rather than trying again."
+            )
+        self.correct_budget.used += 1
+        async with scoped_session(self._maker, self._write_ctx) as session:
+            chunks = await self._load_note(session)
+            try:
+                async with session.begin_nested():
+                    line, write, touched = await self._assert_one(
+                        session, 0, item, chunks, correction=True
+                    )
+            except Exception as exc:  # noqa: BLE001 — a failed correction is text, not a crash
+                log.warning("graphwrite.correct_failed", error=repr(exc))
+                return ToolOutput(
+                    "correct_fact could not record that (internal). Nothing changed —"
+                    " say so rather than telling Jeff it is fixed."
+                )
+        lines = [line.replace("facts[0]", "correct_fact", 1)]
+        lines.append(f"correct_fact: {self.correct_budget.remaining} calls left this note")
+        return ToolOutput(
+            "\n".join(lines),
+            entities=tuple(touched),
+            facts=(write,) if write is not None else (),
+        )
+
     async def _assert_one(
-        self, session: AsyncSession, idx: int, item: Mapping[str, Any], chunks: list[_ChunkRef]
+        self,
+        session: AsyncSession,
+        idx: int,
+        item: Mapping[str, Any],
+        chunks: list[_ChunkRef],
+        *,
+        correction: bool = False,
     ) -> tuple[str, FactWriteRef | None, list[EntityRef]]:
         subject_token = _text(item, "subject", "entity", "about")
         subject = self.lookup(subject_token)
@@ -544,7 +627,12 @@ class NoteGraphWriter:
         # sensitive predicate being written into a general note under a spelling the
         # floor does not recognise.
         registry = get_registry()
-        predicate, qualifier = registry.decompose_predicate(predicate, "")
+        # `qualifier` is only ever supplied by `correct_fact`, whose identity key is
+        # (entity, predicate, qualifier) — `assert_fact`'s schema has no such field and
+        # reads "", which is `decompose_predicate`'s dotted-path recovery case unchanged.
+        predicate, qualifier = registry.decompose_predicate(
+            predicate, _text(item, "qualifier", "of", "for")
+        )
 
         obj = self.lookup(literal)
         object_ref = obj.surface if obj is not None else None
@@ -559,14 +647,23 @@ class NoteGraphWriter:
             except ValueError:
                 notes.append(f'when "{when}" is not a date — recorded undated')
 
-        quote = _text(item, "quote", "span", "evidence")
-        attested = self._attests(quote)
-        if not attested:
-            notes.append(
-                "quote is not in the note — recorded, but at low weight so it cannot"
-                " overwrite anything"
-            )
-        signals = _ATTESTED if attested else _UNATTESTED
+        # An owner CORRECTION carries no `quote` and is never weight-capped: the passage
+        # it rests on is the owner's own message, which is not in the note's chunks when
+        # the tool runs (the clarification block's re-ingest is asynchronous), so a quote
+        # check here could only ever fail and would cap every correction at the inferred
+        # ceiling — the one weight that cannot overwrite the value being corrected. Its
+        # attestation is WHO SPOKE, which is a property of the tool being bound at all.
+        if correction:
+            attested, signals = True, _ATTESTED
+        else:
+            quote = _text(item, "quote", "span", "evidence")
+            attested = self._attests(quote)
+            if not attested:
+                notes.append(
+                    "quote is not in the note — recorded, but at low weight so it cannot"
+                    " overwrite anything"
+                )
+            signals = _ATTESTED if attested else _UNATTESTED
         confidence = effective_weight(1.0, signals)
 
         if not statement:
@@ -594,6 +691,12 @@ class NoteGraphWriter:
             self_confidence=1.0,
             # Recomputed, never asserted by the model (TOOL_SURFACE: no `inferred` field).
             inferred=not attested,
+            # D11: the ONE field `assert_fact` deliberately withholds and `correct_fact`
+            # sets. `supersession.decide()` reads it and, on a single-head address,
+            # supersedes every current head and commits active + PINNED regardless of
+            # temporal order — the force-supersede + pin the retired correction-note path
+            # had. It stays `decide()`'s branch, not a second write path here.
+            correction=correction,
         )
         # Re-assert the mentions this fact hangs off, so the fact's citation anchors where
         # its subject is NAMED rather than on the note's first chunk. Idempotent:
