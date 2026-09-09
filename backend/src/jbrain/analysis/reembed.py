@@ -1,14 +1,28 @@
 """The `reembed_stale` engine action (Phase-6 follow-on; docs/archive/HYGIENE_SWEEPS_PLAN.md).
 
-Nightly maintenance: re-embed the embedded rows whose `embedding_model` is stale (or whose
-embedding is NULL) after an embed-model change — the rows that have NO existing re-embed
-path. `wiki_index` already re-embeds via `wiki_reindex` and `canonical_predicates` via
-`sync_predicates`, so this covers the gap: **entities** (summary, when one exists). Uses
-the local embed container, not the LLM router, so it spends
-no LLM tokens and needs no self-improvement budget; it is mechanical, idempotent
-(`embedding_model IS DISTINCT FROM :model` self-clears as rows are updated), and bounded per
-run so a big post-upgrade backlog spreads across nights. Runs under SYSTEM_CTX; the schedule
-ships disabled and is Ops-fireable.
+Nightly maintenance: re-embed the rows whose `embedding_model` is stale after an
+embed-model change — the rows that have NO existing re-embed path (and, where nothing
+faster fills them, the rows whose embedding is still NULL). `wiki_index` already
+re-embeds via `wiki_reindex` and `canonical_predicates` via `sync_predicates`, so this
+covers the gap: **entities** and **external_sources** (summary, when one exists),
+**external_source_chunks**, and **app.chunks**. Uses the local embed container, not the
+LLM router, so it spends no LLM tokens and needs no self-improvement budget; it is
+mechanical, idempotent (`embedding_model IS DISTINCT FROM :model` self-clears as rows
+are updated), and bounded per run so a big post-upgrade backlog spreads across nights.
+Runs under SYSTEM_CTX — the same all-domains context ingest and `embed_note` already
+embed under, so it widens nobody's scope. Terminal-free (CLAUDE.md #10): 0066 seeds the
+SCHEDULE disabled but the TRIGGER `manual` and enabled, so Ops → Automations can fire it
+on demand today (`POST /ops/triggers/{id}/run`) and its toggle arms the nightly run.
+
+`app.chunks` joined the list when `jbrain.ingest.carryover` landed. Before it, every
+re-ingest destroyed and rebuilt a note's chunk rows, so any edit handed each chunk a fresh
+NULL embedding and `embed_note` re-embedded it under the current model — a note touched
+after a model swap healed itself. Carry-over keeps a byte-identical chunk's ROW (that is
+the point: `wiki_citations` and `entity_mentions` cascade off it), and with the row its
+old-model vector; `embed_note` selects `WHERE embedding IS NULL`, so nothing revisits it.
+Without this target a model swap would leave `chunks_embedding_idx` holding mixed-model
+vectors that only a genuinely rewritten body ever cleared, with no PWA or debug path to
+fix it — precisely the shape CLAUDE.md #10 exists to stop.
 """
 
 from __future__ import annotations
@@ -27,8 +41,9 @@ from jbrain.workflow.registry import ActionSpec
 
 log = structlog.get_logger()
 
-# Per-target, per-run cap: a large re-embed (a model swap touching every row) spreads over
-# nights rather than embedding thousands in one sweep. The next run continues from what's
+# The unit of work: one SELECT, one embed call, one committed UPDATE. A target may spend
+# several of these per run (`_Target.passes`), but never more in one transaction, so a
+# failed embed loses at most this many rows of progress. The next run continues from what's
 # still stale (the WHERE self-advances), so it converges and is idempotent at the tail.
 _BATCH = 256
 
@@ -40,7 +55,7 @@ REEMBED_SPEC = ActionSpec(
     mutating=True,  # writes embedding + embedding_model
     cost_class="standard",  # local embed container, no LLM router
     dedup_key_expr=None,
-    description="Re-embed entities whose embedding_model is stale after a model change.",
+    description="Re-embed rows whose embedding_model is stale after a model change.",
     category="maintenance",
 )
 
@@ -53,6 +68,12 @@ class _Target:
     name: str
     select: str
     update: str
+    # How many `_BATCH`-sized passes this target may spend per run. One is right for a
+    # table holding hundreds of rows; `app.chunks` holds an order of magnitude more than
+    # all the others together, and at one pass a nightly sweep would take months of nights
+    # to drain a model swap. Each pass still commits alone, so a wide target costs nothing
+    # in blast radius — only in how long one run occupies the (CPU-only) embed container.
+    passes: int = 1
 
 
 _TARGETS = (
@@ -100,6 +121,27 @@ _TARGETS = (
             " WHERE id = cast(:id AS uuid)"
         ),
     ),
+    # Note chunks. Last, so a failure on the biggest table cannot starve the small ones.
+    #
+    # Deliberately NOT `embedding IS NULL` like the targets above: `app.chunks` is the one
+    # embedded table that already HAS a NULL-embedding healer — `reconcile_unembedded_notes`
+    # re-enqueues `embed_note` every 300s — and sweeping NULLs here would only race a path
+    # that is already 288x faster. What has no other healer is the opposite row: a chunk
+    # that IS embedded, under a model that is no longer ours. See the module docstring.
+    _Target(
+        name="chunks",
+        select=(
+            "SELECT id::text AS id, text AS src FROM app.chunks"
+            " WHERE embedding IS NOT NULL AND embedding_model IS DISTINCT FROM :model"
+            " ORDER BY id LIMIT :limit"
+        ),
+        update=(
+            "UPDATE app.chunks"
+            " SET embedding = cast(:emb AS vector), embedding_model = :model"
+            " WHERE id = cast(:id AS uuid)"
+        ),
+        passes=8,
+    ),
 )
 
 
@@ -129,6 +171,17 @@ class ReembedAction:
                 log.info("reembed_stale_swept", target=target.name, embedded=embedded)
 
     async def _reembed_one(self, target: _Target) -> int:
+        """Spend up to `target.passes` batches, stopping early once the target is drained
+        (a short batch means the stale set is exhausted, so another SELECT would return 0)."""
+        total = 0
+        for _ in range(target.passes):
+            done = await self._reembed_batch(target)
+            total += done
+            if done < self._batch:
+                break
+        return total
+
+    async def _reembed_batch(self, target: _Target) -> int:
         async with scoped_session(self._maker, self._ctx) as session:
             rows = (
                 await session.execute(
