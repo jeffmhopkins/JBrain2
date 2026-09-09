@@ -580,7 +580,8 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           }
           demodMode={listening.mode}
           bandwidthHz={width}
-          ladder={ladder}
+          minHz={listening.bandwidth_min_hz ?? 0}
+          maxHz={listening.bandwidth_max_hz ?? 0}
           // Absent where there is nothing to choose, which is what makes the handles
           // disappear on wide FM rather than appear and refuse.
           onBandwidth={adjustable ? (hz) => void setWidth(hz) : undefined}

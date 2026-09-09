@@ -95,17 +95,9 @@ AUDIO_CUTOFF_HZ: dict[str, float] = {
 #: every SSB radio is built around begins at 300 Hz; where it ends is the bandwidth.
 SSB_LOW_HZ = 300.0
 
-#: The channel widths each mode offers, as FULL widths in Hz, widest first. **The first
-#: entry is the mode's default**, and the tuple is the whole contract: a `Demodulator`
-#: refuses a width that is not on its mode's ladder.
+#: WHY THESE NUMBERS, and it is one measurement.
 #:
-#: **Why a ladder rather than a range.** Every rung here is a filter design that a test
-#: measures — `test_bandwidth_rejects_the_neighbour` walks this table and proves each
-#: one does what its label implies. A free-running number would ship filter designs
-#: nobody has ever evaluated, and the failure mode of a bad one is not a crash but a
-#: station that sounds slightly wrong in a way only the owner's ear ever sees.
-#:
-#: **AM's widest is 8 kHz, and it used to be 16.** MEASURED 2026-09-08 on the real
+#: **AM's widest preset is 8 kHz, and its ceiling used to be 16.** MEASURED 2026-09-08 on the real
 #: chain: two equal AM carriers 5 kHz apart, and at 16 kHz the neighbour arrives in the
 #: audio at 0.0 dB — exactly as loud as the station that was tuned. At 8 kHz it is
 #: 14.8 dB down, at 6 kHz 85.2, at 4 kHz 110.0. The 16 kHz filter was not a wider,
@@ -120,6 +112,42 @@ SSB_LOW_HZ = 300.0
 #: each other and their products land in the audio band, where no downstream filter can
 #: separate them from the wanted audio again. Rejection has to happen while the
 #: interferer is still a separate signal, which is here.
+
+#: The step a width must land on, and the smallest transition any filter here is asked
+#: to build. 100 Hz rather than 1 kHz because the named presets are not whole kilohertz —
+#: SSB's 2.4 and NFM's 12.5 both are 100 Hz multiples and neither is a 1 kHz one — so a
+#: 1 kHz grid would make the classic filters unreachable by the very control meant to
+#: offer them. The PWA's drag snaps to whole kilohertz; this is what the box will accept.
+BANDWIDTH_STEP_HZ = 100
+
+#: The widest and narrowest filter each mode will build, as full channel widths.
+#:
+#: A RANGE rather than only the presets below, because the owner drags the passband edge
+#: on the picture and wants it to land where they put it — "narrower than that station"
+#: is a position, not a menu choice. The presets stay as the quick picks the ladder
+#: shows; the range is what the box accepts.
+#:
+#: **Each ceiling is its mode's widest preset, deliberately.** On AM that is the whole
+#: point: 8 kHz is the widest filter that costs no audio, and anything above it is the
+#: pure interference intake the 16 kHz default was — so the range must not reopen a door
+#: this wave measured shut. It also keeps the tuning picture exactly the width it already
+#: is, since `crop_reach_hz` is taken from this ceiling.
+#:
+#: The floors are where a filter stops being one: `_build_channel` asks for a stopband
+#: `max(0.5 * kept, 2000)` above the edge, so a narrower filter than these would need a
+#: transition band wider than its own passband.
+BANDWIDTH_RANGE_HZ: dict[str, tuple[int, int]] = {
+    "fm": (5_000, 16_000),
+    "nfm": (5_000, 16_000),
+    "am": (2_000, 8_000),
+    "usb": (1_000, 3_100),
+    "lsb": (1_000, 3_100),
+    "wbfm": (180_000, 180_000),
+}
+
+#: The quick picks the ladder offers, widest first. **The first entry is the mode's
+#: default.** No longer the whole contract — `BANDWIDTH_RANGE_HZ` is — but still the
+#: widths worth naming, and each one a filter a test measures.
 BANDWIDTH_HZ: dict[str, tuple[int, ...]] = {
     # 25 kHz and 12.5 kHz are the two channel rasters land mobile actually uses; 8 kHz
     # is for sitting on top of one of a pair when both are busy.
@@ -664,15 +692,21 @@ class Demodulator:
         if key not in IF_RATE_HZ:
             raise DemodError(f"unknown mode {mode!r}")
         ladder = BANDWIDTH_HZ[key]
+        low, high = BANDWIDTH_RANGE_HZ[key]
         if bandwidth_hz is None:
             bandwidth_hz = ladder[0]
-        elif bandwidth_hz not in ladder:
-            # The ladder is the contract, not a suggestion: every rung is a filter
-            # design a test has measured, and an arbitrary width would ship one nobody
-            # has evaluated. Naming the alternatives makes the refusal actionable.
+        elif not low <= bandwidth_hz <= high:
+            # Bounded rather than clamped: a clamped width would leave the radio
+            # listening at something other than the number on screen, which is the one
+            # failure this whole control exists to end. Naming the bounds makes the
+            # refusal actionable for a caller with no terminal.
             raise DemodError(
-                f"{key} has no {bandwidth_hz} Hz filter "
-                f"(want one of {', '.join(str(w) for w in ladder)})"
+                f"{key} filters run {low}-{high} Hz wide, not {bandwidth_hz}"
+            )
+        elif bandwidth_hz % BANDWIDTH_STEP_HZ:
+            raise DemodError(
+                f"a filter width must be a multiple of {BANDWIDTH_STEP_HZ} Hz, "
+                f"and {bandwidth_hz} is not"
             )
         if_rate = IF_RATE_HZ[key]
         if capture_rate_hz % if_rate:
@@ -707,7 +741,7 @@ class Demodulator:
         #: picture at every setting, which makes the control look like it did nothing.
         #: Pinning it to the widest rung holds the picture still and lets the shaded box
         #: shrink inside it, which is the whole visual argument.
-        self.crop_reach_hz = channel_half_for(key, ladder[0])
+        self.crop_reach_hz = channel_half_for(key, high)
         #: The same thing as the two numbers a viewer needs: how wide to shade, and how
         #: far off the tuned frequency to centre the shading. Zero centre on every
         #: symmetric mode, which is why a client that ignores it draws what it always

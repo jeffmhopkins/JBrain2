@@ -58,6 +58,12 @@ export interface SdrListening {
    *  PWA would go on offering widths a redeployed box had stopped accepting, and the
    *  refusal would arrive as a 400 the owner cannot act on. */
   bandwidths_hz?: number[];
+  /** The narrowest and widest this mode will build, and the grid a width must land on.
+   *  The presets above are quick picks INSIDE this; the drag on the tuning view runs
+   *  anywhere in the range, so the control needs the bounds rather than just the menu. */
+  bandwidth_min_hz?: number;
+  bandwidth_max_hz?: number;
+  bandwidth_step_hz?: number;
 }
 
 export interface SdrState {

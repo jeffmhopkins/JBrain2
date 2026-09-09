@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 5) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅(built; on-box gate pending)
+> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 6) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅(on air; three corrections folded in)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -1383,6 +1383,30 @@ filter is a decision about a crowded *band*, not one station) and reset to the m
 default on a mode change (the ladders differ, so carrying a width across would refuse an
 ordinary mode press). The session reports both the width and the whole ladder, so the
 PWA never holds its own copy to go stale against a redeployed box.
+
+**B4 — what the box taught it (2026-09-09, on air).** Three corrections from the owner
+using it at 162.550:
+
+*A ladder of four was too coarse.* "Narrower than that station" is a position, so a drag
+now snaps to **whole kilohertz** anywhere inside a per-mode range, and the presets became
+quick picks inside that range rather than the whole contract. The box accepts a 100 Hz
+grid — finer than a fingertip on a 32 kHz picture can mean, but the reason it must be
+100 Hz is that NFM's 12.5 kHz and SSB's 3.1 kHz are real filters and neither is a whole
+kilohertz. Each range's ceiling is its widest preset, deliberately: on AM that keeps the
+8 kHz limit this wave measured, rather than reopening the interference intake it closed.
+
+*The grips were furniture.* 12×28 px of accent colour sat over the trace beside them; now
+6×18, growing only while held. The touch target is unchanged at 28 px — a 6 px one would
+be a miss most tries.
+
+*The picture contradicted itself for the length of a retune.* MEASURED: the mode button
+read `8k` while the shading still spanned 16 kHz, because a retune takes ~100 ms and
+every row arriving in that window still carries the OLD passband. Releasing the drag also
+cleared the dragged width, so the edges sprang back to the old position and then jumped
+forward again — which reads as the drag having been rejected. The chosen width now wins
+until the row agrees with it (`sdrBandwidth.pendingPassband`), and only until, so a width
+the box REFUSES stops being drawn instead of lingering as a lie about what the radio is
+doing.
 
 **B3 — the control.** Binding spec `docs/mocks/bandwidth/d-mode-width-draggable.html`,
 chosen by the owner: the mode button carries its width and a second tap opens the

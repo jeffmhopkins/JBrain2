@@ -23,7 +23,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   bandwidthEdges,
   bandwidthSpoken,
-  nearestBandwidth,
+  pendingPassband,
+  snapBandwidth,
   stepBandwidth,
   widthFromOffset,
 } from "../sdrBandwidth";
@@ -248,7 +249,12 @@ function fall(
 /** The tuning references, drawn over whichever picture is underneath. Both modes need
  *  them and neither owns them: the passband is what the demodulator hears and the
  *  centre is where the radio is pointed, and those are true of a waterfall too. */
-function guides(canvas: HTMLCanvasElement, row: SpectrumRow, ratio: number): void {
+function guides(
+  canvas: HTMLCanvasElement,
+  row: SpectrumRow,
+  ratio: number,
+  override: { lowHz: number; highHz: number } | null = null,
+): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const w = canvas.width;
@@ -259,7 +265,12 @@ function guides(canvas: HTMLCanvasElement, row: SpectrumRow, ratio: number): voi
   ctx.lineWidth = ratio;
   ctx.strokeStyle = token(canvas, "--steel", "#7fa7c9");
   ctx.globalAlpha = 0.55;
-  const band = passbandEdges(row);
+  // The row's own passband, UNLESS a width is in flight. A retune takes ~100 ms and the
+  // row keeps arriving with the old passband throughout, so guides drawn from it sit at
+  // the old edges while the handles the finger moved sit at the new ones — the picture
+  // contradicting itself at exactly the moment the owner is watching it (MEASURED on the
+  // box: mode button reading 8k, shading still 16k).
+  const band = override ?? passbandEdges(row);
   for (const hz of [centre + band.lowHz, centre + band.highHz]) {
     ctx.beginPath();
     ctx.moveTo(Math.round(xOf(hz)) + 0.5, 0);
@@ -301,7 +312,8 @@ export function SdrTuningView({
   onTune,
   demodMode,
   bandwidthHz = 0,
-  ladder = [],
+  minHz = 0,
+  maxHz = 0,
   onBandwidth,
 }: {
   /** What the radio is tuned to. Passed rather than read off the row: the row is
@@ -315,7 +327,8 @@ export function SdrTuningView({
   /** The filter width in force, and every width this mode offers. Both from the
    *  session, so the ladder is the box's rather than a copy that can go stale. */
   bandwidthHz?: number;
-  ladder?: number[];
+  minHz?: number;
+  maxHz?: number;
   /** Set a new width. Absent where the filter cannot be changed — a spectrum stare, or
    *  wide FM, where narrowing clips the deviation and distorts rather than cleans. */
   onBandwidth?: ((hz: number) => void) | undefined;
@@ -339,6 +352,13 @@ export function SdrTuningView({
   // refuses therefore snaps back rather than leaving the picture lying.
   const [dragHz, setDragHz] = useState<number | null>(null);
   const chartRef = useRef<HTMLDivElement | null>(null);
+  // The passband the UI is showing, which is not the row's until the retune lands. A ref
+  // as well as state because the 10 fps repaint is imperative and must not re-subscribe
+  // to the stream every time a finger moves.
+  const pendingRef = useRef<{ lowHz: number; highHz: number } | null>(null);
+  // Whether a finger is actually down, which `dragHz` alone can no longer say: it now
+  // also holds a released-but-not-yet-confirmed width.
+  const holdingRef = useRef(false);
   // The waterfall's own pixels, kept off-screen at one column per BIN and one row per
   // DEVICE pixel. Off-screen because the visible canvas is scrolled every frame and a
   // scrolled canvas no longer holds the numbers a resize or a colour-window change has
@@ -424,7 +444,7 @@ export function SdrTuningView({
         paintedRef.current = null;
         paint(canvas, next, read, eased);
       }
-      guides(canvas, next, ratio);
+      guides(canvas, next, ratio, pendingRef.current);
       tuningRef.current = read;
       setRow(next);
       setTuning(read);
@@ -461,7 +481,7 @@ export function SdrTuningView({
       paintedRef.current = null;
       paint(canvas, newest, tuningRef.current, scaleRef.current);
     }
-    guides(canvas, newest, ratio);
+    guides(canvas, newest, ratio, pendingRef.current);
   }, [mode]);
 
   const span = row && row.passbandHz > 0 ? row.stopHz - row.startHz : 0;
@@ -470,8 +490,22 @@ export function SdrTuningView({
   // from the mode and the width rather than read off the row so they track the finger
   // during a drag — the row only catches up when the box answers, ~100 ms later, and
   // handles that waited for it would feel broken rather than merely late.
-  const dragging = onBandwidth !== undefined && ladder.length > 1 && span > 0;
-  const edges = dragging && demodMode ? bandwidthEdges(demodMode, dragHz ?? bandwidthHz) : null;
+  // The session has spoken: stop showing the dragged width and go back to describing
+  // what the box actually did. This is also what stops a REFUSED width being drawn
+  // forever — the session comes back carrying the old one, and the picture follows it.
+  // Skipped while a finger is down, or a change landing mid-drag would yank the edge
+  // out from under it.
+  useEffect(() => {
+    if (!holdingRef.current) setDragHz(null);
+  }, [bandwidthHz]);
+
+  const dragging = onBandwidth !== undefined && span > 0;
+  const shownHz = dragHz ?? bandwidthHz;
+  const edges = dragging && demodMode ? bandwidthEdges(demodMode, shownHz) : null;
+  // Held only while the row DISAGREES — see `pendingPassband` for why, and for why it
+  // must stop the moment the row catches up.
+  pendingRef.current =
+    dragging && demodMode && row ? pendingPassband(demodMode, shownHz, row.passbandHz) : null;
   const pctOf = (hz: number) => 50 + (hz / span) * 100;
   return (
     <>
@@ -479,7 +513,7 @@ export function SdrTuningView({
         Tuning
         <span className="tv-span">
           {span > 0
-            ? `${kHz(span)} kHz view · ${kHz(row?.passbandHz ?? 0)} kHz passband`
+            ? `${kHz(span)} kHz view · ${kHz(edges ? edges.highHz - edges.lowHz : (row?.passbandHz ?? 0))} kHz passband`
             : "waiting for the radio"}
         </span>
       </p>
@@ -532,22 +566,31 @@ export function SdrTuningView({
                   onPointerDown={(e) => {
                     if (fixed) return;
                     e.currentTarget.setPointerCapture(e.pointerId);
+                    holdingRef.current = true;
                     setDragHz(bandwidthHz);
                   }}
                   onPointerMove={(e) => {
                     if (dragHz === null || !chartRef.current) return;
                     const box = chartRef.current.getBoundingClientRect();
                     const offset = ((e.clientX - box.left) / box.width - 0.5) * span;
-                    setDragHz(nearestBandwidth(ladder, widthFromOffset(demodMode, offset)));
+                    setDragHz(snapBandwidth(widthFromOffset(demodMode, offset), minHz, maxHz));
                   }}
                   onPointerUp={() => {
-                    // Committed on RELEASE, not on every rung crossed: a drag across the
-                    // ladder would otherwise rebuild the demodulator three times, and
-                    // each rebuild is an audible click.
+                    holdingRef.current = false;
+                    // Committed on RELEASE, not at every kilohertz crossed: a drag across
+                    // the range would otherwise rebuild the demodulator a dozen times,
+                    // and each rebuild is an audible click.
                     if (dragHz !== null && dragHz !== bandwidthHz) onBandwidth?.(dragHz);
+                    // `dragHz` deliberately SURVIVES the release. Clearing it here fell
+                    // back to the session's width, which is still the old one until the
+                    // retune lands ~100 ms later — so the edges sprang back to where they
+                    // started and then jumped forward again, which reads as the drag
+                    // having been rejected. It clears when the session catches up.
+                  }}
+                  onPointerCancel={() => {
+                    holdingRef.current = false;
                     setDragHz(null);
                   }}
-                  onPointerCancel={() => setDragHz(null)}
                   onKeyDown={(e) => {
                     // The arrow that moves this handle INWARD narrows, whichever handle
                     // it is — the gesture is "pull the edge in", not "decrease a number".
@@ -555,9 +598,10 @@ export function SdrTuningView({
                     const outward = side === "high" ? "ArrowRight" : "ArrowLeft";
                     if (e.key !== inward && e.key !== outward) return;
                     const next = stepBandwidth(
-                      ladder,
-                      bandwidthHz,
+                      shownHz,
                       e.key === inward ? "narrower" : "wider",
+                      minHz,
+                      maxHz,
                     );
                     if (next !== null) onBandwidth?.(next);
                     e.preventDefault();
