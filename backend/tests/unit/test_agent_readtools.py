@@ -933,6 +933,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_correction",
         "make_intake_link",
         "propose_merge",
+        "correct_fact",
+        "merge_entities",
         "lookup_medication",
         "lookup_condition",
         "geocode_reverse",
@@ -978,8 +980,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     }
     # The standing-instruction tools are `read`/`sensitive`, not `web`, so only
     # NEVER_DEFAULT keeps them out of the wildcard's set — which is the whole reason
-    # they are in it (AGENT_INGEST_CONVERSATION_PLAN constraint 9).
-    never_default = {"prefs_read", "prefs_write"}
+    # they are in it (AGENT_INGEST_CONVERSATION_PLAN constraint 9). The on-reply pair is
+    # here for the same reason and a sharper one: they are bound on the chat registry,
+    # because the owner's reply IS a chat turn (D8), so NEVER_DEFAULT is the only thing
+    # standing between a force-supersede and the curator's wildcard.
+    never_default = {"prefs_read", "prefs_write", "correct_fact", "merge_entities"}
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
     assert {t.name for t in registry.schemas_for({"general"})} == (
@@ -1005,7 +1010,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "resolve_entity.tool": (
             "resolve_entity",
             1,
-            "3bdba3fe654175045bffaddace6ed84ebf5003b7fa951e18cb413d98f9e4e779",
+            "d325ae506ce2725cee495f7130b90088a042184e170d57e53e34b01bc1dfe819",
+        ),
+        # The on-reply half (D8): reachable only from a turn the owner sent, and each
+        # force-supersedes or folds, so the wording is the contract for what a reply may
+        # do to the graph.
+        "correct_fact.tool": (
+            "correct_fact",
+            1,
+            "7ce9897c0511b4ecd32e3fc316e3f46291b474241f7a6f6b98f615ca9d498b9b",
+        ),
+        "merge_entities.tool": (
+            "merge_entities",
+            1,
+            "2f39f5cc71d59ea54595e1afb5a2d1be3e927754f283e4737fcad516eb831030",
         ),
         "aprs_recent.tool": (
             "aprs_recent",
