@@ -5096,6 +5096,119 @@ button.small {
   margin: 0;
 }
 
+/* "Answers you gave": the D6 clarification eraser, at the foot of the Note tab
+   (AGENT_INGEST_CONVERSATION_PLAN D6 — W2's "the wave that ships the writer ships the
+   eraser"). Quiet by construction: collapsed, and absent for a note with no blocks,
+   which is nearly every note. The blocks themselves still render as prose in the body
+   above — D6 changes no screen — this is only where their ids become reachable. */
+
+.clar-panel {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.clar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  text-align: left;
+}
+
+.clar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.clar-hint {
+  margin: 4px 0 10px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.clar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clar-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+}
+
+.clar-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clar-q {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-a {
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+
+.clar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.clar-when {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The tap-again confirm every destructive act in the app uses (DESIGN.md "Note view").
+   Erasing re-drives ingestion and, unlike a note delete, is not even soft — so the
+   armed label spells out the consequence rather than saying "tap again" alone. */
+.clar-erase {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-erase.clar-armed {
+  border-color: var(--rose);
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.clar-erase:disabled {
+  opacity: 0.5;
+}
+
 /* Attachments tab: manifest list (docs/reference/DESIGN.md "Note view"). */
 
 .tab-count {

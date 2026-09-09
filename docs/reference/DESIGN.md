@@ -744,7 +744,18 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes.
+  outbox notes. Below the body, and **only when the note has any**, a
+  collapsed **"Answers you gave"** disclosure with a count pill: the note's
+  D6 clarification blocks, each with a rose tap-again **erase**. This is
+  not a second rendering of the blocks — they are already in the body as
+  prose, which is the whole of D6's storage-only treatment — it is the
+  ERASER, and the only place a block's id is reachable at all, since the
+  body is one composed string. An answer becomes the note's own searchable,
+  citable text, so a password or a diagnosis typed into one has to be
+  removable without deleting the whole note; on a box with no terminal
+  (CLAUDE.md #10) that is not a limit the owner can work around. Absent
+  entirely on a note that was never asked about, which is nearly every
+  note — so the note screen is unchanged for it, as D6 requires.
 - *Attachments tab* — the **canonical attachment manager** (the editor
   keeps its quick paperclip for capture-time adds). The tab label carries a
   count pill. Layout is a **manifest**: a one-line summary

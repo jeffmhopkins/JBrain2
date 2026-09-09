@@ -1139,6 +1139,19 @@ export interface NoteOut {
   accuracy_m: number | null;
 }
 
+/** One appended D6 clarification block: a question the agent asked while reading the
+ * note, and the answer Jeff typed back. Once appended it IS the note's text — chunked,
+ * embedded, searchable, citable — so an answer that carried a password or a diagnosis
+ * has to be identifiable before it can be removed. The note screen renders blocks as
+ * prose (D6 changes no screen), which is why the ids only exist here. */
+export interface ClarificationOut {
+  id: string;
+  seq: number;
+  question: string;
+  answer: string;
+  created_at: string;
+}
+
 export interface NotesPage {
   notes: NoteOut[];
   next_cursor: string | null;
@@ -2472,6 +2485,26 @@ export const api = {
 
   async deleteNote(id: string): Promise<void> {
     await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // The D6 clarification blocks. Owner-only server-side, both verbs: the append
+  // enqueues a re-ingest on `is_owner()` RLS, so a token caller would get a driver
+  // error rather than a refusal.
+  async listClarifications(noteId: string): Promise<ClarificationOut[]> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/clarifications`);
+    return (await response.json()) as ClarificationOut[];
+  },
+
+  // Erasing one re-drives ingestion, so the returned note is the note as it now reads —
+  // no second fetch to see the redaction land.
+  async deleteClarification(noteId: string, clarificationId: string): Promise<NoteOut> {
+    const response = await request(
+      `/api/notes/${encodeURIComponent(noteId)}/clarifications/${encodeURIComponent(
+        clarificationId,
+      )}`,
+      { method: "DELETE" },
+    );
+    return (await response.json()) as NoteOut;
   },
 
   // Hide/unhide only flip stream visibility — no re-ingest, so the note keeps
