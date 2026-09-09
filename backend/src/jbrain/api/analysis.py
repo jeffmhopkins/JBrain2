@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from jbrain.analysis.entities import MergeScopeError
 from jbrain.analysis.repo import (
     REVIEW_STATUSES,
     AlreadyOpen,
@@ -181,6 +182,11 @@ async def resolve_review(
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except AlreadyResolved:
         raise HTTPException(status_code=409, detail="review item is not open") from None
+    except MergeScopeError as exc:
+        # Unreachable over HTTP today (ctx_for is a full owner), but the guard exists
+        # for a future narrowed surface and a 500 would read as a server fault rather
+        # than the refusal it is.
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item
@@ -207,8 +213,24 @@ async def file_review_correction(
     instead of resolving one. EXPLICITLY owner-gated like the wiki correction path: minting
     an owner_correction is the one privileged write that force-supersedes the graph. The
     card is resolved separately (action `correct`, carrying this note id) once the id is in
-    hand, mirroring the wiki flow's create-then-drive shape."""
+    hand, mirroring the wiki flow's create-then-drive shape.
+
+    409 when the target card declares `correctable: false`. That flag also drops the
+    footer's composer in the UI, but a rendering hint is not a gate: the one card that
+    sets it (the EMR location firewall's) exists BECAUSE a value was held out of the
+    domain the card sits in, and a correction lands pinned at full weight in that same
+    domain — so the refusal has to hold for any caller, not just the shipped one."""
     ctx = ctx_for(owner)
+    # Read the card on the caller's own scoped session — never a widened one — so the
+    # gate sees exactly the card the caller can see.
+    if not await get_analysis_repo(request).review_correctable(ctx, item_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "review item is not correctable: a correction would file the held"
+                " value back into the domain it was kept out of"
+            ),
+        )
     maker = get_session_maker(request)
     try:
         note, created = await get_notes_repo(request).create_note(
@@ -272,6 +294,8 @@ async def reopen_review(item_id: str, request: Request, principal: PrincipalDep)
         item = await repo.reopen_review(ctx_for(principal), item_id)
     except AlreadyOpen:
         raise HTTPException(status_code=409, detail="review item is already open") from None
+    except MergeScopeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item

@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-09-08 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Waves
 W0–W3 are complete (W0 gates + fixtures; W1 storage bedrock — schema defs, the
@@ -464,8 +464,27 @@ stripping is never a single point of failure:
   `{address, geo}` and the floor dict `{geocoordinates, latitude, longitude, gpscoordinates}`** —
   **when its subject entity kind is a health EMR entity** (`Observation`/`encounter`/`Person`/
   `Organization`/`MedicalCondition`). Because such a fact should never exist on this path, the guard
-  routes it to a `low_confidence` review card (`subkind=firewall_address`) anchored to the chunk and
-  **never commits it**. Building the set as that explicit union closes the earlier draft's gap (a
+  routes it to a `low_confidence` review card (`subkind=firewall_address`) and **never commits it**.
+  That card is filed by `integrate.file_firewall_cards` from the catches the
+  importer returns, deduped per (attachment, page anchor, entity kind, predicate) **across all
+  statuses** so a dismissed card never nags again. It names *what* was held, *where* (attachment +
+  page anchor — durable across a re-ingest, which re-mints chunk rows) and *how many* times (the
+  anchor is page-granular and a page carries several encounters, so identical catches collapse into
+  one card carrying its `count` rather than under-reporting the guard as having fired once), and
+  deliberately **not the caught value** — the card sits in the very
+  health domain the value was kept out of, so parking the value in its payload would re-plant the
+  leak (no `snippet`/`statement`/`value_json`; a §9 test pins the payload's whole key set, since a
+  substring probe would pass on real page text that happened to omit the fixture's address). Its
+  one verb is **`dismiss`**, since the sanctioned way to
+  record a facility address is the deliberate `Place` sidecar below — advertised as an explicit
+  `choices` entry, because a card carrying none renders in the inbox with *no buttons at all*, and
+  paired with `correctable: false`, which suppresses the detail footer's *correct it* composer: that
+  composer files an `owner_correction` note in the card's own domain, force-superseding and pinned
+  at full weight, so on this card it would prompt the owner to type the held address straight back
+  into health. That flag is enforced on **both** sides — `POST /api/review/{id}/correction` reads
+  the target card and 409s an explicit `correctable: false` — since a client-only guard leaves the
+  endpoint offering to re-plant the leak to any caller that is not the shipped UI. Building the set as that
+  explicit union closes the earlier draft's gap (a
   stray `geo` fact, whose predicate is *not* in the floor dict, would otherwise have slipped the
   guard). A single parser miss thus cannot silently plant location-domain whereabouts in the health
   domain — the guard catches it, and (should a facility address ever legitimately be needed) it is
@@ -1693,7 +1712,8 @@ import:
   OCR read **adopts the precise draw's timestamp + specimen** (identical minted qualifier → idempotent,
   dual-cited) and the higher-`fidelity` precise draw is authoritative. A read matching **nothing** —
   including a readable-but-WRONG timestamp — **parks** in `pending_review` behind a `low_confidence`/
-  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent), never a spurious
+  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent **across all
+  statuses**, so a dismissal is a decision and not a snooze), never a spurious
   point. The four red-team scenarios are unit-tested (divergent-rendering dedup, readable-but-wrong
   parks, two-specimen-less draws both persist, matching by canonical LOINC not label) + a real-Postgres
   e2e proves the ARIA reprint corroborates the 2021 OneContent draws (one graph draw, not two) while
@@ -1714,7 +1734,10 @@ import:
 - **`import_handler.py` (`EmrImportPipeline.parse`)** — the DB **job handler** (`emr_parse`) that ties
   it together on a note's decrypted PDF attachments: extract each PDF's page text (+ word geometry for
   OneContent) off the event loop → `parse_corpus` → integrate each precise parse through the shipped
-  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file. Each
+  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file (one per
+  (note, attachment), deduped **across all statuses** like its two sibling cards — `emr_parse` re-runs
+  on every re-ingest, so an unprobed insert multiplies rows and an open-only probe would re-file a
+  card the owner dismissed). Each
   precise source integrates against **its own attachment chunks** so a fact's citation lands on the
   source document (the arbiter anchors an EMR fact to the head of its chunk set; per-page honoring of
   the intent's attested span is a follow-on). Writes run on a **health-scoped owner session** (§3.6).

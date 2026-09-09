@@ -51,14 +51,23 @@ class Note(Base):
     # this many attachments are present (docs/reference/ANALYSIS.md "Analysis gating").
     # 0 = no wait (a plain note, or a client that does not send the hint).
     attachments_expected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    # Phase-6 wiki dirty bit (mark-and-sweep): false at create/edit, set true once a wiki
-    # build has incorporated the note. The builder targets wiki_built = false notes.
+    # VESTIGIAL. The wiki's mark-and-sweep dirty bit is `entities.wiki_built`, which is
+    # what the builder selects on and what 0046's triggers flip. This column has no
+    # reader in the backend or the PWA; writing it re-dirties nothing.
     wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Capture location: owner-eyes metadata, excluded from Phase 7 scoped views.
     latitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When the SERVER received the row (migration 0190). `created_at` above is the
+    # CLIENT's capture time — the offline outbox flushes later, so a note can arrive
+    # long after it was captured. Anything timing the note's ARRIVAL (the reconciler's
+    # attachment settle window) must read this, never created_at, which a backdated
+    # flush puts past the window the instant it lands. Server-stamped, never settable.
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     # Client's capture-time UTC offset in minutes east of UTC; lets the
     # extraction anchor be the note's LOCAL date even though created_at
     # round-trips through timestamptz as a UTC instant.

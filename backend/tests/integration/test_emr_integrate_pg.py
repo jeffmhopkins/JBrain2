@@ -147,7 +147,7 @@ async def test_corrected_without_original_is_held_for_review(maker, tmp_path):  
 
 
 async def test_lab_results_projection_populated(maker, tmp_path):  # noqa: F811
-    # project_emr runs inside _apply, so the projection is materialized already.
+    # project_emr runs inside settle_note, so the projection is materialized already.
     await _integrate(maker, tmp_path)
     async with scoped_session(maker, SYSTEM_CTX) as s:
         rows = (

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.proposals import ProposalRepo, enact_outcome_summary
+from jbrain.analysis.entities import MergeScopeError
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -185,6 +186,10 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
         # text. The load is RLS-scoped exactly like the enact, so an out-of-scope id is
         # already a 404 above.
         proposal, nodes = await repo.load(ctx, proposal_id)
+    except MergeScopeError as exc:
+        # A merge leaf refused because the enacting session is domain-narrowed. Not a
+        # 404 (the proposal is real) and not a 500 (nothing failed) — a refusal.
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return EnactOut(

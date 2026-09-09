@@ -126,6 +126,24 @@ async def test_aria_reprint_reconciles_and_parks(maker, tmp_path):  # noqa: F811
     )
     assert again == 0
 
+    # ...and dismissing it is a decision, not a snooze: the probe spans ALL statuses,
+    # so the next `emr_parse` run does not re-file the card the owner already closed.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'dismissed'"
+                " WHERE kind = 'low_confidence' AND payload->>'subkind' = 'ocr_unreconciled'"
+                " AND payload->>'note_id' = :nid"
+            ),
+            {"nid": note_id},
+        )
+    assert (
+        await file_parked_cards(
+            maker, SYSTEM_CTX, note_id=uuid.UUID(note_id), note_domain="health", parked=rec.parked
+        )
+        == 0
+    )
+
     async with scoped_session(maker, SYSTEM_CTX) as s:
         # One platelet row for the 2021 draw — the ARIA reprint corroborated, not duplicated.
         plt_rows = (

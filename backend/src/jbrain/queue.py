@@ -628,11 +628,16 @@ async def backfill_pending_integration(
                   -- (that would defeat the gate). Eligible again once the promised
                   -- attachments land (present >= expected) OR the settle window lapses
                   -- (a promise that never arrived — integrate on what it has).
+                  -- Measured from `received_at`, the SERVER's receipt instant (0190),
+                  -- never `created_at`: that is the client's capture time, so an
+                  -- offline-flushed note with a promised attachment would arrive
+                  -- already past its own window and defeat this gate in exactly the
+                  -- case the gate exists for.
                   AND (
                       n.attachments_expected <= (
                           SELECT count(*) FROM app.attachments a WHERE a.note_id = n.id
                       )
-                      OR n.created_at < now() - (:settle * interval '1 second')
+                      OR n.received_at < now() - (:settle * interval '1 second')
                   )
                 ORDER BY {INTEGRATION_BACKFILL_ORDER_BY}
                 LIMIT :lim

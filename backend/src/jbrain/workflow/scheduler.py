@@ -490,6 +490,9 @@ REAPABLE_IDLE_SWEEPS: frozenset[str] = frozenset(
         "reconcile_unembedded_notes",
         "geofence_sweep",
         "expire_research_reports",
+        # The graph-rebuild drain poll: a fire with no open run does one count query
+        # and reports 0, so its 12-an-hour idle fires stay out of the Runs log.
+        "graph_rebuild",
     }
 )
 
