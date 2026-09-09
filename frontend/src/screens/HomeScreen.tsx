@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import { PlanSheet } from "../agent/PlanSheet";
 import type { AppointmentRef } from "../agent/types";
-import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
+import { type FullBrainDeps, modeForAgent, useFullBrain } from "../agent/useFullBrain";
 import { useReadAloud } from "../agent/useReadAloud";
 import { usePlanState } from "../agent/views/registry";
 import { AgentModelSheet } from "../components/AgentModelSheet";
@@ -164,7 +164,7 @@ export function HomeScreen({
   // biome-ignore lint/correctness/useExhaustiveDependencies: fb methods are recreated each render; keying on them would re-fire the handoff.
   useEffect(() => {
     if (!openSession) return;
-    setSeg({ row: "main", mode: openSession.agent === "curator" ? "fullbrain" : "research" });
+    setSeg({ row: "main", mode: modeForAgent(openSession.agent) });
     fb.requestOpen(openSession.id);
     fb.setPanel("none");
     onOpenSessionConsumed?.();

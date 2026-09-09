@@ -1,6 +1,16 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◻️ W5◻️
+>
+> W3 in flight. Landed so far: **T3** — the unattended/on-reply split (D8) and the verbs
+> behind it, `correct_fact` (D11) and `merge_entities` (staged only, constraint 12) —
+> plus the fixes from two adversarial reviews: on the write surface the weight cap now
+> lands on the field `decide()` reads, `replaces` is gone, an id `object` becomes a real
+> edge, and the reply turn can reach `assert_fact`; and **T4** — the scenario harness
+> re-pointed onto the write tools, then corrected until it stopped passing on assertions
+> that could not fail (49 passed / 26 xfailed). Two things T4 was briefed to do are
+> **not** done and are recorded as open: the eval corpora and the real-model adversarial
+> scenario.
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
@@ -377,7 +387,7 @@ Five consequences worth carrying:
   candidate predicate so the intake-link teardown's soft deletes are swept too.
 
 The append path is `SqlNotesRepo.append_clarification` plus its `NotesRepo` Protocol entry —
-no route and no tool in W2; W3's `ask_owner` is the caller. It enqueues its own `ingest_note`
+no route and no tool in W2; W3/T2b's owner-reply path (`analysis/clarify.py`) is the caller, pairing the answer with the question `ask_owner` recorded. It enqueues its own `ingest_note`
 inside its transaction rather than relying on a caller to remember. That enqueue makes the
 method **owner-only**: `app.jobs` is `is_owner()` RLS, so it works under the narrowed owner
 session constraint 2 describes (tested) and a capability-token caller gets a raw
@@ -401,7 +411,11 @@ than a refusal, so W3 must not offer this behind a token-authenticated surface.
   removed only by deleting the whole note, losing the body and the graph with it.
   `ingest/emr/intake_handler.py` scrubs `notes.body` for exactly this reason. **The wave that
   ships the writer ships the eraser**: on a box with no terminal (CLAUDE.md #10) an
-  unredactable field is not a limit the owner can work around.
+  unredactable field is not a limit the owner can work around. *Closed in W3/T2b, with the
+  writer: `list_clarifications` + `delete_clarification` behind `GET`/`DELETE
+  /notes/{id}/clarifications[/{id}]`, the delete re-driving ingestion in its own
+  transaction. The listing is half the fix — the note screen renders blocks as text, so
+  without ids there is nothing to name.*
 
 *The block's line structure renders where it is read, and only there.* `Stream.tsx` renders the
 body as a text child inside a 3-line clamp with no `white-space`, so the bubble preview shows a
@@ -425,6 +439,211 @@ too. Author a **new** adversarial scenario running a real model against a hostil
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
 
+*Landed (T4): the harness describes the tool path.* `runner._compile_intent` is gone;
+`runner._tool_calls` compiles each step's scripted extraction into the `resolve_entity` /
+`assert_fact` arguments a faithful agent would send, and `NoteGraphWriter` executes them
+against real Postgres — one function, not 75 files, exactly as briefed. A `tool_calls` key
+on a step overrides it where the faithful default cannot express the case (one scenario
+uses it). `settle_note` runs ONCE per note over the union of every call's writes
+(constraint 6), unioned in-process by a `_LedgerPipeline` subclass until the 0191 ledger
+is the source.
+
+*Corrected after an independent adversarial review of that re-point.* The re-point's own
+commit reported "54 real passes, 21 documented gaps"; the review found four of those
+passes vacuous, two xfail reasons mis-attributed, and ~20 `expect` assertions weakened
+rather than deleted. All of it is now either restored, xfailed or written down —
+`backend/tests/harness/README.md` carries the six-gap table, the 26-scenario xfail index
+and a table of every changed-but-not-xfailed assertion. The corpus is **49 passing / 26
+strict-xfail of 75**, and the five conversions were all greens that could not fail:
+`adv_negation_then_reassert` (its zombie guard needs a negated row the tool cannot write),
+`hist_retrospective_closes_open_interval` and `plan_relative_date_resolution` (assertions
+retargeted onto the scenario's own statement text), `rel_enumerated_children_fan_out` (the
+arbiter's four derived `gender` facts silently absent), `own_joint_co_ownership` (the
+`{share: joint}` value silently absent). Two production bugs the re-point fixed but did
+not pin — the `_QUANTITY` unit class and `_KIND_HINTS["drug"]` — now have regression
+tests, along with four more mis-parses of the same shape (`1/2`, `120/80`, `03/19/1986`,
+`1e3`, and leading zeros) and the thirteen registry types no hint word could reach,
+`Observation` among them — the only default route to `kind: measurement`.
+
+**Still open from T4, both briefed above and neither done:**
+
+- **The eval corpora are untouched.** `src/jbrain/evals/integrate_runner.py` and
+  `src/jbrain/evals/integrate_cases/00_core.json` still score the `integrate.note` prompt
+  and the `IntegrationIntent` shape, and `tests/unit/test_integrate_eval.py` still runs
+  them in CI. They are green, and they measure a path the note conversation no longer
+  takes. (The plan's path `evals/integrate_runner.py` is `src/jbrain/evals/`.)
+- **The new adversarial scenario was not written.** `adv_prompt_injection_body_inert.json`
+  is still the tautology this paragraph names, and it is now *more* of one: the write path
+  is a tool loop, which is a shape hostile note text could plausibly drive, and no scenario
+  exercises the loop at all.
+
+*Scope reduction recorded rather than discovered.* `docs/research/agent-ingest/
+X5-EVALS-TESTING.md` designed this re-point as an N-turn `FakeLlmClient` router replaying
+scripted tool calls through the real `AgentLoop`, promising that `expect{}` "survives
+verbatim". The implementation calls the two handlers directly instead. Neither half held:
+`expect{}` did not survive verbatim (see the README's two tables), and the loop itself —
+`max_steps`, the per-conversation budgets, the tool sidecars' schemas and the harmony
+grammar they compile to — is now **outside** the harness. The 75 scenarios are
+behaviour-preservation evidence for the WRITE PATH only. W5a's ~940-line deletion rests on
+that narrower claim.
+
+*Landed (T1): `owner_prefs`.* `app.owner_prefs` (migration 0195, owner-only RLS, ENABLE
++ FORCE) holds one capped document of standing instructions, injected into every note
+conversation's **system prompt** ahead of the note and framed as the owner's
+instructions rather than as the note's DATA. `prefs_read` is the `read`-class load;
+`prefs_write` **stages an `owner-prefs` Proposal and never writes** (D17) — the only
+writer is `prefstools.owner_prefs_executor`, dispatched by
+`connectortools.build_leaf_executor` on the owner's approval. It is a **delta**: one
+call moves one numbered rule (add / replace / remove), addressed by `rule_number` plus
+the rule's own text, with no full-rewrite verb in the surface at all — a full-replace
+verb reachable from a note-driven turn is a standing-instruction overwrite primitive,
+which is why the archivist's upsert shape was copied for the read half only. A rule is
+one LINE, numbered at render time, so no edit renumbers its neighbours; a
+replace/remove staged against one numbering refuses at enact if the rule it named has
+changed underneath it. Caps are 50 rules / 1k chars per rule / 8k chars of document
+(well under `archivist_memory`'s 20k, because this one is paid on every note turn), and
+every cap is checked on an in-memory rule list **before any write is opened** — at
+staging it is text the model can act on, and at enact it is a skipped leaf, never a
+raise that would roll back the sibling leaves of the same enact transaction.
+
+**Still open from T1** (revised once T2a and T2b landed beside it): both tools are in
+`toolregistry.NEVER_DEFAULT` and in **no profile's allowlist**, so neither is reachable.
+`prefs_read` stays out for good — **`TOOL_SURFACE.md` Cut #1 is taken**: the document is
+already in the system prompt (`converse._rules`), so the tool would offer the persona a
+second, overlapping memory surface for something it has been handed. It was built as
+briefed and is left in place, unreachable, rather than deleted. `prefs_write` still waits
+on the ON-REPLY set, which no task in this wave built. The `reads_knowledge_base` blocker
+it had is **gone** — T2a flipped the flag to True, so `app.proposals`' domain-narrowed
+RLS is satisfiable and the handler's text refusal under empty scopes (tested) is now the
+guard for a W2-era session rather than for every turn. Neither tool has a D3 chip beyond
+the minimal `toolSummary.ts` entry, and the "how many existing notes would this change"
+report the `owner_prefs` section promises is not built — it needs the scoped per-rule
+re-run.
+
+*Landed (the GUI half of W3).* The **D3 "entity modified" rung** and the **two-tab
+inbox** (D4/D5), both as extensions of shipped components rather than new surfaces.
+
+- The rung is one more rung inside `StepRow`'s existing detail. Writes ride the tool
+  result as `ToolResultEvent.facts` (`FactWrite`: statement, per-fact `domain`, a
+  `written|replaced|held` status the WRITE PATH reports, `from_attachment` for D12) plus
+  a call-level `truncated`, folded by `transcript.ts` and persisted by `fromTurn`. The
+  step's seven states and their wording are pure (`agent/entityWrites.ts`); a
+  supersession renders through `ClaimDiffView`, extracted from `ClaimDiff.tsx` so the
+  review inbox and the transcript share the app's one diff renderer. The domain is
+  **named** everywhere it is shown, through a single helper, and an unrecognised code
+  says so instead of degrading to a bare dot. No edit affordance: correction is a reply.
+- **The rung renders from the PERSISTED TURN, not from the 0191 ledger** — deliberately.
+  The ledger stores `fact_ids` with no per-fact status and no statement, so it can say
+  *that* a call wrote and *which domains* it touched and never which of the seven states
+  a write reached; and it has no `tool_call_id`, so joining it to a step is positional
+  and breaks exactly on the truncated turn that motivates it. The turn already survives
+  the event stream (it is how every other step replays), so it is one shape with two
+  arrival paths rather than two sources disagreeing on one screen. **The gap this leaves,
+  named rather than papered over:** a turn cut off by `max_steps` writes no assistant
+  turn, so on reopen its calls exist ONLY in the ledger and render nowhere. Closing that
+  is the recorder moving into the tool dispatch plus persisting a truncated prefix —
+  W3's backend half, where `ok` and the written ids come from the write path anyway.
+- The inbox is `notes · wiki` on the shipped `.review-segs` track. `GET /api/review/notes`
+  (owner-only) unions `note_conversations` in either live state with the staged Proposals
+  a note conversation raised (or of an instructions kind), oldest wait first; a `running`
+  first pass is listed and uncounted. **"The inbox only redirects" is a property of the
+  CONTRACT**: the row carries a `session_id` and an `agent` and no item id, and there is
+  no endpoint on this surface to post a decision to — a test asserts both, so growing an
+  answer affordance means deleting a test. A row hands off exactly as a Tasks run does.
+- The launcher's Review tile badge — the only signal, polled only while the launcher is
+  on screen — now sums both tabs (mock fidelity item 10); the notes half degrades to the
+  wiki count alone if its endpoint fails.
+
+*Closed against an independent adversarial review of W3 (2026-09-09).* Ten findings,
+every one reproduced by the reviewer against the branch, and none of them visible to CI —
+which is the pattern worth carrying more than any single fix: **every one of the three
+worst lived where two halves were each tested alone.**
+
+- **A server-authored message was filed as Jeff's answer onto his note.** `/chat` called
+  `record_owner_reply` with `body.message` and no check on `proposal_outcome` /
+  `deferred_outcome`, the two flags that mark a turn whose message the SERVER wrote. Tap
+  **Enact** on an inline card in a thread that ended with a second `ask_owner`, and the
+  outcome summary was paired with the agent's open question, appended as a D6 block,
+  re-ingested into chunks and embeddings, and the question was consumed — so the real
+  answer could never be paired. `record_owner_reply` takes `owner_authored` now, checked
+  inside as well as at the call site.
+- **The D3 rung was wired to a payload the backend never sent.** `FactWriteRef` emitted
+  `{fact_id, label, domain, outcome}`; the rung read `status`, `predicate`, `qualifier`,
+  `value`, `replaced`, `from_attachment`, plus a `truncated` that existed nowhere at all.
+  Fed the real JSON, `tallyWrites` fell through `else tally.written += 1` and rendered a
+  HELD fact — one `decide()` refused to make live — as **written**, which is the single
+  failure `ask_owner.tool` and the persona prompt both exist to surface. Four of D3's
+  seven states were unreachable, `ClaimDiffView` never rendered, and **D12 had no
+  producer**. Fixed end to end: `status` is derived server-side by one table and is a
+  REQUIRED field (a default of "written" is a silent claim a fact is live); an unmapped
+  outcome word reads as `held`, because the two errors are not symmetric; D12's evidence
+  is the provenance of the chunk the quote is attested against; `truncated` comes from the
+  clamp the tool already reported to the model. `testdata/fact_write_contract.json` is now
+  the shared artefact — real `model_dump(mode="json")` output, asserted by the backend and
+  folded through `applyEvent` by the frontend, because every green test on both sides had
+  been building its own input.
+- **`ToolOutput.halt` was honoured on two of three dispatch loops.** `_produce_buffered`
+  never read it, and `/chat` picks that producer whenever reflexion buffer-retry is on —
+  so after `ask_owner` flipped the thread to `waiting_on_owner` the loop ran on for up to
+  19 more steps of `correct_fact`, `merge_entities` and `prefs_write`. It halts now, a
+  halted turn is never re-produced (that would ask the owner twice), and buffer-retry is
+  forced off for a note conversation as it already was for a spawner — a re-produce
+  re-dispatches every write whatever the stop reason.
+- **The eraser shipped with no PWA affordance.** `grep -rn "clarification" frontend/src`
+  returned nothing: the routes existed and passed 20 tests, but no browser could issue the
+  DELETE and `DEBUG_ACCESS.md` exposes no generic HTTP verb. W2's "the wave that ships the
+  writer ships the eraser" was not met. The note screen's Note tab now carries a collapsed
+  **"Answers you gave"** panel (DESIGN.md "Note view"), absent for a note with no blocks.
+- **Both clarification routes were `PrincipalDep`.** W2's recorded limit said in so many
+  words that W3 must not offer this behind a token surface. `OwnerDep` now — and there
+  were no HTTP-level tests for either route, which is how it shipped.
+- **An enact the executor refused was reported as enacted.** `enact` marked every
+  `plan.enactable` leaf `enacted` regardless, and `owner_prefs_executor` returned silently
+  on a stale `prev`. A refusal is `LeafRefused` now, caught per leaf into `held`; the
+  stated reason for swallowing it ("a raise would roll back the sibling leaves") never
+  applied, since `prefs_write` stages exactly one leaf per proposal.
+- **`INSTRUCTION_PROPOSAL_KINDS` held `owner_prefs`; the kind is `owner-prefs`.** The kind
+  arm of the union was dead code, and the test that declined to cover it did so on a
+  premise 0195 had already retired.
+- **`prefs_write` was reachable only on the turn where the document was invisible.**
+  `with_standing_instructions` had one call site, the unattended pass; `/chat` passed
+  `profile.prompt` raw. So D15 and `ASSISTANT.md` were both false, and the model was asked
+  to edit a numbered list it had never seen. `api/agent._standing_instructions` is the
+  other half, and fails the turn rather than running without them — the direction
+  `converse._rules` already chose, and this is the turn that force-supersedes and pins.
+- **The notes-tab row identified a domain by colour alone** — a `DomainDot` whose `title`
+  does not exist on touch. `domainWord` was one import away.
+- **Comments and docs claiming behaviour the code did not have**, corrected in place; and
+  `prefstools`' "every failure is TEXT" is now enforced by wrapping both handlers rather
+  than asserted, following `asktools._guarded`.
+
+*Found while fixing, not in the review.* `test_note_reply_write_pg.py` asked for
+`owner_ctx` by parameter, but that name is a plain helper and not a fixture — so all
+**eight** of its `correct_fact` / `merge_entities` tests errored at setup and had never
+once executed. With the one-line wrapper `test_ask_owner_pg.py` already uses they run; the
+one that then failed was cross-test pollution (the only test addressing by NAME, resolving
+onto an entity a sibling test had already given a `homeLocation`), not a defect.
+
+*Left open, deliberately.* `ASSISTANT.md` says the reply turn holds twelve tools, which is
+what `NOTE_INGEST_ON_REPLY_TOOLS` contains; the reviewer counted ten because the built
+registry does not bind `assert_fact` on that turn. That is a sibling task's fix, and the
+doc is right about the allowlist, so the number is left standing rather than corrected to
+match a bug.
+
+- Two shipped bugs fixed on the way: an empty lane rendered a `0` count pill (D5's "no
+  zero to clear"), and the session handoff mapped every non-`curator` persona to the
+  Research tab, so a `note_ingest` redirect would have landed on the wrong tab and shown
+  an empty chat. `modeForAgent` now derives it from `MODE_AGENTS`.
+- `toolSummary.ts` gained labels and inline-arg policies for the five W3 tools, and
+  `inlinePiece` now renders a BATCHED argument elementwise (the whole W3 tool surface
+  batches). Their `.tool` sidecars land on sibling branches, so the roster gate carries a
+  named, **self-clearing** `_FORWARD` set: the moment a sidecar lands, a test says to
+  delete the name from it.
+- Found wrong in the chosen mock, and recorded in `docs/mocks/agent-ingest-inbox/`:
+  variant A relabels `pending · decided` to `notes · wiki` without saying what becomes of
+  the **decided log and its `reopen`** — a shipped, `DESIGN.md`-binding full unwind. Built
+  with the log one level down inside the wiki tab rather than silently deleted.
+
 *Two things W2's reviews left specifically for W3, both about flipping
 `reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens
 nothing retroactively**: `read_scopes` is also what is persisted as the session row's
@@ -436,6 +655,217 @@ engine-opened note conversation's scopes — so the moment the flag flips, the o
 route can widen the graph-write persona past `(note_domain, 'general')` on a session the
 owner never started. Inert today only because a False profile's stored scopes are never
 read.
+
+*Landed (T2a): the two tools that write the graph.* `agent/graphwritetools.py` +
+`resolve_entity.tool` / `assert_fact.tool`, batched (≤12 / ≤8) on the measured shapes —
+the flat fallback is not held open, since it is equally well-formed and yields exactly
+one item per turn. Both write through W1's `commit_facts`: the resolver, the mention
+spine, `decide()`, the floor, the ratchet and the citation anchor are the shipped ones,
+so the tools add no second write path and `decide()` never becomes a verb. `quote` is
+required and CHECKED — an unattested quote still commits (Lever A) at the arbiter's own
+0.4 inferred-overwrite ceiling, so it cannot overwrite a confident prior. No
+`domain`/`inferred`/`supersedes`/`correction` field and no `enum` anywhere. Per-element
+SAVEPOINT. Handles (`e1`…) are per CONVERSATION, held in the writer; `assert_fact`
+accepts a handle or the exact surface that earned one and nothing else, so
+`resolve_entity` stays the only minting path. Budgets are engine-side per conversation
+(8 resolve / 10 assert calls) with the remainder appended to every result.
+
+*Corrected after an adversarial review of the graph-write surface — five findings, all
+reproduced before they were fixed. Recorded here because four of them were things this
+plan and `TOOL_SURFACE.md` both asserted and no code enforced:*
+
+- **The 0.4 cap was stored on the field nothing reads.** `decide()`'s low-confidence
+  guard keys on `self_confidence`; `graphwritetools` capped `confidence` and wrote a bare
+  `1.0` into `self_confidence`, so an unattested `assert_fact` went `active` and
+  superseded an attested prior while the result line told the model it could not overwrite
+  anything. The tool surface has no confidence field to report (R3), so the engine's own
+  span check IS the self-report and now sits on both. The claim is also stated correctly
+  now: an unattested value cannot overwrite a CONFIDENT prior — `attribute` reaches
+  `attribute_collision` first and holds both sides; `state`/functional-relationship reach
+  the weight guard and the head stays live.
+- **The `quote`-omission argument for `correct_fact` was a misreading of the same
+  guard.** `decide()`'s correction branch reads neither confidence field — it
+  force-supersedes on the flag alone — so a capped correction would still overwrite and
+  would merely file the owner's own word as a 0.4 guess. The conclusion (no `quote`)
+  stands; the reason is that its attestation is WHO SPOKE. See TOOL_SURFACE correction 5,
+  amended.
+- **`correct_fact`'s `replaces` is removed**, and with it the multi-row retry. The
+  affordance could not work: `entity_view` yields several groups at one key only for a
+  NON-functional relationship, which is exactly the shape `decide()`'s correction branch
+  skips (it needs a `single_head` address), and a set-valued edge's identity IS its object
+  (`_facts_at_key`). The retry left both original edges live, added a third, and reported
+  `ok … replaced`. The handler now lists what is live and refuses.
+- **An `object` that is an entity id is resolved and adopted** before the write, under the
+  turn's own read scopes. Passed through raw it was matched against a handle table holding
+  only the subject, so it never resolved: the row landed `object_entity_id = NULL` with the
+  bare uuid as its literal value and `pinned=True`, the real edge superseded. The shared
+  write path also refuses any id-shaped object no handle answers to, so `assert_fact`
+  cannot reach the same state.
+- **`resolve_entity`/`assert_fact` are now BOUND on the chat registry too.** D8's on-reply
+  set has always allowlisted them, but `build_registry` dropped both sidecars
+  unconditionally — so on a reply turn neither was offered and neither could dispatch, and
+  `correct_fact` was the only write verb left. A correction at an empty address commits
+  `insert_pinned=True`, so every fact the owner taught a note thread was pinned against
+  future supersession, including by later notes. They bind the way `ask_owner` does
+  (through the conversation row, never an argument); `NEVER_DEFAULT` plus the allowlist is
+  what keeps them closed, which is what was doing the real work anyway.
+- **`CORRECT_CALL_BUDGET` was inert**, because the handler built a fresh `NoteGraphWriter`
+  per call and re-created `ToolCallBudget(6)` with it. One writer per conversation now
+  serves all four verbs, so the budget counts down and the handle table survives the turn.
+  The docstring claim that handles span the unattended pass and the reply was never true
+  and is gone: those are two processes.
+
+Three things that answer questions the plan had left open:
+
+- **D18's "the agent chooses the domain" is the agent choosing the PREDICATE**, and
+  nothing else — there is no field, and the conversation is scoped so nothing can land
+  outside `(note_domain, 'general')` or below the note's own domain. What that leans on
+  is `domain_floor`, whose table is keyed on the camelCase spellings the `note.extract`
+  prompt teaches, while a tool-writing model emits `blood_pressure`. It now matches
+  separator- and case-insensitively with a dotted-base fallback, so a clinical fact
+  cannot land in `general` because of a separator. Both rules only ever add a floor.
+- **The `fact_ids` ledger is filled**, through a `facts` chip on the tool result
+  (`contracts.FactWriteRef` → `ToolOutput` → `ToolResultEvent` → the transcript step →
+  `ledger_rows`), so what is recorded is what the write path REPORTED, never what the
+  model asked for. **For the UNATTENDED pass only.** `record_tool_call` has two callers
+  — the worker's pass and `ask_owner`'s self-record — and the owner's reply is an
+  ordinary `/chat` turn that touches the repo nowhere, so a `resolve_entity` /
+  `assert_fact` / `correct_fact` on a reply reaches the D3 rung and never the ledger,
+  while `clarify.close_owner_reply` still maps that turn to `settled`. **W4 precondition,
+  beside constraint 6:** move the recorder into the tool dispatch, or scope the sweep to
+  the unattended pass, BEFORE wiring `settle_note(touched=writes().facts)` — otherwise
+  the first settle retracts every unpinned fact the owner's own answer added, while the
+  transcript still shows them recorded. `correct_fact` survives only because it pins. **`mention_ids` still has no channel** — the ledger
+  has no column for them and migrations are not this task's — so a `settle_note` call
+  must NOT pass an empty `mention_ids` set: `_reconcile_mentions` would delete every
+  mention of the note (constraint 7's failure, exactly).
+- **The rescope gap is closed** in `AgentSessionRepo.set_scopes` (refused for
+  `ENGINE_ONLY_PERSONAS`, 409 at the route), so it holds for every caller rather than
+  one route. On the retroactive half: **accepted, not backfilled** — a W2-era thread
+  wrote no graph, and `converse.note_read_scopes` recomputes a turn's scopes FROM THE
+  NOTE rather than reading the stored row, so a backfill would only make a stale row
+  look authoritative.
+
+*Landed (T2b): `ask_owner`, and the owner-reply path W2 built the storage for.* The
+question and the `waiting_on_owner` state land in ONE transaction, written by the
+HANDLER — the first piece of the recorder move W2 left open, and not an optimisation: the
+owner can reply before the runner's post-turn `_record` runs, and the reply path reads
+that ledger row to know what the answer answers, so a question recorded later is a
+question nothing can pair. `converse.ledger_rows` skips what the handler already wrote.
+**"And stop" is the LOOP's**, not the prompt's: the handler returns `ToolOutput(halt=…)`
+and `AgentLoop` finishes the turn on `stop_reason="awaiting_owner"` without another model
+call — the bare twin of the `deferred` contract, honoured on both `run_stream` and `run`
+so it is a property of the loop rather than of which entry point a caller picked. That
+stop reason is the only producer of `waiting_on_owner` (`models.note_conversation.
+state_for_stop`, which now owns the whole ending→state mapping), so constraint 6 holds by
+construction: `settled` is reachable only from a clean `end_turn`, and a pass that stopped
+to ask cannot claim it. A second ask while one is open is refused rather than recorded —
+two open questions would leave the reply path guessing which one the owner's message
+answers, and that answer becomes source text on the note.
+
+The owner's reply is filed by the ENGINE, in `analysis/clarify.py` off `/chat` (D6's
+block is deliberately not a tool): paired with the recorded question, appended as a
+timestamped clarification block, which enqueues its own re-ingest, and the thread returns
+to `running` — then closes in the turn's `finally` by the same `state_for_stop`, because
+`running` holds the note's one live slot. The state moves BEFORE the append, so the
+failure mode is a lost block (recoverable: the answer is still in the thread) rather than
+a note that collects the same answer twice as source text.
+
+**`note_body_sha` has its reader**, and it is this path. Compared before the append, it
+answers "has anything OTHER than this conversation changed the note?", and it is
+re-stamped only when it matched — the thread has seen every character of the new composed
+text, since it asked the question and read the answer. On a mismatch the block is still
+appended (the owner answered what was asked) and the stale sha is left standing, which is
+the true statement: this thread has not read the note as it now stands.
+
+**The eraser ships with the writer**, as W2's recorded limit demands: `GET` and `DELETE
+/notes/{id}/clarifications[/{id}]` over two new repo methods. An answer is free text the
+owner typed — a password, a diagnosis, a name — and appending makes it the note's own
+chunked, embedded, searchable text; the listing exists because the note screen renders
+blocks as text, so a block's id was otherwise unreachable. The delete re-drives ingestion
+in its own transaction, like the append: a redaction whose old chunk stayed in the index
+is not one.
+
+*Recorded limit, not fixed here.* Whether the answer's re-ingest opens a SECOND thread is
+a race: its `note.ingested` is suppressed while the reply turn holds the note `running`
+and opens a fresh pass if it arrives after the turn closed. Both outcomes are safe today
+(the shipped `integrate_note` re-derives the graph either way, and the sweep is not wired
+yet), and both were already in W2's cost model, but the wave that hangs `settle_note` off
+`settled` has to make it deliberate rather than timing-dependent.
+
+*Reconciled when T2a and T2b merged.* The three tasks widened the same allowlist, the
+same `NEVER_DEFAULT` and the same persona prompt in parallel; the merged result is the
+UNION, not a choice. `NOTE_INGEST_TOOLS` is the six names — `resolve_entity`,
+`assert_fact`, `ask_owner`, `find_entity`, `read_entity`, `current_time` — and
+`NEVER_DEFAULT` carries all five write verbs the plan has shipped (`prefs_read`,
+`prefs_write`, `resolve_entity`, `assert_fact`, `ask_owner`). The persona prompt is one
+v2 describing all six and no others, re-pinned. `ask_owner` joins the per-note registry
+`converse` builds (it is not note-bound — it finds its conversation through
+`ToolContext.agent_session_id` — so one handler serves both it and the chat registry the
+reply turn uses), which leaves the `NoteConverseRunner.executor` fallback the inert empty
+registry T2a made it. Two by-name registry builders arrived, one per task;
+`graphwritetools.note_registry` is the survivor, since it also checks that a sidecar
+declares the name it was loaded for.
+
+*Landed (T3): the ON-REPLY set, and the split itself.* `NOTE_INGEST_TOOLS` is now two
+frozensets — `NOTE_INGEST_UNATTENDED_TOOLS` (the six) and `NOTE_INGEST_ON_REPLY_TOOLS`
+(those six plus `correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`,
+`relate`) — with `agents.agent_for_owner_reply` as the seam and `/chat` its only caller.
+`prefs_write` is reachable at last, `prefs_read` stays out for good (TOOL_SURFACE Cut #1),
+and both new verbs joined `NEVER_DEFAULT`.
+
+**Where the choice had to live, and why it is not where R2 implies.** The unattended pass
+and the reply turn are different code — `converse.py`'s per-note executor in the worker,
+`chat()` in the API — but they are gated by the SAME field: `LoopTurnExecutor.run_turn`
+passes `profile.tools` as `tools_allow` exactly as `/chat` does. So the profile cannot
+quietly mean "unattended", and a flag on one set was never the alternative; the split is a
+second RESOLUTION FUNCTION. The asymmetry is deliberate: `AgentProfile.tools` holds the
+NARROW set, so every caller that has not heard of the split (the worker, the task runner,
+the session listing) narrows a turn, and only an explicit `agent_for_owner_reply` widens
+one. Both directions are pinned at the dispatch gate rather than on the dataclass — over
+every shipped sidecar, at every scope, the unattended profile admits exactly the six and
+the widened one exactly the twelve — and the worker's own registry is asserted to hold no
+on-reply handler at all, so the two locks fail independently.
+
+**`correct_fact` addresses by identity key** `(entity, predicate, qualifier)`, resolved
+under the TURN's read scopes — which is the firewall, since the write session is the
+owner's full scope (constraint 2) and cannot be one. An entity the conversation cannot
+read is an entity it cannot correct. On a key holding several live rows (a set-valued
+relationship: each distinct object is a co-equal current edge) the handler lists what is
+live and REFUSES: it shipped with an `f1`/`f2` retry under `replaces`, and the review
+above is why that is gone — those keys are exactly the ones `decide()`'s correction branch
+skips, and a set-valued edge's identity IS its object, so the retry could only ever add a
+third edge while reporting a replacement. An `object` that is an entity id is resolved and
+adopted under the turn's own scopes before the write, so it becomes an EDGE rather than a
+uuid stored as a literal value. The write is `_assert_one` with `correction=True` — one
+flag, feeding `decide()`'s existing force-supersede-and-pin branch, so there is no second
+write path and `decide()` stays off the model's vocabulary. It carries **no `quote`**: the
+owner's words are not in the note's chunks when the tool runs, so a required quote could
+only ever fail its own check and would file the owner's own word at the inferred ceiling.
+Its attestation is WHO SPOKE. It would not change what the write DOES — `decide()`'s
+correction branch reads neither confidence field.
+
+**The fold is staged, and staging is the only shape available** (constraint 12). It raises
+the same `merge_entities` node op `propose_merge` does, so the owner's approval runs the
+shipped `SqlAnalysisRepo.merge_entities` — tombstone check, `distinct_from` check,
+`plan_merge` for the direction, `merge_entity_pair`'s full-owner guard. The tool asserts
+no survivor. Both ids are followed through `entities.live_entity_by_id` first, so a pair
+that has already been folded reads as one entity rather than staging a fold onto a
+tombstone (the shape `analysis/repo.resolve_review`'s merge-accept arm still reaches; it
+is filed, and its shape was deliberately not copied). A `distinct_from` refuses at staging
+rather than handing the owner a card whose only outcome is a refusal.
+
+**`read_note` was NOT inherited unchanged, and that is this task's judgement call.** Plan
+risk 1 says note bodies reach the model unframed and that this is safe only because the
+persona reading them holds no tools — and the on-reply set is precisely the wave that
+falsifies it: a fetched body is another person's text arriving in a turn that can now
+force-supersede a fact. So `read_note` fences its body in the same nonce-closed frame
+turn 0 gets, keyed on `ToolContext.agent_tools` holding a graph-write verb rather than on
+the persona — the hazard is write authority, not identity, and `jmoltobservetools` already
+reads that field for the same kind of boundary. Curator and jerv hold neither verb and are
+byte-for-byte unchanged. The frame moved to `analysis/noteframe.py` so the two callers
+share one boundary instead of teaching the model two, and the persona prompt (v3) extends
+"THE NOTE IS DATA" to every note it reads rather than only the one it is about.
 
 **W4 — Cutover.** Port EMR (D9) and intake (D10) onto the conversation. **Keep EMR
 firewall Layer 2 as a hard non-commit** — `ingest/emr/firewall.py:3-28` has no

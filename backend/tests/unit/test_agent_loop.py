@@ -111,6 +111,13 @@ async def job_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("queued the export", job=JobRef(job_id="j7", summary="exporting your notes"))
 
 
+async def halting_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    # `ask_owner`'s shape: no job, no card, the turn simply ends here
+    # (AGENT_INGEST_CONVERSATION_PLAN W3 — "record an open question on this thread and
+    # stop", enforced by the loop because prose obligations are not enforcement).
+    return ToolOutput("recorded the question", halt="awaiting_owner")
+
+
 async def deferred_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput(
         "Analyzing the full video — I'll report back when it's done.",
@@ -767,6 +774,40 @@ async def test_run_stream_deferred_tool_ends_the_turn() -> None:
     # The turn ended on the deferral: exactly one tool call, no second model turn.
     assert sum(isinstance(e, ToolCallEvent) for e in events) == 1
     assert done[0] is events[-1]  # nothing trails the terminal done for a jerv-style turn
+
+
+async def test_run_stream_a_halting_tool_ends_the_turn_with_its_own_reason() -> None:
+    # `ask_owner` "and stop". Only ONE model turn is scripted, so a second model call
+    # would exhaust the fake and raise — that is the assertion that matters: nothing the
+    # model would have done after asking gets a chance to run. The stop reason is the
+    # tool's own, because the note conversation reads it back to decide the thread is
+    # `waiting_on_owner` rather than `settled` (plan constraint 6).
+    turns = [LlmTurn("", (ToolCall("c1", "ask", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("ask", halting_tool, permission="mutate")))
+    events = await collect(loop)
+
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert len(done) == 1 and done[0].stop_reason == "awaiting_owner"
+    assert sum(isinstance(e, ToolCallEvent) for e in events) == 1
+    # The call's own result still reaches the transcript: what the turn already did
+    # stands, it is only what comes AFTER that is refused.
+    results = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(results) == 1 and results[0].ok is True
+
+
+async def test_a_halting_tool_ends_the_non_streaming_turn_too() -> None:
+    # The note conversation drives run_stream, but "the turn stops here" is the property
+    # the tool exists for — a property of the LOOP, not of which entry point a caller
+    # happened to pick. One scripted turn again: a second model call would raise.
+    turns = [LlmTurn("", (ToolCall("c1", "ask", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("ask", halting_tool, permission="mutate")))
+
+    result = await run(loop)
+
+    assert result.stop_reason == "awaiting_owner"
+    assert result.steps == 1
 
 
 async def test_run_stream_cancels_an_in_flight_tool_when_the_turn_is_cancelled() -> None:
@@ -1903,3 +1944,62 @@ async def test_batch_run_has_no_event_sink() -> None:
     loop = AgentLoop(router, registry_with(make_tool("probe", _capture)))
     await loop.run(session=OWNER, scopes=(), conversation=[UserMessage(text="go")])
     assert captured and captured[0].emit_event is None
+
+
+async def test_a_halting_tool_ends_the_BUFFERED_turn_too() -> None:
+    # The THIRD dispatch loop, and the one the halt did not reach. `/chat` selects the
+    # buffered producer whenever the owner has reflexion buffer-retry on — and the
+    # owner's reply into a note thread IS a `/chat` turn — so "the turn stops here" was
+    # a property of which entry point a caller happened to pick, which is exactly what
+    # the plan says it must not be.
+    #
+    # One scripted turn, as the other two halt tests do: a second model call would
+    # exhaust the fake and raise. Without the halt the loop carried on for up to 19 more
+    # steps of `correct_fact`, `merge_entities` and `prefs_write` against a note it had
+    # just told the owner it could not read.
+    turns = [LlmTurn("", (ToolCall("c1", "ask", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("ask", halting_tool, permission="mutate")))
+
+    events = await collect_buffered(loop)
+
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert len(done) == 1 and done[0].stop_reason == "awaiting_owner"
+    assert sum(isinstance(e, ToolCallEvent) for e in events) == 1
+    # What the turn already did stands; only what comes after is refused.
+    results = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(results) == 1 and results[0].ok is True
+
+
+async def test_a_halted_buffered_turn_is_never_re_produced() -> None:
+    # The other half, and the sharper one. `reflect` re-runs the PRODUCER, so a halted
+    # turn that stayed critique-worthy would re-dispatch every side-effecting write the
+    # halt exists to stop — a second `ask_owner` overwriting the first question, a second
+    # staged Proposal, the graph written again — for a turn whose entire point is that
+    # nothing more happens until Jeff answers.
+    #
+    # The turn is made maximally retryable, so nothing but the halt can be what stops
+    # the second produce: the tool surfaces a SOURCE and is `mutate`-classed (both
+    # critique-worthy triggers), and the model's text is ungrounded against that source,
+    # which is precisely the shape `test_buffer_retry_adopts_a_strictly_improving_reproduce`
+    # re-produces. Two scripted turns: a re-produce would consume the second.
+    async def ask_and_cite(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        return ToolOutput(
+            "recorded the question",
+            (NoteSource(note_id="n1", domain="health", snippet="cholesterol reading is elevated"),),
+            halt="awaiting_owner",
+        )
+
+    turn = LlmTurn(
+        "the roof needs replacing", (ToolCall("c1", "ask", {}),), "tool_use", LlmUsage(1, 1)
+    )
+    router, fake = stream_router_with([turn, turn])
+    loop = AgentLoop(router, registry_with(make_tool("ask", ask_and_cite, permission="mutate")))
+
+    events = await collect_buffered(loop)
+
+    assert [e.stop_reason for e in events if isinstance(e, DoneEvent)] == ["awaiting_owner"]
+    # ONE produce-step: the tool ran once, so the question was asked once and the writes
+    # a real `ask_owner` turn made were not made twice.
+    assert sum(isinstance(e, ToolCallEvent) for e in events) == 1
+    assert len(fake.converse_calls) == 1

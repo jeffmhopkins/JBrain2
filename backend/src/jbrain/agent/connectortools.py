@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.agent.mergetools import entity_merge_executor
+from jbrain.agent.prefstools import PREFS_OP, owner_prefs_executor
 from jbrain.agent.proposals import (
     LeafExecutor,
     NodeRow,
@@ -122,7 +123,8 @@ def build_leaf_executor(
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
     connector; a merge_entities leaf folds one entity into another through the
-    analysis repo; a delete_external_video leaf hard-deletes one library video; everything
+    analysis repo; an edit_owner_prefs leaf applies one approved delta to the owner's
+    standing instructions; a delete_external_video leaf hard-deletes one library video; everything
     else (correction/knowledge, and a manage_appointment change) re-enters as an agent note
     from its preview `body` (which enqueues ingestion via `jobs`) — so an approved appointment
     flows through extraction to the projection like any note."""
@@ -131,6 +133,7 @@ def build_leaf_executor(
     merge = entity_merge_executor(analysis)
     predicate_resolve = predicate_resolution_executor(analysis)
     intake_note = intake_note_executor(notes, jobs)
+    owner_prefs = owner_prefs_executor(maker)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
@@ -141,6 +144,10 @@ def build_leaf_executor(
             await predicate_resolve(ctx, proposal, node)
         elif node.op == "add_intake_note":
             await intake_note(ctx, proposal, node)
+        elif node.op == PREFS_OP:
+            # The owner approved one delta on their standing instructions — the only
+            # path that writes `owner_prefs` (AGENT_INGEST_CONVERSATION_PLAN.md D17).
+            await owner_prefs(ctx, proposal, node)
         elif node.op == "delete_external_video":
             # The owner approved removing a library video; the trusted executor hard-deletes it
             # (chunks cascade). `source_id` was fixed by the agent's scope-checked staging.

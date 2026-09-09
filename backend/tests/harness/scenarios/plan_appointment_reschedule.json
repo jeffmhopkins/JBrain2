@@ -1,6 +1,6 @@
 {
   "name": "appointment reschedule supersedes the scheduled time, identity stable",
-  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed. TOOL-PATH NOTE: the entity kind asserted here was 'appointment' before the W3 re-point and is now 'Event'. resolve_entity canonicalizes the declared word through _KIND_HINTS, so what is stored is the registry spelling. Stricter, not weaker.",
   "steps": [
     {
       "domain": "general",
@@ -124,7 +124,7 @@
     "entities": [
       {
         "name": "Dr. Nguyen dentist appointment",
-        "kind": "appointment",
+        "kind": "Event",
         "status": "provisional"
       }
     ]

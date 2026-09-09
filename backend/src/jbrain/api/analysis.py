@@ -7,13 +7,16 @@ only with a coordinated frontend PR.
 """
 
 import uuid
-from typing import Annotated, Any, cast
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from jbrain.agent.proposals import ProposalRepo, WaitingApproval
 from jbrain.analysis.entities import MergeScopeError
 from jbrain.analysis.repo import (
     REVIEW_STATUSES,
@@ -25,7 +28,9 @@ from jbrain.analysis.repo import (
 from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.api.images import MAX_IMAGE_BYTES, sniff_image_type, sniff_path
 from jbrain.api.notes import BlobStoreDep, ctx_for
+from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
+from jbrain.models.note_conversation import NoteConversationRepo, NotesInboxEntry
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import UnknownDomain
 from jbrain.workflow import events as wf_events
@@ -47,6 +52,10 @@ def get_session_maker(request: Request) -> "async_sessionmaker":
 
 def get_embed_client(request: Request) -> EmbedClient:
     return cast(EmbedClient, request.app.state.embed_client)
+
+
+def get_proposals_repo(request: Request) -> ProposalRepo:
+    return cast(ProposalRepo, request.app.state.agent_proposals)
 
 
 @router.get("/notes/{note_id}/analysis")
@@ -145,6 +154,105 @@ async def review_list(
         raise HTTPException(status_code=400, detail="unknown status")
     items = await get_analysis_repo(request).list_review(ctx_for(principal), status)
     return {"items": items}
+
+
+class NotesInboxRow(BaseModel):
+    """One row of the review inbox's NOTES tab (D4). Deliberately verb-free: it names
+    where to go and nothing to do, because the conversation is the only place note
+    ingestion is decided. Nothing here addresses a decision endpoint."""
+
+    kind: Literal["question", "approval"]
+    # The conversation to open, and the persona hosting it. The row's entire purpose.
+    session_id: str
+    agent: str
+    note_id: str | None
+    domain: str
+    # What the row quotes — the note's opening, or the owner's own staged request.
+    quote: str
+    # What is being asked. None on a conversation that has not asked yet (a first pass
+    # still reading), which is why the row is listed but not counted.
+    ask: str | None
+    captured_at: datetime | None
+    waiting_since: datetime
+    # Graph writes this thread has already committed, so the row says how much of the
+    # note is settled before the owner spends a tap on it.
+    committed: int
+    # A first pass still running: listed so the note is visibly in hand, NOT counted —
+    # nothing is waiting on the owner yet.
+    live: bool
+
+
+# The sentence a staged standing-instruction change reads as in the inbox. Server-side
+# so the row says the SAME thing everywhere it is read, and so the model never authors
+# the copy on a row whose only job is to be trustworthy.
+STAGED_APPROVAL_ASK = (
+    "A change to your standing instructions is staged, waiting for your approval"
+    " before it is written."
+)
+
+
+def merge_notes_inbox(
+    waiting: Sequence[NotesInboxEntry], approvals: Sequence[WaitingApproval]
+) -> list[NotesInboxRow]:
+    """Interleave the two sources into ONE list, oldest wait first, so the tab drains
+    from the top regardless of which producer a row came from. Pure, so the ordering
+    that makes the tab usable is testable without a database."""
+    rows = [
+        NotesInboxRow(
+            kind="question",
+            session_id=w.session_id,
+            agent=w.agent,
+            note_id=w.note_id,
+            domain=w.domain,
+            quote=w.note_excerpt,
+            ask=w.question,
+            captured_at=w.captured_at,
+            waiting_since=w.waiting_since,
+            committed=w.committed,
+            live=w.live,
+        )
+        for w in waiting
+    ] + [
+        NotesInboxRow(
+            kind="approval",
+            session_id=a.session_id,
+            agent=a.agent,
+            note_id=None,
+            domain=a.domain,
+            quote=a.title,
+            ask=STAGED_APPROVAL_ASK,
+            captured_at=None,
+            waiting_since=a.staged_at,
+            committed=0,
+            live=False,
+        )
+        for a in approvals
+    ]
+    rows.sort(key=lambda r: r.waiting_since)
+    return rows
+
+
+@router.get("/review/notes")
+async def notes_inbox(request: Request, principal: OwnerDep) -> dict[str, Any]:
+    """The notes tab: ingestion questions and staged approvals waiting on the owner
+    (D4/D5), oldest wait first so the list drains from the top.
+
+    A REDIRECT list. It returns no item id a decision could be posted against and no
+    action verb, because "the inbox only redirects" is a property of the contract, not
+    an intention of the screen: there is no endpoint an inbox row could answer through,
+    so no future screen can quietly grow one here.
+
+    Owner-only explicitly (`OwnerDep`), not by the module's pre-P7 implicitness: the
+    rows quote note bodies across every domain, including health.
+    """
+    ctx = ctx_for(principal)
+    # Stateless over a caller-supplied session, the `PlanRepo`/`ArchivistMemoryRepo`
+    # idiom — the transaction (and so the RLS scope) is this route's, not the repo's.
+    async with scoped_session(get_session_maker(request), ctx) as session:
+        waiting = await NoteConversationRepo().notes_inbox(session)
+    approvals = await get_proposals_repo(request).list_waiting_approvals(ctx)
+    rows = merge_notes_inbox(waiting, approvals)
+    return {"items": [r.model_dump(mode="json") for r in rows]}
 
 
 @router.get("/review/{item_id}/predicate-suggestions")

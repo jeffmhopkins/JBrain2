@@ -831,6 +831,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # The note conversation's `ask_owner` — always wired (the note_conversations
+        # table always exists), reachable only by the `note_ingest` allowlist and kept
+        # out of curator's wildcard by NEVER_DEFAULT.
+        "ask_owner",
         # jmolt's scratchpad tools are `web`-classed (jmolt-only), always wired (the
         # jmolt_scratch table always exists), like archivist memory above.
         "scratch_list",
@@ -929,6 +933,15 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_correction",
         "make_intake_link",
         "propose_merge",
+        "correct_fact",
+        "merge_entities",
+        # The note persona's graph writes. On THIS registry because the owner's reply
+        # into a note thread is an ordinary /chat turn and this is the registry it
+        # consults — they were dropped here for a wave, which left the reply turn
+        # allowlisted for two tools it was never offered. Reachable by `note_ingest`
+        # alone: both are in NEVER_DEFAULT and in no other profile's allowlist.
+        "resolve_entity",
+        "assert_fact",
         "lookup_medication",
         "lookup_condition",
         "geocode_reverse",
@@ -947,6 +960,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # may name the chat it is in, and the handler refuses one that already has a name
         # (jbrain.agent.sessiontools). Not in `web`: it touches no network.
         "name_session",
+        # The note persona's standing instructions (AGENT_INGEST_CONVERSATION_PLAN D15).
+        # Registered — a handler must exist for the sidecar — but reachable by nobody:
+        # both are in NEVER_DEFAULT and in no profile's allowlist, so registration here
+        # is the binding, not a grant (asserted in test_agent_prefstools.py).
+        "prefs_read",
+        "prefs_write",
         *web,
     }
     assert registry.names() == shipped
@@ -966,10 +985,29 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "find_when_at",
         "save_place",
     }
+    # The standing-instruction tools are `read`/`sensitive`, not `web`, so only
+    # NEVER_DEFAULT keeps them out of the wildcard's set — which is the whole reason
+    # they are in it (AGENT_INGEST_CONVERSATION_PLAN constraint 9). The on-reply pair is
+    # here for the same reason and a sharper one: they are bound on the chat registry,
+    # because the owner's reply IS a chat turn (D8), so NEVER_DEFAULT is the only thing
+    # standing between a force-supersede and the curator's wildcard.
+    never_default = {
+        "prefs_read",
+        "prefs_write",
+        "correct_fact",
+        "merge_entities",
+        # And the two graph writes, now that this registry binds them for the reply turn
+        # (D8). Dropping their sidecars used to be the outer lock; NEVER_DEFAULT is what
+        # replaced it, so a regression here hands `assert_fact` to curator's wildcard.
+        "resolve_entity",
+        "assert_fact",
+    }
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location - web
-    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web
+    assert {t.name for t in registry.schemas_for({"general"})} == (
+        shipped - location - web - never_default
+    )
+    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web - never_default
     # jerv's allowlist surfaces exactly the web tools and nothing else.
     assert {t.name for t in registry.schemas_for(set(), web)} == web
 
@@ -977,6 +1015,33 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
 def test_sidecars_pinned_to_their_versions() -> None:
     """Editing a tool's behavior must be a deliberate version bump (the CI guard)."""
     pins = {
+        # The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3).
+        # These two descriptions are the model's whole instruction on how to record a
+        # note's meaning — the batch shape, the handle discipline, the quote rule — so a
+        # silent edit to either is a behaviour change to every note the box ingests.
+        "assert_fact.tool": (
+            "assert_fact",
+            2,
+            "ac8cd9c686a4afedbdda18b26ce5eab937de36cf2c8ceedcd859ee1bbb2a4b4c",
+        ),
+        "resolve_entity.tool": (
+            "resolve_entity",
+            1,
+            "d325ae506ce2725cee495f7130b90088a042184e170d57e53e34b01bc1dfe819",
+        ),
+        # The on-reply half (D8): reachable only from a turn the owner sent, and each
+        # force-supersedes or folds, so the wording is the contract for what a reply may
+        # do to the graph.
+        "correct_fact.tool": (
+            "correct_fact",
+            2,
+            "becabce6a226ac12c43a1970dc139058727ce13e8044c8fbb90cf6c78fb661b0",
+        ),
+        "merge_entities.tool": (
+            "merge_entities",
+            1,
+            "2f39f5cc71d59ea54595e1afb5a2d1be3e927754f283e4737fcad516eb831030",
+        ),
         "aprs_recent.tool": (
             "aprs_recent",
             3,
@@ -1561,6 +1626,21 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "name_session",
             1,
             "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
+        ),
+        "prefs_read.tool": (
+            "prefs_read",
+            1,
+            "a8a1430a8f357bf43ea7fca4de79079e7d5f479f2d552b8459e88e24a6fb9ae6",
+        ),
+        "prefs_write.tool": (
+            "prefs_write",
+            1,
+            "b1dc0865b1ab23ba75003028e516adca6f3de47e0863ac06ba97626ffeca5419",
+        ),
+        "ask_owner.tool": (
+            "ask_owner",
+            1,
+            "ebefd192de30fba4950989ce221bb6b6634c176ab8f86fdef55ceb3cd1c5ca79",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

@@ -1,6 +1,7 @@
 {
   "name": "an enumerated relationship fans out to one edge per named child",
   "description": "The four-daughters discrepancy (field report): 'I have four daughters, Summer, Harmony, Lydian and Elora' came back with only Summer wired as a child — the other three were bare people with birthdates. v10 teaches ONE relationship edge per enumerated individual, so all four children edges land, and the kinship reciprocity registry mirrors each onto the daughter's `parent` stream. The model emits only the four directed Me.children edges; the reciprocals are the pipeline's job.",
+  "xfail": "The arbiter does not run on the tool path, so `arbiter.derive_kinship_gender` \u2014 which reads \u2018four daughters\u2019 out of the note and emits one `gender` fact per child object \u2014 emits nothing. Main wrote 12 facts here (4 children + 4 parent inverses + 4 derived genders); this path writes 8, and until the four gender assertions below were added nothing in the corpus noticed. The scenario's own description is about the four-daughters field report, whose reported symptom was children arriving as \u2018bare people with birthdates\u2019 \u2014 exactly the recall this derivation restores. Closing it means the recall lives somewhere the note conversation reaches, or the plan accepts losing it and says so.",
   "steps": [
     {
       "domain": "general",
@@ -36,7 +37,11 @@
       {"entity": "Summer", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
       {"entity": "Harmony", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
       {"entity": "Lydian", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
-      {"entity": "Elora", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"}
+      {"entity": "Elora", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Summer", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Harmony", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Lydian", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Elora", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1}
     ],
     "entities": [
       {"name": "Summer", "kind": "Person", "status": "provisional"},

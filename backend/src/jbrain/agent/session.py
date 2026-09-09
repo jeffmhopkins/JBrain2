@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
+from jbrain.agent.agents import ENGINE_ONLY_PERSONAS
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import AgentSession, AgentTurn, Run
@@ -23,6 +24,12 @@ from jbrain.models.plan import AgentSessionPlan
 from jbrain.models.proposals import Proposal
 
 _PREVIEW_LEN = 140  # the resume hint on a chat card; longer is clamped in the UI too
+
+
+class EngineSessionRescope(ValueError):
+    """A re-scope aimed at a session the ENGINE opened (a note conversation). Its scope
+    is derived from what it was opened to read, so an owner-facing widening of it is a
+    hole, not a preference."""
 
 
 @dataclass(frozen=True)
@@ -304,8 +311,27 @@ class AgentSessionRepo:
     ) -> None:
         """Re-scope a session after start (owner-only — the endpoint is owner-gated,
         and RLS still enforces the firewall per query). Scope is a rail the owner
-        nudges, not a gate frozen at creation (docs/reference/ASSISTANT.md "Sessions")."""
+        nudges, not a gate frozen at creation (docs/reference/ASSISTANT.md "Sessions").
+
+        NOT for an ENGINE-OPENED persona. The engine-only split closed session
+        *creation* — nothing can `POST /sessions {"agent":"note_ingest"}` — but this
+        route was left ungated on persona, so it would happily rewrite the scopes of a
+        note conversation the owner never started: a graph-WRITE persona whose scope is
+        derived from its note (`converse.note_read_scopes`, plan constraint 2), widened
+        from outside to whatever an owner-authenticated request asks for. Refused here
+        rather than in the route so every caller is covered
+        (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md W3)."""
         async with scoped_session(self._maker, ctx) as session:
+            agent = (
+                await session.execute(
+                    select(AgentSession.agent).where(AgentSession.id == uuid.UUID(session_id))
+                )
+            ).scalar_one_or_none()
+            if agent in ENGINE_ONLY_PERSONAS:
+                raise EngineSessionRescope(
+                    f"{agent!r} sessions are opened by the engine and scoped by what they read;"
+                    " they cannot be re-scoped"
+                )
             await session.execute(
                 update(AgentSession)
                 .where(AgentSession.id == uuid.UUID(session_id))

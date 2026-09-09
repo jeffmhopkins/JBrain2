@@ -1,7 +1,85 @@
 # Note-Conversation Persona — Proposed Tool Surface
 
 > **Status:** Research · **Last verified:** 2026-09-09 — an independent design pass for
-> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. Not ratified. No code written.
+> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W3. **The two write tools are now BUILT
+> to this document** (`backend/src/jbrain/agent/graphwritetools.py`, W3/T2a): batched,
+> `quote` required and checked, no `domain`/`inferred`/`supersedes` field, no `enum`, a
+> per-element savepoint, failures as text, and the result shapes below implemented as the
+> ACI. Three corrections this document owes, found once there was code against the real
+> schema — the design is unchanged, the details were wrong:
+>
+> 1. **`assert_fact` has six fields, not four.** `statement` and `when` are required
+>    alongside subject/predicate/object/quote. The `statement` is what the wiki and the
+>    review cards print (a synthesized one reads as a row of fields), and without `when`
+>    no dated fact is expressible at all — the appointments projection and every interval
+>    depend on it. Both are REQUIRED with an explicit empty-string escape for `when`,
+>    since R3 says an optional field is never filled. This is two more fields than the
+>    probe measured; the degradation path (drop `when`, synthesize the statement) is a
+>    sidecar plus handler change, as gap 4 anticipated.
+> 2. **"`domain_floor` runs first regardless" was not true for the spelling this persona
+>    writes.** The floor's table is keyed on the camelCase the note.extract prompt
+>    teaches; `assert_fact`'s natural spelling is snake_case, and `blood_pressure` missed
+>    the table entirely. The lookup is now separator- and case-insensitive with a
+>    dotted-base fallback. Without that fix, D18's "the agent chooses the domain for novel
+>    predicates" would silently have extended to *registered* ones.
+> 3. **`resolve_entity` is not free of the resolver's own vocabulary.** A handle is this
+>    module's addressing and must never reach `_resolve_entities`, which resolves — and
+>    failing that MINTS — on `mention.name`: an `e1` ref creates an entity called "e1".
+>    Refs are surfaces; handles are the model's shorthand for them.
+>
+> **`prefs_read` and `prefs_write`** are also built (W3/T1), as the plan's `owner_prefs` section specifies — so `prefs_read` was built rather than taken by
+> Cut #1 below, and that cut is now a one-line allowlist decision rather than a deletion.
+>
+> **The ON-REPLY set is BUILT** (`backend/src/jbrain/agent/replytools.py` plus
+> `correct_fact.tool` / `merge_entities.tool`; `agents.NOTE_INGEST_ON_REPLY_TOOLS`, chosen
+> by `agents.agent_for_owner_reply`). `prefs_write` joined it and `prefs_read` stayed out,
+> so **Cut #1 is taken**. Four more corrections this document owes, on the same terms as
+> the three above — the design held, these details did not:
+>
+> 4. **"a SECOND frozenset chosen at turn assembly" needed a THIRD thing to be safe.** R2
+>    is right that the mechanism is two frozensets, but it reads as though the unattended
+>    path is gated by something other than `AgentProfile.tools`. It is not:
+>    `tasks/runner.LoopTurnExecutor.run_turn` passes `profile.tools` as `tools_allow`
+>    exactly as `/chat` does, so ONE field feeds both paths and the profile cannot
+>    silently mean "unattended". The split is therefore a second RESOLUTION function
+>    (`agent_for_owner_reply`), with the profile holding the NARROW set — so a caller that
+>    never heard of the split narrows a turn rather than widening one.
+> 5. **`correct_fact` must NOT take a `quote`, and this is the one place "quote stays
+>    required" inverts.** The passage an owner correction rests on is the owner's own chat
+>    message, and the clarification block's re-ingest is asynchronous — so the note's
+>    chunks do not contain it when the tool runs. A required quote could only ever fail
+>    its own check and would file the owner's own word at the 0.4 inferred ceiling. Its
+>    attestation is WHO SPOKE, which is a property of the tool being bound at all.
+>
+>    *Amended after the W3 adversarial review.* The conclusion holds; the stated reason —
+>    "the 0.4 ceiling is exactly the weight that cannot overwrite the value being
+>    corrected" — was a misreading of the guard. `decide()`'s correction branch
+>    (`supersession.py`, the `candidate.correction and single_head` arm) reads NEITHER
+>    confidence field: it force-supersedes on the flag alone. A capped correction would
+>    still overwrite; it would only be recorded as a guess. The same misreading, one field
+>    over, is what let `graphwritetools` write a bare `1.0` into `self_confidence` while
+>    capping `confidence`, so an unattested `assert_fact` silently superseded an attested
+>    prior for a whole wave.
+> 6. **`read_note` is not "inherited unchanged".** Risk 1 says note bodies reach the model
+>    unframed and that this is safe only because the persona reading them holds no tools;
+>    the on-reply set is the wave that falsifies it, and this row is where. It now fences
+>    its body in the same nonce-closed frame `converse` puts turn 0 in, keyed on the TURN
+>    holding graph-write authority (`ToolContext.agent_tools`) — so curator and jerv are
+>    byte-for-byte unchanged. The frame moved to `analysis/noteframe.py` so both callers
+>    share one boundary rather than teaching the model two.
+> 7. **"Never bind, either set" names `propose_merge` for a reason that has stopped being
+>    true.** The stated ground is that Proposals stage "into the inbox D4 deletes" — but
+>    D4 deletes the INGEST TAB, and W3's GUI half built a notes tab that explicitly unions
+>    the staged Proposals a note conversation raised. Staging is the only shape
+>    `merge_entities` can have at all (constraint 12 leaves it no other). The bullet's
+>    other four verbs are still out, on their own merits.
+>
+> One shape worth naming because it costs an hour to find: **`entity_view` carries no
+> `subject_id`**, and `(subject, entity, predicate, qualifier)` is the write path's
+> identity key — so an address resolved from the entity page alone filters on
+> `subject_id IS NULL`, misses the head it meant to supersede, and lands beside it.
+> `entities.live_entity_by_id` returns it, and is the call that has to be made anyway to
+> follow a merge tombstone to its survivor.
 
 The complete proposed tool list for the persona described in the plan: the agent that
 reads a note, writes the entity/fact graph through tools, and shows the owner what it
@@ -30,21 +108,30 @@ grammar. Anything load-bearing is `required` even when the call reads awkwardly.
 
 | Tool | Set | permission | side_effecting | Batch | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `resolve_entity` | unattended | mutate | yes | ≤12 | surfaces → run handles; the only minting path; writes the mention spine |
-| `assert_fact` | unattended | mutate | yes | ≤8 | the one fact-writing verb |
+| `resolve_entity` | both | mutate | yes | ≤12 | surfaces → run handles; the only minting path; writes the mention spine |
+| `assert_fact` | both | mutate | yes | ≤8 | the one fact-writing verb |
 | `ask_owner` | unattended | mutate | yes | — | record an open question on this thread and stop |
 | `find_entity` | unattended | read | no | — | *inherited unchanged* |
 | `read_entity` | unattended | read | no | — | *inherited unchanged* |
 | `prefs_read` | unattended | read | no | — | standing instructions (**weakest tool — see Cuts**) |
-| `correct_fact` | on-reply | sensitive | yes | — | the owner disagrees: force-supersede + pin |
-| `merge_entities` | on-reply | sensitive | yes | — | fold a duplicate; direction server-chosen |
+| `correct_fact` | on-reply | sensitive | yes | — | the owner disagrees: force-supersede + pin (BUILT) |
+| `merge_entities` | on-reply | sensitive | yes | — | fold a duplicate; direction server-chosen; STAGES only (BUILT) |
 | `prefs_write` | on-reply | sensitive | yes | — | delta-edit a standing rule, on owner request only |
-| `search`, `read_note`, `relate` | on-reply | read | no | — | *inherited unchanged* |
+| `search`, `read_note`, `relate` | on-reply | read | no | — | inherited; `read_note` now FRAMES its body (correction 6) |
 | `current_time` | both | read | no | — | *inherited unchanged* |
 | `note_mentions` | conditional | mutate | yes | ≤16 | only if the deterministic layers prove insufficient |
 
 Six tools unattended, three of which write. `ARCHIVIST_TOOLS` is 12 and works on this
 model; `JERV_TOOLS` is ~45 and is where reliability visibly degrades.
+
+`resolve_entity` / `assert_fact` read **both** rather than "unattended" because the
+on-reply set is a superset and the reply turn has to reach them — which means being BOUND
+on the chat registry, not merely allowlisted. They shipped allowlisted and unbound (the
+chat registry dropped their sidecars), so a reply turn was offered neither and its only
+write verb was `correct_fact`, whose empty-address path pins. Every fact the owner taught
+a note thread was pinned against future supersession. They now bind through the
+conversation row the way `ask_owner` does; `NEVER_DEFAULT` plus the allowlist is what
+keeps them off every other persona, which is what was doing the real work anyway.
 
 ## Schema decisions worth defending
 
@@ -64,7 +151,15 @@ model; `JERV_TOOLS` is ~45 and is where reliability visibly degrades.
 - **`correct_fact` addresses by identity key** `(entity, predicate, qualifier)`, not by
   fact id — `read_entity`'s `_edge_line` prints no fact id (`readtools.py:596-604`), so
   id-addressing would force a `read_entity` v5 and a second addressing vocabulary. On a
-  multi-row key the handler mints `f1`/`f2` handles and the model retries.
+  multi-row key the handler LISTS what is live and refuses. It shipped with an `f1`/`f2`
+  retry under a `replaces` argument; that argument is gone, because the only keys that
+  hold several live rows are non-functional relationships, which are exactly the keys
+  `decide()`'s correction branch skips — and a set-valued edge's identity is its object
+  (`_facts_at_key`), so the retry added a third edge and reported a replacement.
+- **`correct_fact.object` may be an entity id**, and it is resolved and adopted as a
+  handle before the write, under the turn's own read scopes. The write path addresses
+  entities by handle and nothing else, so an id passed through raw resolved to nothing and
+  was stored as a literal VALUE on a pinned row.
 - **A batch never rolls back its successful elements.** Per-element savepoint; element 4
   failing must not undo 1–3, or whole-note atomicity returns through the side door.
 

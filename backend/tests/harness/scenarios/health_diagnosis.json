@@ -1,6 +1,7 @@
 {
   "name": "a diagnosis is an asserted state; a rule-out is hypothetical and not a diagnosis fact",
   "description": "docs/reference/ANALYSIS.md: assertion status gates what counts. A confirmed diagnosis lands as an asserted state on me.diagnosis. A separate 'wants to rule out X' is assertion=hypothetical — it is still recorded (the wiki demotes it) but must NEVER become an asserted diagnosis fact. The absent_facts check pins that no asserted diagnosis exists for the ruled-out condition, while the confirmed diagnosis is present and active.",
+  "xfail": "assert_fact has no `qualifier`, so two scalar facts that shared a predicate and differed only in their qualifier now collide on one identity key. (Where the qualifier named the OBJECT entity nothing is lost - a non-functional predicate keys on its object.) assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "health",

@@ -29,6 +29,42 @@ export interface NoteRef {
   note_id: string;
   label: string;
 }
+
+/** What became of one fact the agent wrote (D3 of AGENT_INGEST_CONVERSATION_PLAN).
+ * Reported by the WRITE PATH — `supersession.decide()` owns which of these a write
+ * became, never the model — so a step renders what landed, not what was asked for. */
+export type WriteStatus = "written" | "replaced" | "held";
+
+/** One graph write a tool made, carried on its result and persisted onto the turn so
+ * the step renders identically live and on reopen. `domain` is per fact, not per call:
+ * one note's writes can land in different domains and each must NAME its own (D3 —
+ * "never colour alone"). */
+export interface FactWrite {
+  fact_id: string;
+  /** The whole statement — the fallback when the edge parts below are absent. */
+  label: string;
+  domain: Domain;
+  /** D3's three states, reduced from the write path's seven-word outcome vocabulary
+   * SERVER-SIDE (`contracts.write_status`), so one table decides it rather than each
+   * renderer. Optional on the wire only because an older persisted turn predates it —
+   * `writeVerb`/`tallyWrites` fall back to `outcome`, never to "written". */
+  status?: WriteStatus;
+  /** The precise word the write path used — `already`, `closed`, `historical`,
+   * `promoted` and the three above. Carried because `status` is a lossy reduction and
+   * this is what the ledger and a debug read want. */
+  outcome?: string;
+  /** The graph edge, so a write renders in the shipped `predicate → value` form the
+   * entity page and the review inbox already use rather than a second one. */
+  predicate?: string;
+  qualifier?: string | null;
+  value?: string;
+  /** The statement this write superseded — the "current" half of the shipped
+   * before→after diff. Only ever set with `status: "replaced"`. */
+  replaced?: string;
+  /** D12: committed from an attachment (a photo, an OCR'd page) rather than the note's
+   * own prose. Marked by the write path, never inferred from the tool name. */
+  from_attachment?: boolean;
+}
 export type CitationRef = FactRef | EntityRef | NoteRef;
 
 /** A tool result's rich UI: a registered component name + data-only slots. Never
@@ -101,6 +137,15 @@ export interface ToolResultEvent {
   web_sources?: WebSource[];
   proposal?: ProposalRef | null;
   entities?: EntityRef[];
+  /** Graph writes this call made (D3). Absent for every tool that writes nothing —
+   * an empty array from a write tool means "it wrote nothing", which is a different
+   * statement and renders differently. */
+  facts?: FactWrite[];
+  /** The call asserted only a PREFIX of what it was given — a batch cut short by the
+   * step/tool-error caps (`loop.py`), or arguments the ledger capped. Constraint 6
+   * turns on this distinction, so the step says it out loud rather than showing a
+   * short list as if it were the whole one. */
+  truncated?: boolean;
 }
 export interface ToolViewEvent {
   type: "tool_view";
@@ -292,6 +337,11 @@ export interface TranscriptTurn {
      * bubble's chips and inline links replay on reopen (not just note sources). */
     proposal?: ProposalRef | null;
     entities?: EntityRef[];
+    /** The graph writes the call made and whether it was cut short (D3), persisted so
+     * a conversation reopened days later renders the same writes it did live — the
+     * turn, not the tool-call ledger, is what survives the event stream. */
+    facts?: FactWrite[];
+    truncated?: boolean;
     /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
     view?: ViewPayload | null;
     /** The answer-text length when the tool was called — the split point an image

@@ -744,7 +744,18 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes.
+  outbox notes. Below the body, and **only when the note has any**, a
+  collapsed **"Answers you gave"** disclosure with a count pill: the note's
+  D6 clarification blocks, each with a rose tap-again **erase**. This is
+  not a second rendering of the blocks — they are already in the body as
+  prose, which is the whole of D6's storage-only treatment — it is the
+  ERASER, and the only place a block's id is reachable at all, since the
+  body is one composed string. An answer becomes the note's own searchable,
+  citable text, so a password or a diagnosis typed into one has to be
+  removable without deleting the whole note; on a box with no terminal
+  (CLAUDE.md #10) that is not a limit the owner can work around. Absent
+  entirely on a note that was never asked about, which is nearly every
+  note — so the note screen is unchanged for it, as D6 requires.
 - *Attachments tab* — the **canonical attachment manager** (the editor
   keeps its quick paperclip for capture-time adds). The tab label carries a
   count pill. Layout is a **manifest**: a one-line summary
@@ -902,11 +913,43 @@ supersedes the other); the rail lists them without implying a sequence. A closed
 relationship has **no derived inverse** (so a former `worksFor → X` never shows
 `X employs Me`).
 
-**Review inbox** (resettled in review — the **split inbox** won over the
-original one-at-a-time triage: you couldn't move between items, and a
-proposal that was only *reject*-able was a dead end): a segmented filter
-**pending · deferred · decided** with live count pills splits the screen
-into three lanes, and the list is **browsable** — every item in a lane is
+**Review inbox — two tabs** (resettled twice. First the **split inbox** won over the
+original one-at-a-time triage: you couldn't move between items, and a proposal that was
+only *reject*-able was a dead end. Then the agent-conversation ingestion change replaced
+the lanes with two tabs — binding mock `docs/mocks/agent-ingest-inbox/a-inbox-holds.html`,
+variant A; build plan `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` D4/D5). The
+segmented filter carries **notes · wiki** with live count pills, and the two are
+deliberately **asymmetric — notes redirects, wiki decides**. That asymmetry *is* the
+ruling: the conversation is the only place note ingestion is settled, or the inbox
+becomes a second surface where it happens.
+
+- **notes** — the ingestion questions and staged approvals waiting on you, **oldest
+  first** so the list drains from the top. A row carries the note it came from, what is
+  being asked, how long it has waited, how much the agent already committed, and a kind
+  chip (`question` / `approval`). Tapping it **opens the conversation**; there are no
+  answer controls, and the wire agrees — `GET /api/review/notes` returns no item id and
+  there is no endpoint an inbox row could answer through. Answer chips on the row were
+  briefly this variant's headline feature and were removed by the ruling. A conversation
+  still on its first pass is listed but **uncounted** — it is not waiting on you. Empty,
+  it reads as one calm sentence: no push, no nagging badge, no zero to clear.
+- **wiki** — the findings that never start from a note (`wiki_contradiction`,
+  `wiki_stale_claim`, the EMR importer's failures, the location firewall's catch), and
+  where deciding happens: the browsable list → detail described below.
+
+An **empty tab carries no count pill.** The shipped screen rendered a `0`; only the
+launcher tile badge gated on `> 0`. Both do now.
+
+**The launcher's Review tile badge is the only signal**, and it sums both tabs (the wiki
+findings plus the notes rows actually waiting). It polls only while the launcher is on
+screen. Nothing counts on home, in the top bar, or as a push.
+
+*The decided log is reached from inside the wiki tab* — a quiet `N decided` line under
+the list, toggling that tab between the open findings and the decision log. Variant A
+dropped `decided` from the segment track without saying what becomes of **reopen**
+(below: a shipped, binding full unwind), so it lives one level down rather than being
+deleted or promoted to a third tab.
+
+Within the wiki tab, the list is **browsable** — every item in the lane is
 listed (kind badge, domain dot, one-line summary, confidence badge,
 when), not metered out one card at a time. A **select** toggle turns rows
 into checkboxes with a contextual bulk bar (**defer all · approve all**),
@@ -934,30 +977,29 @@ replaced by the inline edit). Or a what-happens panel for the rest;
 then a one-line rationale, a
 confidence badge, the **cited evidence** snippet (provenance), and the
 **proposals to choose among** as stacked buttons (destructive ones —
-splits, `distinct_from` — keep the armed tap-again). Two universal escape
-hatches sit in the footer — **defer** (park for later) and **talk it
-over** (hand to the assistant) — so *reject is never the only way out*:
-the ambiguous-mention case that used to advertise only reject now always
-offers defer and talk-it-over beside it. Every decision raises an **undo
+splits, `distinct_from` — keep the armed tap-again). One universal escape hatch sits in
+the footer: **correct it**, which files the owner's fix as a correction note (the #7
+channel). *(Earlier drafts described **defer** and **talk it over** as two footer
+hatches. Neither shipped — `Footer.tsx` renders `rfoot-correct` alone, and the deferred
+lane is gone — so the doc was what was stale, not the screen.)* Every decision raises an **undo
 snackbar** (undo is the server's own unwind — clean for a parked item, a
 reopened tombstone for a real decision). Item kinds unchanged: fact
 conflicts, attribute collisions, merge proposals, ambiguous mentions,
 domain promotions, low-confidence extractions, splits.
 
-**Deferred & decided lanes** (**reopen = full unwind** [decided]): the
-**deferred** lane lists parked items (a *defer* or a *talk-it-over*, the
-latter tagged **with assistant**); its detail offers **resume**, a clean
-re-queue to pending with no tombstone — parking is not a decision. The
-**decided** lane is the reverse-chronological log: each row carries **what
-was decided in plain language** (the chosen option's own copy), dismissed
+**The decided log** (**reopen = full unwind**), reached from the quiet `N decided` line
+under the wiki tab's list. *(A **deferred** lane was once specified here — parked items
+with a **resume** — and never shipped: `defer` and `talk it over` have no producer and no
+footer button. It is described nowhere now.)* The log is reverse-chronological: each row
+carries **what was decided in plain language** (the chosen option's own copy), dismissed
 rows muted. Its detail shows the cited evidence, the **proposals that were
 offered with the chosen one marked**, and an amber **reopen** (armed
 tap-again) whose consequence text **names the unwind** per kind. Reopening
 returns the item to pending (count pills update) and reverses the
 resolution's recorded graph effects; the decided row stays behind as a
 **struck-through "reopened" tombstone**. The one permanent exception is a
-rejected merge: the `distinct_from` edge survives by doctrine. Empty lanes
-read as one calm `--text-2` sentence each.
+rejected merge: the `distinct_from` edge survives by doctrine. An empty tab, and an
+empty log, read as one calm `--text-2` sentence.
 
 *Edit model:* "approve with edits" has two shapes, neither of which writes
 the graph by hand (honoring non-negotiable #7 — facts aren't edited
@@ -1399,6 +1441,32 @@ See `docs/archive/IMAGE_LAUNCHER_PLAN.md`.
   primary action; longer flows are full screens.
 - Dialogs are for confirmation only: one sentence of consequence, two
   buttons max (destructive variant on the right), no scrolling content.
+
+### The "entities modified" step rung (build plan `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` D3)
+
+A tool call that WRITES the owner's graph is **expandable to what it changed**, inside
+the step that made it. Not a surface of its own and not a note-screen change: the same
+`StepRow` disclosure the Worked block already uses, one more rung above the arguments.
+
+- The collapsed row carries a one-line phrase in the count-chip slot naming the call's
+  state — **`written · replaced · held · from a photo · failed · truncated · writing…`**
+  — with the counts and **the domain in words**. A health write is legible as a health
+  write without a tap.
+- **A domain is named, never colour alone.** The dot stays; the word beside it is what
+  carries the meaning. This is an accessibility rule *and* a firewall rule — a boundary
+  the owner cannot read is not a boundary they can check — so one helper turns a domain
+  code into text and every renderer goes through it (an unrecognised code says so).
+- Each write renders in the shipped **`predicate → value`** edge form (the entity page's
+  and the review row's), falling back to the whole statement when the edge parts are
+  absent. A **supersession** renders through the app's ONE before→after diff renderer
+  (`ClaimDiffView`), labelled as a write that already landed, never as one still proposed.
+- **A write tool that wrote nothing says so.** An absent rung would read as "not a write".
+- **There is no edit affordance.** Correction is conversational: the owner disagrees by
+  replying in the thread. A control that fixed a value in place would make the transcript
+  a second decision surface, which is the thing the two-tab inbox exists to delete.
+- It renders from the **persisted turn** — the writes ride the tool result and are stored
+  on the turn — so a conversation reopened days later says exactly what it said live,
+  with no second fetch and no second source of truth.
 
 ## Agent tool views (registered components, never bespoke markup)
 

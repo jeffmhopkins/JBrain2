@@ -89,6 +89,31 @@ _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "failed": frozenset({"running", "failed"}),
 }
 
+# The loop stop reason `ask_owner` ends a turn with (`agent/asktools.py`), and the ONLY
+# producer of `waiting_on_owner` — the state W2 shipped with no producer at all. It lives
+# here, beside the edges, because "which endings mean which state" is the same lifecycle
+# question `_ALLOWED_SOURCES` answers, and because a stop reason defined in the tool
+# module and a state machine defined here would drift apart the first time either moved.
+AWAITING_OWNER = "awaiting_owner"
+
+# A turn that reached its own end, as opposed to one `max_steps`, the cost budget or
+# consecutive tool errors cut off partway.
+CLEAN_STOP = "end_turn"
+
+
+def state_for_stop(stop_reason: str) -> str:
+    """The state a pass that ended for `stop_reason` lands in.
+
+    Three outcomes and one rule behind them (constraint 6): `settled` is a claim that the
+    pass finished and everything it meant to write is written, because the whole-note
+    settle sweep retracts whatever `settled` does not vouch for. A turn cut off partway
+    asserted only a prefix, and a turn that stopped to ask a question has not finished
+    reading — neither may claim it, so both land somewhere the sweep does not run."""
+    if stop_reason == AWAITING_OWNER:
+        return "waiting_on_owner"
+    return "settled" if stop_reason == CLEAN_STOP else "failed"
+
+
 # Caps on a recorded call's `args`. The blob is stored, never executed — but a note body
 # may be third-party text (risk 1) and the model copies note text into `quote` /
 # `statement`, so an unbounded ledger is a disk-exhaustion lever a hostile body can pull
@@ -125,9 +150,9 @@ class InvalidStateTransition(ValueError):
 def note_body_sha(body: str) -> str:
     """The `note_body_sha` a conversation is opened against. D6 appends clarification
     blocks and that re-ingests the note, so a resumed pass can compare this against the
-    live body to learn the note moved under it. Nothing compares it yet — the reader
-    lands in W3 with the resume path; W2 stores the value so the comparison has
-    something to read when it does."""
+    live body to learn the note moved under it. `analysis/clarify.py` is that reader: on
+    the owner's reply it compares this against the note's composed text, and re-stamps
+    the field only when the two still agree."""
     return hashlib.sha256(body.encode()).hexdigest()
 
 
@@ -257,6 +282,35 @@ class NoteConversationToolCall(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# How much of a note the inbox row quotes. The row is a REDIRECT (D4) — enough to
+# recognise which note raised the question, never enough to answer it here.
+NOTE_EXCERPT_CHARS = 160
+
+
+@dataclass(frozen=True)
+class NotesInboxEntry:
+    """One note-conversation row of the review inbox's notes tab (D4/D5). Read-only and
+    decision-free by construction: it carries what a redirect needs to be worth taking —
+    which note, what is being asked, how long it has waited, how much already landed —
+    and no id or verb any answer could be posted against."""
+
+    session_id: str
+    # The session's persona, so the PWA flips to the conversation tab that hosts it
+    # before opening the thread — a redirect that lands on the wrong tab shows an empty
+    # chat, which reads as "the question is gone".
+    agent: str
+    note_id: str
+    domain: str
+    note_excerpt: str
+    captured_at: datetime
+    question: str | None
+    waiting_since: datetime
+    committed: int
+    # A first pass still `running` is LISTED but not counted: the agent is reading, and
+    # nothing is waiting on the owner yet (the mock's uncounted trailing row).
+    live: bool
+
+
 @dataclass(frozen=True)
 class ConversationWrites:
     """The whole-conversation union of what its successful calls wrote — constraint 6's
@@ -267,18 +321,26 @@ class ConversationWrites:
     `frozenset`, not `set`: `frozen=True` only stops the FIELDS being rebound, and a
     caller that dropped an id from a mutable `facts` would silently widen the sweep.
 
-    **`facts` IS ALWAYS EMPTY TODAY, AND AN EMPTY `facts` IS NOT "NOTHING WAS
-    WRITTEN".** Nothing shipped reports fact ids on a tool step — `ledger_rows`
-    (`analysis/converse.py`) therefore passes none, deliberately, rather than inventing
-    them from the model's arguments. So a conversation that wrote a dozen facts still
-    reports `facts=frozenset()`. Wiring `settle_note(touched=writes().facts)` before the
-    recorder reports real ids does not narrow the sweep — it retracts the note's ENTIRE
-    non-pinned graph on every pass. The recorder has to move into the tool dispatch
-    first (W3), where `ok` and the written ids come from the write path itself."""
+    **`facts` IS FILLED FOR ONE TURN PATH AND EMPTY FOR THE OTHER, AND AN EMPTY `facts`
+    IS NOT "NOTHING WAS WRITTEN".** `record_tool_call` has exactly two callers: the
+    worker's unattended pass (`analysis/converse.py`, via `ledger_rows`, which does now
+    report real fact ids) and `ask_owner`'s self-record. The owner's REPLY turn is an
+    ordinary `/chat` turn — `api/agent.py` touches this repo nowhere — so a
+    `resolve_entity` / `assert_fact` / `correct_fact` on that turn reaches the D3 rung
+    through the transcript and never reaches this table.
+
+    That asymmetry is the trap, and it is worse than the old always-empty state because
+    it looks solved. `clarify.close_owner_reply` maps that turn's clean end to
+    `settled`; wiring `settle_note(touched=writes().facts)` off `settled` — which is
+    exactly what constraint 6 specifies — would retract every unpinned fact the owner's
+    own reply just added, while the transcript still shows them recorded. `correct_fact`
+    survives only by accident, because it pins. **W4 must move the recorder into the
+    tool dispatch, or scope the sweep to the unattended pass, BEFORE wiring it.**"""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
-    """The fact ids the conversation's successful calls wrote. EMPTY IN EVERY WAVE SO
-    FAR — see the class docstring before feeding it to `settle_note`."""
+    """The fact ids the conversation's successful calls wrote. Filled by the unattended
+    pass; EMPTY for anything the owner's reply turn wrote — see the class docstring
+    before feeding this to `settle_note`."""
 
     entities: frozenset[uuid.UUID] = field(default_factory=frozenset)
     domains: frozenset[str] = field(default_factory=frozenset)
@@ -405,6 +467,61 @@ class NoteConversationRepo:
         )
         return list((await session.execute(stmt)).scalars())
 
+    async def notes_inbox(self, session: AsyncSession, *, limit: int = 50) -> list[NotesInboxEntry]:
+        """The notes tab of the review inbox (D4/D5): every live conversation, oldest
+        wait first, with what it is asking and what it already committed.
+
+        Both live states, not just `waiting_on_owner`: a first pass still `running` is
+        listed so the owner can see the note is being read, and the route leaves it out
+        of the count because nothing is waiting on them yet.
+
+        The question is the LAST `ask_owner` of the thread — a conversation resumed after
+        an answer can ask again, and the inbox must point at the open one, not the
+        answered one. `committed` counts distinct fact ids over the thread's SUCCEEDED
+        calls, so it is honestly 0 until the recorder moves into the tool dispatch
+        (`ConversationWrites`' docstring) rather than a number invented from arguments.
+
+        A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
+        conversation survives, and a redirect into a deleted note's thread is a dead end.
+        """
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT c.session_id, c.note_id, c.state, c.updated_at, s.agent,"
+                    " n.domain_code, n.body, n.created_at AS captured_at,"
+                    " (SELECT t.args->>'question'"
+                    "    FROM app.note_conversation_tool_calls t"
+                    "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
+                    "   ORDER BY t.seq DESC LIMIT 1) AS question,"
+                    " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
+                    "         unnest(t2.fact_ids) AS f"
+                    "   WHERE t2.session_id = c.session_id AND t2.ok) AS committed"
+                    "  FROM app.note_conversations c"
+                    "  JOIN app.notes n ON n.id = c.note_id"
+                    "  JOIN app.agent_sessions s ON s.id = c.session_id"
+                    " WHERE c.state = ANY(:states) AND n.deleted_at IS NULL"
+                    " ORDER BY c.updated_at ASC, c.session_id ASC"
+                    " LIMIT :limit"
+                ),
+                {"states": list(LIVE_STATES), "limit": limit},
+            )
+        ).all()
+        return [
+            NotesInboxEntry(
+                session_id=str(r.session_id),
+                agent=r.agent,
+                note_id=str(r.note_id),
+                domain=r.domain_code,
+                note_excerpt=_excerpt(r.body),
+                captured_at=r.captured_at,
+                question=r.question,
+                waiting_since=r.updated_at,
+                committed=int(r.committed or 0),
+                live=r.state == "running",
+            )
+            for r in rows
+        ]
+
     async def set_state(
         self,
         session: AsyncSession,
@@ -442,6 +559,32 @@ class NoteConversationRepo:
         raise InvalidStateTransition(
             f"{current.state!r} -> {state!r} is not a note-conversation transition"
         )
+
+    async def set_body_sha(
+        self, session: AsyncSession, session_id: str, body_sha: str
+    ) -> NoteConversation | None:
+        """Re-stamp the body this conversation stands on. Returns None when it is gone.
+
+        The one legitimate caller is the owner-reply path (`analysis/clarify.py`), and
+        only in the case where the stored sha still MATCHED before the append: the answer
+        the reply appends is text the thread itself holds — the question was asked in it
+        and the answer was typed into it — so a conversation that had read the note as it
+        stood has read the note as it now stands, and leaving the old sha would report
+        "the note moved under me" about this thread's own answer. When the sha did NOT
+        match, nothing here is called and the stale value stands, which is exactly the
+        true statement: something the thread never saw changed the note.
+
+        Deliberately not folded into `set_state`: a state change is a lifecycle fact and
+        a body sha is a claim about what was read, and the only caller that has grounds
+        to make the second is not the many callers that make the first."""
+        stmt = (
+            update(NoteConversation)
+            .where(NoteConversation.session_id == uuid.UUID(session_id))
+            .values(note_body_sha=body_sha)
+            .returning(NoteConversation)
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     # --- the tool-call ledger --------------------------------------------------
 
@@ -531,11 +674,12 @@ class NoteConversationRepo:
         counting its ids would spare a fact the whole-note sweep is supposed to
         retract.
 
-        **The returned `facts` is empty in every wave so far**, because no shipped tool
-        step reports fact ids for `record_tool_call` to store — not because the
-        conversation wrote nothing. `settle_note` retracts every non-pinned fact of the
-        note that is NOT in `touched` (`analysis/pipeline.py`), so passing this straight
-        through today retracts the whole note. Read `ConversationWrites`' docstring
+        **The returned `facts` covers the unattended pass ONLY.** The owner's reply turn
+        runs on `/chat`, which never calls `record_tool_call`, so anything it wrote is
+        missing here — not because the conversation wrote nothing. `settle_note`
+        retracts every non-pinned fact of the note that is NOT in `touched`
+        (`analysis/pipeline.py`), so passing this straight through would retract exactly
+        the facts the owner's own answer added. Read `ConversationWrites`' docstring
         before you wire it."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
@@ -555,6 +699,14 @@ class NoteConversationRepo:
         return ConversationWrites(
             facts=frozenset(facts), entities=frozenset(entities), domains=frozenset(domains)
         )
+
+
+def _excerpt(body: str) -> str:
+    """The note as the inbox row quotes it — one line, capped. Collapsed to a single
+    line here rather than in CSS: the row is a two-line quote in the mock, and a note
+    whose first line is blank would otherwise quote nothing at all."""
+    line = " ".join(body.split())
+    return line if len(line) <= NOTE_EXCERPT_CHARS else f"{line[:NOTE_EXCERPT_CHARS]}…"
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

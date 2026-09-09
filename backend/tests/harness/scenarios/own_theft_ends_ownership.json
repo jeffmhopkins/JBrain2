@@ -1,6 +1,7 @@
 {
   "name": "a stolen item ends ownership and records the theft as an event",
   "description": "Loss/theft: 'my laptop was stolen' ends ownership. The owns state flips its value_json owned true->false so supersession.values_equal sees a real change and the state newest-wins branch closes the owned=true interval (SCD-2) and files a fact_conflict; the current head is owned=false. A separate event-kind theft fact records WHEN it happened on its own identity key (Laptop.theftEvent) and accumulates independently. Pins that loss is a status transition on the possession, not a silent delete, while the historical owned=true interval is retained (docs/reference/ANALYSIS.md state row: 'the old fact stays true about its interval'). Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "xfail": "assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. The future (`expected`) and past-marker (interval close) normalizers still fire; nothing else does. Closing it is the on-reply correct_fact set, or an assertion the write can carry.",
   "steps": [
     {
       "domain": "general",

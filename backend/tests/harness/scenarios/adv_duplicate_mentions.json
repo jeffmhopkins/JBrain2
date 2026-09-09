@@ -1,6 +1,6 @@
 {
   "name": "the same name mentioned twice in one note yields one entity",
-  "description": "Adversarial duplicate-mention probe. One extraction lists the SAME mention name ('Cleo') three times (identical name+kind, varying surface_text) plus one fact. resolve_entity is called once per DISTINCT name (pipeline._resolve_entities dedupes into `names`), so exactly one provisional Cleo is minted — not three. _upsert_mentions writes one row per anchored surface (keyed on chunk+span+entity) and _reconcile_mentions drops what this run no longer asserts; the fact attaches to the single entity. Pins clean dedupe: one Cleo entity, one active fact, no duplicate entities from repeated mentions.",
+  "description": "Adversarial duplicate-mention probe. One extraction lists the SAME mention name ('Cleo') three times (identical name+kind, varying surface_text) plus one fact. resolve_entity is called once per DISTINCT name (pipeline._resolve_entities dedupes into `names`), so exactly one provisional Cleo is minted — not three. _upsert_mentions writes one row per anchored surface (keyed on chunk+span+entity) and _reconcile_mentions drops what this run no longer asserts; the fact attaches to the single entity. Pins clean dedupe: one Cleo entity, one active fact, no duplicate entities from repeated mentions. TOOL-PATH NOTE: this file asserted kind='state' before the W3 re-point and now asserts 'attribute'. The tool surface has no `kind` field and plannedTrip is declared by no entity type, so _fact_kind falls back to the Person default. The classification coverage is gone; what this file exists for -- one Cleo, one fact -- is carried by the count:1 guards and is unaffected.",
   "steps": [
     {
       "domain": "general",
@@ -23,7 +23,7 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Cleo", "predicate": "plannedTrip", "kind": "state", "value_contains": "Lisbon", "status": "active", "count": 1}
+      {"entity": "Cleo", "predicate": "plannedTrip", "kind": "attribute", "value_contains": "Lisbon", "status": "active", "count": 1}
     ],
     "entities": [
       {"name": "Cleo", "kind": "Person", "status": "provisional"}

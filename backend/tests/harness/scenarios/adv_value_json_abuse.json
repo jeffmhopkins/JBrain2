@@ -1,6 +1,7 @@
 {
   "name": "deeply nested / huge / null value_json is stored verbatim without crashing",
   "description": "Adversarial value_json robustness probe. Three measurement facts on distinct instants carry hostile-but-valid value_json: (1) deeply nested object with arrays and unicode; (2) a measurement with value_json explicitly null (parse_extraction keeps null when value_json is not a dict); (3) a large flat object. The pipeline stores value_json as-is into a jsonb column — no shape validation beyond 'is it a dict'. This pins that schema-valid-but-degenerate value_json persists cleanly (all three active, accumulating as a time-series), proving value_json is opaque to the pipeline and cannot crash the upsert. Note the open risk this DOCUMENTS: value_json size is unbounded server-side (no length guard in extraction.parse_extraction), so a model could write arbitrarily large jsonb blobs — same family as H1's unbounded-text gap.",
+  "xfail": "FOUR gaps, not two. (1) No `kind` field: none of these predicates is declared, so _fact_kind falls back to the subject type's default and a measurement time-series becomes an attribute collision. (2) No `qualifier`: the three readings differ only in their qualifier (deep/nullval/flat), so they now collide on one identity key. (3) No structured `value_json`: `object` is a STRING, so the nested payload and the 13-key flat object are flattened by runner._object_literal to '0 1 2 \u2026 12' and stored as {value: '\u2026'} \u2014 which is precisely the robustness property this scenario exists to pin, so it cannot be tested through this surface at all. (4) Entity kind is CANONICALIZED: resolve_entity maps the declared word through _KIND_HINTS, so a surface declared 'device' is stored as 'Device'. That last one is expectation drift, not an engine gap \u2014 the sibling scenarios were updated and this one was missed; the expectation below is corrected.",
   "steps": [
     {
       "domain": "general",
@@ -26,7 +27,7 @@
       {"entity": "Sensor-9", "predicate": "reading", "qualifier": "flat", "kind": "measurement", "value_contains": "k12", "status": "active"}
     ],
     "entities": [
-      {"name": "Sensor-9", "kind": "device", "status": "provisional"}
+      {"name": "Sensor-9", "kind": "Device", "status": "provisional"}
     ]
   }
 }

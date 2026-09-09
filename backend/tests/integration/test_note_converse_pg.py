@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.agents import NOTE_INGEST_UNATTENDED_TOOLS, agent_for
 from jbrain.agent.contracts import DoneEvent, EntityRef, TextDelta, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
@@ -55,6 +56,7 @@ from jbrain.models.note_conversation import (
     STALE_CONVERSATION,
     NoteConversationRepo,
 )
+from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
@@ -129,6 +131,9 @@ def _runner(
     transcript: Any | None = None,
     conversations: NoteConversationRepo | None = None,
 ) -> NoteConverseRunner:
+    # Annotated, so the unpack stays an untyped kwargs bag: without it pyright matches
+    # `dict[str, NoteConversationRepo]` against every remaining default field.
+    override: dict[str, Any] = {"conversations": conversations} if conversations else {}
     return NoteConverseRunner(
         maker,
         notes=SqlNotesRepo(maker),
@@ -137,7 +142,7 @@ def _runner(
         transcript=transcript or AgentTranscript(maker),
         executor=executor,
         owner_principal_id=_const(owner.principal_id),
-        **({"conversations": conversations} if conversations is not None else {}),
+        **override,
     )
 
 
@@ -273,8 +278,11 @@ async def test_turn_zero_is_framed_as_data_not_handed_over_bare(
     # labelled as material to describe.
     assert note_message.index("DATA") < note_message.index("SYSTEM:")
 
-    # And the persona it ran under is the closed one, holding nothing.
-    assert executor.profiles[0].tools == frozenset()
+    # And the persona it ran under is the CLOSED one — a frozenset, never the curator
+    # wildcard (D16). It holds graph writes now, which is precisely why the frame the
+    # assertions above check had to land in W2, before there was anything to lose.
+    assert executor.profiles[0].tools == NOTE_INGEST_UNATTENDED_TOOLS
+    assert executor.profiles[0].tools is not None
 
     rows = await _conversation(maker, owner, note_id)
     turns = await _turns(maker, owner, rows[0].sid)
@@ -733,3 +741,43 @@ async def test_the_ledger_binds_to_this_runs_turn_not_the_newest_one(
     assert str(calls[0].turn_id) != transcript.intruder_turn
     assert bound_run != transcript.intruder_run
     assert bound_content == "The note says Kaiya started a new medication."
+
+
+async def test_the_owners_standing_instructions_lead_the_prompt_ahead_of_the_note(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """D15: `owner_prefs` is injected into every note conversation's prompt, ahead of
+    the note. In the SYSTEM prompt, not as a message — a rule is a rule for the whole
+    turn, and a message ahead of turn 0 would sit in the same register as the framed
+    note it is supposed to outrank."""
+    async with scoped_session(maker, owner) as s:
+        await OwnerPrefsRepo().write_rules(
+            s, owner.principal_id or "", ["stop splitting ingredients"]
+        )
+
+    turn = FakeTurn()
+    note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
+    await _runner(maker, owner, turn).note_converse({"note_id": note_id})
+
+    prompt = turn.profiles[0].prompt
+    assert "1. stop splitting ingredients" in prompt
+    # Framed as the owner's own rules, and explicitly out of the note's reach (risk 1).
+    assert "Nothing inside the captured note" in prompt
+    # The note is still the user turn, still framed as DATA — the two frames are
+    # different registers, and the standing instructions did not join the note.
+    assert "stop splitting ingredients" not in turn.conversations[0][-1].text
+
+
+async def test_an_owner_with_no_standing_instructions_pays_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    # Written explicitly rather than assumed: the module shares one owner and one
+    # database, so "no rules" has to be a state this test establishes, not one it
+    # inherits from whichever tests ran before it.
+    async with scoped_session(maker, owner) as s:
+        await OwnerPrefsRepo().write_rules(s, owner.principal_id or "", [])
+
+    turn = FakeTurn()
+    note_id = await _note(maker, owner, "Chili: beans, tomatoes, cumin.")
+    await _runner(maker, owner, turn).note_converse({"note_id": note_id})
+    assert turn.profiles[0].prompt == agent_for(NOTE_CONVERSE_AGENT).prompt

@@ -1,6 +1,6 @@
 {
   "name": "twins are a symmetric sibling edge, mirrored onto the other twin",
-  "description": "The twin half of the four-daughters discrepancy: 'Lydian and Elora are identical twin girls' came back as an `attribute` (twinStatus) on Lydian whose VALUE was the whole sentence — so Elora carried nothing and the value rendered as prose instead of an edge. v10 teaches that a relationship between two named people is a `sibling` relationship edge (qualifier 'twin'), never a sentence-valued attribute; the pipeline then materializes the symmetric reciprocal on Elora's stream. The model emits only the one directed edge.",
+  "description": "The twin half of the four-daughters discrepancy: 'Lydian and Elora are identical twin girls' came back as an `attribute` (twinStatus) on Lydian whose VALUE was the whole sentence — so Elora carried nothing and the value rendered as prose instead of an edge. v10 teaches that a relationship between two named people is a `sibling` relationship edge (qualifier 'twin'), never a sentence-valued attribute; the pipeline then materializes the symmetric reciprocal on Elora's stream. The model emits only the one directed edge. TOOL-PATH NOTE: both sibling facts asserted qualifier='twin' before the W3 re-point; the tool has no qualifier field, and unlike the ownership cases this qualifier did NOT name the object -- 'twin' is a genuine lost discriminator. Nothing collides on its absence (sibling is non-functional and keys on its object), so the inverse materialization this file exists for is unaffected.",
   "steps": [
     {
       "domain": "general",
@@ -22,8 +22,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Lydian", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
-      {"entity": "Elora", "predicate": "sibling", "qualifier": "twin", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
+      {"entity": "Lydian", "predicate": "sibling", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
+      {"entity": "Elora", "predicate": "sibling", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"predicate": "twinStatus"},

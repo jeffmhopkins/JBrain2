@@ -1139,6 +1139,19 @@ export interface NoteOut {
   accuracy_m: number | null;
 }
 
+/** One appended D6 clarification block: a question the agent asked while reading the
+ * note, and the answer Jeff typed back. Once appended it IS the note's text — chunked,
+ * embedded, searchable, citable — so an answer that carried a password or a diagnosis
+ * has to be identifiable before it can be removed. The note screen renders blocks as
+ * prose (D6 changes no screen), which is why the ids only exist here. */
+export interface ClarificationOut {
+  id: string;
+  seq: number;
+  question: string;
+  answer: string;
+  created_at: string;
+}
+
 export interface NotesPage {
   notes: NoteOut[];
   next_cursor: string | null;
@@ -1386,6 +1399,31 @@ export const FILTER_STATUS: Record<ReviewFilter, "open" | "resolved"> = {
   pending: "open",
   decided: "resolved",
 };
+
+/** One row of the review inbox's NOTES tab (D4 of AGENT_INGEST_CONVERSATION_PLAN) —
+ * an ingestion question or a staged approval waiting on the owner.
+ *
+ * There is deliberately no `id` and no action here. The row is a redirect: it carries
+ * the `session_id` to open and nothing a decision could be posted against, because the
+ * conversation is the only place ingestion is decided. The wire shape is what enforces
+ * that, not the screen. */
+export interface NotesInboxRow {
+  kind: "question" | "approval";
+  session_id: string;
+  /** The session's persona, so the redirect flips to the conversation tab that hosts
+   * it before opening the thread. */
+  agent: string;
+  note_id: string | null;
+  domain: string;
+  quote: string;
+  ask: string | null;
+  captured_at: string | null;
+  waiting_since: string;
+  committed: number;
+  /** A first pass still reading: listed so the note is visibly in hand, uncounted
+   * because nothing is waiting on the owner yet. */
+  live: boolean;
+}
 
 export interface BatchDecision {
   id: string;
@@ -2449,6 +2487,26 @@ export const api = {
     await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  // The D6 clarification blocks. Owner-only server-side, both verbs: the append
+  // enqueues a re-ingest on `is_owner()` RLS, so a token caller would get a driver
+  // error rather than a refusal.
+  async listClarifications(noteId: string): Promise<ClarificationOut[]> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/clarifications`);
+    return (await response.json()) as ClarificationOut[];
+  },
+
+  // Erasing one re-drives ingestion, so the returned note is the note as it now reads —
+  // no second fetch to see the redaction land.
+  async deleteClarification(noteId: string, clarificationId: string): Promise<NoteOut> {
+    const response = await request(
+      `/api/notes/${encodeURIComponent(noteId)}/clarifications/${encodeURIComponent(
+        clarificationId,
+      )}`,
+      { method: "DELETE" },
+    );
+    return (await response.json()) as NoteOut;
+  },
+
   // Hide/unhide only flip stream visibility — no re-ingest, so the note keeps
   // its place in Search and stays openable from there.
   async hideNote(id: string): Promise<void> {
@@ -3340,6 +3398,13 @@ export const api = {
   async reviewQueue(status: "open" | "resolved" | "deferred" = "open"): Promise<ReviewQueue> {
     const response = await request(`/api/review?status=${status}`);
     return (await response.json()) as ReviewQueue;
+  },
+
+  // The notes tab: ingestion questions and staged approvals, oldest wait first. A
+  // READ ONLY — there is no sibling call that answers one, by design (D4).
+  async notesInbox(): Promise<{ items: NotesInboxRow[] }> {
+    const response = await request("/api/review/notes");
+    return (await response.json()) as { items: NotesInboxRow[] };
   },
 
   // Skip is client-side only (cycle to the back of the local queue) — there

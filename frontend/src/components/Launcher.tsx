@@ -248,10 +248,14 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
     if (!open || !active || !foreground) return;
     let stale = false;
     const refresh = () => {
-      api
-        .reviewQueue()
-        .then((queue) => {
-          if (!stale) setReviewCount(queue.items.length);
+      // The Review tile's badge is the whole signal for both tabs (D4/D5 — no push, no
+      // nagging count anywhere else), so it sums the wiki findings and the notes tab's
+      // waiting rows. A first pass still reading is not waiting on anyone and is
+      // excluded, the same rule the tab's own count pill uses.
+      Promise.all([api.reviewQueue(), api.notesInbox().catch(() => ({ items: [] }))])
+        .then(([queue, notes]) => {
+          if (stale) return;
+          setReviewCount(queue.items.length + notes.items.filter((r) => !r.live).length);
         })
         .catch(() => {});
       // Count tasks with an unviewed latest run — recomputed each poll against the

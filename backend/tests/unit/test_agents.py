@@ -16,7 +16,8 @@ from jbrain.agent.agents import (
     JERV_TOOLS,
     MEMORY_TOOLS,
     NON_OWNER_PERSONAS,
-    NOTE_INGEST_TOOLS,
+    NOTE_INGEST_ON_REPLY_TOOLS,
+    NOTE_INGEST_UNATTENDED_TOOLS,
     OWNER_AGENTS,
     RESEARCH_TOOLS,
     REVIEW_TOOLS,
@@ -28,6 +29,7 @@ from jbrain.agent.agents import (
     PersonaResolutionError,
     agent_for,
     agent_for_intake,
+    agent_for_owner_reply,
     is_agent,
     is_owner_agent,
 )
@@ -446,39 +448,164 @@ def _every_shipped_tool() -> ToolRegistry:
     )
 
 
-def test_note_ingest_holds_an_explicit_empty_allowlist_not_the_wildcard() -> None:
+def test_the_profile_carries_the_unattended_set_so_a_forgotten_caller_narrows() -> None:
+    """D8's split is asymmetric on purpose, and this is the asymmetry.
+
+    `AgentProfile.tools` — what every resolution path reads by default — is the
+    UNATTENDED set. The wider one exists only behind `agent_for_owner_reply`, so a caller
+    that never heard of the split (the task runner, a session listing, a future entry
+    point) gets the narrow surface. The other arrangement fails the other way: it would
+    hand `correct_fact` to a pass the owner is not present for, which is exactly the
+    authority D8 withholds."""
+    assert AGENTS["note_ingest"].tools == NOTE_INGEST_UNATTENDED_TOOLS
+    assert agent_for("note_ingest").tools == NOTE_INGEST_UNATTENDED_TOOLS
+    # And the two sets are genuinely different objects, not one aliased twice — the
+    # failure mode where "the split" is a rename.
+    assert NOTE_INGEST_ON_REPLY_TOOLS != NOTE_INGEST_UNATTENDED_TOOLS
+
+
+def test_the_on_reply_set_adds_exactly_the_six_names_and_keeps_the_unattended_six() -> None:
+    """TOOL_SURFACE's on-reply rows, enumerated. A SUPERSET: the reply turn is the same
+    agent finishing the same note, so it keeps the graph writes it was recording with."""
+    assert NOTE_INGEST_ON_REPLY_TOOLS > NOTE_INGEST_UNATTENDED_TOOLS
+    assert {
+        "correct_fact",
+        "merge_entities",
+        "prefs_write",
+        "search",
+        "read_note",
+        "relate",
+    } == NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS
+    # `prefs_read` is in NEITHER (TOOL_SURFACE Cut #1: D15 already injects the document
+    # into the system prompt, so the tool would be a second overlapping memory surface).
+    assert "prefs_read" not in NOTE_INGEST_ON_REPLY_TOOLS
+    # Nothing outward-facing. The owner replying does not sanitize the note body still
+    # sitting in this turn's context, so the trifecta is just as complete on-reply.
+    outward = WEB_TOOLS | GMAIL_TOOLS | {"news_feed", "news_search", "web_fetch", "grokipedia"}
+    assert not (outward & NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def test_agent_for_owner_reply_widens_only_the_note_persona() -> None:
+    """The selector is called unconditionally from `/chat`, so every other persona has to
+    come back byte-identical — otherwise the note split would be a chat-wide change."""
+    assert agent_for_owner_reply("note_ingest").tools == NOTE_INGEST_ON_REPLY_TOOLS
+    # Everything else is the same OBJECT, not merely an equal one.
+    for name in AGENT_NAMES - {"note_ingest"}:
+        assert agent_for_owner_reply(name) is AGENTS[name]
+    # An unknown/malformed stored name still falls back to curator, unwidened — the
+    # fallback must not become a door into the note persona's write set.
+    assert agent_for_owner_reply("no-such-agent") is AGENTS[DEFAULT_AGENT]
+    # The widened profile is otherwise the note persona unchanged: same prompt version,
+    # same empty `extra_tools` (which `_admits` honours AHEAD of the NEVER_DEFAULT gate).
+    widened = agent_for_owner_reply("note_ingest")
+    assert widened.name == "note_ingest"
+    assert widened.version == AGENTS["note_ingest"].version
+    assert widened.extra_tools == frozenset()
+    assert widened.reads_knowledge_base is True
+
+
+def test_the_on_reply_writes_are_never_default_and_the_reads_are_not() -> None:
+    """Constraint 9 at the point it bites: a `mutate`/`sensitive` tool outside
+    NEVER_DEFAULT is handed to the CURATOR by `allow=None` on every ordinary chat turn.
+    Asserted on the three WRITES only — `search`/`read_note`/`relate` are curator's
+    already and belong in its wildcard."""
+    from jbrain.agent.toolregistry import NEVER_DEFAULT
+
+    assert {"correct_fact", "merge_entities", "prefs_write"} <= NEVER_DEFAULT
+    registry = _every_shipped_tool()
+    curator = AGENTS["curator"]
+    wildcard = registry.allowed_names(_EVERY_SCOPE, curator.tools, curator.extra_tools)
+    assert not ({"correct_fact", "merge_entities", "prefs_write"} & wildcard)
+
+
+def test_the_unattended_pass_can_never_reach_an_on_reply_verb() -> None:
+    """The first of the two directions the split has to prove, at the dispatch gate.
+
+    Every shipped sidecar is in this registry, including the three on-reply writes — so
+    the closure is the ALLOWLIST's doing and not an accident of what happens to be
+    wired."""
+    registry = _every_shipped_tool()
+    assert all(n in registry for n in ("correct_fact", "merge_entities", "prefs_write"))
+    unattended = AGENTS["note_ingest"]
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, unattended.tools, unattended.extra_tools)
+        assert admitted == NOTE_INGEST_UNATTENDED_TOOLS
+        assert not (admitted & (NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS))
+
+
+def test_the_reply_turn_admits_the_on_reply_verbs_and_still_nothing_else() -> None:
+    """The other direction: the widened profile really does reach the three writes and
+    the three reads — and reaches nothing beyond its own allowlist, at every scope."""
+    registry = _every_shipped_tool()
+    widened = agent_for_owner_reply("note_ingest")
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, widened.tools, widened.extra_tools)
+        assert admitted == NOTE_INGEST_ON_REPLY_TOOLS
+    # The D16 four stay outside on the reply turn too — the owner replying does not
+    # unlock the verbs that write a note back into ingestion.
+    assert not (_FORBIDDEN_FOUR & NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> None:
     """`tools` is a frozenset, never None. `None` is the curator wildcard — the single
     thing D16 forbids for the persona that will hold graph writes — and the difference is
     invisible at the call site (`allow is not None` is the whole gate)."""
     note = AGENTS["note_ingest"]
     assert note.tools is not None
     assert isinstance(note.tools, frozenset)
-    assert note.tools == NOTE_INGEST_TOOLS == frozenset()
+    assert note.tools == NOTE_INGEST_UNATTENDED_TOOLS
+    # W3's whole unattended set, and nothing else: two graph writes, `ask_owner`, two
+    # entity reads, the clock. Enumerated rather than derived, so a tool arrives here by
+    # being named and never by inheriting anything.
+    assert note.tools == {
+        "resolve_entity",
+        "assert_fact",
+        "ask_owner",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    }
     # `extra_tools` is admitted AHEAD of the web / NEVER_DEFAULT gates, so it is the one way
     # to hand this persona a tool without touching its allowlist. It stays empty in W3 too.
     assert note.extra_tools == frozenset()
-    # W2: the note is turn 0 and nothing needs retrieval, and a False agent runs with empty
-    # read scopes, so a mis-scoped session reads no domain data.
-    assert note.reads_knowledge_base is False
+    # W3: True, and the flip is what makes constraint 2 real — a False agent runs with EMPTY
+    # read scopes, under which the domain-visible entity reads cannot reach a row and there
+    # are no scopes to narrow to `(note_domain, 'general')`.
+    assert note.reads_knowledge_base is True
     # 2x, matching the KB-less children: inert while the persona is tool-less, but W3's
     # resolve/assert chain runs many calls per note and a truncated turn is a correctness
     # problem (plan constraint 6: the settle sweep must not run on one), not a short answer.
     assert note.budget_multiplier == 2
 
 
-def test_note_ingest_admits_no_tool_through_the_real_registry() -> None:
+def test_note_ingest_admits_only_its_allowlist_through_the_real_registry() -> None:
     """The closure, proven at the dispatch gate rather than on the dataclass: at every
-    scope, over every shipped sidecar, the admitted set is empty. Rule 2 of `_admits`
-    (`allow is not None and name not in allow`) is what closes it, and it fires BEFORE the
-    web and NEVER_DEFAULT gates — so the emptiness does not depend on a tool's permission
-    class, its domains, or its NEVER_DEFAULT membership."""
+    scope, over every shipped sidecar, the admitted set is EXACTLY the allowlist and never
+    more. Rule 2 of `_admits` (`allow is not None and name not in allow`) is what closes
+    it, and it fires BEFORE the web and NEVER_DEFAULT gates — so the closure does not
+    depend on a tool's permission class, its domains, or its NEVER_DEFAULT membership.
+
+    This registry globs the sidecar directory, so it holds the graph writes too — which
+    is the stricter test: even where their sidecars ARE present, the closure holds. The
+    registry `analysis.converse` actually builds is narrower still (the same six, with
+    the graph writes bound to one note), and `readtools.build_registry` drops those two
+    sidecars outright."""
     registry = _every_shipped_tool()
     note = AGENTS["note_ingest"]
+    assert note.tools is not None  # the wildcard would make every assertion below vacuous
     assert len(registry) > 100  # the real sidecar set, not a two-tool stub
 
+    # Including NO scopes: every one of the six declares no `domains`, so registry
+    # VISIBILITY was never what the `reads_knowledge_base` flip bought — the schemas the
+    # model is offered are the same six at every scope. What the flip bought is at the
+    # DB: `read_context(pid, ())` is `owner_scoped` with an empty scope list, so
+    # `has_domain_scope` is false for every domain and the entity reads would answer
+    # "nothing in scope" for every name in the note. RLS is the firewall; the allowlist
+    # is the surface.
     for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
-        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == frozenset()
-        assert registry.schemas_for(scopes, note.tools, note.extra_tools) == []
+        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == note.tools
+        offered = [t.name for t in registry.schemas_for(scopes, note.tools, note.extra_tools)]
+        assert sorted(offered) == sorted(note.tools)
 
 
 def test_note_ingest_cannot_reach_the_four_verbs_d16_names() -> None:
@@ -507,7 +634,8 @@ def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None
     profile = agent_for("note_ingest")
     assert profile is AGENTS["note_ingest"]
     assert profile.name == "note_ingest"
-    assert profile.tools == frozenset()  # not curator's None
+    assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS  # a closed set, not curator's None
+    assert profile.tools is not None
     assert is_agent("note_ingest")
 
 
@@ -629,8 +757,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v1",
-            "dbaf96c696d253309ac2d3b1c1a93106e201f65d581f3e32a6e44c6db60c6b39",
+            "agent-note-ingest-v3",
+            "d3bace60e9d1fbf279ece138fa8360d8193446c23ea1665c0a9eaebb9ec679f5",
         ),
     }
     assert set(pins) == AGENT_NAMES

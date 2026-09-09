@@ -19,6 +19,7 @@ import time
 import uuid
 from bisect import bisect_left
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -27,7 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, AgentProfile, agent_for
+from jbrain.agent.agents import (
+    DEEP_RESEARCH_TOOL,
+    SPAWN_TOOL,
+    AgentProfile,
+    agent_for_owner_reply,
+)
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_IMAGES_PER_TURN,
@@ -46,6 +52,7 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.plantools import format_plan_results
+from jbrain.agent.prefstools import with_standing_instructions
 from jbrain.agent.readtools import (
     canvas_hidden_tools,
     compose_hidden_tools,
@@ -58,6 +65,11 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
+from jbrain.analysis.clarify import (
+    NOTE_CONVERSE_AGENT,
+    close_owner_reply,
+    record_owner_reply,
+)
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -71,7 +83,9 @@ from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.models.plan import PlanRepo
+from jbrain.notes.service import NotesRepo
 from jbrain.storage import BlobStore
 from jbrain.web import FaviconFetcher, FaviconResult
 from jbrain.web.favicon import normalize_host
@@ -174,6 +188,43 @@ class ChatRequest(BaseModel):
     # on the conversation channel (#1) — jerv acknowledges the finished work and can quote
     # its content, rather than treating the report as an instruction.
     deferred_outcome: bool = False
+
+    @property
+    def owner_authored(self) -> bool:
+        """Whether `message` is text JEFF TYPED, rather than text the server composed.
+
+        The two outcome flags above are the only shapes that make it false, and both say
+        so in their own comments. Named here rather than spelled inline at each use so
+        "is this the owner talking?" has one answer in this module: `_record_transcript`
+        asks it to decide whether a user turn exists at all, and the note-conversation
+        reply path asks it before appending anything to the owner's note as source text.
+        """
+        return not (self.proposal_outcome or self.deferred_outcome)
+
+
+async def _standing_instructions(request: Request, owner_ctx: SessionContext) -> list[str]:
+    """The owner's `owner_prefs` rules for a note-conversation turn (D15).
+
+    A named seam, not an inline read, because it is the one pre-turn DB read on this
+    path that must NOT be best-effort — and because the difference deserves somewhere to
+    be stated. `owner_prefs` is owner-only RLS, so the scoped read is the firewall.
+
+    Raises 503 rather than running without the rules, the same direction
+    `converse._rules` chose and for the same reason: the reply turn is the one that
+    writes the graph and holds `correct_fact`, which force-supersedes and PINS. A turn
+    that ignored Jeff's standing instructions and committed anyway would write the graph
+    the way he asked it not to, and pin it; a 503 he can resend is recoverable. It costs
+    nothing in the ordinary case either — no rules is an empty list, not a failure, and a
+    read that genuinely fails means a database this turn could not have used anyway.
+    """
+    try:
+        async with scoped_session(request.app.state.session_maker, owner_ctx) as db:
+            return await OwnerPrefsRepo().read_rules(db, owner_ctx.principal_id or "")
+    except Exception as exc:
+        log.warning("chat.standing_instructions_failed", error=repr(exc))
+        raise HTTPException(
+            status_code=503, detail="couldn't read your standing instructions — try again"
+        ) from exc
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -748,8 +799,63 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge
     # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
     # session that carries domains touches no owner data — the firewall, not a flag.
-    profile = agent_for(session.agent)
+    #
+    # `agent_for_owner_reply`, not `agent_for`: a /chat turn exists because the OWNER just
+    # sent one, which is what D8 unlocks the note persona's full surface on. It resolves
+    # every other persona identically, so this is not a note-only branch — it is the one
+    # place in the codebase that says "this turn has the owner in it".
+    profile = agent_for_owner_reply(session.agent)
     read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
+
+    # D15: the owner's standing instructions go into EVERY note conversation's system
+    # prompt, ahead of the note. `analysis/converse.py` does it for the unattended pass,
+    # and this is the other half — which was missing, with a sharp consequence: the
+    # unattended pass sees the rules and cannot call `prefs_write`, while the reply turn
+    # is the only turn that CAN call it and was the one turn where the document was
+    # invisible. `prefs_read` is deliberately unreachable on the premise that the prompt
+    # injection makes it redundant, which was true there and false here — so the model
+    # was asked to edit a numbered list it had never been shown.
+    #
+    # Fails the turn rather than running without them, the same direction
+    # `converse._rules` chose and for the same reason: this is the turn that writes the
+    # graph and force-supersedes, and a turn that ignored Jeff's rules and committed
+    # anyway would write the graph the way he asked it not to. A 503 he can retry is
+    # recoverable; that write is not.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        profile = replace(
+            profile,
+            prompt=with_standing_instructions(
+                profile.prompt, await _standing_instructions(request, owner_ctx)
+            ),
+        )
+
+    # A reply into a note conversation that is WAITING is an answer, and D6 makes an
+    # answer part of the note: it is appended as a timestamped clarification block, which
+    # re-ingests the note so the block becomes chunks of it (D7) and the graph re-derives.
+    # The engine does it, not a tool — a model that had to remember to file the owner's
+    # answer would sometimes not, and the answer would exist only as chat
+    # (AGENT_INGEST_CONVERSATION_PLAN, TOOL_SURFACE.md "Verbs deliberately NOT tools").
+    # Before the turn, so this turn already sees the note it just changed; never raises,
+    # so an answer that cannot be filed is still an answer the agent reads. The persona
+    # check is HERE as well as inside, so a chat turn of any other persona touches
+    # neither the notes repo nor a second session maker on its way to the model.
+    #
+    # `owner_authored` is the same distinction `_record_transcript`'s `omit_user_turn`
+    # draws, and for a sharper reason: on those two turns `message` is text the SERVER
+    # wrote (an enact outcome, a deferred result), and a block pairs its text with the
+    # agent's open question and appends it to the note as SOURCE text. Filing one would
+    # put a sentence Jeff never said into his own note, permanently and searchably, and
+    # spend the question that his real answer was waiting to be paired with.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        await record_owner_reply(
+            request.app.state.session_maker,
+            cast(NotesRepo, request.app.state.notes_repo),
+            owner_ctx,
+            session_id=str(session.id),
+            agent=session.agent,
+            message=body.message,
+            owner_authored=body.owner_authored,
+        )
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
@@ -1074,6 +1180,17 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # so a future deep-research-only agent stays covered.)
     if profile.tools is not None and profile.tools & {SPAWN_TOOL, DEEP_RESEARCH_TOOL}:
         buffer_retry = False
+    # ...and never for a note conversation, which is the same objection with the writes
+    # in place of the fan. Its on-reply surface holds `assert_fact`, `correct_fact`,
+    # `merge_entities` and `prefs_write`, and a re-produce re-dispatches all of them:
+    # `correct_fact` force-supersedes a SECOND time, `merge_entities` stages a second
+    # fold, `prefs_write` a second standing-instruction Proposal — one owner message
+    # arriving in the inbox twice, and in the graph twice. The loop now ends a HALTED
+    # turn on this path (`_produce_buffered`), but a turn that ends any other way is
+    # still a whole graph write the reflexion loop would run again for a better
+    # paragraph. Post-hoc verify-and-annotate still applies, as it does for jerv.
+    if session.agent == NOTE_CONVERSE_AGENT:
+        buffer_retry = False
     # The PWA's live position for this turn (both coords or nothing), reused by the
     # location tool to answer from the phone's current spot. When a turn carries a
     # fix we cache it as the owner's last-known position; when it carries none we fall
@@ -1357,6 +1474,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         stop_reason=stop_reason,
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
+                    )
+                # Close the note conversation this reply re-opened. In the `finally`, not
+                # the `done` path: a Stop, a dropped turn or a mid-turn error still has to
+                # release the note's one live slot, because the re-ingest the owner's
+                # answer queued emits its own `note.ingested` and the pass that event
+                # opens is suppressed while this one stands. A turn that ended by asking
+                # ANOTHER question is left waiting — `state_for_stop` says so.
+                if session.agent == NOTE_CONVERSE_AGENT:
+                    await close_owner_reply(
+                        request.app.state.session_maker,
+                        owner_ctx,
+                        session_id=str(session.id),
+                        agent=session.agent,
+                        stop_reason=stop_reason,
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

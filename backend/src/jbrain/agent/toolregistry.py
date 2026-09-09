@@ -33,8 +33,57 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
+#
+# Everything AGENT_INGEST_CONVERSATION_PLAN.md adds is here too (its constraint 9: every
+# write tool the plan ships joins this set, or the wildcard hands it to the curator on
+# every ordinary chat turn).
+#
+# `prefs_write` is a WRITE tool, and the wildcard would otherwise hand the owner's
+# standing instructions to the curator. It IS in an allowlist now —
+# `agents.NOTE_INGEST_ON_REPLY_TOOLS`, the D8 set built in W3 — so this line is what
+# keeps "the note persona alone reaches it" true. `prefs_read` is here for the other
+# reason: `owner_prefs` is the NOTE persona's standing-instruction surface, and offering
+# it to curator alongside `memory_read` puts two overlapping memory surfaces in one tool
+# union, the contradiction docs/research/agent-ingest/TOOL_SURFACE.md names as the one
+# gpt-oss handles worst. It is in no allowlist at all (TOOL_SURFACE Cut #1: the document
+# is already in the system prompt), and stays that way deliberately.
+#
+# `resolve_entity` / `assert_fact` are here for the first reason and a sharper one: they
+# are `mutate`-classed GRAPH WRITES bound to one note conversation. Without this line the
+# wildcard hands the note-ingestion persona's write verbs to the CURATOR. This is now the
+# OUTER lock rather than the inner one: the chat registry used to drop both sidecars, but
+# that also made them unreachable on the reply turn D8 allowlists them for, so they are
+# bound there (`replytools`) and the allowlist plus this set are what keep them closed.
+#
+# `ask_owner` is a write too — it records the question and moves the conversation to
+# `waiting_on_owner` — but it is here for the note-thread reason rather than the graph
+# one: outside a note conversation there is nothing for it to write to, so the wildcard
+# would hand the curator a tool whose best outcome is a refusal it wasted a step on.
+# Unlike the two graph writes it IS wired into the chat registry, because the owner's
+# reply into a note thread arrives as an ordinary /chat turn (D8) — the allowlist, not
+# the registry, is what keeps it off every other persona.
+#
+# `correct_fact` and `merge_entities` are the ON-REPLY writes, and both are here for the
+# sharpest version of the first reason. They are wired into the chat registry (the reply
+# turn's only registry) and they are `sensitive`-classed, which is documentation and not
+# a gate — `outcome_for`/`DEFAULT_OWNER_POLICY` is never consulted by the loop. Without
+# this line curator's `allow=None` would absorb a verb that force-supersedes and PINS a
+# fact, and one that stages a fold of two identities, on every ordinary chat turn.
 NEVER_DEFAULT: frozenset[str] = frozenset(
-    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research", "deep_produce"}
+    {
+        "spawn_subagent",
+        "deep_research",
+        "decompose_research",
+        "deepest_research",
+        "deep_produce",
+        "prefs_read",
+        "prefs_write",
+        "resolve_entity",
+        "assert_fact",
+        "ask_owner",
+        "correct_fact",
+        "merge_entities",
+    }
 )
 
 

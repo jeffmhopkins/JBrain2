@@ -592,7 +592,19 @@ export function App() {
                 }}
               />
             )}
-            {card === "review" && <ReviewScreen />}
+            {/* A notes-tab row REDIRECTS into its conversation (D4) — the same handoff
+              a Tasks run makes: drop the card and the launcher so the chat is revealed,
+              leaving a return marker for the back gesture. */}
+            {card === "review" && (
+              <ReviewScreen
+                onOpenConversation={(sessionId, agent) => {
+                  setCard(null);
+                  setLauncherOpen(false);
+                  setSessionBackTo("review");
+                  setOpenSession({ id: sessionId, agent });
+                }}
+              />
+            )}
             {card === "intake" && <IntakeLinksScreen />}
             {/* Rows open the same entity layer the analysis chips use. */}
             {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}

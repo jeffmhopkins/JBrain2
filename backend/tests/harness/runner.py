@@ -1,14 +1,58 @@
-"""Run a Scenario against a real Postgres through the genuine integrate_note
-pipeline, then snapshot the graph for the checker.
+"""Run a Scenario against a real Postgres through the genuine note-conversation
+write path, then snapshot the graph for the checker.
 
-We are BOTH models: each step scripts the note.extract response (the
-extraction) and the integrate.note response (the Integrator's intent). The
-intent is compiled from the step — explicit when the scenario authored one,
-else a faithful default (name-match resolution against the live graph, every
-surface-attested fact committed) — with existing-entity references resolved to
-their live ids at step time, the way the real agent reads them from graph
-context. Everything downstream (canonicalize → plan_intent → apply_intent →
-the arbiter's supersession/inverse/review writes) is the real pipeline.
+We are the model: each step scripts the `note.extract` response, and the runner
+turns it into the TOOL CALLS a faithful agent would make — one batched
+`resolve_entity` per twelve surfaces, one batched `assert_fact` per eight facts
+(`jbrain.agent.graphwritetools`). Everything downstream is the real engine:
+`commit_facts` resolves the surfaces, anchors the mention spine, and runs every
+fact through `supersession.decide()`, the domain floor and the ratchet;
+`settle_note` then closes the note out ONCE, over the union of every call's
+writes — plan constraint 6, the sweep is whole-conversation, never per call.
+
+**What the harness tests is unchanged: the deterministic engine given good model
+output.** What changed is the SHAPE of that output. The old runner compiled an
+`IntegrationIntent` and drove `integrate_note`, so it also pinned the arbiter and
+the review cards W5 deletes. A scenario failing here still means the ENGINE
+changed, not the model — the faithful agent lives in `_tool_calls` and nowhere
+else, one function rather than seventy-five files.
+
+**What the tool surface cannot say**, and so what a scenario can no longer
+script. Each is a real gap in `assert_fact`, recorded here because the harness is
+where it becomes visible (see the plan's W3 section):
+
+  - **No `qualifier`.** The identity key is `entity.predicate[.qualifier]`
+    pointing at a value or another entity, and the tool has no field for the
+    middle term. Where the extraction's qualifier named the OBJECT entity
+    (`owns.Civic` → Civic) nothing is lost: a non-functional predicate keys on
+    its object. Where it discriminated two scalar facts under one predicate (two
+    diagnoses in one note, three readings) those facts now collide.
+  - **No `assertion` but `asserted`.** A future date still normalizes to
+    `expected` and a past marker in the statement still closes the interval —
+    both are `_upsert_fact`'s own normalizers, and they still fire. A NEGATED
+    fact ("I sold the Civic") has no expression at all, so a disposal stated in a
+    LATER note cannot reach the earlier note's fact; the settle sweep only
+    retracts facts of the note it is settling.
+  - **No structured `value_json`.** `object` is a string, so a literal value is
+    stored as `{value}` or `{value, unit}`. Anything richer — a nested payload, a
+    13-key flat object, `{state, start, end}` on an interval — is flattened by
+    `_object_literal` before it ever reaches the tool, and an edge with an object
+    entity stores no `value_json` at all.
+  - **No `kind`.** `_fact_kind` derives it: an object edge is always
+    `relationship`, and everything else falls to the registry's declaration for
+    the predicate, then the subject type's default, then `attribute`. A
+    `measurement` time-series and a `preference` are not sayable on an
+    undeclared predicate, and asserting `kind: relationship` on an object edge
+    is now a tautology.
+  - **No `confidence`.** The tool surface has no confidence field, so a model
+    that knows its own read is a guess cannot say so. The guard itself is live —
+    `assert_fact` stamps `self_confidence=confidence`, so an unattested write
+    lands at 0.4, under `LOW_CONFIDENCE`, and is held — but a 0.25 self-report
+    on an otherwise well-quoted read has no channel. This is the SAFETY one
+    (`health_low_confidence_ocr_guard`).
+  - **No arbiter.** `derive_kinship_gender` and the rest of the arbiter's
+    derivations do not run on this path, so facts main inferred are simply
+    absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote 12).
 
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
@@ -25,16 +69,30 @@ import asyncio
 import json
 import sys
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.analysis.entities import get_or_create_me
-from jbrain.analysis.extraction import Extraction
-from jbrain.analysis.pipeline import AnalysisPipeline, _extract_note, local_anchor
+from jbrain.agent.graphwritetools import (
+    MAX_ENTITIES,
+    MAX_FACTS,
+    NoteGraphWriter,
+    NoteTarget,
+)
+from jbrain.agent.loop import ToolContext
+from jbrain.analysis.entities import ResolvedEntity, get_or_create_me
+from jbrain.analysis.extraction import ExtractedFact, ExtractedMention, Extraction
+from jbrain.analysis.pipeline import (
+    AnalysisPipeline,
+    CommitOutcome,
+    _ChunkRef,
+    _extract_note,
+    local_anchor,
+)
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
@@ -49,127 +107,200 @@ from tests.harness.scenario import (
     load_scenario,
 )
 
-
-def _integrator(
-    maker: async_sessionmaker, extraction_json: str, intent_json: str
-) -> AnalysisPipeline:
-    """A pipeline whose two model calls return exactly this step's scripted JSON
-    (we are both models); routing/tasks mirror the real default."""
-    router = LlmRouter(
-        {"xai": FakeLlmClient([extraction_json, intent_json])},
-        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-    )
-    return AnalysisPipeline(maker, router)
+# What the note conversation stamps on the facts it writes — `converse.py`'s
+# default, so a harness row is indistinguishable from a live one.
+EXTRACTOR = "note_ingest"
 
 
-async def _entity_id_by_name(maker: async_sessionmaker, name: str, domain: str) -> str | None:
-    """The live id of the most recent non-retracted entity with this canonical
-    name — how the runner, acting as the agent, resolves an existing-mode
-    reference (and merge/distinct pairs) to a real id at step time. 'Me' is the
-    owner, which lives in the general domain; everyone else is matched within the
-    note's own domain (the firewall the real resolver respects)."""
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        return (
-            await s.execute(
-                text(
-                    "SELECT id::text FROM app.entities"
-                    " WHERE canonical_name = :n AND status <> 'retracted'"
-                    "   AND (:d = 'general' OR domain_code = :d OR canonical_name = 'Me')"
-                    " ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"n": name, "d": domain},
-            )
-        ).scalar_one_or_none()
+# --- the conversation ledger -----------------------------------------------
 
 
-async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) -> str:
-    """Produce the integrate.note JSON for this step.
+@dataclass
+class _Ledger:
+    """The union of every `commit_facts` pass one note's conversation made.
 
-    Default (no scripted intent): the extraction is parsed exactly as
-    integrate_note parses it (the same dedup/fact-cap/drop-invalid pass), then we
-    are a faithful agent over the survivors — one resolution per referenced name
-    (existing when a live entity already carries that canonical name, so
-    name-stable dedup/supersession works across steps; else new) and one
-    surface-attested fact per surviving extraction fact, so the arbiter commits
-    it. Behaviour the integrate path itself does not carry — e.g. the
-    extraction_truncated review, which `plan_to_extraction` reconstructs away — is
-    out of the harness's reach by design.
+    The accumulation seam plan constraint 6 names: `settle_note` is whole-note,
+    so settling on a single tool call's share would retract what the earlier
+    calls committed. Production will read this union back from the 0191 ledger
+    (`NoteConversationRepo.writes()`); in-process the outcomes are right here, so
+    the harness unions them directly rather than pretending to a durable store it
+    does not have."""
 
-    Explicit intent: passed through, but every existing-mode resolution and
-    merge/distinct pair names its entity (`name`/`entity_a`/`entity_b`); the
-    runner swaps each for its live id here so authors never hard-code uuids."""
-    # Ensure the owner exists before we resolve "Me" to it.
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        await get_or_create_me(s)
+    resolved: dict[str, ResolvedEntity | None] = field(default_factory=dict)
+    touched: set[uuid.UUID] = field(default_factory=set)
+    projected: set[uuid.UUID] = field(default_factory=set)
+    mention_ids: set[uuid.UUID] = field(default_factory=set)
+    mentions: dict[str, ExtractedMention] = field(default_factory=dict)
+    facts: list[ExtractedFact] = field(default_factory=list)
 
-    if step.intent is not None:
-        return await _compile_explicit_intent(maker, step.intent, domain)
+    def as_extraction(self) -> Extraction:
+        """What the conversation, taken whole, asserted about the note — the
+        input `settle_note`'s alias registration and stale-card sweep read. Title
+        and tags are empty because the tool surface has no verb for either, and
+        `dropped_facts` is 0 because no per-note cap runs on a tool call."""
+        return Extraction(
+            title="",
+            tags=[],
+            mentions=list(self.mentions.values()),
+            facts=list(self.facts),
+            tokens=[],
+        )
 
-    extraction = await _parse_extraction(step, domain)
+
+class _LedgerPipeline(AnalysisPipeline):
+    """The real pipeline, with every `commit_facts` outcome recorded.
+
+    A subclass rather than an accumulator inside `NoteGraphWriter`: the writer
+    accumulates nothing today, and the durable ledger that will feed production's
+    settle is a later task's. Overriding here keeps the harness honest about
+    which half is shipped — every line of write behaviour below this override is
+    the shipped one."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], router: LlmRouter) -> None:
+        super().__init__(maker, router)
+        self.ledger = _Ledger()
+
+    async def commit_facts(self, session: AsyncSession, **kwargs: Any) -> CommitOutcome:
+        outcome = await super().commit_facts(session, **kwargs)
+        led = self.ledger
+        led.resolved.update(outcome.resolved)
+        led.touched |= outcome.touched
+        led.projected |= outcome.projected
+        led.mention_ids |= outcome.mention_ids
+        extraction: Extraction = kwargs["extraction"]
+        for mention in extraction.mentions:
+            led.mentions.setdefault(mention.name, mention)
+        led.facts.extend(extraction.facts)
+        return outcome
+
+
+def _pipeline(maker: async_sessionmaker[AsyncSession]) -> _LedgerPipeline:
+    """A pipeline with no live model behind it. The write path makes no LLM call
+    at all — resolution layer 2 is skipped when no embedder is wired — so the
+    router exists only to satisfy the constructor."""
+    return _LedgerPipeline(maker, LlmRouter({"xai": FakeLlmClient([])}, {}))
+
+
+# --- the faithful agent: one extraction becomes one turn of tool calls -------
+
+
+def _object_literal(fact: ExtractedFact) -> str:
+    """The `object` string for a fact with no object entity.
+
+    `assert_fact` takes a plain string and rebuilds `{value}` / `{value, unit}`
+    from it, so a structured `value_json` has to be rendered down. A `value`/
+    `unit` pair round-trips through the tool's quantity parser; a single-key dict
+    gives its value; anything else is its non-boolean values in order, which is
+    roughly what a model reading the same sentence would have written.
+
+    **Nothing here is shaped by what the engine needs to see.** This function is
+    the model stand-in, and the harness's whole contract is that it scripts a
+    PERFECT model so a failure means the engine changed. A branch tuned so the
+    engine's dedup would compare equal — there was one, re-spelling `{"kg": 80.0}`
+    as "80.0 kg" because dropping the unit made two spellings of one weight
+    incomparable — breaks that contract: it hides an engine gap behind a
+    sympathetic stand-in. The unit is dropped, and the scenarios that then fail
+    say so in their `xfail` (hist_backdated_measurement_insert)."""
+    value = fact.value_json
+    if isinstance(value, dict) and value:
+        if "value" in value:
+            unit = value.get("unit")
+            return f"{value['value']} {unit}" if unit else str(value["value"])
+        if len(value) == 1:
+            return str(next(iter(value.values())))
+        parts = [
+            str(v) for v in value.values() if v is not None and not isinstance(v, bool) and v != []
+        ]
+        if parts:
+            return " ".join(parts)
+    if value is not None:
+        return json.dumps(value, ensure_ascii=False)
+    # No value and no object entity: the sentence is all the note gives.
+    return fact.statement
+
+
+def _when(fact: ExtractedFact) -> str:
+    """The `when` string — the ISO START the note gave, or empty. Only the start:
+    the tool has one date field, and `_upsert_fact`'s own normalizers derive the
+    future (`expected`) and past-marker (interval close) treatment from it and
+    from the statement."""
+    temporal = fact.temporal
+    if temporal is None or temporal.resolved_start is None:
+        return ""
+    return temporal.resolved_start.isoformat()
+
+
+def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[dict]]:
+    """The `resolve_entity` and `assert_fact` batches a faithful agent would send
+    for this step — the ONE place the harness plays the model.
+
+    Surfaces are the extraction's mention NAMES, in first-reference order, plus
+    any name a fact refers to without a mention of its own. The name and not the
+    `surface_text`, because the name is the addressing the model itself chose:
+    the surface is often a verb or a bare pronoun ("Bought", "tonight", "my"),
+    and resolving on it would mint an entity called "Bought". The kind is passed
+    lowercased and straight through — a word `resolve_entity`'s hint table does
+    not know degrades to `Thing` inside the tool, and the harness must show that
+    rather than translate around it.
+
+    Facts follow in extraction order, each quoting its subject's own
+    `surface_text` — the span the old intent attested with, so "attested" means
+    here exactly what it meant before."""
     surface_by_name = {m.name: m.surface_text for m in extraction.mentions}
-    body_surface = next(iter(surface_by_name.values()), step.body[:24])
+    kind_by_name = {m.name: m.kind for m in extraction.mentions}
+    body_quote = next(iter(surface_by_name.values()), step.body[:24])
 
     refs: list[str] = []
-    for m in extraction.mentions:
-        if m.name not in refs:
-            refs.append(m.name)
-    for f in extraction.facts:
-        for ref in (f.entity_ref, f.object_entity_ref):
+    for mention in extraction.mentions:
+        if mention.name not in refs:
+            refs.append(mention.name)
+    for fact in extraction.facts:
+        for ref in (fact.entity_ref, fact.object_entity_ref):
             if ref and ref not in refs:
                 refs.append(ref)
-    kind_by_name = {m.name: m.kind for m in extraction.mentions}
 
-    resolutions = []
-    for name in refs:
-        # The mention's own surface rides the resolution so plan_to_extraction
-        # reprojects it (else the mention_ref doubles as the surface_text).
-        res: dict[str, Any] = {"mention_ref": name, "surface": surface_by_name.get(name, name)}
-        existing = await _entity_id_by_name(maker, name, domain)
-        if existing is not None:
-            res.update({"mode": "existing", "entity_id": existing})
-        else:
-            res.update(
-                {"mode": "new", "new_kind": kind_by_name.get(name, "Thing"), "new_name": name}
-            )
-        resolutions.append(res)
-
-    facts = []
-    for f in extraction.facts:
-        facts.append(
-            {
-                "entity_ref": f.entity_ref,
-                "predicate": f.predicate,
-                "qualifier": f.qualifier,
-                "kind": f.kind,
-                "statement": f.statement,
-                "value_json": f.value_json,
-                "assertion": f.assertion,
-                "object_entity_ref": f.object_entity_ref,
-                "self_confidence": f.confidence,
-                "inferred": f.inferred,
-                "surface": surface_by_name.get(f.entity_ref, body_surface),
-                "temporal": _temporal_json(f.temporal),
-            }
-        )
-    return json.dumps({"resolutions": resolutions, "facts": facts})
+    entities = [
+        {"surface": name, "kind": kind_by_name.get(name, "thing").strip().casefold()}
+        for name in refs
+    ]
+    facts = [
+        {
+            "subject": fact.entity_ref,
+            "predicate": fact.predicate,
+            "object": fact.object_entity_ref or _object_literal(fact),
+            "statement": fact.statement,
+            "when": _when(fact),
+            "quote": surface_by_name.get(fact.entity_ref) or body_quote,
+        }
+        for fact in extraction.facts
+    ]
+    return _batched(entities, facts)
 
 
-def _temporal_json(temporal: Any) -> dict[str, Any] | None:
-    """Serialize a parsed ExtractedTemporal back into the intent's temporal shape."""
-    if temporal is None:
-        return None
-    return {
-        "phrase": temporal.phrase,
-        "resolved_start": temporal.resolved_start.isoformat() if temporal.resolved_start else None,
-        "resolved_end": temporal.resolved_end.isoformat() if temporal.resolved_end else None,
-        "precision": temporal.precision,
-    }
+def _batched(entities: list[dict], facts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split both lists at the tools' own ceilings. The batch is the measured
+    shape (20/20 well-formed at ~9 entities and ~8 facts a turn), so a note that
+    needs more sends a second call rather than a flat one-per-call turn."""
+    return (
+        [
+            {"entities": entities[i : i + MAX_ENTITIES]}
+            for i in range(0, len(entities), MAX_ENTITIES)
+        ],
+        [{"facts": facts[i : i + MAX_FACTS]} for i in range(0, len(facts), MAX_FACTS)],
+    )
+
+
+def _authored_calls(calls: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """A scenario that scripts its own tool arguments. Only needed when the
+    faithful default cannot express the case under test — a deliberately fumbled
+    `quote`, an object the model chose to leave as a literal."""
+    return _batched(list(calls.get("entities", [])), list(calls.get("facts", [])))
 
 
 async def _parse_extraction(step: Step, domain: str) -> Extraction:
-    """Run the note's scripted extraction through the genuine note.extract parse
-    (dedup, fact-cap, drop-invalid), the same front half integrate_note runs, so
-    the default intent reflects extraction-layer behaviour rather than the raw
+    """Run the note's scripted extraction through the genuine `note.extract`
+    parse (dedup, fact-cap, drop-invalid), the same front half the ingest path
+    runs, so the tool calls reflect extraction-layer behaviour rather than the raw
     scripted JSON."""
     created = datetime.fromisoformat(step.created_at)
     offset = created.utcoffset()
@@ -190,38 +321,26 @@ async def _parse_extraction(step: Step, domain: str) -> Extraction:
     )
 
 
-async def _compile_explicit_intent(
-    maker: async_sessionmaker, intent: dict[str, Any], domain: str
-) -> str:
-    """Resolve the name-based references in an authored intent to live ids."""
-    out: dict[str, Any] = {"resolutions": [], "facts": list(intent.get("facts", []))}
-    for r in intent.get("resolutions", []):
-        r = dict(r)
-        if r.get("mode") == "existing" and "entity_id" not in r:
-            name = r.get("name", r["mention_ref"])
-            r["entity_id"] = await _entity_id_by_name(maker, name, domain)
-        out["resolutions"].append(r)
-    for key in ("supersession_proposals", "merge_proposals", "distinct_proposals"):
-        items = intent.get(key)
-        if not items:
-            continue
-        resolved = []
-        for p in items:
-            p = dict(p)
-            for end in ("entity_a", "entity_b"):
-                if end in p:
-                    p[f"{end}_id"] = await _entity_id_by_name(maker, p.pop(end), domain)
-            resolved.append(p)
-        out[key] = resolved
-    return json.dumps(out)
+# --- the note ---------------------------------------------------------------
 
 
-async def _seed_note(maker: async_sessionmaker, step: Step) -> str:
+@dataclass(frozen=True)
+class _Note:
+    """A seeded note, carried across steps so a `reanalyze_step` re-runs against
+    the same row, the same chunk and the same capture instant."""
+
+    note_id: uuid.UUID
+    domain: str
+    created_at: datetime
+    tz_offset_minutes: int | None
+
+
+async def _seed_note(maker: async_sessionmaker[AsyncSession], step: Step) -> _Note:
     """Insert one note + a single chunk (body verbatim) with the step's exact
     created_at — reported_at and the temporal anchor every assertion turns on.
     One chunk keeps span-anchoring deterministic; chunk splitting is covered by
     the ingest tests, not here."""
-    note_id = str(uuid.uuid4())
+    note_id = uuid.uuid4()
     created = datetime.fromisoformat(step.created_at)
     # Carry the step's local offset like a real capture would: the pipeline's
     # local_anchor (and the backward-phrase repair that rides it) needs it, and
@@ -236,8 +355,8 @@ async def _seed_note(maker: async_sessionmaker, step: Step) -> str:
                 " tz_offset_minutes) VALUES (:i, :c, :d, :b, :t, :tz)"
             ),
             {
-                "i": note_id,
-                "c": note_id[:12],
+                "i": str(note_id),
+                "c": str(note_id)[:12],
                 "d": step.domain,
                 "b": step.body,
                 "t": created,
@@ -249,13 +368,85 @@ async def _seed_note(maker: async_sessionmaker, step: Step) -> str:
                 "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq, text)"
                 " VALUES (:i, :n, :d, 'paragraph', 1, :b)"
             ),
-            {"i": str(uuid.uuid4()), "n": note_id, "d": step.domain, "b": step.body},
+            {"i": str(uuid.uuid4()), "n": str(note_id), "d": step.domain, "b": step.body},
         )
         await s.commit()
-    return note_id
+    return _Note(note_id, step.domain, created, tz_offset)
 
 
-async def _snapshot(maker: async_sessionmaker) -> Snapshot:
+async def _chunks(session: AsyncSession, note_id: uuid.UUID) -> list[_ChunkRef]:
+    rows = (
+        await session.execute(
+            text(
+                "SELECT id, text FROM app.chunks WHERE note_id = :n"
+                " AND granularity = 'paragraph' ORDER BY seq"
+            ),
+            {"n": str(note_id)},
+        )
+    ).all()
+    return [_ChunkRef(id=r.id, text=r.text) for r in rows]
+
+
+async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _Note) -> None:
+    """One note's whole conversation: the tool calls, then one settle over their
+    union.
+
+    The writer is built per note, exactly as `converse.executor_for_note` builds
+    it — full-owner write scope (layer 1 of resolution carries no domain
+    predicate, and a floored write would be refused outright) with the narrowed
+    `(note_domain, 'general')` passed separately, which is what decides whether a
+    cross-domain entity's NAME comes back in the result text."""
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await get_or_create_me(session)
+
+    pipeline = _pipeline(maker)
+    read_scopes = (note.domain, "general")
+    writer = NoteGraphWriter(
+        maker,
+        pipeline,
+        target=NoteTarget(
+            note_id=note.note_id,
+            domain=note.domain,
+            captured_at=note.created_at,
+            tz_offset_minutes=note.tz_offset_minutes,
+        ),
+        write_ctx=SYSTEM_CTX,
+        read_scopes=read_scopes,
+        extractor=EXTRACTOR,
+    )
+    ctx = ToolContext(session=SYSTEM_CTX, scopes=read_scopes)
+
+    if step.tool_calls is not None:
+        resolves, asserts = _authored_calls(step.tool_calls)
+    else:
+        resolves, asserts = _tool_calls(await _parse_extraction(step, note.domain), step)
+    for arguments in resolves:
+        await writer.resolve_entity(arguments, ctx)
+    for arguments in asserts:
+        await writer.assert_fact(arguments, ctx)
+
+    # One settle per note, over the union — never per call (plan constraint 6).
+    # An EMPTY union is passed through deliberately: here it means the whole
+    # conversation asserted nothing, which is exactly when the note's mentions
+    # and facts should be swept. It is a per-CALL settle that constraint 7
+    # forbids, and this is not one.
+    led = pipeline.ledger
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await pipeline.settle_note(
+            session,
+            note_id=note.note_id,
+            note_domain=note.domain,
+            chunks=await _chunks(session, note.note_id),
+            extraction=led.as_extraction(),
+            extractor=EXTRACTOR,
+            resolved=led.resolved,
+            touched=led.touched,
+            projected=led.projected,
+            mention_ids=led.mention_ids,
+        )
+
+
+async def _snapshot(maker: async_sessionmaker[AsyncSession]) -> Snapshot:
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
         facts = (
@@ -304,28 +495,18 @@ async def _snapshot(maker: async_sessionmaker) -> Snapshot:
     )
 
 
-async def run_scenario(maker: async_sessionmaker, scenario: Scenario) -> Snapshot:
-    """Apply every step in order through the real pipeline; return the graph."""
-    note_ids: list[str] = []
-    domains: list[str] = []
+async def run_scenario(maker: async_sessionmaker[AsyncSession], scenario: Scenario) -> Snapshot:
+    """Apply every step in order through the real write path; return the graph."""
+    notes: list[_Note] = []
     for step in scenario.steps:
-        if step.reanalyze_step is not None:
-            # Re-analysis of an earlier step's note: same row, same chunk,
-            # same reported_at (and same domain) — only the extraction/intent
-            # changes.
-            note_id = note_ids[step.reanalyze_step]
-            domain = domains[step.reanalyze_step]
-        else:
-            note_id = await _seed_note(maker, step)
-            domain = step.domain
-        note_ids.append(note_id)
-        domains.append(domain)
-        # The intent is compiled against the graph AS IT STANDS now (prior steps
-        # committed), so an existing-mode reference resolves to the live entity.
-        intent_json = await _compile_intent(maker, step, domain)
-        await _integrator(maker, json.dumps(step.extraction), intent_json).integrate_note(
-            {"note_id": note_id}
-        )
+        # Re-analysis of an earlier step's note: same row, same chunk, same
+        # reported_at (and same domain) — only the extraction changes, so the
+        # conversation is a fresh one over an unchanged note.
+        note = notes[step.reanalyze_step] if step.reanalyze_step is not None else None
+        if note is None:
+            note = await _seed_note(maker, step)
+        notes.append(note)
+        await _run_step(maker, step, note)
     return await _snapshot(maker)
 
 
