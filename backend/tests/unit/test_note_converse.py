@@ -63,6 +63,37 @@ def test_the_frame_names_the_boundary_an_injected_body_would_cross() -> None:
     assert HOSTILE not in banner
 
 
+def test_the_capture_time_is_rendered_in_the_zone_the_note_was_captured_in() -> None:
+    """A note written at 11pm local must not read as the next day — that is a one-day
+    slip a dated fact in the graph would then carry forever."""
+    from datetime import UTC, datetime
+
+    from jbrain.analysis.converse import capture_line
+
+    # 2026-03-05 06:10 UTC is still 2026-03-04 23:10 in UTC-07:00.
+    utc = datetime(2026, 3, 5, 6, 10, tzinfo=UTC)
+    note = _note_info(created_at=utc, tz_offset_minutes=-420)
+    assert capture_line(note) == "Wednesday, March 04, 2026, 23:10 (UTC-07:00)"
+    # A half-hour zone keeps its minutes.
+    assert capture_line(_note_info(created_at=utc, tz_offset_minutes=330)).endswith("(UTC+05:30)")
+    # No recorded offset degrades to UTC rather than guessing.
+    assert capture_line(_note_info(created_at=utc)) == "Thursday, March 05, 2026, 06:10 UTC"
+
+
+def _note_info(*, created_at: Any, tz_offset_minutes: int | None = None) -> Any:
+    from jbrain.notes.service import NoteInfo
+
+    return NoteInfo(
+        id="n-1",
+        client_id="c-1",
+        domain="general",
+        destination=None,
+        body="body",
+        created_at=created_at,
+        tz_offset_minutes=tz_offset_minutes,
+    )
+
+
 def test_a_capture_time_rides_inside_the_same_frame() -> None:
     framed = framed_note("body", captured="Tuesday, March 04, 2026, 23:10 (UTC-07:00)")
     assert "[captured Tuesday, March 04, 2026, 23:10 (UTC-07:00)]" in framed

@@ -124,8 +124,6 @@ def capture_line(note: NoteInfo) -> str:
     at 11pm local must not read as the next day, which is exactly the kind of one-day
     slip a dated fact in the graph would carry forever. Falls back to UTC for the
     server-stamped and pre-Phase-3 rows that recorded no offset."""
-    if note.created_at is None:
-        return ""
     offset = note.tz_offset_minutes
     if offset is None:
         return f"{note.created_at.astimezone(UTC):%A, %B %d, %Y, %H:%M} UTC"
