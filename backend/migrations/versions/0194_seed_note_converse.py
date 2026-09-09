@@ -12,14 +12,35 @@ removes a producer before its replacement is merged, so this wave runs both path
 shipped pipeline still extracts the facts and writes the graph, and the conversation
 reads the note in a thread the owner can open.
 
-ENABLED, and the cost is real and worth stating plainly. Every ingested note now costs
-one extra `agent.turn` on a serial GPU, and in W2 that turn produces NO graph writes at
-all — the `note_ingest` persona's tool allowlist is an empty frozenset (D16, 0192), so
-there is nothing it can write. What it produces is the thread, which is the entire point
-of the wave landing: W2's honest retreat point is "the agent reads a note in a visible
-thread", and a trigger seeded disabled would ship that retreat point already retreated
-from. This is plan risk 4 ("Cost. 5-10x inference per note"), accepted at ratification.
-Turning it off needs no terminal: it is a row in Ops -> Automations (CLAUDE.md #10).
+ENABLED, and the cost is real and worth stating plainly — per EVENT, which is not per
+note. `note.ingested` fires on every settled ingest, so a note re-ingested is a note
+charged again, in a second thread: an attachment landing on an already-ingested note (a
+photo captured WITH its `attachments_expected` hint pays once, because the emit gate
+defers until OCR is done; one added later, or a client that sends no hint, does not), and
+every D6 clarification, since `append_clarification` enqueues `ingest_note` itself. A
+corpus rebuild costs nothing here: `backfill_pending_integration` enqueues
+`integrate_note` straight into `app.jobs` and emits no event.
+
+Each of those turns produces NO graph writes in W2 — the `note_ingest` persona's tool
+allowlist is an empty frozenset (D16, 0192), so there is nothing it can write. What it
+produces is the thread, which is the entire point of the wave landing: W2's honest retreat
+point is "the agent reads a note in a visible thread", and a trigger seeded disabled would
+ship that retreat point already retreated from. This is plan risk 4 ("Cost. 5-10x
+inference per note"), accepted at ratification. Turning it off needs no terminal: it is a
+row in Ops -> Automations (CLAUDE.md #10).
+
+KNOWN LIMIT, on old code against this schema. `resolve_event` returns a whole-event error
+on the first trigger it cannot resolve and discards the enqueues it had already computed,
+so a worker running a PRE-0194 image against a migrated database resolves this trigger to
+an action its in-code registry does not have and drops that event's `integrate_note` with
+it — the event is then marked dispatched. Every note stops being integrated for as long as
+that pairing stands, which is the one window where D13's "no producer removed before its
+replacement is merged" is transiently violated. The normal `Ops -> Update` path does not
+reach it (the worker is quiesced across `migrate`); it needs an image rolled back without
+its schema. The integration recovers on its own through the recurring
+`backfill_pending_integration`; the conversation does not, and in this wave writes nothing.
+The fix belongs to the dispatcher — separating the E3 resolution error, which should be
+per-trigger, from the E1/E2 authorization errors, which must stay whole-event fail-closed.
 
 The trigger's `filter` pins `event_types` to the bound type, exactly as 0040 does, and
 leaves `domains` empty — the action is cross-domain, so it accepts any note's domain and

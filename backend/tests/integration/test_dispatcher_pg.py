@@ -33,7 +33,7 @@ from jbrain import queue
 from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
-from jbrain.models.note_conversation import NoteConversationRepo
+from jbrain.models.note_conversation import STALE_CONVERSATION, NoteConversationRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from jbrain.workflow import dispatcher
@@ -934,3 +934,81 @@ async def test_a_live_conversation_suppresses_a_second_note_converse_enqueue(
     # not yet integrated), which is exactly the shipped behaviour, unchanged by this
     # wave: the conversation's dedup narrows nothing but the conversation.
     assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 2
+
+
+async def test_a_stranded_conversation_stops_suppressing_the_note_once_it_is_stale(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The other side of the suppression above, and the one that had no exit. A pass can
+    only leave `running` from inside the handler that opened it, so a worker SIGKILLed
+    mid-turn — which `Ops -> Update` produces on every deploy (`docker compose stop -t 30
+    worker`) — leaves `running` standing with nothing to clear it. This gate then skipped
+    every future `note_converse` for that note, silently and forever, on a box whose owner
+    has no terminal (CLAUDE.md #10).
+
+    `live_for_note` now reclaims a `running` pass older than `STALE_CONVERSATION` before
+    it reads, so the note comes back into the pipeline by itself."""
+    pid = await _seed_owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    note_id = await _make_note(maker, domain="general", body="the gutter is coming loose")
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    # The job ran and was killed mid-turn: off the queue, `running` left behind, and its
+    # last transition is older than any turn is allowed to take.
+    session_id = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done' WHERE payload->>'note_id' = :n"),
+            {"n": note_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions (id, principal_id, agent, domain_scopes)"
+                " VALUES (CAST(:id AS uuid), :pid, 'note_ingest', '{}')"
+            ),
+            {"id": session_id, "pid": pid},
+        )
+        await NoteConversationRepo().start(
+            s, session_id=session_id, note_id=note_id, body_sha="deadbeef"
+        )
+        await s.execute(
+            text(
+                "UPDATE app.note_conversations"
+                " SET updated_at = now() - make_interval(secs => :s)"
+                " WHERE session_id = CAST(:i AS uuid)"
+            ),
+            {"s": STALE_CONVERSATION.total_seconds() + 60, "i": session_id},
+        )
+
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.events (id, type, payload, domain_code, principal_id)"
+                " VALUES (CAST(:eid AS uuid), :t,"
+                " jsonb_build_object('note_id', CAST(:n AS text)), 'general', :pid)"
+            ),
+            {"eid": str(uuid.uuid4()), "t": wf_events.NOTE_INGESTED, "n": note_id, "pid": pid},
+        )
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    async with scoped_session(maker, owner) as s:
+        queued = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
+                    " AND payload->>'note_id' = :n AND status = 'queued'"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+        state = (
+            await s.execute(
+                text(
+                    "SELECT state FROM app.note_conversations WHERE session_id = CAST(:i AS uuid)"
+                ),
+                {"i": session_id},
+            )
+        ).scalar_one()
+    assert queued == 1  # the note is back in the pipeline
+    assert state == "failed"  # and the dead pass is settled as dead, not resurrected

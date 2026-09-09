@@ -735,16 +735,41 @@ AGENTS: dict[str, AgentProfile] = {
 
 AGENT_NAMES = frozenset(AGENTS)
 
-# The personas an OWNER may select for a Full Brain session or task. `intake` lives in
-# AGENTS (so it is resolvable + version-pinned) but is a NON-owner persona — it belongs to
-# an intake_link principal, is resolved via `agent_for_intake`, and must never be stored in
-# app.agent_sessions/app.tasks (whose `agent` CHECK excludes it anyway). Owner-facing
-# validation gates on THIS set, not AGENT_NAMES, so an owner can't open an intake session.
-OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS
+# Two different exclusions sit between AGENT_NAMES and what an owner may select, and they
+# are not the same question. `intake` lives in AGENTS (so it is resolvable +
+# version-pinned) but is a NON-owner persona — it belongs to an intake_link principal, is
+# resolved via `agent_for_intake`, and must never be stored owner-side at all (the `agent`
+# CHECK excludes it). The engine-only personas below ARE owner-side and ARE stored; they
+# are simply not a person's to start.
+
+# Owner-side personas the ENGINE opens and a person never picks. They are stored in
+# `app.agent_sessions` like any other owner persona (the CHECK admits them, 0192), and
+# they are the owner's own threads — but nothing may mint one from a request.
+#
+# `note_ingest` is one because it is only itself with a note behind it: the runner opens
+# it in the same transaction as its `note_conversations` row, seeded with a captured note
+# as turn 0 under the frame, and W3 hands it the graph-write tools. A session started
+# from `POST /sessions {"agent":"note_ingest"}` has none of that — no note, no frame, no
+# conversation row, owner-chosen read scopes — and would be the write persona reachable
+# by a request. Harmless while the allowlist is an empty frozenset, which is exactly why
+# it is closed now rather than after W3 fills it. Also keeps `ASSISTANT.md`'s "not
+# selectable — the engine opens it, never a picker" a fact rather than an intention.
+ENGINE_ONLY_PERSONAS = frozenset({"note_ingest"})
+
+# What an OWNER may SELECT for a Full Brain session or task — the session/task routes'
+# gate (`is_owner_agent`, `api/sessions.py`, `api/tasks.py`), never AGENT_NAMES.
+OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS - ENGINE_ONLY_PERSONAS
+
+# What may be STORED owner-side: everything an owner selects, plus the engine-opened
+# personas. This is the set the two `agent` CHECK constraints must admit, and the set the
+# RLS suites iterate — selectability and storability are different questions, and pinning
+# the CHECK to the selectable set alone would fail the moment the engine opens a session.
+STORABLE_OWNER_AGENTS = OWNER_AGENTS | ENGINE_ONLY_PERSONAS
 
 
 def is_owner_agent(name: str) -> bool:
-    """Whether an OWNER may run this persona (excludes the non-owner intake persona)."""
+    """Whether an OWNER may SELECT this persona (excludes the non-owner intake persona
+    and the engine-only ones the owner never picks)."""
     return name in OWNER_AGENTS
 
 

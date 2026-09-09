@@ -17,7 +17,15 @@ What each test is defending:
 - the tool-call ledger actually records. Nothing can call a tool in W2, so this is the
   one thing that would otherwise ship dead.
 - a dead pass lands `failed`, never a stuck `running` — a `running` conversation holds
-  the note's one live slot and nothing on a terminal-less box can release it.
+  the note's one live slot and nothing on a terminal-less box can release it. And when a
+  pass dies WITHOUT reaching its own `set_state` (a SIGKILL mid-turn, which `Ops ->
+  Update` produces on every deploy), the next attempt reclaims it rather than finding the
+  note suppressed forever.
+- `settled` is never claimed for a pass whose record did not land. It is the state W3
+  hangs a whole-note retraction off, so an empty ledger under it is not "nothing was
+  written", it is a retraction armed.
+- no orphan `agent_sessions` row survives a lost race. The thread is listed in the
+  owner's chat list now, so an orphan is an empty chat that nothing removes.
 """
 
 import uuid
@@ -42,7 +50,11 @@ from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.note_conversation import NoteConversationRepo
+from jbrain.models.note_conversation import (
+    NOTE_TURN_WALL_CLOCK,
+    STALE_CONVERSATION,
+    NoteConversationRepo,
+)
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
@@ -110,16 +122,22 @@ async def owner(maker: async_sessionmaker[AsyncSession]) -> SessionContext:
 
 
 def _runner(
-    maker: async_sessionmaker[AsyncSession], owner: SessionContext, executor: FakeTurn
+    maker: async_sessionmaker[AsyncSession],
+    owner: SessionContext,
+    executor: FakeTurn,
+    *,
+    transcript: Any | None = None,
+    conversations: NoteConversationRepo | None = None,
 ) -> NoteConverseRunner:
     return NoteConverseRunner(
         maker,
         notes=SqlNotesRepo(maker),
         sessions=AgentSessionRepo(maker),
         runlog=AgentRunLog(maker),
-        transcript=AgentTranscript(maker),
+        transcript=transcript or AgentTranscript(maker),
         executor=executor,
         owner_principal_id=_const(owner.principal_id),
+        **({"conversations": conversations} if conversations is not None else {}),
     )
 
 
@@ -454,3 +472,264 @@ async def test_the_conversation_is_opened_against_the_body_it_read(
 
     rows = await _conversation(maker, owner, note_id)
     assert rows[0].note_body_sha == note_body_sha(body)
+
+
+async def _run_row(maker: async_sessionmaker[AsyncSession], owner: SessionContext, session_id: str):  # noqa: ANN202
+    async with scoped_session(maker, owner) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT id::text AS id, status, stop_reason FROM app.runs"
+                    " WHERE session_id = CAST(:i AS uuid)"
+                ),
+                {"i": session_id},
+            )
+        ).one()
+
+
+class BrokenTranscript(AgentTranscript):
+    """An `AgentTranscript` whose write fails — a full disk, a lost connection, a
+    constraint. The point is not which: it is that `_record` can raise at all."""
+
+    async def record_exchange(self, *args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("transcript write failed")
+
+
+async def test_a_conversation_never_settles_on_a_record_that_did_not_land(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`settled` is a CLAIM: the pass finished and what it did is on the record. W3 hangs
+    the whole-note retraction off exactly that claim, keyed on the ledger — so a
+    `settled` conversation with an empty ledger and an empty transcript does not read as
+    "the write failed", it reads as "the agent found nothing in this note" and arms a
+    retraction of the note's entire non-pinned graph (constraint 6, `settle_note`).
+
+    Settling AFTER the record is therefore settling BECAUSE of it."""
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    runner = _runner(maker, owner, FakeTurn(), transcript=BrokenTranscript(maker))
+
+    await runner.note_converse({"note_id": note_id})
+
+    rows = await _conversation(maker, owner, note_id)
+    assert [r.state for r in rows] == ["failed"]
+    assert await _turns(maker, owner, rows[0].sid) == []
+    # The run says the same thing, and says WHICH half failed: the model answered, the
+    # persistence did not — a different fault from a turn that never ran.
+    run = await _run_row(maker, owner, rows[0].sid)
+    assert run.status == "error"
+    assert run.stop_reason == "record_failed"
+    # And the note is released, so the next ingest opens a fresh pass over it.
+    async with scoped_session(maker, owner) as s:
+        assert await NoteConversationRepo().live_for_note(s, note_id) is None
+
+
+class LyingConversations(NoteConversationRepo):
+    """A repo whose liveness read misses a conversation that exists — the race the
+    partial unique index is the authority for, reproduced deterministically rather than
+    by hoping two workers interleave."""
+
+    async def live_for_note(self, session: AsyncSession, note_id: str) -> Any:
+        return None
+
+
+async def test_losing_the_one_live_race_leaves_no_orphan_session_behind(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The dedup read can miss — that is why the index exists. What must not survive the
+    refusal is the `agent_sessions` row: a note's thread is listed in the owner's Full
+    Brain chat list now, so an orphan is a permanent empty chat nothing points at and
+    nothing on a terminal-less box removes. The session row and the conversation row are
+    written in ONE transaction, so the refusal rolls back both."""
+    note_id = await _note(maker, owner, "dinner with sam on friday")
+    held = await _session(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(s, session_id=held, note_id=note_id, body_sha="0" * 64)
+
+    executor = FakeTurn()
+    await _runner(maker, owner, executor, conversations=LyingConversations()).note_converse(
+        {"note_id": note_id}
+    )
+
+    # No second conversation, no raise, and no turn billed.
+    rows = await _conversation(maker, owner, note_id)
+    assert [r.sid for r in rows] == [held]
+    assert executor.conversations == []
+    # And no session row with no conversation behind it.
+    async with scoped_session(maker, owner) as s:
+        orphans = (
+            (
+                await s.execute(
+                    text(
+                        "SELECT s.id::text FROM app.agent_sessions s"
+                        " LEFT JOIN app.note_conversations c ON c.session_id = s.id"
+                        " WHERE s.agent = :a AND c.session_id IS NULL"
+                    ),
+                    {"a": NOTE_CONVERSE_AGENT},
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert orphans == []
+
+
+async def _backdate(
+    maker: async_sessionmaker[AsyncSession],
+    owner: SessionContext,
+    session_id: str,
+    *,
+    minutes: int,
+) -> None:
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "UPDATE app.note_conversations"
+                " SET updated_at = now() - make_interval(mins => :m)"
+                " WHERE session_id = CAST(:i AS uuid)"
+            ),
+            {"m": minutes, "i": session_id},
+        )
+
+
+async def _open_live(
+    maker: async_sessionmaker[AsyncSession],
+    owner: SessionContext,
+    note_id: str,
+    *,
+    state: str = "running",
+) -> str:
+    session_id = await _session(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(
+            s, session_id=session_id, note_id=note_id, body_sha="0" * 64, state=state
+        )
+    return session_id
+
+
+async def test_a_conversation_stranded_running_by_a_killed_worker_is_reclaimed(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The failure this exists for: `Ops -> Update` quiesces the worker with
+    `docker compose stop -t 30 worker` mid-turn, so the pass dies between `start` and the
+    state transition. `running` holds the note's ONE live slot, the dispatcher then
+    suppresses every future `note_converse` for it, and the owner has no terminal — left
+    unreclaimed that note is out of the pipeline permanently and silently."""
+    note_id = await _note(maker, owner, "the roof needs looking at")
+    stranded = await _open_live(maker, owner, note_id)
+    await _backdate(
+        maker, owner, stranded, minutes=int(STALE_CONVERSATION.total_seconds() // 60) + 1
+    )
+
+    executor = FakeTurn()
+    await _runner(maker, owner, executor).note_converse({"note_id": note_id})
+
+    states = {r.sid: r.state for r in await _conversation(maker, owner, note_id)}
+    assert states[stranded] == "failed"  # reclaimed, never resurrected
+    assert len(states) == 2
+    assert sorted(states.values()) == ["failed", "settled"]  # and a fresh pass really ran
+    assert len(executor.conversations) == 1
+
+
+async def test_a_slow_pass_is_not_reclaimed_out_from_under_itself(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """A turn cannot outlive `NOTE_TURN_WALL_CLOCK` and the horizon is twice that, so a
+    pass still inside its own budget keeps the note. A reclaim firing here would run two
+    conversations over one note at once — the thing this whole lifecycle exists to stop."""
+    note_id = await _note(maker, owner, "a long one")
+    running = await _open_live(maker, owner, note_id)
+    await _backdate(maker, owner, running, minutes=int(NOTE_TURN_WALL_CLOCK.total_seconds() // 60))
+
+    executor = FakeTurn()
+    await _runner(maker, owner, executor).note_converse({"note_id": note_id})
+
+    rows = await _conversation(maker, owner, note_id)
+    assert [(r.sid, r.state) for r in rows] == [(running, "running")]
+    assert executor.conversations == []
+
+
+async def test_an_unanswered_question_is_never_reclaimed_however_old(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`waiting_on_owner` waits as long as the owner does (D5: no push, no nagging). The
+    reclaim must not turn "you have not answered yet" into a released note and a question
+    dropped out of the notes tab."""
+    note_id = await _note(maker, owner, "which sam?")
+    asking = await _open_live(maker, owner, note_id, state="waiting_on_owner")
+    await _backdate(maker, owner, asking, minutes=60 * 24 * 30)
+
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+
+    rows = await _conversation(maker, owner, note_id)
+    assert [(r.sid, r.state) for r in rows] == [(asking, "waiting_on_owner")]
+
+
+class InterleavingTranscript(AgentTranscript):
+    """Writes the real exchange, then a LATER assistant turn belonging to another run in
+    the same session — W3's shape, where the owner's reply is a second run in the thread
+    the ingest pass is still closing out."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], owner: SessionContext) -> None:
+        super().__init__(maker)
+        self._owner = owner
+        self.intruder_turn: str | None = None
+        self.intruder_run: str | None = None
+
+    async def record_exchange(self, *args: Any, **kwargs: Any) -> str:
+        out = await super().record_exchange(*args, **kwargs)
+        session_id = kwargs["session_id"]
+        # A real second run in the same session, opened the way any turn opens one.
+        self.intruder_run = await AgentRunLog(self._maker).start(
+            self._owner, session_id=session_id, prompt_version="test"
+        )
+        async with scoped_session(self._maker, self._owner) as s:
+            self.intruder_turn = (
+                await s.execute(
+                    text(
+                        "INSERT INTO app.agent_turns"
+                        " (id, session_id, run_id, role, content, tools)"
+                        " VALUES (gen_random_uuid(), CAST(:i AS uuid), CAST(:r AS uuid),"
+                        " 'assistant', 'later', '[]'::jsonb) RETURNING id::text"
+                    ),
+                    {"i": session_id, "r": self.intruder_run},
+                )
+            ).scalar_one()
+        return out
+
+
+async def test_the_ledger_binds_to_this_runs_turn_not_the_newest_one(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`record_exchange` stamps `run_id` on both rows it writes, so the exchange this
+    pass produced has an exact name. Binding "the newest assistant turn in the session"
+    instead was only ever right while a note session held ONE exchange — and W3 puts a
+    second one in it the moment the owner replies. Then the D3 chip renders this turn's
+    writes under somebody else's answer."""
+    acc = TranscriptAccumulator()
+    for event in (
+        ToolCallEvent(id="c1", name="assert_fact", arguments={"subject": "Kaiya"}),
+        ToolResultEvent(tool_call_id="c1", ok=True, summary="wrote 1 fact"),
+        DoneEvent(stop_reason="end_turn"),
+    ):
+        acc.feed(event)
+
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    transcript = InterleavingTranscript(maker, owner)
+    await _runner(
+        maker, owner, FakeTurn(tools=acc.tool_steps()), transcript=transcript
+    ).note_converse({"note_id": note_id})
+
+    sid = (await _conversation(maker, owner, note_id))[0].sid
+    async with scoped_session(maker, owner) as s:
+        calls = await NoteConversationRepo().tool_calls(s, sid)
+        bound_run, bound_content = (
+            await s.execute(
+                text("SELECT run_id::text, content FROM app.agent_turns WHERE id = :t"),
+                {"t": str(calls[0].turn_id)},
+            )
+        ).one()
+    assert transcript.intruder_turn is not None
+    # Not the newest assistant turn in the session — the one THIS run wrote.
+    assert str(calls[0].turn_id) != transcript.intruder_turn
+    assert bound_run != transcript.intruder_run
+    assert bound_content == "The note says Kaiya started a new medication."

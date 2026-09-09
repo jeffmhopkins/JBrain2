@@ -172,7 +172,7 @@ Personas (`backend/src/jbrain/agent/agents.py`, each a `.prompt` sidecar); an
 | **teacher** | Socratic tutor | No tools, no retrieval. |
 | **jerv** | Sandboxed web chatbot (the approved web-egress exception) | Web + weather/hurricane + image/media + `spawn_subagent` + host metrics. **No KB.** |
 | **archivist** | Gmail triage/organizer | `gmail_*` + an owner-only cross-session memory. **No KB**; present only when Gmail is configured. |
-| **note_ingest** | The note conversation — a captured note as turn 0, opened by the `note_converse` action, never picked by the owner | **No tools** (an explicitly EMPTY allowlist, never the curator wildcard) and **no KB** in this wave; the graph-write tools hang off it later. |
+| **note_ingest** | The note conversation — a captured note as turn 0, opened by the `note_converse` action. Never picked by the owner, and now enforced: `ENGINE_ONLY_PERSONAS` keeps it out of `OWNER_AGENTS`, so the session/task routes 422 it. Its threads are listed on the PWA's Full Brain tab | **No tools** (an explicitly EMPTY allowlist, never the curator wildcard) and **no KB** in this wave; the graph-write tools hang off it later. |
 | **intake** | Guided-intake interviewer, run by a **non-owner** | **No tools, no KB** — capture is the server's job. |
 | research / review / summarize | The closed sub-agents `jerv` can spawn | Web-only or no tools; always leaves. |
 | research_scout / research_fetch / research_deep | The deep-research gather tiers (scout searches only, fetch opens only, deep may decompose one sub-fan) | Web-only; always leaves. |
