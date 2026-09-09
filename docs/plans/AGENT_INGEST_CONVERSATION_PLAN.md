@@ -1266,9 +1266,51 @@ green without it. W5b: the arbiter card kinds and the inbox's
 ingest tab, with an explicit surviving-kinds list. W5c: correction-note retirement plus
 the `SECURITY DEFINER` move and grant revoke — a security-path change needing its own RLS
 isolation test, which cannot ride a 3,000-line deletion. **Port `file_correction`
-first**: `PHASE6_WIKI_PLAN.md:255-261` names `plan_intent(correction=True)` as the wiki
-correction loop's shipped exit criterion, and `wiki/lint.py:790` offers it as a card
-action.
+first**: `PHASE6_WIKI_PLAN.md` §4 names `plan_intent(correction=True)` as the wiki
+correction loop's shipped exit criterion, and `wiki/lint.py`'s stale-claim card offers it
+as a `correct` action.
+
+*Landed (the precondition).* **`file_correction` is not `correct_fact` under another name,
+and converging them would have been wrong.** `correct_fact` addresses ONE identity key
+`(entity, predicate, qualifier)` resolved against the graph, REFUSES a key holding several
+live rows, and is bound only inside a note conversation (`replytools._bound`). The wiki
+lever takes PROSE, from a Talk thread anchored to an `article_id` or from a review card —
+places with no note conversation to be inside of — and its product is the NOTE, which is
+the part that cannot be dropped: `wiki_citations.chunk_id` is NOT NULL and
+`wiki/builder.py` INNER JOINs chunks, and the corpus rebuild re-derives the graph from
+notes, so a correction that left no note would have nothing to cite and would evaporate on
+the next rebuild. Three producers mint that note (`agent/wikiwritetools.file_correction`,
+`POST /api/wiki/{id}/corrections`, `POST /api/review/{id}/correction`) and all three are
+kept.
+
+What was actually broken by W5a was the note's BACK half, not its front: the elevation was
+two lines inside `integrate_note` (`provenance == 'owner_correction'` →
+`plan_intent(correction=True)`), both inside the deleted range. So the flag is what was
+ported, onto the write path the conversation already uses: `NoteTarget` carries the note's
+provenance and `graphwritetools._assert_one` sets `correction=True` on a fact the
+correction note's own text ATTESTS — the arbiter's rule verbatim, refusing half included
+(`fact_correction = correction and signals_i.surface_attested`; an inferred fact in a
+correction note follows the ordinary capped path), at the same `weight = 1.0` and with the
+model's self-report suppressed so the number cannot drift. Nothing model-facing changed:
+no sidecar edit, no version bump, no re-pinned digest, and no field the model could fill to
+claim a force-supersede. The discriminator is server-read provenance — `CreateNoteRequest`
+has no such field and every producer sits behind an owner principal — which is what makes
+it safe on a pass the owner is not present for, and it can never collide with D10:
+`is_third_party` and `is_correction` are disjoint answers to the same field.
+
+Evidence: `tests/integration/test_note_correction_pg.py`, end to end from the
+`file_correction` handler through `ingest_note`, the production `note_converse` wiring and
+`supersession.decide()` — the pin, the refusal, the pin holding against a later ordinary
+note, and an ordinary note in the same shape doing none of it. **The port needed nothing
+inside W5a's deletion range**, so the two waves do not conflict.
+
+*Also found and fixed there.* `note_converse` could not run on a real box at all:
+`tasks.scheduler._owner_principal_id` is annotated `str | None` but `app.principals.id` is
+a `uuid` column, so the handler built a `SessionContext` from a `uuid.UUID` and died in
+`scoped_session`'s `set_config`. Both other callers wrap the value at their own call site
+(`tasks_tick`; `PlanContinuationRunner`, whose test comment reads "raw uuid, like
+production"), and every note-conversation test injects the id itself, so nothing caught
+it. Fixed at the source.
 
 The stated per-PR rule is *no PR removes a producer before its replacement is merged and
 green* — the wave-level split of deletion from replacement is deliberate (D13).

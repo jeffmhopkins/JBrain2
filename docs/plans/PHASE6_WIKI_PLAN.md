@@ -1,6 +1,6 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** A✅ B✅ C✅ D◻️ —
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** A✅ B✅ C✅ D◻️ —
 > the builder, `wiki_citations`/`wiki_links` graph coupling, and Talk all shipped
 > (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** the nightly build
 > schedules (`wiki_refresh` 03:30 + `wiki_prune` 03:45) were **re-enabled by migration
@@ -254,11 +254,31 @@ reads are firewalled.
 **Correction-note path — owner-authored, elevated-weight, revision-anchored.** The existing
 `propose_correction` makes an *agent*-authored NORMAL-weight note — the wrong path. **Built
 (Wave A+):** the owner-authored correction path + revision anchoring shipped (migration
-0051; `analysis/arbiter.py` `plan_intent(correction=True)`): each SURFACE-ATTESTED fact in a
-correction note commits at full weight — skipping the confidence ceiling — and the executor
-force-supersedes the current head + pins; an INFERRED fact is NOT elevated, and safety
-review flags still force review. This is the correction loop's "out-argue the wiki" exit
-criterion, consumed by Wave B2b's Talk/correction machinery.
+0051): each SURFACE-ATTESTED fact in a correction note commits at full weight — skipping the
+confidence ceiling — and the executor force-supersedes the current head + pins; an INFERRED
+fact is NOT elevated, and safety review flags still force review. This is the correction
+loop's "out-argue the wiki" exit criterion, consumed by Wave B2b's Talk/correction
+machinery.
+
+**Where that elevation lives has MOVED, and the criterion is unchanged.** It was
+`analysis/arbiter.py` `plan_intent(correction=True)`, reached from two lines inside
+`analysis/pipeline.integrate_note` that read `provenance == 'owner_correction'` — both
+deleted by `AGENT_INGEST_CONVERSATION_PLAN.md` W5a. The rule now runs on the note's own
+agent conversation: `agent/graphwritetools.NoteTarget.is_correction` plus the branch in
+`_assert_one`, which is the same rule including its refusing half (an inferred fact in a
+correction note is not elevated). `tests/integration/test_note_correction_pg.py` is the
+evidence, end to end from the `file_correction` tool through `ingest_note`, the production
+`note_converse` wiring and `supersession.decide()`.
+
+**`file_correction` stays.** It is not `correct_fact` (W3) under another name and the two do
+not converge: `correct_fact` addresses ONE identity key `(entity, predicate, qualifier)`
+resolved against the graph, refuses a key holding several live rows, and works only inside a
+note conversation — while this lever takes PROSE from a Talk thread or a lint review card,
+where there is no note conversation at all, and its whole point is the NOTE it leaves behind:
+the citable source `wiki_citations.chunk_id` (NOT NULL, INNER JOINed by `wiki/builder.py`)
+needs, and the one the corpus rebuild re-derives the graph from. A correction expressed only
+as a tool call in a Talk thread would have no chunk to cite and would evaporate on the next
+rebuild.
 
 ## 5. Read-only wiki UI — reader (mock gate ✅)
 
