@@ -681,7 +681,7 @@ class AnalysisPipeline:
         override = await self._resolve_from_intent(
             session, list(intent.entity_resolutions), note_domain=note_domain
         )
-        # All facts (commit_only=False); held ones are routed to the pending_review
+        # ALL facts, held ones included: they are routed to the pending_review
         # path by INDEX — extraction.facts[i] is 1:1 with plan.facts[i], so the key
         # is exact even when two facts share entity_ref.predicate.qualifier (e.g.
         # enumerated children edges).

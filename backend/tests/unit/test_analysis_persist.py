@@ -81,8 +81,6 @@ def _plan(facts: list[IntentFact], *, commit: bool = True) -> ArbiterPlan:
             PlannedFact(fact=f, weight=0.9, status="active" if commit else "pending_review")
             for f in facts
         ),
-        merge_proposals=(),
-        distinct_proposals=(),
     )
 
 
@@ -101,9 +99,7 @@ def test_build_run_steps_names_the_three_pipeline_stages():
 
 
 def test_build_run_steps_arbiter_not_ok_when_rejected():
-    rejected = ArbiterPlan(
-        rejected=True, fatal_violations=(), facts=(), merge_proposals=(), distinct_proposals=()
-    )
+    rejected = ArbiterPlan(rejected=True, fatal_violations=(), facts=())
     steps = build_run_steps(_intent([]), rejected)
     assert steps[2] == ("arbiter", "plan_intent", False)
 

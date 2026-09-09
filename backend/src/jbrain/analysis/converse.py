@@ -724,6 +724,13 @@ def note_converse_handler(
                 domain=note.domain,
                 captured_at=note.created_at,
                 tz_offset_minutes=note.tz_offset_minutes,
+                # Read from the note row, like `integrate_note` read it: an
+                # `owner_correction` note's attested facts force-supersede + pin
+                # (`NoteTarget.is_correction`). This is the same value `is_third_party`
+                # below already reads, so the conversation now branches on provenance in
+                # two directions off one field — narrower for a stranger, authoritative
+                # for the owner's own correction.
+                provenance=note.provenance,
             ),
             # The WRITE session is the owner at FULL scope, like `integrate_note`'s:
             # entity resolution layer 1 carries no domain predicate (narrowing mints

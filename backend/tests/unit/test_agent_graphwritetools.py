@@ -535,3 +535,78 @@ def test_a_handle_still_addresses_an_entity_under_a_value_predicate() -> None:
     assert writer.lookup("e1", by_name=False) is handle
     assert writer.lookup("Sammy", by_name=False) is None
     assert writer.lookup("Sammy", by_name=True) is handle
+
+
+# --- the correction-note elevation --------------------------------------------
+#
+# W5's stated precondition. `PHASE6_WIKI_PLAN.md` §4 names `plan_intent(correction=True)`
+# as the wiki correction loop's shipped exit criterion; its only bridge was
+# `integrate_note` reading `provenance == 'owner_correction'`, which W5a deletes. The
+# rule now lives on `NoteTarget`, and these are the parts of it that need no database.
+
+
+def _target(provenance: str) -> gw.NoteTarget:
+    return gw.NoteTarget(
+        note_id=gw.uuid.uuid4(),
+        domain="general",
+        captured_at=gw.datetime(2026, 9, 9, tzinfo=gw.UTC),
+        provenance=provenance,
+    )
+
+
+def test_only_an_owner_correction_note_is_a_correction() -> None:
+    """The discriminator is the provenance the SERVER stamped, and the closed set of
+    spellings matters: `human` is the ordinary capture, `agent` a Proposal enactment,
+    `untrusted_origin` a stranger's approved intake body. None of them may force-supersede
+    and pin, and a note conversation is opened over all four."""
+    assert _target("owner_correction").is_correction is True
+    for ordinary in ("human", "agent", "untrusted_origin", "", "OWNER_CORRECTION"):
+        assert _target(ordinary).is_correction is False
+
+
+def test_a_note_is_not_a_correction_unless_it_was_said_to_be() -> None:
+    """The default is the safe one. Every `NoteTarget` built without the field — a test,
+    a future caller, a path that forgets — is an ordinary note, so the elevation can only
+    ever be reached by a caller that read a real note row."""
+    bare = gw.NoteTarget(
+        note_id=gw.uuid.uuid4(),
+        domain="general",
+        captured_at=gw.datetime(2026, 9, 9, tzinfo=gw.UTC),
+    )
+    assert bare.provenance == "human"
+    assert bare.is_correction is False
+
+
+def test_a_stranger_authored_note_can_never_be_a_correction() -> None:
+    """The two provenance branches the conversation now takes must not overlap: the body
+    a stranger wrote narrows the surface (D10), and the owner's correction widens what a
+    write means. `is_third_party` and `is_correction` are answers to the same field, and
+    a note that satisfied both would be stranger text force-superseding the graph."""
+    from jbrain.analysis.thirdparty import is_third_party
+
+    for provenance in ("human", "agent", "owner_correction", "untrusted_origin", "anything"):
+        target = _target(provenance)
+        assert not (target.is_correction and is_third_party(provenance))
+
+
+def test_the_capture_api_cannot_mint_a_correction_note() -> None:
+    """The whole safety argument for elevating on a pass the owner is not present for is
+    that nothing but an owner-gated server path can set this provenance. `POST /api/notes`
+    is the one endpoint an offline client (and, through it, anything that can reach the
+    PWA's own capture route) drives, and its request model carries no `provenance` field
+    at all — so there is no value to send."""
+    from jbrain.api.notes import CreateNoteRequest
+
+    assert "provenance" not in CreateNoteRequest.model_fields
+
+
+def test_the_sidecar_gained_nothing_the_model_can_set() -> None:
+    """Constraint 5, restated as a schema property: the elevation is server-side, so
+    `assert_fact` is unchanged — no new field, no version bump, no re-pinned digest, and
+    nothing the model could claim in order to buy a force-supersede. `correct_fact` stays
+    the only place a model asks for one, and it asks by being CALLED, not by a field."""
+    spec = _spec("assert_fact")
+    item = spec.params["properties"]["facts"]["items"]
+    assert spec.version == 3
+    for forbidden in ("correction", "provenance", "pinned", "domain"):
+        assert forbidden not in item["properties"]

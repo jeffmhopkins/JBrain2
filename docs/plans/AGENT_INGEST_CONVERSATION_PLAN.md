@@ -1,6 +1,6 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️ (W5a blocked — see W5)
 >
 > W4's two halves have both landed and are merged. INTAKE (D10): the third tool set, and
 > the finding that the port itself had already happened by accident in W2. EMR (D9): the
@@ -1257,6 +1257,50 @@ head holds every later draw). So the EMR lookup now fails closed too: no convers
 no note, a soft-deleted note or any exception all narrow, for each predicate
 independently.
 
+*W5a attempted, and the gate is NOT met — the wave is blocked, not skipped.* The
+six-gap half of the gate holds and was honoured: every one of the 23 `xfail` strings
+and the README's eight-row table were read against the code, and nothing on the "may
+not delete" list was touched. What blocks the wave is the OTHER half, D13's per-PR
+rule, and it fails on two independent counts the plan's own line numbers hid:
+
+- **`pipeline.py:305-478` is `integrate_note` exactly, and it is still the sole
+  producer of the whole-note settle.** The conversation's write path is `commit_facts`
+  only (`agent/graphwritetools.py`) and calls `settle_note` **nowhere**, so nothing but
+  `integrate_note` runs the mention reconcile, the declared-alias sweep, the retraction
+  of facts a re-extraction dropped and the chain repair behind it, the stale-ambiguity
+  and truncation cards, the entity reprojection, the corroboration promotion, or the
+  `note_analysis` stamp that `api/notes.py`'s `analyzed` flag and `/analysis` read —
+  nor the `notes.integration_state = 'integrated'` flip that
+  `queue.backfill_pending_integration`, the workflow reconciler and `rebuild.py` all
+  key on. `emr/ownership.py` already states the first half of this ("the CONVERSATION
+  adds no sweep of its own today"); what it does not say is that this makes the
+  deletion a producer removal with no replacement. Wiring the sweep is blocked on the
+  precondition W4 was briefed to land and did not: `ConversationWrites.facts` is filled
+  by the unattended pass and **empty for the owner's reply turn**, so
+  `settle_note(touched=writes().facts)` today would retract every unpinned fact the
+  owner's own reply just added (`models/note_conversation.py`). Pinned by
+  `test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`.
+- **`arbiter.py` cannot go at all, and that is W4's own doing.** Its EMR half routes
+  the deterministic importer through `arbiter.plan_intent`
+  (`ingest/emr/integrate.py`), and `commit_intent` — the seam that importer and the
+  eval runner write through — itself calls `plan_to_extraction` and `compute_signals`.
+  `ArbiterPlan` / `PlannedFact` / `plan_intent` / `plan_to_extraction` /
+  `compute_signals` therefore have a live non-model producer. Only the three helpers
+  `integrate_note` alone calls — `recover_dropped_fields`, `derive_kinship_gender`,
+  `dedup_intent_facts` — are W5a's to take, and only after the first bullet clears.
+
+So W5a's real size is not ~940 lines; it is three helpers plus `integrate_note`, and
+it is gated on the settle wiring, which is a *replacement*, not a deletion. Sequence
+it as W4c (move the ledger recorder into tool dispatch, wire the scoped sweep, decide
+the `integrate_note` / `emr_parse` race the third writer would make three-way) and
+only then W5a.
+
+What did land under W5a: two genuinely dead pieces inside `arbiter.py`, both
+unreachable regardless of the gate — `plan_to_extraction`'s `commit_only` arm (A1b-ii-1's
+safety, superseded by A1b-ii-2's index routing, no caller since) and `ArbiterPlan`'s
+write-only `merge_proposals` / `distinct_proposals`, which nothing read, so the module
+docstring's "merges and distinct-from proposals always route to review" was false.
+
 **W5 — Teardown, decomposed.** W5a: the old chain (`pipeline.py:305-478` + `arbiter.py`,
 ~940 LOC), gated on W3's runner re-point **and on the six-gap decision above, which is the
 other half of that gate**: an accepted gap is a path no scenario can cover, so the "what
@@ -1266,9 +1310,51 @@ green without it. W5b: the arbiter card kinds and the inbox's
 ingest tab, with an explicit surviving-kinds list. W5c: correction-note retirement plus
 the `SECURITY DEFINER` move and grant revoke — a security-path change needing its own RLS
 isolation test, which cannot ride a 3,000-line deletion. **Port `file_correction`
-first**: `PHASE6_WIKI_PLAN.md:255-261` names `plan_intent(correction=True)` as the wiki
-correction loop's shipped exit criterion, and `wiki/lint.py:790` offers it as a card
-action.
+first**: `PHASE6_WIKI_PLAN.md` §4 names `plan_intent(correction=True)` as the wiki
+correction loop's shipped exit criterion, and `wiki/lint.py`'s stale-claim card offers it
+as a `correct` action.
+
+*Landed (the precondition).* **`file_correction` is not `correct_fact` under another name,
+and converging them would have been wrong.** `correct_fact` addresses ONE identity key
+`(entity, predicate, qualifier)` resolved against the graph, REFUSES a key holding several
+live rows, and is bound only inside a note conversation (`replytools._bound`). The wiki
+lever takes PROSE, from a Talk thread anchored to an `article_id` or from a review card —
+places with no note conversation to be inside of — and its product is the NOTE, which is
+the part that cannot be dropped: `wiki_citations.chunk_id` is NOT NULL and
+`wiki/builder.py` INNER JOINs chunks, and the corpus rebuild re-derives the graph from
+notes, so a correction that left no note would have nothing to cite and would evaporate on
+the next rebuild. Three producers mint that note (`agent/wikiwritetools.file_correction`,
+`POST /api/wiki/{id}/corrections`, `POST /api/review/{id}/correction`) and all three are
+kept.
+
+What was actually broken by W5a was the note's BACK half, not its front: the elevation was
+two lines inside `integrate_note` (`provenance == 'owner_correction'` →
+`plan_intent(correction=True)`), both inside the deleted range. So the flag is what was
+ported, onto the write path the conversation already uses: `NoteTarget` carries the note's
+provenance and `graphwritetools._assert_one` sets `correction=True` on a fact the
+correction note's own text ATTESTS — the arbiter's rule verbatim, refusing half included
+(`fact_correction = correction and signals_i.surface_attested`; an inferred fact in a
+correction note follows the ordinary capped path), at the same `weight = 1.0` and with the
+model's self-report suppressed so the number cannot drift. Nothing model-facing changed:
+no sidecar edit, no version bump, no re-pinned digest, and no field the model could fill to
+claim a force-supersede. The discriminator is server-read provenance — `CreateNoteRequest`
+has no such field and every producer sits behind an owner principal — which is what makes
+it safe on a pass the owner is not present for, and it can never collide with D10:
+`is_third_party` and `is_correction` are disjoint answers to the same field.
+
+Evidence: `tests/integration/test_note_correction_pg.py`, end to end from the
+`file_correction` handler through `ingest_note`, the production `note_converse` wiring and
+`supersession.decide()` — the pin, the refusal, the pin holding against a later ordinary
+note, and an ordinary note in the same shape doing none of it. **The port needed nothing
+inside W5a's deletion range**, so the two waves do not conflict.
+
+*Also found and fixed there.* `note_converse` could not run on a real box at all:
+`tasks.scheduler._owner_principal_id` is annotated `str | None` but `app.principals.id` is
+a `uuid` column, so the handler built a `SessionContext` from a `uuid.UUID` and died in
+`scoped_session`'s `set_config`. Both other callers wrap the value at their own call site
+(`tasks_tick`; `PlanContinuationRunner`, whose test comment reads "raw uuid, like
+production"), and every note-conversation test injects the id itself, so nothing caught
+it. Fixed at the source.
 
 The stated per-PR rule is *no PR removes a producer before its replacement is merged and
 green* — the wave-level split of deletion from replacement is deliberate (D13).

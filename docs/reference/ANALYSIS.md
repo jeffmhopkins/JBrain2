@@ -627,6 +627,19 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   *structured pipeline outputs* (tags, domains, entity links, fact status)
   are corrected directly in the review inbox. A correction note's "elevated
   weight" is implemented as pinning the facts it asserts.
+- **Where that elevation lives**: the note's own agent conversation, not the
+  arbiter. `agent/graphwritetools.NoteTarget.is_correction` reads
+  `notes.provenance == 'owner_correction'` (the four owner-gated producers:
+  `file_correction`, `POST /api/wiki/{id}/corrections`,
+  `POST /api/review/{id}/correction`, and the lint card's `correct` verb), and
+  `_assert_one` sets `ExtractedFact.correction` on a fact the correction note's
+  own text ATTESTS — full weight, force-supersede + pin through
+  `supersession.decide()`. An INFERRED fact in a correction note is **not**
+  elevated. This is the rule `arbiter.plan_intent(correction=True)` implemented,
+  ported unchanged off `integrate_note` ahead of its deletion
+  (`AGENT_INGEST_CONVERSATION_PLAN.md` W5). Nothing about it is model-facing:
+  `assert_fact` has no `correction` field and the capture API has no
+  `provenance` field.
 - Contested (flagged-and-unreviewed) facts are **held out of wiki builds**;
   the wiki never publishes an unreviewed supersession.
 - The pipeline records per-note stage state so retries are idempotent and a

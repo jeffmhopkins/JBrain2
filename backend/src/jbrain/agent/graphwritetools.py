@@ -60,6 +60,18 @@ one that matters: what this module REPORTS BACK. A resolved entity outside the
 conversation's scopes is confirmed as a handle — the model needs that to avoid a
 duplicate — but its canonical name is withheld, so the note's own words are all the
 conversation ever learns about a cross-domain row.
+
+**An OWNER CORRECTION NOTE elevates its attested facts here** (W5's stated precondition
+for retiring the correction-note machinery). `file_correction`, `POST
+/api/wiki/{id}/corrections` and the lint card's `correct` verb all mint one note with
+`provenance='owner_correction'`, and `PHASE6_WIKI_PLAN.md` §4 names what happened next —
+`arbiter.plan_intent(correction=True)` — as the wiki correction loop's shipped exit
+criterion. That bridge was two lines inside `integrate_note`, which W5a deletes, so the
+same rule is now `NoteTarget.is_correction` and the branch in `_assert_one`: a fact the
+correction note's own text ATTESTS is written with `correction=True` at full weight, and
+an inferred one is not. Nothing about it is model-facing (constraint 5) — provenance is
+read off the note row, the capture API has no field for it, and every producer is behind
+an owner principal, which is why it is safe on a pass the owner is not present for.
 """
 
 from __future__ import annotations
@@ -415,6 +427,24 @@ class NoteTarget:
     domain: str
     captured_at: datetime
     tz_offset_minutes: int | None = None
+    provenance: str = "human"
+    """Who authored the BODY, read from the note row — never from the model. It is the
+    only field here the write path branches on beyond the domain, and it carries the
+    ported correction elevation (`is_correction`)."""
+
+    @property
+    def is_correction(self) -> bool:
+        """This note is an owner CORRECTION (Phase 6 §4) — the wiki's "out-argue the
+        graph" lever, minted by `file_correction`, `POST /api/wiki/{id}/corrections` and
+        the review card's `correct` verb.
+
+        The discriminator is server-read provenance, and that is the whole safety
+        argument: `CreateNoteRequest` carries no `provenance` field, so the capture API
+        cannot mint one, and the three producers that can are each behind an owner
+        principal. No model-facing verb sets it and no stranger's body can reach it,
+        which is what makes elevating a write on it safe on a pass the owner is not
+        present for — the note IS the owner speaking."""
+        return self.provenance == "owner_correction"
 
     @property
     def anchor(self) -> datetime:
@@ -901,6 +931,31 @@ class NoteGraphWriter:
                     " on file"
                 )
             signals = _ATTESTED if attested else _UNATTESTED
+            # THE CORRECTION-NOTE ELEVATION, ported off `arbiter.plan_intent(correction=
+            # True)` (W5's stated precondition). `PHASE6_WIKI_PLAN.md` §4 names that call
+            # as the wiki correction loop's shipped exit criterion, and its only bridge
+            # was two lines inside `integrate_note` — which W5a deletes. Without the same
+            # rule here, an owner correction filed from Talk or from a lint card would
+            # land as an ordinary capped fact and quietly stop out-arguing the graph.
+            #
+            # The rule is the arbiter's, unchanged, including the half that refuses:
+            # `fact_correction = correction and signals_i.surface_attested`. A correction
+            # note is authoritative for what it LITERALLY STATES, so only a fact whose
+            # value the note's own text attests is elevated. An inferred one — a
+            # pronoun-resolved value, a hallucinated number — follows the ordinary capped
+            # path, because a fact that force-supersedes and pins is the most destructive
+            # write in the system and a guess must not buy one.
+            #
+            # This is not the reply turn's `correct_fact` rule and must not be confused
+            # with it: THAT one takes attestation to be "who spoke" (the owner's message
+            # is not in the note's chunks when the tool runs). Here the owner's words ARE
+            # the note, so the span check is live evidence and is kept.
+            if attested and self._target.is_correction:
+                correction = True
+                notes.append(
+                    "this note is your correction, so it out-argues what was on file and"
+                    " is pinned against later notes"
+                )
         confidence = effective_weight(1.0, signals)
         # The model's own read-confidence, and the ONE rule that makes the field safe:
         # it can only ever LOWER (TOOL_SURFACE cut 3's own words, which were the reason
@@ -912,6 +967,13 @@ class NoteGraphWriter:
         # were marked down — which is the direction that matters, because the cost of a
         # spurious low number is a true fact parked behind a card on a box whose owner
         # has no inbox to clear it from.
+        # Skipped for a correction — and now for a correction NOTE's attested fact too,
+        # which is the arbiter's `weight = 1.0 if fact_correction` restored exactly.
+        # `effective_weight(1.0, _ATTESTED)` is already 1.0; letting the model's own
+        # self-report drag the owner's stated correction down to a 0.4 guess is the one
+        # way the ported rule could have landed at a different number from the rule it
+        # replaces, and the stored weight is what `decide()`'s low-confidence guard and
+        # every later note read back.
         self_report = None if correction else _self_report(item)
         if self_report is not None and self_report < confidence:
             confidence = self_report
