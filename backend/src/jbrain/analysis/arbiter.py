@@ -717,7 +717,6 @@ def plan_to_extraction(
     *,
     title: str = "",
     tags: list[str] | None = None,
-    commit_only: bool = False,
     dropped_facts: int = 0,
 ) -> Extraction:
     """Bridge a (non-rejected) plan into the name-based `Extraction` the existing
@@ -727,14 +726,6 @@ def plan_to_extraction(
     intent doesn't carry them). A1b-ii threads the agent's resolutions in as a
     name→entity override so `_resolve_entities` honors them.
 
-    `commit_only` writes only active-eligible facts (`plan.to_commit`) — the
-    A1b-ii-1 safety: a review-held fact (cross-subject, low weight) has no
-    commit path that respects its pending_review disposition yet, and some
-    carry high weight `decide()` would otherwise commit, so they are excluded
-    until A1b-ii-2 writes them as pending_review + a low_confidence_inference
-    card. Mentions still cover every resolution (an entity may be mentioned
-    without a committed fact).
-
     `dropped_facts` carries the per-note cap's tail-drop count from the upstream
     extract step forward onto the rebuilt Extraction. The intent/plan only ever
     see the already-capped fact list, so this count would otherwise reset to 0
@@ -742,7 +733,6 @@ def plan_to_extraction(
     clipped long note (W0)."""
     if plan.rejected:
         raise ValueError("cannot build an extraction from a rejected plan")
-    source = plan.to_commit if commit_only else plan.facts
     # kind="Thing" for an existing resolution is harmless under Option 1: the
     # resolution-override (A1b-ii) supplies the entity directly, so kind_hint only
     # matters on the resolver fallback path, which an in-override ref never hits.
@@ -756,7 +746,7 @@ def plan_to_extraction(
     ]
     facts = [
         _to_extracted(pf.fact, pf.weight, correction=pf.correction, fhir_status=pf.fhir_status)
-        for pf in source
+        for pf in plan.facts
     ]
     return Extraction(
         title=title,

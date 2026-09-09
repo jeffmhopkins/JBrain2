@@ -330,16 +330,17 @@ def test_plan_to_extraction_dropped_facts_defaults_to_zero():
     assert plan_to_extraction(intent, plan).dropped_facts == 0
 
 
-def test_plan_to_extraction_commit_only_excludes_review_facts():
-    # commit_only drops review-held facts (cross-subject here) but keeps every
-    # mention — the A1b-ii-1 safety so a high-weight review fact can't commit.
+def test_plan_to_extraction_carries_review_held_facts_too():
+    # The A1b-ii-1 `commit_only` escape hatch is gone: a review-held fact rides
+    # the extraction so `commit_intent` can write it as an inert pending_review
+    # row (A1b-ii-2), keyed by the index this 1:1 mapping preserves.
     intent = _intent(
         entity_resolutions=[_res("m1"), _res("m2", cross_subject=True)],
         facts=[_fact(entity_ref="m1"), _fact(entity_ref="m2")],
     )
     plan = plan_intent(intent, signals={0: _surface_sig(), 1: _surface_sig()})
-    ex = plan_to_extraction(intent, plan, commit_only=True)
-    assert [f.entity_ref for f in ex.facts] == ["m1"]
+    ex = plan_to_extraction(intent, plan)
+    assert [f.entity_ref for f in ex.facts] == ["m1", "m2"]
     assert len(ex.mentions) == 2
 
 
