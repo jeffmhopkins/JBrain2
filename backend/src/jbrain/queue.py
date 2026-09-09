@@ -169,21 +169,43 @@ async def enqueue(
     as before — the six shipped kinds are unchanged. The stamp is fail-closed at
     *use*: a partial stamp narrows to nothing and raises in the worker, never a
     silent widening (db.session.narrowed_context)."""
-    job_id = str(uuid.uuid4())
     async with scoped_session(maker, ctx) as session:
-        await session.execute(
-            text(
-                "INSERT INTO app.jobs (id, kind, payload, principal_id, domain_code)"
-                " VALUES (:id, :kind, cast(:payload AS jsonb), :principal_id, :domain_code)"
-            ),
-            {
-                "id": job_id,
-                "kind": kind,
-                "payload": json.dumps(payload),
-                "principal_id": principal_id,
-                "domain_code": domain_code,
-            },
+        return await enqueue_on(
+            session, kind, payload, principal_id=principal_id, domain_code=domain_code
         )
+
+
+async def enqueue_on(
+    session: AsyncSession,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    principal_id: str | None = None,
+    domain_code: str | None = None,
+) -> str:
+    """`enqueue` on a session the caller already owns, so the job lands in the SAME
+    transaction as the write that needs it.
+
+    That atomicity is the point: a write path whose re-ingest is enqueued afterwards
+    can crash in between and leave the row committed with nothing queued to act on it
+    (the standing FUTURE note on `SqlNotesRepo.create_note`). `analysis/rebuild.py`
+    already reaches for this shape with raw SQL — "enqueued directly, in the note's own
+    transaction"; this is the same thing with the queue's own column list.
+    """
+    job_id = str(uuid.uuid4())
+    await session.execute(
+        text(
+            "INSERT INTO app.jobs (id, kind, payload, principal_id, domain_code)"
+            " VALUES (:id, :kind, cast(:payload AS jsonb), :principal_id, :domain_code)"
+        ),
+        {
+            "id": job_id,
+            "kind": kind,
+            "payload": json.dumps(payload),
+            "principal_id": principal_id,
+            "domain_code": domain_code,
+        },
+    )
     return job_id
 
 
