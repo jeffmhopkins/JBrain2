@@ -15,10 +15,13 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+
+log = structlog.get_logger()
 
 # A dependency is "satisfied" when the node it points to is approved or already
 # enacted; anything else (pending, rejected, held) leaves it unmet.
@@ -27,9 +30,15 @@ _SATISFIED = frozenset(("approved", "enacted"))
 # Proposal kinds that are a change to the owner's STANDING INSTRUCTIONS, and so belong
 # on the review inbox's notes tab rather than only inside the chat that staged them
 # (AGENT_INGEST_CONVERSATION_PLAN D15/D17 — `prefs_write` stages before it writes).
-# A set, not a single string, so W3's `owner_prefs` and any later instructions document
+# A set, not a single string, so W3's `owner-prefs` and any later instructions document
 # land here without a second query being written.
-INSTRUCTION_PROPOSAL_KINDS = frozenset({"owner_prefs"})
+#
+# HYPHENATED, matching `prefstools.PREFS_KIND` and migration 0195's widened
+# `proposals_kind_check`. It read `owner_prefs` and so matched nothing ever staged: the
+# kind arm of `list_waiting_approvals`' union was dead code, latent only because
+# `prefs_write` can fire nowhere but a note conversation today, which the conversation
+# arm covers — the exact scenario the union exists to survive.
+INSTRUCTION_PROPOSAL_KINDS = frozenset({"owner-prefs"})
 
 
 @dataclass(frozen=True)
@@ -154,6 +163,30 @@ class ProposalSpec:
 # agent-authored note re-entering the pipeline). Injected, so the engine stays
 # decoupled from what a kind actually does.
 LeafExecutor = Callable[[SessionContext, "ProposalRow", "NodeRow"], Awaitable[None]]
+
+
+class LeafRefused(Exception):
+    """An executor declined to enact a leaf, and the leaf must NOT be marked enacted.
+
+    `enact` used to mark every `plan.enactable` leaf `enacted` regardless of what the
+    executor did, so an executor that returned without acting — a stale `prev` on a
+    standing-instruction edit, an over-cap one — left the owner told their rule had
+    changed when it had not, with the only trace a structlog line on a box they read
+    through a debug token.
+
+    An exception rather than a return value because the alternative was rejected for a
+    reason that turned out not to hold: "a raise would roll back the sibling leaves of
+    the same enact transaction". `enact` catches this one per leaf, so the sibling
+    leaves are untouched and the refusing leaf lands in `held` — the status the engine
+    already has for "approved but not enacted, fail-closed", which is exactly what a
+    refusal is. Any OTHER exception still propagates: that is a bug, not a decision.
+
+    `reason` is for the caller's outcome summary, so the owner is told which leaf did
+    not land and why rather than reading a silent count."""
+
+    def __init__(self, reason: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -466,20 +499,47 @@ class ProposalRepo:
     ) -> EnactmentPlan:
         """Run every enactable leaf through the executor and mark it enacted; mark
         held leaves held. Dependency-safe: a leaf with an unmet prerequisite is
-        held, not enacted (#fail-closed)."""
+        held, not enacted (#fail-closed).
+
+        A leaf whose executor raises `LeafRefused` moves from `enactable` to `held` in
+        the plan this returns, and is marked `held` rather than `enacted`. Without that
+        every enactable leaf was marked enacted whatever the executor actually did, so a
+        refused edit — a standing instruction whose rules moved under the approval —
+        reported back as `enacted` on both the node and the proposal while the document
+        was untouched. The owner was told their rule changed when it had not."""
         proposal, node_rows = await self.load(ctx, proposal_id)
         plan = enactment_plan([n.to_node() for n in node_rows])
         by_id = {n.id: n for n in node_rows}
+        enacted: list[str] = []
+        refused: list[str] = []
         async with scoped_session(self._maker, ctx) as session:
             for leaf_id in plan.enactable:
-                await executor(ctx, proposal, by_id[leaf_id])
+                try:
+                    await executor(ctx, proposal, by_id[leaf_id])
+                except LeafRefused as exc:
+                    # Caught PER LEAF, so a refusal cannot roll back a sibling that
+                    # already ran — the objection that kept executors swallowing this.
+                    log.info(
+                        "proposal.leaf_refused",
+                        proposal_id=proposal_id,
+                        node_id=leaf_id,
+                        reason=exc.reason,
+                    )
+                    refused.append(leaf_id)
+                    continue
+                enacted.append(leaf_id)
             await self._apply(
                 session,
-                {**{i: "enacted" for i in plan.enactable}, **{i: "held" for i in plan.held}},
+                {
+                    **{i: "enacted" for i in enacted},
+                    **{i: "held" for i in (*plan.held, *refused)},
+                },
             )
-            # The proposal is enacted once at least one leaf ran and none remain
-            # pending/approved-but-unenacted.
-            if plan.enactable:
+            # The proposal is enacted once at least one leaf ACTUALLY ran and none
+            # remain pending/approved-but-unenacted. A proposal whose every leaf refused
+            # is not enacted — that is the single-leaf `owner-prefs` shape, and calling
+            # it enacted is the report the owner cannot check.
+            if enacted:
                 await session.execute(
                     text(
                         "UPDATE app.proposals SET status = 'enacted', updated_at = now()"
@@ -487,7 +547,7 @@ class ProposalRepo:
                     ),
                     {"id": proposal_id},
                 )
-        return plan
+        return EnactmentPlan(tuple(enacted), (*plan.held, *refused))
 
     async def patch_intake_config(self, ctx: SessionContext, node_id: str, fields: dict) -> bool:
         """Edit the constrained config of a STAGED intake-link mint node — the net-new

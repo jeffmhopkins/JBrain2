@@ -38,13 +38,15 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # write tool the plan ships joins this set, or the wildcard hands it to the curator on
 # every ordinary chat turn).
 #
-# `prefs_write` is a WRITE tool with no allowlist at all: the on-reply set it belongs to
-# is not built, and the wildcard would otherwise hand the owner's standing instructions
-# to the curator. `prefs_read` is here for the other reason — `owner_prefs` is the NOTE
-# persona's standing-instruction surface, and offering it to curator alongside
-# `memory_read` puts two overlapping memory surfaces in one tool union, the contradiction
-# docs/research/agent-ingest/TOOL_SURFACE.md names as the one gpt-oss handles worst.
-# Both stay reachable only through an explicit allowlist — and neither is in one yet.
+# `prefs_write` is a WRITE tool, and the wildcard would otherwise hand the owner's
+# standing instructions to the curator. It IS in an allowlist now —
+# `agents.NOTE_INGEST_ON_REPLY_TOOLS`, the D8 set built in W3 — so this line is what
+# keeps "the note persona alone reaches it" true. `prefs_read` is here for the other
+# reason: `owner_prefs` is the NOTE persona's standing-instruction surface, and offering
+# it to curator alongside `memory_read` puts two overlapping memory surfaces in one tool
+# union, the contradiction docs/research/agent-ingest/TOOL_SURFACE.md names as the one
+# gpt-oss handles worst. It is in no allowlist at all (TOOL_SURFACE Cut #1: the document
+# is already in the system prompt), and stays that way deliberately.
 #
 # `resolve_entity` / `assert_fact` are here for the first reason and a sharper one: they
 # are `mutate`-classed GRAPH WRITES bound to one note conversation. Without this line the

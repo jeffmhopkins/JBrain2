@@ -193,7 +193,6 @@ describe("FullBrainSurface", () => {
               sources: [],
               facts: [
                 {
-                  kind: "fact",
                   fact_id: "f1",
                   label: "Me takes lisinopril 10mg",
                   domain: "health",

@@ -88,6 +88,11 @@ class TranscriptAccumulator:
                 # ledger, which is where constraint 6's `touched` set comes from.
                 if event.facts:
                     step["facts"] = [f.model_dump() for f in event.facts]
+                # D3's `truncated`: the call took only a prefix of its batch. Persisted
+                # beside the writes because the rung's wording turns on it — a clamped
+                # batch shown as a whole one is the same false report on reopen as live.
+                if event.truncated:
+                    step["truncated"] = True
                 # Web citation sources (jerv) — persisted so the favicon chips and
                 # their [^n] targets replay on reopen.
                 if event.web_sources:

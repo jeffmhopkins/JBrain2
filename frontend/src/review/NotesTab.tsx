@@ -9,6 +9,7 @@
 // asked, how long, how much already landed) to be worth the tap that opens the thread.
 
 import type { ReactNode } from "react";
+import { domainWord } from "../agent/entityWrites";
 import type { NotesInboxRow } from "../api/client";
 import { DomainDot } from "./DomainDot";
 
@@ -28,11 +29,21 @@ function whenLabel(row: NotesInboxRow): string {
   return `${verb} ${waitedFor(row.waiting_since)}`;
 }
 
+/** The row's source, with its DOMAIN in words.
+ *
+ * `DomainDot` alone is a coloured span with a `title` tooltip — invisible on touch — so
+ * this list distinguished a HEALTH note from a finance one by hue and nothing else. D3
+ * calls "never colour alone" a rule for the write rung, and it is the same rule here for
+ * the same reason: a firewall boundary the owner cannot read is not a boundary they can
+ * check. `EntityWrites` already honours it through `domainWord`, one import away. The
+ * dot stays — it is a fast scan cue — it is just no longer the only carrier of the fact. */
 function sourceLabel(row: NotesInboxRow): string {
-  if (row.kind === "approval") return "preferences";
-  if (row.captured_at === null) return "note";
+  const domain = domainWord(row.domain);
+  if (row.kind === "approval") return `preferences · ${domain}`;
+  if (row.captured_at === null) return `note · ${domain}`;
   const d = new Date(row.captured_at);
-  return `note · ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const when = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `note · ${when} · ${domain}`;
 }
 
 function NotesRow({ row, onOpen }: { row: NotesInboxRow; onOpen: () => void }): ReactNode {

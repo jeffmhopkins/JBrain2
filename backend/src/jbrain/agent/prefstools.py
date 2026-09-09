@@ -23,17 +23,24 @@ Two properties follow, both enforced by code rather than by the model behaving:
    as one line. With deltas the blast radius of any one call is one rule, and the
    Proposal preview shows that rule's before and after rather than a wall of text.
 
-`prefs_write` is also, by design, not in ANY profile's allowlist and IS in
-`toolregistry.NEVER_DEFAULT` (plan constraint 9): the on-reply set that will hold it
-does not exist yet, and until it does the tool must be unreachable rather than
-half-reachable. `prefs_read` joins NEVER_DEFAULT for a different reason — it is the
-note persona's standing-instruction surface, and letting curator's `allow=None`
-wildcard absorb it puts two overlapping memory surfaces (`memory_read`, `prefs_read`)
-in one tool union, which is the contradiction TOOL_SURFACE.md names as the one gpt-oss
-handles worst.
+`prefs_write` is in `agents.NOTE_INGEST_ON_REPLY_TOOLS` — the D8 set — and in NOTHING
+else, and it is in `toolregistry.NEVER_DEFAULT` (plan constraint 9) so the curator's
+`allow=None` wildcard cannot absorb it. Those two lines together are the whole of its
+reachability: D17 fires it on Jeff's explicit request, and "explicit request" has no
+meaning on a turn he is not present for. `prefs_read` joins NEVER_DEFAULT for a
+different reason and is in no allowlist at all — it is the note persona's
+standing-instruction surface, and letting the wildcard absorb it puts two overlapping
+memory surfaces (`memory_read`, `prefs_read`) in one tool union, which is the
+contradiction TOOL_SURFACE.md names as the one gpt-oss handles worst. The document is
+already in the system prompt on BOTH sides now — the unattended pass through
+`converse._rules`, the reply turn through `api/agent._standing_instructions` — so the
+read tool would be a second surface for something the persona has been handed
+(TOOL_SURFACE Cut #1).
 
-Every failure is TEXT, never an exception: `loop.py` turns a raise into a generic "hit
-an internal error" the model learns nothing from.
+Every failure is TEXT, never an exception — enforced by wrapping both handlers, the way
+`asktools._guarded` does, not merely intended. `loop.py` turns a raise into a generic
+"hit an internal error" the model learns nothing from, and a bare DB or RLS error out of
+either handler reached exactly that.
 """
 
 from __future__ import annotations
@@ -47,6 +54,7 @@ from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import (
     LeafExecutor,
+    LeafRefused,
     NodeRow,
     NodeSpec,
     ProposalRepo,
@@ -226,7 +234,36 @@ def build_owner_prefs_handlers(
             proposal=ProposalRef(proposal_id=prop_id, kind=PREFS_KIND),
         )
 
-    return {"prefs_read": prefs_read_tool, "prefs_write": prefs_write_tool}
+    def _guarded(name: str, handler: ToolHandler) -> ToolHandler:
+        """Turn any escape from a handler into a result line, the `asktools._guarded`
+        shape. The module has claimed "every failure is TEXT" since it shipped, but
+        neither handler was wrapped: a DB or RLS error out of `_rules` or of
+        `proposals.stage` reached `loop.py`'s generic "hit an internal error", which
+        tells the model nothing it can act on — and for `prefs_write` specifically leaves
+        it unable to distinguish "your edit is staged" from "nothing happened"."""
+
+        async def run(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+            try:
+                return await handler(arguments, ctx)
+            except Exception as exc:  # noqa: BLE001 — a failed pref op is an observation
+                log.warning("owner_prefs.tool_failed", tool=name, error=repr(exc))
+                if name == "prefs_write":
+                    return (
+                        "Couldn't stage that change to Jeff's standing instructions"
+                        " (internal). Nothing was staged and nothing changed — tell him"
+                        " so rather than saying it is waiting for his approval."
+                    )
+                return (
+                    "Couldn't read Jeff's standing instructions (internal). Carry on"
+                    " without them rather than guessing what they say."
+                )
+
+        return run
+
+    return {
+        "prefs_read": _guarded("prefs_read", prefs_read_tool),
+        "prefs_write": _guarded("prefs_write", prefs_write_tool),
+    }
 
 
 def owner_prefs_executor(maker: async_sessionmaker[AsyncSession]) -> LeafExecutor:
@@ -242,10 +279,16 @@ def owner_prefs_executor(maker: async_sessionmaker[AsyncSession]) -> LeafExecuto
     - a `prev` that no longer matches is a REFUSAL, not a clobber — the rules moved
       between staging and approval, and the owner approved a change to text that is no
       longer there;
-    - it returns rather than raises on either. `ProposalRepo.enact` runs every enactable
-      leaf inside one transaction and then marks statuses in it, so a raise here would
-      roll back the sibling leaves that already succeeded (the same reason
-      `predicate_resolution_executor` swallows its `UnknownAction`)."""
+    - a refusal RAISES `LeafRefused`, so the leaf is marked `held` and the proposal is
+      not marked enacted. It used to return silently, and `enact` marked every enactable
+      leaf `enacted` regardless — so a refused edit told the owner their standing
+      instruction had changed while the document was untouched, with the only trace a
+      structlog line on a box they read through a debug token (CLAUDE.md #10).
+
+      The stated reason for swallowing it — "a raise would roll back the sibling leaves"
+      — did not hold twice over: `prefs_write` stages exactly ONE leaf per proposal, so
+      there are no siblings, and `enact` now catches this exception per leaf anyway.
+      `held` was already the engine's word for "approved, correctly not enacted"."""
     repo = OwnerPrefsRepo()
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
@@ -269,11 +312,11 @@ def owner_prefs_executor(maker: async_sessionmaker[AsyncSession]) -> LeafExecuto
                         rule_number=rule_number,
                         edit=op,
                     )
-                    return
+                    raise LeafRefused(f"rule {rule_number} has changed since this edit was staged")
             updated, refusal = apply_op(rules, op=op, rule_number=rule_number, text=text)
             if updated is None:
                 log.warning("owner_prefs.enact_refused", node_id=node.id, reason=refusal)
-                return
+                raise LeafRefused(refusal)
             await repo.write_rules(session, principal_id, updated)
 
     return execute

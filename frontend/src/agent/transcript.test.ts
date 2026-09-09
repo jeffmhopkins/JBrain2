@@ -197,7 +197,6 @@ describe("applyEvent reducer", () => {
       summary: "1 ok",
       facts: [
         {
-          kind: "fact",
           fact_id: "f1",
           label: "Me takes lisinopril",
           domain: "health",

@@ -374,6 +374,7 @@ class ToolOutput(str):
     deferred: DeferredRef | None
     facts: tuple[FactWriteRef, ...]
     halt: str | None
+    truncated: bool
 
     def __new__(
         cls,
@@ -387,6 +388,7 @@ class ToolOutput(str):
         deferred: DeferredRef | None = None,
         facts: tuple[FactWriteRef, ...] = (),
         halt: str | None = None,
+        truncated: bool = False,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -400,6 +402,10 @@ class ToolOutput(str):
         # note conversation's ledger reads it back as `fact_ids` (constraint 6).
         out.facts = facts
         out.halt = halt
+        # The call took only a prefix of its batch (D3's `truncated`). Set by the tool
+        # that clamped, never inferred downstream — nothing below can tell a short list
+        # from a clamped one.
+        out.truncated = truncated
         return out
 
 
@@ -475,6 +481,8 @@ def _persisted_step(
         step["entities"] = [e.model_dump() for e in dispatched.entities]
     if dispatched.facts:
         step["facts"] = [f.model_dump() for f in dispatched.facts]
+    if dispatched.truncated:
+        step["truncated"] = True
     if dispatched.view is not None:
         step["view"] = dispatched.view.model_dump()
     return step
@@ -496,6 +504,7 @@ class _Dispatched:
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
     facts: tuple[FactWriteRef, ...] = ()
+    truncated: bool = False
     # A tool that ENDS THE TURN on its own, with no background job behind it and no card
     # to stream: the string is the stop_reason the loop finishes on. `deferred` is the
     # same contract with a job attached; this is the bare one, for a tool whose whole
@@ -519,11 +528,24 @@ class _BufferedTurn:
     entities: tuple[EntityRef, ...]
     mutated: bool
     stop_reason: str
+    # A turn-ending tool ended this attempt (`ask_owner`). Carried separately from
+    # `stop_reason` because it also has to suppress the RETRY: `reflect` re-runs the
+    # producer, and re-producing a halted turn would re-dispatch the very side-effecting
+    # writes the halt exists to stop — asking the owner a second question, staging a
+    # second Proposal, writing the graph again — for a turn whose whole point is that
+    # nothing more happens until they answer.
+    halted: bool = False
 
 
 def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
     """The Loop-1 trigger applied to a buffered turn: evidence (sources OR entities),
-    a mutation, or sensitive data actually touched (not merely a held scope)."""
+    a mutation, or sensitive data actually touched (not merely a held scope).
+
+    A HALTED turn is never critique-worthy, whatever it gathered. It ended on a tool
+    that says "stop here and wait for Jeff", and the improvement loop's move is to run
+    the whole turn again."""
+    if turn.halted:
+        return False
     return critique_worthy(
         source_count=len(turn.sources),
         entity_count=len(turn.entities),
@@ -1294,6 +1316,7 @@ class AgentLoop:
                     proposal=dispatched.proposal,
                     entities=list(dispatched.entities),
                     facts=list(dispatched.facts),
+                    truncated=dispatched.truncated,
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1599,9 +1622,12 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
@@ -1617,6 +1643,7 @@ class AgentLoop:
                         proposal=dispatched.proposal,
                         entities=list(dispatched.entities),
                         facts=list(dispatched.facts),
+                        truncated=dispatched.truncated,
                     )
                 )
                 if dispatched.view is not None:
@@ -1632,6 +1659,26 @@ class AgentLoop:
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A turn-ending tool (`ask_owner`). The THIRD dispatch loop, and the last
+                # one that did not honour this — `/chat` picks this path whenever the
+                # owner has reflexion buffer-retry on, and the owner's reply into a note
+                # thread IS a `/chat` turn, so the halt was silently a property of which
+                # entry point a caller happened to take. After `ask_owner` flips the
+                # thread to `waiting_on_owner` the loop went on for up to 19 more steps
+                # of `correct_fact`, `merge_entities` and `prefs_write` against a note it
+                # had just said it could not read.
+                return _BufferedTurn(
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    halt_seen,
+                    halted=True,
+                )
+
             if any_error:
                 return _BufferedTurn(
                     tuple(events),
@@ -1753,17 +1800,21 @@ class AgentLoop:
             return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        # By keyword: this list has grown past the point where a reader can check a
+        # positional call against the dataclass, and inserting a field mid-list silently
+        # shifts every argument after it.
         return _Dispatched(
-            result,
-            out.sources if out else (),
-            out.proposal if out else None,
-            out.entities if out else (),
-            out.view if out else None,
-            out.job if out else None,
-            out.web_sources if out else (),
-            out.deferred if out else None,
-            out.facts if out else (),
-            out.halt if out else None,
+            result=result,
+            sources=out.sources if out else (),
+            proposal=out.proposal if out else None,
+            entities=out.entities if out else (),
+            view=out.view if out else None,
+            job=out.job if out else None,
+            web_sources=out.web_sources if out else (),
+            deferred=out.deferred if out else None,
+            facts=out.facts if out else (),
+            truncated=out.truncated if out else False,
+            halt=out.halt if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

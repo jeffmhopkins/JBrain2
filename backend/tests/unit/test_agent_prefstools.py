@@ -21,7 +21,7 @@ from jbrain.agent.prefstools import (
     owner_prefs_executor,
     with_standing_instructions,
 )
-from jbrain.agent.proposals import NodeRow, ProposalRow, ProposalSpec
+from jbrain.agent.proposals import LeafRefused, NodeRow, ProposalRow, ProposalSpec
 from jbrain.agent.toolregistry import NEVER_DEFAULT
 from jbrain.db.session import SessionContext
 from jbrain.models.owner_prefs import (
@@ -339,21 +339,63 @@ async def test_executor_ignores_a_leaf_that_is_not_its_op() -> None:
 
 async def test_executor_refuses_when_the_rules_moved_under_the_approval() -> None:
     # Staged against rule 2 == "b"; by the time the owner approved, rule 2 is "c".
+    #
+    # It RAISES `LeafRefused` rather than returning: `enact` marked every enactable leaf
+    # `enacted` whatever the executor did, so a silent return told the owner their
+    # standing instruction had changed while the document was untouched — with the only
+    # trace a structlog line on a box they read through a debug token.
     store = {"content": "a\nc"}
     execute = owner_prefs_executor(_maker(store))  # type: ignore[arg-type]
-    await execute(
-        OWNER, PROPOSAL, _node({"edit": "replace", "rule_number": 2, "text": "B", "prev": "b"})
-    )
+    with pytest.raises(LeafRefused):
+        await execute(
+            OWNER, PROPOSAL, _node({"edit": "replace", "rule_number": 2, "text": "B", "prev": "b"})
+        )
     assert store["content"] == "a\nc"
 
 
-async def test_executor_skips_rather_than_raises_when_the_op_no_longer_applies() -> None:
-    # A raise here would roll back the sibling leaves of the same enact transaction.
+async def test_executor_refuses_rather_than_writing_when_the_op_no_longer_applies() -> None:
+    # The cap arm of the same refusal. Nothing is written, and the leaf is reported.
     store = {"content": "a"}
     execute = owner_prefs_executor(_maker(store))  # type: ignore[arg-type]
-    await execute(
-        OWNER,
-        PROPOSAL,
-        _node({"edit": "add", "rule_number": 0, "text": "x" * (MAX_RULE_CHARS + 1)}),
-    )
+    with pytest.raises(LeafRefused):
+        await execute(
+            OWNER,
+            PROPOSAL,
+            _node({"edit": "add", "rule_number": 0, "text": "x" * (MAX_RULE_CHARS + 1)}),
+        )
     assert store["content"] == "a"
+
+
+# --- every failure is TEXT (the module docstring's claim, now enforced) --------
+
+
+class _ExplodingRepo(FakeProposalRepo):
+    async def stage(self, ctx: object, *, principal_id: str, spec: ProposalSpec) -> str:
+        raise RuntimeError("app.proposals is unreachable")
+
+
+async def test_a_failure_inside_either_handler_is_a_result_line_not_a_raise() -> None:
+    """The module has claimed "every failure is TEXT, never an exception" since it
+    shipped, and neither handler was wrapped: a DB or RLS error reached `loop.py`'s
+    generic "hit an internal error", which tells the model nothing — and for
+    `prefs_write` leaves it unable to tell "your edit is staged" from "nothing happened",
+    so it would report a staged approval that does not exist.
+
+    `asktools._guarded` does this properly; both handlers follow it now."""
+    handlers = _handlers({"content": "a"}, _ExplodingRepo())
+
+    staged = await handlers["prefs_write"](
+        {"op": "add", "rule_number": 0, "text": "stop splitting ingredients"}, CTX
+    )
+    assert isinstance(staged, str)
+    assert "Nothing was staged" in staged
+    assert "waiting for his approval" in staged
+
+    def boom():  # noqa: ANN202
+        raise RuntimeError("app.owner_prefs is unreachable")
+
+    read = await build_owner_prefs_handlers(boom, FakeProposalRepo())["prefs_read"](  # type: ignore[arg-type]
+        {}, CTX
+    )
+    assert isinstance(read, str)
+    assert "Couldn't read" in read

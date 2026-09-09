@@ -5,7 +5,6 @@ import type { FactWrite } from "./types";
 
 function fact(over: Partial<FactWrite> = {}): FactWrite {
   return {
-    kind: "fact",
     fact_id: "f1",
     label: "Me lives_in Marina District",
     domain: "general",

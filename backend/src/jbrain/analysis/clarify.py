@@ -29,6 +29,18 @@ question was already answered and appended: the owner answers again, and the not
 the same answer TWICE, as source text, in a corpus with no per-block eraser in the PWA.
 Duplicated source text is the one of the two that cannot be undone from the owner's side.
 
+**Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
+prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
+SERVER wrote — an enact summary ("Enacted 1 of 1 — 1 approved…"), a finished off-turn
+analysis — framed as a DATA report rather than as something Jeff said, which is why
+`_record_transcript` already declines to record one as a user turn. Filing one here would be
+strictly worse than a cosmetic slip: it pairs machine text with the agent's open question,
+appends the pair to the owner's own note as source text, re-ingests it so it becomes chunks,
+embeddings and citable facts, and consumes the question (the `running` latch below) so the
+owner's REAL answer can never be paired with it. That is the wrong-sentence-in-the-corpus
+failure this module exists to prevent, so `owner_authored=False` returns before anything
+moves: the thread stays `waiting_on_owner` and the question stays open, which is the truth.
+
 **A note that moved under the thread.** `note_conversations.note_body_sha` is the sha of
 the body the pass read, shipped in W2 with no reader — this is the reader. Compared here
 against the note's composed text as it stands, it answers one question the reply path
@@ -91,14 +103,25 @@ async def record_owner_reply(
     session_id: str,
     agent: str,
     message: str,
+    owner_authored: bool = True,
 ) -> OwnerReply | None:
     """Turn the owner's reply into a clarification block on the note. `None` when this
-    message is not an answer to anything — not a note conversation, not waiting, or empty.
+    message is not an answer to anything — not a note conversation, not waiting, not
+    written by the owner, or empty.
+
+    `owner_authored=False` for a turn whose `message` the SERVER composed (a proposal
+    enact outcome, a deferred-tool result): it is a DATA report on the channel, not
+    Jeff's answer, and the docstring above says why filing one is the worst thing this
+    module could do. Defaulted True so a caller must say so deliberately, and checked
+    here rather than only at the call site so the rule is the function's, not the
+    caller's.
 
     Never raises: a reply that cannot be filed must still be a reply the agent can read,
     so every failure here degrades to "the block did not land" and the turn goes on.
     """
     if agent != NOTE_CONVERSE_AGENT:
+        return None
+    if not owner_authored:
         return None
     answer = message.strip()
     if not answer:

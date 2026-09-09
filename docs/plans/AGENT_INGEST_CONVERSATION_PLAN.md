@@ -553,6 +553,83 @@ inbox** (D4/D5), both as extensions of shipped components rather than new surfac
 - The launcher's Review tile badge — the only signal, polled only while the launcher is
   on screen — now sums both tabs (mock fidelity item 10); the notes half degrades to the
   wiki count alone if its endpoint fails.
+
+*Closed against an independent adversarial review of W3 (2026-09-09).* Ten findings,
+every one reproduced by the reviewer against the branch, and none of them visible to CI —
+which is the pattern worth carrying more than any single fix: **every one of the three
+worst lived where two halves were each tested alone.**
+
+- **A server-authored message was filed as Jeff's answer onto his note.** `/chat` called
+  `record_owner_reply` with `body.message` and no check on `proposal_outcome` /
+  `deferred_outcome`, the two flags that mark a turn whose message the SERVER wrote. Tap
+  **Enact** on an inline card in a thread that ended with a second `ask_owner`, and the
+  outcome summary was paired with the agent's open question, appended as a D6 block,
+  re-ingested into chunks and embeddings, and the question was consumed — so the real
+  answer could never be paired. `record_owner_reply` takes `owner_authored` now, checked
+  inside as well as at the call site.
+- **The D3 rung was wired to a payload the backend never sent.** `FactWriteRef` emitted
+  `{fact_id, label, domain, outcome}`; the rung read `status`, `predicate`, `qualifier`,
+  `value`, `replaced`, `from_attachment`, plus a `truncated` that existed nowhere at all.
+  Fed the real JSON, `tallyWrites` fell through `else tally.written += 1` and rendered a
+  HELD fact — one `decide()` refused to make live — as **written**, which is the single
+  failure `ask_owner.tool` and the persona prompt both exist to surface. Four of D3's
+  seven states were unreachable, `ClaimDiffView` never rendered, and **D12 had no
+  producer**. Fixed end to end: `status` is derived server-side by one table and is a
+  REQUIRED field (a default of "written" is a silent claim a fact is live); an unmapped
+  outcome word reads as `held`, because the two errors are not symmetric; D12's evidence
+  is the provenance of the chunk the quote is attested against; `truncated` comes from the
+  clamp the tool already reported to the model. `testdata/fact_write_contract.json` is now
+  the shared artefact — real `model_dump(mode="json")` output, asserted by the backend and
+  folded through `applyEvent` by the frontend, because every green test on both sides had
+  been building its own input.
+- **`ToolOutput.halt` was honoured on two of three dispatch loops.** `_produce_buffered`
+  never read it, and `/chat` picks that producer whenever reflexion buffer-retry is on —
+  so after `ask_owner` flipped the thread to `waiting_on_owner` the loop ran on for up to
+  19 more steps of `correct_fact`, `merge_entities` and `prefs_write`. It halts now, a
+  halted turn is never re-produced (that would ask the owner twice), and buffer-retry is
+  forced off for a note conversation as it already was for a spawner — a re-produce
+  re-dispatches every write whatever the stop reason.
+- **The eraser shipped with no PWA affordance.** `grep -rn "clarification" frontend/src`
+  returned nothing: the routes existed and passed 20 tests, but no browser could issue the
+  DELETE and `DEBUG_ACCESS.md` exposes no generic HTTP verb. W2's "the wave that ships the
+  writer ships the eraser" was not met. The note screen's Note tab now carries a collapsed
+  **"Answers you gave"** panel (DESIGN.md "Note view"), absent for a note with no blocks.
+- **Both clarification routes were `PrincipalDep`.** W2's recorded limit said in so many
+  words that W3 must not offer this behind a token surface. `OwnerDep` now — and there
+  were no HTTP-level tests for either route, which is how it shipped.
+- **An enact the executor refused was reported as enacted.** `enact` marked every
+  `plan.enactable` leaf `enacted` regardless, and `owner_prefs_executor` returned silently
+  on a stale `prev`. A refusal is `LeafRefused` now, caught per leaf into `held`; the
+  stated reason for swallowing it ("a raise would roll back the sibling leaves") never
+  applied, since `prefs_write` stages exactly one leaf per proposal.
+- **`INSTRUCTION_PROPOSAL_KINDS` held `owner_prefs`; the kind is `owner-prefs`.** The kind
+  arm of the union was dead code, and the test that declined to cover it did so on a
+  premise 0195 had already retired.
+- **`prefs_write` was reachable only on the turn where the document was invisible.**
+  `with_standing_instructions` had one call site, the unattended pass; `/chat` passed
+  `profile.prompt` raw. So D15 and `ASSISTANT.md` were both false, and the model was asked
+  to edit a numbered list it had never seen. `api/agent._standing_instructions` is the
+  other half, and fails the turn rather than running without them — the direction
+  `converse._rules` already chose, and this is the turn that force-supersedes and pins.
+- **The notes-tab row identified a domain by colour alone** — a `DomainDot` whose `title`
+  does not exist on touch. `domainWord` was one import away.
+- **Comments and docs claiming behaviour the code did not have**, corrected in place; and
+  `prefstools`' "every failure is TEXT" is now enforced by wrapping both handlers rather
+  than asserted, following `asktools._guarded`.
+
+*Found while fixing, not in the review.* `test_note_reply_write_pg.py` asked for
+`owner_ctx` by parameter, but that name is a plain helper and not a fixture — so all
+**eight** of its `correct_fact` / `merge_entities` tests errored at setup and had never
+once executed. With the one-line wrapper `test_ask_owner_pg.py` already uses they run; the
+one that then failed was cross-test pollution (the only test addressing by NAME, resolving
+onto an entity a sibling test had already given a `homeLocation`), not a defect.
+
+*Left open, deliberately.* `ASSISTANT.md` says the reply turn holds twelve tools, which is
+what `NOTE_INGEST_ON_REPLY_TOOLS` contains; the reviewer counted ten because the built
+registry does not bind `assert_fact` on that turn. That is a sibling task's fix, and the
+doc is right about the allowlist, so the number is left standing rather than corrected to
+match a bug.
+
 - Two shipped bugs fixed on the way: an empty lane rendered a `0` count pill (D5's "no
   zero to clear"), and the session handoff mapped every non-`curator` persona to the
   Research tab, so a `note_ingest` redirect would have landed on the wrong tab and shown
