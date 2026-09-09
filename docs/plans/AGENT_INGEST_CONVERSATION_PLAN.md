@@ -210,6 +210,12 @@ set; the frozen-body + clarification-block note model. **No chip, no redirect** 
 `.tool` files contain no graph-write verb, so there is nothing to render yet. Honest
 retreat point: the agent reads a note in a visible thread.
 
+*Landed:* the D16 profile — `note_ingest` in `agent/agents.py` with `tools=frozenset()`
+and empty `extra_tools`, its prompt sidecar, and migration `0192` widening both agent
+CHECKs. `reads_knowledge_base=False` for now, which **W3 must revisit**: constraint 2
+wants the conversation owner-scoped to `(note_domain, 'general')`, and `False` zeroes the
+session's read scopes, so the domain-visible entity read tools cannot be reached under it.
+
 **W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
 "entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and
 `toolSummary.ts`; **keep `ClaimDiff.tsx`**, it is the only diff renderer); the two-tab
