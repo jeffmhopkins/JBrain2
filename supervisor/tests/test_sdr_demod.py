@@ -1102,3 +1102,21 @@ def test_the_default_bandwidth_preserves_every_mode_but_am():
     ):
         assert demod.Demodulator(mode, CAPTURE_HZ).channel_half_hz == half_hz, mode
     assert demod.Demodulator("am", CAPTURE_HZ).channel_half_hz == 4_000.0
+
+
+def test_every_view_span_fits_the_picture_it_crops():
+    """A span wider than the chain supplies is drawn out of the anti-alias filter's
+    own skirt — a station that is not there, at the edge of a picture the owner just
+    zoomed out to see more of.
+
+    This is what keeps `VIEW_SPAN_HZ` honest as the ladders or the rates change: the
+    ladders exist to be croppable from what the chain ALREADY makes: widening
+    the chain would mean rebuilding it and clicking the audio."""
+    demod = _load()
+    for mode, spans in demod.VIEW_SPAN_HZ.items():
+        built = demod.Demodulator(mode, CAPTURE_HZ)
+        for span in spans:
+            assert span <= built.max_span_hz, (mode, span, built.max_span_hz)
+        # ...and the default the picture opens at is one of them, or the zoom control
+        # opens with nothing selected.
+        assert built.view_span_hz in [float(s) for s in spans], mode

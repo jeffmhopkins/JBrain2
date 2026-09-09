@@ -12,6 +12,7 @@ import importlib.util
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest import mock
 
@@ -3614,3 +3615,94 @@ def test_bandwidths_for_comes_from_the_demodulator() -> None:
     and the failure would be a control offering a width the box then refuses."""
     for mode, ladder in demod.BANDWIDTH_HZ.items():
         assert listen.bandwidths_for(mode) == tuple(ladder)
+
+
+def _spectrum(bins: int = 512, bin_hz: float = 93.75):
+    """One row of the channel's own spectrum, the shape `_tuning_frame` crops."""
+    return SimpleNamespace(
+        at=0.0,
+        bins=bins,
+        bin_hz=bin_hz,
+        start_hz=100_000_000 - bins / 2 * bin_hz,
+        db=np.zeros(bins),
+        headroom_db=0.0,
+        clipped_share=0.0,
+    )
+
+
+def test_a_wider_view_span_keeps_more_of_the_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The zoom, through the path a real frame takes.
+
+    Driven via `_publish_channel` rather than by calling the cropper directly, because
+    the thing that can break is the WIRING: the stored span reaching the crop at all. A
+    test passing the span in by hand still passes when `_publish_channel` ignores it
+    and falls back to the chain's default reach — exactly the bug that would make
+    the zoom do nothing on the box.
+
+    Twice the span keeps twice the row, and the passband it reports is untouched —
+    zooming changes how much spectrum is drawn AROUND the filter, never the filter."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        drawn: list[Any] = []
+        monkeypatch.setattr(session, "_publish_frame", drawn.append)
+        passband = (-8_000.0, 8_000.0)
+        # The reach the CHAIN was built with, which the span must override.
+        reach = 8_000.0
+
+        session.set_view_span(8_000)
+        session._publish_channel(_spectrum(), passband, reach)
+        session.set_view_span(16_000)
+        session._publish_channel(_spectrum(), passband, reach)
+
+        narrow, wide = drawn
+        assert (wide.stop_hz - wide.start_hz) == pytest.approx(
+            2 * (narrow.stop_hz - narrow.start_hz), rel=0.02
+        )
+        # ...and not the chain's own 4x reach default, or the span never arrived.
+        assert (narrow.stop_hz - narrow.start_hz) < 4 * reach
+        assert narrow.passband_hz == wide.passband_hz == 16_000.0
+    finally:
+        session.stop()
+
+
+def test_setting_the_view_span_rebuilds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The property the tap-to-cycle control rests on.
+
+    A bandwidth change replaces the demodulator, which is a click in the audio and worth
+    paying once for selectivity. A zoom must not: it stores one number and the frame
+    is cropped to it. If this ever starts replacing the chain, the label must stop being
+    tappable — so the two are pinned together here."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        before = session._demod
+        session.set_view_span(8_000)
+        assert session.view_span_hz == 8_000
+        assert session._demod is before, "a zoom must not replace the chain"
+        assert session.info().view_span_hz == 8_000
+    finally:
+        session.stop()
+
+
+def test_a_view_span_the_mode_does_not_offer_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ladder rather than a range, unlike the bandwidth: a magnification has no
+    equivalent of "narrower than that station" to place by eye, so there is nothing
+    between the rungs worth reaching."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        with pytest.raises(listen.SdrError, match="draws"):
+            session.set_view_span(9_000)
+        with pytest.raises(listen.SdrError, match="not a picture width"):
+            session.set_view_span("wide")  # type: ignore[arg-type]
+        # ...and the refusal left the picture where it was.
+        assert session.view_span_hz == 0.0
+    finally:
+        session.stop()

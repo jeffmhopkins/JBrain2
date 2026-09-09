@@ -65,12 +65,18 @@ describe("dragging an edge", () => {
     }
   });
 
-  it("snaps a drag to whole kilohertz, which is what the owner asked for", () => {
-    // 2 kHz apart was too coarse to place an edge beside a station; 100 Hz (the grid the
-    // box accepts) is finer than a fingertip on a 32 kHz picture can mean.
-    expect(snapBandwidth(6400, ...AM_RANGE)).toBe(6000);
-    expect(snapBandwidth(6600, ...AM_RANGE)).toBe(7000);
+  it("snaps a drag to half a kilohertz, which is what the owner asked for", () => {
+    // A preset ladder was too coarse to place an edge beside a station, then 1 kHz still
+    // was. 500 Hz is about 5 px on a 32 kHz picture — placeable — and is a multiple of
+    // the 100 Hz grid the box accepts, so nothing it produces gets refused.
+    expect(snapBandwidth(6400, ...AM_RANGE)).toBe(6500);
+    expect(snapBandwidth(6600, ...AM_RANGE)).toBe(6500);
+    expect(snapBandwidth(6751, ...AM_RANGE)).toBe(7000);
     expect(snapBandwidth(5001, ...AM_RANGE)).toBe(5000);
+    // Every value it can produce is on the box's grid.
+    for (let want = AM_RANGE[0]; want <= AM_RANGE[1]; want += 137) {
+      expect(snapBandwidth(want, ...AM_RANGE) % 100).toBe(0);
+    }
   });
 
   it("clamps a drag past either end instead of refusing it", () => {
@@ -83,12 +89,11 @@ describe("dragging an edge", () => {
 });
 
 describe("stepping with arrow keys", () => {
-  it("moves one kilohertz, the same distance the drag snaps to", () => {
-    // The arrows and the drag are one gesture at two resolutions. A key that jumped to
-    // the next preset while the drag moved 1 kHz would make them disagree about what
-    // "narrower" means.
-    expect(stepBandwidth(8000, "narrower", ...AM_RANGE)).toBe(7000);
-    expect(stepBandwidth(7000, "wider", ...AM_RANGE)).toBe(8000);
+  it("moves by the same distance the drag snaps to", () => {
+    // The arrows and the drag are one gesture at two resolutions. A key that moved a
+    // different distance from the drag would make them disagree about "narrower".
+    expect(stepBandwidth(8000, "narrower", ...AM_RANGE)).toBe(8000 - DRAG_STEP_HZ);
+    expect(stepBandwidth(7000, "wider", ...AM_RANGE)).toBe(7000 + DRAG_STEP_HZ);
   });
 
   it("stops at the ends rather than wrapping", () => {
@@ -100,9 +105,13 @@ describe("stepping with arrow keys", () => {
 
   it("lands ON the grid from an off-grid preset rather than carrying the remainder", () => {
     // NFM's 12.5k and SSB's 3.1k are real presets and neither is a whole kilohertz.
-    expect(stepBandwidth(12500, "narrower", 5000, 16000)).toBe(12000);
-    expect(stepBandwidth(12500, "wider", 5000, 16000)).toBe(13000);
     expect(stepBandwidth(3100, "narrower", ...SSB_RANGE)).toBe(3000);
+    // ...and wider from 3.1k is null, because 3.1k IS the SSB ceiling: landing on the
+    // grid must not become a way to step past the end of the range.
+    expect(stepBandwidth(3100, "wider", ...SSB_RANGE)).toBeNull();
+    // NFM's 12.5k has room above it, so there the grid landing is a real move.
+    expect(stepBandwidth(12500, "wider", 5000, 16000)).toBe(13000);
+    expect(stepBandwidth(12500, "narrower", 5000, 16000)).toBe(12000);
   });
 });
 

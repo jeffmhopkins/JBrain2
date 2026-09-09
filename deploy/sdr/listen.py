@@ -707,6 +707,38 @@ def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
     return want
 
 
+def view_spans_for(mode: str) -> tuple[int, ...]:
+    """The picture widths a mode offers, from the demodulator. One source of truth, for
+    the same reason `bandwidths_for` is."""
+    return tuple(demod.VIEW_SPAN_HZ.get(mode.lower(), ()))
+
+
+def validate_view_span(mode: str, span_hz: object) -> int:
+    """The picture width, bounded to the rungs this mode offers.
+
+    A ladder rather than a range, unlike the bandwidth: a zoom has no equivalent of
+    "narrower than that station" to place by eye — it is a magnification, and three of
+    them cover what a phone screen can usefully show. Refused rather than clamped for
+    the same reason everything else here is."""
+    ladder = view_spans_for(mode)
+    if not ladder:
+        raise SdrError(f"unknown mode {mode!r}")
+    if span_hz is None:
+        return 0
+    if isinstance(span_hz, bool) or not isinstance(span_hz, int | float | str):
+        raise SdrError(f"{span_hz!r} is not a picture width in Hz")
+    try:
+        want = int(span_hz)
+    except ValueError:
+        raise SdrError(f"{span_hz!r} is not a picture width in Hz") from None
+    if want not in ladder:
+        raise SdrError(
+            f"{mode.lower()} draws {', '.join(str(w) for w in ladder)} Hz wide, "
+            f"not {want}"
+        )
+    return want
+
+
 # Narrowband FM is the only thing 1200-baud AFSK arrives on. Accepting `usb` or `wbfm`
 # for a logging session would start a radio that reports healthy and can never decode.
 APRS_MODES = ("fm", "nfm")
@@ -1278,6 +1310,12 @@ class SessionInfo:
     bandwidth_min_hz: int = 0
     bandwidth_max_hz: int = 0
     bandwidth_step_hz: int = 0
+    #: How wide the TUNING PICTURE is, and the widths this mode offers. A different thing
+    #: from the bandwidth above and deliberately so: the bandwidth is what the radio
+    #: HEARS, this is only how much spectrum is drawn around it. Zero on a session with
+    #: no channel to draw.
+    view_span_hz: int = 0
+    view_spans_hz: tuple[int, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1299,6 +1337,8 @@ class SessionInfo:
             "bandwidth_min_hz": self.bandwidth_min_hz,
             "bandwidth_max_hz": self.bandwidth_max_hz,
             "bandwidth_step_hz": self.bandwidth_step_hz,
+            "view_span_hz": self.view_span_hz,
+            "view_spans_hz": list(self.view_spans_hz),
         }
 
 
@@ -1352,6 +1392,10 @@ class Session:
         #: built, so a width this box cannot serve is refused before anything opens the
         #: radio — the same order everything else in this constructor follows.
         self.bandwidth_hz = validate_bandwidth(self.mode, bandwidth_hz)
+        #: How wide the tuning picture is drawn. Zero means "whatever the chain's own
+        #: default is", which is what every session starts at; a number is the owner's
+        #: pick. Set through `set_view_span`, which rebuilds NOTHING.
+        self.view_span_hz: float = 0.0
         self.audio_peak = 0.0
         self._subs: set[queue.Queue[bytes | None]] = set()
         # Captioning subscribers. Segmenting only runs while at least one is attached,
@@ -1728,7 +1772,11 @@ class Session:
     def _publish_channel(
         self, spectrum: "iq.Spectrum", passband: tuple[float, float], reach_hz: float
     ) -> None:
-        self._publish_frame(self._tuning_frame(spectrum, passband, reach_hz))
+        # The chain's own default reach is ignored once the owner has picked a width: a
+        # zoom is a CROP, so it never rebuilt anything and `reach_hz` is still whatever
+        # the demodulator was built with.
+        span = self.view_span_hz or 4.0 * reach_hz
+        self._publish_frame(self._tuning_frame(spectrum, passband, span))
 
     def _publish_band(self, spectrum: "iq.Spectrum") -> None:
         self._publish_frame(self._band_frame(spectrum))
@@ -1767,7 +1815,7 @@ class Session:
                 self._end_frames()
 
     def _tuning_frame(
-        self, spectrum: "iq.Spectrum", passband: tuple[float, float], reach_hz: float
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float], span_hz: float
     ) -> Frame:
         """The channel's own spectrum, cropped to twice the mode's WIDEST passband.
 
@@ -1780,10 +1828,11 @@ class Session:
 
         The crop stays CENTRED on the tuned frequency even where the passband is not
         (SSB), because "am I centred?" is a question about the dial: it reaches four
-        times `reach_hz`, which is the same span every symmetric mode had before C14 and
+        the span it is given, which is what every symmetric mode had before C14 and
         now also holds all of SSB's.
 
-        **`reach_hz` is the mode's WIDEST filter, not the one in force.** Cropping to the
+        **`span_hz` is the owner's, and its default is the mode's WIDEST filter times
+        four rather than the filter in force.** Cropping to the
         live passband would zoom the picture in every time the owner narrowed the filter
         — hiding the interfering station at the moment they narrowed it to reject that
         station, and keeping the shaded box the same fraction of the picture at every
@@ -1793,7 +1842,7 @@ class Session:
         low, high = passband
         keep = min(
             spectrum.bins,
-            max(TUNING_BINS // 8, int(round(4.0 * reach_hz / spectrum.bin_hz))),
+            max(TUNING_BINS // 8, int(round(span_hz / spectrum.bin_hz))),
         )
         first = (spectrum.bins - keep) // 2
         return Frame(
@@ -2766,6 +2815,30 @@ KISSPORT {self.kiss_port}
         with self._lock:
             self._history = {}
 
+    def set_view_span(self, span_hz: int) -> None:
+        """Change how much spectrum the tuning picture draws. **Rebuilds nothing.**
+
+        That is the whole design of it, and the reason a zoom is not a second bandwidth.
+        A filter width changes what the radio HEARS, so it redesigns the channel filter
+        and replaces the chain — a click in the audio, which is a price worth paying once
+        for selectivity. A picture width changes only how much of a row `_tuning_frame`
+        keeps, so it costs one integer and the next frame is already drawn to it: no
+        filter is redesigned, no chain is replaced, the audio does not stop, and there is
+        no retune for the shading to lag behind.
+
+        Bounded by what the chain ALREADY supplies (`demod.max_span_hz`), which is why
+        the ladders in `demod.VIEW_SPAN_HZ` stop where they do. A wider picture than that
+        would have to change `view_rate_hz`, and that is a rebuild — so it is not
+        offered rather than being offered and made to click."""
+        wanted = validate_view_span(self.mode, span_hz)
+        chain = self._demod
+        if chain is not None and wanted > chain.max_span_hz:
+            raise SdrError(
+                f"this radio draws at most {int(chain.max_span_hz)} Hz "
+                f"of picture at once, not {wanted}"
+            )
+        self.view_span_hz = float(wanted)
+
     def resweep(self, sweep: Sweep) -> None:
         """Point a live spectrum at a different range, in place.
 
@@ -2980,6 +3053,8 @@ KISSPORT {self.kiss_port}
             bandwidth_min_hz=0 if self.sweep is not None else bounds[0],
             bandwidth_max_hz=0 if self.sweep is not None else bounds[1],
             bandwidth_step_hz=0 if self.sweep is not None else demod.BANDWIDTH_STEP_HZ,
+            view_span_hz=0 if self.sweep is not None else int(self.view_span_hz),
+            view_spans_hz=() if self.sweep is not None else view_spans_for(self.mode),
         )
 
 

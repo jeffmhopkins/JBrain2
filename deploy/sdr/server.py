@@ -1823,6 +1823,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, info.as_dict())
 
+    def _view_span(self, body: dict[str, Any]) -> None:
+        """How wide the tuning picture is drawn. **Not a retune.**
+
+        Its own route rather than a field on `/listen/tune` precisely because it is not:
+        `tune` rebuilds the demodulator, which is right for a filter change and wrong for
+        a zoom — it would click the audio every time the owner changed magnification. So
+        this reaches `set_view_span`, which stores one number and lets the next frame be
+        cropped to it."""
+        wanted = body.get("session_id")
+        session = TUNER.find(str(wanted)) if wanted else TUNER.for_purpose(PURPOSE_LISTEN)
+        if session is None:
+            self._json(
+                409,
+                {
+                    "detail": "that session is no longer the live one"
+                    if wanted
+                    else "nothing is listening"
+                },
+            )
+            return
+        try:
+            session.set_view_span(int(body.get("span_hz", 0)))
+        except (ListenError, ValueError) as bad:
+            self._json(400, {"detail": str(bad)})
+            return
+        self._json(200, session.info().as_dict())
+
     def _tune(self, body: dict[str, Any]) -> None:
         # By id when the caller names one — with several radios live, "retune the
         # session" is not a request that identifies anything. Falling back to the
@@ -1952,7 +1979,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
         route = self.path.split("?")[0]
-        if route in ("/listen/start", "/listen/tune", "/listen/stop"):
+        if route in ("/listen/start", "/listen/tune", "/listen/stop", "/listen/view"):
             body = self._body()
             if body is None:
                 return
@@ -1960,6 +1987,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._listen(body)
             elif route == "/listen/tune":
                 self._tune(body)
+            elif route == "/listen/view":
+                self._view_span(body)
             else:
                 self._stop(body)
             return

@@ -542,6 +542,11 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           bandwidthHz={width}
           minHz={listening.bandwidth_min_hz ?? 0}
           maxHz={listening.bandwidth_max_hz ?? 0}
+          viewSpanHz={listening.view_span_hz ?? 0}
+          viewSpans={listening.view_spans_hz ?? []}
+          // Its own call, not `act`: a zoom is a crop on the box rather than a retune,
+          // so it must not put the whole sheet in the busy state a rebuild deserves.
+          onViewSpan={(hz) => void act(() => api.sdrViewSpan(hz, listening.session_id))}
           // Absent where there is nothing to choose, which is what makes the handles
           // disappear on wide FM rather than appear and refuse.
           onBandwidth={adjustable ? (hz) => void setWidth(hz) : undefined}

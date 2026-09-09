@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 7) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅ B5✅(on air; four corrections folded in)
+> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 8) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅ B5✅ B6✅(on air; six corrections folded in)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -1425,6 +1425,29 @@ only thing blocking it. Verified against the real planner: the owner's 4.625 ± 
 A span is checked at both EDGES and across the middle, which a point never needs: 12 to
 28 MHz has two legal edges and a middle drawn from a mirror of somewhere else. My own
 test caught that — the first draft checked edges only.
+
+**B6 — half a kilohertz, and a zoom (2026-09-09, on air).** Two more from use.
+
+*The drag snaps to 500 Hz.* 1 kHz was still too coarse; 500 Hz is about 5 px on a 32 kHz
+picture, is a multiple of the box's 100 Hz grid so nothing it produces gets refused, and
+on SSB is the difference between 2.4 and 2.9 kHz — two filters that sound quite different.
+
+*The tuning picture's width is the owner's.* `VIEW_SPAN_HZ` is a per-mode ladder and the
+"32.0 kHz view" label is the control: a tap steps to the next width and wraps.
+
+**A span is a CROP, never a rebuild, and that is the whole design.** A bandwidth change
+redesigns the channel filter and replaces the chain — a click in the audio, worth paying
+once for selectivity. A zoom changes only how much of a row `_tuning_frame` keeps, so it
+costs one integer, the next frame is already drawn to it, and the audio does not stop.
+That is why it has its own route rather than a `/tune` parameter (`tune` rebuilds), why
+the label can be tapped freely, and why every ladder stops at what the chain ALREADY
+supplies (`Demodulator.max_span_hz`): a wider picture would need `view_rate_hz` to change,
+which is a rebuild, so it is not offered rather than being offered and made to click.
+
+The test that matters drives it through `_publish_channel` rather than calling the cropper
+directly. The first version passed the span in by hand and still passed when the wiring
+from the stored span to the crop was cut — which is exactly the bug that would make the
+zoom do nothing on the box.
 
 **B3 — the control.** Binding spec `docs/mocks/bandwidth/d-mode-width-draggable.html`,
 chosen by the owner: the mode button carries its width and a second tap opens the

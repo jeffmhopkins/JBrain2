@@ -64,6 +64,12 @@ export interface SdrListening {
   bandwidth_min_hz?: number;
   bandwidth_max_hz?: number;
   bandwidth_step_hz?: number;
+  /** How wide the TUNING PICTURE is drawn, and the widths this mode offers. A different
+   *  thing from the bandwidth above: that is what the radio hears, this is only how much
+   *  spectrum is drawn around it. Changing it rebuilds nothing and never clicks the
+   *  audio, which is why it has its own route rather than being a `tune` parameter. */
+  view_span_hz?: number;
+  view_spans_hz?: number[];
 }
 
 export interface SdrState {

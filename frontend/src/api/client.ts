@@ -2805,6 +2805,15 @@ export const api = {
     return (await response.json()) as SdrListening;
   },
 
+  /** How wide the tuning picture is drawn. NOT a retune: the sidecar crops the next
+   *  frame differently and rebuilds nothing, so the audio does not stop. */
+  async sdrViewSpan(spanHz: number, sessionId?: string): Promise<SdrListening> {
+    let query = `span_hz=${encodeURIComponent(spanHz)}`;
+    if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    const response = await request(`/api/sdr/view?${query}`, { method: "POST" });
+    return (await response.json()) as SdrListening;
+  },
+
   // What is armed and what has been tried against it — the radio tab's read-only
   // summary. Editing lives in Tasks; this is a view (docs/mocks/aprs/a-launcher-shape).
   async getAprsCommands(): Promise<AprsCommandState> {
