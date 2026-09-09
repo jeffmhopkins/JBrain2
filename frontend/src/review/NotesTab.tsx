@@ -90,7 +90,9 @@ export function NotesTab({
     <div className="rlist2">
       {rows.map((row) => (
         <NotesRow
-          key={`${row.kind}:${row.session_id}`}
+          // The row carries no item id by design, so the key is composed — a session can
+          // hold two staged approvals, and `waiting_since` is what separates them.
+          key={`${row.kind}:${row.session_id}:${row.waiting_since}`}
           row={row}
           onOpen={() => onOpenConversation(row.session_id, row.agent)}
         />
