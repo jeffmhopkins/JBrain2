@@ -174,6 +174,86 @@ async def test_waiting_threads_list_newest_first(
     assert [sid for sid in listed if sid in waiting] == list(reversed(waiting))
 
 
+async def test_notes_inbox_lists_the_question_the_row_redirects_to(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """The notes tab's query (D4/D5): the LAST `ask_owner` of the thread, the note it
+    came from, and the committed count — oldest wait first."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    fact_a, fact_b = uuid.uuid4(), uuid.uuid4()
+
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        await repo.record_tool_call(
+            s, sid, name="assert_fact", ok=True, fact_ids=[fact_a, fact_b], domains=["general"]
+        )
+        # A failed call asserted nothing, so it must not inflate "how much landed".
+        await repo.record_tool_call(
+            s, sid, name="assert_fact", ok=False, fact_ids=[uuid.uuid4()], domains=[]
+        )
+        await repo.record_tool_call(
+            s, sid, name="ask_owner", args={"question": "answered already"}, ok=True, domains=[]
+        )
+        await repo.record_tool_call(
+            s, sid, name="ask_owner", args={"question": "which shop?"}, ok=True, domains=[]
+        )
+        await repo.set_state(s, sid, "waiting_on_owner")
+
+    async with scoped_session(maker, owner) as s:
+        rows = {r.session_id: r for r in await repo.notes_inbox(s)}
+
+    row = rows[sid]
+    assert row.question == "which shop?"
+    assert row.note_id == note and row.domain == "general"
+    assert row.note_excerpt == "repo seed note"
+    assert row.committed == 2
+    assert row.live is False
+    assert row.agent == "curator"
+
+
+async def test_notes_inbox_lists_a_first_pass_but_marks_it_live(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """A `running` conversation is listed so the note is visibly in hand — and flagged,
+    because the route leaves it out of the count: nothing is waiting on the owner yet."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+
+    async with scoped_session(maker, owner) as s:
+        row = {r.session_id: r for r in await repo.notes_inbox(s)}[sid]
+    assert row.live is True and row.question is None
+
+
+async def test_notes_inbox_drops_a_settled_thread_and_a_deleted_note(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """A settled thread is not waiting, and a soft-deleted note's thread is a redirect
+    into a dead end — `notes/repo.py`'s delete is soft, so its conversation survives."""
+    repo = NoteConversationRepo()
+    settled_note, deleted_note = await seed_note(maker, owner), await seed_note(maker, owner)
+    settled_sid, deleted_sid = await seed_session(maker, owner), await seed_session(maker, owner)
+
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=settled_sid, note_id=settled_note, body_sha="sha")
+        await repo.set_state(s, settled_sid, "settled")
+        await repo.start(s, session_id=deleted_sid, note_id=deleted_note, body_sha="sha")
+        await repo.set_state(s, deleted_sid, "waiting_on_owner")
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = CAST(:id AS uuid)"),
+            {"id": deleted_note},
+        )
+
+    async with scoped_session(maker, owner) as s:
+        listed = {r.session_id for r in await repo.notes_inbox(s)}
+    assert settled_sid not in listed
+    assert deleted_sid not in listed
+
+
 async def test_the_ledger_records_calls_in_order_and_binds_its_turn(
     maker: async_sessionmaker, owner: SessionContext
 ) -> None:

@@ -27,6 +27,22 @@ _SUMMARY_TS = _REPO / "frontend" / "src" / "agent" / "toolSummary.ts"
 # "queued" job step). They may appear in the frontend maps without a sidecar.
 _SYNTHETIC = {"queued"}
 
+# The note-conversation write surface (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md W3,
+# `docs/research/agent-ingest/TOOL_SURFACE.md`). Its sidecars and its PWA polish land on
+# separate branches, and the polish has to land first or the wave's own chip renders
+# `assert_fact` as a raw snake_case row. So these are allowed to be polished ahead of
+# their sidecar — and the assertion below is self-clearing: the moment a sidecar lands,
+# this test says to delete the name from here.
+_FORWARD = {"resolve_entity", "assert_fact", "ask_owner", "prefs_read", "prefs_write"}
+
+
+def test_forward_entries_are_deleted_once_their_sidecar_lands() -> None:
+    landed = sorted(_FORWARD & set(_roster()))
+    assert not landed, (
+        "these tools now HAVE a .tool sidecar, so they are no longer forward-declared — "
+        f"remove them from _FORWARD so the staleness gate covers them again: {landed}"
+    )
+
 
 def _summary_src() -> str:
     return _SUMMARY_TS.read_text(encoding="utf-8")
@@ -105,7 +121,7 @@ def test_inline_arg_keys_exist_in_each_tool_schema() -> None:
 
 def test_frontend_maps_carry_no_stale_tools() -> None:
     src = _summary_src()
-    known = set(_roster()) | _SYNTHETIC
+    known = set(_roster()) | _SYNTHETIC | _FORWARD
     stale = sorted((set(_step_labels(src)) | set(_inline_args(src)) | _no_inline(src)) - known)
     assert not stale, (
         "these entries in toolSummary.ts no longer match any .tool sidecar (renamed or "

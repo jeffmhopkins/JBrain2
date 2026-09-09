@@ -257,6 +257,35 @@ class NoteConversationToolCall(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# How much of a note the inbox row quotes. The row is a REDIRECT (D4) — enough to
+# recognise which note raised the question, never enough to answer it here.
+NOTE_EXCERPT_CHARS = 160
+
+
+@dataclass(frozen=True)
+class NotesInboxEntry:
+    """One note-conversation row of the review inbox's notes tab (D4/D5). Read-only and
+    decision-free by construction: it carries what a redirect needs to be worth taking —
+    which note, what is being asked, how long it has waited, how much already landed —
+    and no id or verb any answer could be posted against."""
+
+    session_id: str
+    # The session's persona, so the PWA flips to the conversation tab that hosts it
+    # before opening the thread — a redirect that lands on the wrong tab shows an empty
+    # chat, which reads as "the question is gone".
+    agent: str
+    note_id: str
+    domain: str
+    note_excerpt: str
+    captured_at: datetime
+    question: str | None
+    waiting_since: datetime
+    committed: int
+    # A first pass still `running` is LISTED but not counted: the agent is reading, and
+    # nothing is waiting on the owner yet (the mock's uncounted trailing row).
+    live: bool
+
+
 @dataclass(frozen=True)
 class ConversationWrites:
     """The whole-conversation union of what its successful calls wrote — constraint 6's
@@ -404,6 +433,61 @@ class NoteConversationRepo:
             .limit(limit)
         )
         return list((await session.execute(stmt)).scalars())
+
+    async def notes_inbox(self, session: AsyncSession, *, limit: int = 50) -> list[NotesInboxEntry]:
+        """The notes tab of the review inbox (D4/D5): every live conversation, oldest
+        wait first, with what it is asking and what it already committed.
+
+        Both live states, not just `waiting_on_owner`: a first pass still `running` is
+        listed so the owner can see the note is being read, and the route leaves it out
+        of the count because nothing is waiting on them yet.
+
+        The question is the LAST `ask_owner` of the thread — a conversation resumed after
+        an answer can ask again, and the inbox must point at the open one, not the
+        answered one. `committed` counts distinct fact ids over the thread's SUCCEEDED
+        calls, so it is honestly 0 until the recorder moves into the tool dispatch
+        (`ConversationWrites`' docstring) rather than a number invented from arguments.
+
+        A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
+        conversation survives, and a redirect into a deleted note's thread is a dead end.
+        """
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT c.session_id, c.note_id, c.state, c.updated_at, s.agent,"
+                    " n.domain_code, n.body, n.created_at AS captured_at,"
+                    " (SELECT t.args->>'question'"
+                    "    FROM app.note_conversation_tool_calls t"
+                    "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
+                    "   ORDER BY t.seq DESC LIMIT 1) AS question,"
+                    " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
+                    "         unnest(t2.fact_ids) AS f"
+                    "   WHERE t2.session_id = c.session_id AND t2.ok) AS committed"
+                    "  FROM app.note_conversations c"
+                    "  JOIN app.notes n ON n.id = c.note_id"
+                    "  JOIN app.agent_sessions s ON s.id = c.session_id"
+                    " WHERE c.state = ANY(:states) AND n.deleted_at IS NULL"
+                    " ORDER BY c.updated_at ASC, c.session_id ASC"
+                    " LIMIT :limit"
+                ),
+                {"states": list(LIVE_STATES), "limit": limit},
+            )
+        ).all()
+        return [
+            NotesInboxEntry(
+                session_id=str(r.session_id),
+                agent=r.agent,
+                note_id=str(r.note_id),
+                domain=r.domain_code,
+                note_excerpt=_excerpt(r.body),
+                captured_at=r.captured_at,
+                question=r.question,
+                waiting_since=r.updated_at,
+                committed=int(r.committed or 0),
+                live=r.state == "running",
+            )
+            for r in rows
+        ]
 
     async def set_state(
         self,
@@ -555,6 +639,14 @@ class NoteConversationRepo:
         return ConversationWrites(
             facts=frozenset(facts), entities=frozenset(entities), domains=frozenset(domains)
         )
+
+
+def _excerpt(body: str) -> str:
+    """The note as the inbox row quotes it — one line, capped. Collapsed to a single
+    line here rather than in CSS: the row is a two-line quote in the mock, and a note
+    whose first line is blank would otherwise quote nothing at all."""
+    line = " ".join(body.split())
+    return line if len(line) <= NOTE_EXCERPT_CHARS else f"{line[:NOTE_EXCERPT_CHARS]}…"
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

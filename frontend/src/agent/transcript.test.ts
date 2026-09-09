@@ -185,6 +185,32 @@ describe("applyEvent reducer", () => {
     ]);
   });
 
+  it("attaches graph writes and the truncation flag from a tool result to its tool", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "assert_fact", arguments: {} });
+    // Still in flight: nothing has been written yet, and nothing claims it has.
+    expect(ms[0]?.tools[0]?.facts).toBeUndefined();
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "1 ok",
+      facts: [
+        {
+          kind: "fact",
+          fact_id: "f1",
+          label: "Me takes lisinopril",
+          domain: "health",
+          status: "written",
+        },
+      ],
+      truncated: true,
+    });
+    expect(ms[0]?.tools[0]?.facts).toHaveLength(1);
+    expect(ms[0]?.tools[0]?.facts?.[0]?.domain).toBe("health");
+    expect(ms[0]?.tools[0]?.truncated).toBe(true);
+  });
+
   it("attaches web sources (favicon citation chips) from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "web_search", arguments: {} });

@@ -425,6 +425,53 @@ too. Author a **new** adversarial scenario running a real model against a hostil
 the re-authored `adv_prompt_injection_body_inert.json` is a tautology, by its own
 description.
 
+*Landed (the GUI half of W3).* The **D3 "entity modified" rung** and the **two-tab
+inbox** (D4/D5), both as extensions of shipped components rather than new surfaces.
+
+- The rung is one more rung inside `StepRow`'s existing detail. Writes ride the tool
+  result as `ToolResultEvent.facts` (`FactWrite`: statement, per-fact `domain`, a
+  `written|replaced|held` status the WRITE PATH reports, `from_attachment` for D12) plus
+  a call-level `truncated`, folded by `transcript.ts` and persisted by `fromTurn`. The
+  step's seven states and their wording are pure (`agent/entityWrites.ts`); a
+  supersession renders through `ClaimDiffView`, extracted from `ClaimDiff.tsx` so the
+  review inbox and the transcript share the app's one diff renderer. The domain is
+  **named** everywhere it is shown, through a single helper, and an unrecognised code
+  says so instead of degrading to a bare dot. No edit affordance: correction is a reply.
+- **The rung renders from the PERSISTED TURN, not from the 0191 ledger** — deliberately.
+  The ledger stores `fact_ids` with no per-fact status and no statement, so it can say
+  *that* a call wrote and *which domains* it touched and never which of the seven states
+  a write reached; and it has no `tool_call_id`, so joining it to a step is positional
+  and breaks exactly on the truncated turn that motivates it. The turn already survives
+  the event stream (it is how every other step replays), so it is one shape with two
+  arrival paths rather than two sources disagreeing on one screen. **The gap this leaves,
+  named rather than papered over:** a turn cut off by `max_steps` writes no assistant
+  turn, so on reopen its calls exist ONLY in the ledger and render nowhere. Closing that
+  is the recorder moving into the tool dispatch plus persisting a truncated prefix —
+  W3's backend half, where `ok` and the written ids come from the write path anyway.
+- The inbox is `notes · wiki` on the shipped `.review-segs` track. `GET /api/review/notes`
+  (owner-only) unions `note_conversations` in either live state with the staged Proposals
+  a note conversation raised (or of an instructions kind), oldest wait first; a `running`
+  first pass is listed and uncounted. **"The inbox only redirects" is a property of the
+  CONTRACT**: the row carries a `session_id` and an `agent` and no item id, and there is
+  no endpoint on this surface to post a decision to — a test asserts both, so growing an
+  answer affordance means deleting a test. A row hands off exactly as a Tasks run does.
+- The launcher's Review tile badge — the only signal, polled only while the launcher is
+  on screen — now sums both tabs (mock fidelity item 10); the notes half degrades to the
+  wiki count alone if its endpoint fails.
+- Two shipped bugs fixed on the way: an empty lane rendered a `0` count pill (D5's "no
+  zero to clear"), and the session handoff mapped every non-`curator` persona to the
+  Research tab, so a `note_ingest` redirect would have landed on the wrong tab and shown
+  an empty chat. `modeForAgent` now derives it from `MODE_AGENTS`.
+- `toolSummary.ts` gained labels and inline-arg policies for the five W3 tools, and
+  `inlinePiece` now renders a BATCHED argument elementwise (the whole W3 tool surface
+  batches). Their `.tool` sidecars land on sibling branches, so the roster gate carries a
+  named, **self-clearing** `_FORWARD` set: the moment a sidecar lands, a test says to
+  delete the name from it.
+- Found wrong in the chosen mock, and recorded in `docs/mocks/agent-ingest-inbox/`:
+  variant A relabels `pending · decided` to `notes · wiki` without saying what becomes of
+  the **decided log and its `reopen`** — a shipped, `DESIGN.md`-binding full unwind. Built
+  with the log one level down inside the wiki tab rather than silently deleted.
+
 *Two things W2's reviews left specifically for W3, both about flipping
 `reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens
 nothing retroactively**: `read_scopes` is also what is persisted as the session row's

@@ -3,7 +3,8 @@
 > **Status:** GUI gate **SETTLED — variant A chosen.** `a-inbox-holds.html` is the binding
 > spec (`docs/reference/PROCESS.md` "GUI gate"). `b-waiting-bucket.html` and
 > `c-question-in-stream.html` are **superseded**, kept as the record of the round and not
-> maintained. Nothing is built yet.
+> maintained. **Built** (`ReviewScreen.tsx` + `review/NotesTab.tsx` + `GET
+> /api/review/notes`); the two doc corrections below rode along, as item 2 promised.
 > Build plan: `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D4/D5**, wave **W3**.
 
 ## The ruling
@@ -195,14 +196,28 @@ Standalone, no build step, phone-viewport first, correct in both themes, on the
    does not suppress) or *file a correction note* and wait for the next build. That is defensible
    under non-negotiable #7 — the wiki stays machine-written — but it is slow, and the mocks show
    how slow. Adding verbs is scope; so is fixing dismiss.
-2. **Doc corrections ride along.** `docs/reference/DESIGN.md:899-953` has drifted from the code
-   in two places, and both are corrected in the PR that builds this (`docs/DOC_LIFECYCLE.md`):
-   - it describes a **three-lane** review inbox (`pending · deferred · decided`); only two
+2. **Doc corrections ride along — DONE.** `docs/reference/DESIGN.md`'s "Review inbox" had
+   drifted from the code in two places, and both were corrected in the PR that built this
+   (`docs/DOC_LIFECYCLE.md`):
+   - it described a **three-lane** review inbox (`pending · deferred · decided`); only two
      lanes shipped, and this change replaces them with the two tabs;
-   - `:930-935` describes **defer** and **talk it over** as "two universal escape hatches
-     [that] sit in the footer", but `Footer.tsx` renders only `rfoot-correct` for the pending
-     lane. The mocks show no defer and no talk-it-over because the code has none — the doc is
-     what is stale, not the mock.
+   - it described **defer** and **talk it over** as "two universal escape hatches [that] sit
+     in the footer", but `Footer.tsx` renders only `rfoot-correct`. The mocks show no defer
+     and no talk-it-over because the code has none — the doc was what was stale, not the mock.
+
+## Found wrong in this mock while building it
+
+**A drops the `decided` lane and does not say what becomes of `reopen`.** Relabelling the
+`.review-segs` track from `pending · decided` to `notes · wiki` leaves the decision log with
+no host — and with it the amber **reopen**, which `DESIGN.md` specifies as a *full unwind* of
+a decision's recorded graph effects and which the shipped detail renders. The Fidelity list
+and "Two things still open" both pass over it, so it reads as an oversight rather than a
+trade the ruling made. Built as: the two tabs exactly as specced, with the decided log one
+level down inside the **wiki** tab — a quiet `N decided` line under the list, in the same
+`--text-2` sentence register the empty lanes already use, toggling that tab between the open
+findings and the log. No third segment, no new visual language, and nothing shipped is
+deleted. If the owner would rather the log go, that is a one-line removal — but it should be
+said out loud rather than fall out of a relabel.
 
 ## Round history
 
