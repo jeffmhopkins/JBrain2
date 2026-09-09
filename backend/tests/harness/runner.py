@@ -44,11 +44,12 @@ where it becomes visible (see the plan's W3 section):
     `measurement` time-series and a `preference` are not sayable on an
     undeclared predicate, and asserting `kind: relationship` on an object edge
     is now a tautology.
-  - **No `confidence`.** `assert_fact` stamps `self_confidence=1.0` on every
-    fact, and `supersession.decide`'s low-confidence guard is keyed on exactly
-    that field — so a model that knows its own read is a guess cannot say so,
-    and a 0.25 OCR read supersedes a 0.95 prior with no card. This is the SAFETY
-    one (`health_low_confidence_ocr_guard`).
+  - **No `confidence`.** The tool surface has no confidence field, so a model
+    that knows its own read is a guess cannot say so. The guard itself is live —
+    `assert_fact` stamps `self_confidence=confidence`, so an unattested write
+    lands at 0.4, under `LOW_CONFIDENCE`, and is held — but a 0.25 self-report
+    on an otherwise well-quoted read has no channel. This is the SAFETY one
+    (`health_low_confidence_ocr_guard`).
   - **No arbiter.** `derive_kinship_gender` and the rest of the arbiter's
     derivations do not run on this path, so facts main inferred are simply
     absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote 12).

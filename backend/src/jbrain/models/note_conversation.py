@@ -321,18 +321,26 @@ class ConversationWrites:
     `frozenset`, not `set`: `frozen=True` only stops the FIELDS being rebound, and a
     caller that dropped an id from a mutable `facts` would silently widen the sweep.
 
-    **`facts` IS ALWAYS EMPTY TODAY, AND AN EMPTY `facts` IS NOT "NOTHING WAS
-    WRITTEN".** Nothing shipped reports fact ids on a tool step — `ledger_rows`
-    (`analysis/converse.py`) therefore passes none, deliberately, rather than inventing
-    them from the model's arguments. So a conversation that wrote a dozen facts still
-    reports `facts=frozenset()`. Wiring `settle_note(touched=writes().facts)` before the
-    recorder reports real ids does not narrow the sweep — it retracts the note's ENTIRE
-    non-pinned graph on every pass. The recorder has to move into the tool dispatch
-    first (W3), where `ok` and the written ids come from the write path itself."""
+    **`facts` IS FILLED FOR ONE TURN PATH AND EMPTY FOR THE OTHER, AND AN EMPTY `facts`
+    IS NOT "NOTHING WAS WRITTEN".** `record_tool_call` has exactly two callers: the
+    worker's unattended pass (`analysis/converse.py`, via `ledger_rows`, which does now
+    report real fact ids) and `ask_owner`'s self-record. The owner's REPLY turn is an
+    ordinary `/chat` turn — `api/agent.py` touches this repo nowhere — so a
+    `resolve_entity` / `assert_fact` / `correct_fact` on that turn reaches the D3 rung
+    through the transcript and never reaches this table.
+
+    That asymmetry is the trap, and it is worse than the old always-empty state because
+    it looks solved. `clarify.close_owner_reply` maps that turn's clean end to
+    `settled`; wiring `settle_note(touched=writes().facts)` off `settled` — which is
+    exactly what constraint 6 specifies — would retract every unpinned fact the owner's
+    own reply just added, while the transcript still shows them recorded. `correct_fact`
+    survives only by accident, because it pins. **W4 must move the recorder into the
+    tool dispatch, or scope the sweep to the unattended pass, BEFORE wiring it.**"""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
-    """The fact ids the conversation's successful calls wrote. EMPTY IN EVERY WAVE SO
-    FAR — see the class docstring before feeding it to `settle_note`."""
+    """The fact ids the conversation's successful calls wrote. Filled by the unattended
+    pass; EMPTY for anything the owner's reply turn wrote — see the class docstring
+    before feeding this to `settle_note`."""
 
     entities: frozenset[uuid.UUID] = field(default_factory=frozenset)
     domains: frozenset[str] = field(default_factory=frozenset)
@@ -666,11 +674,12 @@ class NoteConversationRepo:
         counting its ids would spare a fact the whole-note sweep is supposed to
         retract.
 
-        **The returned `facts` is empty in every wave so far**, because no shipped tool
-        step reports fact ids for `record_tool_call` to store — not because the
-        conversation wrote nothing. `settle_note` retracts every non-pinned fact of the
-        note that is NOT in `touched` (`analysis/pipeline.py`), so passing this straight
-        through today retracts the whole note. Read `ConversationWrites`' docstring
+        **The returned `facts` covers the unattended pass ONLY.** The owner's reply turn
+        runs on `/chat`, which never calls `record_tool_call`, so anything it wrote is
+        missing here — not because the conversation wrote nothing. `settle_note`
+        retracts every non-pinned fact of the note that is NOT in `touched`
+        (`analysis/pipeline.py`), so passing this straight through would retract exactly
+        the facts the owner's own answer added. Read `ConversationWrites`' docstring
         before you wire it."""
         stmt = select(
             NoteConversationToolCall.fact_ids,

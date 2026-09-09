@@ -727,8 +727,15 @@ Three things that answer questions the plan had left open:
 - **The `fact_ids` ledger is filled**, through a `facts` chip on the tool result
   (`contracts.FactWriteRef` → `ToolOutput` → `ToolResultEvent` → the transcript step →
   `ledger_rows`), so what is recorded is what the write path REPORTED, never what the
-  model asked for. The sibling wiring `settle_note` can now read `touched` from
-  `NoteConversationRepo.writes()`. **`mention_ids` still has no channel** — the ledger
+  model asked for. **For the UNATTENDED pass only.** `record_tool_call` has two callers
+  — the worker's pass and `ask_owner`'s self-record — and the owner's reply is an
+  ordinary `/chat` turn that touches the repo nowhere, so a `resolve_entity` /
+  `assert_fact` / `correct_fact` on a reply reaches the D3 rung and never the ledger,
+  while `clarify.close_owner_reply` still maps that turn to `settled`. **W4 precondition,
+  beside constraint 6:** move the recorder into the tool dispatch, or scope the sweep to
+  the unattended pass, BEFORE wiring `settle_note(touched=writes().facts)` — otherwise
+  the first settle retracts every unpinned fact the owner's own answer added, while the
+  transcript still shows them recorded. `correct_fact` survives only because it pins. **`mention_ids` still has no channel** — the ledger
   has no column for them and migrations are not this task's — so a `settle_note` call
   must NOT pass an empty `mention_ids` set: `_reconcile_mentions` would delete every
   mention of the note (constraint 7's failure, exactly).

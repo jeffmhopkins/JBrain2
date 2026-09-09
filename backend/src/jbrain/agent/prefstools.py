@@ -174,7 +174,8 @@ def build_owner_prefs_handlers(
         # without `general` cannot stage this — and would get a raw ProgrammingError
         # from the INSERT rather than something the model can read. Said as text here.
         # Note this is live: a `reads_knowledge_base=False` note conversation runs with
-        # EMPTY scopes today, so `prefs_write` refuses until W3 flips that flag.
+        # EMPTY scopes, so `prefs_write` would refuse. The flag is True as of W3;
+        # this stays as the reason the check exists, not as a live condition.
         if PREFS_DOMAIN not in ctx.scopes:
             return (
                 "Can't stage a change to your standing instructions — this session isn't"

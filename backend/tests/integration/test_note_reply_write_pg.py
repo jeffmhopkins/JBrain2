@@ -263,8 +263,10 @@ async def test_a_correction_force_supersedes_the_head_and_pins_the_new_value(  #
     assert live[0].pinned is True
     # Sourced to the conversation's OWN note — the note whose reading Jeff corrected.
     assert str(live[0].note_id) == note_id
-    # And the tool reported a real fact write, so the D3 chip and the 0191 ledger both
-    # see it (`facts` is the channel `converse.ledger_rows` folds into `touched`).
+    # And the tool reported a real fact write, so the D3 chip sees it. The 0191 ledger
+    # does NOT: `record_tool_call` is reached only from the worker's unattended pass,
+    # and this is a `/chat` turn. That gap is W4's to close before it wires the settle
+    # sweep — see `ConversationWrites`.
     assert isinstance(out, ToolOutput) and len(out.facts) == 1
     # D3's supersession state, with the "before" the diff needs. `ClaimDiffView` — the
     # reason the app's one diff renderer was extracted from `ClaimDiff.tsx` — renders

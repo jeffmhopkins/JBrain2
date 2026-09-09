@@ -466,7 +466,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
     `read_entity` prints — never by fact id, and the entity is resolved under the TURN's
     own read scopes, so the only rows it can be pointed at are ones the conversation
     could already see. On a key holding several live values it lists them as `f1`/`f2`,
-    writes nothing, and the model retries naming one. The write is the ordinary graph
+    writes nothing, and REFUSES — there is no retry. A non-functional edge's identity is its object, so "replace this one" is one fact ending and another beginning, not a single write; the model is told what is on file and asks which is meant. The write is the ordinary graph
     write with `correction=True`, which is what `supersession.decide()` reads to
     supersede the current head(s) and commit the new value **active + pinned** — so a
     later note re-flags it rather than flipping it back. It takes no `quote`: its

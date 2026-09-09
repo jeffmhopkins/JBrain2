@@ -1,7 +1,7 @@
 {
   "name": "a low-confidence OCR-derived health state must not auto-supersede a confident prior",
   "description": "docs/reference/ANALYSIS.md 'Guards': low-confidence numeric health facts never auto-supersede anything. Note 1 records a confident medication regimen (lisinopril, conf 0.95). Note 2 is a blurry OCR read the model returns at conf 0.25. Even though the OCR text is surface-attested (so the weight model would commit it), supersession.decide()'s low-confidence guard is keyed on the model's SELF-confidence, not the plan weight: a 0.25 read that would supersede a more-confident active fact is parked as pending_review behind a low_confidence card, and the confident fact stays active. Pins that a blurry OCR value can't silently overwrite a confident fact (regression: integrate must thread self-confidence to decide(), not the plan weight a surface-attested fact carries).",
-  "xfail": "SAFETY gap, and the only scenario in the corpus that asserts a `low_confidence` card. The tool surface has no confidence field and `assert_fact` stamps `self_confidence=1.0` on every fact, so the model's own 0.25 self-report is inexpressible \u2014 and `supersession.decide`'s low-confidence guard is keyed on exactly that field (`candidate.self_confidence < LOW_CONFIDENCE`), so the whole branch is unreachable from a tool write. The failure is in the DANGEROUS direction: a blurry OCR read of a blood-pressure medication overwrites a 0.95-confidence prior with no card and no held row. Closing it needs a channel for model self-confidence (a tool field, or a derivation the write path trusts), not a `kind` field \u2014 this reason previously blamed the missing `kind`, which is a separate, milder gap and is not what fails here.",
+  "xfail": "SAFETY gap, and the only scenario in the corpus that asserts a `low_confidence` card. The tool surface has no confidence field, so the model's own 0.25 self-report is inexpressible. Note the guard itself is NOT dead: `assert_fact` stamps `self_confidence=confidence`, so an unattested write is held at 0.4 (`test_note_graph_write_pg.py` proves it). What is missing is a channel for a self-report lower than the quote check implies — a tool field, or a derivation the write path trusts. An earlier version of this reason blamed the missing `kind` field, and a later one claimed the guard was unreachable; both were wrong.",
   "steps": [
     {
       "domain": "health",
@@ -9,13 +9,46 @@
       "body": "Confirmed with Dr. Okafor: I'm on lisinopril 10mg daily.",
       "extraction": {
         "title": "Medication confirmed",
-        "tags": ["medication", "lisinopril", "health"],
+        "tags": [
+          "medication",
+          "lisinopril",
+          "health"
+        ],
         "mentions": [
-          {"name": "Me", "kind": "Person", "surface_text": "I"},
-          {"name": "Dr. Okafor", "kind": "Person", "surface_text": "Dr. Okafor"}
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "I"
+          },
+          {
+            "name": "Dr. Okafor",
+            "kind": "Person",
+            "surface_text": "Dr. Okafor"
+          }
         ],
         "facts": [
-          {"predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "statement": "Taking lisinopril 10mg daily.", "value_json": {"drug": "lisinopril", "dose": "10mg", "frequency": "daily"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.95}
+          {
+            "predicate": "medicationRegimen",
+            "qualifier": "antihypertensive",
+            "kind": "state",
+            "statement": "Taking lisinopril 10mg daily.",
+            "value_json": {
+              "drug": "lisinopril",
+              "dose": "10mg",
+              "frequency": "daily"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-06-01T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "health",
+            "confidence": 0.95
+          }
         ],
         "temporal_tokens": []
       }
@@ -26,10 +59,41 @@
       "body": "Photo of the pharmacy label (blurry OCR): looks like it might say losartan 50mg?",
       "extraction": {
         "title": "Pharmacy label photo",
-        "tags": ["medication", "ocr", "health"],
-        "mentions": [{"name": "Me", "kind": "Person", "surface_text": "label"}],
+        "tags": [
+          "medication",
+          "ocr",
+          "health"
+        ],
+        "mentions": [
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "label"
+          }
+        ],
         "facts": [
-          {"predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.", "value_json": {"drug": "losartan", "dose": "50mg", "frequency": "daily"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "", "resolved_start": "2026-06-09T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "health", "confidence": 0.25}
+          {
+            "predicate": "medicationRegimen",
+            "qualifier": "antihypertensive",
+            "kind": "state",
+            "statement": "Pharmacy label (OCR, low confidence) reads losartan 50mg daily.",
+            "value_json": {
+              "drug": "losartan",
+              "dose": "50mg",
+              "frequency": "daily"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-06-09T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "health",
+            "confidence": 0.25
+          }
         ],
         "temporal_tokens": []
       }
@@ -37,14 +101,41 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "value_contains": "lisinopril", "status": "active", "chained": false, "domain": "health"},
-      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "kind": "state", "value_contains": "losartan", "status": "pending_review", "domain": "health"}
+      {
+        "entity": "Me",
+        "predicate": "medicationRegimen",
+        "qualifier": "antihypertensive",
+        "kind": "state",
+        "value_contains": "lisinopril",
+        "status": "active",
+        "chained": false,
+        "domain": "health"
+      },
+      {
+        "entity": "Me",
+        "predicate": "medicationRegimen",
+        "qualifier": "antihypertensive",
+        "kind": "state",
+        "value_contains": "losartan",
+        "status": "pending_review",
+        "domain": "health"
+      }
     ],
     "absent_facts": [
-      {"entity": "Me", "predicate": "medicationRegimen", "qualifier": "antihypertensive", "value_contains": "lisinopril", "status": "superseded"}
+      {
+        "entity": "Me",
+        "predicate": "medicationRegimen",
+        "qualifier": "antihypertensive",
+        "value_contains": "lisinopril",
+        "status": "superseded"
+      }
     ],
     "review_items": [
-      {"kind": "low_confidence", "domain": "health", "count": 1}
+      {
+        "kind": "low_confidence",
+        "domain": "health",
+        "count": 1
+      }
     ]
   }
 }
