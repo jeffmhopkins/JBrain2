@@ -28,13 +28,26 @@ down_revision = "0194"
 branch_labels = None
 depends_on = None
 
+# 0111's own _KIND_NEW, verbatim — the constraint as it stands on the live box. Restating
+# it by hand is how `prompt-edit` and `skill-promotion` got dropped from the first draft of
+# this migration, which would have silently un-admitted two kinds nothing here touches.
 _KIND_OLD = (
     "('correction', 'knowledge', 'appointment', 'wiki-restructure',"
-    " 'predicate-canon', 'egress', 'intake-link', 'intake-submission')"
+    " 'prompt-edit', 'skill-promotion', 'predicate-canon', 'egress',"
+    " 'intake-link', 'intake-submission')"
 )
+# Four additions. `owner-prefs` is this migration's own; the other three are a live bug
+# this surfaced — `propose_merge` (mergetools), the library-video removal (externaltools)
+# and the research-report removal (researchtools) have all been staging kinds the CHECK
+# refuses, so each raises at stage time on a real box. Every test covering them uses a
+# fake repo, which is exactly why nine months of green CI never noticed.
+# `test_proposal_kinds_pg.py` now stages every kind the source actually constructs, so a
+# tool added without its kind fails there rather than on the owner's box.
 _KIND_NEW = (
     "('correction', 'knowledge', 'appointment', 'wiki-restructure',"
-    " 'predicate-canon', 'egress', 'intake-link', 'intake-submission', 'owner-prefs')"
+    " 'prompt-edit', 'skill-promotion', 'predicate-canon', 'egress',"
+    " 'intake-link', 'intake-submission', 'owner-prefs',"
+    " 'merge', 'remove-library-video', 'remove-research-report')"
 )
 
 
