@@ -1,11 +1,12 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◻️ W4◻️ W5◻️
 
 Owner-ratified 2026-09-08, then revised the same day against six independent cold
 reviews (`docs/research/agent-ingest/COLD_REVIEW_FINDINGS.md`). Research behind it: the
 eighteen dossiers in `docs/research/agent-ingest/`, consolidated in `SYNTHESIS.md`. The
-proposed tool list is `docs/research/agent-ingest/TOOL_SURFACE.md`. No code written yet.
+proposed tool list is `docs/research/agent-ingest/TOOL_SURFACE.md`, whose batch shapes
+W2 measured against the live model rather than leaving them guessed.
 
 ## Thesis
 
