@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 6) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅(on air; three corrections folded in)
+> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 7) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅ B5✅(on air; four corrections folded in)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -1407,6 +1407,24 @@ forward again — which reads as the drag having been rejected. The chosen width
 until the row agrees with it (`sdrBandwidth.pendingPassband`), and only until, so a width
 the box REFUSES stops being drawn instead of lingering as a lie about what the radio is
 doing.
+
+**B5 — the tuner floor leaked into the band sheet (2026-09-09, on air).** The Spectrum
+band sheet's manual entry refused 4.625 MHz as "outside what this radio reaches
+(24-1766 MHz)" — while the picture behind it was drawing 4.393-5.417 MHz from the 60 m
+button. It bounded on `bands.tuner_min_hz`, which is the R820T2 TUNER's floor, so the
+band table could go somewhere the box's own entry field called unreachable.
+
+This is the bug class `jbrain/sdr/tuner.py` exists to end, appearing for the third time:
+`MIN_MHZ` is the tuner's range and `TUNABLE_MIN_MHZ` is the radio's. The tuner controls
+had already been fixed with a comment saying exactly that, and the fix did not travel.
+So the rule now lives in one module both screens import (`sdrTunable.ts`), and the API
+was already right — `Query(ge=TUNABLE_MIN_MHZ)` — which is why the frontend guard was the
+only thing blocking it. Verified against the real planner: the owner's 4.625 ± 0.5 gets
+400 Hz bins in a single capture, the same plan the 60 m button gets.
+
+A span is checked at both EDGES and across the middle, which a point never needs: 12 to
+28 MHz has two legal edges and a middle drawn from a mirror of somewhere else. My own
+test caught that — the first draft checked edges only.
 
 **B3 — the control.** Binding spec `docs/mocks/bandwidth/d-mode-width-draggable.html`,
 chosen by the owner: the mode button carries its width and a second tap opens the
