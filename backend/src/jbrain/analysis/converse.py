@@ -43,7 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.agents import agent_for
+from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -59,7 +59,7 @@ from jbrain.models.note_conversation import (
 )
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
-from jbrain.tasks.runner import LoopTurnExecutor, TurnExecutor
+from jbrain.tasks.runner import ExecutedTurn, LoopTurnExecutor, TurnExecutor
 from jbrain.tasks.scheduler import _owner_principal_id
 from jbrain.workflow.registry import ActionSpec
 
@@ -277,7 +277,7 @@ class NoteConverseRunner:
     async def _run_turn(
         self,
         owner_ctx: SessionContext,
-        profile: Any,
+        profile: AgentProfile,
         note: NoteInfo,
         session_id: str,
         read_scopes: Sequence[str],
@@ -340,7 +340,7 @@ class NoteConverseRunner:
         session_id: str,
         run_id: str,
         turn_0: str,
-        executed: Any,
+        executed: ExecutedTurn,
     ) -> None:
         """Persist the exchange, the ledger, and the meter seed.
 
