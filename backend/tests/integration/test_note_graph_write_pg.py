@@ -581,3 +581,212 @@ async def test_the_call_budget_is_per_conversation_and_refuses_in_words(maker, t
             await s.execute(select(Fact.id).where(Fact.note_id == writer._target.note_id))
         ).all()
     assert count == []
+
+
+# --- the D3 rung's payload, from the real write path --------------------------
+#
+# `tests/unit/test_fact_write_contract.py` pins the SHAPE the frontend reads; these say
+# the write path fills it from what actually happened. The rung shipped reading six field
+# names the backend never sent, so a fixture-built ref proves nothing on its own — the
+# fields below have to arrive from `commit_facts`, not from a test helper.
+
+
+@pytest.mark.asyncio
+async def test_a_write_decide_parked_reports_held_and_never_written(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """THE finding. `decide()` refused to make this value live — it clashes with a head
+    it cannot order — and a rung that calls that "written" tells Jeff his graph says
+    something it does not. `ask_owner.tool` and the persona prompt both instruct the
+    model to raise exactly this case, so the screen contradicting them is worse than
+    silence.
+
+    The reviewer's reproduction fed two facts (one replaced, one held) through the
+    shipped helpers and got "2 written". This is the backend half of stopping that: the
+    write path reports the state, and `status` carries it."""
+    _, writer = await _resolved(maker, tmp_path)
+    first = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "staff engineer",
+                    "statement": "Dana Whitfield is a staff engineer.",
+                    "when": "2026-03",
+                    "quote": "as a staff engineer",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    assert first.facts[0].status == "written"
+
+    second = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "principal engineer",
+                    "statement": "Dana Whitfield is a principal engineer.",
+                    "when": "2026-06",
+                    "quote": "as a staff engineer",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    write = second.facts[0]
+    assert write.outcome == "held"
+    # The reduction the renderer reads. `held` is the ONE outcome that must never widen
+    # into a live state, and the tool text agrees with it in the same breath.
+    assert write.status == "held"
+    assert "NOT live" in str(second)
+    # The edge, as the write path resolved it — not the spelling the model sent. It is
+    # what the expanded rung prints as `predicate → value`.
+    assert write.predicate == "jobTitle"
+    assert write.value == "principal engineer"
+    assert write.from_attachment is False
+
+
+@pytest.mark.asyncio
+async def test_a_clamped_batch_says_truncated_on_the_step_not_only_in_the_prose(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The tool tells the MODEL its batch was clamped; D3 says the step has to tell the
+    OWNER too. Without it a batch cut to its first few renders as though the whole list
+    landed — the step's write list is a prefix and nothing on screen says so."""
+    from jbrain.agent.graphwritetools import MAX_FACTS
+
+    _, writer = await _resolved(maker, tmp_path)
+    out = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": f"likes{i}",
+                    "object": f"thing {i}",
+                    "statement": f"Dana Whitfield likes thing {i}.",
+                    "when": "",
+                    "quote": "Coffee with Dana Whitfield",
+                }
+                for i in range(MAX_FACTS + 3)
+            ]
+        },
+        _ctx(),
+    )
+    assert out.truncated is True
+    assert len(out.facts) <= MAX_FACTS
+
+    # A batch inside the cap is NOT truncated — otherwise the flag says nothing.
+    ok = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "drinks",
+                    "object": "coffee",
+                    "statement": "Dana Whitfield drinks coffee.",
+                    "when": "",
+                    "quote": "Coffee with Dana Whitfield",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    assert ok.truncated is False
+
+
+@pytest.mark.asyncio
+async def test_a_fact_quoted_from_an_attachment_is_marked_from_the_attachment(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """D12, which had no producer at all: `from_attachment` appeared nowhere in the write
+    path, so the chip could never say a fact came off a photo.
+
+    The evidence is the provenance of the CHUNK the quote is attested against — the same
+    deterministic check attestation itself uses. The model does not get to say where a
+    fact came from, and a quote out of the note's own prose stays unmarked."""
+    from jbrain.ingest.chunker import PARAGRAPH
+    from jbrain.models.notes import Attachment
+    from jbrain.models.notes import Chunk as ChunkRow
+
+    note_id = await _note(maker, tmp_path)
+    ocr = "Lab report: A1C 5.4 percent, drawn 12 March."
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        attachment = Attachment(
+            note_id=uuid.UUID(note_id),
+            domain_code="general",
+            sha256="0" * 64,
+            filename="lab.png",
+            media_type="image/png",
+            size_bytes=1,
+        )
+        s.add(attachment)
+        await s.flush()
+        # One more paragraph chunk of the same note carrying the attachment's text —
+        # the shape `ingest_note` builds for an OCR'd page.
+        seq = (
+            await s.execute(
+                select(ChunkRow.seq)
+                .where(ChunkRow.note_id == uuid.UUID(note_id))
+                .order_by(ChunkRow.seq.desc())
+                .limit(1)
+            )
+        ).scalar_one()
+        s.add(
+            ChunkRow(
+                note_id=uuid.UUID(note_id),
+                domain_code="general",
+                granularity=PARAGRAPH,
+                seq=seq + 1,
+                char_start=0,
+                char_end=len(ocr),
+                source_kind="ocr",
+                attachment_id=attachment.id,
+                text=ocr,
+            )
+        )
+
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity(
+        {"entities": [{"surface": "Dana Whitfield", "kind": "person"}]}, _ctx()
+    )
+
+    from_photo = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "labResult",
+                    "object": "5.4",
+                    "statement": "Dana Whitfield's A1C is 5.4.",
+                    "when": "",
+                    "quote": "A1C 5.4 percent",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    assert from_photo.facts[0].from_attachment is True
+
+    from_prose = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "allergy",
+                    "object": "shellfish",
+                    "statement": "Dana Whitfield is allergic to shellfish.",
+                    "when": "",
+                    "quote": "she is allergic to shellfish",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    assert from_prose.facts[0].from_attachment is False

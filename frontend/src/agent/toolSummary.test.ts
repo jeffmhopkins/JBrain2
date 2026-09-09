@@ -230,7 +230,6 @@ describe("the note-conversation write tools", () => {
   it("carries the graph writes and the truncation flag onto the step", () => {
     const facts: FactWrite[] = [
       {
-        kind: "fact",
         fact_id: "f1",
         label: "Me takes lisinopril",
         domain: "health",

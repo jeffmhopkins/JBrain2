@@ -69,7 +69,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.contracts import EntityRef, FactWriteRef
+from jbrain.agent.contracts import EntityRef, FactWriteRef, write_status
 from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
@@ -335,6 +335,11 @@ class NoteGraphWriter:
         self._by_surface: dict[str, Handle] = {}
         self._chunks: list[_ChunkRef] | None = None
         self._note_text = ""
+        # The normalized text of this note's ATTACHMENT-backed chunks alone (D12). A
+        # quote found in here came off a photo or an OCR'd page rather than out of the
+        # note's own prose, and that is the only evidence the write path has for the
+        # claim — so it is what marks the chip, never the tool name.
+        self._attachment_text = ""
         self.resolve_budget = ToolCallBudget(RESOLVE_CALL_BUDGET)
         self.assert_budget = ToolCallBudget(ASSERT_CALL_BUDGET)
         self.correct_budget = ToolCallBudget(CORRECT_CALL_BUDGET)
@@ -371,13 +376,21 @@ class NoteGraphWriter:
         if self._chunks is None:
             rows = (
                 await session.execute(
-                    select(Chunk.id, Chunk.text)
+                    select(Chunk.id, Chunk.text, Chunk.attachment_id)
                     .where(Chunk.note_id == self._target.note_id, Chunk.granularity == PARAGRAPH)
                     .order_by(Chunk.seq)
                 )
             ).all()
             self._chunks = [_ChunkRef(id=r.id, text=r.text) for r in rows]
             self._note_text = _norm("\n".join(c.text for c in self._chunks))
+            # Attestation joins every chunk, so a quote may legitimately span the body
+            # and an attachment; this joins only the attachment ones, so such a quote
+            # matches NEITHER index and goes unmarked. Under-claiming "from a photo" is
+            # the safe direction — over-claiming would put a provenance on the chip that
+            # the note does not support.
+            self._attachment_text = _norm(
+                "\n".join(r.text for r in rows if r.attachment_id is not None)
+            )
         return self._chunks
 
     def _attests(self, quote: str) -> bool:
@@ -385,6 +398,14 @@ class NoteGraphWriter:
         it can only offer text, and this is the deterministic check on the text."""
         body = _norm(quote)
         return bool(body) and body in self._note_text
+
+    def _from_attachment(self, quote: str) -> bool:
+        """D12: whether the passage this fact rests on came off an ATTACHMENT.
+
+        Same deterministic shape as `_attests` and for the same reason — the model does
+        not get to say where a fact came from. `_load_note` must have run."""
+        body = _norm(quote)
+        return bool(body) and body in self._attachment_text
 
     # --- resolve_entity --------------------------------------------------------
 
@@ -444,7 +465,9 @@ class NoteGraphWriter:
                 " second call."
             )
         lines.append(f"resolve_entity: {self.resolve_budget.remaining} calls left this note")
-        return ToolOutput("\n".join(lines), entities=tuple(refs))
+        # `resolve_entity` is a WRITE_TOOL on the D3 rung too (it mints entities and
+        # mentions), so a clamped batch of surfaces has to say so for the same reason.
+        return ToolOutput("\n".join(lines), entities=tuple(refs), truncated=clamped)
 
     async def _resolve_one(
         self, session: AsyncSession, surface: str, kind: str, chunks: list[_ChunkRef]
@@ -539,7 +562,12 @@ class NoteGraphWriter:
                 " second call."
             )
         lines.append(f"assert_fact: {self.assert_budget.remaining} calls left this note")
-        return ToolOutput("\n".join(lines), entities=tuple(refs), facts=tuple(writes))
+        # `clamped` IS D3's `truncated`: the call asserted a prefix of what it was given.
+        # The model is told in prose above; the owner's step has to say it too, or a
+        # clamped batch renders as though the whole list landed.
+        return ToolOutput(
+            "\n".join(lines), entities=tuple(refs), facts=tuple(writes), truncated=clamped
+        )
 
     # --- correct_fact ----------------------------------------------------------
 
@@ -676,11 +704,15 @@ class NoteGraphWriter:
         # check here could only ever fail and would cap every correction at the inferred
         # ceiling — the one weight that cannot overwrite the value being corrected. Its
         # attestation is WHO SPOKE, which is a property of the tool being bound at all.
+        # D12's evidence. A correction rests on the owner's own message, which is never
+        # an attachment, so it stays False without a quote to check.
+        from_attachment = False
         if correction:
             attested, signals = True, _ATTESTED
         else:
             quote = _text(item, "quote", "span", "evidence")
             attested = self._attests(quote)
+            from_attachment = attested and self._from_attachment(quote)
             if not attested:
                 notes.append(
                     "quote is not in the note — recorded, but at low weight so it cannot"
@@ -760,6 +792,16 @@ class NoteGraphWriter:
                 label=write.statement,
                 domain=write.domain,  # type: ignore[arg-type]  # validated by the write path
                 outcome=write.outcome,
+                status=write_status(write.outcome),
+                # The edge as the write path resolved it — the canonical predicate and
+                # the recovered qualifier, not the spelling the model sent.
+                predicate=predicate,
+                qualifier=qualifier or None,
+                value=obj.label if obj else literal,
+                # Joined as `_write_line` joins them, so the model's result text and the
+                # owner's diff quote the same "before".
+                replaced="; ".join(write.replaced) or None,
+                from_attachment=from_attachment,
             ),
             refs,
         )

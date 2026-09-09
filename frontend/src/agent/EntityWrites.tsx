@@ -39,7 +39,9 @@ function WriteRow({ fact }: { fact: FactWrite }): ReactNode {
   const verb = writeVerb(fact);
   const path =
     fact.predicate === undefined ? null : edgePath(fact.predicate, fact.qualifier ?? null);
-  const superseded = fact.status === "replaced" && fact.replaced !== undefined;
+  // `verb`, not `fact.status`: the state has one resolver, and asking the raw field
+  // here would put the diff on a different reading of the same write than the chip.
+  const superseded = verb === "replaced" && fact.replaced !== undefined;
   return (
     <li className={`fbw-row fbw-${verb}`}>
       <div className="fbw-head">

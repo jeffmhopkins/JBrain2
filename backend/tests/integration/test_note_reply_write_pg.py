@@ -53,7 +53,7 @@ from tests.integration.test_extraction_pg import (  # noqa: F401
     make_note,
     maker,
 )
-from tests.integration.test_note_conversation_rls import owner_ctx  # noqa: F401
+from tests.integration.test_note_conversation_rls import owner_ctx as _owner_ctx
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -65,6 +65,19 @@ BODY = (
     "Talked to Jeff about the move. He said he lives at 118 Pine Ave now, and that "
     "Kaiya is seen by Dr. Patel."
 )
+
+
+@pytest.fixture
+async def owner_ctx(maker) -> SessionContext:  # noqa: F811
+    """A real owner principal, as a FIXTURE.
+
+    `test_note_conversation_rls.owner_ctx` is a plain async helper its own module calls
+    directly; every other importer does the same. This module alone asks for it by
+    PARAMETER, and without this wrapper pytest could not resolve the name — so all eight
+    tests below errored at setup with "fixture 'owner_ctx' not found" and the entire
+    `correct_fact` / `merge_entities` suite had never once executed. The same one-line
+    wrapper `test_ask_owner_pg.py` uses for the same helper."""
+    return await _owner_ctx(maker)
 
 
 def _router() -> LlmRouter:
@@ -246,6 +259,18 @@ async def test_a_correction_force_supersedes_the_head_and_pins_the_new_value(  #
     # And the tool reported a real fact write, so the D3 chip and the 0191 ledger both
     # see it (`facts` is the channel `converse.ledger_rows` folds into `touched`).
     assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    # D3's supersession state, with the "before" the diff needs. `ClaimDiffView` — the
+    # reason the app's one diff renderer was extracted from `ClaimDiff.tsx` — renders
+    # ONLY when `replaced` carries the superseded statement, so a `replaced` write that
+    # dropped it would leave both the extraction and the state pointless: the owner
+    # would be told a value changed and never shown what it changed from.
+    write = out.facts[0]
+    assert write.outcome == "replaced" and write.status == "replaced"
+    assert write.replaced is not None and "118 Pine Ave" in write.replaced
+    assert write.predicate == "homeLocation"
+    assert write.value == "412 Oak St"
+    # An owner correction rests on Jeff's own message, never on a photo.
+    assert write.from_attachment is False
 
 
 @pytest.mark.asyncio
@@ -259,11 +284,16 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
     note_id = await make_note(maker, domain="general", body=BODY)
     await ingest(maker, note_id, tmp_path)
     session_id = await _conversation(maker, owner_ctx, note_id)
-    jeff = await _entity(maker, "Jeff Hopkins")
+    # A name of its OWN. The suite shares one database, and this is the only test that
+    # addresses by NAME, so reusing "Jeff Hopkins" resolved onto the entity a sibling
+    # test had already given a `homeLocation` — the test passed alone and failed in file
+    # order. It could not surface before: the whole module errored at setup.
+    jeff = await _entity(maker, "Jeff Hopkins of the empty address")
 
     await _handlers(maker)[CORRECT_FACT](
         {
-            "entity": "Jeff Hopkins",  # by NAME, not id — the note's own words
+            # by NAME, not id — the note's own words
+            "entity": "Jeff Hopkins of the empty address",
             "predicate": "homeLocation",
             "qualifier": "",
             "object": "412 Oak St",

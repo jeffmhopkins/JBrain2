@@ -40,12 +40,19 @@ export type WriteStatus = "written" | "replaced" | "held";
  * one note's writes can land in different domains and each must NAME its own (D3 —
  * "never colour alone"). */
 export interface FactWrite {
-  kind: "fact";
   fact_id: string;
   /** The whole statement — the fallback when the edge parts below are absent. */
   label: string;
   domain: Domain;
-  status: WriteStatus;
+  /** D3's three states, reduced from the write path's seven-word outcome vocabulary
+   * SERVER-SIDE (`contracts.write_status`), so one table decides it rather than each
+   * renderer. Optional on the wire only because an older persisted turn predates it —
+   * `writeVerb`/`tallyWrites` fall back to `outcome`, never to "written". */
+  status?: WriteStatus;
+  /** The precise word the write path used — `already`, `closed`, `historical`,
+   * `promoted` and the three above. Carried because `status` is a lossy reduction and
+   * this is what the ledger and a debug read want. */
+  outcome?: string;
   /** The graph edge, so a write renders in the shipped `predicate → value` form the
    * entity page and the review inbox already use rather than a second one. */
   predicate?: string;

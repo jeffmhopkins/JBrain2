@@ -374,6 +374,7 @@ class ToolOutput(str):
     deferred: DeferredRef | None
     facts: tuple[FactWriteRef, ...]
     halt: str | None
+    truncated: bool
 
     def __new__(
         cls,
@@ -387,6 +388,7 @@ class ToolOutput(str):
         deferred: DeferredRef | None = None,
         facts: tuple[FactWriteRef, ...] = (),
         halt: str | None = None,
+        truncated: bool = False,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -400,6 +402,10 @@ class ToolOutput(str):
         # note conversation's ledger reads it back as `fact_ids` (constraint 6).
         out.facts = facts
         out.halt = halt
+        # The call took only a prefix of its batch (D3's `truncated`). Set by the tool
+        # that clamped, never inferred downstream — nothing below can tell a short list
+        # from a clamped one.
+        out.truncated = truncated
         return out
 
 
@@ -475,6 +481,8 @@ def _persisted_step(
         step["entities"] = [e.model_dump() for e in dispatched.entities]
     if dispatched.facts:
         step["facts"] = [f.model_dump() for f in dispatched.facts]
+    if dispatched.truncated:
+        step["truncated"] = True
     if dispatched.view is not None:
         step["view"] = dispatched.view.model_dump()
     return step
@@ -496,6 +504,7 @@ class _Dispatched:
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
     facts: tuple[FactWriteRef, ...] = ()
+    truncated: bool = False
     # A tool that ENDS THE TURN on its own, with no background job behind it and no card
     # to stream: the string is the stop_reason the loop finishes on. `deferred` is the
     # same contract with a job attached; this is the bare one, for a tool whose whole
@@ -1294,6 +1303,7 @@ class AgentLoop:
                     proposal=dispatched.proposal,
                     entities=list(dispatched.entities),
                     facts=list(dispatched.facts),
+                    truncated=dispatched.truncated,
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1617,6 +1627,7 @@ class AgentLoop:
                         proposal=dispatched.proposal,
                         entities=list(dispatched.entities),
                         facts=list(dispatched.facts),
+                        truncated=dispatched.truncated,
                     )
                 )
                 if dispatched.view is not None:
@@ -1753,17 +1764,21 @@ class AgentLoop:
             return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        # By keyword: this list has grown past the point where a reader can check a
+        # positional call against the dataclass, and inserting a field mid-list silently
+        # shifts every argument after it.
         return _Dispatched(
-            result,
-            out.sources if out else (),
-            out.proposal if out else None,
-            out.entities if out else (),
-            out.view if out else None,
-            out.job if out else None,
-            out.web_sources if out else (),
-            out.deferred if out else None,
-            out.facts if out else (),
-            out.halt if out else None,
+            result=result,
+            sources=out.sources if out else (),
+            proposal=out.proposal if out else None,
+            entities=out.entities if out else (),
+            view=out.view if out else None,
+            job=out.job if out else None,
+            web_sources=out.web_sources if out else (),
+            deferred=out.deferred if out else None,
+            facts=out.facts if out else (),
+            truncated=out.truncated if out else False,
+            halt=out.halt if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:
