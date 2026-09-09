@@ -34,7 +34,7 @@ and makes the write legible, and disagreement is a reply, not a queue.
 | D3 | **Every tool call is visible as a custom tool component inside the conversation**, expandable to what changed — not a note-screen surface. It must render `written · replaced · held · from a photo · failed · truncated · writing…`, with each write's domain named **in words, never colour alone**. Correction is conversational. |
 | D4 | **The inbox becomes two tabs, and it only redirects.** A **notes** tab lists ingestion questions *and pending approvals* waiting on you; tapping opens the conversation. **Nothing is answerable from the inbox** — the conversation is the only place ingestion is decided, or the inbox becomes a second surface where that happens. A **wiki** tab holds findings that never start from a note. |
 | D5 | **Questions live in their note's conversation** — findable from the notes tab, which is the discoverability answer the original "no queue at all" lacked. Still no push and no nagging badge. |
-| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. This is a **storage** decision with no bespoke rendering: the existing note view renders appended text as text, and the note screen does not change. |
+| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. This is a **storage** decision with no bespoke rendering: the existing note view renders appended text as text, and the note screen does not change. *Shipped as `app.note_clarifications` (0193) composed onto the note's text at read time — never into `notes.body`, which a `PATCH` would overwrite whole.* |
 | D7 | **Re-derivability stays binding.** Clarification blocks are chunks of the same note, so the graph re-derives from notes alone and citations have a real chunk. |
 | D8 | **Unattended, the first pass gets graph tools only.** Nothing outward-facing runs while you are asleep. The full surface unlocks when you reply. |
 | D9 | **EMR import goes through the agent conversation, like a note.** Large imports chunk across several turns. |
@@ -220,6 +220,35 @@ and empty `extra_tools`, its prompt sidecar, and migration `0192` widening both 
 CHECKs. `reads_knowledge_base=False` for now, which **W3 must revisit**: constraint 2
 wants the conversation owner-scoped to `(note_domain, 'general')`, and `False` zeroes the
 session's read scopes, so the domain-visible entity read tools cannot be reached under it.
+
+*Clarification blocks, as built (migration 0193).* The body column is never appended to;
+`app.note_clarifications` holds `(note_id, seq, question, answer, session_id, domain_code,
+created_at)` and `jbrain.notes.compose.compose_body` joins them onto the body for the three
+readers that matter — `_note_info` (list/get/PATCH, and so the note view and `read_note`),
+the ingest chunk build (D7), and the integrator's chunkless body fallback. An un-clarified
+note composes to its body byte-for-byte, and blocks append *after* the body, so no existing
+`char_start`/`char_end` moves. Three consequences worth carrying:
+
+- **The editor round trip.** The note editor loads `NoteInfo.body`, which is now composed, and
+  PATCHes the whole string back. `update_note` therefore cuts at the first block marker before
+  storing — otherwise an untouched save bakes the blocks into the column and the next read
+  doubles them. This is what makes "frozen" enforced rather than conventional (COLD_REVIEW E's
+  objection to `DESIGN.md:697`): the editor stays, and it simply cannot reach the blocks.
+- **RLS is the note's, not owner-only.** `USING (app.has_domain_scope(domain_code))`, the
+  notes/chunks/facts policy — *not* the `is_owner()` posture of `graph_rebuild_runs`/
+  `archivist_memory`, which hold metadata and scratchpad. A clarification is the owner's words
+  about a health or finance note and the same sentence is already firewalled in `app.chunks`;
+  owner-only would let the narrowed session a note conversation runs as (constraint 2) read
+  across the firewall. Grants are `SELECT, INSERT, DELETE` plus `UPDATE (domain_code)` alone,
+  so the text is immutable in Postgres and the domain still carries on a note move.
+- **Purge sides.** The privacy delete takes the blocks (explicitly — the note delete is soft,
+  so 0193's cascade never fires); the rebuild sweep keeps them, or the graph stops re-deriving
+  from the notes corpus-wide and silently. `backfill_deleted_note_artifacts` counts them as a
+  candidate predicate so the intake-link teardown's soft deletes are swept too.
+
+The append path is `SqlNotesRepo.append_clarification` plus its `NotesRepo` Protocol entry —
+no route and no tool in W2; W3's `ask_owner` is the caller. It enqueues its own `ingest_note`
+inside its transaction rather than relying on a caller to remember.
 
 **W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
 "entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and

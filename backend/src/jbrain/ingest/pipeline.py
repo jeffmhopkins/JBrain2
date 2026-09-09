@@ -33,6 +33,7 @@ from jbrain.ingest.extract import (
 from jbrain.ingest.ocr import MAX_OCR_BYTES
 from jbrain.ingest.transcribe_job import DEFAULT_TRANSCRIBE_MAX_BYTES
 from jbrain.models.notes import AttachmentExtract, Chunk, Note
+from jbrain.notes.compose import compose_body
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
 from jbrain.workflow import events as wf_events
@@ -87,7 +88,12 @@ class IngestPipeline:
                 log.info("ingest.skipped", note_id=note_id, reason="missing or deleted")
                 return
             note.ingest_state = "processing"
-            body = note.body
+            # D7: the composed text, so a clarification block is a CHUNK of this note.
+            # Without it a fact extracted from an owner's answer has no chunk to cite,
+            # `wiki/builder.py`'s INNER JOIN drops it, and the graph stops re-deriving
+            # from notes alone. Appended after the body, so every existing chunk offset
+            # into the original text is unmoved.
+            body = compose_body(note.body, note.clarifications)
             domain = note.domain_code
             destination = note.destination
             attachments_expected = note.attachments_expected

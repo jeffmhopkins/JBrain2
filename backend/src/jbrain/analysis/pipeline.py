@@ -135,6 +135,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
+from jbrain.notes.compose import compose_body
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
 from jbrain.schema.models import _norm_key
@@ -355,7 +356,10 @@ class AnalysisPipeline:
             if note is None or note.deleted_at is not None:
                 log.info("integration.skipped", note_id=note_id, reason="missing or deleted")
                 return
-            body, domain, captured_at = note.body, note.domain_code, note.created_at
+            # Composed (D6): `body` is only the chunkless fallback below, but an
+            # owner's answer is part of the note's text wherever it is read.
+            body = compose_body(note.body, note.clarifications)
+            domain, captured_at = note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
             # An owner correction note (Phase 6 §4) extracts at full weight and
             # force-supersedes + pins the current head, so it out-argues the graph.

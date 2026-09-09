@@ -45,6 +45,9 @@ class NoteInfo:
     client_id: str
     domain: str
     destination: str | None
+    # The note's TEXT: the frozen author body plus any appended clarification blocks
+    # (D6, jbrain.notes.compose). A PATCH of this string is stripped back to the body
+    # before it is stored, so an untouched edit round trip is a no-op.
     body: str
     created_at: datetime
     # Client capture-time UTC offset (minutes east of UTC); None for
@@ -116,6 +119,29 @@ class NotesRepo(Protocol):
 
         None when the note doesn't exist or is invisible under RLS;
         raises UnknownDomain for a bogus domain move.
+        """
+        ...
+
+    async def append_clarification(
+        self,
+        ctx: SessionContext,
+        note_id: str,
+        *,
+        question: str,
+        answer: str,
+        session_id: str | None = None,
+    ) -> NoteInfo | None:
+        """Append one clarification block to the note and re-drive ingestion (D6).
+
+        The body column is untouched — the block is a row, composed onto the note's
+        text at read time — so an owner body edit cannot destroy it and it cannot
+        shift the body's character offsets. Re-ingest is enqueued in the same
+        transaction, because the note's text (and therefore its chunks, and the graph
+        derived from them) just changed.
+
+        Returns the note with the new block already composed in; None when the note
+        doesn't exist, is deleted, or is outside ctx's domain scopes. There is no HTTP
+        route for this: W3's `ask_owner` tool is the caller.
         """
         ...
 

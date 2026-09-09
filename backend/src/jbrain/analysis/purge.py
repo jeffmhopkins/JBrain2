@@ -8,6 +8,8 @@ too — facts, entity mentions, temporal tokens, review items in ANY status
 (resolved history carries frozen snippets of the note's text), the
 note_analysis row, provisional entities no surviving note references, and
 the note's agent ingest conversations (whose transcripts hold the body).
+The note's clarification blocks (D6) go too: they are not derived — the owner
+typed them — but the promise is about the note, and they are part of its text.
 The note row itself stays soft-deleted (the settled Phase 2 behavior); only
 the derived graph purges, and the pipeline skips deleted notes, so nothing
 re-creates these artifacts afterward.
@@ -20,9 +22,10 @@ recorded effects, the purge re-derives chain repairs from what survives.
 
 `purge_note_artifacts(keep_pinned=True)` is the SECOND caller of this destructive
 half: the corpus rebuild sweep (analysis/rebuild.py), which re-derives from notes
-that still exist. Its four exemptions are on that keyword's docstring — a rebuild
+that still exist. Its five exemptions are on that keyword's docstring — a rebuild
 is not a deletion promise, so pinned decisions, every review item that is not still
-open (and the facts it names), agent episodes and note conversations all survive it.
+open (and the facts it names), agent episodes, note conversations and the note's
+own clarification blocks all survive it.
 """
 
 import uuid
@@ -48,6 +51,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.note_conversation import NoteConversation
+from jbrain.models.notes import NoteClarification
 
 log = structlog.get_logger()
 
@@ -399,6 +403,11 @@ async def purge_note_artifacts(
        from the notes can reconstruct. Destroying a thread because the graph is being
        re-derived would throw away the human half of the ingest and orphan any question
        still waiting in the notes inbox.
+    5. Clarification blocks stay. They are SOURCE — the owner typed them, and D7 makes
+       them chunks of the note — so a rebuild that deleted them would leave the graph
+       unable to re-derive from the notes, corpus-wide and silently. The whole premise
+       of `keep_pinned=True` is re-deriving FROM the notes; a clarification is part of
+       the note.
     """
     keep_ids = await rebuild_spare_fact_ids(session, note_id) if keep_pinned else set()
     keep_mentions = await rebuild_spare_mention_ids(session, note_id) if keep_pinned else set()
@@ -475,9 +484,28 @@ async def purge_note_artifacts(
     await project_emr(session, candidates)
     await project_place_geofences(session, candidates)
     if not keep_pinned:
+        await _purge_clarifications(session, note_id)
         await _purge_episodes(session, note_id)
         await _purge_conversations(session, note_id)
     return PurgeCounts(purged=len(doomed), kept=len(keep_ids))
+
+
+async def _purge_clarifications(session: AsyncSession, note_id: uuid.UUID) -> None:
+    """Delete the note's clarification blocks (D6, migration 0193).
+
+    This runs on the PRIVACY delete only — never under `keep_pinned=True`, see
+    exemption 4 above. It has to be an explicit statement rather than the table's
+    ON DELETE CASCADE for the same reason `_purge_episodes` does: deleting a note is a
+    SOFT delete that keeps the `app.notes` row (invariant #11), so the cascade never
+    fires on the one path that needs it.
+
+    Placed here rather than in `SqlNotesRepo.delete_note` because this is the second
+    reaper too: `backfill_deleted_note_artifacts` sweeps notes soft-deleted by paths
+    that never touch the repo (an intake link's teardown, intake/repo.py), and a
+    clarification left behind by one of those is owner-typed text surviving a deletion
+    promise.
+    """
+    await session.execute(delete(NoteClarification).where(NoteClarification.note_id == note_id))
 
 
 async def _purge_episodes(session: AsyncSession, note_id: uuid.UUID) -> None:
@@ -702,6 +730,7 @@ async def backfill_deleted_note_artifacts(
                 SELECT 1 FROM app.review_items r
                 WHERE r.payload->>'note_id' = n.id::text
             )
+            OR EXISTS (SELECT 1 FROM app.note_clarifications c WHERE c.note_id = n.id)
         )
         """
     )
