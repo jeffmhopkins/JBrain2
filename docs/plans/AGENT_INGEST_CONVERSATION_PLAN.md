@@ -451,7 +451,13 @@ profile's allowlist**, so neither is reachable yet. The wave's tool-set split mu
 in the prompt); it was built as briefed, and cutting it is now a one-line allowlist
 decision rather than a deletion. Neither tool has a D3 chip beyond the minimal
 `toolSummary.ts` entry, and the "how many existing notes would this change" report the
-`owner_prefs` section promises is not built — it needs the scoped per-rule re-run.
+`owner_prefs` section promises is not built — it needs the scoped per-rule re-run. And
+`prefs_write` needs the `reads_knowledge_base` flip: `app.proposals` is domain-narrowed
+RLS, a `False` persona runs with EMPTY read scopes, and staging under those would be a
+raw `ProgrammingError` from the INSERT. The handler therefore refuses in TEXT while the
+scopes are empty (tested) — correct, and inert, but it means `prefs_write` does nothing
+useful until that flag flips. `prefs_read` is unaffected: `owner_prefs` is `is_owner()`
+only, with no domain predicate.
 
 *Two things W2's reviews left specifically for W3, both about flipping
 `reads_knowledge_base` to True to satisfy constraint 2.* First, **the flip alone widens

@@ -278,6 +278,21 @@ async def test_prefs_write_takes_a_string_rule_number() -> None:
     assert proposals.staged[0][1].nodes[0].preview["rule_number"] == 2
 
 
+async def test_prefs_write_refuses_an_unscoped_session_as_text_not_a_driver_error() -> None:
+    # `app.proposals` is domain-narrowed RLS, so staging under empty scopes would be a
+    # raw ProgrammingError from the INSERT — which `loop.py` shows the model as a
+    # generic internal error. A note conversation runs with EMPTY scopes until W3 flips
+    # `reads_knowledge_base`, so this path is live, not hypothetical.
+    proposals = FakeProposalRepo()
+    ctx = ToolContext(session=OWNER, scopes=())
+    out = await _handlers({"content": "a"}, proposals)["prefs_write"](
+        {"op": "add", "text": "b", "rule_number": 0}, ctx
+    )
+    assert isinstance(out, str)
+    assert "isn't scoped to 'general'" in out
+    assert proposals.staged == []
+
+
 async def test_both_tools_refuse_without_an_owner_principal() -> None:
     ctx = ToolContext(session=SessionContext(principal_kind="capability_token"), scopes=())
     handlers = _handlers({"content": "a"}, FakeProposalRepo())

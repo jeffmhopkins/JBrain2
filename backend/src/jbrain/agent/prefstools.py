@@ -162,6 +162,16 @@ def build_owner_prefs_handlers(
     async def prefs_write_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if not ctx.session.principal_id:
             return "Can't change the standing instructions — this session has no owner principal."
+        # `app.proposals` is owner-only AND domain-narrowed RLS (0018), so a session
+        # without `general` cannot stage this — and would get a raw ProgrammingError
+        # from the INSERT rather than something the model can read. Said as text here.
+        # Note this is live: a `reads_knowledge_base=False` note conversation runs with
+        # EMPTY scopes today, so `prefs_write` refuses until W3 flips that flag.
+        if PREFS_DOMAIN not in ctx.scopes:
+            return (
+                "Can't stage a change to your standing instructions — this session isn't"
+                f" scoped to '{PREFS_DOMAIN}'."
+            )
         op = str(arguments.get("op", "")).strip().lower()
         text = str(arguments.get("text", ""))
         rule_number = _int_arg(arguments.get("rule_number"))
