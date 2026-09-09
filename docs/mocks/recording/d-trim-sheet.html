@@ -1,0 +1,464 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>D — Trim in a sheet: the waveform is the argument</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+  --r-card: 16px; --r-input: 12px; --r-pill: 999px;
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18);
+  --green-tint: rgba(143,188,154,.2); --amber-tint: rgba(201,163,106,.2);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 9; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; flex: 1; flex-direction: column; }
+.pane.on { display: flex; }
+
+/* ---- Listen: settled in round 1 (shape A), identical in all three ---- */
+#listen { justify-content: flex-end; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: var(--r-card) var(--r-card) 0 0; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.readout { padding: 6px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 30px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 12px 16px 6px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.transport { display: flex; gap: 10px; padding: 0 16px 12px; }
+.rec { flex: 1; min-height: 52px; border-radius: var(--r-input); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 15px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 9px; }
+.rec .dot { width: 13px; height: 13px; border-radius: var(--r-pill); background: var(--danger); flex: none; }
+.rec[data-on=true] { border-color: var(--danger); background: var(--rose-tint); }
+.rec[data-on=true] .dot { animation: pulse 1.6s ease-in-out infinite; }
+.rec[data-armed=true] { border-color: var(--danger); background: var(--danger); color: var(--bg); }
+.rec[data-armed=true] .dot { background: var(--bg); }
+@keyframes pulse { 50% { opacity: .25; } }
+.rec .el { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 14px; font-variant-numeric: tabular-nums; }
+.rec small { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.golib { min-height: 52px; padding: 0 15px; border-radius: var(--r-input); border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.hint { padding: 0 16px 18px; font-size: 12px; color: var(--text-3); }
+.hint b { color: var(--text-2); font-weight: 500; }
+
+/* ---- the library ---- */
+.hdr { padding: 14px 16px 6px; font-size: 22px; font-weight: 600; }
+.disk { margin: 0 16px 4px; font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; gap: 10px; }
+.disk b { color: var(--ok); font-weight: 500; font-variant-numeric: tabular-nums; }
+.bar { margin: 6px 16px 12px; height: 5px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width 220ms ease-out; }
+.day { padding: 12px 16px 6px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+/* The row is the flex container, so a trailing action sits BESIDE the tappable body
+   rather than wrapping under it, and the progress bar spans the full width below both. */
+.row { margin: 0 16px 8px; border: 1px solid var(--border); border-radius: var(--r-input);
+  background: var(--surface); overflow: hidden; display: flex; flex-wrap: wrap; align-items: stretch; }
+.row > .top { display: flex; align-items: center; gap: 11px; padding: 11px 12px; flex: 1; min-width: 0;
+  min-height: 56px; background: transparent; border: 0; color: var(--text); font: inherit; text-align: left; }
+.play { width: 38px; height: 38px; flex: none; border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); display: grid; place-items: center; }
+.row[data-play=true] .play { border-color: var(--accent); background: var(--steel-tint); color: var(--accent); }
+.who { flex: 1; min-width: 0; }
+.who b { display: block; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.who .unit { font-size: 11px; color: var(--text-3); }
+.who .prev { font-size: 12px; color: var(--text-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.meta { text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+.chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; vertical-align: 1px; }
+.chip.cut { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok); }
+.empty { margin: 24px 16px; padding: 22px 16px; border: 1px dashed var(--border); border-radius: var(--r-input);
+  text-align: center; color: var(--text-3); font-size: 13px; line-height: 1.6; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.trimbtn { flex: none; width: 44px; align-self: stretch; border: 0; border-left: 1px solid var(--border);
+  background: transparent; color: var(--text-3); display: grid; place-items: center; }
+.row[data-cut=true] .trimbtn { color: var(--ok); }
+.prog { flex: 0 0 100%; height: 3px; background: var(--surface-2); display: none; }
+.row[data-play=true] .prog { display: block; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+/* ---- the trim sheet ---- */
+.scrim { position: fixed; inset: 0; z-index: 80; background: var(--scrim);
+  display: none; flex-direction: column; justify-content: flex-end; }
+.scrim.open { display: flex; }
+.tsheet { background: var(--surface); border: 1px solid var(--border); border-bottom: 0;
+  border-radius: var(--r-card) var(--r-card) 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom));
+  max-width: 430px; width: 100%; margin: 0 auto; animation: up 150ms ease-out; }
+@keyframes up { from { transform: translateY(16px); opacity: .6; } }
+.tsheet .sgrab { width: 100%; display: flex; justify-content: center; padding: 12px 0; background: none; border: 0; }
+.tsheet .sgrab i { width: 32px; height: 4px; border-radius: var(--r-pill); background: var(--border); display: block; }
+.tsheet h2 { font-size: 18px; font-weight: 500; margin: 0 0 2px; }
+.tsheet .sub { font-size: 12px; color: var(--text-3); margin: 0 0 14px; font-variant-numeric: tabular-nums; }
+
+.wave { position: relative; height: 118px; border: 1px solid var(--border); border-radius: 10px;
+  background: #0a0c10; overflow: hidden; touch-action: none; }
+:root[data-theme=light] .wave { background: #0e1218; }
+.wave .b { position: absolute; bottom: 50%; width: 2px; background: var(--text-3); opacity: .45; transform: translateY(50%); }
+.wave .b.in { background: var(--ok); opacity: 1; }
+.wave .drop { position: absolute; top: 0; bottom: 0; background: rgba(14,15,17,.55); }
+:root[data-theme=light] .wave .drop { background: rgba(0,0,0,.42); }
+.wave .grip { position: absolute; top: 0; bottom: 0; width: 34px; margin-left: -17px; touch-action: none; }
+.wave .grip::before { content: ""; position: absolute; left: 16px; top: 0; bottom: 0; width: 2px; background: var(--ok); }
+.wave .grip::after { content: ""; position: absolute; left: 11px; top: 50%; margin-top: -16px;
+  width: 12px; height: 32px; border-radius: 4px; background: var(--ok); }
+.wave .grip:focus-visible::after { box-shadow: 0 0 0 4px var(--green-tint); }
+.wave .head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); display: none; }
+.wave.playing .head { display: block; }
+.wave .t { position: absolute; top: 6px; font-size: 9px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.marks { display: flex; justify-content: space-between; padding: 6px 2px 0; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.nudge { display: flex; gap: 6px; margin: 10px 0 0; }
+.nudge button { flex: 1; min-height: 40px; border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sums { display: flex; gap: 8px; margin: 12px 0 0; }
+.sums div { flex: 1; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.sums span { display: block; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .07em; }
+.sums b { display: block; margin-top: 2px; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.sums .was { text-decoration: line-through; color: var(--text-3); font-size: 11px; font-weight: 400; }
+.gain { margin: 10px 0 0; padding: 9px 11px; border-radius: 10px; background: var(--green-tint);
+  font-size: 12px; color: var(--text); display: flex; justify-content: space-between; gap: 10px; }
+.gain b { font-variant-numeric: tabular-nums; }
+.acts { display: flex; gap: 8px; margin-top: 14px; }
+.acts button { flex: 1; min-height: 48px; border-radius: var(--r-input); border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 14px; }
+.acts .keep { flex: 1.5; border-color: var(--ok); background: var(--green-tint); color: var(--text); font-weight: 500; }
+.copy { display: flex; align-items: center; gap: 9px; margin: 12px 2px 0; font-size: 12px; color: var(--text-2); }
+.copy input { width: 20px; height: 20px; accent-color: var(--accent); }
+.foot { margin: 10px 2px 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>D &mdash; Trim in a sheet.</b> A capture is a rough take: you pressed record before it started and stopped after it ended. Tapping the scissors on a row opens a <b>dedicated trim sheet</b> &mdash; the whole clip drawn as a waveform, two handles, and one place to be careful in.<br><br>The waveform is the argument. Radio has real silence in it, so the part worth keeping is <em>visible</em>: you can see the dead air at both ends and pull the handles in to meet the signal. Nudge buttons move an edge by a frame for when a fingertip is not enough, and Preview plays only the selection so you commit to something you have heard.<br><br><b>Try it on the 3:06 weather clip.</b> Its useful twenty seconds cost 1.4&nbsp;MB to keep whole.</div>
+  <div class="swap" role="tablist">
+    <button id="t-listen" role="tab" aria-pressed="false" type="button">Listen</button>
+    <button id="t-lib" role="tab" aria-pressed="true" type="button">Recordings</button>
+  </div>
+
+  <div class="pane" id="listen">
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="title">Listen</div>
+      <div class="readout">5.000<small>MHz &middot; AM 6k &middot; WWV</small></div>
+      <div class="lbl">Recording &mdash; settled, round 1</div>
+      <div class="transport">
+        <button class="rec" id="rec" type="button" data-on="false" data-armed="false" aria-pressed="false">
+          <span class="dot"></span><span id="recLabel">Record</span>
+        </button>
+        <button class="golib" id="goLib" type="button">Library<br><small id="libCount">&nbsp;</small></button>
+      </div>
+      <p class="hint">Unchanged from the chosen shape: press to record what you are already hearing, press again and the clip lands in the library. <b>Everything new is in there</b> &mdash; a capture is a rough take now, and the trim is where it becomes the thing worth keeping.</p>
+    </div>
+  </div>
+
+  <div class="pane on" id="lib">
+    <div class="hdr">Recordings</div>
+    <div class="disk"><span id="used">1.9 GB of 8 GB</span><span id="freed">&nbsp;</span></div>
+    <div class="bar"><i id="barfill" style="width:24%"></i></div>
+    <div id="list"></div>
+  </div>
+  <div class="scrim" id="scrim">
+    <div class="tsheet" role="dialog" aria-modal="true" aria-label="Trim recording" id="tsheet">
+      <button class="sgrab" type="button" id="sclose" aria-label="Close"><i></i></button>
+      <h2 id="th">Trim</h2>
+      <p class="sub" id="tsub"></p>
+      <div class="wave" id="wave"></div>
+      <div class="marks"><span>0:00</span><span id="mmid">drag either handle</span><span id="mend"></span></div>
+      <div class="nudge">
+        <button type="button" data-n="in,-1">&minus;72 ms in</button>
+        <button type="button" data-n="in,1">+72 ms in</button>
+        <button type="button" data-n="out,-1">&minus;72 ms out</button>
+        <button type="button" data-n="out,1">+72 ms out</button>
+      </div>
+      <div class="sums">
+        <div><span>Keeps</span><b id="slen">0:00</b></div>
+        <div><span>Size</span><b id="ssize">0 kB</b><b class="was" id="swas"></b></div>
+      </div>
+      <div class="gain" id="sgain"></div>
+      <div class="acts">
+        <button type="button" id="sprev">Preview</button>
+        <button type="button" id="scancel">Cancel</button>
+        <button type="button" class="keep" id="skeep">Keep the trim</button>
+      </div>
+      <label class="copy"><input type="checkbox" id="scopy"> Keep the full capture as well</label>
+      <p class="foot">Cut on an MP3 frame boundary with <code>-c copy</code>: lossless and instant, landing
+        within 72&nbsp;ms of the handle. Discarding the original is what actually frees the disk &mdash; and
+        needs a <code>delete()</code> the blob store does not have yet.</p>
+    </div>
+  </div>
+</div>
+<script>
+const BPS = 8000; // 64 kbps mono MP3 — deploy/sdr/listen.py AUDIO_BITRATE_BPS
+// An MP3 frame is 1152 samples; at the sidecar's 16 kHz that is 72 ms. A trim done with
+// `ffmpeg -c copy` lands on a frame boundary, so it is LOSSLESS and instant but lands
+// within 72 ms of where you put the handle. Re-encoding would be sample-exact and lossy.
+const FRAME_MS = 72;
+const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " kB";
+const fmtDur = s => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+const fmtAt = s => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0")
+  + "." + String(Math.floor((s % 1) * 10));
+const PLAY = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/></svg>';
+const PAUSE = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="4" height="14" fill="currentColor"/><rect x="14" y="5" width="4" height="14" fill="currentColor"/></svg>';
+const SCISSORS = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>';
+
+// Every clip the box has kept. `secs` is the FULL capture; `cut` is a trim already applied.
+const CLIPS = [
+  { id: 1, day: "Today", f: "5.000", mode: "AM", bw: "6k", at: "23:45", secs: 42, cut: null,
+    tx: "At the tone twenty-three hours forty-five minutes Coordinated Universal Time. Geophysical alert, solar flux one thirty-two, A index six, no storms observed." },
+  { id: 2, day: "Today", f: "162.550", mode: "NFM", bw: "16k", at: "19:12", secs: 186, cut: null,
+    tx: "A coastal flood advisory remains in effect until two AM Eastern time. Winds south fifteen to twenty knots becoming west after midnight. Seas three to five feet, subsiding late." },
+  { id: 3, day: "Today", f: "146.940", mode: "NFM", bw: "12.5k", at: "18:03", secs: 27, cut: [11, 21],
+    tx: "That is a good copy, you are full quieting into the repeater. Seventy-three." },
+  { id: 4, day: "Yesterday", f: "7.200", mode: "LSB", bw: "2.4k", at: "21:40", secs: 415, cut: null,
+    tx: "Net control is standing by for check-ins. Any station with traffic or announcements for the net please come now." },
+  { id: 5, day: "Yesterday", f: "4.625", mode: "USB", bw: "3.1k", at: "02:11", secs: 240, cut: null,
+    tx: "Buzzer. Repeating tone approximately twenty-five per minute. No voice heard during this capture." },
+  { id: 6, day: "7 Sep", f: "121.500", mode: "AM", bw: "8k", at: "14:22", secs: 19, cut: null, tx: "" },
+];
+
+// A deterministic level envelope per clip, with real silence at the edges — which is
+// what makes a trim worth offering: most of a capture is the part before it started.
+function peaks(clip, n) {
+  let seed = clip.id * 9781;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const lead = 0.14 + (clip.id % 3) * 0.06, tail = 0.10 + (clip.id % 2) * 0.09;
+  return Array.from({ length: n }, (_, i) => {
+    const t = i / n;
+    if (t < lead || t > 1 - tail) return 0.03 + rnd() * 0.05;
+    const env = Math.min(1, (t - lead) * 9) * Math.min(1, (1 - tail - t) * 9);
+    return Math.max(0.06, (0.34 + rnd() * 0.62) * env);
+  });
+}
+const dur = c => c.cut ? c.cut[1] - c.cut[0] : c.secs;
+const bytes = c => dur(c) * BPS;
+const savedTotal = () => CLIPS.reduce((n, c) => n + (c.cut ? (c.secs - dur(c)) * BPS : 0), 0);
+
+function paintDisk() {
+  const saved = savedTotal();
+  document.getElementById("freed").innerHTML = saved
+    ? `<b>${fmtSize(saved)} reclaimed by trimming</b>` : "oldest kept 90 days";
+  document.getElementById("barfill").style.width = (24 - saved / 1048576 * 0.9).toFixed(2) + "%";
+  const el = document.getElementById("libCount");
+  if (el) el.textContent = CLIPS.length + " clips";
+}
+
+const list = document.getElementById("list");
+let playing = null, playT = null;
+
+function draw() {
+  let html = "", day = "";
+  CLIPS.forEach(c => {
+    if (c.day !== day) { day = c.day; html += `<div class="day">${day}</div>`; }
+    html += `<div class="row" data-id="${c.id}" data-play="false" data-cut="${!!c.cut}">
+      <button class="top" type="button">
+        <span class="play">${PLAY}</span>
+        <span class="who"><b>${c.f} <span class="unit">MHz</span><span class="chip">${c.mode} ${c.bw}</span>${
+          c.cut ? '<span class="chip cut">trimmed</span>' : ""}</b>
+          <span class="prev">${c.tx || "(no speech detected)"}</span></span>
+        <span class="meta">${c.at}<br>${fmtDur(dur(c))} &middot; ${fmtSize(bytes(c))}</span>
+      </button>
+      <button class="trimbtn" type="button" aria-label="Trim this recording">${SCISSORS}</button>
+      <div class="prog"><i></i></div></div>`;
+  });
+  list.innerHTML = html || '<div class="empty">Nothing recorded yet.<br>Press Record while listening.</div>';
+}
+
+list.addEventListener("click", e => {
+  const row = e.target.closest(".row"); if (!row) return;
+  const c = CLIPS.find(x => String(x.id) === row.dataset.id);
+  if (e.target.closest(".trimbtn")) { openTrim(c); return; }
+  clearInterval(playT);
+  if (playing === row) { row.dataset.play = "false"; playing = null; return; }
+  if (playing) playing.dataset.play = "false";
+  playing = row; row.dataset.play = "true";
+  const fill = row.querySelector(".prog i"); let p = 0;
+  playT = setInterval(() => {
+    p += 2.5; fill.style.width = p + "%";
+    if (p >= 100) { clearInterval(playT); row.dataset.play = "false"; fill.style.width = "0"; playing = null; }
+  }, 55);
+});
+
+// --- the trim sheet ---------------------------------------------------------------
+const scrim = document.getElementById("scrim"), wave = document.getElementById("wave");
+let editing = null, inS = 0, outS = 0, prevT = null;
+
+function openTrim(c) {
+  editing = c;
+  inS = c.cut ? c.cut[0] : 0;
+  outS = c.cut ? c.cut[1] : c.secs;
+  document.getElementById("th").textContent = `Trim ${c.f} MHz`;
+  document.getElementById("tsub").textContent =
+    `${c.mode} ${c.bw} · ${c.at} · full capture ${fmtDur(c.secs)}, ${fmtSize(c.secs * BPS)}`;
+  document.getElementById("mend").textContent = fmtDur(c.secs);
+  document.getElementById("scopy").checked = false;
+  scrim.classList.add("open");
+  paintWave();
+  document.getElementById("skeep").focus();
+}
+function closeTrim() { clearInterval(prevT); wave.classList.remove("playing"); scrim.classList.remove("open"); editing = null; }
+
+function paintWave() {
+  const c = editing; if (!c) return;
+  const N = 116, lv = peaks(c, N);
+  const a = inS / c.secs, b = outS / c.secs;
+  let html = "";
+  lv.forEach((v, i) => {
+    const t = (i + 0.5) / N;
+    html += `<div class="b${t >= a && t <= b ? " in" : ""}" style="left:${(i / N * 100).toFixed(2)}%;height:${(v * 96).toFixed(1)}px"></div>`;
+  });
+  html += `<div class="drop" style="left:0;width:${(a * 100).toFixed(2)}%"></div>`;
+  html += `<div class="drop" style="left:${(b * 100).toFixed(2)}%;right:0"></div>`;
+  html += `<div class="t" style="left:6px">${fmtAt(inS)}</div><div class="t" style="right:6px">${fmtAt(outS)}</div>`;
+  html += `<div class="grip" data-h="in" tabindex="0" role="slider" aria-label="Start of the trim"
+    aria-valuemin="0" aria-valuemax="${c.secs}" aria-valuenow="${inS.toFixed(1)}" aria-valuetext="${fmtAt(inS)}"
+    style="left:${(a * 100).toFixed(2)}%"></div>`;
+  html += `<div class="grip" data-h="out" tabindex="0" role="slider" aria-label="End of the trim"
+    aria-valuemin="0" aria-valuemax="${c.secs}" aria-valuenow="${outS.toFixed(1)}" aria-valuetext="${fmtAt(outS)}"
+    style="left:${(b * 100).toFixed(2)}%"></div>`;
+  html += `<div class="head" id="head" style="left:${(a * 100).toFixed(2)}%"></div>`;
+  wave.innerHTML = html;
+
+  const kept = outS - inS, saved = (c.secs - kept) * BPS;
+  document.getElementById("slen").textContent = fmtDur(kept);
+  document.getElementById("ssize").textContent = fmtSize(kept * BPS);
+  document.getElementById("swas").textContent = kept < c.secs ? fmtSize(c.secs * BPS) : "";
+  document.getElementById("sgain").innerHTML = saved > 0
+    ? `Discards ${fmtDur(c.secs - kept)} of dead air <b>frees ${fmtSize(saved)}</b>`
+    : `Nothing trimmed yet <b>${fmtSize(c.secs * BPS)}</b>`;
+}
+
+function xAt(e) {
+  const r = wave.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+}
+let grabbing = null;
+wave.addEventListener("pointerdown", e => {
+  if (!editing) return;
+  const g = e.target.closest(".grip");
+  const x = xAt(e) * editing.secs;
+  grabbing = g ? g.dataset.h : (Math.abs(x - inS) < Math.abs(x - outS) ? "in" : "out");
+  wave.setPointerCapture(e.pointerId);
+  moveGrip(e);
+});
+function moveGrip(e) {
+  if (!grabbing || !editing) return;
+  const t = xAt(e) * editing.secs;
+  const gap = Math.max(0.5, FRAME_MS / 1000);
+  if (grabbing === "in") inS = Math.min(t, outS - gap); else outS = Math.max(t, inS + gap);
+  inS = Math.max(0, inS); outS = Math.min(editing.secs, outS);
+  paintWave();
+}
+wave.addEventListener("pointermove", moveGrip);
+wave.addEventListener("pointerup", () => { grabbing = null; });
+wave.addEventListener("keydown", e => {
+  const g = e.target.closest(".grip"); if (!g || !editing) return;
+  const step = (e.shiftKey ? 1 : FRAME_MS / 1000) * (e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0);
+  if (!step) return;
+  e.preventDefault();
+  nudge(g.dataset.h, step);
+  wave.querySelector(`.grip[data-h="${g.dataset.h}"]`).focus();
+});
+function nudge(which, by) {
+  if (!editing) return;
+  const gap = Math.max(0.5, FRAME_MS / 1000);
+  if (which === "in") inS = Math.max(0, Math.min(inS + by, outS - gap));
+  else outS = Math.min(editing.secs, Math.max(outS + by, inS + gap));
+  paintWave();
+}
+document.querySelector(".nudge").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const [which, dir] = b.dataset.n.split(",");
+  nudge(which, Number(dir) * FRAME_MS / 1000);
+});
+
+document.getElementById("sprev").addEventListener("click", () => {
+  clearInterval(prevT);
+  if (!editing) return;
+  wave.classList.add("playing");
+  const head = document.getElementById("head");
+  let t = inS;
+  prevT = setInterval(() => {
+    t += 0.05;
+    if (t >= outS) { clearInterval(prevT); wave.classList.remove("playing"); return; }
+    head.style.left = (t / editing.secs * 100).toFixed(2) + "%";
+  }, 50);
+});
+document.getElementById("skeep").addEventListener("click", () => {
+  if (!editing) return;
+  const whole = inS <= 0.05 && outS >= editing.secs - 0.05;
+  editing.cut = whole ? null : [inS, outS];
+  if (document.getElementById("scopy").checked && !whole) {
+    CLIPS.splice(CLIPS.indexOf(editing) + 1, 0,
+      { ...editing, id: Date.now(), cut: null, tx: editing.tx });
+  }
+  closeTrim(); draw(); paintDisk();
+});
+document.getElementById("scancel").addEventListener("click", closeTrim);
+document.getElementById("sclose").addEventListener("click", closeTrim);
+scrim.addEventListener("click", e => { if (e.target === scrim) closeTrim(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && editing) closeTrim(); });
+
+// --- Listen: the settled record control (arm-then-confirm, per the tuner binding spec) ---
+(() => {
+  const rec = document.getElementById("rec"), label = document.getElementById("recLabel");
+  let on = false, armed = false, t0 = 0, timer = null, armT = null;
+  const disarm = () => { clearTimeout(armT); armed = false; rec.dataset.armed = "false"; label.textContent = "Record"; };
+  rec.addEventListener("click", () => {
+    if (on) {
+      clearInterval(timer); on = false; rec.dataset.on = "false"; rec.setAttribute("aria-pressed", "false");
+      const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
+      label.textContent = "Record";
+      CLIPS.unshift({ id: Date.now(), day: "Today", f: "5.000", mode: "AM", bw: "6k",
+        at: new Date().toTimeString().slice(0, 5), secs, cut: null, tx: "Transcribing…" });
+      draw(); paintDisk(); return;
+    }
+    if (!armed) {
+      armed = true; rec.dataset.armed = "true"; label.textContent = "Tap again to record";
+      armT = setTimeout(disarm, 2600); return;
+    }
+    disarm(); on = true; rec.dataset.on = "true"; rec.setAttribute("aria-pressed", "true"); t0 = Date.now();
+    timer = setInterval(() => {
+      const s = (Date.now() - t0) / 1000;
+      label.innerHTML = `<span class="el">${fmtDur(s)}</span> <small>${fmtSize(s * BPS)}</small>`;
+    }, 200);
+  });
+})();
+
+// --- panes + theme ---
+const panes = { listen: document.getElementById("listen"), lib: document.getElementById("lib") };
+const tabs = { listen: document.getElementById("t-listen"), lib: document.getElementById("t-lib") };
+function show(w) {
+  for (const k in panes) { panes[k].classList.toggle("on", k === w); tabs[k].setAttribute("aria-pressed", String(k === w)); }
+  if (typeof onShow === "function") onShow(w);
+}
+tabs.listen.addEventListener("click", () => show("listen"));
+tabs.lib.addEventListener("click", () => show("lib"));
+document.getElementById("goLib").addEventListener("click", () => show("lib"));
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+draw(); paintDisk();
+</script>
