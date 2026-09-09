@@ -454,6 +454,27 @@ SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 # (docs/archive/GUIDED_INTAKE_PLAN.md §5, W2).
 INTAKE_TOOLS: frozenset[str] = frozenset()
 
+# The note-conversation persona's allowlist: EMPTY, and empty as a MECHANISM
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D16). A note is turn 0 of an ordinary agent
+# conversation, but that conversation runs under its own CLOSED allowlist and never
+# curator's `tools=None` wildcard — whose admitted set reaches `file_correction`,
+# `add_source_exclusion`, `make_intake_link` and `remember`, the four verbs D16 names as
+# provably outside this persona (the first two would write a note that re-enters ingestion,
+# laundering third-party text into an owner-attributed source). W2 ships only the mechanism:
+# the graph-write tools do not exist yet, so the set is empty and dispatch refuses every
+# call — `ToolRegistry._admits` rejects any name outside a non-None `allow` BEFORE it
+# consults the web / NEVER_DEFAULT gates, so an empty frozenset is a hard floor no later
+# registry change can lift.
+#
+# W3 adds the UNATTENDED set here (docs/research/agent-ingest/TOOL_SURFACE.md): `resolve_entity`,
+# `assert_fact`, `ask_owner`, `find_entity`, `read_entity`, `prefs_read`. The ON-REPLY set
+# (`correct_fact`, `merge_entities`, `prefs_write`, `search`, `read_note`, `relate`) unlocks
+# only once the owner has actually replied (D8) — that must be a SECOND frozenset chosen at
+# turn assembly, never a flag on one set, because the allowlist is the only enforcement
+# (constraint 9). Every write tool added must also join `toolregistry.NEVER_DEFAULT`, or
+# curator's wildcard absorbs it on every ordinary chat turn.
+NOTE_INGEST_TOOLS: frozenset[str] = frozenset()
+
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
 # set — never `agent_for`, whose curator fallback would be catastrophic for a stranger.
@@ -684,6 +705,31 @@ AGENTS: dict[str, AgentProfile] = {
         tools=INTAKE_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=1,
+    ),
+    # note_ingest — the note conversation (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D1/D16).
+    # An OWNER persona the engine opens with a captured note as turn 0, not a picker choice.
+    # `tools` is an explicit empty frozenset, never None: the wildcard is precisely what D16
+    # forbids for a persona that will hold graph writes, and `frozenset()` closes the set now
+    # so W3 widens it deliberately rather than by inheriting a default.
+    # `extra_tools` stays EMPTY here in every wave — an `extra` name is admitted AHEAD of the
+    # registry's web and NEVER_DEFAULT gates (`toolregistry._admits`), which is exactly the
+    # door D16 closes; a graph-write persona must gain tools only through its allowlist.
+    # `reads_knowledge_base=False` for W2: the note arrives as turn 0, so nothing needs
+    # retrieval yet, and a False agent runs with EMPTY read scopes, so even a mis-scoped
+    # session reads no domain data. W3 must revisit it — plan constraint 2 wants the
+    # conversation owner-scoped to `(note_domain, 'general')`, and the entity read tools are
+    # domain-visible, so they cannot be reached under empty scopes.
+    # 2x budget (not 1x): in W2 the multiplier is nearly inert — a tool-less turn is one pass
+    # over one note — but the first thing W3 hangs off this profile is a many-call
+    # resolve/assert chain over a whole note, and under plan constraint 6 a TRUNCATED turn is
+    # a correctness problem (it has asserted only a prefix, so the settle sweep must not run),
+    # not merely a short answer. 2 matches the KB-less children; it is not jerv's 6 cost lever.
+    "note_ingest": _profile(
+        "note_ingest",
+        "note_ingest.prompt",
+        tools=NOTE_INGEST_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
     ),
 }
 
