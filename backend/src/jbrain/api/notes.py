@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import (
@@ -285,9 +285,19 @@ async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep)
 # The listing exists because the note view renders blocks as text (D6 changes no screen),
 # so their ids are otherwise unreachable — an id you cannot name is a block you cannot
 # redact.
+#
+# BOTH are `OwnerDep`, explicitly, for the reason the plan recorded before either
+# existed: `append_clarification` enqueues its own `ingest_note`, and `app.jobs` is
+# `is_owner()` RLS, so a capability-token caller gets a raw `ProgrammingError` from the
+# job insert rather than a refusal — "fail-closed and correct, but a driver error rather
+# than a refusal, so W3 must not offer this behind a token-authenticated surface". Under
+# `PrincipalDep` the DELETE was fail-closed only by accident, as a 500 instead of a 403,
+# and the GET had no backstop at all: an intake-link principal could enumerate Jeff's
+# question-and-answer pairs for any note in its scope. The sibling notes-tab route says
+# the same thing in the same words (`api/analysis.py` `notes_inbox`).
 @router.get("/notes/{note_id}/clarifications")
 async def list_clarifications(
-    note_id: str, principal: PrincipalDep, repo: NotesRepoDep
+    note_id: str, principal: OwnerDep, repo: NotesRepoDep
 ) -> list[ClarificationOut]:
     blocks = await repo.list_clarifications(ctx_for(principal), note_id)
     if blocks is None:
@@ -306,7 +316,7 @@ async def list_clarifications(
 
 @router.delete("/notes/{note_id}/clarifications/{clarification_id}")
 async def delete_clarification(
-    note_id: str, clarification_id: str, principal: PrincipalDep, repo: NotesRepoDep
+    note_id: str, clarification_id: str, principal: OwnerDep, repo: NotesRepoDep
 ) -> NoteOut:
     """Erase one block. Returns the note as it now reads, so a caller sees the redaction
     landed rather than having to re-fetch and compare."""

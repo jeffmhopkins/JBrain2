@@ -47,6 +47,7 @@ from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.proposals import (
     LeafExecutor,
+    LeafRefused,
     NodeRow,
     NodeSpec,
     ProposalRepo,
@@ -242,10 +243,16 @@ def owner_prefs_executor(maker: async_sessionmaker[AsyncSession]) -> LeafExecuto
     - a `prev` that no longer matches is a REFUSAL, not a clobber — the rules moved
       between staging and approval, and the owner approved a change to text that is no
       longer there;
-    - it returns rather than raises on either. `ProposalRepo.enact` runs every enactable
-      leaf inside one transaction and then marks statuses in it, so a raise here would
-      roll back the sibling leaves that already succeeded (the same reason
-      `predicate_resolution_executor` swallows its `UnknownAction`)."""
+    - a refusal RAISES `LeafRefused`, so the leaf is marked `held` and the proposal is
+      not marked enacted. It used to return silently, and `enact` marked every enactable
+      leaf `enacted` regardless — so a refused edit told the owner their standing
+      instruction had changed while the document was untouched, with the only trace a
+      structlog line on a box they read through a debug token (CLAUDE.md #10).
+
+      The stated reason for swallowing it — "a raise would roll back the sibling leaves"
+      — did not hold twice over: `prefs_write` stages exactly ONE leaf per proposal, so
+      there are no siblings, and `enact` now catches this exception per leaf anyway.
+      `held` was already the engine's word for "approved, correctly not enacted"."""
     repo = OwnerPrefsRepo()
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
@@ -269,11 +276,11 @@ def owner_prefs_executor(maker: async_sessionmaker[AsyncSession]) -> LeafExecuto
                         rule_number=rule_number,
                         edit=op,
                     )
-                    return
+                    raise LeafRefused(f"rule {rule_number} has changed since this edit was staged")
             updated, refusal = apply_op(rules, op=op, rule_number=rule_number, text=text)
             if updated is None:
                 log.warning("owner_prefs.enact_refused", node_id=node.id, reason=refusal)
-                return
+                raise LeafRefused(refusal)
             await repo.write_rules(session, principal_id, updated)
 
     return execute
