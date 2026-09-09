@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
-from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
+from jbrain.analysis.entities import (
+    MergeScopeError,
+    are_distinct,
+    merge_entity_pair,
+    plan_merge,
+    require_unnarrowed_session,
+)
 from jbrain.analysis.neighborhood import (
     DEFAULT_DEPTH,
     DEFAULT_HUB_CAP,
@@ -856,8 +862,11 @@ class SqlAnalysisRepo:
                         # INNER JOIN notes (never LEFT): the join is the RLS
                         # backstop — an out-of-scope note must drop the whole
                         # mention, not leak a bare note_id. Live notes only;
-                        # n.created_at is the date shown next to the source note
-                        # (m.created_at is re-analysis-time, not capture time).
+                        # n.created_at is the date shown next to the source note.
+                        # m.created_at is now first-link time, not re-analysis
+                        # time: mentions are upserted in place, so a re-asserted
+                        # row keeps its original timestamp and this ordering is
+                        # stable across re-analysis instead of churning.
                         """
                         SELECT m.note_id::text, m.surface_text,
                                m.char_start, m.char_end,
@@ -1213,6 +1222,28 @@ class SqlAnalysisRepo:
             )
         return [{"name": n, "score": s} for n, s in suggestions]
 
+    async def review_correctable(self, ctx: SessionContext, item_id: str) -> bool:
+        """Whether the card at `item_id` may be corrected via the owner-correction flow.
+
+        Mirrors the frontend's `payload.correctable !== false` EXACTLY: only a payload
+        that says `correctable: false` refuses, so the flag's absence — true of every
+        card but the EMR location-firewall one — keeps meaning "correctable". An id
+        naming no card is correctable too; this is the leak gate, not an existence
+        check, and the create path already tolerates an unknown id.
+        """
+        iid = _as_uuid(item_id)
+        if iid is None:
+            return True
+        async with scoped_session(self._maker, ctx) as session:
+            payload = (
+                await session.execute(
+                    text("SELECT payload FROM app.review_items WHERE id = :id"), {"id": str(iid)}
+                )
+            ).scalar()
+        # An id that names no card reads as correctable for the same reason: the gate is
+        # about the leak, not about existence.
+        return not isinstance(payload, dict) or payload.get("correctable") is not False
+
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -1322,7 +1353,13 @@ class SqlAnalysisRepo:
                     new_status, effects = await self._apply_resolution(
                         session, row.kind, row.payload, action, payload
                     )
-                except UnknownAction as exc:
+                except (UnknownAction, MergeScopeError) as exc:
+                    # MergeScopeError belongs here rather than on the floor: the guard
+                    # raises before writing anything — its one statement is a SELECT that
+                    # succeeded — so unlike a DB error it has not poisoned the
+                    # transaction, and the batch's advertised contract is
+                    # that a bad item is an error while the good ones still commit.
+                    # Aborting 200 cards over one merge card would be the outage.
                     errors.append({"id": item_id, "detail": str(exc)})
                     continue
                 to_emit.append((str(iid), row.domain_code, effects))
@@ -1828,7 +1865,16 @@ class SqlAnalysisRepo:
         self, session: AsyncSession, effects: list[dict[str, Any]]
     ) -> list[str]:
         """Undo recorded effects newest-first; returns notes for the ones
-        that are permanent by doctrine and deliberately survive."""
+        that are permanent by doctrine and deliberately survive.
+
+        An un-merge is the fold run backwards and is scoped exactly like it: the
+        check runs before ANY effect is reversed, so a narrowed reopen leaves the
+        whole resolution untouched rather than half of it. It is asked ONLY when a
+        merge is among the effects — reversing a pin, a retraction or a domain move
+        is an in-scope single-row write, and a narrowed reopen must keep it.
+        """
+        if any(e.get("action") == "merged" for e in effects):
+            await require_unnarrowed_session(session, operation="un-merging two entities")
         notes: list[str] = []
         for effect in reversed(effects):
             action = effect.get("action")

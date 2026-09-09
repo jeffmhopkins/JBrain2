@@ -9,9 +9,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jbrain.analysis.intent import has_fatal, validate_intent
 from jbrain.ingest.emr.epic import parse_epic
-from jbrain.ingest.emr.importer import lower_parse_result
+from jbrain.ingest.emr.importer import (
+    KIND_ENCOUNTER,
+    FirewallCatch,
+    _IntentBuilder,
+    lower_parse_result,
+)
 
 _TEXT = (Path(__file__).resolve().parents[1] / "fixtures" / "emr" / "epic_report.txt").read_text()
 _RESULT = parse_epic(_TEXT)
@@ -29,7 +36,7 @@ def _facts(pred=lambda f: True):
 
 
 def test_one_intent_per_note_all_encounters_together() -> None:
-    # One intent per note (the shipped _apply reconciles the whole note), so all
+    # One intent per note (the shipped write path settles the whole note), so all
     # four encounters — incl. the MICU + A3 transfer — share it and their
     # partOfEncounter/hasObservation refs resolve intra-intent.
     assert len(_INTENTS) == 1
@@ -95,3 +102,33 @@ def test_effective_date_carries_a_point_temporal() -> None:
 
 def test_no_firewall_catches_on_clean_epic() -> None:
     assert _CATCHES == []
+
+
+_SYNTHETIC_ADDRESS = "1200 Elm Street, Springfield IL 62701"
+
+
+@pytest.mark.parametrize("predicate", ["address", "geo"])
+def test_a_location_locked_fact_is_caught_with_its_anchor_and_never_its_value(
+    predicate: str,
+) -> None:
+    # Layer 1 disabled: a parser regression hands the builder a whereabouts fact.
+    # It must be held out of the intent AND recorded as a catch that says WHAT was
+    # caught and WHERE — the value stays out, because the card filed from this catch
+    # sits in the health domain the guard just kept the value out of.
+    b = _IntentBuilder("note-1", _chunk_for)
+    ref = b.entity("enc:1", KIND_ENCOUNTER, "inpatient — Mercy General")
+    b.fact(
+        entity_ref=ref,
+        entity_kind=KIND_ENCOUNTER,
+        predicate=predicate,
+        qualifier="",
+        kind="attribute",
+        statement=_SYNTHETIC_ADDRESS,
+        anchor="page 3",
+        value_json={"value": _SYNTHETIC_ADDRESS},
+    )
+    assert b.facts == []
+    assert b.catches == [
+        FirewallCatch(entity_kind=KIND_ENCOUNTER, predicate=predicate, anchor="page 3")
+    ]
+    assert "Elm" not in repr(b.catches)

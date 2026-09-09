@@ -19,6 +19,20 @@ from jbrain.notes.service import NoteInfo, UnknownDomain
 from tests.unit.fakes import FakeAuthRepo
 
 
+class FakeAnalysisRepo:
+    """Only the gate the endpoint consults. `correctable` decides what the (real) repo
+    would have read off the target card's payload; the payload semantics themselves are
+    pinned end-to-end in tests/integration/test_review_correction_gate_pg.py."""
+
+    def __init__(self) -> None:
+        self.correctable = True
+        self.asked: list[str] = []
+
+    async def review_correctable(self, ctx, item_id: str) -> bool:
+        self.asked.append(item_id)
+        return self.correctable
+
+
 class FakeNotesRepo:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -51,8 +65,9 @@ async def test_owner_only_rejects_a_non_owner_token() -> None:
 
 
 @pytest.fixture
-def api(monkeypatch) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
+def api(monkeypatch) -> Iterator[tuple[TestClient, FakeNotesRepo, FakeAnalysisRepo]]:
     repo = FakeNotesRepo()
+    analysis = FakeAnalysisRepo()
 
     async def _no_emit(*args, **kwargs):  # the event-emit hits the DB; stub it for the unit test
         return None
@@ -65,6 +80,7 @@ def api(monkeypatch) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
     with TestClient(app) as client:
         app.state.auth_repo = FakeAuthRepo()
         app.state.notes_repo = repo
+        app.state.analysis_repo = analysis
         app.state.session_maker = object()  # unused once emit is stubbed
         key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
         assert (
@@ -73,13 +89,13 @@ def api(monkeypatch) -> Iterator[tuple[TestClient, FakeNotesRepo]]:
             ).status_code
             == 204
         )
-        yield client, repo
+        yield client, repo, analysis
 
 
 def test_correction_mints_an_owner_correction_note(
-    api: tuple[TestClient, FakeNotesRepo],
+    api: tuple[TestClient, FakeNotesRepo, FakeAnalysisRepo],
 ) -> None:
-    client, repo = api
+    client, repo, _analysis = api
     resp = client.post(
         "/api/review/item-42/correction",
         json={"body": "The value for address should be 6070 Chapman Street.", "domain": "finance"},
@@ -95,8 +111,29 @@ def test_correction_mints_an_owner_correction_note(
     assert call["domain"] == "finance"
 
 
-def test_unknown_domain_is_400(api: tuple[TestClient, FakeNotesRepo]) -> None:
-    client, repo = api
+def test_an_uncorrectable_card_is_refused_before_any_note_is_minted(
+    api: tuple[TestClient, FakeNotesRepo, FakeAnalysisRepo],
+) -> None:
+    # `correctable: false` is a SERVER gate, not just the footer-suppressing render hint:
+    # this endpoint is reachable by anything that is not the shipped UI, and on the EMR
+    # firewall card a correction would pin the held value back into the very domain the
+    # guard kept it out of. 409 like the router's other target-state refusal
+    # ("review item is not open") — the caller is the owner and duly authorized, so this
+    # is not a 403.
+    client, repo, analysis = api
+    analysis.correctable = False
+    resp = client.post(
+        "/api/review/fw-1/correction",
+        json={"body": "The address for that encounter is 12 Elm Street.", "domain": "health"},
+    )
+    assert resp.status_code == 409
+    assert "not correctable" in resp.json()["detail"]
+    assert analysis.asked == ["fw-1"]  # the gate consulted the card the request named
+    assert repo.calls == []  # and nothing was minted
+
+
+def test_unknown_domain_is_400(api: tuple[TestClient, FakeNotesRepo, FakeAnalysisRepo]) -> None:
+    client, repo, _analysis = api
     repo.raise_unknown_domain = True
     resp = client.post("/api/review/i1/correction", json={"body": "x", "domain": "bogus"})
     assert resp.status_code == 400

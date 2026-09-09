@@ -47,7 +47,7 @@ HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
 
 # Red-team derived-shadow / cross-subject lifecycle tests that asserted v1
-# resolver + _apply behaviour. Under integrate they need an explicit intent
+# resolver + commit-path behaviour. Under integrate they need an explicit intent
 # (cross_subject / ambiguous flags) + assertion revision; the core cross-subject
 # firewall stays covered by test_apply_intent_pg. Tracked in
 # docs/archive/CUTOVER_V1_REMOVAL.md.

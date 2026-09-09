@@ -89,15 +89,17 @@ async def seed_fact(
     return fid
 
 
-async def seed_entity(maker: async_sessionmaker[AsyncSession], name: str) -> str:
+async def seed_entity(
+    maker: async_sessionmaker[AsyncSession], name: str, *, domain: str = "general"
+) -> str:
     eid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
                 "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
-                " VALUES (:id, 'Person', :name, 'general')"
+                " VALUES (:id, 'Person', :name, :domain)"
             ),
-            {"id": eid, "name": name},
+            {"id": eid, "name": name, "domain": domain},
         )
     return eid
 
