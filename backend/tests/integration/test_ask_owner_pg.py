@@ -62,6 +62,7 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import LoopTurnExecutor
 from tests.conftest import docker_available
 from tests.integration.test_note_conversation_rls import owner_ctx
+from tests.integration.test_note_converse_pg import BrokenTranscript
 from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [
@@ -308,6 +309,59 @@ async def test_the_turn_ends_on_the_ask_and_the_note_waits(
             )
         ).one()
     assert (status, stop) == ("done", AWAITING_OWNER)
+
+
+async def test_a_failure_after_the_ask_does_not_retract_the_question(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The ask is durable; a later fault in the same pass is not grounds to drop it.
+
+    The handler moved the thread to `waiting_on_owner` inside the tool call, and the
+    owner may already be typing. The runner's own settle would write `failed` here — a
+    transition `_ALLOWED_SOURCES` refuses without `abandon_question=True`, precisely so a
+    failure that means nothing of the sort cannot silently drop the owner's question (and
+    which would otherwise leave the job raising and retrying)."""
+    note_id = await _note(maker, owner)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                "",
+                (ToolCall("c1", ASK_OWNER_TOOL, {"question": QUESTION}),),
+                "tool_use",
+                LlmUsage(10, 3),
+            )
+        ]
+    )
+    runner = NoteConverseRunner(
+        maker,
+        notes=SqlNotesRepo(maker),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=BrokenTranscript(maker),
+        executor=LoopTurnExecutor(
+            LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}),
+            ToolRegistry(note_conversation_tools(maker)),
+        ),
+        owner_principal_id=_const(owner.principal_id),
+    )
+
+    await runner.note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid, state FROM app.note_conversations"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+    assert row.state == "waiting_on_owner"
+    # And the question the owner is waiting on is still readable, which is what makes
+    # the wait answerable at all.
+    calls = await _ledger(maker, owner, row.sid)
+    assert [c.args["question"] for c in calls] == [QUESTION]
 
 
 # --- the owner answers --------------------------------------------------------

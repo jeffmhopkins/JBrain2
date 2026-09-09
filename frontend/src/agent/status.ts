@@ -95,6 +95,10 @@ function phaseStatus(last: TranscriptMessage): AgentStatus {
   // A user-initiated Stop is calm (a "done" register), not the red error the
   // guardrail/error reasons get.
   if (stop === "stopped") return { kind: "done", label: "Stopped" };
+  // `ask_owner` ended the turn on purpose (a note conversation with an open question).
+  // Neither an error nor a finished answer — the turn is over and the next move is the
+  // owner's, which is exactly what "waiting" says.
+  if (stop === "awaiting_owner") return { kind: "waiting", label: "Waiting on your answer" };
   if (stop && STOP_LABELS[stop]) return { kind: "error", label: STOP_LABELS[stop] };
   // Clean finish — a quiet confirmation with how many tools it used.
   const used = last.tools.filter((t) => t.name !== "queued").length;
