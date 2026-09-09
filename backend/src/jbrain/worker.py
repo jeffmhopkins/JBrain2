@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from jbrain import box_events, ops_metrics, queue
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC, note_converse_handler
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.predicates import retire_open_new_predicate_cards
@@ -745,6 +746,14 @@ async def run() -> None:
         "embed_research_report": research_report_embedder.embed_research_report,
         "title_research_report": research_report_titler.title_research_report,
         "integrate_note": analyzer.integrate_note,
+        # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2), running BESIDE
+        # integrate_note off the same note.ingested event — D13 forbids removing a
+        # producer before its replacement is merged, so this wave pays for both.
+        # Its tool registry is EMPTY, not the chat registry: the `note_ingest` persona
+        # admits nothing (tools=frozenset(), D16), so binding the real tool set here
+        # would drag every readtool dependency into the worker to serve a turn that can
+        # call none of them. W3 swaps in the registry holding the graph-write tools.
+        "note_converse": note_converse_handler(maker, router),
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(
             maker, blobs, router, SqlSettingsStore(maker), RapidOcrClient(settings.rapidocr_url)
@@ -914,6 +923,7 @@ async def run() -> None:
             EMR_IMPORT_SPEC,
             EMR_PARSE_SPEC,
             GRAPH_REBUILD_SPEC,
+            NOTE_CONVERSE_SPEC,
         )
     )
     handlers = registry.dispatch_table(impls)

@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-09 — added the **`note_ingest`** persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -395,7 +395,8 @@ prompt** that frames it, the **tool allowlist** it may call, and whether it **re
 the knowledge base** at all. The set is code-defined (`jbrain.agent.agents`). The
 owner-facing conversation personas are `curator`, `teacher`, and `jerv` (below);
 the box also runs **`archivist`** (a Gmail-triage persona with the `gmail_*` tools
-+ an owner-only cross-session memory, no KB), the non-owner **`intake`**
++ an owner-only cross-session memory, no KB), **`note_ingest`** (the note conversation,
+below), the non-owner **`intake`**
 interviewer (no tools, no KB), and the closed **`research`/`review`/`summarize`**
 personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 
@@ -406,6 +407,19 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 - **`teacher`** — a Socratic homework tutor: **no tools, no retrieval.** It guides
   the learner to their own answer by questioning and never reads owner data; its
   prompt forbids handing over graded answers.
+- **`note_ingest`** — the **note conversation**
+  (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`): a captured note is turn 0 of an
+  ordinary agent conversation, opened by the `note_converse` action off `note.ingested`
+  and rendered by the same transcript route as any chat. It is not selectable — the
+  engine opens it, never a picker. Its allowlist is an explicit **empty** `frozenset()`,
+  never the curator wildcard (D16), and in this wave the executor's tool registry is
+  empty too, so the persona provably reaches nothing; the graph-write tools hang off it
+  later. Turn 0 is the note **fenced as DATA** the way the `intake` persona fences a
+  stranger's reply — a note body may carry an email, a forwarded message or text read off
+  a photo, so nothing inside it is an instruction. The conversation's lifecycle and its
+  per-tool-call ledger live in `app.note_conversations` (see `ANALYSIS.md`); at most one
+  live conversation exists per note. While it holds no tools it writes nothing: the
+  shipped extraction pipeline still writes the graph, and this runs beside it.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
   (`web_search`, `news_search`, `science_search`, `web_fetch`), the dataless `current_time`, and
   the owner-approved `current_location`, and **no knowledge-base tools** — it runs with empty read

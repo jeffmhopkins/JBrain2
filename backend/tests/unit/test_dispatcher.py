@@ -982,3 +982,45 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
     assert captured_enqueue[0]["principal_id"] == PRINCIPAL
     assert len(run_log.records) == 1
     assert run_log.records[0]["steps"][0].job_id == "job-1"
+
+
+def _extra_enqueue(ev, kind: str = "note_converse"):  # noqa: ANN001, ANN202
+    return dispatcher.WouldEnqueue(
+        kind=kind,
+        payload={"note_id": "n-1"},
+        principal_id=ev.principal_id,
+        domain_code=ev.domain_code,
+        trigger_id="t-extra",
+        pipeline="event_note_converse",
+    )
+
+
+def _ingest_baseline_event():  # noqa: ANN202
+    return _event(
+        payload={
+            "note_id": "n-1",
+            wf_events.SHADOW_ENQUEUED_KEY: wf_events.shadow_enqueued(
+                "ingest_note", {"note_id": "n-1"}
+            ),
+        }
+    )
+
+
+def test_compute_diff_tolerates_an_additive_second_pipeline_on_the_same_event() -> None:
+    """`note.ingested` drives BOTH the integration and the note conversation (D13 of
+    AGENT_INGEST_CONVERSATION_PLAN.md), and neither displaces the other. The baseline
+    names only the kind the hardcoded path enqueued, so an equality check would log a
+    permanent mismatch on every note — which is how a real mismatch gets ignored."""
+    ev = _ingest_baseline_event()
+    would, _ = dispatcher.diff_pipeline(ev, _ingest_pipeline(), _registry())
+    diff = dispatcher.compute_diff(ev, [*would, _extra_enqueue(ev)])
+    assert diff.matches
+    assert diff.discrepancies == []
+
+
+def test_compute_diff_still_flags_the_baseline_kind_going_missing() -> None:
+    """The subset rule tolerates an EXTRA kind, never a MISSING one."""
+    ev = _ingest_baseline_event()
+    diff = dispatcher.compute_diff(ev, [_extra_enqueue(ev)])
+    assert not diff.matches
+    assert any("kind mismatch" in d for d in diff.discrepancies)

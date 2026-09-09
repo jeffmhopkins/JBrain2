@@ -1,0 +1,86 @@
+"""Seed the `note_converse` pipeline + trigger, bound to `note.ingested`.
+
+W2/T4 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md: an ingested note now ALSO opens
+an agent conversation about itself (`analysis/converse.py`), and this is the binding
+that makes it happen. `note_converse` lives in the in-code registry only, like the other
+post-Phase-4 actions — no `app.actions` row (that seed's RLS test asserts an exact
+shipped set), so the pipeline references the action by name.
+
+BESIDE, not instead of. `note.ingested` already drives `event_integrate_note` (0040) and
+the two EMR triggers, and it keeps driving all of them. D13 is explicit that no PR
+removes a producer before its replacement is merged, so this wave runs both paths: the
+shipped pipeline still extracts the facts and writes the graph, and the conversation
+reads the note in a thread the owner can open.
+
+ENABLED, and the cost is real and worth stating plainly. Every ingested note now costs
+one extra `agent.turn` on a serial GPU, and in W2 that turn produces NO graph writes at
+all — the `note_ingest` persona's tool allowlist is an empty frozenset (D16, 0192), so
+there is nothing it can write. What it produces is the thread, which is the entire point
+of the wave landing: W2's honest retreat point is "the agent reads a note in a visible
+thread", and a trigger seeded disabled would ship that retreat point already retreated
+from. This is plan risk 4 ("Cost. 5-10x inference per note"), accepted at ratification.
+Turning it off needs no terminal: it is a row in Ops -> Automations (CLAUDE.md #10).
+
+The trigger's `filter` pins `event_types` to the bound type, exactly as 0040 does, and
+leaves `domains` empty — the action is cross-domain, so it accepts any note's domain and
+the fail-closed E2 check on the dispatcher's accept side is the gate. `forward_keys`
+stays at the default, so the job payload is `{note_id}`; the EMR markers the same event
+carries are inert here.
+
+One conversation per note is NOT this migration's job. `note_conversations_one_live`
+(0191) is the authority, and `dispatcher._already_active` is the graceful arm in front of
+it so a re-delivered event is a logged skip rather than an IntegrityError in a worker.
+
+A fixed UUID keeps the trigger addressable by the run-log / Ops surfaces across
+environments, and the downgrade removes both rows.
+
+NOTE ON THE CHAIN. This is revision 0194 and 0193 is reserved for the sibling W2 task
+that adds the frozen-body + clarification-block tables. That task had not landed on this
+branch when this one was written, so `down_revision` points at 0192 rather than at a
+revision alembic cannot resolve. When 0193 merges the two become separate heads,
+`test_single_migration_head` fails at PR time by design, and the fix is to re-point this
+one line to "0193".
+
+Revision ID: 0194
+Revises: 0192
+Create Date: 2026-09-09
+"""
+
+import json
+
+from alembic import op
+
+revision = "0194"
+down_revision = "0192"
+branch_labels = None
+depends_on = None
+
+_EVENT = "note.ingested"
+_ACTION = "note_converse"
+_PIPELINE = "event_note_converse"
+_TRIGGER = "00000000-0000-0000-0000-0000000e0004"
+_DESCRIPTION = "Open the note's agent conversation and read the note in it."
+
+
+def _q(value: str) -> str:
+    """A single-quoted SQL string literal (trusted module constants)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def upgrade() -> None:
+    steps = json.dumps([{"action": _ACTION, "action_version": 1, "params": {}}])
+    op.execute(
+        "INSERT INTO app.pipelines (name, version, steps, description)"
+        f" VALUES ({_q(_PIPELINE)}, 1, cast({_q(steps)} AS jsonb), {_q(_DESCRIPTION)})"
+    )
+    filter_ = json.dumps({"event_types": [_EVENT]})
+    op.execute(
+        "INSERT INTO app.triggers (id, on_event, pipeline, filter)"
+        f" VALUES ({_q(_TRIGGER)}, {_q(_EVENT)}, {_q(_PIPELINE)},"
+        f" cast({_q(filter_)} AS jsonb))"
+    )
+
+
+def downgrade() -> None:
+    op.execute(f"DELETE FROM app.triggers WHERE id = '{_TRIGGER}'")
+    op.execute(f"DELETE FROM app.pipelines WHERE name = '{_PIPELINE}' AND version = 1")

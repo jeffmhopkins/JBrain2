@@ -62,6 +62,7 @@ from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
 from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
@@ -260,6 +261,11 @@ API_ACTION_SPECS = (
     WIKI_LINT_SPEC,
     TRIAGE_INBOX_SPEC,
     GRAPH_REBUILD_SPEC,
+    # Event-bound, never Ops-fireable — but the Automations surface resolves every
+    # seeded pipeline's steps through THIS registry, and an action it does not carry
+    # renders as "not in the action registry" beside the integrate trigger it now
+    # runs next to.
+    NOTE_CONVERSE_SPEC,
 )
 
 

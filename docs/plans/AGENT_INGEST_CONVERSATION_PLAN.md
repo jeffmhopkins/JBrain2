@@ -216,6 +216,24 @@ CHECKs. `reads_knowledge_base=False` for now, which **W3 must revisit**: constra
 wants the conversation owner-scoped to `(note_domain, 'general')`, and `False` zeroes the
 session's read scopes, so the domain-visible entity read tools cannot be reached under it.
 
+*Landed:* the conversation itself — the `note_converse` action (`analysis/converse.py`),
+seeded onto `note.ingested` **beside** `integrate_note`, not instead of it (D13). It opens
+an ordinary `agent_sessions` row under `note_ingest`, drives one turn through the shared
+`LoopTurnExecutor`, persists through `AgentTranscript` (so the thread renders on the
+shipped transcript route with no frontend work), records every tool call into the 0191
+ledger and binds it to its assistant turn, and settles `settled` / `failed` — `failed`
+also for a turn that did not end cleanly, since constraint 6's sweep must never see a
+truncated pass. Turn 0 is the note **fenced as DATA** (`framed_note`, the
+`intake/turn.py:_RECIPIENT_FRAME` pattern), closing the unframed-body half of risk 1
+while the persona still holds no tools. The dispatcher gained the graceful arm in front
+of `note_conversations_one_live`, so a re-delivered event is a logged skip rather than an
+IntegrityError in a worker. The trigger ships **enabled**: one extra `agent.turn` per note
+producing no graph writes at all this wave is risk 4, and a disabled trigger would ship
+W2's retreat point already retreated from. Its tool registry is empty as well as its
+allowlist. Still open for W3: the executor's registry, `reads_knowledge_base`, the
+`waiting_on_owner` producer, and moving the recorder into the tool dispatch so `ok` and the
+written ids come from the write path.
+
 **W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
 "entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and
 `toolSummary.ts`; **keep `ClaimDiff.tsx`**, it is the only diff renderer); the two-tab
