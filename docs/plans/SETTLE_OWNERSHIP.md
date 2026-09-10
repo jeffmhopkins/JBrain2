@@ -321,15 +321,25 @@ the sole producer and must take the sweep, the stamp and the state flip:
    would retract. The sweep must not fire on a `False`, nor on a truncated turn or one
    ending `awaiting_owner` (constraint 6). *Landed with S3: all three are one gate on the
    pass's STATE, `SETTLED`, because the `False` is degraded to `record_failed` at the call
-   site and `state_for_stop` maps every non-clean ending away from `settled`. Two things
-   the first cut of that gate got wrong and S3's review caught: there is a FIFTH
-   truncation — a provider LENGTH cut, which both adapters report as `max_tokens` and
-   `agent/loop.py` used to collapse into `end_turn` — and `close_owner_reply` could not
-   tell a thread the owner's reply re-opened from one the worker's 30-minute unattended
-   pass is still inside, so an ordinary `/chat` message during a live pass settled it and
-   swept against a ledger that had not been written yet. Both are fixed: the loop carries
-   `max_tokens` (and `no_turn`) out under their own names, and the close requires the
-   positive `reopened` signal `record_owner_reply` already returns.*
+   site and `state_for_stop` maps every non-clean ending away from `settled`.*
+
+   *That gate's own reach had to be widened twice, because a stop reason is only as
+   honest as the code that produces it, and three separate places were laundering a
+   truncation into `end_turn` before it ever reached `state_for_stop`:*
+
+   - *a provider LENGTH cut, which both adapters report as `max_tokens` and
+     `agent/loop.py` collapsed — now classified once, by `loop._round_stop`, at all
+     three natural-end sites (`run`, `run_stream`, `_produce_buffered`), which had
+     drifted apart. It also catches a `tool_use` round whose `tool_calls` are empty;*
+   - *a stream that ended before the provider ever sent a stop reason. The
+     openai-compatible adapter has refused that since it was found live
+     (`LlmStreamTruncatedError`); the Anthropic route had no such guard and yielded a
+     fragment wearing `stop_reason="end_turn"`. It refuses now too;*
+   - *`close_owner_reply`, which could not tell a thread the owner's reply re-opened from
+     one the worker's 30-minute unattended pass is still inside — so an ordinary `/chat`
+     message during a live pass settled it and swept against a ledger that had not been
+     written yet. It requires the positive `reopened` signal `record_owner_reply` already
+     returns.*
 3. **A title/tags source.** Unowned: the plan names `note_analysis` exactly once
    (`AGENT_INGEST_CONVERSATION_PLAN.md:1282`) and never says where the title comes from
    afterwards. Recommendation for that day: keep the analyzer's title half as its own small

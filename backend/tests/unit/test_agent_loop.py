@@ -2027,6 +2027,39 @@ async def test_a_provider_length_cut_is_not_reported_as_a_clean_stop() -> None:
     assert state_for_stop(done[0].stop_reason) == "failed"
 
 
+async def test_a_tool_use_round_with_no_tool_calls_is_not_a_clean_stop() -> None:
+    # The other shape this branch swallows, and the one the first fix's own comment named
+    # without guarding: the provider said `tool_use` and not one call survived — the
+    # content blocks never arrived (Anthropic) or the deltas did not (openai-compatible).
+    # The round is a fragment; the one thing it is not is a model that chose to stop.
+    turns = [LlmTurn("", (), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with())
+    events = await collect(loop)
+
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert len(done) == 1 and done[0].stop_reason == "empty_tool_use"
+    assert state_for_stop(done[0].stop_reason) == "failed"
+
+
+async def test_run_classifies_a_length_cut_the_same_way_run_stream_does() -> None:
+    # `run_stream`'s docstring claims guardrail accounting is identical to `run`, and for
+    # one commit it was not: the stop-reason fix landed on the streaming path only, so a
+    # sub-agent (which drives `run`) still laundered a length cut into `end_turn`. One
+    # `_round_stop` now classifies all three natural-end sites, and this is the pin that
+    # keeps them from drifting apart again.
+    turns = [LlmTurn("half a sen", (), "max_tokens", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with())
+
+    result = await loop.run(
+        session=OWNER, scopes=("general",), conversation=[UserMessage(text="q")]
+    )
+
+    assert result.stop_reason == "max_tokens"
+    assert state_for_stop(result.stop_reason) == "failed"
+
+
 async def test_a_length_cut_mid_tool_call_is_still_not_a_clean_stop() -> None:
     # The dangerous shape: the provider cut the output while the model was emitting tool
     # calls, so `stop_reason` is `max_tokens` and `tool_calls` may be a PREFIX of what the

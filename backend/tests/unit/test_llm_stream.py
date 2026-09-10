@@ -382,6 +382,49 @@ async def test_openai_stream_truncated_mid_tool_call_raises() -> None:
             pass
 
 
+async def test_anthropic_stream_truncated_before_stop_reason_raises() -> None:
+    # The SAME failure, on the route that had no guard. `stop` is initialised to
+    # `"end_turn"` and was yielded unconditionally, so a body that ended at a clean event
+    # boundary before `message_delta` handed back a well-formed turn carrying a fragment,
+    # `stop_reason="end_turn"` and zero output tokens. Every caller reads that as "the
+    # model chose to stop" — and for a note conversation that is `settled`, the one state
+    # its whole-note sweep fires on (docs/plans/SETTLE_OWNERSHIP.md). A config toggle away
+    # from live on a box that runs local-only today, which is not the same as safe.
+    body = sse(
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":'
+        '{"type":"text_delta","text":"half a sen"}}',
+    )
+    client = AnthropicClient("k", transport=stream_transport(body))
+    parts: list[StreamPart] = []
+    with pytest.raises(LlmStreamTruncatedError):
+        async for part in client.converse_stream(
+            model="m", system="s", messages=[UserMessage(text="hi")]
+        ):
+            parts.append(part)
+    # What arrived still streamed; what never arrived is not invented. No LlmTurn, so no
+    # caller can mistake the fragment for a completed turn.
+    assert [p.text for p in parts if isinstance(p, TextChunk)] == ["half a sen"]
+    assert not any(isinstance(p, LlmTurn) for p in parts)
+
+
+async def test_anthropic_stream_truncated_mid_tool_call_raises() -> None:
+    # The block start arrived and the argument deltas did not — the same half-built call
+    # the openai-compatible route already refuses.
+    body = sse(
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":'
+        '{"type":"tool_use","id":"tu_1","name":"search"}}',
+    )
+    client = AnthropicClient("k", transport=stream_transport(body))
+    with pytest.raises(LlmStreamTruncatedError):
+        async for _ in client.converse_stream(
+            model="m", system="s", messages=[UserMessage(text="hi")], tools=[TOOL]
+        ):
+            pass
+
+
 async def test_openai_stream_without_done_sentinel_still_succeeds_when_finished() -> None:
     # `finish_reason` is the invariant, NOT `[DONE]`: a server that closes the body right
     # after the finish chunk has told us the turn is over, and must not be treated as cut.
