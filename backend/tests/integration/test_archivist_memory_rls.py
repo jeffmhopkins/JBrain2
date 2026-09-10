@@ -41,17 +41,29 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
 
 
 async def _owner(maker: async_sessionmaker) -> SessionContext:
+    """Rotate the owner key and return a context for the principal it minted — the ACTIVE
+    one, so a second call (a rotation mid-test) is the new owner, not a superseded row."""
     await service.rotate_owner_key(SqlAuthRepo(maker))
     async with scoped_session(maker, SessionContext(principal_kind="owner")) as session:
         pid = (
-            await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
+            await session.execute(
+                text("SELECT id FROM app.principals WHERE kind = 'owner' AND revoked_at IS NULL")
+            )
         ).scalar()
     return SessionContext(principal_id=str(pid), principal_kind="owner")
+
+
+async def _clear_memory(maker: async_sessionmaker, owner: SessionContext) -> None:
+    """`database_url` is module-scoped, so rows outlive a test. A test that asserts on the
+    scratchpad as a WHOLE (an empty read, a row count) has to start from a known table."""
+    async with scoped_session(maker, owner) as session:
+        await session.execute(text("DELETE FROM app.archivist_memory"))
 
 
 async def test_owner_write_read_and_overwrite_roundtrips(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     repo = ArchivistMemoryRepo()
+    await _clear_memory(maker, owner)
 
     async with scoped_session(maker, owner) as session:
         assert await repo.read(session, owner.principal_id) == ""  # empty before any write
@@ -73,6 +85,51 @@ async def test_handlers_roundtrip_under_owner_scope(maker: async_sessionmaker) -
     saved = await handlers["archivist_memory_write"]({"content": "rule: newsletters→Promo"}, ctx)
     assert "saved" in saved.lower()
     assert await handlers["archivist_memory_read"]({}, ctx) == "rule: newsletters→Promo"
+
+
+async def test_write_receipt_reports_what_it_replaced(maker: async_sessionmaker) -> None:
+    """The receipt is the model's only ground truth about a replace it just performed —
+    the archivist apologized for destroying notes its read had returned as empty."""
+    owner = await _owner(maker)
+    handlers = build_archivist_memory_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=())
+    await _clear_memory(maker, owner)
+
+    first = await handlers["archivist_memory_write"]({"content": "taxonomy: Finance"}, ctx)
+    assert "nothing was stored before" in first
+
+    second = await handlers["archivist_memory_write"]({"content": "oops"}, ctx)
+    assert "GONE" in second and "17 chars → 4" in second
+
+
+async def test_memory_survives_an_owner_key_rotation(maker: async_sessionmaker) -> None:
+    """A rotation revokes the owner principal and mints a new one. The scratchpad is keyed
+    by principal id, so without the carry-forward the archivist would start blind with its
+    real notes one row over — which is how the owner's box lost its June taxonomy."""
+    old_owner = await _owner(maker)
+    handlers = build_archivist_memory_handlers(maker)
+    old_ctx = ToolContext(session=old_owner, scopes=())
+    await _clear_memory(maker, old_owner)
+    await handlers["archivist_memory_write"]({"content": "taxonomy: Finance/Chase"}, old_ctx)
+
+    new_owner = await _owner(maker)  # the rotation
+    assert new_owner.principal_id != old_owner.principal_id
+    new_ctx = ToolContext(session=new_owner, scopes=())
+
+    assert await handlers["archivist_memory_read"]({}, new_ctx) == "taxonomy: Finance/Chase"
+
+    # The next write files the document under the current principal, so the carry-forward
+    # stops firing: the new owner reads its own row from here on.
+    await handlers["archivist_memory_write"](
+        {"content": "taxonomy: Finance/Chase, Travel"}, new_ctx
+    )
+    async with scoped_session(maker, new_owner) as session:
+        assert (
+            await ArchivistMemoryRepo().read(session, new_owner.principal_id)
+            == "taxonomy: Finance/Chase, Travel"
+        )
+        rows = (await session.execute(text("SELECT count(*) FROM app.archivist_memory"))).scalar()
+    assert rows == 2  # the superseded row is left alone, not rewritten
 
 
 async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker) -> None:

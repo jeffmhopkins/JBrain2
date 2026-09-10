@@ -217,15 +217,24 @@ class InboxTriage:
         """The owner's triage corrections from the archivist's memory, or empty string.
         Reading runs under SYSTEM_CTX (a worker context, `is_owner()`); the row is keyed
         by the owner principal (the interactive archivist writes under its own principal,
-        not "worker"), so resolve that id first. NEVER raises — a memory read failure
-        must not break the sweep, so it logs and falls back to no corrections."""
+        not "worker"), so resolve that id first — the ACTIVE one. A key rotation leaves
+        the superseded owner rows behind with `revoked_at` set, and an unscoped lookup
+        picks whichever the scan happens to return first: on the owner's box that was a
+        principal revoked months earlier with no memory row at all, so every correction he
+        recorded was read back as "no corrections" and the sweep kept misfiling. NEVER
+        raises — a memory read failure must not break the sweep, so it logs and falls back
+        to no corrections."""
         if self._maker is None:
             return ""
         try:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
                 principal = (
                     await session.execute(
-                        text("SELECT id::text FROM app.principals WHERE kind = 'owner'")
+                        text(
+                            "SELECT id::text FROM app.principals"
+                            " WHERE kind = 'owner' AND revoked_at IS NULL"
+                            " ORDER BY created_at DESC LIMIT 1"
+                        )
                     )
                 ).scalar()
                 if not principal:
