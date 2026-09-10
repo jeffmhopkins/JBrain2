@@ -1,6 +1,12 @@
 # Who owns a note's whole-note settle
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S2✅ S3❌dropped S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S1b✅ S2✅ S3❌dropped S4◻️ S5◻️
+>
+> **S1b shipped**, closing S1's two residuals — the settle's review-card halves. A
+> third key, `review_items.settle_owner`, and singular rather than a set: a card records
+> one producer's READING of the note, so it has one filer. Its section says why that is
+> sound here and would not be for a fact, and covers the EMR half of the same bug (a
+> `dropped_facts` that was defaulted rather than measured).
 >
 > **S1 shipped**, with three amendments the build forced. Each is argued in place below
 > and marked **[amended in build]**: the key is a claim SET (`settle_owners text[]`)
@@ -381,15 +387,11 @@ of those is now closed by S2** — the conversation runs the tail. The sweep hal
 closed and will not be: S3 was built and dropped, and its section says why that is a
 proof rather than a retreat.
 
-Scoped by the owner key: the fact retraction and the mention reconcile. NOT scoped, and
-still note-keyed and producer-blind, are the settle's two REVIEW-CARD halves —
-`_sweep_stale_ambiguous` (`ambiguous_mention`) and `_sync_truncation_review`
-(`extraction_truncated`). Both delete a co-writer's open card; no graph row is lost, but
-the card is only refiled if that producer runs again, which the `integrate_note`-only
-re-enqueue paths do not guarantee. `_sweep_stale_ambiguous` is worst in the EMR
-direction, where the settling producer's names are semantic keys (`org:Quest`,
-`cond:E11.9`) that spare no surface-named card at all. Argued in full in
-`analysis/settle_owner.py`; each is tracked as its own task.
+Scoped by the owner key: the fact retraction and the mention reconcile. The settle's two
+REVIEW-CARD halves — `_sweep_stale_ambiguous` (`ambiguous_mention`) and
+`_sync_truncation_review` (`extraction_truncated`) — were left note-keyed and
+producer-blind, tracked each as its own task. **Both are now closed** (S1b below); the
+paragraph that described them as open is that section.
 
 Three holes an independent review of the first cut found, all closed before merge and
 all worth keeping in mind for S2-S5: the shadow-adoption branch re-homes a row onto this
@@ -398,6 +400,69 @@ adopted shadow can come from another note); `_update_shadows_in_place` copies re
 and not claims, which is why the shadow sweep must not read a shadow's own set; and
 `Fact(...)` / `EntityMention(...)` type-check with no stamp at all, so the static guard
 has to look for the constructors and not only for raw SQL.
+
+### S1b — The two review-card halves ✅ SHIPPED
+
+S1's residuals, closed on the same reasoning and a third key:
+`review_items.settle_owner`. Both sweeps now name the producer they are settling for and
+touch only the cards that producer filed.
+
+**Why this was filed and fixed on its own rather than folded into S1.** The EMR direction fired on every settle of a health
+`Records` note, deterministically, and it silenced exactly the notice the owner needs:
+`note.ingested` fans out to `integrate_note` (trigger 0040, no payload filter) and
+`emr_parse` (0122); the analyzer's extraction hits the per-note fact cap on a long
+medical-history dump and files the `extraction_truncated` card; then EMR settles with
+`dropped == 0` — it cannot truncate — and the clear branch deleted the card. The owner
+was never told the tail of their medical records had been dropped. Order-independent in
+practice: the EMR flow is two-stage, so `emr_parse` settles at least twice and at least
+one of those lands after the analyzer's. The reverse mis-fired too: a truncating settle
+UPDATEd the payload of whatever open card the note had, its own or not.
+
+**The key is SINGULAR — the one place the card model differs from the row model.** A
+fact states something about the world, so two producers reading one note land the same
+identity key and `settle_owners` has to be a SET (the amendment above). A card states
+something about a READING — *this producer could not resolve this name*, *this
+producer's extraction hit the cap* — and a reading has exactly one reader.
+`_file_ambiguous_review` keeps its whole-note dedup (one card per name per note, so the
+inbox never stacks duplicates), so a second producer that hits the same ambiguity files
+nothing and the row keeps its first filer. First-writer-keeps-it is unsound for a fact
+and sound here for two reasons that do not transfer: the scoped delete is
+evidence-backed — a card is retired only by the producer that filed it, only on a settle
+where that producer re-read the note and no longer has the problem, which is exactly the
+run on which it would re-file — and a missing card costs no citable truth, since
+resolving either kind is a dismissal that writes no graph state (`analysis/repo.py`).
+
+**Nullable with no default, deliberately unlike the S1 column.** `review_items` holds a
+dozen kinds and only two are swept; a `DEFAULT 'analyzer'` would stamp every firewall
+hold and merge proposal with a producer that did not file it. NULL states the true thing
+for those — no settling producer claims this card — and it is also the safe failure: a
+future filer of a swept kind that forgets to stamp gets a card no sweep can retire, i.e.
+one the owner dismisses by hand, where S1's default direction would quietly join someone
+else's claim. The migration argues both choices in full.
+
+**The other half of the same bug, and not a card problem at all.** EMR's
+`dropped_facts` was DEFAULTED rather than measured — `commit_intent` never received one
+from `ingest/emr/integrate.py`, so EMR truncation was unreportable and its `0` read like
+a finding. It genuinely has nothing to report: the per-note cap is
+`analysis/extraction.parse_extraction`'s, on the LLM path, and `lower_parse_result`
+lowers every parsed encounter and orphan observation into the one intent with no cap
+anywhere. The two things it declines to emit are accounted for elsewhere and are not
+truncation — a Layer-2 firewall catch (carded by `file_firewall_cards`) and a
+non-committable pathology rule-out. So the count is now passed explicitly at the seam a
+real one would arrive on, with the reasoning beside it, rather than left to a default
+that reads like a measurement.
+
+Evidence: `tests/integration/test_settle_review_cards_pg.py` — three tests for the loss
+(an EMR settle over each kind, and the mirror direction) and three that keep the fix
+honest, since a card nobody can retire is as much a defect as one anybody can delete
+(the filer still retires its OWN stale cards; an EMR import files no truncation card
+because it has nothing to report; `status = 'open'` still spares a card the owner
+answered). All three loss tests fail against the unscoped predicates. Beside them: the
+widened sweep case in `tests/integration/test_reanalysis_pg.py` (a co-writer's card and
+an unclaimed one both survive an analyzer re-run), the RLS pin in
+`tests/integration/test_analysis_rls.py`, and the static guards in
+`tests/unit/test_settle_owner.py`.
+
 
 ### S2 — Split `settle_note`, give the conversation the tail ✅ SHIPPED
 
@@ -417,16 +482,18 @@ Three things the build settled that this section had left implicit:
   beside it. Without the second caller, a conversation that ended by asking a question
   would never project what the answer wrote, and `ask_owner` is the common ending.
 - **The two REVIEW-CARD halves did NOT move into `sweep_note`.**
-  `_sweep_stale_ambiguous` and `_sync_truncation_review` are S1's residuals: note-keyed,
+  `_sweep_stale_ambiguous` and `_sync_truncation_review` were S1's residuals: note-keyed,
   producer-blind, each deleting a co-writer's open card. Putting them in `sweep_note`
   would have handed that reach to the conversation as well — deleting the analyzer's
   `ambiguous_mention` and `extraction_truncated` cards, on re-enqueue paths that never
   refile them. They stay in the `settle_note` composition, which only `integrate_note` and
-  `emr_parse` call, so the residual is exactly the size S1 left it. (That call was made
+  `emr_parse` call, so the residual was exactly the size S1 left it. (That call was made
   against S3's incoming sweep; it stands on its own now that no sweep is coming, because
   the conversation calls `settle_tail` directly and would have reached them there.)
   `_register_declared_aliases` stays there too, for the plainer reason that it reads an
-  `Extraction` the conversation does not have.
+  `Extraction` the conversation does not have. **S1b has since scoped both halves by
+  producer**, so where they SIT no longer bounds what they can reach — they stay for the
+  `Extraction`.
 - **`sweep_note` takes no `Extraction` at all** — an id set is all a sweep needs, and
   that is what makes it callable by a producer with a ledger and no extraction.
   `settle_tail` likewise takes entity ID SETS rather than the `resolved` map, since all

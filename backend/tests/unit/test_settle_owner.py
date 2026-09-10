@@ -23,6 +23,7 @@ from jbrain.agent.graphwritetools import NoteGraphWriter
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION, EMR, SETTLE_OWNERS
 from jbrain.ingest.emr.integrate import EXTRACTOR as EMR_EXTRACTOR
+from jbrain.models.analysis import ReviewItem
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "jbrain"
 
@@ -218,3 +219,77 @@ def test_the_vocabulary_is_closed_and_the_emr_extractor_is_not_the_analyzers() -
     # `emr:deterministic` is `provider:model`-shaped, which is why classifying the
     # analyzer's bucket by the string's SHAPE was never an option.
     assert ":" in EMR_EXTRACTOR
+
+
+#: The two review-card kinds the whole-note settle sweeps. Every other kind carries a
+#: NULL filer on purpose (migration 0197) — nobody's settle may retire those.
+_SWEPT_KINDS = ("ambiguous_mention", "extraction_truncated")
+
+#: A destructive statement over the card table. Same case-insensitive, schema-agnostic
+#: reading as `_RAW_SQL`, and for the same reason.
+_CARD_SQL = re.compile(r"(?:DELETE\s+FROM|UPDATE)\s+(?:\w+\.)?review_items\b", re.IGNORECASE)
+
+
+def test_no_card_filer_or_sweep_of_a_swept_kind_forgets_the_filer() -> None:
+    """Every `ReviewItem(...)` of a swept kind names `settle_owner`, and every
+    destructive statement that names a swept kind is scoped by it.
+
+    The column is nullable with no default, so a forgotten stamp does not silently join
+    the analyzer's claim the way an unstamped `Fact` does — it files a card no sweep can
+    retire, which the owner then has to dismiss by hand. Milder than the fact case and
+    still wrong, and pyright cannot see either: `ReviewItem(...)` is a declarative
+    constructor typed `**kw: Any`, and the sweeps' predicates are hand-written SQL.
+
+    The destructive half is the one that actually cost the owner something: an unscoped
+    DELETE is how an EMR settle removed the analyzer's "the tail of your medical records
+    was dropped" card on every run (`analysis/settle_owner.py`).
+
+    Same known edges as the guard above: a kind assembled from a variable, a stamp it
+    cannot follow out of the call, and the correctness of the producer named. One more
+    of its own: an ORM `update(ReviewItem)` names no kind, so it is invisible here —
+    `_sync_truncation_review`'s refresh is scoped by the SELECT that found the id, and
+    that SELECT is what this reads.
+    """
+    offenders: list[str] = []
+    for path in _SRC.rglob("*.py"):
+        if path.name == "settle_owner.py":
+            continue  # its docstring quotes the shapes this looks for
+        source = path.read_text()
+        for match in re.finditer(r"(?<![A-Za-z_])ReviewItem\s*\(", source):
+            call = _call_text(source, source.index("(", match.start()))
+            if any(k in call for k in _SWEPT_KINDS) and "settle_owner" not in call:
+                offenders.append(f"{path.relative_to(_SRC)}:{_line(source, match.start())}")
+        for match in _CARD_SQL.finditer(source):
+            # 200 chars, not the 900 the fact guard uses: these statements are short,
+            # and a wide window here reads the NEXT statement's scoping as this one's —
+            # the two truncation statements sit back to back.
+            window = source[match.start() : match.start() + 200]
+            if any(k in window for k in _SWEPT_KINDS) and "settle_owner" not in window:
+                offenders.append(f"{path.relative_to(_SRC)}:{_line(source, match.start())}")
+    assert not offenders, (
+        "a swept review card written or deleted with no settle_owner in sight: "
+        f"{offenders}. A card is retired by its FILER and nobody else."
+    )
+
+
+def test_the_card_seams_require_the_filer_and_take_it_singular() -> None:
+    """`settle_owner` has no default on any card seam either, and it is a STRING.
+
+    Singular is the design claim, not a shortcut: a fact states something about the
+    world, so two producers land one row and the column has to be a claim set; a card
+    states something about a READING, and a reading has one reader
+    (`analysis/settle_owner.py`). Asserted here so a later "make it consistent with
+    facts" edit has to argue with a test rather than quietly widen the model.
+    """
+    for name in (
+        "_resolve_entities",
+        "_file_ambiguous_review",
+        "_sweep_stale_ambiguous",
+        "_sync_truncation_review",
+    ):
+        param = inspect.signature(getattr(AnalysisPipeline, name)).parameters["settle_owner"]
+        assert param.default is inspect.Parameter.empty, name
+        assert param.annotation is str, name
+    column = ReviewItem.__table__.c["settle_owner"]
+    assert column.nullable is True
+    assert column.server_default is None

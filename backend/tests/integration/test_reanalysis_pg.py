@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.analysis.settle_owner import ANALYZER, EMR
 from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.notes.repo import SqlNotesRepo
@@ -149,7 +150,8 @@ async def review_rows(
         rows = (
             await s.execute(
                 text(
-                    "SELECT status, payload FROM app.review_items WHERE kind = :kind"
+                    "SELECT status, payload, settle_owner FROM app.review_items"
+                    " WHERE kind = :kind"
                     " AND payload->>'note_id' = ANY(:nids) ORDER BY created_at"
                 ),
                 {"kind": kind, "nids": list(note_ids)},
@@ -270,36 +272,52 @@ async def test_rerun_sweeps_stale_open_ambiguous_cards_only(
     note_id = await analyzed_note(maker, tmp_path, "Saw Sarah and Alex.", extraction(person, []))
     other_note = str(uuid.uuid4())
     cards = [
-        # Stale: the re-extraction below no longer references "Alex".
-        ("open", "Alex", note_id),
+        # Stale AND the analyzer's own: the re-extraction below no longer references
+        # "Alex", and this is the only card the sweep may take.
+        ("open", "Alex", note_id, ANALYZER),
         # Still referenced: must survive.
-        ("open", person, note_id),
+        ("open", person, note_id, ANALYZER),
         # Human history: never touched even though stale.
-        ("dismissed", "Alex", note_id),
+        ("dismissed", "Alex", note_id, ANALYZER),
         # Another note's card: out of this run's scope.
-        ("open", "Alex", other_note),
+        ("open", "Alex", other_note, ANALYZER),
+        # Stale, on this note, and filed by ANOTHER producer — the EMR importer, which
+        # settles the same note off the same `note.ingested`. Its names are semantic
+        # keys, so the `NOT IN :names` clause spares nothing here and only the filer
+        # key does (migration 0197).
+        ("open", "Alex", note_id, EMR),
+        # Stale, on this note, and claimed by no settling producer at all: the column
+        # is nullable on purpose, and NULL means no sweep may take it.
+        ("open", "Alex", note_id, None),
     ]
     async with scoped_session(maker, OWNER) as s:
-        for status, name, nid in cards:
+        for status, name, nid, owner in cards:
             await s.execute(
                 text(
-                    "INSERT INTO app.review_items (id, kind, payload, status, domain_code)"
+                    "INSERT INTO app.review_items"
+                    " (id, kind, payload, status, domain_code, settle_owner)"
                     " VALUES (gen_random_uuid(), 'ambiguous_mention',"
-                    " cast(:payload AS jsonb), :status, 'general')"
+                    " cast(:payload AS jsonb), :status, 'general', :owner)"
                 ),
-                {"payload": json.dumps({"name": name, "note_id": nid}), "status": status},
+                {
+                    "payload": json.dumps({"name": name, "note_id": nid}),
+                    "status": status,
+                    "owner": owner,
+                },
             )
 
     await analyze(maker, note_id, extraction(person, []))
 
     remaining = {
-        (r["status"], r["payload"]["name"], r["payload"]["note_id"])
+        (r["status"], r["payload"]["name"], r["payload"]["note_id"], r["settle_owner"])
         for r in await review_rows(maker, "ambiguous_mention", note_id, other_note)
     }
     assert remaining == {
-        ("open", person, note_id),
-        ("dismissed", "Alex", note_id),
-        ("open", "Alex", other_note),
+        ("open", person, note_id, ANALYZER),
+        ("dismissed", "Alex", note_id, ANALYZER),
+        ("open", "Alex", other_note, ANALYZER),
+        ("open", "Alex", note_id, EMR),
+        ("open", "Alex", note_id, None),
     }
 
 
