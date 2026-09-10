@@ -6,10 +6,10 @@
 // Preview, or softened the confirm's wording, or started offering to "trim" a selection
 // that frees nothing, would each turn a careful surface into a destructive one.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type SdrRecording, api } from "../api/client";
-import { FRAME_S } from "../sdrTrim";
+import { FRAME_MS, FRAME_S } from "../sdrTrim";
 import { SdrTrimSheet } from "./SdrTrimSheet";
 
 /** The mock's 3:06 weather clip: its useful twenty seconds cost 1.4 MB to keep whole. */
@@ -52,7 +52,38 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** A hand-driven frame clock.
+ *
+ *  The preview's stop is placed by an animation frame rather than by `timeupdate`, so a
+ *  test that fires `timeupdate` can only ever observe the coarse backstop — it cannot
+ *  see whether the stop lands at the out-point or a quarter of a second past it. Driving
+ *  the frames is what makes the real mechanism observable: each `paint` runs exactly the
+ *  callbacks that were outstanding, and `pending` says whether a loop is still armed. */
+function frameClock() {
+  const pending = new Map<number, FrameRequestCallback>();
+  let next = 1;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = next++;
+    pending.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    pending.delete(id);
+  });
+  return {
+    pending,
+    paint(atMs: number) {
+      const due = [...pending.values()];
+      pending.clear();
+      act(() => {
+        for (const callback of due) callback(atMs);
+      });
+    },
+  };
+}
 
 describe("where the waveform comes from", () => {
   it("fetches the envelope by id when the row arrived without one", async () => {
@@ -222,10 +253,11 @@ describe("the trim sheet", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("stops the preview at the out-point instead of running on to the end", async () => {
-    // "Plays only the selection" is half the rule; the other half is that it STOPS
-    // there. A preview that ran past the out-point would play the owner exactly the
-    // audio the confirm is about to destroy, and call it what will remain.
+  it("stops on a timeupdate too, for the hidden tab that is served no frames", async () => {
+    // The backstop, NOT the mechanism: a backgrounded tab gets no animation frames while
+    // its audio plays on, so the coarse event still has to be able to end the preview.
+    // Where the stop is PLACED is the frame loop's job, and is pinned below — this case
+    // drives `timeupdate` by hand and so could never see a 250 ms overrun.
     open();
     fireEvent.keyDown(endHandle(), { key: "ArrowLeft", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
@@ -239,6 +271,64 @@ describe("the trim sheet", () => {
     expect(pause).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole("button", { name: "Preview" })).toBeTruthy());
     expect(document.querySelector(".trim-head")).toBeNull();
+  });
+
+  it("stops within a frame of the out-point, with no timeupdate involved at all", () => {
+    // DESIGN.md rule 2 is that the sheet plays EXACTLY what will remain. `timeupdate`
+    // fires about four times a second, so a stop placed on it overruns the out-point by
+    // up to ~250 ms — a quarter-second of precisely the audio the confirm is about to
+    // destroy, played back as "what survives". This walks the element's own clock in
+    // frame-sized steps and never fires `timeupdate` at all.
+    const clock = frameClock();
+    open();
+    fireEvent.keyDown(endHandle(), { key: "ArrowLeft", shiftKey: true }); // out-point 185 s
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    // The stop is armed the moment playback starts, rather than waiting on an event.
+    expect(clock.pending.size).toBe(1);
+
+    const element = document.querySelector("audio") as HTMLAudioElement;
+    const pause = vi.spyOn(element, "pause");
+    let at = 0;
+    for (let frame = 0; frame < 40 && pause.mock.calls.length === 0; frame += 1) {
+      at = 184.9 + frame * 0.016;
+      element.currentTime = at;
+      clock.paint(frame * 16);
+    }
+
+    expect(pause).toHaveBeenCalled();
+    // Inside one MP3 frame of the handle — the same 72 ms the cut itself lands within,
+    // so the preview cannot be playing audio the trim will keep or destroy differently.
+    expect(at).toBeLessThan(185 + FRAME_S);
+    expect(screen.getByRole("button", { name: "Preview" })).toBeTruthy();
+    expect(document.querySelector(".trim-head")).toBeNull();
+    // ...and the loop is not left running against a preview that has ended.
+    expect(clock.pending.size).toBe(0);
+  });
+
+  it("stops the preview whenever a handle moves, by key or by nudge button", () => {
+    // A preview is a claim about a PARTICULAR selection. Left running while a handle
+    // moves it goes on playing a selection that no longer exists — the same lie the rule
+    // exists to prevent. A pointer drag already stopped it; these two routes did not.
+    const clock = frameClock();
+    open();
+    const element = document.querySelector("audio") as HTMLAudioElement;
+    const pause = vi.spyOn(element, "pause");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    fireEvent.keyDown(endHandle(), { key: "ArrowLeft" });
+    expect(pause).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeTruthy();
+    expect(clock.pending.size).toBe(0);
+
+    pause.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `+${FRAME_MS} ms out` }));
+    expect(pause).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeTruthy();
+    expect(clock.pending.size).toBe(0);
   });
 
   it("offers no way to delete the whole recording from here", async () => {

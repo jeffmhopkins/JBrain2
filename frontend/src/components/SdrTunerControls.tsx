@@ -28,7 +28,12 @@ import {
   subscribeSdrCaptions,
 } from "../sdrCaptions";
 import { channelIndex, channelLabel, namedByFrequency, planAt, stepChannel } from "../sdrChannels";
-import { type SdrListening, liveRecording, useSdrSession } from "../sdrSession";
+import {
+  type SdrListening,
+  liveRecording,
+  noteSdrRecordingSaved,
+  useSdrSession,
+} from "../sdrSession";
 import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
 import { formatSize } from "../sdrTrim";
 import { whyNotTunable } from "../sdrTunable";
@@ -664,7 +669,16 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
               // No confirmation on the way OUT: stopping destroys nothing, and the clip
               // it lands is the thing the owner asked for.
               setArmed(false);
-              void act(() => api.sdrRecord(false));
+              void act(async () => {
+                // The answer carries the row that just landed, and it is the ONLY
+                // reliable news of it: the recorder stops reporting a capture when the
+                // stream ends, which is before the waveform is computed and the row
+                // written, so a library reloading off the poll can read a list without
+                // it. Announced rather than returned because the library is a different
+                // tab (sdrSession.ts).
+                const result = await api.sdrRecord(false);
+                if (result.saved) noteSdrRecordingSaved(result.saved);
+              });
               return;
             }
             if (!armed) {

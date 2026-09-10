@@ -2231,9 +2231,12 @@ export interface SdrRecording {
   /** The level envelope the trim sheet draws, 0..1, computed on the box at stop and
    *  again after a trim — so the waveform can never disagree with the clip.
    *
-   *  Optional because the list route's projection currently omits it and there is no
-   *  by-id route to fetch one row: a sheet opened without it draws a flat picture and
-   *  says so rather than inventing an envelope. See SdrTrimSheet. */
+   *  Optional because the LIST route's projection omits it — 400 floats a row would
+   *  dwarf a hundred-row response — so a row that arrived from the library has none and
+   *  the trim sheet fetches the one clip it is open on (`getSdrRecording`, the by-id
+   *  route). A box older than that route, or a clip whose decode failed, answers without
+   *  an envelope even there; a sheet without one draws a flat picture and says so rather
+   *  than inventing one. See SdrTrimSheet. */
   peaks?: number[];
   /** R4 (deferred). The library and the trim both work without it; a row simply has no
    *  preview yet. */

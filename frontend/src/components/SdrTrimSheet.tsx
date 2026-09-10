@@ -72,14 +72,20 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Where the preview has reached, or null when it is not playing. Owned here rather
-  // than read off the element on every frame so the picture repaints only when the
-  // element says something new.
+  // Where the preview has reached, or null when it is not playing — which is also what
+  // the Preview/Stop button reads. The frame loop asks the ELEMENT where it is on every
+  // frame; this is only written when the head has moved far enough to redraw.
   const [headS, setHeadS] = useState<number | null>(null);
 
   const waveRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const dragging = useRef<Handle | null>(null);
+  // The running frame loop, and the out-point it is watching for. The out-point is
+  // captured when Preview starts rather than read from state on every frame because
+  // moving a handle STOPS the preview: for as long as one is running, the selection it
+  // was started against is the selection.
+  const frameRef = useRef<number | null>(null);
+  const outRef = useRef(totalS);
 
   // The list deliberately omits `peaks` — 400 floats per row would dwarf a hundred-row
   // library — so the sheet asks for the one clip it is open on, once, when it opens.
@@ -93,6 +99,10 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
   const whole = isWholeClip(selection, totalS);
   const startPct = (selection.startS / Math.max(totalS, FRAME_S)) * 100;
   const endPct = (selection.endS / Math.max(totalS, FRAME_S)) * 100;
+  // What a repaint of the playhead is worth: roughly one pixel of the drawn picture,
+  // which is BARS bars at about 3 px each. A frame loop asks the element where it is
+  // sixty times a second; the drawing only has to keep up with the screen.
+  const headStepS = totalS / (BARS * 3);
 
   useEffect(() => {
     if (recording.peaks?.length) return;
@@ -114,9 +124,34 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
   }, [recording.id, recording.peaks]);
 
   const stopPreview = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
     audioRef.current?.pause();
     setHeadS(null);
   }, []);
+
+  // A sheet closed mid-preview must not leave a loop running against a torn-down
+  // element. Only the frame is cancelled here: pausing an element React is about to
+  // remove is pointless, and setting state on the way out is not.
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
+
+  /** Move a handle, and stop any preview first.
+   *
+   *  Every route into the selection goes through here — drag, arrow key, nudge button —
+   *  because a preview is a claim about a PARTICULAR selection ("this is what will
+   *  remain"). Left running while a handle moves, it goes on playing a selection that no
+   *  longer exists, which is the same lie rule 2 exists to prevent. */
+  const moveSelection = (next: (was: Selection) => Selection) => {
+    stopPreview();
+    setSelection(next);
+  };
 
   /** Where on the clip a pointer is, in seconds. */
   const secondsAt = (event: ReactPointerEvent): number | null => {
@@ -138,8 +173,7 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
       (Math.abs(at - selection.startS) <= Math.abs(at - selection.endS) ? "start" : "end");
     dragging.current = handle;
     event.currentTarget.setPointerCapture(event.pointerId);
-    stopPreview();
-    setSelection((was) => moveHandle(was, handle, at, totalS));
+    moveSelection((was) => moveHandle(was, handle, at, totalS));
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -147,7 +181,7 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
     if (!handle) return;
     const at = secondsAt(event);
     if (at === null) return;
-    setSelection((was) => moveHandle(was, handle, at, totalS));
+    moveSelection((was) => moveHandle(was, handle, at, totalS));
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, handle: Handle) => {
@@ -155,11 +189,20 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
     if (direction === 0) return;
     event.preventDefault();
     const step = event.shiftKey ? COARSE_STEP_S : FRAME_S;
-    setSelection((was) => nudgeHandle(was, handle, direction * step, totalS));
+    moveSelection((was) => nudgeHandle(was, handle, direction * step, totalS));
   };
 
   /** Play ONLY the selection. Mandatory, not a nicety: the original does not survive
-   *  the confirm, so the sheet has to be able to play exactly what will remain. */
+   *  the confirm, so the sheet has to be able to play exactly what will remain.
+   *
+   *  The stop is driven by a frame loop, NOT by the element's `timeupdate`. That event
+   *  fires roughly four times a second, so stopping on it overruns the out-point by up
+   *  to ~250 ms — a quarter-second of precisely the audio the confirm is about to
+   *  destroy, played back as "what will remain". A frame loop checks the element's own
+   *  clock every time the browser paints, so the stop lands within a frame or two of the
+   *  handle, well inside the 72 ms frame the cut itself is quantised to. (A single
+   *  timer scheduled from the remaining duration would be blind to a stall while the
+   *  clip buffers: only the element knows where it really is.) */
   const preview = () => {
     const element = audioRef.current;
     if (!element) return;
@@ -167,24 +210,39 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
       stopPreview();
       return;
     }
+    outRef.current = selection.endS;
     element.currentTime = selection.startS;
     setHeadS(selection.startS);
+
+    const tick = () => {
+      const at = element.currentTime;
+      if (at >= outRef.current) {
+        stopPreview();
+        return;
+      }
+      // The CHECK runs every frame; the repaint does not need to. A move smaller than
+      // one pixel of the drawn picture would move the playhead nowhere, and React bails
+      // out of the render when the value is unchanged.
+      setHeadS((was) => (was === null || Math.abs(at - was) >= headStepS ? at : was));
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+
     void element.play().catch(() => {
       // A refused autoplay or a clip the box cannot serve: say so rather than leaving
       // a Preview button that does nothing, which reads as a broken sheet.
-      setHeadS(null);
+      stopPreview();
       setError("Couldn't play this clip.");
     });
   };
 
+  /** A backstop, not the mechanism. A hidden tab is served no animation frames while its
+   *  audio plays on, so this is what ends a preview the owner backgrounded mid-play;
+   *  `timeupdate` is too coarse to be the thing that places the stop. */
   const onTimeUpdate = () => {
     const element = audioRef.current;
     if (!element || headS === null) return;
-    if (element.currentTime >= selection.endS) {
-      stopPreview();
-      return;
-    }
-    setHeadS(element.currentTime);
+    if (element.currentTime >= outRef.current) stopPreview();
   };
 
   const run = async (work: () => Promise<void>) => {
@@ -298,7 +356,7 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
             key={label}
             type="button"
             onClick={() =>
-              setSelection((was) => nudgeHandle(was, handle, direction * FRAME_S, totalS))
+              moveSelection((was) => nudgeHandle(was, handle, direction * FRAME_S, totalS))
             }
           >
             {label}

@@ -12,7 +12,7 @@
 // so an app with no radio surface open costs nothing.
 
 import { useEffect, useState } from "react";
-import { ApiError, api } from "./api/client";
+import { ApiError, type SdrRecording, api } from "./api/client";
 import { playSdrAudio, stopSdrAudio } from "./sdrAudio";
 
 export interface SdrListening {
@@ -241,6 +241,39 @@ export function useSdrSession(): SdrState {
 export function resetSdrSession(): void {
   stop();
   listeners.clear();
+  savedListeners.clear();
   published = IDLE;
   inFlight = false;
+}
+
+// --- the row a stop just landed ------------------------------------------------------
+//
+// `liveRecording` above cannot answer "has the clip been written yet". The recorder
+// reports no capture the moment the STREAM ends, which is before the waveform is
+// computed and the row inserted, so a library reloading off that poll can legitimately
+// read a list that does not contain the recording the owner just made — and nothing
+// would ever re-read it. `POST /sdr/record?on=false` answers with the saved row itself,
+// which is the only signal that is true by construction; this carries it from the
+// control that pressed Stop to the tab that lists it, the two being on different tabs of
+// the launcher and never mounted together.
+//
+// A one-shot signal, deliberately NOT retained state: a last-saved row kept around would
+// be re-folded into the list by a library mounted long afterwards, resurrecting a
+// recording the owner had since deleted.
+
+type SavedListener = (row: SdrRecording) => void;
+
+const savedListeners = new Set<SavedListener>();
+
+/** Announce the row a just-completed capture landed. */
+export function noteSdrRecordingSaved(row: SdrRecording): void {
+  for (const listener of savedListeners) listener(row);
+}
+
+/** Hear about a capture that has finished being written; returns an unsubscribe. */
+export function onSdrRecordingSaved(listener: SavedListener): () => void {
+  savedListeners.add(listener);
+  return () => {
+    savedListeners.delete(listener);
+  };
 }

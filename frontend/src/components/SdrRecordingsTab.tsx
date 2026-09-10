@@ -29,7 +29,7 @@ import {
 } from "../api/client";
 import { mhz } from "../mhz";
 import { bandwidthLabel } from "../sdrBandwidth";
-import { liveRecording, useSdrSession } from "../sdrSession";
+import { liveRecording, onSdrRecordingSaved, useSdrSession } from "../sdrSession";
 import {
   clockLabel,
   formatDuration,
@@ -57,6 +57,37 @@ function downloadName(row: SdrRecording): string {
   return `${mhz(row.frequency_hz)}MHz-${stamp}.mp3`;
 }
 
+/** Fold a saved-but-not-yet-listed recording into a list that answered without it.
+ *
+ *  The stop route returns the row it wrote, while the LIST is read on a poll that flips
+ *  the moment the stream ends — a whole waveform computation before the insert. So the
+ *  list can be right about everything except the one clip the owner is looking for, and
+ *  this is what puts it on screen anyway. Clears the held row as soon as a list carries
+ *  it: from then on the server's copy is the one that gets trimmed, deleted and drawn.
+ *
+ *  `usage` moves with the row for the same reason the api ships the meter WITH the rows:
+ *  a header counting one fewer recording than the list shows is a disagreement the owner
+ *  cannot resolve from a phone. */
+function withPendingSave(
+  page: SdrRecordingsPage,
+  pending: { current: SdrRecording | null },
+): SdrRecordingsPage {
+  const row = pending.current;
+  if (!row) return page;
+  if (page.recordings.some((r) => r.id === row.id)) {
+    pending.current = null;
+    return page;
+  }
+  return {
+    recordings: [row, ...page.recordings],
+    usage: {
+      ...page.usage,
+      bytes: page.usage.bytes + row.bytes,
+      count: page.usage.count + 1,
+    },
+  };
+}
+
 export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void }) {
   const [page, setPage] = useState<SdrRecordingsPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,9 +105,19 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
   const [diskTotal, setDiskTotal] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // A recording that has been saved but is not in the list yet. The recorder reports no
+  // capture from the moment the STREAM ends — before the waveform is computed and the
+  // row inserted — so a reload triggered by that poll can honestly answer without the
+  // clip the owner just made, and a slow one can land after a good list and undo it. The
+  // row is held here and folded into whatever any list says until one carries it, which
+  // is what makes the new clip appear and stay. Cleared when the list has it, and when
+  // the owner deletes it.
+  const pendingSave = useRef<SdrRecording | null>(null);
+
   const reload = useCallback(async () => {
     try {
-      setPage(await api.getSdrRecordings());
+      const fresh = await api.getSdrRecordings();
+      setPage(withPendingSave(fresh, pendingSave));
       setError(null);
     } catch (caught) {
       setError(
@@ -90,9 +131,40 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
   // own: a list of stored files does not change except when the box or the owner
   // changes it, and polling one would be a request a second for a screen at rest.
   const capturing = liveRecording(useSdrSession()) !== null;
+  const wasCapturing = useRef(false);
   useEffect(() => {
-    if (!capturing) void reload();
+    if (capturing) {
+      wasCapturing.current = true;
+      return;
+    }
+    const justStopped = wasCapturing.current;
+    wasCapturing.current = false;
+    void reload();
+    if (!justStopped) return;
+    // A capture that ended without this PWA stopping it — the box ran out of disk, or a
+    // second device pressed Stop — lands no `saved` answer here to hold on to, and it is
+    // the only way this effect sees a capture end at all: the Record control is on
+    // another tab of the launcher, so a stop made HERE arrives as a fresh mount instead.
+    // The poll flips the moment the STREAM ends, a waveform computation before the row
+    // is inserted, so the read above can be early with nothing to correct it. Two
+    // follow-ups are what make the clip turn up on its own.
+    const timers = [1200, 5000].map((ms) => window.setTimeout(() => void reload(), ms));
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
   }, [capturing, reload]);
+
+  // ...and again on the stop's own answer, which is the signal that is true by
+  // construction: the row it carries has been written. The poll is what makes the
+  // library feel live; this is what makes it correct.
+  useEffect(
+    () =>
+      onSdrRecordingSaved((row) => {
+        pendingSave.current = row;
+        void reload();
+      }),
+    [reload],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -138,6 +210,9 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
   const remove = async (id: string) => {
     try {
       if (playingId === id) stop();
+      // Otherwise the next reload folds it straight back in: a held row outliving the
+      // recording it describes is a delete that appears not to have worked.
+      if (pendingSave.current?.id === id) pendingSave.current = null;
       const result = await api.deleteSdrRecording(id);
       setOpenId(null);
       setPage((was) =>
@@ -312,6 +387,11 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
           // frame boundary, so the sheet's live figure was only ever an estimate of it
           // and must not be what the library goes on showing.
           onTrimmed={(result) => {
+            // A row still held as pending is held as the SERVER last described it, or a
+            // reload landing after this would fold the untrimmed original back in.
+            if (pendingSave.current?.id === result.recording.id) {
+              pendingSave.current = result.recording;
+            }
             setPage((was) =>
               was
                 ? {

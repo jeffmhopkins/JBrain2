@@ -7,11 +7,11 @@
 // look identical from the sofa — a box that answered with an error and a box that could
 // not be reached at all — must both reach the screen rather than a spinner.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type SdrRecording, type SdrRecordingsPage, api } from "../api/client";
 import type { OpsMetrics } from "../api/client";
-import { resetSdrSession } from "../sdrSession";
+import { type SdrRecordingState, noteSdrRecordingSaved, resetSdrSession } from "../sdrSession";
 import { SdrRecordingsTab } from "./SdrRecordingsTab";
 
 const GB = 1024 * 1024 * 1024;
@@ -277,6 +277,124 @@ describe("the recordings library", () => {
     // The row goes, and the meter comes from the box's own answer rather than a guess.
     await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(1));
     expect(document.querySelector(".rec-disk")?.textContent).toContain("in 1 recording");
+  });
+
+  it("shows the clip just recorded even when the list answers without it yet", async () => {
+    // THE window this exists for: the recorder reports no capture from the moment the
+    // STREAM ends, which is a whole waveform computation before the row is inserted. A
+    // reload landing in there is not wrong, it is early — and nothing re-reads, so the
+    // clip the owner just made is missing until they navigate away and back. The stop
+    // route answers with the row it wrote, which is the only signal true by construction.
+    const read = library(page({ recordings: [] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Nothing recorded yet/)).toBeTruthy());
+
+    // The list STILL does not have it when the reload this triggers comes back.
+    act(() => noteSdrRecordingSaved(row({ id: "fresh", frequency_hz: 146_940_000 })));
+
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(1));
+    expect(document.querySelector(".rec-who b")?.textContent).toContain("146.940");
+    // The meter counts it too: a header disagreeing with the list is a disagreement the
+    // owner cannot resolve from a phone.
+    expect(document.querySelector(".rec-disk")?.textContent).toContain("in 1 recording");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not double the row once a list finally carries it", async () => {
+    // The held row is a stand-in for a list that is behind, not a second recording — and
+    // once the server's own copy arrives that is the one that gets trimmed and deleted.
+    const fresh = row({ id: "fresh" });
+    const read = library(page({ recordings: [] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Nothing recorded yet/)).toBeTruthy());
+
+    read.mockResolvedValue(page({ recordings: [fresh] }));
+    act(() => noteSdrRecordingSaved(fresh));
+
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(1));
+    expect(document.querySelector(".rec-disk")?.textContent).toContain("in 1 recording");
+  });
+
+  it("keeps a deleted recording deleted, even one it is still holding", async () => {
+    // A held row outliving the recording it describes would be folded straight back in
+    // by the next reload — a delete that appears not to have worked.
+    const fresh = row({ id: "fresh" });
+    const read = library(page({ recordings: [] }));
+    const remove = vi
+      .spyOn(api, "deleteSdrRecording")
+      .mockResolvedValue({ deleted: true, usage: { bytes: 0, count: 0, reclaimed_bytes: 0 } });
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Nothing recorded yet/)).toBeTruthy());
+    act(() => noteSdrRecordingSaved(fresh));
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(1));
+
+    fireEvent.click(document.querySelector(".rec-main") as Element);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: /Tap again — deletes this recording/ }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("fresh"));
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(0));
+
+    // A later reload — here the next capture's — must not resurrect it.
+    act(() => noteSdrRecordingSaved(row({ id: "next", frequency_hz: 121_500_000 })));
+    await waitFor(() =>
+      expect(document.querySelector(".rec-who b")?.textContent).toContain("121.500"),
+    );
+    expect(document.querySelectorAll(".rec-row").length).toBe(1);
+    expect(read).toHaveBeenCalled();
+  });
+
+  it("re-reads after a capture that ended without this PWA stopping it", async () => {
+    // The Record control is on another tab, so a stop made HERE arrives as a fresh mount
+    // and there is nothing to be early about. This effect only ever sees a capture end
+    // when the BOX ended it — out of disk, a released lease, a second device — and there
+    // is no `saved` answer to hold on to in that case. The list read on the flip can
+    // still be early, so it must not be the last word.
+    const running: SdrRecordingState = {
+      started_at: at(0),
+      seconds: 4,
+      bytes: 32_000,
+      frequency_hz: 146_940_000,
+      mode: "fm",
+      bandwidth_hz: 16_000,
+      serial: null,
+    };
+    const status = vi.spyOn(api, "getSdrStatus").mockResolvedValue({
+      available: true,
+      listening: null,
+      sessions: [],
+      recording: running,
+    });
+    const read = library(page({ recordings: [] }));
+
+    vi.useFakeTimers();
+    try {
+      render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // The stream ends: the recorder reports nothing, while the row is still being
+      // written. The reload this flip triggers is the early one.
+      status.mockResolvedValue({
+        available: true,
+        listening: null,
+        sessions: [],
+        recording: null,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(document.querySelectorAll(".rec-row").length).toBe(0);
+
+      // ...and by the time the follow-up lands, the box has finished writing it.
+      read.mockResolvedValue(page({ recordings: [row({ id: "fresh" })] }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(document.querySelectorAll(".rec-row").length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("opens the trim sheet from the row's own action, not from the row", async () => {

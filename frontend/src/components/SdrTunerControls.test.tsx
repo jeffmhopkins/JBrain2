@@ -8,10 +8,15 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { type SdrRecording, api } from "../api/client";
 import { resetBands } from "../sdrBands";
 import { resetSdrCaptions } from "../sdrCaptions";
-import { type SdrListening, type SdrRecordingState, resetSdrSession } from "../sdrSession";
+import {
+  type SdrListening,
+  type SdrRecordingState,
+  onSdrRecordingSaved,
+  resetSdrSession,
+} from "../sdrSession";
 import { SdrTunerControls, liveTag } from "./SdrTunerControls";
 
 // The caption stream, faked at the EventSource seam so a test can deliver a segment.
@@ -881,6 +886,46 @@ describe("the record control", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
     await waitFor(() => expect(record).toHaveBeenCalledWith(false));
+  });
+
+  it("announces the row the stop landed, because the library cannot infer it", async () => {
+    // The recorder reports no capture from the moment the STREAM ends — before the
+    // waveform is computed and the row written — so a library reloading off that poll
+    // can read a list without the clip that was just made. The stop's own answer carries
+    // the row, and it is a different TAB from this one, so it is announced rather than
+    // returned (sdrSession.ts).
+    const saved: SdrRecording = {
+      id: "fresh",
+      started_at: "2026-09-10T19:12:00Z",
+      ended_at: "2026-09-10T19:12:04Z",
+      duration_s: 4,
+      captured_s: 4,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      bytes: 32_000,
+    };
+    status({
+      started_at: "2026-09-10T19:12:00Z",
+      seconds: 4,
+      bytes: 32_000,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      serial: null,
+    });
+    vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null, saved });
+    const heard: SdrRecording[] = [];
+    const off = onSdrRecordingSaved((row) => heard.push(row));
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => expect(heard).toEqual([saved]));
+    off();
   });
 
   it("says why when the box refuses, instead of a button that does nothing", async () => {
